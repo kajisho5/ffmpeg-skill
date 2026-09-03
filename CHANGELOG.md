@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+
+- `mcp/server.py` (new): the whole toolkit as an MCP server over stdio (JSON-RPC 2.0, standard library only). Every script is a tool; named args or raw argv; results as structured JSON. Installed alongside scripts by `npx ffmpeg-skill`.
+- `batch.py` (new): apply a step recipe or a render project to every file in a folder, content-hash cache so re-runs only touch changed files, `--watch` polling.
+- `caption.py --transcribe`: optional local speech-to-text bridge (whisper.cpp `whisper-cli`, faster-whisper, or openai-whisper if present). Never required; a clear install hint otherwise.
+- Tests: 49 end-to-end cases.
+
 ## 0.6.0
 
 - `graphics.py` (new): motion-graphics templates with no image assets — lower-third (slide in/out), title card, chapter chip, progress bar, countdown, corner bug — coloured from brand.json.

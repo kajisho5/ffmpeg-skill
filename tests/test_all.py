@@ -695,6 +695,72 @@ class FFmpegSkillTests(unittest.TestCase):
         script("report.py", "--after", reels, "--no-sheets", "-o", OUT / "report2.html")
         self.assertLess((OUT / "report2.html").stat().st_size, 40000)
 
+    # ---------------------------------------------------------------- v0.7: MCP server / batch / ASR bridge
+    def test_mcp_server_stdio(self):
+        server = ROOT / "mcp" / "server.py"
+        reqs = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "probe", "arguments": {"inputs": [str(self.src)]}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "cut", "arguments": {"input": str(self.src), "start": 1, "end": 3, "output": str(OUT / "mcp_cut.mp4")}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "cut", "arguments": {"argv": [str(self.src), "--start", "0", "--end", "2", "-o", str(OUT / "mcp_cut2.mp4")]}}},
+            {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "nope", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 7, "method": "bogus/method"},
+        ]
+        proc = subprocess.run([sys.executable, str(server)], input="\n".join(json.dumps(r) for r in reqs) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        resp = {r["id"]: r for r in (json.loads(l) for l in proc.stdout.splitlines() if l.strip())}
+        self.assertEqual(resp[1]["result"]["serverInfo"]["name"], "ffmpeg-skill")
+        names = {t["name"] for t in resp[2]["result"]["tools"]}
+        self.assertTrue({"probe", "cut", "render", "check", "scenes", "batch"} <= names or {"probe", "cut", "render", "check", "scenes"} <= names)
+        self.assertEqual(resp[3]["result"]["structuredContent"]["duration"], 12.0)
+        self.assertClose(resp[4]["result"]["structuredContent"]["probe"]["duration"], 2.0, 0.6)
+        self.assertTrue(Path(resp[5]["result"]["structuredContent"]["output"]).exists())
+        self.assertTrue(resp[6]["result"].get("isError"))
+        self.assertEqual(resp[7]["error"]["code"], -32601)
+
+    def test_batch_recipe_and_cache(self):
+        folder = OUT / "batch_in"
+        folder.mkdir(exist_ok=True)
+        for name in ("a.mp4", "b.mp4"):
+            (folder / name).write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_final",
+                                      "steps": [["fit.py", "{in}", "--duration", "5", "-o", "{out}"], ["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertEqual(data["processed"], 2)
+        self.assertFalse(any(r.get("cached") for r in data["results"]))
+        for r in data["results"]:
+            m = probe(r["output"])
+            self.assertClose(m["duration"], 5.0, 0.3)
+            self.assertEqual(m["video"]["width"], 1280)
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertTrue(all(r.get("cached") for r in data["results"]), "second run served from cache")
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--json").stdout)
+        self.assertFalse(any(r.get("cached") for r in data["results"]))
+        # project-based recipe
+        proj = folder / "p.json"
+        proj.write_text(json.dumps({"clips": [{"src": "x", "in": 0, "out": 3}], "export": {"preset": "x"}}))
+        recipe2 = folder / "batch2.json"
+        recipe2.write_text(json.dumps({"glob": "a.mp4", "output_dir": "out2", "suffix": "_p", "project": "p.json"}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
+        self.assertEqual(data["processed"], 1)
+        self.assertClose(probe(data["results"][0]["output"])["duration"], 3.0, 0.3)
+
+    def test_transcribe_without_engine_explains(self):
+        import shutil
+        if shutil.which("whisper-cli") or shutil.which("whisper"):
+            self.skipTest("a local ASR engine is installed")
+        try:
+            import faster_whisper  # noqa: F401
+            self.skipTest("faster-whisper installed")
+        except ImportError:
+            pass
+        proc = script("caption.py", self.src, "--transcribe", "-o", OUT / "asr.mp4", expect_fail=True)
+        self.assertIn("no local speech-to-text engine", proc.stderr)
+        self.assertIn("whisper", proc.stderr)
+
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):

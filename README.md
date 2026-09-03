@@ -18,6 +18,9 @@ npx ffmpeg-skill
 - **Lossless when possible** — cuts and joins use stream copy by default; re-encoding only happens when it must (frame-accurate cuts, filters, format changes).
 - **Cut & join** segments with `mm:ss` / `hh:mm:ss.ms` times.
 - **Declarative edits** — describe the whole edit in a `project.json` (clips, transitions, captions, overlays, music, loudness, export, check) and re-render after every tweak.
+- **MCP server** — `mcp/server.py` exposes every script as an MCP tool over stdio (stdlib only) for Claude Desktop, Cursor or any MCP client.
+- **Batch / watch folder** — one recipe over a whole shoot with a content-hash cache; re-runs only touch what changed.
+- **Optional local transcription** — `caption.py --transcribe` uses whisper.cpp / faster-whisper / openai-whisper when present; never required.
 - **Brand kit** — one `brand.json` (fonts, colours, logo, safe margins, caption style) applied by captions, overlays, graphics and projects.
 - **Motion graphics without assets** — lower-thirds, title cards, chapter chips, progress bars, countdowns and corner bugs drawn by FFmpeg.
 - **HTML delivery report** — before/after contact sheets, media facts, loudness, compliance and the commands run, in one file.
@@ -99,6 +102,8 @@ More examples: [examples/README.md](examples/README.md). To see everything run e
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision, colour space, rotation, audio channels as JSON; `--analyze` flags Log footage |
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact |
 | `render.py` | Render a whole edit from `project.json`; `--init`, `--dry-run`, `--stop-after` |
+| `batch.py` | Apply a step recipe or render project to a folder, cached, optional watch |
+| `mcp/server.py` | MCP server exposing all scripts as tools (stdio JSON-RPC) |
 | `graphics.py` | Lower-third, title, chapter, progress, countdown, bug templates (brand colours) |
 | `report.py` | Single-file HTML delivery report with sheets, facts, loudness, compliance, commands |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals and per-scene sheet |
@@ -118,6 +123,14 @@ More examples: [examples/README.md](examples/README.md). To see everything run e
 | `export.py` | Presets: `youtube`, `youtube4k`, `reels`, `x`, `prores`, `h265`, `gif` |
 
 All scripts: Python 3.9+, standard library only, `--help`, non-zero exit + stderr message on failure.
+
+## MCP
+
+```json
+{"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["/Users/you/.claude/skills/ffmpeg-skill/mcp/server.py"]}}}
+```
+
+`python3 mcp/server.py --list` prints the tools; `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
 
 ## Requirements
 

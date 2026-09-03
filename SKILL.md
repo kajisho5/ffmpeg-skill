@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-skill
-description: Professional video editing with local FFmpeg — declarative project rendering, brand kits, motion-graphics templates (lower-thirds, titles, countdowns), HTML delivery reports, scene detection and highlight picks, delivery compliance checks, cut, silence removal, transitions, multicam, captions (animated/karaoke timed to speech), fit to duration/aspect, audio sync with drift correction, HDR/HLG/Dolby Vision to SDR, LUTs, audio clean-up and ducking, loudness, overlays, platform exports, frame inspection and a real-footage verification kit; Python stdlib scripts, no cloud or API keys.
+description: Professional video editing with local FFmpeg — MCP server, batch folders, declarative project rendering, brand kits, motion-graphics templates (lower-thirds, titles, countdowns), HTML delivery reports, scene detection and highlight picks, delivery compliance checks, cut, silence removal, transitions, multicam, captions (animated/karaoke timed to speech), fit to duration/aspect, audio sync with drift correction, HDR/HLG/Dolby Vision to SDR, LUTs, audio clean-up and ducking, loudness, overlays, platform exports, frame inspection and a real-footage verification kit; Python stdlib scripts, no cloud or API keys.
 ---
 
 # ffmpeg-skill
@@ -75,6 +75,8 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
 | "add a lower third with my name", "title card", "countdown intro", "progress bar" | `graphics.py input.mp4 --template lower-third --name "..." --title "..." --start 2 --end 8` |
 | "use our brand fonts/colours/logo" | pass `--brand brand.json` to caption/overlay/graphics, or `"brand"` in project.json |
 | "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 --platform youtube -o report.html` |
+| "do this to every file in the folder", "process the whole shoot" | `batch.py FOLDER --recipe batch.json` (steps or a render project; cached) |
+| "transcribe it and caption it" | `caption.py input.mp4 --transcribe --animate pop --karaoke` (needs a local whisper; otherwise `--text`) |
 | "three cameras, cut between them" | `multicam.py camA.mp4 camB.mp4 camC.mp4 --switch "0-20:0,20-40:1,40-60:2"` |
 | "it's an iPhone Dolby Vision clip and players show it wrong" | `color.py clip.mov --to-sdr` or `color.py clip.mov --strip-dovi` (keep HDR, drop the DV layer) |
 | "does it look like Log / S-Log / flat footage?" | `probe.py clip.mp4 --analyze` (`looks_like_log`) then `color.py --lut` |
@@ -175,6 +177,30 @@ check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|broadcast|podca
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
 step before reporting a deliverable; fix FAILs, mention WARNs.
+
+### batch.py — same recipe over a folder, cached
+```
+batch.py FOLDER --recipe batch.json [--force] [--watch SECONDS] [--json]
+```
+`batch.json` holds either `steps` (a list of script argv with `{in}`/`{out}`
+placeholders, chained) or `project` (a render project applied per file).
+Outputs land in `output_dir` with `suffix`; a content-hash cache skips files
+already done with the same recipe. Use `--dry-run` to preview the plan.
+
+### caption.py --transcribe — optional local speech-to-text
+If `whisper-cli` (whisper.cpp), `faster-whisper` or `whisper` is installed,
+`caption.py input.mp4 --transcribe [--language ja] [--model base]` writes the
+SRT from the audio and burns it (combine with `--animate pop --karaoke`).
+Nothing is downloaded and nothing is required: without an engine it prints
+install hints and the user can supply `--text` cues instead. Always tell the
+user which engine was used, and treat the transcript as a draft to review.
+
+### MCP server — the toolkit for any MCP client
+`python3 mcp/server.py` speaks MCP over stdio; each script is a tool taking
+named args (flags without dashes, underscores for hyphens) or `argv`. Config
+for Claude Desktop / Claude Code:
+`{"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["~/.claude/skills/ffmpeg-skill/mcp/server.py"]}}}`.
+Inside this skill, call the scripts directly; the server is for other hosts.
 
 ### graphics.py — motion-graphics templates
 ```
