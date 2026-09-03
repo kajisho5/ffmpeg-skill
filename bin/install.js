@@ -88,7 +88,11 @@ for (const t of targets) {
     }
     fs.rmSync(t.dir, { recursive: true, force: true });
     fs.mkdirSync(t.dir, { recursive: true });
-    for (const item of PAYLOAD) copyRecursive(path.join(ROOT, item), path.join(t.dir, item));
+    for (const item of PAYLOAD) {
+      const src = path.join(ROOT, item);
+      if (!fs.existsSync(src)) { if (item !== 'SKILL.md' && item !== 'scripts') continue; throw new Error(`missing ${item} in package`); }
+      copyRecursive(src, path.join(t.dir, item));
+    }
     console.log(`installed ${t.label}: ${t.dir}`);
   } catch (err) {
     failed = true;
