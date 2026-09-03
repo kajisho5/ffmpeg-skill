@@ -417,6 +417,55 @@ def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
     }
 
 
+BRAND_DEFAULTS: Dict[str, Any] = {
+    "font": "DejaVu Sans",
+    "font_file": None,
+    "colors": {"primary": "FFD200", "text": "FFFFFF", "outline": "000000", "background": "101418", "accent": "1E6F8E"},
+    "logo": None,
+    "logo_position": "top-right",
+    "logo_scale": 160,
+    "logo_opacity": 0.9,
+    "safe_margin": 48,
+    "caption": {"size": 26, "position": "bottom", "animate": "pop", "karaoke": False, "bold": True, "outline": 2},
+    "loudness": {"lufs": -14, "tp": -1},
+}
+
+
+def load_brand(path: Optional[str]) -> Dict[str, Any]:
+    """Load brand.json (fonts, colours, logo, safe margins, caption defaults); missing keys fall back to defaults."""
+    import copy
+    brand = copy.deepcopy(BRAND_DEFAULTS)
+    if not path:
+        return brand
+    if not os.path.exists(path):
+        die(f"brand file not found: {path}")
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except ValueError as exc:
+        die(f"brand file is not valid JSON: {exc}")
+    base = Path(path).resolve().parent
+    for k, v in data.items():
+        if isinstance(v, dict) and isinstance(brand.get(k), dict):
+            brand[k].update(v)
+        else:
+            brand[k] = v
+    for key in ("logo", "font_file"):
+        if brand.get(key) and not os.path.isabs(brand[key]):
+            brand[key] = str(base / brand[key])
+    brand["_path"] = str(path)
+    return brand
+
+
+def color_hex(value: str) -> str:
+    """Normalise '#ffd200' / 'ffd200' / '0xFFD200' to 'FFD200'."""
+    v = str(value).strip().lstrip("#")
+    if v.lower().startswith("0x"):
+        v = v[2:]
+    if len(v) != 6:
+        die(f"colour must be RRGGBB, got '{value}'")
+    return v.upper()
+
+
 def print_json(obj: Any) -> None:
     sys.stdout.write(json.dumps(obj, indent=2, ensure_ascii=False) + "\n")
 

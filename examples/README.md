@@ -109,6 +109,26 @@ python3 $S/render.py project.json --fast      # preview
 python3 $S/render.py project.json             # final
 ```
 
+### "Add a lower third / title / countdown"
+```bash
+python3 $S/graphics.py talk.mp4 --template lower-third --name "Ada Lovelace" --title "Analyst" --start 2 --end 8 --brand brand.json
+python3 $S/graphics.py talk.mp4 --template title --title "Episode 12" --subtitle "The math of video" --start 0 --end 4
+python3 $S/graphics.py intro.mp4 --template countdown --from 5 --start 1 --end 6
+python3 $S/graphics.py talk.mp4 --template progress
+```
+
+### "Use our brand"
+```bash
+cp examples/brand.json ./brand.json          # edit fonts, colours, logo
+python3 $S/caption.py talk.mp4 --text cues.txt --brand brand.json
+python3 $S/overlay.py talk.mp4 --logo --brand brand.json
+```
+
+### "Give me a report of what you did"
+```bash
+python3 $S/report.py --before raw.mov --after final.mp4 --platform youtube --commands commands.txt -o report.html
+```
+
 ### "Make a 60 second highlight from an hour"
 ```bash
 python3 $S/scenes.py event.mp4 --highlights 6 --target 60 --edl picks.txt --sheet scenes.png

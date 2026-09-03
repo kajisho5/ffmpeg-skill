@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -76,9 +76,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_overlay.<ext>)")
-    src = ap.add_mutually_exclusive_group(required=True)
+    src = ap.add_mutually_exclusive_group()
     src.add_argument("--image", help="PNG/JPG (alpha respected) to composite")
     src.add_argument("--text", help="text to draw (drawtext)")
+    src.add_argument("--logo", action="store_true", help="composite the brand logo from --brand (position/scale/opacity from brand.json)")
+    ap.add_argument("--brand", help="brand.json (logo, font, colours, safe margin)")
     ap.add_argument("--position", default="top-right", help="named position or X,Y (default top-right)")
     ap.add_argument("--margin", type=int, default=24, help="margin from the edges in px (default 24)")
     ap.add_argument("--start", help="show from this time (default: whole video)")
@@ -104,6 +106,26 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
+    brand = load_brand(args.brand)
+    if args.logo:
+        if not brand.get("logo"):
+            die("--logo needs a brand.json with a 'logo' entry")
+        args.image = brand["logo"]
+        if args.position == ap.get_default("position"):
+            args.position = brand.get("logo_position", "top-right")
+        if not args.scale and not args.scale_percent:
+            args.scale = int(brand.get("logo_scale", 160))
+        if args.opacity == 1.0:
+            args.opacity = float(brand.get("logo_opacity", 1.0))
+    if not (args.image or args.text):
+        die("give --image, --text or --logo")
+    if args.brand:
+        if args.margin == ap.get_default("margin"):
+            args.margin = int(brand.get("safe_margin", args.margin))
+        if args.font == ap.get_default("font"):
+            args.font = brand.get("font", args.font)
+        if not args.font_file and brand.get("font_file"):
+            args.font_file = brand["font_file"]
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")

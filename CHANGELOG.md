@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- `graphics.py` (new): motion-graphics templates with no image assets — lower-third (slide in/out), title card, chapter chip, progress bar, countdown, corner bug — coloured from brand.json.
+- `brand.json` support: fonts, colours, logo (position/scale/opacity), safe margin, caption defaults. `caption.py --brand`, `overlay.py --brand --logo`, `graphics.py --brand`, and a `"brand"` key in `render.py` projects (plus a `graphics` stage and `{"logo": true}` overlays).
+- `report.py` (new): single-file HTML delivery report with before/after contact sheets, media facts, loudness, compliance table and the commands run.
+- Tests: 46 end-to-end cases.
+
 ## 0.5.0
 
 - `render.py` (new): declarative edits from one `project.json` (clips → join → silence → fit → captions → overlays → audio → loudness → export → check). `--init` writes a starter, `--dry-run` prints every command, `--stop-after` for iterating.

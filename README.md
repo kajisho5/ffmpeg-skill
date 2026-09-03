@@ -18,6 +18,9 @@ npx ffmpeg-skill
 - **Lossless when possible** — cuts and joins use stream copy by default; re-encoding only happens when it must (frame-accurate cuts, filters, format changes).
 - **Cut & join** segments with `mm:ss` / `hh:mm:ss.ms` times.
 - **Declarative edits** — describe the whole edit in a `project.json` (clips, transitions, captions, overlays, music, loudness, export, check) and re-render after every tweak.
+- **Brand kit** — one `brand.json` (fonts, colours, logo, safe margins, caption style) applied by captions, overlays, graphics and projects.
+- **Motion graphics without assets** — lower-thirds, title cards, chapter chips, progress bars, countdowns and corner bugs drawn by FFmpeg.
+- **HTML delivery report** — before/after contact sheets, media facts, loudness, compliance and the commands run, in one file.
 - **Scene detection and highlight picks** — find cuts and loud moments, get a 60-second digest proposal as a cut list.
 - **Delivery checks** — PASS/FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, broadcast and podcast specs, with the fix for each failure.
 - **Multicam** — align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list.
@@ -96,6 +99,8 @@ More examples: [examples/README.md](examples/README.md). To see everything run e
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision, colour space, rotation, audio channels as JSON; `--analyze` flags Log footage |
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact |
 | `render.py` | Render a whole edit from `project.json`; `--init`, `--dry-run`, `--stop-after` |
+| `graphics.py` | Lower-third, title, chapter, progress, countdown, bug templates (brand colours) |
+| `report.py` | Single-file HTML delivery report with sheets, facts, loudness, compliance, commands |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals and per-scene sheet |
 | `check.py` | Pre-delivery compliance per platform (duration, aspect, codec, colour, loudness, size) |
 | `multicam.py` | Align cameras/recorders by audio and switch between them from a time list |

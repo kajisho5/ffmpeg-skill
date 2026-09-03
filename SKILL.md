@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-skill
-description: Professional video editing with local FFmpeg — declarative project rendering, scene detection and highlight picks, delivery compliance checks, cut, silence removal, transitions, multicam, captions (animated/karaoke timed to speech), fit to duration/aspect, audio sync with drift correction, HDR/HLG/Dolby Vision to SDR, LUTs, audio clean-up and ducking, loudness, overlays, platform exports, frame inspection and a real-footage verification kit; Python stdlib scripts, no cloud or API keys.
+description: Professional video editing with local FFmpeg — declarative project rendering, brand kits, motion-graphics templates (lower-thirds, titles, countdowns), HTML delivery reports, scene detection and highlight picks, delivery compliance checks, cut, silence removal, transitions, multicam, captions (animated/karaoke timed to speech), fit to duration/aspect, audio sync with drift correction, HDR/HLG/Dolby Vision to SDR, LUTs, audio clean-up and ducking, loudness, overlays, platform exports, frame inspection and a real-footage verification kit; Python stdlib scripts, no cloud or API keys.
 ---
 
 # ffmpeg-skill
@@ -72,6 +72,9 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
 | "make a 60 s highlight from this hour", "find the good bits" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` → `cut.py --segments` |
 | "is this OK to upload?", "check it meets the Reels spec" | `check.py final.mp4 --platform reels` |
 | "set it up so I can tweak and re-render", "several changes to the same edit" | `render.py --init project.json`, edit, `render.py project.json` |
+| "add a lower third with my name", "title card", "countdown intro", "progress bar" | `graphics.py input.mp4 --template lower-third --name "..." --title "..." --start 2 --end 8` |
+| "use our brand fonts/colours/logo" | pass `--brand brand.json` to caption/overlay/graphics, or `"brand"` in project.json |
+| "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 --platform youtube -o report.html` |
 | "three cameras, cut between them" | `multicam.py camA.mp4 camB.mp4 camC.mp4 --switch "0-20:0,20-40:1,40-60:2"` |
 | "it's an iPhone Dolby Vision clip and players show it wrong" | `color.py clip.mov --to-sdr` or `color.py clip.mov --strip-dovi` (keep HDR, drop the DV layer) |
 | "does it look like Log / S-Log / flat footage?" | `probe.py clip.mp4 --analyze` (`looks_like_log`) then `color.py --lut` |
@@ -149,7 +152,7 @@ render.py --init project.json                # starter file
 render.py project.json [--fast] [--dry-run] [--stop-after STAGE] [--work DIR --keep]
 ```
 Stages: clips (cut, optional speed) → join (transition) → silence → fit →
-captions → overlays → audio → loudness → export → check. Keys mirror the
+captions → graphics → overlays → audio → loudness → export → check. Keys mirror the
 CLI flags of each script (see the docstring). Use it whenever an edit has
 more than two steps or the user is likely to ask for changes: edit the JSON,
 re-render, and the result is reproducible. `--dry-run --json` prints the
@@ -172,6 +175,35 @@ check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|broadcast|podca
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
 step before reporting a deliverable; fix FAILs, mention WARNs.
+
+### graphics.py — motion-graphics templates
+```
+graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug [--name] [--title] [--subtitle]
+            [--from N] [--start S] [--end E] [--position CORNER] [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [-o OUT]
+```
+Drawn with drawbox/drawtext/overlay — no PNG assets needed. Sizes scale with
+the frame's short side; colours, font and safe margin come from `--brand`.
+Lower-third slides in over 0.4 s and out over 0.3 s; title/chapter/bug fade.
+
+### brand.json — one file for fonts, colours, logo, margins
+```json
+{"font": "Noto Sans CJK JP", "font_file": "fonts/NotoSansCJK-Bold.ttc",
+ "colors": {"primary": "FF6A00", "text": "FFFFFF", "outline": "000000", "background": "0B1D2A"},
+ "logo": "logo.png", "logo_position": "top-right", "logo_scale": 160, "logo_opacity": 0.9,
+ "safe_margin": 48, "caption": {"size": 28, "position": "bottom", "animate": "pop", "karaoke": true, "bold": true}}
+```
+`caption.py --brand`, `overlay.py --brand --logo`, `graphics.py --brand`, and
+`"brand": "brand.json"` in a render project. Explicit flags still win. When a
+user mentions brand guidelines, colours, "our font" or a logo, ask for or
+write a brand.json once and reuse it across every output.
+
+### report.py — HTML delivery report
+```
+report.py --after FINAL [--before SOURCE] [--platform youtube] [--commands cmds.txt] [--notes notes.md] [--title T] [--no-sheets] [-o report.html]
+```
+One self-contained HTML: before/after facts and contact sheets, loudness,
+compliance table with fixes, commands. Produce it for any multi-step job and
+hand the path to the user together with the numbers.
 
 ### multicam.py — align several cameras and switch between them
 ```

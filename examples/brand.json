@@ -1,0 +1,28 @@
+{
+  "font": "DejaVu Sans",
+  "font_file": null,
+  "colors": {
+    "primary": "FF6A00",
+    "text": "FFFFFF",
+    "outline": "000000",
+    "background": "0B1D2A",
+    "accent": "1E6F8E"
+  },
+  "logo": "logo.png",
+  "logo_position": "top-right",
+  "logo_scale": 160,
+  "logo_opacity": 0.9,
+  "safe_margin": 48,
+  "caption": {
+    "size": 28,
+    "position": "bottom",
+    "animate": "pop",
+    "karaoke": true,
+    "bold": true,
+    "outline": 2
+  },
+  "loudness": {
+    "lufs": -14,
+    "tp": -1
+  }
+}
