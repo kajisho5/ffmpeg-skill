@@ -53,6 +53,31 @@ class FFmpegSkillTests(unittest.TestCase):
         cls.cues = OUT / "cues.txt"
         cls.cues.write_text("0:00-0:03 Hello world\n0:03-0:06 Second | line\nAuto timed cue\n", encoding="utf-8")
 
+        # --- "real world" material: VFR, rotated phone clip, 5.1 audio, 10-bit HDR10 HEVC, long drifting pair
+        cls.vfr = OUT / "vfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
+           "-t", "12", "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr",
+           "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", cls.vfr)
+        cls.rot = OUT / "rot.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
+        cls.surround = OUT / "surround.mov"
+        six = "|".join([TONES, TONES, "0.5*" + TONES, "0.2*sin(2*PI*60*t)", "0.3*" + TONES, "0.3*" + TONES])
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{six}':s=48000:c=5.1",
+           "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "6", cls.surround)
+        cls.hdr = OUT / "hdr10.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
+           "-t", "4", "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:log-level=error",
+           "-tag:v", "hvc1", "-c:a", "aac", cls.hdr)
+        cls.long_ref = OUT / "long_ref.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000", "-t", "200", "-c:a", "pcm_s16le", cls.long_ref)
+        cls.long_drift = OUT / "long_drift.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.2", "-i", cls.long_ref,
+           "-af", "asetrate=48000*0.9995,aresample=48000", "-c:a", "pcm_s16le", cls.long_drift)
+
     def assertClose(self, a, b, tol, msg=""):
         self.assertIsNotNone(a, msg)
         self.assertLessEqual(abs(a - b), tol, f"{msg}: {a} vs {b} (tol {tol})")
@@ -200,6 +225,120 @@ class FFmpegSkillTests(unittest.TestCase):
 
     def test_export_list(self):
         self.assertIn("youtube", script("export.py", "--list").stdout)
+
+    # ---------------------------------------------------------------- real-world material
+    def test_probe_detects_vfr_rotation_surround_hdr(self):
+        self.assertTrue(probe(str(self.vfr))["video"]["variable_frame_rate_suspected"])
+        self.assertEqual(probe(str(self.rot))["video"]["rotation"], 90)
+        self.assertEqual(probe(str(self.surround))["audio"]["channels"], 6)
+        h = probe(str(self.hdr))["video"]
+        self.assertTrue(h["hdr"])
+        self.assertEqual(h["hdr_format"], "HDR10/PQ")
+        self.assertEqual(h["bit_depth"], 10)
+        self.assertEqual(h["codec"], "hevc")
+
+    def test_vfr_is_conformed_to_cfr_on_cut_and_fit(self):
+        out = OUT / "vfr_cut.mp4"
+        proc = script("cut.py", self.vfr, "--start", "2", "--end", "6", "-o", out)
+        self.assertIn("variable-frame-rate", proc.stderr)
+        m = probe(str(out))
+        self.assertFalse(m["video"]["variable_frame_rate_suspected"])
+        self.assertClose(m["duration"], 4.0, 0.2)
+        out2 = OUT / "vfr_fit.mp4"
+        script("fit.py", self.vfr, "--fps", "30", "--aspect", "1:1", "-o", out2)
+        m2 = probe(str(out2))
+        self.assertClose(m2["video"]["fps"], 30.0, 0.05)
+        self.assertFalse(m2["video"]["variable_frame_rate_suspected"])
+
+    def test_rotated_source_uses_display_orientation(self):
+        out = OUT / "rot_fit.mp4"
+        script("fit.py", self.rot, "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
+        self.assertEqual(m["video"]["rotation"], 0)
+
+    def test_hdr_to_sdr_tonemap(self):
+        out = OUT / "sdr.mp4"
+        script("color.py", self.hdr, "--to-sdr", "--preset", "veryfast", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertFalse(v["hdr"])
+        self.assertEqual((v["color_transfer"], v["color_primaries"], v["pix_fmt"]), ("bt709", "bt709", "yuv420p"))
+        self.assertEqual((v["width"], v["height"]), (1920, 1080))
+        # refuses on SDR input unless forced
+        script("color.py", self.src, "--to-sdr", expect_fail=True)
+
+    def test_color_retag_is_stream_copy(self):
+        out = OUT / "retag.mp4"
+        proc = script("color.py", self.src, "--retag", "bt601", "-o", out)
+        self.assertIn("-c copy", proc.stderr)
+        self.assertEqual(probe(str(out))["video"]["color_transfer"], "smpte170m")
+
+    def test_color_lut(self):
+        lut = OUT / "invert.cube"
+        lines = ["LUT_3D_SIZE 2"]
+        for b in (0, 1):
+            for g in (0, 1):
+                for r in (0, 1):
+                    lines.append(f"{1 - r} {1 - g} {1 - b}")
+        lut.write_text("\n".join(lines) + "\n")
+        out = OUT / "lut.mp4"
+        script("color.py", self.src, "--lut", lut, "--lut-strength", "0.5", "--preset", "veryfast", "-o", out)
+        self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
+
+    def test_export_warns_on_hdr(self):
+        out = OUT / "hdr_youtube.mp4"
+        proc = script("export.py", self.hdr, "--preset", "x", "-o", out)
+        self.assertIn("HDR", proc.stderr)
+
+    def test_audio_downmix_voice_and_ducking(self):
+        out = OUT / "downmix.mp4"
+        script("audio.py", self.surround, "--downmix", "--voice", "-o", out)
+        a = probe(str(out))["audio"]
+        self.assertEqual(a["channels"], 2)
+        out2 = OUT / "ducked.mp4"
+        proc = script("audio.py", self.src, "--music", self.long_ref, "--duck", "--fade-out", "2", "-o", out2)
+        self.assertIn("sidechaincompress", proc.stderr)
+        self.assertClose(probe(str(out2))["duration"], 12.0, 0.2)
+        out3 = OUT / "replaced.mp4"
+        script("audio.py", self.src, "--replace", self.mic, "--stereo", "-o", out3)
+        m3 = probe(str(out3))
+        self.assertEqual(m3["audio"]["channels"], 2)
+        self.assertClose(m3["duration"], 12.0, 0.2)
+
+    def test_sync_fine_resolution_and_drift(self):
+        data = json.loads(script("sync.py", self.long_ref, self.long_drift, "--fix-drift", "--json").stdout)
+        self.assertClose(data["offset_seconds"], 1.2, 0.01, "offset extrapolated to t=0 at 1 ms resolution")
+        self.assertClose(data["drift"]["drift_ppm"], 500.0, 40.0)
+        out = OUT / "drift_fixed.wav"
+        script("sync.py", self.long_ref, self.long_drift, "--fix-drift", "--trim-second", "-o", out)
+        again = json.loads(script("sync.py", self.long_ref, out, "--fix-drift", "--json").stdout)
+        self.assertClose(again["offset_seconds"], 0.0, 0.01)
+        self.assertClose(again["drift"]["drift_ppm"], 0.0, 40.0)
+
+    def test_fit_smooth_slow_motion_blend(self):
+        out = OUT / "slow.mp4"
+        script("fit.py", self.src, "--duration", "18", "--smooth", "blend", "--preset", "veryfast", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 18.0, 0.2)
+        self.assertClose(m["video"]["fps"], 30.0, 0.05, "frame rate preserved while slowing down")
+
+    def test_caption_animated_karaoke_ass(self):
+        out = OUT / "karaoke.mp4"
+        ass = OUT / "karaoke.ass"
+        script("caption.py", self.src, "--text", self.cues, "--animate", "pop", "--karaoke", "--write-ass", ass, "--preset", "veryfast", "-o", out)
+        text = ass.read_text(encoding="utf-8-sig")
+        self.assertIn("PlayResX: 1280", text)
+        self.assertIn("\\kf", text)
+        self.assertIn("\\fscx", text)
+        self.assertEqual(text.count("Dialogue:"), 3)
+        self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
+        # from an existing SRT too
+        srt = OUT / "cues.srt"
+        if not srt.exists():
+            script("caption.py", "--text", self.cues, "--write-srt", srt)
+        out2 = OUT / "fade.mp4"
+        script("caption.py", self.src, "--srt", srt, "--animate", "fade", "--preset", "veryfast", "-o", out2)
+        self.assertTrue((OUT / "fade.ass").exists())
 
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):

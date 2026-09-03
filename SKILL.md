@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-skill
-description: Professional video editing with local FFmpeg — cut, caption, fit to duration/aspect, sync multicam audio, normalise loudness, overlay logos and export platform presets, all from Python stdlib scripts with no cloud or API keys.
+description: Professional video editing with local FFmpeg — cut, caption (animated/karaoke), fit to duration/aspect, sync multicam audio with drift correction, HDR-to-SDR and LUT colour, denoise/duck/mix audio, normalise loudness, overlay logos and export platform presets, all from Python stdlib scripts with no cloud or API keys.
 ---
 
 # ffmpeg-skill
@@ -23,8 +23,8 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
    (plain cuts on keyframes, remuxing, audio-only changes), do not re-encode.
    `cut.py` and `loudness.py` stream-copy video by default; only pass
    `--accurate` to `cut.py` when the user needs frame-exact cuts.
-3. **Chain operations in a sensible order.** Cut → fit → caption/overlay →
-   sync/loudness → export. Do the destructive/aspect changes before burning
+3. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
+   fit → caption/overlay → sync → audio → loudness → export. Do the destructive/aspect changes before burning
    text so captions are sized for the final frame. Re-encode as few times as
    possible: if several re-encoding steps are needed, keep intermediates at
    CRF 18 (the default) and only use `export.py` for the last step.
@@ -51,6 +51,17 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast) |
 | "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
+| "the colours look washed out / it's an iPhone HDR video" | `color.py input.mov --to-sdr` (probe shows `hdr: true`) |
+| "apply this LUT", "convert the S-Log / V-Log footage" | `color.py input.mp4 --lut grade.cube [--lut-strength 0.7]` |
+| "the colours are tagged wrong" | `color.py input.mp4 --retag bt709` (no re-encode) |
+| "clean up the audio", "remove the hiss / room noise" | `audio.py input.mp4 --voice` (speech) or `--denoise` |
+| "add background music under the talking" | `audio.py input.mp4 --music bed.mp3 --duck --fade-out 3` |
+| "convert the 5.1 to stereo" | `audio.py input.mov --downmix` |
+| "swap in the narration track" | `audio.py input.mp4 --replace narration.wav` |
+| "the audio drifts out of sync over the hour" | `sync.py camera.mp4 recorder.wav --fix-drift --replace-audio` |
+| "smooth slow motion", "half speed but fluid" | `fit.py input.mp4 --duration 2x --smooth interpolate` (slow) or `--smooth blend` |
+| "TikTok-style captions with the words popping / highlighted" | `caption.py input.mp4 --text cues.txt --animate pop --karaoke` |
+| "it's a phone video with variable frame rate" | nothing extra: every re-encoding script conforms VFR to constant fps automatically; `fit.py --fps 30` to pick the rate |
 
 ## Scripts
 
@@ -79,18 +90,27 @@ fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
              [--fps N] [-o OUT]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`); it
-refuses factors beyond `--max-speed`. `trim` keeps the head (or the middle with
-`--from-center`). `--fps` forces constant frame rate — use it on VFR sources.
+refuses factors beyond `--max-speed`. For slow motion add `--smooth blend`
+(frame blending, fast) or `--smooth interpolate` (motion-compensated
+`minterpolate`, fluid but roughly 10-20x slower than realtime). `trim` keeps
+the head (or the middle with `--from-center`). `--fps` forces a constant frame
+rate; VFR sources are conformed automatically even without it.
 
-### caption.py — subtitles
+### caption.py — subtitles (static, animated, karaoke)
 ```
 caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
-           [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N] [-o OUT]
+           [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
+           [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass] [-o OUT]
 caption.py --text CUES.txt --write-srt OUT.srt        # generate the SRT only
 ```
 Text cue format, one per line: `0:00-0:03 Hello`, `00:00:03.500 --> 00:00:06 Two | lines`.
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
+`--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
+SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
+word from `--color` to `--highlight-color` evenly across the cue (word timing
+is distributed, not transcribed). The ASS is kept next to the output so the
+user can hand-tune timings and re-run with `--ass`.
 
 ### overlay.py — logo, image, title
 ```
@@ -99,17 +119,47 @@ overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--f
 ```
 Alpha in PNGs is respected. Fades apply to the overlay only; the video keeps playing.
 
-### sync.py — offset detection and alignment
+### sync.py — offset detection, alignment, drift correction
 ```
-sync.py REFERENCE SECOND [--json] [--max-offset 30] [--analyze-seconds 120]
+sync.py REFERENCE SECOND [--json] [--max-offset 30] [--analyze-seconds 120] [--fix-drift [--drift-window 60]]
         [--replace-audio | --trim-second] [-o OUT]
 ```
-Cross-correlates loudness envelopes (pure Python FFT, ~5 ms resolution).
-Positive offset = the second recording started later. `--replace-audio` writes
-the reference video with the second file's audio aligned (video stream copied).
+Cross-correlates loudness envelopes: coarse FFT search (20 ms), then a direct
+1 ms refinement (pure Python, a 2-minute window takes ~1-3 s). Positive offset
+= the second recording started later. `--replace-audio` writes the reference
+video with the second file's audio aligned (video stream copied).
 `--trim-second` writes the second file shifted to the reference timeline.
-Check `confidence` (0–1); below ~0.3 the match is doubtful — try a longer
-`--analyze-seconds` or a window that contains a clear event (clap).
+`--fix-drift` measures the offset again near the end of the overlap, reports
+the clock difference in ppm, and resamples the second file so a 60-minute
+take stays in sync (typical consumer devices drift 20-500 ppm = up to 1.8 s/h).
+Use it whenever the recording is longer than ~10 minutes. Check `confidence`
+(0–1); below ~0.3 the match is doubtful — use a window with a clear event.
+
+### color.py — HDR to SDR, LUTs, colour tags
+```
+color.py INPUT --to-sdr [--tonemap hable|mobius|reinhard|bt2390] [--peak 1000] [--desat 0] [-o OUT]
+color.py INPUT --lut grade.cube [--lut-strength 0..1] [-o OUT]
+color.py INPUT --retag bt709|bt2020-pq|bt2020-hlg|bt601 [-o OUT]      # metadata only, stream copy
+```
+`--to-sdr` does a real conversion: linearise (zscale, PQ or HLG), tone-map
+(default `hable`, `mobius` keeps more highlight detail, `bt2390` is the
+broadcast standard), then BT.709 gamma + matrix. Refuses when probe says the
+input is not HDR unless `--force`. `--lut` applies a 3D .cube with
+tetrahedral interpolation (Log→709 conversions, creative looks); blend with
+`--lut-strength`. Everything else in the skill assumes SDR BT.709, so run this
+first on HDR or Log sources.
+
+### audio.py — clean-up, music, ducking, layout
+```
+audio.py INPUT [--voice | --denoise [--denoise-strength 25]] [--gain dB]
+         [--music FILE [--music-volume -14] [--duck [--duck-amount 12]] [--music-loop]]
+         [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE] [-o OUT]
+```
+`--voice` = highpass 80 Hz → de-esser → FFT denoise → gentle compressor, the
+standard talking-head chain. `--duck` uses a sidechain compressor keyed by the
+speech so music dips under dialogue and swells in pauses. `--downmix` uses the
+ITU centre/LFE weights for 5.1/7.1 → stereo. Video is always stream-copied.
+Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation
 ```
@@ -131,21 +181,22 @@ trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`.
 
 - **Variable frame rate (phone/screen recordings).** `probe.py` sets
   `variable_frame_rate_suspected` when `r_frame_rate` and `avg_frame_rate`
-  disagree. VFR causes audio drift and bad concat joins. Fix it early with
-  `fit.py --fps 30` (or 60) before cutting with `--accurate`, captioning or
-  syncing; add `--accurate` to `cut.py` because copy-cuts on VFR are unreliable.
+  disagree. Every re-encoding script then adds `-fps_mode cfr` at the source's
+  average rate, and `cut.py` switches itself to `--accurate` (copy-cuts on VFR
+  are unreliable). Pick the rate explicitly with `fit.py --fps 30|60` when the
+  average is odd (e.g. 23.4 fps from dropped frames).
 - **Audio drift / sync.** Don't mix files with different frame rates or sample
   rates in one `cut.py --segments` join without re-encoding (`--accurate`).
-  After `sync.py`, verify by running it again on the output: the offset should
-  be ~0. If dialogue drifts over a long recording, the clocks differ; align the
-  start with `sync.py`, then fix drift with `fit.py --duration` on the audio-only
-  track to match the reference length.
-- **Colour.** All H.264/H.265 outputs are tagged BT.709 (`-colorspace`,
-  `-color_primaries`, `-color_trc`) and `yuv420p`. If `probe.py` shows a
-  BT.2020/HDR source (`color_transfer` smpte2084 or arib-std-b67), tell the
-  user the output will be tagged as SDR BT.709 without tone mapping, and add
-  `-vf zscale=t=linear:npl=100,tonemap=hable,zscale=p=bt709:t=bt709:m=bt709`
-  manually with ffmpeg if they need a proper SDR conversion.
+  After `sync.py`, verify by running it again on the output: offset (and drift
+  ppm with `--fix-drift`) should be ~0. Recordings longer than ~10 minutes from
+  separate devices: always use `--fix-drift`.
+- **Colour.** All H.264/H.265 outputs are tagged BT.709 and `yuv420p`. When
+  `probe.py` reports `hdr: true` (`hdr_format` HDR10/PQ, HLG or BT.2020), run
+  `color.py --to-sdr` **first**; other scripts would tag the HDR picture as
+  BT.709 and it would look flat and desaturated (`export.py` warns about this).
+  For Log footage (S-Log, V-Log, C-Log: looks grey and low-contrast but is
+  tagged SDR) apply the manufacturer's `.cube` with `color.py --lut`. Keep
+  ProRes masters at source colour: `export.py --preset prores` does not retag.
 - **CJK and other non-Latin text.** libass and drawtext need a font that has
   the glyphs. Check with `fc-list | grep -i cjk`. Then either name it
   (`caption.py --font "Noto Sans CJK JP"`) or point at the file

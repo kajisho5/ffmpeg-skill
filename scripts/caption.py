@@ -11,6 +11,7 @@ Text-to-SRT input format (one cue per line, blank lines ignored):
 
 Examples:
   python3 caption.py input.mp4 --srt subs.srt
+  python3 caption.py input.mp4 --text cues.txt --animate pop --karaoke        # word-by-word highlight, TikTok style
   python3 caption.py input.mp4 --srt subs.srt --font "Noto Sans CJK JP" --size 28 --position top
   python3 caption.py --text cues.txt --write-srt cues.srt          # only produce the SRT
   python3 caption.py input.mp4 --text cues.txt                     # generate + burn in one go
@@ -21,7 +22,7 @@ import re
 import sys
 from typing import List, Tuple
 
-from _common import aac_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
+from _common import aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -58,10 +59,82 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float) -> List[Tuple[fl
     return cues
 
 
+def parse_srt(path: str) -> List[Tuple[float, float, str]]:
+    cues: List[Tuple[float, float, str]] = []
+    block: List[str] = []
+    with open(path, encoding="utf-8-sig") as fh:
+        content = fh.read().replace("\r\n", "\n") + "\n\n"
+    for line in content.split("\n"):
+        if line.strip():
+            block.append(line)
+            continue
+        if block:
+            times = next((b for b in block if "-->" in b), None)
+            if times:
+                a, b = times.split("-->")
+                text = "\n".join(block[block.index(times) + 1:]).strip()
+                cues.append((parse_time(a), parse_time(b), text))
+            block = []
+    if not cues:
+        die(f"no cues found in {path}")
+    return cues
+
+
 def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         for i, (s, e, t) in enumerate(cues, 1):
             fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
+
+
+def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int, play_h: int) -> None:
+    """Write a styled ASS file with optional animation and word-by-word highlight."""
+    def t(sec: float) -> str:
+        cs = int(round(sec * 100))
+        h, rem = divmod(cs, 360000)
+        m, rem = divmod(rem, 6000)
+        s_, cs = divmod(rem, 100)
+        return f"{h}:{m:02d}:{s_:02d}.{cs:02d}"
+
+    scale = play_h / 288.0  # our --size is relative to a 288-line script like force_style
+    size = int(round(args.size * scale))
+    margin = int(round(args.margin * scale))
+    # karaoke: PrimaryColour is the "sung" colour, SecondaryColour the "not yet sung" one
+    primary = ass_color(args.highlight_color if args.karaoke else args.color)
+    secondary = ass_color(args.color)
+    outline = ass_color(args.outline_color)
+    back = ass_color(args.outline_color, 0x80)
+    header = [
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {play_w}", f"PlayResY: {play_h}", "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        f"Style: Default,{args.font},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin},{margin},{margin},1",
+        "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    lines = []
+    for start, end, text in cues:
+        text = text.replace("\n", "\\N")
+        fx = ""
+        if args.animate == "fade":
+            fx = "{\\fad(200,200)}"
+        elif args.animate == "pop":
+            fx = "{\\fad(80,120)\\fscx60\\fscy60\\t(0,120,\\fscx110\\fscy110)\\t(120,200,\\fscx100\\fscy100)}"
+        elif args.animate == "slide":
+            fx = "{\\fad(150,150)\\move(%d,%d,%d,%d,0,250)}" % (play_w // 2, play_h - margin + int(30 * scale), play_w // 2, play_h - margin)
+        body = text
+        if args.karaoke:
+            # split each line into words and give every word an equal share of the cue (\k is in centiseconds)
+            dur_cs = max(1, int(round((end - start) * 100)))
+            segments = body.split("\\N")
+            words = [w for seg in segments for w in seg.split(" ") if w]
+            per = max(1, dur_cs // max(1, len(words)))
+            out_segments = []
+            for seg in segments:
+                ws = [w for w in seg.split(" ") if w]
+                out_segments.append(" ".join(f"{{\\kf{per}}}{w}" for w in ws))
+            body = "\\N".join(out_segments)
+        lines.append(f"Dialogue: 0,{t(start)},{t(end)},Default,,0,0,0,,{fx}{body}")
+    with open(path, "w", encoding="utf-8-sig") as fh:
+        fh.write("\n".join(header + lines) + "\n")
 
 
 def ass_color(hex_rgb: str, alpha: int = 0) -> str:
@@ -95,6 +168,11 @@ def main() -> int:
     sty.add_argument("--position", choices=sorted(ALIGN), default="bottom", help="on-screen placement (default bottom)")
     sty.add_argument("--margin", type=int, default=30, help="vertical margin from the edge (default 30)")
     sty.add_argument("--box", action="store_true", help="draw an opaque box behind text instead of an outline")
+    anim = ap.add_argument_group("animation (generates ASS; needs --text or --srt input)")
+    anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default="none", help="per-cue entrance animation")
+    anim.add_argument("--karaoke", action="store_true", help="word-by-word highlight (fills from --color to --highlight-color across each cue)")
+    anim.add_argument("--highlight-color", default="FFD200", help="karaoke fill colour RRGGBB (default FFD200)")
+    anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
     enc = ap.add_argument_group("encoding")
     enc.add_argument("--crf", type=int, default=18)
     enc.add_argument("--preset", default="medium")
@@ -115,7 +193,20 @@ def main() -> int:
 
     if not args.input:
         die("input video is required unless you only use --text/--write-srt")
-    probe(args.input)
+    meta = probe(args.input)
+    if not meta.get("video"):
+        die("input has no video stream")
+
+    output = args.output or default_output(args.input, "captioned")
+    if (args.animate != "none" or args.karaoke) and not args.ass:
+        cues_for_ass = cues if args.text else parse_srt(srt_path)
+        ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
+        w, h = meta["video"]["width"], meta["video"]["height"]
+        if meta["video"].get("rotation") in (90, -90, 270, -270):
+            w, h = h, w
+        write_ass(cues_for_ass, ass_path, args, w, h)
+        info(f"wrote {ass_path} ({len(cues_for_ass)} cues, animate={args.animate}, karaoke={args.karaoke})")
+        args.ass = ass_path
 
     if args.ass:
         if not os.path.exists(args.ass):
@@ -144,8 +235,8 @@ def main() -> int:
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
 
-    output = args.output or default_output(args.input, "captioned")
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf] + x264_args(args.crf, args.preset) + aac_args() + [output]
+    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf] + x264_args(args.crf, args.preset) + cfr_args(meta)
+    cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
     run(cmd)
     result = probe(output)
     info(f"wrote {output} ({result.get('duration'):.3f}s)")

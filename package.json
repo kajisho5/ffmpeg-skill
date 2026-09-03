@@ -1,7 +1,7 @@
 {
   "name": "ffmpeg-skill",
-  "version": "0.1.0",
-  "description": "Agent Skill that lets coding agents (Claude Code, Cursor, Codex) do professional video editing with local FFmpeg. No API keys, no cloud, no dependencies.",
+  "version": "0.2.0",
+  "description": "Agent Skill that lets coding agents (Claude Code, Cursor, Codex) do professional video editing with local FFmpeg: cut, captions, sync with drift correction, HDR to SDR, LUTs, audio clean-up and ducking, loudness, platform exports. No API keys, no cloud, no dependencies.",
   "keywords": ["ffmpeg", "video", "agent-skill", "claude-code", "cursor", "codex", "skill", "video-editing"],
   "license": "MIT",
   "author": "kajisho5",
