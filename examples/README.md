@@ -101,11 +101,31 @@ python3 $S/fit.py input.mp4 --duration 60 --aspect 9:16 --dry-run
 python3 $S/export.py input.mp4 --preset reels --json          # structured result incl. probe of the output
 ```
 
+### "Three cameras and a recorder — cut it together"
+```bash
+python3 $S/multicam.py camA.mp4 camB.mp4 camC.mp4 zoom.wav --offsets-only
+python3 $S/multicam.py camA.mp4 camB.mp4 camC.mp4 zoom.wav --audio 3 --fix-drift \
+  --switch "0-45:0,45-80:1,80-95:2,95-140:0" -o edit.mp4
+python3 $S/multicam.py camA.mp4 camB.mp4 --auto 10 -o rough.mp4     # alternate every 10 s
+```
+
+### "Run it on my actual footage first"
+```bash
+python3 $S/verify.py ~/Footage/iphone.MOV ~/Footage/gopro.MP4 ~/Footage/obs.mkv --report verify.md
+python3 $S/verify.py ~/Footage --quick
+```
+
+### "Is this Log footage?"
+```bash
+python3 $S/probe.py a7s.mp4 --analyze --compact          # [Log?] when flat + desaturated
+```
+
 ### "The iPhone HDR footage looks washed out"
 ```bash
 python3 $S/probe.py IMG_0231.MOV --field video.hdr_format        # HDR10/PQ, HLG, ...
 python3 $S/color.py IMG_0231.MOV --to-sdr                          # real tone mapping to BT.709
 python3 $S/color.py IMG_0231.MOV --to-sdr --tonemap mobius --peak 1200
+python3 $S/color.py IMG_0231.MOV --strip-dovi                      # keep HDR, drop the Dolby Vision layer
 ```
 
 ### "Apply the S-Log3 conversion LUT" / "give it this look"

@@ -86,7 +86,65 @@ def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
             fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
 
 
-def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int, play_h: int) -> None:
+def word_durations_from_audio(video: str, start: float, end: float, n_words: int) -> List[int]:
+    """Split a cue's time across n_words in proportion to speech energy (centiseconds each).
+
+    Decodes the cue window to 8 kHz mono, builds a 10 ms RMS envelope, removes the noise floor,
+    and cuts at equal cumulative-energy quantiles: pauses get no words, loud stretches get more time.
+    Falls back to an even split when the window is silent or too short.
+    """
+    import struct
+    import subprocess as sp
+    from _common import require_tool
+    total_cs = max(1, int(round((end - start) * 100)))
+    if n_words <= 1:
+        return [total_cs]
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", video,
+           "-t", f"{end - start:.3f}", "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+    proc = sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
+    n = len(proc.stdout) // 2
+    if proc.returncode != 0 or n < 800:
+        per = total_cs // n_words
+        return [per] * (n_words - 1) + [total_cs - per * (n_words - 1)]
+    samples = struct.unpack(f"<{n}h", proc.stdout[: n * 2])
+    step = 80  # 10 ms
+    env = []
+    for i in range(0, n - step + 1, step):
+        block = samples[i:i + step]
+        env.append((sum(x * x for x in block) / step) ** 0.5)
+    floor = sorted(env)[len(env) // 5]  # 20th percentile ~ noise floor
+    energy = [max(0.0, e - floor) for e in env]
+    total_e = sum(energy)
+    if total_e <= 0:
+        per = total_cs // n_words
+        return [per] * (n_words - 1) + [total_cs - per * (n_words - 1)]
+    # boundaries at cumulative-energy quantiles 1/n .. (n-1)/n
+    bounds = []
+    acc = 0.0
+    k = 1
+    for idx, e in enumerate(energy):
+        acc += e
+        while k < n_words and acc >= total_e * k / n_words:
+            bounds.append(idx + 1)
+            k += 1
+    while len(bounds) < n_words - 1:
+        bounds.append(len(energy))
+    prev = 0
+    out = []
+    for b in bounds:
+        cs = max(5, int(round((b - prev) * 1.0)))  # 10 ms blocks -> centiseconds
+        out.append(cs)
+        prev = b
+    out.append(max(5, total_cs - sum(out)))
+    # normalise to the exact cue length
+    scale = total_cs / max(1, sum(out))
+    out = [max(5, int(round(x * scale))) for x in out]
+    out[-1] += total_cs - sum(out)
+    return out
+
+
+def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int, play_h: int, video: str = None) -> None:
     """Write a styled ASS file with optional animation and word-by-word highlight."""
     def t(sec: float) -> str:
         cs = int(round(sec * 100))
@@ -126,11 +184,16 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
             dur_cs = max(1, int(round((end - start) * 100)))
             segments = body.split("\\N")
             words = [w for seg in segments for w in seg.split(" ") if w]
-            per = max(1, dur_cs // max(1, len(words)))
+            if getattr(args, "karaoke_timing", "even") == "energy" and video:
+                durs = word_durations_from_audio(video, start, end, len(words))
+            else:
+                per = max(1, dur_cs // max(1, len(words)))
+                durs = [per] * len(words)
+            it = iter(durs)
             out_segments = []
             for seg in segments:
                 ws = [w for w in seg.split(" ") if w]
-                out_segments.append(" ".join(f"{{\\kf{per}}}{w}" for w in ws))
+                out_segments.append(" ".join(f"{{\\kf{next(it)}}}{w}" for w in ws))
             body = "\\N".join(out_segments)
         lines.append(f"Dialogue: 0,{t(start)},{t(end)},Default,,0,0,0,,{fx}{body}")
     with open(path, "w", encoding="utf-8-sig") as fh:
@@ -172,6 +235,8 @@ def main() -> int:
     anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default="none", help="per-cue entrance animation")
     anim.add_argument("--karaoke", action="store_true", help="word-by-word highlight (fills from --color to --highlight-color across each cue)")
     anim.add_argument("--highlight-color", default="FFD200", help="karaoke fill colour RRGGBB (default FFD200)")
+    anim.add_argument("--karaoke-timing", choices=["even", "energy"], default="energy",
+                      help="how words are timed inside a cue: 'energy' follows the speech loudness in the audio (default), 'even' splits time equally")
     anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
     enc = ap.add_argument_group("encoding")
     enc.add_argument("--crf", type=int, default=18)
@@ -206,7 +271,7 @@ def main() -> int:
         w, h = meta["video"]["width"], meta["video"]["height"]
         if meta["video"].get("rotation") in (90, -90, 270, -270):
             w, h = h, w
-        write_ass(cues_for_ass, ass_path, args, w, h)
+        write_ass(cues_for_ass, ass_path, args, w, h, video=args.input if meta.get("audio") else None)
         info(f"wrote {ass_path} ({len(cues_for_ass)} cues, animate={args.animate}, karaoke={args.karaoke})")
         args.ass = ass_path
 
