@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -100,7 +100,9 @@ def main() -> int:
     enc = ap.add_argument_group("encoding")
     enc.add_argument("--crf", type=int, default=18)
     enc.add_argument("--preset", default="medium")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     meta = probe(args.input)
     if not meta.get("video"):
@@ -163,7 +165,7 @@ def main() -> int:
     run(cmd)
     result = probe(output)
     info(f"wrote {output} ({result['duration']:.3f}s)")
-    print(output)
+    emit(output)
     return 0
 
 

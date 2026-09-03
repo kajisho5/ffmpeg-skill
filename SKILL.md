@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-skill
-description: Professional video editing with local FFmpeg — cut, caption (animated/karaoke), fit to duration/aspect, sync multicam audio with drift correction, HDR-to-SDR and LUT colour, denoise/duck/mix audio, normalise loudness, overlay logos and export platform presets, all from Python stdlib scripts with no cloud or API keys.
+description: Professional video editing with local FFmpeg — cut, remove silences, join with transitions, caption (animated/karaoke), fit to duration/aspect, sync multicam audio with drift correction, HDR-to-SDR and LUT colour, denoise/duck/mix audio, normalise loudness, overlay logos, export platform presets, and inspect frames to verify the result; Python stdlib scripts, no cloud or API keys.
 ---
 
 # ffmpeg-skill
@@ -23,15 +23,19 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
    (plain cuts on keyframes, remuxing, audio-only changes), do not re-encode.
    `cut.py` and `loudness.py` stream-copy video by default; only pass
    `--accurate` to `cut.py` when the user needs frame-exact cuts.
-3. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
+3. **Plan with `--dry-run --json`, then execute.** Every script accepts
+   `--dry-run` (prints the ffmpeg commands, runs nothing) and `--json`
+   (structured result: output path, probe of the output, commands run). Use
+   them to confirm a plan before long encodes and to report exact facts.
+4. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
    fit → caption/overlay → sync → audio → loudness → export. Do the destructive/aspect changes before burning
    text so captions are sized for the final frame. Re-encode as few times as
    possible: if several re-encoding steps are needed, keep intermediates at
    CRF 18 (the default) and only use `export.py` for the last step.
-4. **Verify the output.** Run `probe.py` on each result and confirm duration,
+5. **Verify the output.** Run `probe.py` on each result and confirm duration,
    resolution, fps and audio match what was requested. Report those numbers to
    the user (e.g. "final.mp4: 59.98 s, 1080x1920, 30 fps, AAC stereo").
-5. **Keep the user's originals.** Never overwrite the source file. Write new
+6. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
 
 ## Request → script
@@ -51,6 +55,10 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast) |
 | "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
+| "cut out the pauses / dead air", "tighten it up", "jump cuts" | `silence.py input.mp4 [--threshold -40 --min-silence 0.8]` |
+| "stitch these clips together", "add a crossfade between them" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` |
+| "show me what it looks like", "check the captions are readable" | `look.py output.mp4` then view the PNG |
+| "what would you run?", "don't render yet" | any script with `--dry-run` |
 | "the colours look washed out / it's an iPhone HDR video" | `color.py input.mov --to-sdr` (probe shows `hdr: true`) |
 | "apply this LUT", "convert the S-Log / V-Log footage" | `color.py input.mp4 --lut grade.cube [--lut-strength 0.7]` |
 | "the colours are tagged wrong" | `color.py input.mp4 --retag bt709` (no re-encode) |
@@ -95,6 +103,36 @@ refuses factors beyond `--max-speed`. For slow motion add `--smooth blend`
 `minterpolate`, fluid but roughly 10-20x slower than realtime). `trim` keeps
 the head (or the middle with `--from-center`). `--fps` forces a constant frame
 rate; VFR sources are conformed automatically even without it.
+
+### silence.py — remove dead air / jump cuts
+```
+silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.15] [--min-keep 0.2] [--list] [--edl keep.txt] [-o OUT]
+```
+Runs `silencedetect`, keeps `--margin` seconds of air around speech, drops
+gaps shorter than `--min-silence`, and re-encodes once with `select`/`aselect`
+(frame accurate). `--list` prints silences, kept ranges and seconds removed
+without rendering; `--edl` saves the kept ranges in `cut.py --segments` format
+so the user can edit the list by hand. Quiet rooms need `--threshold -40`
+to `-45`; noisy ones `-30`. Always tell the user how many seconds were removed.
+
+### join.py — concatenate with transitions
+```
+join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen|none]
+        [--duration 0.5] [--width W --height H] [--fps N] [--fit pad|crop] [-o OUT]
+```
+Normalises every clip to one frame size, fps, `yuv420p` and 48 kHz stereo
+(silent track generated for clips without audio), then chains `xfade` +
+`acrossfade`. Output length = sum of clips − transition × (n−1). Clips must be
+longer than 2 × the transition. Use `--transition none` for a plain cut.
+
+### look.py — see the result
+```
+look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes
+look.py INPUT --at 2.5 [--at 7] [-o basename]                     # single frames -> basename_2.500s.png
+look.py BEFORE --compare AFTER --at 4 [-o cmp.png]                # side-by-side frame
+```
+Outputs PNG. View it with the Read tool (or any image viewer) and judge the
+frame like an editor would. Use `--compare` to show before/after to the user.
 
 ### caption.py — subtitles (static, animated, karaoke)
 ```

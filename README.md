@@ -17,6 +17,10 @@ npx ffmpeg-skill
 - **Probe first, verify last** — the skill forces the agent to read real duration/fps/resolution before editing and to check the result after, so you get "final.mp4: 59.98 s, 1080×1920, 30 fps" instead of guesses.
 - **Lossless when possible** — cuts and joins use stream copy by default; re-encoding only happens when it must (frame-accurate cuts, filters, format changes).
 - **Cut & join** segments with `mm:ss` / `hh:mm:ss.ms` times.
+- **Silence removal / jump cuts** — detect dead air, keep a margin around speech, render frame-accurate in one pass; export the cut list for hand editing.
+- **Join with transitions** — crossfade, wipes, fade-to-black between mismatched clips (any size, fps, audio layout).
+- **Agent eyes** — contact sheets, single frames and before/after comparisons as PNG so the agent verifies caption placement, crops and colour visually.
+- **Plan before render** — every script has `--dry-run` (print the ffmpeg commands) and `--json` (structured result with a probe of the output).
 - **Captions** — burn SRT/ASS with font, size, colour, outline and position control; generate SRT from a plain timed-text file; animated (fade/pop/slide) and word-by-word karaoke highlight styles for short-form video.
 - **Fit** to an exact duration (pitch-preserving speed change or trim) and to 16:9 / 9:16 / 1:1 / 4:5 by padding or cropping; motion-interpolated or blended slow motion.
 - **Real-world footage handling** — variable-frame-rate phone clips are conformed to constant fps automatically, rotation metadata is honoured, 10-bit HEVC and 5.1 sources are handled.
@@ -86,6 +90,9 @@ More examples: [examples/README.md](examples/README.md). To see everything run e
 |--------|--------------|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format, colour space, rotation, audio channels as JSON |
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact |
+| `silence.py` | Detect and remove silences (jump cuts), list or export the cut list |
+| `join.py` | Concatenate clips with xfade transitions, normalising size, fps and audio |
+| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG for visual checks |
 | `caption.py` | Burn SRT/ASS (font, size, colour, outline, position); build SRT from timed plain text; animated + karaoke ASS |
 | `fit.py` | Fit to a duration (speed or trim, smooth slow-mo) and/or aspect ratio (pad or crop), force constant fps |
 | `sync.py` | Detect offset between two recordings by audio cross-correlation (1 ms), correct clock drift; output aligned video/audio |

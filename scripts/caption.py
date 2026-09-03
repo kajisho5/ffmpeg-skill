@@ -22,7 +22,7 @@ import re
 import sys
 from typing import List, Tuple
 
-from _common import aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
+from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -176,7 +176,9 @@ def main() -> int:
     enc = ap.add_argument_group("encoding")
     enc.add_argument("--crf", type=int, default=18)
     enc.add_argument("--preset", default="medium")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     if not (args.srt or args.ass or args.text):
         die("give one of --srt, --ass or --text")
@@ -240,7 +242,7 @@ def main() -> int:
     run(cmd)
     result = probe(output)
     info(f"wrote {output} ({result.get('duration'):.3f}s)")
-    print(output)
+    emit(output)
     return 0
 
 

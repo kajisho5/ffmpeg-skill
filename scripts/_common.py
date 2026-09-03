@@ -55,10 +55,46 @@ def require_tool(name: str) -> str:
     return ""  # unreachable
 
 
+STATE: Dict[str, Any] = {"dry_run": False, "json": False, "commands": []}
+
+
+def add_common(ap: "argparse.ArgumentParser") -> None:
+    """Add the flags every script shares."""
+    g = ap.add_argument_group("agent options")
+    g.add_argument("--dry-run", action="store_true", help="print the ffmpeg commands that would run, run nothing")
+    g.add_argument("--json", action="store_true", help="print a JSON result (output, probe, commands) on stdout instead of the path")
+
+
+def apply_common(args: "argparse.Namespace") -> None:
+    STATE["dry_run"] = bool(getattr(args, "dry_run", False))
+    STATE["json"] = bool(getattr(args, "json", False))
+
+
+def emit(output: Optional[str], **extra: Any) -> None:
+    """Final stdout line: the output path, or a JSON document with --json."""
+    if STATE["json"]:
+        doc: Dict[str, Any] = {"output": output, "dry_run": STATE["dry_run"], "commands": list(STATE["commands"])}
+        if output and not STATE["dry_run"] and os.path.exists(output):
+            doc["probe"] = probe(output)
+        doc.update(extra)
+        print_json(doc)
+    elif output:
+        print(output)
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True."""
+    """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
+
+    With --dry-run, ffmpeg invocations are printed and skipped (ffprobe still runs so
+    scripts can plan); a fake successful CompletedProcess is returned.
+    """
+    is_ffmpeg = os.path.basename(cmd[0]).startswith("ffmpeg")
+    if is_ffmpeg:
+        STATE["commands"].append(" ".join(shell_quote(c) for c in cmd))
     if not quiet:
-        info("$ " + " ".join(shell_quote(c) for c in cmd))
+        info(("[dry-run] $ " if STATE["dry_run"] and is_ffmpeg else "$ ") + " ".join(shell_quote(c) for c in cmd))
+    if STATE["dry_run"] and is_ffmpeg:
+        return subprocess.CompletedProcess(list(cmd), 0, "", "")
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if check and proc.returncode != 0:
         tail = "\n".join(proc.stderr.strip().splitlines()[-15:])
@@ -81,6 +117,11 @@ def ffmpeg_base(overwrite: bool = True) -> List[str]:
 def probe(path: str) -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file."""
     if not os.path.exists(path):
+        if STATE["dry_run"]:
+            return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
+                    "video": {"codec": None, "width": 0, "height": 0, "fps": None, "pix_fmt": None, "hdr": False,
+                              "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
+                    "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0}
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(

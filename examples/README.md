@@ -74,6 +74,33 @@ python3 $S/overlay.py final.mp4 --image logo.png --position top-right --scale 22
 python3 $S/overlay.py final.mp4 --text "Episode 12 — Clean Audio" --position top-left --font-size 48 --box --start 0 --end 4 --fade 0.4
 ```
 
+### "Cut out the pauses"
+```bash
+python3 $S/silence.py talk.mp4 --list                          # see what would go
+python3 $S/silence.py talk.mp4 --threshold -40 --margin 0.2    # render talk_tight.mp4
+python3 $S/silence.py talk.mp4 --edl keep.txt                  # hand-edit keep.txt, then:
+python3 $S/cut.py talk.mp4 --segments "$(paste -sd, keep.txt)" --accurate
+```
+
+### "Stitch the clips with a crossfade"
+```bash
+python3 $S/join.py intro.mp4 main.mp4 outro.mp4 --transition fade --duration 0.5 -o final.mp4
+python3 $S/join.py phone.mov camera.mp4 screen.mkv --transition fadeblack --width 1920 --height 1080 --fps 30
+```
+
+### "Let me see it" (and let the agent see it)
+```bash
+python3 $S/look.py final.mp4                          # final_sheet.png, 12 tiles with timecodes
+python3 $S/look.py final.mp4 --at 4.5 --at 12         # individual frames
+python3 $S/look.py before.mp4 --compare after.mp4 --at 4
+```
+
+### "Tell me what you'd run first"
+```bash
+python3 $S/fit.py input.mp4 --duration 60 --aspect 9:16 --dry-run
+python3 $S/export.py input.mp4 --preset reels --json          # structured result incl. probe of the output
+```
+
 ### "The iPhone HDR footage looks washed out"
 ```bash
 python3 $S/probe.py IMG_0231.MOV --field video.hdr_format        # HDR10/PQ, HLG, ...

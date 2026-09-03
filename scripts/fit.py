@@ -19,7 +19,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
@@ -74,7 +74,9 @@ def main() -> int:
     e.add_argument("--crf", type=int, default=18)
     e.add_argument("--preset", default="medium")
     e.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     if not args.duration and not args.aspect and not args.width and not args.fps:
         die("nothing to do: give --duration, --aspect, --width and/or --fps")
@@ -164,7 +166,7 @@ def main() -> int:
     if abs(factor - 1.0) > 1e-4:
         msg += f", speed {factor:.3f}x"
     info(msg)
-    print(output)
+    emit(output)
     return 0
 
 

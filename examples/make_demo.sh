@@ -67,6 +67,10 @@ step "7/10 sync.py (detect the 2.5 s lav-mic offset, replace camera audio)"
 "$PY" "$SCRIPTS/sync.py" "$OUT/source.mp4" "$OUT/lavmic.wav" --json | tee "$OUT/sync.json"
 "$PY" "$SCRIPTS/sync.py" "$OUT/05_titled.mp4" "$OUT/lavmic.wav" --replace-audio -o "$OUT/06_synced.mp4"
 
+step "7b/10 silence.py (remove dead air) and join.py (crossfade the intro onto it)"
+"$PY" "$SCRIPTS/silence.py" "$OUT/06_synced.mp4" --threshold -35 --min-silence 0.4 --preset veryfast -o "$OUT/06a_tight.mp4"
+"$PY" "$SCRIPTS/join.py" "$OUT/02_fit.mp4" "$OUT/06a_tight.mp4" --transition fade --duration 0.5 --preset veryfast -o "$OUT/06c_joined.mp4"
+
 step "8/10 audio.py (voice clean-up + ducked music bed) and loudness.py (-14 LUFS, two-pass)"
 ffmpeg -y -hide_banner -loglevel error -f lavfi -i "aevalsrc='0.3*sin(2*PI*110*t)+0.2*sin(2*PI*165*t)*gt(sin(2*PI*2*t)\,0)':s=48000" -t 12 -c:a aac "$OUT/music.m4a"
 "$PY" "$SCRIPTS/audio.py" "$OUT/06_synced.mp4" --voice --music "$OUT/music.m4a" --duck --fade-out 2 -o "$OUT/06b_audio.mp4"
@@ -74,6 +78,9 @@ ffmpeg -y -hide_banner -loglevel error -f lavfi -i "aevalsrc='0.3*sin(2*PI*110*t
 
 step "8b/10 color.py (HDR10 -> SDR BT.709 tone mapping)"
 "$PY" "$SCRIPTS/color.py" "$OUT/hdr10.mp4" --to-sdr --preset veryfast -o "$OUT/07b_sdr.mp4"
+
+step "8c/10 look.py (contact sheet for a visual check)"
+"$PY" "$SCRIPTS/look.py" "$OUT/07_loudnorm.mp4" -o "$OUT/07_loudnorm_sheet.png"
 
 step "9/10 export.py (YouTube, Reels, X, ProRes, H.265)"
 "$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset youtube -o "$OUT/08_youtube.mp4"

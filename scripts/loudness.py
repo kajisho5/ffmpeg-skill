@@ -18,7 +18,7 @@ import os
 import re
 import sys
 
-from _common import AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run
+from _common import add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run
 
 
 
@@ -46,7 +46,9 @@ def main() -> int:
     ap.add_argument("--measure-only", action="store_true", help="print the measured stats as JSON and exit")
     ap.add_argument("--audio-bitrate", default="192k", help="AAC bitrate when the container is video (default 192k)")
     ap.add_argument("--sample-rate", type=int, help="output sample rate (default: 48000; loudnorm upsamples internally to 192k)")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     meta = probe(args.input)
     if not meta.get("audio"):
@@ -76,7 +78,7 @@ def main() -> int:
 
     after = measure(output, args.lufs, args.tp, args.lra)
     info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {args.lufs} LUFS)")
-    print(output)
+    emit(output)
     return 0
 
 

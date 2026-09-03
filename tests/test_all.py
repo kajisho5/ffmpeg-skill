@@ -30,6 +30,12 @@ def sh(*cmd, expect_fail=False):
     return proc
 
 
+def png_size(path) -> tuple:
+    with open(path, "rb") as fh:
+        head = fh.read(24)
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
 def script(name, *args, **kw):
     return sh(sys.executable, SCRIPTS / name, *args, **kw)
 
@@ -339,6 +345,85 @@ class FFmpegSkillTests(unittest.TestCase):
         out2 = OUT / "fade.mp4"
         script("caption.py", self.src, "--srt", srt, "--animate", "fade", "--preset", "veryfast", "-o", out2)
         self.assertTrue((OUT / "fade.ass").exists())
+
+    # ---------------------------------------------------------------- v0.3: look / silence / join / agent flags
+    def test_look_contact_sheet_and_frames(self):
+        sheet = OUT / "sheet.png"
+        proc = script("look.py", self.src, "--tiles", "4x3", "--width", "1280", "-o", sheet)
+        self.assertTrue(sheet.exists())
+        self.assertIn("12 frames", proc.stderr)
+        w, h = png_size(sheet)
+        self.assertGreaterEqual(w, 1280)
+        self.assertGreater(h, 500, "three rows of 16:9 tiles")
+        proc = script("look.py", self.src, "--at", "2.5", "--at", "0:07", "-o", OUT / "frame")
+        frames = [OUT / "frame_2.500s.png", OUT / "frame_7.000s.png"]
+        for f in frames:
+            self.assertTrue(f.exists(), f)
+        self.assertEqual(png_size(frames[0]), (1280, 720))
+        cmp_png = OUT / "cmp.png"
+        script("look.py", self.src, "--compare", self.src, "--at", "1", "-o", cmp_png)
+        self.assertEqual(png_size(cmp_png)[0], 1280)
+
+    def test_silence_removal(self):
+        gappy = OUT / "gappy.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", gappy)
+        data = json.loads(script("silence.py", gappy, "--list", "--json").stdout)
+        self.assertEqual(len(data["silences"]), 3)
+        self.assertClose(data["removed_seconds"], 5.25, 0.3)
+        out = OUT / "tight.mp4"
+        edl = OUT / "keep.txt"
+        script("silence.py", gappy, "--preset", "veryfast", "--edl", edl, "-o", out)
+        self.assertClose(probe(str(out))["duration"], 6.75, 0.3)
+        self.assertEqual(len(edl.read_text().strip().splitlines()), 3)
+        # the EDL feeds cut.py --segments directly
+        segs = ",".join(edl.read_text().split())
+        out2 = OUT / "tight_via_cut.mp4"
+        script("cut.py", gappy, "--segments", segs, "--accurate", "--preset", "veryfast", "-o", out2)
+        self.assertClose(probe(str(out2))["duration"], 6.75, 0.4)
+
+    def test_join_with_transition_normalises_mismatched_clips(self):
+        out = OUT / "joined.mp4"
+        # 720p 30fps stereo + rotated portrait + 640x360 mono clip without audio
+        silent = OUT / "silent.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "4", "-c:v", "libx264", "-preset", "veryfast", silent)
+        script("join.py", self.src, self.rot, silent, "--transition", "fadeblack", "--duration", "0.5", "--preset", "veryfast", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+        self.assertClose(m["video"]["fps"], 30.0, 0.05)
+        self.assertEqual(m["audio"]["channels"], 2)
+        self.assertClose(m["duration"], 12 + 6 + 4 - 1.0, 0.3)
+        out2 = OUT / "joined_cut.mp4"
+        script("join.py", self.src, silent, "--transition", "none", "--preset", "veryfast", "-o", out2)
+        self.assertClose(probe(str(out2))["duration"], 16.0, 0.3)
+        script("join.py", self.src, expect_fail=True)
+
+    def test_dry_run_and_json_on_every_script(self):
+        cases = [
+            ("cut.py", [self.src, "--start", "1", "--end", "3"]),
+            ("fit.py", [self.src, "--duration", "6"]),
+            ("caption.py", [self.src, "--srt", OUT / "cues.srt"]),
+            ("overlay.py", [self.src, "--image", self.logo]),
+            ("export.py", [self.src, "--preset", "x"]),
+            ("color.py", [self.src, "--retag", "bt709"]),
+            ("audio.py", [self.src, "--denoise"]),
+            ("join.py", [self.src, self.src]),
+        ]
+        if not (OUT / "cues.srt").exists():
+            script("caption.py", "--text", self.cues, "--write-srt", OUT / "cues.srt")
+        for name, argv in cases:
+            out = OUT / f"dry_{name}.mp4"
+            proc = script(name, *argv, "-o", out, "--dry-run", "--json")
+            self.assertFalse(out.exists(), f"{name} wrote a file in --dry-run")
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["dry_run"], name)
+            self.assertTrue(data["commands"] and all("ffmpeg" in c for c in data["commands"]), name)
+            self.assertEqual(data["output"], str(out), name)
+        # --json on a real run includes the probe of the output
+        out = OUT / "json_cut.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", out, "--json").stdout)
+        self.assertClose(data["probe"]["duration"], 2.0, 0.6)
 
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
