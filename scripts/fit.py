@@ -19,7 +19,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import aac_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
@@ -63,6 +63,8 @@ def main() -> int:
     d.add_argument("--method", choices=["speed", "trim"], default="speed", help="how to reach the duration (default speed)")
     d.add_argument("--from-center", action="store_true", help="with --method trim, keep the middle instead of the start")
     d.add_argument("--max-speed", type=float, default=4.0, help="refuse speed factors above this (default 4x)")
+    d.add_argument("--smooth", choices=["none", "blend", "interpolate"], default="none",
+                   help="slow-motion quality: blend (frame blending) or interpolate (motion-compensated, slow but fluid). default none = duplicate frames")
     a = ap.add_argument_group("aspect")
     a.add_argument("--aspect", help="target aspect ratio, e.g. 16:9, 9:16, 1:1, 4:5")
     a.add_argument("--fit", choices=["pad", "crop"], default="pad", help="pad (letterbox) or crop to reach the aspect (default pad)")
@@ -103,6 +105,12 @@ def main() -> int:
                 die(f"required speed factor {factor:.2f}x exceeds --max-speed {args.max_speed}x; use --method trim or raise the limit")
             if abs(factor - 1.0) > 1e-4:
                 vf.append(f"setpts={1/factor:.8f}*PTS")
+                src_fps = meta["video"].get("fps") or 30.0
+                if factor < 1.0 and args.smooth == "interpolate":
+                    vf.append(f"minterpolate=fps={src_fps:g}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
+                elif factor < 1.0 and args.smooth == "blend":
+                    vf.append(f"fps={src_fps:g}")
+                    vf.append("tblend=all_mode=average")
                 if has_audio:
                     af.append(atempo_chain(factor))
             post += ["-t", f"{target:.3f}"]
@@ -133,6 +141,8 @@ def main() -> int:
 
     if args.fps:
         vf.append(f"fps={args.fps:g}")
+    elif meta["video"].get("variable_frame_rate_suspected"):
+        info("source looks variable-frame-rate; conforming to constant fps automatically")
 
     output = args.output or default_output(args.input, "fit")
     cmd = ffmpeg_base() + pre_input + ["-i", args.input]
@@ -141,6 +151,7 @@ def main() -> int:
     if af:
         cmd += ["-af", ",".join(af)]
     cmd += x264_args(args.crf, args.preset)
+    cmd += cfr_args(meta, args.fps) if not args.fps else []
     if has_audio:
         cmd += aac_args()
     else:

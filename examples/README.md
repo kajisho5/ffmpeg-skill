@@ -74,6 +74,40 @@ python3 $S/overlay.py final.mp4 --image logo.png --position top-right --scale 22
 python3 $S/overlay.py final.mp4 --text "Episode 12 — Clean Audio" --position top-left --font-size 48 --box --start 0 --end 4 --fade 0.4
 ```
 
+### "The iPhone HDR footage looks washed out"
+```bash
+python3 $S/probe.py IMG_0231.MOV --field video.hdr_format        # HDR10/PQ, HLG, ...
+python3 $S/color.py IMG_0231.MOV --to-sdr                          # real tone mapping to BT.709
+python3 $S/color.py IMG_0231.MOV --to-sdr --tonemap mobius --peak 1200
+```
+
+### "Apply the S-Log3 conversion LUT" / "give it this look"
+```bash
+python3 $S/color.py a7s.mp4 --lut SLog3SGamut3.CineToLC-709TypeA.cube
+python3 $S/color.py final.mp4 --lut teal_orange.cube --lut-strength 0.6
+```
+
+### "Clean up the audio and add music under it"
+```bash
+python3 $S/audio.py talk.mp4 --voice                                     # highpass, de-ess, denoise, compress
+python3 $S/audio.py talk.mp4 --music bed.mp3 --duck --music-volume -16 --fade-out 3
+python3 $S/audio.py surround.mov --downmix                               # 5.1 -> stereo
+python3 $S/audio.py clip.mp4 --replace narration.wav --fade-in 0.5
+```
+
+### "TikTok-style captions"
+```bash
+python3 $S/caption.py final.mp4 --text cues.txt --animate pop --karaoke --bold --size 30
+python3 $S/caption.py final.mp4 --srt subs.srt --animate fade --position center
+# the generated .ass sits next to the output; tweak it and re-run with --ass
+```
+
+### "Smooth half-speed slow motion"
+```bash
+python3 $S/fit.py shot.mp4 --duration 10 --smooth interpolate     # 5 s clip -> fluid 10 s (slow to render)
+python3 $S/fit.py shot.mp4 --duration 10 --smooth blend           # quick alternative
+```
+
 ### "Sync the lav mic to the camera"
 ```bash
 python3 $S/sync.py camera.mp4 lav.wav --json                       # just tell me the offset
@@ -84,6 +118,12 @@ python3 $S/sync.py camera_synced.mp4 lav.wav --json                # verify: off
 ### "Line up camera B with camera A"
 ```bash
 python3 $S/sync.py camA.mp4 camB.mp4 --trim-second -o camB_aligned.mp4
+```
+
+### "It's an hour-long recording and the audio drifts"
+```bash
+python3 $S/sync.py camera.mp4 zoom_h5.wav --fix-drift --json                 # reports offset + drift ppm
+python3 $S/sync.py camera.mp4 zoom_h5.wav --fix-drift --replace-audio -o camera_synced.mp4
 ```
 
 ### "Fix the levels"

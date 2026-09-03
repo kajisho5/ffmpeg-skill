@@ -16,7 +16,7 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import aac_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 
 def parse_segments(spec: str) -> List[Tuple[float, float]]:
@@ -37,26 +37,27 @@ def parse_segments(spec: str) -> List[Tuple[float, float]]:
     return segs
 
 
-def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5) -> bool:
+def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5, meta: dict = None) -> bool:
     """Cut one segment. Returns True if the result was re-encoded."""
     dur = end - start
+    meta = meta or probe(src)
     if reencode:
         cmd = ffmpeg_base() + ["-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}"]
-        cmd += x264_args(crf, preset) + aac_args() + ["-avoid_negative_ts", "make_zero", dst]
+        cmd += x264_args(crf, preset) + cfr_args(meta) + aac_args() + ["-avoid_negative_ts", "make_zero", dst]
     else:
         cmd = ffmpeg_base() + ["-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}", "-c", "copy", "-avoid_negative_ts", "make_zero", dst]
     proc = run(cmd, check=False)
     if proc.returncode != 0:
         if not reencode:
             info("stream copy failed, falling back to re-encode")
-            return cut_one(src, start, end, dst, True, crf, preset, tolerance)
+            return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
         die(f"ffmpeg failed:\n{proc.stderr.strip()}")
     if not reencode and tolerance >= 0:
         got = probe(dst).get("duration") or 0.0
         if abs(got - dur) > tolerance:
             info(f"stream copy landed on a keyframe {abs(got - dur):.2f}s away from the requested cut "
                  f"(> {tolerance:.2f}s tolerance); re-encoding this segment for accuracy")
-            return cut_one(src, start, end, dst, True, crf, preset, tolerance)
+            return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
     return reencode
 
 
@@ -77,6 +78,9 @@ def main() -> int:
 
     meta = probe(args.input)
     total = meta.get("duration") or 0.0
+    if meta.get("video", {}) and meta["video"].get("variable_frame_rate_suspected") and not args.accurate:
+        info("source looks variable-frame-rate; lossless cuts on VFR are unreliable, switching to --accurate")
+        args.accurate = True
 
     if args.segments:
         segments = parse_segments(args.segments)
@@ -104,13 +108,13 @@ def main() -> int:
 
     reencoded = False
     if len(segments) == 1:
-        reencoded = cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance)
+        reencoded = cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta)
     else:
         with tempfile.TemporaryDirectory(prefix="ffskill_cut_") as tmp:
             parts = []
             for i, (s, e) in enumerate(segments):
                 part = os.path.join(tmp, f"part{i:03d}{ext}")
-                reencoded |= cut_one(args.input, s, e, part, args.accurate, args.crf, args.preset, args.tolerance)
+                reencoded |= cut_one(args.input, s, e, part, args.accurate, args.crf, args.preset, args.tolerance, meta)
                 parts.append(part)
             listfile = os.path.join(tmp, "list.txt")
             with open(listfile, "w", encoding="utf-8") as fh:
@@ -120,7 +124,7 @@ def main() -> int:
             proc = run(cmd, check=False)
             if proc.returncode != 0:
                 info("concat with stream copy failed, re-encoding the join")
-                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + x264_args(args.crf, args.preset) + aac_args() + [output]
+                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + x264_args(args.crf, args.preset) + cfr_args(meta) + aac_args() + [output]
                 run(cmd)
 
     result = probe(output)

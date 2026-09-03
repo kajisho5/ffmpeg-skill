@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -157,7 +157,7 @@ def main() -> int:
             opts.append(f"enable='{enable}'")
         cmd += ["-vf", "drawtext=" + ":".join(opts)]
 
-    cmd += x264_args(args.crf, args.preset)
+    cmd += x264_args(args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
     cmd.append(output)
     run(cmd)

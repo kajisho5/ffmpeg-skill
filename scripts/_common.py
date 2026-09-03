@@ -128,6 +128,10 @@ def probe(path: str) -> Dict[str, Any]:
                 rotation = int(video["tags"]["rotate"])
             except ValueError:
                 pass
+        pix = video.get("pix_fmt") or ""
+        trc = video.get("color_transfer") or ""
+        prim = video.get("color_primaries") or ""
+        hdr = trc in ("smpte2084", "arib-std-b67") or prim == "bt2020"
         out["video"] = {
             "codec": video.get("codec_name"),
             "profile": video.get("profile"),
@@ -139,6 +143,9 @@ def probe(path: str) -> Dict[str, Any]:
             "avg_frame_rate": video.get("avg_frame_rate"),
             "variable_frame_rate_suspected": vfr,
             "pix_fmt": video.get("pix_fmt"),
+            "bit_depth": 10 if "10" in pix else (12 if "12" in pix else 8),
+            "hdr": hdr,
+            "hdr_format": ("HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
             "color_space": video.get("color_space"),
             "color_primaries": video.get("color_primaries"),
             "color_transfer": video.get("color_transfer"),
@@ -206,6 +213,20 @@ def escape_drawtext(text: str) -> str:
         .replace("[", "\\[")
         .replace("]", "\\]")
     )
+
+
+def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> List[str]:
+    """Force a constant frame rate on output when the source looks VFR (or fps is given).
+
+    VFR sources (phone/screen recordings) drift against audio after cuts and joins,
+    so every re-encoding script passes this to conform them automatically.
+    """
+    v = (meta or {}).get("video") or {}
+    if fps is None and not v.get("variable_frame_rate_suspected"):
+        return []
+    rate = fps or v.get("fps") or 30.0
+    rate = round(rate) if abs(rate - round(rate)) < 0.02 else rate
+    return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
 def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True) -> List[str]:

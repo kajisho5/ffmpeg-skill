@@ -22,7 +22,7 @@ import argparse
 import sys
 from typing import Dict, List
 
-from _common import default_output, die, ffmpeg_base, info, probe, run
+from _common import cfr_args, default_output, die, ffmpeg_base, info, probe, run
 
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
@@ -61,6 +61,8 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    if meta["video"].get("hdr") and args.preset != "prores":
+        info("warning: source is HDR (%s). This preset outputs SDR BT.709 tags without tone mapping; run color.py --to-sdr first for correct colours." % meta["video"].get("hdr_format"))
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, args.preset, p["ext"])
 
@@ -91,6 +93,8 @@ def main() -> int:
     if args.crf is not None and "-crf" in video:
         video[video.index("-crf") + 1] = str(args.crf)
     cmd += video
+    if "-r" not in video:
+        cmd += cfr_args(meta)
     if args.preset not in ("prores",):
         cmd += BT709
     if p["ext"] == "mp4":
