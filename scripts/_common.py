@@ -55,6 +55,7 @@ def require_tool(name: str) -> str:
     return ""  # unreachable
 
 
+X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo")
 STATE: Dict[str, Any] = {"dry_run": False, "json": False, "commands": [], "progress": False, "fast": False, "duration_hint": None}
 
 
@@ -72,7 +73,7 @@ def apply_common(args: "argparse.Namespace") -> None:
     STATE["json"] = bool(getattr(args, "json", False))
     STATE["progress"] = bool(getattr(args, "progress", False))
     STATE["fast"] = bool(getattr(args, "fast", False))
-    if STATE["fast"] and hasattr(args, "preset"):
+    if STATE["fast"] and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
 
 
@@ -163,7 +164,7 @@ def probe(path: str) -> Dict[str, Any]:
     if not os.path.exists(path):
         if STATE["dry_run"]:
             return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
-                    "video": {"codec": None, "width": 0, "height": 0, "fps": None, "pix_fmt": None, "hdr": False,
+                    "video": {"codec": None, "width": 1920, "height": 1080, "fps": 30.0, "pix_fmt": None, "hdr": False,
                               "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
                     "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0}
         die(f"input not found: {path}")

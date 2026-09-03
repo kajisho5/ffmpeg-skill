@@ -14,7 +14,7 @@ import argparse
 import sys
 from typing import List
 
-from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, x264_args
+from _common import STATE, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, x264_args
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -44,17 +44,24 @@ def main() -> int:
         if not m.get("video"):
             die(f"{p} has no video stream")
     first = metas[0]["video"]
-    w = args.width or first["width"]
-    h = args.height or first["height"]
-    if first.get("rotation") in (90, -90, 270, -270) and not (args.width or args.height):
-        w, h = h, w
+    fw, fh = first["width"], first["height"]
+    if first.get("rotation") in (90, -90, 270, -270):
+        fw, fh = fh, fw
+    if args.width and args.height:
+        w, h = args.width, args.height
+    elif args.width:
+        w, h = args.width, int(round(args.width * fh / fw))
+    elif args.height:
+        w, h = int(round(args.height * fw / fh)), args.height
+    else:
+        w, h = fw, fh
     fps = args.fps or first.get("fps") or 30.0
     fps = round(fps) if abs(fps - round(fps)) < 0.02 else fps
     w, h = w - (w % 2), h - (h % 2)
     durs = [m.get("duration") or 0.0 for m in metas]
     d = args.duration if args.transition != "none" else 0.0
     for p, dur in zip(args.inputs, durs):
-        if d and dur <= d * 2:
+        if d and dur <= d * 2 and not STATE["dry_run"]:
             die(f"{p} is only {dur:.2f}s, too short for a {d:.2f}s transition; shorten --duration")
 
     cmd = ffmpeg_base()

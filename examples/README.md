@@ -101,6 +101,26 @@ python3 $S/fit.py input.mp4 --duration 60 --aspect 9:16 --dry-run
 python3 $S/export.py input.mp4 --preset reels --json          # structured result incl. probe of the output
 ```
 
+### "Do the whole edit and let me tweak it"
+```bash
+python3 $S/render.py --init project.json      # fill in clips, captions, music, export, check
+python3 $S/render.py project.json --dry-run   # review the command plan
+python3 $S/render.py project.json --fast      # preview
+python3 $S/render.py project.json             # final
+```
+
+### "Make a 60 second highlight from an hour"
+```bash
+python3 $S/scenes.py event.mp4 --highlights 6 --target 60 --edl picks.txt --sheet scenes.png
+python3 $S/cut.py event.mp4 --segments "$(paste -sd, picks.txt)" --accurate -o digest.mp4
+```
+
+### "Is it OK to upload?"
+```bash
+python3 $S/check.py final.mp4 --platform reels
+python3 $S/check.py spot.mov --platform broadcast      # EBU R128 -23 LUFS
+```
+
 ### "Three cameras and a recorder — cut it together"
 ```bash
 python3 $S/multicam.py camA.mp4 camB.mp4 camC.mp4 zoom.wav --offsets-only

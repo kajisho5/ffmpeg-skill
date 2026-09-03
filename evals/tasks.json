@@ -1,0 +1,29 @@
+{
+  "description": "Routing eval for ffmpeg-skill: natural-language requests and the script(s) an agent should reach for. Run with evals/run.py against an agent transcript, or use skill-creator's eval runner with these as prompts.",
+  "tasks": [
+    {"id": 1, "request": "Make this 60 seconds and vertical for Reels.", "expect": ["probe.py", "fit.py", "export.py"], "args_hint": "--duration 60 --aspect 9:16; export --preset reels"},
+    {"id": 2, "request": "Cut from 1:20 to 2:05 without losing quality.", "expect": ["probe.py", "cut.py"], "args_hint": "--start 1:20 --end 2:05 (no --accurate unless VFR)"},
+    {"id": 3, "request": "Burn these subtitles in, Japanese font, at the top.", "expect": ["caption.py"], "args_hint": "--font 'Noto Sans CJK JP' --position top"},
+    {"id": 4, "request": "TikTok style captions where each word pops and highlights.", "expect": ["caption.py"], "args_hint": "--animate pop --karaoke"},
+    {"id": 5, "request": "The lav mic audio is out of sync with the camera, fix it.", "expect": ["sync.py"], "args_hint": "--replace-audio"},
+    {"id": 6, "request": "It's a 90 minute talk and the audio drifts by the end.", "expect": ["sync.py"], "args_hint": "--fix-drift"},
+    {"id": 7, "request": "Normalise the audio for YouTube.", "expect": ["loudness.py"], "args_hint": "-I -14 --tp -1"},
+    {"id": 8, "request": "Put my logo top right with a fade in.", "expect": ["overlay.py"], "args_hint": "--image logo.png --position top-right --fade"},
+    {"id": 9, "request": "Export a ProRes master and an H.265 copy.", "expect": ["export.py"], "args_hint": "--preset prores; --preset h265"},
+    {"id": 10, "request": "This iPhone video looks washed out on YouTube.", "expect": ["probe.py", "color.py"], "args_hint": "probe shows hdr; color --to-sdr"},
+    {"id": 11, "request": "Apply the S-Log3 LUT to this Sony footage.", "expect": ["color.py"], "args_hint": "--lut file.cube"},
+    {"id": 12, "request": "Remove the background hiss and add some quiet music under the voice.", "expect": ["audio.py"], "args_hint": "--voice --music bed.mp3 --duck"},
+    {"id": 13, "request": "Convert the 5.1 to stereo.", "expect": ["audio.py"], "args_hint": "--downmix"},
+    {"id": 14, "request": "Cut out all the pauses, it's a talking head.", "expect": ["silence.py"], "args_hint": "default or --threshold -40"},
+    {"id": 15, "request": "Stitch these three clips with a crossfade.", "expect": ["join.py"], "args_hint": "--transition fade"},
+    {"id": 16, "request": "Two cameras and a Zoom recorder, cut between them every 20 seconds.", "expect": ["multicam.py"], "args_hint": "--audio 2 --auto 20"},
+    {"id": 17, "request": "Show me what the result looks like before you export.", "expect": ["look.py"], "args_hint": "contact sheet or --at"},
+    {"id": 18, "request": "Is this ready to upload to Instagram?", "expect": ["check.py"], "args_hint": "--platform reels"},
+    {"id": 19, "request": "Make a 60 second highlight reel from this hour of footage.", "expect": ["scenes.py", "cut.py"], "args_hint": "scenes --highlights N --target 60 --edl; cut --segments"},
+    {"id": 20, "request": "Half speed slow motion but smooth, not stuttery.", "expect": ["fit.py"], "args_hint": "--duration 2x --smooth interpolate"},
+    {"id": 21, "request": "Test the toolkit on my GoPro and OBS files first.", "expect": ["verify.py"], "args_hint": "folder --report"},
+    {"id": 22, "request": "Set up the whole edit so I can tweak numbers and re-render.", "expect": ["render.py"], "args_hint": "--init project.json then render"},
+    {"id": 23, "request": "Tell me what you'd run before actually rendering.", "expect": ["--dry-run"], "args_hint": "any script with --dry-run"},
+    {"id": 24, "request": "Why is the video stuttering after the cut? It's a screen recording.", "expect": ["probe.py", "fit.py"], "args_hint": "VFR suspected -> --fps 30 / accurate"}
+  ]
+}
