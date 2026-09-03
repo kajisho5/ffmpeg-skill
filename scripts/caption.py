@@ -21,7 +21,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from _common import color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
 
@@ -58,6 +58,71 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float) -> List[Tuple[fl
     if not cues:
         die(f"no cues found in {path}")
     return cues
+
+
+def transcribe(video: str, out_srt: str, language: Optional[str], model: str) -> List[Tuple[float, float, str]]:
+    """Optional local ASR bridge. Tries, in order: whisper-cli / main (whisper.cpp), faster-whisper (python),
+    whisper (openai-whisper CLI). Produces an SRT with word timings where the engine supports it.
+    No engine installed -> clear error with install hints; the skill never depends on one."""
+    import shutil
+    import subprocess
+    import tempfile
+    from _common import require_tool
+    ffmpeg = require_tool("ffmpeg")
+    tmpdir = tempfile.mkdtemp(prefix="ffskill_asr_")
+    wav = os.path.join(tmpdir, "audio.wav")
+    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav], check=True)
+    # 1. whisper.cpp
+    cli = shutil.which("whisper-cli") or shutil.which("whisper-cpp") or shutil.which("main")
+    if cli and (shutil.which("whisper-cli") or shutil.which("whisper-cpp")):
+        model_path = model
+        if not os.path.exists(model_path):
+            for cand in (os.path.expanduser(f"~/.cache/whisper.cpp/ggml-{model}.bin"), f"models/ggml-{model}.bin", f"/usr/local/share/whisper/ggml-{model}.bin"):
+                if os.path.exists(cand):
+                    model_path = cand
+                    break
+        base = os.path.join(tmpdir, "out")
+        cmd = [cli, "-m", model_path, "-f", wav, "-osrt", "-of", base]
+        if language:
+            cmd += ["-l", language]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode == 0 and os.path.exists(base + ".srt"):
+            info(f"transcribed with whisper.cpp ({os.path.basename(cli)}, model {os.path.basename(model_path)})")
+            cues = parse_srt(base + ".srt")
+            write_srt(cues, out_srt)
+            return cues
+        info("whisper.cpp found but failed: " + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
+    # 2. faster-whisper (python package)
+    try:
+        from faster_whisper import WhisperModel  # type: ignore
+        m = WhisperModel(model, device="cpu", compute_type="int8")
+        segments, _ = m.transcribe(wav, language=language, word_timestamps=False)
+        cues = [(seg.start, seg.end, seg.text.strip()) for seg in segments if seg.text.strip()]
+        if cues:
+            info("transcribed with faster-whisper")
+            write_srt(cues, out_srt)
+            return cues
+    except ImportError:
+        pass
+    # 3. openai-whisper CLI
+    if shutil.which("whisper"):
+        cmd = ["whisper", wav, "--model", model, "--output_format", "srt", "--output_dir", tmpdir]
+        if language:
+            cmd += ["--language", language]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        srt = os.path.join(tmpdir, "audio.srt")
+        if proc.returncode == 0 and os.path.exists(srt):
+            info("transcribed with openai-whisper")
+            cues = parse_srt(srt)
+            write_srt(cues, out_srt)
+            return cues
+    die("no local speech-to-text engine found for --transcribe.\n"
+        "Install one (all run offline):\n"
+        "  whisper.cpp:    brew install whisper-cpp   (then download a model: ggml-base.bin)\n"
+        "  faster-whisper: pip install faster-whisper\n"
+        "  openai-whisper: pip install openai-whisper\n"
+        "Or write the cues by hand with --text cues.txt (see format above).")
+    return []
 
 
 def parse_srt(path: str) -> List[Tuple[float, float, str]]:
@@ -217,6 +282,9 @@ def main() -> int:
     src.add_argument("--srt", help="SRT file to burn")
     src.add_argument("--ass", help="ASS file to burn (styles inside the file are used)")
     src.add_argument("--text", help="plain text cue file to convert into SRT (see format above)")
+    src.add_argument("--transcribe", action="store_true", help="generate the SRT from the audio with a local speech-to-text engine if one is installed (whisper-cli / whisper / faster-whisper); never required")
+    src.add_argument("--language", help="language code for --transcribe (e.g. en, ja); default auto")
+    src.add_argument("--model", default="base", help="whisper model name/path for --transcribe (default base)")
     src.add_argument("--write-srt", help="where to save the generated SRT (default: <text>.srt)")
     src.add_argument("--auto-seconds", type=float, default=3.0, help="duration for cues without timing (default 3)")
     src.add_argument("--gap", type=float, default=0.0, help="gap after auto-timed cues in seconds")
@@ -263,10 +331,17 @@ def main() -> int:
         args.karaoke = True
     if args.brand and brand.get("font_file") and not args.fonts_dir:
         args.fonts_dir = str(Path(brand["font_file"]).parent)
-    if not (args.srt or args.ass or args.text):
-        die("give one of --srt, --ass or --text")
+    if not (args.srt or args.ass or args.text or args.transcribe):
+        die("give one of --srt, --ass, --text or --transcribe")
 
     srt_path = args.srt
+    if args.transcribe:
+        if not args.input:
+            die("--transcribe needs the input video")
+        srt_path = args.write_srt or os.path.splitext(args.input)[0] + ".srt"
+        cues = transcribe(args.input, srt_path, args.language, args.model)
+        info(f"wrote {srt_path} ({len(cues)} cues)")
+        args.text = None
     if args.text:
         cues = parse_text_cues(args.text, args.auto_seconds, args.gap)
         srt_path = args.write_srt or os.path.splitext(args.text)[0] + ".srt"

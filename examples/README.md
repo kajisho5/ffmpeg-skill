@@ -109,6 +109,21 @@ python3 $S/render.py project.json --fast      # preview
 python3 $S/render.py project.json             # final
 ```
 
+### "Process the whole folder"
+```bash
+cat > batch.json <<'EOF2'
+{"glob": "*.mp4", "output_dir": "out", "suffix": "_yt",
+ "steps": [["silence.py", "{in}", "-o", "{out}"], ["loudness.py", "{in}", "-o", "{out}"], ["export.py", "{in}", "--preset", "youtube", "-o", "{out}"]]}
+EOF2
+python3 $S/batch.py ~/Shoot --recipe batch.json            # second run: cached, only new files
+python3 $S/batch.py ~/Shoot --recipe batch.json --watch 60
+```
+
+### "Transcribe and caption it" (needs a local whisper)
+```bash
+python3 $S/caption.py talk.mp4 --transcribe --language en --animate pop --karaoke
+```
+
 ### "Add a lower third / title / countdown"
 ```bash
 python3 $S/graphics.py talk.mp4 --template lower-third --name "Ada Lovelace" --title "Analyst" --start 2 --end 8 --brand brand.json
