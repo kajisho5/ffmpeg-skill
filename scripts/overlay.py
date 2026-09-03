@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -140,7 +140,7 @@ def main() -> int:
         # -loop 1 turns the still into a timed stream so fade/enable expressions see real timestamps
         cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", "-i", args.image]
         fc = f"[1:v]{','.join(chain)},setpts=PTS-STARTPTS[ov];[0:v][ov]{ov}[out]"
-        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", "0:a?", "-shortest"]
+        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", "0:a:0?", "-shortest"]
     else:
         x, y = position_exprs(args.position, args.margin, text_mode=True)
         opts = [f"text='{escape_drawtext(args.text)}'", f"fontsize={args.font_size}", f"x={x}", f"y={y}",
@@ -159,7 +159,7 @@ def main() -> int:
             opts.append(f"enable='{enable}'")
         cmd += ["-vf", "drawtext=" + ":".join(opts)]
 
-    cmd += x264_args(args.crf, args.preset) + cfr_args(meta)
+    cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
     cmd.append(output)
     run(cmd)

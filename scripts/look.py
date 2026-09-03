@@ -44,6 +44,13 @@ def main() -> int:
     stem = Path(args.input).stem
     outdir = str(Path(args.output).parent) if args.output else str(Path(args.input).parent)
     tc = "" if args.no_timecode else "," + timecode_filter()
+    # HDR sources: tone-map for the PNG so the agent judges representative colours, not raw HLG/PQ
+    if meta["video"].get("hdr"):
+        v = meta["video"]
+        tm = (f"zscale=tin={v.get('color_transfer') or 'arib-std-b67'}:pin={v.get('color_primaries') or 'bt2020'}:min={v.get('color_space') or 'bt2020nc'}:rin=tv:t=linear:npl=1000,"
+              "format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,")
+        tc = "," + tm.rstrip(",") + tc
+        info("HDR source: frames are tone-mapped to SDR for display")
     outputs: List[str] = []
 
     if args.compare:

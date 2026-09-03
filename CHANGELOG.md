@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1
+
+Fixes found by running `verify.py` on a real iPhone clip (Dolby Vision 8.4 / HLG, 10-bit HEVC, 60 fps VFR, portrait rotation, extra metadata tracks):
+
+- HDR sources now stay HDR through every re-encode (`cut`, `fit`, `caption`, `overlay`, `silence`, `join`, `multicam`, `sync`): HEVC Main10 with the source's HLG/PQ tags instead of an 8-bit H.264 file mislabelled BT.709. Use `color.py --to-sdr` when you want SDR.
+- Audio mapping uses the first audio stream only (`0:a:0?`); iPhone `.mov` files carry timecode/metadata tracks that broke `-map 0:a?`.
+- `probe.py --analyze` normalises 10-/12-bit levels to an 8-bit scale before the Log heuristic.
+- `look.py` tone-maps HDR frames for display so the agent judges representative colours.
+- `verify.py` runs `color --to-sdr` on the original file and adds an "hdr preserved" check on the accurate cut.
+
 ## 0.4.0
 
 - `verify.py` (new): real-footage verification kit — runs the toolchain over the user's own files and reports PASS/FAIL per step, Markdown and JSON.

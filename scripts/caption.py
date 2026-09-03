@@ -22,7 +22,7 @@ import re
 import sys
 from typing import List, Tuple
 
-from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
+from _common import video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -302,7 +302,7 @@ def main() -> int:
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf] + x264_args(args.crf, args.preset) + cfr_args(meta)
+    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
     run(cmd)
     result = probe(output)

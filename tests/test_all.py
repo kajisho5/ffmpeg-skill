@@ -513,6 +513,42 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertIn("-preset veryfast", proc.stderr, "--fast overrides the preset")
         self.assertClose(probe(str(out))["duration"], 6.0, 0.2)
 
+    # ---------------------------------------------------------------- real iPhone regressions (Dolby Vision 8.4 / HLG, VFR, extra tracks)
+    def test_hdr_source_stays_hdr_through_reencodes(self):
+        # HLG 10-bit HEVC with audio AND a timecode data track, like an iPhone .mov
+        hlg = OUT / "hlg_tc.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
+           "-t", "5", "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:log-level=error", "-tag:v", "hvc1",
+           "-c:a", "aac", "-timecode", "01:00:00:00", hlg)
+        streams = json.loads(sh("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", hlg).stdout)["streams"]
+        self.assertEqual(len(streams), 3, "video + audio + tmcd data track")
+        for name, argv in [
+            ("cut.py", [hlg, "--start", "1", "--end", "3", "--accurate"]),
+            ("fit.py", [hlg, "--aspect", "1:1", "--width", "480"]),
+            ("caption.py", [hlg, "--text", self.cues]),
+            ("overlay.py", [hlg, "--text", "hdr"]),
+            ("silence.py", [hlg]),
+            ("join.py", [hlg, hlg, "--transition", "none"]),
+        ]:
+            out = OUT / f"hdrkeep_{name}.mp4"
+            script(name, *argv, "--fast", "-o", out)
+            v = probe(str(out))["video"]
+            self.assertTrue(v["hdr"], name)
+            self.assertEqual((v["codec"], v["pix_fmt"], v["color_transfer"]), ("hevc", "yuv420p10le", "arib-std-b67"), name)
+        # tone-mapping and the display path still work on the multi-track file
+        sdr = OUT / "hlg_tc_sdr.mp4"
+        script("color.py", hlg, "--to-sdr", "--fast", "-o", sdr)
+        self.assertFalse(probe(str(sdr))["video"]["hdr"])
+        proc = script("look.py", hlg, "--at", "1", "-o", OUT / "hlgframe")
+        self.assertIn("tone-mapped", proc.stderr)
+        self.assertTrue((OUT / "hlgframe_1.000s.png").exists())
+        # 10-bit levels are reported on an 8-bit scale, so a normal HDR clip is not called Log
+        data = json.loads(script("probe.py", hlg, "--analyze").stdout)
+        self.assertLessEqual(data["levels"]["y_max"], 255)
+        self.assertFalse(data["levels"]["looks_like_log"])
+
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):

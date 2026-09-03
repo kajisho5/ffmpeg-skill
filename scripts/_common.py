@@ -331,6 +331,25 @@ def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True) ->
     return args
 
 
+def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium") -> List[str]:
+    """Encoder args that preserve what the source is.
+
+    SDR sources -> H.264 8-bit tagged BT.709 (x264_args). HDR sources (HDR10/PQ, HLG,
+    Dolby Vision base layer, BT.2020) -> HEVC Main10 with the source's own colour tags,
+    so cutting/captioning/fitting an iPhone HDR clip stays HDR instead of becoming a
+    washed-out file mislabelled as BT.709. Use color.py --to-sdr when SDR is wanted.
+    """
+    v = (meta or {}).get("video") or {}
+    if not v.get("hdr"):
+        return x264_args(crf, preset)
+    cs = v.get("color_space") or "bt2020nc"
+    prim = v.get("color_primaries") or "bt2020"
+    trc = v.get("color_transfer") or "arib-std-b67"
+    x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
+    return ["-c:v", "libx265", "-preset", preset, "-crf", str(crf + 2), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+            "-x265-params", x265, "-colorspace", cs, "-color_primaries", prim, "-color_trc", trc, "-movflags", "+faststart"]
+
+
 def aac_args(bitrate: str = "192k") -> List[str]:
     return ["-c:a", "aac", "-b:a", bitrate]
 
@@ -376,14 +395,20 @@ def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
         v = vals.get(k) or [0.0]
         return sum(v) / len(v)
     ymin, ymax, yavg, sat = min(vals.get("YMIN") or [0]), max(vals.get("YMAX") or [255]), mean("YAVG"), mean("SATAVG")
+    # signalstats reports in the source bit depth; normalise everything to an 8-bit scale
+    scale = 1.0
+    if ymax > 255 or yavg > 255:
+        scale = 1 / 4.0 if ymax <= 1023 else 1 / 16.0
+    ymin, ymax, yavg, sat = ymin * scale, ymax * scale, yavg * scale, sat * scale
     # 5th/95th percentile of per-frame lows/highs is more robust than the absolute min/max
-    lows = sorted(vals.get("YLOW") or vals.get("YMIN") or [0])
-    highs = sorted(vals.get("YHIGH") or vals.get("YMAX") or [255])
+    lows = sorted(x * scale for x in (vals.get("YLOW") or vals.get("YMIN") or [0]))
+    highs = sorted(x * scale for x in (vals.get("YHIGH") or vals.get("YMAX") or [255]))
     p_low = lows[len(lows) // 20]
     p_high = highs[-1 - len(highs) // 20]
     looks_log = p_low >= 64 and p_high <= 235 and sat < 40
     return {
-        "y_min": ymin, "y_max": ymax, "y_avg": round(yavg, 1), "y_low_p5": p_low, "y_high_p95": p_high,
+        "scale": "8-bit equivalent",
+        "y_min": round(ymin, 1), "y_max": round(ymax, 1), "y_avg": round(yavg, 1), "y_low_p5": round(p_low, 1), "y_high_p95": round(p_high, 1),
         "saturation_avg": round(sat, 1),
         "looks_like_log": looks_log,
         "note": ("flat, low-contrast, desaturated picture tagged as SDR: probably a Log profile (S-Log/V-Log/C-Log). "
