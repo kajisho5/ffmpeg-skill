@@ -1,0 +1,31 @@
+{
+  "name": "ffmpeg-skill",
+  "version": "0.1.0",
+  "description": "Agent Skill that lets coding agents (Claude Code, Cursor, Codex) do professional video editing with local FFmpeg. No API keys, no cloud, no dependencies.",
+  "keywords": ["ffmpeg", "video", "agent-skill", "claude-code", "cursor", "codex", "skill", "video-editing"],
+  "license": "MIT",
+  "author": "kajisho5",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kajisho5/ffmpeg-skill.git"
+  },
+  "homepage": "https://github.com/kajisho5/ffmpeg-skill#readme",
+  "bugs": "https://github.com/kajisho5/ffmpeg-skill/issues",
+  "bin": {
+    "ffmpeg-skill": "bin/install.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "SKILL.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "python3 tests/test_all.py",
+    "demo": "bash examples/make_demo.sh"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

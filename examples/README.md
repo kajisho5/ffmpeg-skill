@@ -1,0 +1,115 @@
+# Examples
+
+Natural-language requests and the commands the agent runs for them. Paths
+assume the skill is installed at `~/.claude/skills/ffmpeg-skill`; shorten with
+`S=~/.claude/skills/ffmpeg-skill/scripts`.
+
+Run `bash examples/make_demo.sh` to generate sample footage from nothing and
+push it through every script (outputs land in `examples/out/`).
+
+---
+
+### "What am I working with?"
+```bash
+python3 $S/probe.py footage.mov --compact
+python3 $S/probe.py footage.mov            # full JSON, check variable_frame_rate_suspected
+```
+
+### "Cut from 1:20 to 2:05"
+```bash
+python3 $S/cut.py footage.mov --start 1:20 --end 2:05             # lossless, keyframe-snapped
+python3 $S/cut.py footage.mov --start 1:20 --end 2:05 --accurate  # frame-exact
+```
+
+### "Keep the intro and the ending, drop the middle"
+```bash
+python3 $S/cut.py talk.mp4 --segments 0-1:30,18:40-20:00 -o talk_short.mp4
+```
+
+### "Make it exactly 60 seconds"
+```bash
+python3 $S/fit.py talk_short.mp4 --duration 60                  # speed up/down (pitch preserved)
+python3 $S/fit.py talk_short.mp4 --duration 60 --method trim    # keep the first 60 s
+```
+
+### "Make a vertical version for TikTok / Reels"
+```bash
+python3 $S/fit.py final.mp4 --aspect 9:16 --fit pad --width 1080 --pad-color black
+python3 $S/fit.py final.mp4 --aspect 9:16 --fit crop --width 1080   # centre-crop instead
+```
+
+### "Square for Instagram feed, 15 seconds"
+```bash
+python3 $S/fit.py final.mp4 --aspect 1:1 --fit crop --duration 15 --method trim --from-center
+```
+
+### "Add these captions"
+`cues.txt`:
+```
+0:00-0:02.5 Welcome back
+0:02.5-0:06 Today: three tips | for cleaner audio
+Tip one: get the mic close
+```
+```bash
+python3 $S/caption.py final.mp4 --text cues.txt --size 26 --bold --position bottom
+python3 $S/caption.py final.mp4 --srt subtitles.srt --font "Inter" --color FFFFFF --outline 3
+python3 $S/caption.py final.mp4 --ass styled.ass
+python3 $S/caption.py --text cues.txt --write-srt cues.srt           # SRT only, no video
+```
+
+### "Japanese subtitles"
+```bash
+fc-list | grep -i "cjk"      # find an installed CJK font
+python3 $S/caption.py final.mp4 --srt jp.srt --font "Noto Sans CJK JP" --size 28
+python3 $S/overlay.py final.mp4 --text "第1話" --font-file /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc --position top --box
+```
+
+### "Logo top-right, 80% opacity, fade in and out"
+```bash
+python3 $S/overlay.py final.mp4 --image logo.png --position top-right --scale 220 --opacity 0.8 --start 0.5 --end 58 --fade 0.5
+```
+
+### "Title card for the first 4 seconds"
+```bash
+python3 $S/overlay.py final.mp4 --text "Episode 12 — Clean Audio" --position top-left --font-size 48 --box --start 0 --end 4 --fade 0.4
+```
+
+### "Sync the lav mic to the camera"
+```bash
+python3 $S/sync.py camera.mp4 lav.wav --json                       # just tell me the offset
+python3 $S/sync.py camera.mp4 lav.wav --replace-audio -o camera_synced.mp4
+python3 $S/sync.py camera_synced.mp4 lav.wav --json                # verify: offset should be ~0 (on the new file's audio)
+```
+
+### "Line up camera B with camera A"
+```bash
+python3 $S/sync.py camA.mp4 camB.mp4 --trim-second -o camB_aligned.mp4
+```
+
+### "Fix the levels"
+```bash
+python3 $S/loudness.py final.mp4                    # -14 LUFS / -1 dBTP (YouTube, Spotify)
+python3 $S/loudness.py podcast.wav -I -16 --tp -1.5 # Apple Podcasts
+python3 $S/loudness.py final.mp4 --measure-only     # report only
+```
+
+### "Export for YouTube and Reels, plus a ProRes master"
+```bash
+python3 $S/export.py final.mp4 --preset youtube
+python3 $S/export.py final.mp4 --preset reels --fit crop
+python3 $S/export.py final.mp4 --preset prores -o final_master.mov
+python3 $S/export.py final.mp4 --preset h265
+python3 $S/export.py final.mp4 --preset gif -o preview.gif
+```
+
+### Full pipeline in one go
+```bash
+python3 $S/probe.py raw.mp4 --compact
+python3 $S/cut.py raw.mp4 --segments 0:45-3:10,5:00-6:30 -o step1.mp4
+python3 $S/fit.py step1.mp4 --duration 60 --aspect 9:16 --fit crop --width 1080 -o step2.mp4
+python3 $S/caption.py step2.mp4 --text cues.txt -o step3.mp4
+python3 $S/overlay.py step3.mp4 --image logo.png --position top-right --scale 180 -o step4.mp4
+python3 $S/loudness.py step4.mp4 -o step5.mp4
+python3 $S/export.py step5.mp4 --preset reels -o final_reels.mp4
+python3 $S/probe.py final_reels.mp4 --compact     # confirm 60 s, 1080x1920, 30 fps
+```
