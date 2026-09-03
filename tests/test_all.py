@@ -637,6 +637,64 @@ class FFmpegSkillTests(unittest.TestCase):
         m = probe(str(out))["video"]
         self.assertEqual((m["width"], m["height"]), (640, 360))
 
+    # ---------------------------------------------------------------- v0.6: graphics / brand / report
+    def test_graphics_templates(self):
+        brand = OUT / "brand.json"
+        brand.write_text(json.dumps({"font": "DejaVu Sans", "colors": {"primary": "FF6A00", "text": "FFFFFF", "background": "0B1D2A"},
+                                     "logo": "logo.png", "logo_position": "top-right", "logo_scale": 140, "safe_margin": 40,
+                                     "caption": {"size": 28, "position": "bottom", "animate": "pop", "karaoke": True, "bold": True}}), encoding="utf-8")
+        cases = {
+            "lower-third": ["--name", "Ada Lovelace", "--title", "Analyst", "--start", "1", "--end", "6"],
+            "title": ["--title", "Episode 12", "--subtitle", "The math of video", "--start", "0", "--end", "4"],
+            "chapter": ["--title", "Part 2", "--start", "0", "--end", "5"],
+            "progress": [],
+            "countdown": ["--from", "3", "--start", "1", "--end", "5"],
+            "bug": ["--title", "@handle"],
+        }
+        for name, argv in cases.items():
+            out = OUT / f"gfx_{name}.mp4"
+            proc = script("graphics.py", self.src, "--template", name, "--brand", brand, "--fast", "-o", out, *argv)
+            self.assertClose(probe(str(out))["duration"], 12.0, 0.2, name)
+            self.assertTrue("FF6A00" in proc.stderr or "0B1D2A" in proc.stderr, f"{name} uses the brand colours")
+        # animated templates must actually move: lower-third frame mid-slide differs from settled frame
+        script("look.py", OUT / "gfx_lower-third.mp4", "--at", "1.15", "--at", "3", "--no-timecode", "-o", OUT / "lt")
+        a, b = (OUT / "lt_1.150s.png").read_bytes(), (OUT / "lt_3.000s.png").read_bytes()
+        self.assertNotEqual(a[200:4000], b[200:4000])
+        script("graphics.py", self.src, "--template", "lower-third", expect_fail=True)
+
+    def test_brand_defaults_apply_to_caption_and_logo(self):
+        brand = OUT / "brand.json"
+        if not brand.exists():
+            self.test_graphics_templates()
+        ass = OUT / "brand.ass"
+        script("caption.py", self.src, "--text", self.cues, "--brand", brand, "--write-ass", ass, "--fast", "-o", OUT / "brand_cap.mp4")
+        style = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Style:")][0]
+        self.assertIn("&H00006AFF", style, "primary FF6A00 becomes the karaoke fill (BGR)")
+        self.assertIn(",70,", style, "size 28 scaled to 720p")
+        self.assertIn("\\kf", ass.read_text(encoding="utf-8-sig"), "brand enables karaoke")
+        proc = script("overlay.py", self.src, "--logo", "--brand", brand, "--fast", "-o", OUT / "brand_logo.mp4")
+        self.assertIn("scale=140:-1", proc.stderr)
+        self.assertIn("overlay=W-w-40:40", proc.stderr)
+        script("overlay.py", self.src, "--logo", expect_fail=True)
+
+    def test_report_html(self):
+        reels = OUT / "export_reels.mp4"
+        if not reels.exists():
+            script("export.py", self.src, "--preset", "reels", "--fit", "crop", "-o", reels)
+        cmds = OUT / "cmds.txt"
+        cmds.write_text("python3 export.py source.mp4 --preset reels\n")
+        out = OUT / "report.html"
+        data = json.loads(script("report.py", "--before", self.src, "--after", reels, "--platform", "reels", "--commands", cmds, "--title", "Test delivery", "-o", out, "--json").stdout)
+        self.assertEqual(data["report"], str(out))
+        html_text = out.read_text(encoding="utf-8")
+        self.assertIn("Test delivery", html_text)
+        self.assertEqual(html_text.count("data:image/png;base64"), 2, "before and after contact sheets")
+        self.assertIn("export.py source.mp4 --preset reels", html_text)
+        self.assertIn("class='verdict", html_text)
+        self.assertIn("1080×1920", html_text)
+        script("report.py", "--after", reels, "--no-sheets", "-o", OUT / "report2.html")
+        self.assertLess((OUT / "report2.html").stat().st_size, 40000)
+
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):

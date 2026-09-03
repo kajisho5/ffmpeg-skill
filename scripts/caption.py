@@ -20,9 +20,10 @@ import argparse
 import os
 import re
 import sys
+from pathlib import Path
 from typing import List, Tuple
 
-from _common import video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
+from _common import color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -220,21 +221,22 @@ def main() -> int:
     src.add_argument("--auto-seconds", type=float, default=3.0, help="duration for cues without timing (default 3)")
     src.add_argument("--gap", type=float, default=0.0, help="gap after auto-timed cues in seconds")
     sty = ap.add_argument_group("style (SRT only)")
-    sty.add_argument("--font", default="DejaVu Sans", help="font family, e.g. 'Noto Sans CJK JP' for Japanese")
+    sty.add_argument("--brand", help="brand.json: font, colours, caption size/position/animation defaults")
+    sty.add_argument("--font", default=None, help="font family, e.g. 'Noto Sans CJK JP' for Japanese (default DejaVu Sans or brand font)")
     sty.add_argument("--fonts-dir", help="directory with extra .ttf/.otf files")
-    sty.add_argument("--size", type=int, default=24, help="font size in ASS points (relative to a 288p script height, scales automatically)")
-    sty.add_argument("--color", default="FFFFFF", help="text colour RRGGBB (default FFFFFF)")
-    sty.add_argument("--outline-color", default="000000", help="outline colour RRGGBB")
-    sty.add_argument("--outline", type=float, default=2.0, help="outline width (default 2)")
+    sty.add_argument("--size", type=int, default=None, help="font size in ASS points (relative to a 288p script height, scales automatically)")
+    sty.add_argument("--color", default=None, help="text colour RRGGBB (default FFFFFF or brand text colour)")
+    sty.add_argument("--outline-color", default=None, help="outline colour RRGGBB")
+    sty.add_argument("--outline", type=float, default=None, help="outline width (default 2)")
     sty.add_argument("--shadow", type=float, default=0.0, help="shadow depth (default 0)")
     sty.add_argument("--bold", action="store_true")
-    sty.add_argument("--position", choices=sorted(ALIGN), default="bottom", help="on-screen placement (default bottom)")
+    sty.add_argument("--position", choices=sorted(ALIGN), default=None, help="on-screen placement (default bottom)")
     sty.add_argument("--margin", type=int, default=30, help="vertical margin from the edge (default 30)")
     sty.add_argument("--box", action="store_true", help="draw an opaque box behind text instead of an outline")
     anim = ap.add_argument_group("animation (generates ASS; needs --text or --srt input)")
-    anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default="none", help="per-cue entrance animation")
+    anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default=None, help="per-cue entrance animation (default none, or brand caption.animate)")
     anim.add_argument("--karaoke", action="store_true", help="word-by-word highlight (fills from --color to --highlight-color across each cue)")
-    anim.add_argument("--highlight-color", default="FFD200", help="karaoke fill colour RRGGBB (default FFD200)")
+    anim.add_argument("--highlight-color", default=None, help="karaoke fill colour RRGGBB (default FFD200 or brand primary)")
     anim.add_argument("--karaoke-timing", choices=["even", "energy"], default="energy",
                       help="how words are timed inside a cue: 'energy' follows the speech loudness in the audio (default), 'even' splits time equally")
     anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
@@ -245,6 +247,22 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
+    brand = load_brand(args.brand)
+    bc, bcap = brand["colors"], brand["caption"]
+    args.font = args.font or brand.get("font") or "DejaVu Sans"
+    args.size = args.size if args.size is not None else (bcap.get("size", 24) if args.brand else 24)
+    args.color = color_hex(args.color or bc.get("text", "FFFFFF"))
+    args.outline_color = color_hex(args.outline_color or bc.get("outline", "000000"))
+    args.outline = args.outline if args.outline is not None else (float(bcap.get("outline", 2)) if args.brand else 2.0)
+    args.position = args.position or (bcap.get("position", "bottom") if args.brand else "bottom")
+    args.animate = args.animate or (bcap.get("animate", "none") if args.brand else "none")
+    args.highlight_color = color_hex(args.highlight_color or bc.get("primary", "FFD200"))
+    if args.brand and bcap.get("bold") and not args.bold:
+        args.bold = True
+    if args.brand and bcap.get("karaoke") and not args.karaoke:
+        args.karaoke = True
+    if args.brand and brand.get("font_file") and not args.fonts_dir:
+        args.fonts_dir = str(Path(brand["font_file"]).parent)
     if not (args.srt or args.ass or args.text):
         die("give one of --srt, --ass or --text")
 

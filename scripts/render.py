@@ -15,8 +15,13 @@ Project format (all keys optional except clips):
   "transition": {"type": "fade", "duration": 0.5},
   "silence": {"threshold": -38, "min_silence": 0.8},
   "captions": {"text": "cues.txt", "srt": null, "animate": "pop", "karaoke": true, "font": "Noto Sans CJK JP", "size": 28, "position": "bottom"},
+  "brand": "brand.json",
+  "graphics": [
+    {"template": "title", "title": "Episode 12", "subtitle": "The math of video", "start": 0, "end": 4},
+    {"template": "lower-third", "name": "Ada Lovelace", "title": "Analyst", "start": 5, "end": 11}
+  ],
   "overlays": [
-    {"image": "logo.png", "position": "top-right", "scale": 160, "opacity": 0.9},
+    {"logo": true},
     {"text": "Episode 12", "position": "bottom", "start": 1, "end": 5, "fade": 0.3, "box": true}
   ],
   "audio": {"voice": true, "music": "bed.mp3", "music_volume": -16, "duck": true, "fade_out": 2},
@@ -27,7 +32,9 @@ Project format (all keys optional except clips):
 }
 
 Stages run in this order: clips (cut) → join → silence → fit → captions →
-overlays → audio → loudness → export → check. Missing stages are skipped.
+graphics → overlays → audio → loudness → export → check. Missing stages are
+skipped. "brand" points caption/graphics/overlay at a brand.json (fonts,
+colours, logo, safe margin); {"logo": true} in overlays places the brand logo.
 
 Examples:
   python3 render.py --init project.json          # write a commented starter project
@@ -53,7 +60,9 @@ TEMPLATE = {
     "clips": [{"src": "REPLACE_ME.mp4", "in": "0:00", "out": "0:30"}],
     "transition": {"type": "fade", "duration": 0.5},
     "silence": None,
+    "brand": None,
     "captions": None,
+    "graphics": [],
     "overlays": [],
     "audio": None,
     "loudness": {"lufs": -14, "tp": -1},
@@ -89,7 +98,7 @@ def main() -> int:
     ap.add_argument("--init", metavar="FILE", help="write a starter project file and exit")
     ap.add_argument("--work", help="work directory for intermediates (default: <output>_work)")
     ap.add_argument("--keep", action="store_true", help="keep intermediates (default: kept only when --work is given)")
-    ap.add_argument("--stop-after", choices=["clips", "join", "silence", "fit", "captions", "overlays", "audio", "loudness", "export"], help="stop after this stage (for iterating)")
+    ap.add_argument("--stop-after", choices=["clips", "join", "silence", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export"], help="stop after this stage (for iterating)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -119,6 +128,7 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     frame = proj.get("frame") or {}
     trans = proj.get("transition") or {}
+    brand_args: List[str] = ["--brand", rel(proj["brand"])] if proj.get("brand") else []
     stages_done: List[str] = []
 
     # ---- clips
@@ -222,10 +232,27 @@ def main() -> int:
         for k, flag in (("karaoke", "--karaoke"), ("bold", "--bold"), ("box", "--box")):
             if cap.get(k):
                 argv.append(flag)
-        sh("caption.py", *argv)
+        sh("caption.py", *(argv + brand_args))
         current = nxt
         stages_done.append("captions")
     if args.stop_after == "captions":
+        emit(current, stages=stages_done)
+        return 0
+
+    # ---- graphics
+    for i, g in enumerate(proj.get("graphics") or []):
+        nxt = str(work / f"graphics{i:02d}.mp4")
+        if not g.get("template"):
+            die(f"graphics[{i}] needs a template")
+        argv = [current, "-o", nxt, "--template", g["template"]]
+        for k, flag in (("name", "--name"), ("title", "--title"), ("subtitle", "--subtitle"), ("start", "--start"), ("end", "--end"), ("position", "--position"), ("from", "--from"), ("scale", "--scale"), ("primary", "--primary"), ("text_color", "--text-color")):
+            if g.get(k) is not None:
+                argv += [flag, str(g[k])]
+        sh("graphics.py", *(argv + brand_args))
+        current = nxt
+        if "graphics" not in stages_done:
+            stages_done.append("graphics")
+    if args.stop_after == "graphics":
         emit(current, stages=stages_done)
         return 0
 
@@ -233,7 +260,9 @@ def main() -> int:
     for i, ov in enumerate(proj.get("overlays") or []):
         nxt = str(work / f"overlay{i:02d}.mp4")
         argv = [current, "-o", nxt]
-        if ov.get("image"):
+        if ov.get("logo"):
+            argv.append("--logo")
+        elif ov.get("image"):
             argv += ["--image", rel(ov["image"])]
         elif ov.get("text"):
             argv += ["--text", ov["text"]]
@@ -244,7 +273,7 @@ def main() -> int:
                 argv += [flag, str(ov[k])]
         if ov.get("box"):
             argv.append("--box")
-        sh("overlay.py", *argv)
+        sh("overlay.py", *(argv + brand_args))
         current = nxt
         if "overlays" not in stages_done:
             stages_done.append("overlays")
