@@ -22,7 +22,7 @@ import argparse
 import sys
 from typing import Dict, List
 
-from _common import cfr_args, default_output, die, ffmpeg_base, info, probe, run
+from _common import add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run
 
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
@@ -48,7 +48,9 @@ def main() -> int:
     ap.add_argument("--allow-long", action="store_true", help="do not trim to the platform's max duration")
     ap.add_argument("--crf", type=int, help="override CRF")
     ap.add_argument("--list", action="store_true", help="list presets and exit")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     if args.list:
         for name, p in PRESETS.items():
@@ -84,7 +86,7 @@ def main() -> int:
         cmd += ["-filter_complex", fc, "-loop", "0", output]
         run(cmd)
         info(f"wrote {output}")
-        print(output)
+        emit(output)
         return 0
 
     if vf:
@@ -108,7 +110,7 @@ def main() -> int:
     result = probe(output)
     v = result["video"]
     info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {v['codec']})")
-    print(output)
+    emit(output)
     return 0
 
 

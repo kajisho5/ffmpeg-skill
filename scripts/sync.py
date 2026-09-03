@@ -26,7 +26,7 @@ import subprocess
 import sys
 from typing import List
 
-from _common import aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, x264_args
+from _common import add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, x264_args
 
 SR = 8000  # decode sample rate
 
@@ -160,12 +160,13 @@ def main() -> int:
     ap.add_argument("--fine-ms", type=float, default=1.0, help="fine resolution in ms for the refinement pass, 0 to skip (default 1)")
     ap.add_argument("--fix-drift", action="store_true", help="also measure the offset near the END and correct clock drift by resampling the second file")
     ap.add_argument("--drift-window", type=float, default=60.0, help="seconds of audio analysed at each end for drift (default 60)")
-    ap.add_argument("--json", action="store_true", help="print the result as JSON")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--replace-audio", action="store_true", help="write reference video with the second file's audio, aligned")
     mode.add_argument("--trim-second", action="store_true", help="write the second file shifted so it lines up with the reference")
     ap.add_argument("--crf", type=int, default=18)
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     for p in (args.reference, args.second):
         if not probe(p).get("audio"):
@@ -286,7 +287,7 @@ def main() -> int:
         info(f"wrote {output}")
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        emit(result.get("output"), **{k: v for k, v in result.items() if k != "output"})
     else:
         print(f"offset: {result['offset_seconds']:+.3f}s ({result['meaning']}), confidence {result['confidence']:.2f}")
         if drift_info:

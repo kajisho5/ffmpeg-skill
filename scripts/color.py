@@ -15,7 +15,7 @@ import os
 import sys
 from typing import List
 
-from _common import aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, x264_args
+from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, x264_args
 
 TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
 
@@ -52,7 +52,9 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="run --to-sdr even if the file is not tagged as HDR (treat as PQ)")
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="medium")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     meta = probe(args.input)
     if not meta.get("video"):
@@ -82,7 +84,7 @@ def main() -> int:
             cmd += ["-colorspace", tags[0], "-color_primaries", tags[1], "-color_trc", tags[2]] + (aac_args() if has_audio else []) + [output]
             run(cmd)
         info(f"wrote {output} (tags -> {args.retag})")
-        print(output)
+        emit(output)
         return 0
 
     if args.to_sdr:
@@ -109,7 +111,7 @@ def main() -> int:
     r = probe(output)
     info(f"wrote {output} ({r['duration']:.3f}s, {r['video']['width']}x{r['video']['height']}, "
          f"{r['video']['color_transfer']}/{r['video']['color_primaries']}, {tag})")
-    print(output)
+    emit(output)
     return 0
 
 

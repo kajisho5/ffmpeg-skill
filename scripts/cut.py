@@ -16,7 +16,7 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 
 def parse_segments(spec: str) -> List[Tuple[float, float]]:
@@ -52,7 +52,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             info("stream copy failed, falling back to re-encode")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
         die(f"ffmpeg failed:\n{proc.stderr.strip()}")
-    if not reencode and tolerance >= 0:
+    if not reencode and tolerance >= 0 and not STATE["dry_run"]:
         got = probe(dst).get("duration") or 0.0
         if abs(got - dur) > tolerance:
             info(f"stream copy landed on a keyframe {abs(got - dur):.2f}s away from the requested cut "
@@ -74,7 +74,9 @@ def main() -> int:
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF when re-encoding (default 18)")
     ap.add_argument("--preset", default="medium", help="x264 preset when re-encoding")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     meta = probe(args.input)
     total = meta.get("duration") or 0.0
@@ -131,7 +133,7 @@ def main() -> int:
     expected = sum(e - s for s, e in segments)
     info(f"wrote {output} ({result.get('duration'):.3f}s, expected ~{expected:.3f}s, "
          + ("re-encoded" if reencoded else "lossless stream copy") + ")")
-    print(output)
+    emit(output)
     return 0
 
 

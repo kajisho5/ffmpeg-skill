@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import List
 
-from _common import audio_codec_for, default_output, die, ffmpeg_base, info, probe, run
+from _common import add_common, apply_common, emit, audio_codec_for, default_output, die, ffmpeg_base, info, probe, run
 
 VOICE_CHAIN = "highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
 
@@ -43,7 +43,9 @@ def main() -> int:
     fades.add_argument("--downmix", action="store_true", help="downmix 5.1/7.1 to stereo using standard weights")
     fades.add_argument("--replace", help="replace the audio with this file (trimmed/padded to the video)")
     ap.add_argument("--bitrate", default="192k")
+    add_common(ap)
     args = ap.parse_args()
+    apply_common(args)
 
     meta = probe(args.input)
     dur = meta.get("duration") or 0.0
@@ -120,7 +122,7 @@ def main() -> int:
     r = probe(output)
     a = r["audio"]
     info(f"wrote {output} ({r['duration']:.3f}s, audio {a['codec']} {a['channels']}ch {a['sample_rate']}Hz)")
-    print(output)
+    emit(output)
     return 0
 
 
