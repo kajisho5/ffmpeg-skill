@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- `verify.py` (new): real-footage verification kit — runs the toolchain over the user's own files and reports PASS/FAIL per step, Markdown and JSON.
+- `multicam.py` (new): align N cameras/recorders by audio (drift correction optional), switch between them from a time list or automatically, pick the audio source.
+- `probe.py`: Dolby Vision detection (`dolby_vision`, `hdr_format`), `--analyze` samples picture levels and flags Log-looking footage.
+- `color.py`: `--strip-dovi` removes the Dolby Vision RPU losslessly; HLG and DV 8.4 sources verified through `--to-sdr`.
+- `caption.py`: karaoke word timing now follows speech energy in the audio (`--karaoke-timing energy|even`).
+- `--progress` (percent / ETA) and `--fast` (preview preset) on every script.
+- Tests: 38 end-to-end cases.
+
 ## 0.3.0
 
 - `look.py` (new): contact sheet with timecodes, single-frame extraction, side-by-side before/after PNGs — the agent can inspect its own output.

@@ -19,7 +19,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
@@ -116,6 +116,7 @@ def main() -> int:
                 if has_audio:
                     af.append(atempo_chain(factor))
             post += ["-t", f"{target:.3f}"]
+            STATE["duration_hint"] = target
         else:
             if target < src_dur:
                 start = (src_dur - target) / 2 if args.from_center else 0.0

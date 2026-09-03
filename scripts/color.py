@@ -9,6 +9,8 @@ Examples:
   python3 color.py slog3.mp4 --lut SLog3_to_Rec709.cube            # apply LUT (any Log -> 709 or a look)
   python3 color.py clip.mp4 --lut look.cube --lut-strength 0.6
   python3 color.py wrongly_tagged.mp4 --retag bt709                # metadata only, stream copy
+  python3 color.py iphone_dv.mov --strip-dovi                       # drop Dolby Vision RPU, keep HLG base layer
+  python3 color.py iphone_dv.mov --to-sdr                           # DV 8.4 = HLG base layer -> tone-mapped SDR
 """
 import argparse
 import os
@@ -45,6 +47,7 @@ def main() -> int:
     mode.add_argument("--to-sdr", action="store_true", help="tone-map HDR (PQ/HLG/BT.2020) to SDR BT.709")
     mode.add_argument("--lut", help=".cube LUT to apply (3D)")
     mode.add_argument("--retag", choices=["bt709", "bt2020-pq", "bt2020-hlg", "bt601"], help="rewrite colour tags only (no re-encode)")
+    mode.add_argument("--strip-dovi", action="store_true", help="remove the Dolby Vision RPU (profile 8.4 iPhone clips) so players use the plain HLG/HDR10 base layer; stream copy")
     ap.add_argument("--tonemap", choices=TONEMAPS, default="hable", help="tone-mapping curve (default hable)")
     ap.add_argument("--peak", type=float, default=1000.0, help="source peak brightness in nits used for PQ (default 1000)")
     ap.add_argument("--desat", type=float, default=0.0, help="tonemap desaturation strength (default 0)")
@@ -61,6 +64,22 @@ def main() -> int:
         die("input has no video stream")
     v = meta["video"]
     has_audio = bool(meta.get("audio"))
+
+    if args.strip_dovi:
+        output = args.output or default_output(args.input, "nodv")
+        if v.get("codec") != "hevc":
+            die("--strip-dovi only applies to HEVC (Dolby Vision) streams")
+        if not v.get("dolby_vision"):
+            info("note: no Dolby Vision metadata detected; removing unregistered SEI anyway")
+        cmd = ffmpeg_base() + ["-i", args.input, "-map", "0", "-c", "copy", "-bsf:v", "filter_units=remove_types=62", "-tag:v", "hvc1"]
+        if os.path.splitext(output)[1].lower() in (".mp4", ".mov", ".m4v"):
+            cmd += ["-movflags", "+faststart"]
+        cmd.append(output)
+        run(cmd)
+        r = probe(output)
+        info(f"wrote {output} (dolby_vision={r['video'].get('dolby_vision')})")
+        emit(output)
+        return 0
 
     if args.retag:
         tags = {

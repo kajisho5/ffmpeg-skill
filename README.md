@@ -17,15 +17,17 @@ npx ffmpeg-skill
 - **Probe first, verify last** — the skill forces the agent to read real duration/fps/resolution before editing and to check the result after, so you get "final.mp4: 59.98 s, 1080×1920, 30 fps" instead of guesses.
 - **Lossless when possible** — cuts and joins use stream copy by default; re-encoding only happens when it must (frame-accurate cuts, filters, format changes).
 - **Cut & join** segments with `mm:ss` / `hh:mm:ss.ms` times.
+- **Multicam** — align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list.
+- **Real-footage verification kit** — run the whole toolchain on your own device files and get a PASS/FAIL report.
 - **Silence removal / jump cuts** — detect dead air, keep a margin around speech, render frame-accurate in one pass; export the cut list for hand editing.
 - **Join with transitions** — crossfade, wipes, fade-to-black between mismatched clips (any size, fps, audio layout).
 - **Agent eyes** — contact sheets, single frames and before/after comparisons as PNG so the agent verifies caption placement, crops and colour visually.
-- **Plan before render** — every script has `--dry-run` (print the ffmpeg commands) and `--json` (structured result with a probe of the output).
-- **Captions** — burn SRT/ASS with font, size, colour, outline and position control; generate SRT from a plain timed-text file; animated (fade/pop/slide) and word-by-word karaoke highlight styles for short-form video.
+- **Plan before render** — every script has `--dry-run` (print the ffmpeg commands), `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress` (percent / ETA).
+- **Captions** — burn SRT/ASS with font, size, colour, outline and position control; generate SRT from a plain timed-text file; animated (fade/pop/slide) and word-by-word karaoke highlight timed to the speech energy in the audio.
 - **Fit** to an exact duration (pitch-preserving speed change or trim) and to 16:9 / 9:16 / 1:1 / 4:5 by padding or cropping; motion-interpolated or blended slow motion.
 - **Real-world footage handling** — variable-frame-rate phone clips are conformed to constant fps automatically, rotation metadata is honoured, 10-bit HEVC and 5.1 sources are handled.
 - **Multicam / external-audio sync** — offset detection by cross-correlation implemented in pure Python (no numpy), 1 ms resolution, plus clock-drift correction for long takes.
-- **Colour management** — real HDR10/HLG → SDR BT.709 tone mapping, 3D LUT (.cube) for Log footage and looks, and metadata-only retagging.
+- **Colour management** — HDR10 / HLG / Dolby Vision (iPhone) → SDR BT.709 tone mapping, Dolby Vision layer stripping, 3D LUT (.cube) for Log footage and looks, Log-footage detection, metadata-only retagging.
 - **Audio post** — voice clean-up chain (highpass, de-esser, FFT denoise, compressor), background music with sidechain ducking, fades, 5.1 → stereo downmix, track replacement.
 - **Loudness** — two-pass EBU R128 normalisation to −14 LUFS (or any target) with true-peak ceiling.
 - **Overlays** — logos, watermarks and titles with position, time range, opacity and fades.
@@ -88,15 +90,17 @@ More examples: [examples/README.md](examples/README.md). To see everything run e
 
 | Script | What it does |
 |--------|--------------|
-| `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format, colour space, rotation, audio channels as JSON |
+| `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision, colour space, rotation, audio channels as JSON; `--analyze` flags Log footage |
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact |
+| `multicam.py` | Align cameras/recorders by audio and switch between them from a time list |
+| `verify.py` | Run the toolchain on real device files and report PASS/FAIL per step |
 | `silence.py` | Detect and remove silences (jump cuts), list or export the cut list |
 | `join.py` | Concatenate clips with xfade transitions, normalising size, fps and audio |
 | `look.py` | Contact sheet, single frames, side-by-side comparison as PNG for visual checks |
 | `caption.py` | Burn SRT/ASS (font, size, colour, outline, position); build SRT from timed plain text; animated + karaoke ASS |
 | `fit.py` | Fit to a duration (speed or trim, smooth slow-mo) and/or aspect ratio (pad or crop), force constant fps |
 | `sync.py` | Detect offset between two recordings by audio cross-correlation (1 ms), correct clock drift; output aligned video/audio |
-| `color.py` | HDR10/HLG → SDR BT.709 tone mapping, 3D LUT application, colour-tag rewriting |
+| `color.py` | HDR10/HLG/Dolby Vision → SDR tone mapping, DV layer stripping, 3D LUT application, colour-tag rewriting |
 | `audio.py` | Denoise / voice chain, music bed with auto-ducking, fades, downmix, replace track |
 | `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP (or custom), video stream-copied |
 | `overlay.py` | Composite image/logo or drawtext title with position, time range, opacity, fade |

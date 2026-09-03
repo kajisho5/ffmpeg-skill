@@ -55,7 +55,7 @@ def require_tool(name: str) -> str:
     return ""  # unreachable
 
 
-STATE: Dict[str, Any] = {"dry_run": False, "json": False, "commands": []}
+STATE: Dict[str, Any] = {"dry_run": False, "json": False, "commands": [], "progress": False, "fast": False, "duration_hint": None}
 
 
 def add_common(ap: "argparse.ArgumentParser") -> None:
@@ -63,11 +63,17 @@ def add_common(ap: "argparse.ArgumentParser") -> None:
     g = ap.add_argument_group("agent options")
     g.add_argument("--dry-run", action="store_true", help="print the ffmpeg commands that would run, run nothing")
     g.add_argument("--json", action="store_true", help="print a JSON result (output, probe, commands) on stdout instead of the path")
+    g.add_argument("--progress", action="store_true", help="show percent / ETA on stderr while ffmpeg encodes")
+    g.add_argument("--fast", action="store_true", help="preview quality: x264 preset veryfast (overrides --preset) for quick iterations")
 
 
 def apply_common(args: "argparse.Namespace") -> None:
     STATE["dry_run"] = bool(getattr(args, "dry_run", False))
     STATE["json"] = bool(getattr(args, "json", False))
+    STATE["progress"] = bool(getattr(args, "progress", False))
+    STATE["fast"] = bool(getattr(args, "fast", False))
+    if STATE["fast"] and hasattr(args, "preset"):
+        args.preset = "veryfast"
 
 
 def emit(output: Optional[str], **extra: Any) -> None:
@@ -95,11 +101,49 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
         info(("[dry-run] $ " if STATE["dry_run"] and is_ffmpeg else "$ ") + " ".join(shell_quote(c) for c in cmd))
     if STATE["dry_run"] and is_ffmpeg:
         return subprocess.CompletedProcess(list(cmd), 0, "", "")
+    if STATE["progress"] and is_ffmpeg and cmd[-1] != "-":
+        return _run_with_progress(list(cmd), check)
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if check and proc.returncode != 0:
         tail = "\n".join(proc.stderr.strip().splitlines()[-15:])
         die(f"command failed ({proc.returncode}): {cmd[0]}\n{tail}", code=proc.returncode or 1)
     return proc
+
+
+def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
+    """Run ffmpeg with -progress on a pipe and print percent/ETA to stderr."""
+    import time
+    total = STATE.get("duration_hint") or 0.0
+    full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+    t0 = time.time()
+    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    last = ""
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
+            try:
+                done = int(line.split("=")[1]) / 1_000_000
+            except ValueError:
+                continue
+            if total > 0:
+                pct = min(99.9, done / total * 100)
+                elapsed = time.time() - t0
+                eta = (elapsed / pct * (100 - pct)) if pct > 0.5 else 0
+                msg = f"\r  {pct:5.1f}%  {done:7.1f}s / {total:.1f}s  ETA {eta:4.0f}s"
+            else:
+                msg = f"\r  {done:7.1f}s encoded"
+            if msg != last:
+                sys.stderr.write(msg)
+                sys.stderr.flush()
+                last = msg
+    _, err = proc.communicate()
+    if last:
+        sys.stderr.write("\r" + " " * len(last) + "\r")
+    result = subprocess.CompletedProcess(full, proc.returncode, "", err)
+    if check and proc.returncode != 0:
+        tail = "\n".join(err.strip().splitlines()[-15:])
+        die(f"command failed ({proc.returncode}): {cmd[0]}\n{tail}", code=proc.returncode or 1)
+    return result
 
 
 def shell_quote(s: str) -> str:
@@ -143,6 +187,8 @@ def probe(path: str) -> Dict[str, Any]:
         duration = _to_float(video.get("duration"))
     if duration is None and audio:
         duration = _to_float(audio.get("duration"))
+    if duration and STATE.get("duration_hint") is None:
+        STATE["duration_hint"] = duration
 
     out: Dict[str, Any] = {
         "file": path,
@@ -173,6 +219,12 @@ def probe(path: str) -> Dict[str, Any]:
         trc = video.get("color_transfer") or ""
         prim = video.get("color_primaries") or ""
         hdr = trc in ("smpte2084", "arib-std-b67") or prim == "bt2020"
+        dovi = None
+        for sd in video.get("side_data_list", []) or []:
+            if "dv_profile" in sd or "DOVI" in str(sd.get("side_data_type", "")):
+                dovi = {"profile": sd.get("dv_profile"), "level": sd.get("dv_level"), "bl_compatibility_id": sd.get("dv_bl_signal_compatibility_id")}
+        if dovi:  # a Dolby Vision stream is HDR even when its base layer tags are missing
+            hdr = True
         out["video"] = {
             "codec": video.get("codec_name"),
             "profile": video.get("profile"),
@@ -186,7 +238,9 @@ def probe(path: str) -> Dict[str, Any]:
             "pix_fmt": video.get("pix_fmt"),
             "bit_depth": 10 if "10" in pix else (12 if "12" in pix else 8),
             "hdr": hdr,
-            "hdr_format": ("HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
+            "hdr_format": (("Dolby Vision %s" % (("profile %s" % dovi["profile"]) if dovi and dovi.get("profile") is not None else "")).strip() if dovi else
+                           "HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
+            "dolby_vision": dovi,
             "color_space": video.get("color_space"),
             "color_primaries": video.get("color_primaries"),
             "color_transfer": video.get("color_transfer"),
@@ -296,6 +350,45 @@ def audio_codec_for(output_path: str, default_bitrate: str = "192k") -> List[str
     """Pick an audio codec that the output container can actually hold."""
     ext = os.path.splitext(output_path)[1].lower()
     return list(AUDIO_CODECS.get(ext, ["-c:a", "aac", "-b:a", default_bitrate]))
+
+
+def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
+    """Sample luma/saturation statistics (signalstats) and guess whether the picture is Log-encoded.
+
+    Log gammas (S-Log3, V-Log, C-Log, HLG-looking flat profiles) put black around 90-95/255 and
+    white below ~235 with low saturation: the image looks grey and flat but is tagged as plain SDR.
+    """
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-t", f"{seconds:.1f}", "-i", path, "-an",
+           "-vf", "fps=2,signalstats,metadata=print:file=-", "-f", "null", "-"]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    vals: Dict[str, List[float]] = {}
+    for line in proc.stdout.splitlines():
+        if "lavfi.signalstats." in line and "=" in line:
+            key, val = line.split("lavfi.signalstats.", 1)[1].split("=", 1)
+            try:
+                vals.setdefault(key, []).append(float(val))
+            except ValueError:
+                pass
+    if not vals.get("YAVG"):
+        return {"error": "no frames analysed"}
+    def mean(k: str) -> float:
+        v = vals.get(k) or [0.0]
+        return sum(v) / len(v)
+    ymin, ymax, yavg, sat = min(vals.get("YMIN") or [0]), max(vals.get("YMAX") or [255]), mean("YAVG"), mean("SATAVG")
+    # 5th/95th percentile of per-frame lows/highs is more robust than the absolute min/max
+    lows = sorted(vals.get("YLOW") or vals.get("YMIN") or [0])
+    highs = sorted(vals.get("YHIGH") or vals.get("YMAX") or [255])
+    p_low = lows[len(lows) // 20]
+    p_high = highs[-1 - len(highs) // 20]
+    looks_log = p_low >= 64 and p_high <= 235 and sat < 40
+    return {
+        "y_min": ymin, "y_max": ymax, "y_avg": round(yavg, 1), "y_low_p5": p_low, "y_high_p95": p_high,
+        "saturation_avg": round(sat, 1),
+        "looks_like_log": looks_log,
+        "note": ("flat, low-contrast, desaturated picture tagged as SDR: probably a Log profile (S-Log/V-Log/C-Log). "
+                 "Apply the camera's conversion LUT with color.py --lut" if looks_log else "contrast and saturation look like normal display-referred SDR"),
+    }
 
 
 def print_json(obj: Any) -> None:

@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-skill
-description: Professional video editing with local FFmpeg — cut, remove silences, join with transitions, caption (animated/karaoke), fit to duration/aspect, sync multicam audio with drift correction, HDR-to-SDR and LUT colour, denoise/duck/mix audio, normalise loudness, overlay logos, export platform presets, and inspect frames to verify the result; Python stdlib scripts, no cloud or API keys.
+description: Professional video editing with local FFmpeg — cut, remove silences, join with transitions, multicam switching, caption (animated/karaoke timed to speech), fit to duration/aspect, sync audio with drift correction, HDR/HLG/Dolby Vision to SDR, LUTs and Log detection, denoise/duck/mix audio, loudness, overlays, platform exports, frame inspection and a real-footage verification kit; Python stdlib scripts, no cloud or API keys.
 ---
 
 # ffmpeg-skill
@@ -27,6 +27,8 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
    `--dry-run` (prints the ffmpeg commands, runs nothing) and `--json`
    (structured result: output path, probe of the output, commands run). Use
    them to confirm a plan before long encodes and to report exact facts.
+   `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
+   prints percent and ETA on stderr for long encodes.
 4. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
    fit → caption/overlay → sync → audio → loudness → export. Do the destructive/aspect changes before burning
    text so captions are sized for the final frame. Re-encode as few times as
@@ -59,6 +61,11 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
 | "stitch these clips together", "add a crossfade between them" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` |
 | "show me what it looks like", "check the captions are readable" | `look.py output.mp4` then view the PNG |
 | "what would you run?", "don't render yet" | any script with `--dry-run` |
+| "three cameras, cut between them" | `multicam.py camA.mp4 camB.mp4 camC.mp4 --switch "0-20:0,20-40:1,40-60:2"` |
+| "it's an iPhone Dolby Vision clip and players show it wrong" | `color.py clip.mov --to-sdr` or `color.py clip.mov --strip-dovi` (keep HDR, drop the DV layer) |
+| "does it look like Log / S-Log / flat footage?" | `probe.py clip.mp4 --analyze` (`looks_like_log`) then `color.py --lut` |
+| "test the tool on my real files" | `verify.py ~/Footage --report verify.md` |
+| "show me progress", "quick preview first" | any encoding script with `--progress` and/or `--fast` |
 | "the colours look washed out / it's an iPhone HDR video" | `color.py input.mov --to-sdr` (probe shows `hdr: true`) |
 | "apply this LUT", "convert the S-Log / V-Log footage" | `color.py input.mp4 --lut grade.cube [--lut-strength 0.7]` |
 | "the colours are tagged wrong" | `color.py input.mp4 --retag bt709` (no re-encode) |
@@ -125,6 +132,29 @@ Normalises every clip to one frame size, fps, `yuv420p` and 48 kHz stereo
 `acrossfade`. Output length = sum of clips − transition × (n−1). Clips must be
 longer than 2 × the transition. Use `--transition none` for a plain cut.
 
+### multicam.py — align several cameras and switch between them
+```
+multicam.py REF CAM2 [CAM3 ...] [--switch "START-END:CAM,..."] | [--auto N] [--audio IDX] [--fix-drift]
+            [--offsets-only] [--width W --height H --fps N] [-o OUT]
+```
+All inputs are aligned to the first one by audio (same engine as `sync.py`,
+`--fix-drift` for long takes). `--switch` names which camera is on screen for
+each range of the reference timeline (gaps fall back to camera 0), `--auto N`
+simply alternates every N seconds. Audio comes from the reference unless
+`--audio` picks another input, e.g. an external recorder that has no video.
+`--offsets-only` reports offsets and confidence without rendering.
+
+### verify.py — real-footage verification kit
+```
+verify.py FILES_OR_FOLDERS [--quick] [--report verify.md] [--out DIR --keep] [--seconds 6] [--json]
+```
+Runs the toolchain on the user's own files (phone HDR, GoPro, OBS, Log, Zoom)
+and prints a PASS/FAIL table per step (probe, copy cut, accurate cut, fit,
+caption, overlay, look, export, loudness, silence, plus `color --to-sdr` for
+HDR and `audio --downmix` for >2 channels). Exit code 1 if anything fails.
+Run this first when a user hands over footage from a device you have not
+seen before, and fix or report what fails.
+
 ### look.py — see the result
 ```
 look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes
@@ -173,12 +203,17 @@ take stays in sync (typical consumer devices drift 20-500 ppm = up to 1.8 s/h).
 Use it whenever the recording is longer than ~10 minutes. Check `confidence`
 (0–1); below ~0.3 the match is doubtful — use a window with a clear event.
 
-### color.py — HDR to SDR, LUTs, colour tags
+### color.py — HDR to SDR, LUTs, colour tags, Dolby Vision
 ```
 color.py INPUT --to-sdr [--tonemap hable|mobius|reinhard|bt2390] [--peak 1000] [--desat 0] [-o OUT]
 color.py INPUT --lut grade.cube [--lut-strength 0..1] [-o OUT]
 color.py INPUT --retag bt709|bt2020-pq|bt2020-hlg|bt601 [-o OUT]      # metadata only, stream copy
+color.py INPUT --strip-dovi [-o OUT]                                 # drop the Dolby Vision RPU, keep the HLG/HDR10 base layer (stream copy)
 ```
+iPhone "HDR" video is Dolby Vision profile 8.4 on an HLG base layer:
+`probe.py` reports `hdr_format: Dolby Vision profile 8` and `--to-sdr`
+tone-maps it from the HLG base layer. When the user wants to keep HDR but
+players mis-render the DV layer, `--strip-dovi` removes it losslessly.
 `--to-sdr` does a real conversion: linearise (zscale, PQ or HLG), tone-map
 (default `hable`, `mobius` keeps more highlight detail, `bt2390` is the
 broadcast standard), then BT.709 gamma + matrix. Refuses when probe says the
@@ -233,7 +268,8 @@ trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`.
   `color.py --to-sdr` **first**; other scripts would tag the HDR picture as
   BT.709 and it would look flat and desaturated (`export.py` warns about this).
   For Log footage (S-Log, V-Log, C-Log: looks grey and low-contrast but is
-  tagged SDR) apply the manufacturer's `.cube` with `color.py --lut`. Keep
+  tagged SDR) run `probe.py --analyze`; `looks_like_log: true` means apply the
+  manufacturer's `.cube` with `color.py --lut` before anything else. Keep
   ProRes masters at source colour: `export.py --preset prores` does not retag.
 - **CJK and other non-Latin text.** libass and drawtext need a font that has
   the glyphs. Check with `fc-list | grep -i cjk`. Then either name it

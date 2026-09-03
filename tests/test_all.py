@@ -4,6 +4,7 @@
     python3 tests/test_all.py            # or: python3 -m unittest tests/test_all.py
 """
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -424,6 +425,93 @@ class FFmpegSkillTests(unittest.TestCase):
         out = OUT / "json_cut.mp4"
         data = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", out, "--json").stdout)
         self.assertClose(data["probe"]["duration"], 2.0, 0.6)
+
+    # ---------------------------------------------------------------- v0.4: verify / multicam / HLG / Log / energy karaoke / progress
+    def test_probe_hlg_and_log_detection(self):
+        hlg = OUT / "hlg.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t", "3",
+           "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:log-level=error", "-tag:v", "hvc1", hlg)
+        v = probe(str(hlg))["video"]
+        self.assertEqual(v["hdr_format"], "HLG")
+        self.assertIsNone(v["dolby_vision"])
+        out = OUT / "hlg_sdr.mp4"
+        script("color.py", hlg, "--to-sdr", "--fast", "-o", out)
+        self.assertEqual(probe(str(out))["video"]["color_transfer"], "bt709")
+        nodv = OUT / "hlg_nodv.mp4"
+        proc = script("color.py", hlg, "--strip-dovi", "-o", nodv)
+        self.assertIn("filter_units", proc.stderr)
+        self.assertEqual(probe(str(nodv))["video"]["hdr_format"], "HLG")
+        flat = OUT / "loglike.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t", "3",
+           "-vf", "curves=all='0/0.36 1/0.88',hue=s=0.4,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", flat)
+        data = json.loads(script("probe.py", flat, "--analyze").stdout)
+        self.assertTrue(data["levels"]["looks_like_log"])
+        data = json.loads(script("probe.py", self.src, "--analyze").stdout)
+        self.assertFalse(data["levels"]["looks_like_log"])
+        compact = script("probe.py", flat, "--analyze", "--compact").stdout
+        self.assertIn("[Log?]", compact)
+
+    def test_karaoke_energy_timing_follows_audio(self):
+        gappy = OUT / "gappy_k.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*lt(t\\,2)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "4", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", gappy)
+        cues = OUT / "kcues.txt"
+        cues.write_text("0:00-0:04 one two three four\n", encoding="utf-8")
+        ass = OUT / "ke.ass"
+        script("caption.py", gappy, "--text", cues, "--karaoke", "--write-ass", ass, "--fast", "-o", OUT / "ke.mp4")
+        line = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue")][0]
+        durs = [int(x) for x in re.findall(r"\\kf(\d+)", line)]
+        self.assertEqual(len(durs), 4)
+        self.assertEqual(sum(durs), 400)
+        self.assertLess(sum(durs[:3]), 200, "first three words should sit inside the 2 s of sound")
+        ass2 = OUT / "ke_even.ass"
+        script("caption.py", gappy, "--text", cues, "--karaoke", "--karaoke-timing", "even", "--write-ass", ass2, "--fast", "-o", OUT / "ke2.mp4")
+        line2 = [l for l in ass2.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue")][0]
+        self.assertEqual([int(x) for x in re.findall(r"\\kf(\d+)", line2)], [100, 100, 100, 100])
+
+    def test_multicam_offsets_and_switch(self):
+        camB = OUT / "camB.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.5", "-i", self.src, "-vf", "hue=h=90", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", camB)
+        data = json.loads(script("multicam.py", self.src, camB, self.mic, "--offsets-only", "--json").stdout)
+        self.assertClose(data["offsets_seconds"][1], 1.5, 0.05)
+        self.assertClose(data["offsets_seconds"][2], 2.5, 0.05)
+        out = OUT / "mc.mp4"
+        data = json.loads(script("multicam.py", self.src, camB, self.mic, "--audio", "2", "--switch", "0-3:0,3-6:1,6-9:0", "--fast", "-o", out, "--json").stdout)
+        self.assertEqual(len(data["cuts"]), 4, "three named ranges plus the gap-fill to the end")
+        m = probe(str(out))
+        self.assertClose(m["duration"], 12.0, 0.2)
+        self.assertEqual(m["audio"]["channels"], 2)
+        # camB is hue-shifted: a frame at 4.5 s (camera 1) must differ from one at 2 s (camera 0)
+        script("look.py", out, "--at", "2", "--at", "4.5", "-o", OUT / "mcf")
+        self.assertNotEqual((OUT / "mcf_2.000s.png").read_bytes()[100:2000], (OUT / "mcf_4.500s.png").read_bytes()[100:2000])
+        auto = OUT / "mc_auto.mp4"
+        script("multicam.py", self.src, camB, "--auto", "4", "--fast", "-o", auto)
+        self.assertClose(probe(str(auto))["duration"], 12.0, 0.2)
+        script("multicam.py", self.src, camB, "--switch", "0-3:5", expect_fail=True)
+
+    def test_verify_kit_runs_on_real_world_fixtures(self):
+        folder = OUT / "vfx"
+        folder.mkdir(exist_ok=True)
+        for f in (self.hdr, self.surround, self.vfr):
+            (folder / Path(f).name).write_bytes(Path(f).read_bytes())
+        report = OUT / "verify.md"
+        data = json.loads(script("verify.py", folder, "--quick", "--report", report, "--json").stdout)
+        self.assertEqual(data["failed"], 0)
+        self.assertEqual(len(data["files"]), 3)
+        text = report.read_text()
+        self.assertIn("| PASS |", text)
+        self.assertNotIn("| FAIL |", text)
+        self.assertIn("HDR10/PQ", text)
+        script("verify.py", OUT / "does_not_exist", expect_fail=True)
+
+    def test_progress_and_fast_flags(self):
+        out = OUT / "prog.mp4"
+        proc = script("fit.py", self.src, "--duration", "6", "--fast", "--progress", "-o", out)
+        self.assertIn("%", proc.stderr)
+        self.assertIn("-preset veryfast", proc.stderr, "--fast overrides the preset")
+        self.assertClose(probe(str(out))["duration"], 6.0, 0.2)
 
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
