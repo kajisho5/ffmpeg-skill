@@ -17,6 +17,9 @@ npx ffmpeg-skill
 - **Probe first, verify last** — the skill forces the agent to read real duration/fps/resolution before editing and to check the result after, so you get "final.mp4: 59.98 s, 1080×1920, 30 fps" instead of guesses.
 - **Lossless when possible** — cuts and joins use stream copy by default; re-encoding only happens when it must (frame-accurate cuts, filters, format changes).
 - **Cut & join** segments with `mm:ss` / `hh:mm:ss.ms` times.
+- **Declarative edits** — describe the whole edit in a `project.json` (clips, transitions, captions, overlays, music, loudness, export, check) and re-render after every tweak.
+- **Scene detection and highlight picks** — find cuts and loud moments, get a 60-second digest proposal as a cut list.
+- **Delivery checks** — PASS/FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, broadcast and podcast specs, with the fix for each failure.
 - **Multicam** — align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list.
 - **Real-footage verification kit** — run the whole toolchain on your own device files and get a PASS/FAIL report.
 - **Silence removal / jump cuts** — detect dead air, keep a margin around speech, render frame-accurate in one pass; export the cut list for hand editing.
@@ -92,6 +95,9 @@ More examples: [examples/README.md](examples/README.md). To see everything run e
 |--------|--------------|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision, colour space, rotation, audio channels as JSON; `--analyze` flags Log footage |
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact |
+| `render.py` | Render a whole edit from `project.json`; `--init`, `--dry-run`, `--stop-after` |
+| `scenes.py` | Scene changes, audio peaks, highlight proposals and per-scene sheet |
+| `check.py` | Pre-delivery compliance per platform (duration, aspect, codec, colour, loudness, size) |
 | `multicam.py` | Align cameras/recorders by audio and switch between them from a time list |
 | `verify.py` | Run the toolchain on real device files and report PASS/FAIL per step |
 | `silence.py` | Detect and remove silences (jump cuts), list or export the cut list |
@@ -119,6 +125,7 @@ All scripts: Python 3.9+, standard library only, `--help`, non-zero exit + stder
 ```bash
 bash examples/make_demo.sh      # generates footage, runs every script, rebuilds assets/demo.gif
 python3 tests/test_all.py       # end-to-end tests incl. VFR, rotated, 5.1, 10-bit HDR10 and drifting sources (needs ffmpeg)
+python3 evals/run.py --list     # routing eval prompts (see evals/)
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
 

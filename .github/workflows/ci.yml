@@ -1,0 +1,33 @@
+# Manual-only for now: the account's Actions minutes are exhausted for this cycle.
+# After the reset (Oct 1), add:
+#   push: { branches: [main] }
+#   pull_request:
+# under `on:` to run on every change.
+name: tests
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+      - run: ffmpeg -version | head -1
+        shell: bash
+      - run: python tests/test_all.py
+      - run: node bin/install.js

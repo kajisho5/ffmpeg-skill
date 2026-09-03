@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-skill
-description: Professional video editing with local FFmpeg — cut, remove silences, join with transitions, multicam switching, caption (animated/karaoke timed to speech), fit to duration/aspect, sync audio with drift correction, HDR/HLG/Dolby Vision to SDR, LUTs and Log detection, denoise/duck/mix audio, loudness, overlays, platform exports, frame inspection and a real-footage verification kit; Python stdlib scripts, no cloud or API keys.
+description: Professional video editing with local FFmpeg — declarative project rendering, scene detection and highlight picks, delivery compliance checks, cut, silence removal, transitions, multicam, captions (animated/karaoke timed to speech), fit to duration/aspect, audio sync with drift correction, HDR/HLG/Dolby Vision to SDR, LUTs, audio clean-up and ducking, loudness, overlays, platform exports, frame inspection and a real-footage verification kit; Python stdlib scripts, no cloud or API keys.
 ---
 
 # ffmpeg-skill
@@ -30,15 +30,23 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
    `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
    prints percent and ETA on stderr for long encodes.
 4. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
-   fit → caption/overlay → sync → audio → loudness → export. Do the destructive/aspect changes before burning
-   text so captions are sized for the final frame. Re-encode as few times as
-   possible: if several re-encoding steps are needed, keep intermediates at
-   CRF 18 (the default) and only use `export.py` for the last step.
-5. **Verify the output.** Run `probe.py` on each result and confirm duration,
+   join → silence → fit → caption/overlay → sync → audio → loudness → export.
+   Do frame changes (fit/crop) before captions and overlays so text is sized
+   for the final frame. Re-encode as few times as possible: keep intermediates
+   at CRF 18 (the default) and only use `export.py` for the last step; for
+   anything with more than two steps use `render.py` with a project.json.
+5. **Check the deliverable.** Before reporting, run `check.py OUTPUT --platform X`
+   for the destination the user named; fix FAILs, mention WARNs.
+6. **Verify the output.** Run `probe.py` on each result and confirm duration,
    resolution, fps and audio match what was requested. Report those numbers to
    the user (e.g. "final.mp4: 59.98 s, 1080x1920, 30 fps, AAC stereo").
-6. **Keep the user's originals.** Never overwrite the source file. Write new
+7. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
+8. **Look at the picture.** After captioning, overlaying, cropping or colour
+   work run `look.py OUTPUT` (contact sheet) or `look.py OUTPUT --at T` and
+   view the PNG: text inside the frame and not over faces, logos where asked,
+   crops keeping the subject, colours not washed out. Fix and re-run before
+   reporting. Numbers from probe are not enough.
 
 ## Request → script
 
@@ -61,6 +69,9 @@ path on stdout, and defaults the output name to `<input>_<operation>.<ext>`.
 | "stitch these clips together", "add a crossfade between them" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` |
 | "show me what it looks like", "check the captions are readable" | `look.py output.mp4` then view the PNG |
 | "what would you run?", "don't render yet" | any script with `--dry-run` |
+| "make a 60 s highlight from this hour", "find the good bits" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` → `cut.py --segments` |
+| "is this OK to upload?", "check it meets the Reels spec" | `check.py final.mp4 --platform reels` |
+| "set it up so I can tweak and re-render", "several changes to the same edit" | `render.py --init project.json`, edit, `render.py project.json` |
 | "three cameras, cut between them" | `multicam.py camA.mp4 camB.mp4 camC.mp4 --switch "0-20:0,20-40:1,40-60:2"` |
 | "it's an iPhone Dolby Vision clip and players show it wrong" | `color.py clip.mov --to-sdr` or `color.py clip.mov --strip-dovi` (keep HDR, drop the DV layer) |
 | "does it look like Log / S-Log / flat footage?" | `probe.py clip.mp4 --analyze` (`looks_like_log`) then `color.py --lut` |
@@ -131,6 +142,36 @@ Normalises every clip to one frame size, fps, `yuv420p` and 48 kHz stereo
 (silent track generated for clips without audio), then chains `xfade` +
 `acrossfade`. Output length = sum of clips − transition × (n−1). Clips must be
 longer than 2 × the transition. Use `--transition none` for a plain cut.
+
+### render.py — the whole edit in one project.json
+```
+render.py --init project.json                # starter file
+render.py project.json [--fast] [--dry-run] [--stop-after STAGE] [--work DIR --keep]
+```
+Stages: clips (cut, optional speed) → join (transition) → silence → fit →
+captions → overlays → audio → loudness → export → check. Keys mirror the
+CLI flags of each script (see the docstring). Use it whenever an edit has
+more than two steps or the user is likely to ask for changes: edit the JSON,
+re-render, and the result is reproducible. `--dry-run --json` prints the
+complete command plan for review.
+
+### scenes.py — scene changes and highlight candidates
+```
+scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECONDS] [--max-scene 15]] [--edl picks.txt] [--sheet scenes.png] [--json]
+```
+Lists scenes with audio energy, the loudest moments, and (with
+`--highlights`) proposes N ranges that add up to `--target` seconds, biased to
+the loudest window of each scene. Review the sheet + JSON, adjust the EDL, then
+`cut.py --segments`. It is a proposal engine, not a judgement of content:
+tell the user what it picked and why (energy, scene length).
+
+### check.py — pre-delivery compliance
+```
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|broadcast|podcast|custom [--no-loudness] [--json]
+         [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
+```
+PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
+step before reporting a deliverable; fix FAILs, mention WARNs.
 
 ### multicam.py — align several cameras and switch between them
 ```

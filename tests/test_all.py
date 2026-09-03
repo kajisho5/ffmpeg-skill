@@ -549,6 +549,94 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertLessEqual(data["levels"]["y_max"], 255)
         self.assertFalse(data["levels"]["looks_like_log"])
 
+    # ---------------------------------------------------------------- v0.5: check / scenes / render
+    def test_check_compliance(self):
+        reels = OUT / "export_reels.mp4"
+        if not reels.exists():
+            script("export.py", self.src, "--preset", "reels", "--fit", "crop", "-o", reels)
+        data = json.loads(script("check.py", reels, "--platform", "reels", "--json", expect_fail=True).stdout)
+        names = {r["check"]: r["status"] for r in data["checks"]}
+        self.assertEqual(names["aspect"], "PASS")
+        self.assertEqual(names["pixel format"], "PASS")
+        self.assertEqual(names["loudness"], "FAIL", "unnormalised test tone is far from -14 LUFS")
+        self.assertFalse(data["ok"])
+        # after loudness.py the same file passes
+        norm = OUT / "reels_norm.mp4"
+        script("loudness.py", reels, "-o", norm)
+        data = json.loads(script("check.py", norm, "--platform", "reels", "--json").stdout)
+        self.assertTrue(data["ok"], [r for r in data["checks"] if r["status"] != "PASS"])
+        # HDR on an SDR-only platform fails the colour check
+        data = json.loads(script("check.py", self.hdr, "--platform", "x", "--no-loudness", "--json", expect_fail=True).stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["colour"], "FAIL")
+        # custom overrides
+        data = json.loads(script("check.py", self.src, "--platform", "custom", "--max-duration", "5", "--no-loudness", "--json", expect_fail=True).stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["duration"], "FAIL")
+
+    def test_scenes_and_highlights(self):
+        src = OUT / "scenes_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:d=4", "-f", "lavfi", "-i", "smptebars=size=640x360:rate=30:d=4",
+           "-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
+           "-f", "lavfi", "-i", "aevalsrc='0.6*sin(2*PI*440*t)*between(t\\,5\\,7)+0.3*sin(2*PI*330*t)*between(t\\,9\\,10)':s=48000",
+           "-filter_complex", "[2:v]trim=0:4,setpts=PTS-STARTPTS[m];[0:v][1:v][m]concat=n=3:v=1:a=0[v]",
+           "-map", "[v]", "-map", "3:a", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", src)
+        edl = OUT / "picks.txt"
+        sheet = OUT / "scenes.png"
+        data = json.loads(script("scenes.py", src, "--highlights", "2", "--target", "6", "--edl", edl, "--sheet", sheet, "--json").stdout)
+        self.assertEqual(data["scene_count"], 3)
+        self.assertEqual([round(sc["start"]) for sc in data["scenes"]], [0, 4, 8])
+        self.assertEqual(len(data["highlights"]), 2)
+        self.assertClose(data["highlights_total"], 6.0, 0.6)
+        # the loudest pick must cover the 5-7 s tone
+        self.assertTrue(any(h["start"] <= 5.5 and h["end"] >= 6.5 for h in data["highlights"]), data["highlights"])
+        self.assertTrue(sheet.exists())
+        self.assertGreater(png_size(sheet)[0], 1200, "three tiles across")
+        # EDL feeds cut.py
+        segs = ",".join(edl.read_text().split())
+        out = OUT / "digest.mp4"
+        script("cut.py", src, "--segments", segs, "--accurate", "--fast", "-o", out)
+        self.assertClose(probe(str(out))["duration"], 6.0, 0.6)
+
+    def test_render_project(self):
+        proj = OUT / "project.json"
+        proj.write_text(json.dumps({
+            "output": "render_final.mp4",
+            "frame": {"aspect": "9:16", "width": 720, "fps": 30},
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:05"}, {"src": "source.mp4", "in": 6, "out": 10, "speed": 1.25}],
+            "transition": {"type": "fade", "duration": 0.5},
+            "captions": {"text": "cues.txt", "animate": "pop", "karaoke": True, "size": 26},
+            "overlays": [{"text": "render test", "position": "top-left", "start": 0.5, "end": 3, "fade": 0.3, "box": True}],
+            "audio": {"music": "long_ref.wav", "music_volume": -20, "duck": True, "fade_out": 1},
+            "loudness": {"lufs": -14, "tp": -1},
+            "export": {"preset": "reels"},
+            "check": {"platform": "reels"},
+        }), encoding="utf-8")
+        if not (OUT / "cues.txt").exists():
+            (OUT / "cues.txt").write_text("0:00-0:03 Hello world\n", encoding="utf-8")
+        plan = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        self.assertTrue(plan["dry_run"])
+        self.assertFalse((OUT / "render_final.mp4").exists())
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertEqual(data["stages"], ["clips", "join", "fit", "captions", "overlays", "audio", "loudness", "export", "check"])
+        self.assertTrue(data["check"]["ok"], data["check"])
+        m = probe(str(OUT / "render_final.mp4"))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 1920))
+        self.assertClose(m["duration"], 4 + 3.2 - 0.5, 0.4)
+        self.assertFalse((OUT / "render_final_work").exists(), "work dir removed when not kept")
+        init = OUT / "init.json"
+        script("render.py", "--init", init)
+        self.assertIn("clips", json.loads(init.read_text()))
+        # --stop-after keeps the intermediate
+        out = json.loads(script("render.py", proj, "--fast", "--stop-after", "join", "--work", OUT / "rw", "--json").stdout)
+        self.assertEqual(out["stages"], ["clips", "join"])
+        self.assertTrue(Path(out["output"]).exists())
+
+    def test_join_width_keeps_aspect(self):
+        out = OUT / "join_w.mp4"
+        script("join.py", self.src, self.src, "--transition", "none", "--width", "640", "--fast", "-o", out)
+        m = probe(str(out))["video"]
+        self.assertEqual((m["width"], m["height"]), (640, 360))
+
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):

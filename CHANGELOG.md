@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- `render.py` (new): declarative edits from one `project.json` (clips → join → silence → fit → captions → overlays → audio → loudness → export → check). `--init` writes a starter, `--dry-run` prints every command, `--stop-after` for iterating.
+- `scenes.py` (new): scene changes (scdet) and audio peaks, highlight proposals sized to a target duration, `--edl` for `cut.py --segments`, per-scene contact sheet.
+- `check.py` (new): pre-delivery compliance for youtube / shorts / reels / tiktok / x / linkedin / broadcast / podcast / custom: duration, aspect, resolution, fps, VFR, codec, pixel format, colour/HDR, file size, loudness, true peak, with the fix command per failure.
+- `evals/`: 24 natural-language routing tasks with expected scripts, plus a transcript scorer.
+- `.github/workflows/ci.yml`: 3-OS matrix, manual trigger only until the Actions quota resets.
+- `join.py`: `--width` alone keeps the first clip's aspect; `--fast` no longer breaks `export.py` presets.
+
 ## 0.4.1
 
 Fixes found by running `verify.py` on a real iPhone clip (Dolby Vision 8.4 / HLG, 10-bit HEVC, 60 fps VFR, portrait rotation, extra metadata tracks):

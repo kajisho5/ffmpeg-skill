@@ -102,6 +102,8 @@ def main() -> int:
         if target <= 0:
             die("target duration must be > 0")
         if args.method == "speed":
+            if src_dur <= 0 and STATE["dry_run"]:
+                src_dur = target  # planning against an intermediate that does not exist yet
             factor = src_dur / target  # >1 = speed up
             if factor > args.max_speed or factor < 1 / args.max_speed:
                 die(f"required speed factor {factor:.2f}x exceeds --max-speed {args.max_speed}x; use --method trim or raise the limit")

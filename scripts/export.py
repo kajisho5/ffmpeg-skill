@@ -22,7 +22,7 @@ import argparse
 import sys
 from typing import Dict, List
 
-from _common import add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run
+from _common import STATE, add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run
 
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
@@ -94,6 +94,8 @@ def main() -> int:
     video = list(p["video"])
     if args.crf is not None and "-crf" in video:
         video[video.index("-crf") + 1] = str(args.crf)
+    if STATE["fast"] and "-preset" in video:
+        video[video.index("-preset") + 1] = "veryfast"
     cmd += video
     if "-r" not in video:
         cmd += cfr_args(meta)
