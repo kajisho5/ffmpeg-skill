@@ -47,6 +47,14 @@ def collect(paths: List[str]) -> List[Path]:
 
 def step(name: str, argv: List[str], timeout: float) -> Dict:
     t0 = time.time()
+    if argv[0] == "__check_hdr__":
+        try:
+            v = probe(argv[1]).get("video") or {}
+            ok = bool(v.get("hdr")) and v.get("bit_depth", 8) >= 10
+            err = "" if ok else f"re-encode lost HDR: {v.get('color_transfer')}/{v.get('pix_fmt')}"
+        except SystemExit:
+            ok, err = False, "output missing"
+        return {"step": name, "ok": ok, "seconds": round(time.time() - t0, 1), "error": err}
     try:
         proc = subprocess.run([sys.executable, str(HERE / argv[0])] + argv[1:], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
         ok = proc.returncode == 0
@@ -110,7 +118,8 @@ def main() -> int:
                 plan.append(("overlay text", ["overlay.py", cut, "--text", "verify", "--position", "top-left", "-o", f"{stem}_ovl.mp4"] + fast))
                 plan.append(("look sheet", ["look.py", cut, "-o", f"{stem}_sheet.png"]))
                 if (meta.get("video") or {}).get("hdr"):
-                    plan.append(("color to-sdr", ["color.py", cut, "--to-sdr", "-o", f"{stem}_sdr.mp4"] + fast))
+                    plan.append(("color to-sdr", ["color.py", str(f), "--to-sdr", "-o", f"{stem}_sdr.mp4"] + fast))
+                    plan.append(("hdr preserved", ["__check_hdr__", f"{stem}_acc.mp4"]))
                 plan.append(("probe analyze", ["probe.py", cut, "--analyze"]))
             plan.append(("export x", ["export.py", cut, "--preset", "x", "-o", f"{stem}_x.mp4"]))
         if has_a and not args.quick:

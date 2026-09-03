@@ -19,7 +19,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
@@ -153,7 +153,7 @@ def main() -> int:
         cmd += ["-vf", ",".join(vf)]
     if af:
         cmd += ["-af", ",".join(af)]
-    cmd += x264_args(args.crf, args.preset)
+    cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta, args.fps) if not args.fps else []
     if has_audio:
         cmd += aac_args()

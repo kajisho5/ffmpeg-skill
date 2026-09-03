@@ -16,7 +16,7 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 
 def parse_segments(spec: str) -> List[Tuple[float, float]]:
@@ -43,7 +43,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     meta = meta or probe(src)
     if reencode:
         cmd = ffmpeg_base() + ["-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}"]
-        cmd += x264_args(crf, preset) + cfr_args(meta) + aac_args() + ["-avoid_negative_ts", "make_zero", dst]
+        cmd += video_args(meta, crf, preset) + cfr_args(meta) + aac_args() + ["-avoid_negative_ts", "make_zero", dst]
     else:
         cmd = ffmpeg_base() + ["-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}", "-c", "copy", "-avoid_negative_ts", "make_zero", dst]
     proc = run(cmd, check=False)
@@ -126,7 +126,7 @@ def main() -> int:
             proc = run(cmd, check=False)
             if proc.returncode != 0:
                 info("concat with stream copy failed, re-encoding the join")
-                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + x264_args(args.crf, args.preset) + cfr_args(meta) + aac_args() + [output]
+                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + video_args(meta, args.crf, args.preset) + cfr_args(meta) + aac_args() + [output]
                 run(cmd)
 
     result = probe(output)

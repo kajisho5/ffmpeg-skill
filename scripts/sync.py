@@ -26,7 +26,7 @@ import subprocess
 import sys
 from typing import List
 
-from _common import add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, x264_args
+from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, x264_args
 
 SR = 8000  # decode sample rate
 
@@ -253,14 +253,14 @@ def main() -> int:
             if proc.returncode != 0:
                 cmd = [c for c in cmd if c != "copy"]
                 idx = cmd.index("-c:v"); del cmd[idx]
-                cmd = cmd[:-1] + x264_args(args.crf) + [output]
+                cmd = cmd[:-1] + video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) + [output]
                 run(cmd)
         else:
             if head_trim > 0 and not drift_af:
                 cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second, "-c", "copy", "-avoid_negative_ts", "make_zero", output]
                 proc = run(cmd, check=False)
                 if proc.returncode != 0:
-                    cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + (x264_args(args.crf) if has_video else []) + audio_codec_for(output) + [output]
+                    cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + (video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) if has_video else []) + audio_codec_for(output) + [output]
                     run(cmd)
             else:
                 cmd = ffmpeg_base()
@@ -278,7 +278,7 @@ def main() -> int:
                         vf.append(f"setpts=PTS/{drift_ratio:.9f}")
                     if vf:
                         cmd += ["-vf", ",".join(vf)]
-                    cmd += x264_args(args.crf)
+                    cmd += video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf)
                 if af_parts:
                     cmd += ["-af", ",".join(af_parts)]
                 cmd += audio_codec_for(output) + [output]

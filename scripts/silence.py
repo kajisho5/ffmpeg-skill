@@ -16,7 +16,7 @@ import re
 import sys
 from typing import List, Tuple
 
-from _common import aac_args, add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, print_json, probe, require_tool, run, x264_args
+from _common import video_args, aac_args, add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, print_json, probe, require_tool, run, x264_args
 
 SIL_RE = re.compile(r"silence_(start|end): ([0-9.]+)")
 
@@ -110,7 +110,7 @@ def main() -> int:
     af = f"aselect='{expr}',asetpts=N/SR/TB"
     cmd = ffmpeg_base() + ["-i", args.input]
     if meta.get("video"):
-        cmd += ["-vf", vf] + x264_args(args.crf, args.preset) + cfr_args(meta)
+        cmd += ["-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += ["-af", af] + aac_args() + [output]
     run(cmd)
     r = probe(output)

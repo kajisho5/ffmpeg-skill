@@ -99,7 +99,7 @@ def main() -> int:
         if proc.returncode != 0:
             # some codecs cannot carry retagged colour info without a bitstream filter; fall back to re-encode
             info("stream copy could not rewrite tags, re-encoding")
-            cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", "0:a?"] + x264_args(args.crf, args.preset, keep_bt709=False)
+            cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", "0:a:0?"] + x264_args(args.crf, args.preset, keep_bt709=False)
             cmd += ["-colorspace", tags[0], "-color_primaries", tags[1], "-color_trc", tags[2]] + (aac_args() if has_audio else []) + [output]
             run(cmd)
         info(f"wrote {output} (tags -> {args.retag})")
@@ -124,7 +124,7 @@ def main() -> int:
         output = args.output or default_output(args.input, "lut")
         tag = "lut"
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", "0:a?"]
+    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", "0:a:0?"]
     cmd += x264_args(args.crf, args.preset) + cfr_args(meta) + (aac_args() if has_audio else []) + [output]
     run(cmd)
     r = probe(output)

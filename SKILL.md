@@ -263,10 +263,14 @@ trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`.
   After `sync.py`, verify by running it again on the output: offset (and drift
   ppm with `--fix-drift`) should be ~0. Recordings longer than ~10 minutes from
   separate devices: always use `--fix-drift`.
-- **Colour.** All H.264/H.265 outputs are tagged BT.709 and `yuv420p`. When
-  `probe.py` reports `hdr: true` (`hdr_format` HDR10/PQ, HLG or BT.2020), run
-  `color.py --to-sdr` **first**; other scripts would tag the HDR picture as
-  BT.709 and it would look flat and desaturated (`export.py` warns about this).
+- **Colour.** SDR outputs are H.264 tagged BT.709 `yuv420p`. When `probe.py`
+  reports `hdr: true` (HDR10/PQ, HLG, Dolby Vision, BT.2020), every editing
+  script keeps the output HDR (HEVC Main10, source colour tags) so nothing is
+  silently flattened. Decide with the user: keep HDR (fine for YouTube/phones)
+  or run `color.py --to-sdr` first for SDR-only destinations, LUT work or
+  H.264 deliverables. `export.py` platform presets are SDR and warn on HDR
+  input. iPhone `.mov` files also carry timecode/metadata tracks; scripts map
+  only the first audio track, so extra tracks are dropped on re-encode.
   For Log footage (S-Log, V-Log, C-Log: looks grey and low-contrast but is
   tagged SDR) run `probe.py --analyze`; `looks_like_log: true` means apply the
   manufacturer's `.cube` with `color.py --lut` before anything else. Keep

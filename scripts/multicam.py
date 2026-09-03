@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common import aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, x264_args
 from sync import measure_offset
 
 
@@ -154,7 +154,8 @@ def main() -> int:
         w, h = h, w
     fps = args.fps or v0.get("fps") or 30.0
     fps = round(fps) if abs(fps - round(fps)) < 0.02 else fps
-    geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:g},format=yuv420p"
+    pixfmt = "yuv420p10le" if v0.get("hdr") else "yuv420p"
+    geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:g},format={pixfmt}"
 
     cmd = ffmpeg_base()
     for p in args.inputs:
@@ -184,7 +185,7 @@ def main() -> int:
 
     output = args.output or default_output(args.inputs[0], "multicam", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
-    cmd += x264_args(args.crf, args.preset) + aac_args() + ["-shortest", output]
+    cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + ["-shortest", output]
     run(cmd)
     r = probe(output)
     info(f"wrote {output} ({r['duration']:.3f}s, {len(filled)} cuts, audio from input {a})")
