@@ -124,6 +124,22 @@ More examples: [examples/README.md](examples/README.md). To see everything run e
 
 All scripts: Python 3.9+, standard library only, `--help`, non-zero exit + stderr message on failure.
 
+## Measured, not assumed
+
+`tests/corpus.py` downloads public real-device footage (GoPro, DJI, iPhone incl. Dolby Vision, Android screen recordings, HDR10, 24p, Tears of Steel) and runs the toolchain on it; `tests/bench_sync.py`, `bench_silence.py` and `bench_scenes.py` score the algorithms against known ground truth.
+
+| What | Result (0.8.0, local ffmpeg 6.1) |
+|---|---|
+| Real-device corpus, 10 files | 92 verify steps, all pass after fixes |
+| sync.py, ±30 s offsets, gain/noise/EQ, real dialogue+music | 120 s windows (the documented rule): 40/40 within 10 ms, max 1.1 ms. 60 s stress windows: 95 % within 10 ms, 4 of 5 misses flagged by confidence |
+| silence.py, 20 cases, known gaps | 0 missed gaps, ≤ 1 ms leftover silence |
+| scenes.py, 53 hard cuts between single takes (GoPro/DJI/iPhone/…) | precision 0.95, recall 1.00, F1 0.97 at the default threshold |
+
+```bash
+python3 tests/corpus.py --fetch --verify     # ~1.4 GB download, then verify (slow on 4K)
+python3 tests/bench_sync.py --cases 100
+```
+
 ## MCP
 
 ```json

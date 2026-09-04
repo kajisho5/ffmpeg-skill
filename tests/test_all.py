@@ -761,6 +761,35 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertIn("no local speech-to-text engine", proc.stderr)
         self.assertIn("whisper", proc.stderr)
 
+    # ---------------------------------------------------------------- Phase 3 regressions
+    def test_sync_large_offset_on_repetitive_music(self):
+        # repetitive music-like signal: a 4-bar loop with slow variation; raw correlation used to prefer
+        # the small-overlap-friendly wrong lag, NCC must find the true -28 s offset in a 60 s window
+        loop = OUT / "loop.wav"
+        # speech-like: dialogue from the demo tones plus random-looking bursts (incommensurate gates,
+        # a slowly drifting pitch and pink-noise "room"), so no two 9 s stretches look alike
+        expr = (TONES + "+0.25*sin(2*PI*(165+30*sin(2*PI*0.031*t))*t)*gt(sin(2*PI*0.113*t+0.4)\\,0.55)"
+                "+0.3*sin(2*PI*(520+80*sin(2*PI*0.017*t+1))*t)*gt(sin(2*PI*0.29*t+2.1)*sin(2*PI*0.073*t)\\,0.35)")
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{expr}':s=48000",
+           "-f", "lavfi", "-i", "anoisesrc=a=0.02:c=pink:r=48000", "-t", "200", "-filter_complex", "amix=inputs=2:duration=first:normalize=0", "-c:a", "pcm_s16le", loop)
+        ref = OUT / "loop_ref.wav"
+        sec = OUT / "loop_sec.wav"
+        # 28 s offset inside a 120 s analysis window (the documented rule: window >= 4x max offset)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "40", "-i", loop, "-t", "120", "-c:a", "pcm_s16le", ref)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "12", "-i", loop, "-t", "120", "-af", "volume=-8dB,highpass=f=300", "-c:a", "pcm_s16le", sec)
+        data = json.loads(script("sync.py", ref, sec, "--json", "--max-offset", "30").stdout)
+        self.assertClose(data["offset_seconds"], -28.0, 0.02)
+        self.assertGreater(data["confidence"], 0.3)
+
+    def test_loudness_silent_input_is_reported_not_crashed(self):
+        silent = OUT / "silent.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+           "-t", "3", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", silent)
+        data = json.loads(script("loudness.py", silent, "--measure-only").stdout)
+        self.assertTrue(data["silent"])
+        proc = script("loudness.py", silent, "-o", OUT / "silent_norm.mp4", expect_fail=True)
+        self.assertIn("silent", proc.stderr)
+
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):

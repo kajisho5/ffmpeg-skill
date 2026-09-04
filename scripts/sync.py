@@ -92,6 +92,14 @@ def ifft(a: List[complex]) -> List[complex]:
 
 
 def cross_correlate(ref: List[float], other: List[float], max_lag: int):
+    """Normalised cross-correlation over the overlapping region only.
+
+    The raw FFT correlation sum grows with the overlap length, so with a 60 s window a
+    correct 28 s offset (32 s overlap) loses to a wrong 2 s offset (58 s overlap) on
+    music-like material. Dividing each lag by the energy of the overlapping parts
+    (prefix sums, O(1) per lag) makes lags comparable and turns the peak value into a
+    real similarity score in 0..1 that doubles as the confidence.
+    """
     n = 1
     while n < len(ref) + len(other):
         n <<= 1
@@ -99,15 +107,50 @@ def cross_correlate(ref: List[float], other: List[float], max_lag: int):
     fb = fft([complex(x) for x in other] + [0j] * (n - len(other)))
     prod = [x * y.conjugate() for x, y in zip(fa, fb)]
     corr = ifft(prod)
-    # corr[k] = sum ref[i+k]*other[i]  -> lag k means 'other' is delayed by k relative to ref? see below
-    best_lag, best_val = 0, -float("inf")
+    # prefix sums of squares for overlap energy
+    def prefix(v: List[float]) -> List[float]:
+        out = [0.0]
+        acc = 0.0
+        for x in v:
+            acc += x * x
+            out.append(acc)
+        return out
+    pr, po = prefix(ref), prefix(other)
+    lr, lo = len(ref), len(other)
     max_lag = min(max_lag, n // 2 - 1)
+    best_lag, best_val, second = 0, -float("inf"), -float("inf")
+    # ignore lags with less than 35 % overlap: with the documented rule (analysis window >= 4x the
+    # largest expected offset) true offsets always keep >= 75 % overlap, while short-overlap lags are
+    # where coincidental matches on quasi-periodic material (music, tone beds) live
+    min_overlap = max(10, int(0.35 * min(lr, lo)))
+    scores = []
     for lag in range(-max_lag, max_lag + 1):
-        val = corr[lag % n].real
+        # corr[lag] = sum_i ref[i] * other[i - lag]  -> ref index range and other index range overlap:
+        r0, r1 = max(0, lag), min(lr, lo + lag)
+        if r1 - r0 < min_overlap:
+            continue
+        e_ref = pr[r1] - pr[r0]
+        e_oth = po[r1 - lag] - po[r0 - lag]
+        denom = math.sqrt(e_ref * e_oth)
+        if denom <= 0:
+            continue
+        val = corr[lag % n].real / denom
+        # mild preference for longer overlaps: a perfect match over 55 % of the window must not tie
+        # with a perfect match over 100 % (quasi-periodic material). Exponent 0.5: with the window rule (>= 4x offset) a true match keeps >= 75 % overlap (x0.87) while a coincidental 55 % match drops to x0.74; keeps large true
+        # offsets (28 s in 60 s = 53 % overlap -> x0.94) competitive while still breaking exact ties.
+        val *= ((r1 - r0) / min(lr, lo)) ** 0.5
+        scores.append((val, lag))
         if val > best_val:
+            second = best_val
             best_val, best_lag = val, lag
-    energy = math.sqrt(sum(x * x for x in ref) * sum(x * x for x in other)) or 1.0
-    return best_lag, best_val / energy
+        elif val > second and abs(lag - best_lag) > 5:
+            second = val
+    # confidence: peak similarity, penalised when a distant runner-up is nearly as good
+    conf = max(0.0, min(1.0, best_val))
+    if second > -float("inf") and best_val > 0:
+        margin = (best_val - second) / best_val
+        conf *= min(1.0, 0.5 + margin)
+    return best_lag, conf
 
 
 def refine(ref_s: List[float], oth_s: List[float], coarse_offset: float, fine_step: int, window_s: float) -> float:
