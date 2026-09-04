@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.5 — audio-only inputs, spelled out
+
+- SKILL.md: "Audio-only files" section. WAV, FLAC, MP3, M4A/AAC, OGG and Opus go through `probe`, `cut`, `silence`, `loudness`, `audio`, `sync` and `check --platform podcast` unchanged; the output extension picks the codec; `Look: not needed`; picture scripts refuse with "input has no video stream". Six audio-only request→script rows.
+- Evals: six audio-only agent prompts (`evals/agent_prompts_audio.json`), grader checks that audio-only runs use no picture script and mark the visual check not needed, routing tasks 25–29, two audio-only trigger cases. First run: 6/6 on every criterion.
+- Test for WAV/M4A/MP3 through the audio scripts (56 tests).
+- GitHub Sponsors: `.github/FUNDING.yml` and a Support section in the README.
+
 ## 0.8.4 — three repeats, independent grading
 
 The 24-prompt evaluation was run three times (72 agent runs, `evals/results/iteration-2-4.json`) and every run was graded by a separate model (`evals/results/iteration-2-4-independent-grades.json`): routing 72/72, honest 72/72, user's language 72/72, report format 71/72, visual check whenever the picture changed 24/24, mean quality 4.9 / 5. Script choices were identical across repeats; only defaults (crop vs pad, silence margin) varied.
