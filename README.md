@@ -18,7 +18,7 @@ npx ffmpeg-skill
 - **Lossless when possible** — cuts and joins use stream copy by default; re-encoding only happens when it must (frame-accurate cuts, filters, format changes).
 - **Cut & join** segments with `mm:ss` / `hh:mm:ss.ms` times.
 - **Declarative edits** — describe the whole edit in a `project.json` (clips, transitions, captions, overlays, music, loudness, export, check) and re-render after every tweak.
-- **MCP server** — `mcp/server.py` exposes every script as an MCP tool over stdio (stdlib only) for Claude Desktop, Cursor or any MCP client.
+- **MCP server** — `mcp/server.py` exposes every script as an MCP tool over stdio (stdlib only) for Claude Desktop, Cursor or any MCP client; tool names, order and `inputSchema` are derived from the contract, so the MCP surface follows the scripts.
 - **Batch / watch folder** — one recipe over a whole shoot with a content-hash cache; re-runs only touch what changed.
 - **Optional local transcription** — `caption.py --transcribe` uses whisper.cpp / faster-whisper / openai-whisper when present; never required.
 - **Brand kit** — one `brand.json` (fonts, colours, logo, safe margins, caption style) applied by captions, overlays, graphics and projects.
@@ -155,7 +155,7 @@ For agent frameworks that treat ffmpeg-skill as an execution skill: `contract --
 {"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["/Users/you/.claude/skills/ffmpeg-skill/mcp/server.py"]}}}
 ```
 
-`python3 mcp/server.py --list` prints the tools (the same set as `contract --json`); `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
+`python3 mcp/server.py --list` prints the tools (the same set, order and schemas as `contract --json`: the contract is the source of truth, MCP is the transport); `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
 
 ## Requirements
 

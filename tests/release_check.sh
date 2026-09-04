@@ -68,7 +68,16 @@ listed = subprocess.run([sys.executable, sys.argv[2] + "/mcp/server.py", "--list
 names = {l.split()[0] for l in listed.splitlines() if l.strip()}
 want = {t["name"] for t in doc["tools"]}
 assert names == want, f"MCP {sorted(names ^ want)} differs from contract"
-print(f"   ok ({len(names)} tools)")
+# tools/list inputSchema must be the translation of the installed contract's ToolSpecs
+sys.path.insert(0, sys.argv[2] + "/scripts")
+import _contract
+req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n"
+resp = json.loads(subprocess.run([sys.executable, sys.argv[2] + "/mcp/server.py"], input=req, stdout=subprocess.PIPE, text=True, check=True).stdout.splitlines()[0])
+mcp_tools = resp["result"]["tools"]
+assert [t["name"] for t in mcp_tools] == [t["name"] for t in doc["tools"]], "MCP order differs from contract"
+for entry, spec in zip(mcp_tools, doc["tools"]):
+    assert json.dumps(entry["inputSchema"], sort_keys=True) == json.dumps(_contract.mcp_input_schema(spec), sort_keys=True), f"{entry['name']}: inputSchema not derived from the contract"
+print(f"   ok ({len(names)} tools, inputSchema derived from the contract)")
 PY
 python3 "$INST/scripts/_contract.py" doctor >/dev/null || { echo "FAIL: doctor reports missing required capabilities"; python3 "$INST/scripts/_contract.py" doctor; exit 1; }
 echo "   doctor ok"

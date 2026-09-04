@@ -260,6 +260,125 @@ class ContractTests(unittest.TestCase):
         resp = json.loads(proc.stdout.strip().splitlines()[0])
         self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(self.tools))
 
+    # ------------------------------------------------------------------ MCP inputSchema derived from the contract
+    def _rpc(self, requests, root=ROOT):
+        text = "".join(json.dumps(r) + "\n" for r in requests)
+        proc = subprocess.run([sys.executable, str(Path(root) / "mcp" / "server.py")], input=text, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return [json.loads(line) for line in proc.stdout.strip().splitlines()]
+
+    @staticmethod
+    def _norm(obj):
+        return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+    def test_mcp_input_schema_equals_translated_contract_schema(self):
+        listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]["result"]["tools"]
+        self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"]], "MCP order == contract order")
+        for entry in listed:
+            spec = self.tools[entry["name"]]
+            self.assertEqual(self._norm(entry["inputSchema"]), self._norm(_contract.mcp_input_schema(spec)), entry["name"])
+            self.assertEqual(self._norm(entry), self._norm(_contract.mcp_tool(spec)))
+            schema = entry["inputSchema"]
+            self.assertFalse(schema["additionalProperties"])
+            self.assertIn("argv", schema["properties"])
+            for dest, prop in spec["input_schema"]["properties"].items():
+                self.assertIn(dest, schema["properties"], f"{entry['name']}.{dest} lost in translation")
+                self.assertEqual(schema["properties"][dest]["type"], prop["type"])
+                for key in ("enum", "default"):
+                    if key in prop:
+                        self.assertEqual(schema["properties"][dest][key], prop[key])
+                self.assertNotIn("cli", schema["properties"][dest])
+            if spec["input_schema"]["required"] or spec["input_schema"].get("mutually_exclusive"):
+                self.assertEqual(schema["anyOf"][0], {"required": ["argv"]})
+                self.assertEqual(schema["anyOf"][1].get("required", []), spec["input_schema"]["required"])
+        # a group shows up as pairwise exclusion plus a required-one-of
+        color = next(t for t in listed if t["name"] == "color")["inputSchema"]["anyOf"][1]
+        self.assertIn({"not": {"required": ["to_sdr", "lut"]}}, color["allOf"])
+        self.assertIn({"required": ["to_sdr"]}, color["anyOf"])
+        # no hand-written schema or tool table is left in the transport
+        src = (ROOT / "mcp" / "server.py").read_text(encoding="utf-8")
+        self.assertNotIn("TOOLS:", src)
+        self.assertNotIn('"inputSchema": {"type"', src)
+
+    def test_mcp_tools_list_is_deterministic(self):
+        a = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]
+        b = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]
+        self.assertEqual(json.dumps(a), json.dumps(b), "tools/list must be byte-identical across processes")
+        c1 = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout
+        c2 = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout
+        self.assertEqual(c1, c2, "contract --json --static must be byte-identical")
+
+    def test_mcp_schema_drift_follows_the_scripts(self):
+        """Add a public script, remove one, change a parser: MCP must follow without any edit to mcp/."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(SCRIPTS, root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(ROOT / "mcp", root / "mcp", ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copy(ROOT / "package.json", root / "package.json")
+            (root / "scripts" / "cut.py").unlink()
+            # a new public script without metadata is reported, not silently dropped or guessed
+            (root / "scripts" / "zzztool.py").write_text("#!/usr/bin/env python3\nimport argparse\ndef main():\n    argparse.ArgumentParser().parse_args()\nif __name__ == '__main__':\n    main()\n", encoding="utf-8")
+            err = self._rpc([{"jsonrpc": "2.0", "id": 0, "method": "tools/list"}], root=root)[0]
+            self.assertIn("no TOOL_META entry", err["error"]["message"])
+            contract_py = (root / "scripts" / "_contract.py").read_text(encoding="utf-8")
+            contract_py = contract_py.replace('TOOL_META: Dict[str, Dict[str, Any]] = {', 'TOOL_META: Dict[str, Dict[str, Any]] = {\n    "zzztool": dict(role="analysis", inputs=["x"], outputs=["y"], required=["ffprobe"], optional=[], video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=False, idempotency="bit_exact", deterministic=True),', 1)
+            (root / "scripts" / "_contract.py").write_text(contract_py, encoding="utf-8")
+            (root / "scripts" / "zzztool.py").write_text(
+                '#!/usr/bin/env python3\n"""Drift probe tool."""\nimport argparse, sys, os\n'
+                'sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\nfrom _common import add_common, apply_common, emit\n'
+                'def main():\n    ap = argparse.ArgumentParser(description=__doc__)\n    ap.add_argument("input")\n'
+                '    ap.add_argument("--knob", type=int, default=3, choices=[1, 2, 3], help="a knob")\n    add_common(ap)\n'
+                '    args = ap.parse_args()\n    apply_common(args)\n    emit(None, knob=args.knob)\n    return 0\n'
+                'if __name__ == "__main__":\n    sys.exit(main())\n', encoding="utf-8")
+            fit = (root / "scripts" / "fit.py").read_text(encoding="utf-8")
+            fit = fit.replace('    add_common(ap)', '    ap.add_argument("--drift-flag", action="store_true", help="added for the drift test")\n    add_common(ap)', 1)
+            (root / "scripts" / "fit.py").write_text(fit, encoding="utf-8")
+            tools = {t["name"]: t for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], root=root)[0]["result"]["tools"]}
+            self.assertNotIn("cut", tools, "removed script still exposed")
+            self.assertIn("zzztool", tools, "new public script not exposed")
+            self.assertEqual(tools["zzztool"]["inputSchema"]["properties"]["knob"], {"type": "integer", "description": "a knob", "enum": [1, 2, 3], "default": 3})
+            self.assertIn("drift_flag", tools["fit"]["inputSchema"]["properties"], "parser change not reflected")
+            self.assertEqual(list(tools), sorted(tools), "order stays sorted after changes")
+            # the temporary tool also runs through the derived mapping
+            call = self._rpc([{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "zzztool", "arguments": {"input": "x", "knob": 2}}}], root=root)[0]
+            self.assertEqual(call["result"]["structuredContent"]["knob"], 2)
+            unknown = self._rpc([{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "_contract", "arguments": {}}}], root=root)[0]
+            self.assertTrue(unknown["result"]["isError"], "internal scripts are not callable")
+
+    def test_mcp_round_trips_built_from_the_derived_schema(self):
+        listed = {t["name"]: t["inputSchema"] for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]["result"]["tools"]}
+        project = self.out("mcp_project.json")
+        project.write_text(json.dumps({"output": str(self.out("mcp_render.mp4")), "clips": [{"src": str(self.src), "in": 0, "out": 2}], "export": {"preset": "x"}}), encoding="utf-8")
+        calls = {
+            "probe": {"inputs": [str(self.wav)]},
+            "cut": {"input": str(self.src), "start": "1", "end": "3", "output": str(self.out("mcp_cut.mp4"))},
+            "silence": {"input": str(self.src), "list": True},
+            "loudness": {"input": str(self.wav), "lufs": -16.0, "tp": -1.5, "output": str(self.out("mcp_loud.wav"))},
+            "export": {"input": str(self.src), "preset": "x", "fast": True, "output": str(self.out("mcp_export.mp4"))},
+            "render": {"project": str(project), "fast": True},
+        }
+        reqs = []
+        for i, (name, args) in enumerate(calls.items(), start=10):
+            schema = listed[name]
+            for key, val in args.items():
+                self.assertIn(key, schema["properties"], f"{name}: {key} not in the derived schema")
+                jtype = schema["properties"][key]["type"]
+                py = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list}[jtype]
+                self.assertIsInstance(val, py, f"{name}.{key}")
+            for req in schema.get("anyOf", [{}, {}])[1].get("required", []):
+                self.assertIn(req, args, f"{name}: required {req} missing")
+            reqs.append({"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": name, "arguments": args}})
+        for name, resp in zip(calls, self._rpc(reqs)):
+            self.assertNotIn("error", resp, name)
+            self.assertFalse(resp["result"].get("isError"), f"{name}: {resp['result']['content'][0]['text'][:300]}")
+            doc = resp["result"]["structuredContent"]
+            if name == "probe":
+                self.assertEqual(doc["audio"]["codec"], "pcm_s16le")
+            else:
+                self.assertEqual(doc["status"], "completed", name)
+                if doc.get("output"):
+                    self.assertTrue(Path(doc["output"]).exists(), name)
+
     def test_installer_payload_matches_contract(self):
         js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
         payload = re.search(r"const PAYLOAD = \[(.*?)\];", js).group(1)

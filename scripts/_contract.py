@@ -372,6 +372,9 @@ def doctor() -> Dict[str, Any]:
 
 # ----------------------------------------------------------------------------- contract
 def tool_spec(name: str, version: str) -> Dict[str, Any]:
+    if name not in TOOL_META:
+        # a public script without metadata is drift: fail loudly instead of guessing its role or capabilities
+        raise RuntimeError(f"scripts/{name}.py is public but has no TOOL_META entry in scripts/_contract.py; add one (or prefix the file with '_')")
     meta = TOOL_META[name]
     parser = _capture_parser(HERE / f"{name}.py")
     schema = input_schema(parser)
@@ -416,6 +419,74 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "idempotency_hint": meta["idempotency"],
         "mcp": {"tool": name, "positional": schema["positional"], "argument_exceptions": exceptions},
     }
+
+
+# ----------------------------------------------------------------------------- MCP derivation
+# tools that print JSON without --json (probe) or whose primary output is a file path (look): the transport
+# does not append --json for them (stated in invocation.structured.argument_mapping.json)
+MCP_JSON_EXEMPT = ("look", "probe")
+MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
+                       "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
+                       "Media paths must be absolute.")
+
+
+def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate a ToolSpec.input_schema into the JSON Schema an MCP tools/list entry carries.
+
+    Deterministic and lossless where JSON Schema can express argparse semantics:
+      - properties keep type / enum / default / description / items; the ffmpeg-skill-only keys
+        (`cli`, `common`) are dropped, positionals get a "(positional N)" prefix in the description;
+      - required fields, mutually exclusive groups (`not required [a, b]` per pair) and required
+        groups (`anyOf required`) apply to the structured branch;
+      - the raw-argv compatibility branch (`argv` present) lifts those constraints, which JSON Schema
+        expresses as a top-level anyOf of the two branches.
+    Not expressible and therefore documented rather than encoded: which keys the tool ignores when
+    `argv` is given (all of them), and argparse's `%(default)s` help interpolation (already applied).
+    """
+    src = spec["input_schema"]
+    props: Dict[str, Any] = {}
+    positional = list(src.get("positional", []))
+    for dest in sorted(src["properties"]):
+        p = src["properties"][dest]
+        out: Dict[str, Any] = {"type": p["type"]}
+        if p["type"] == "array":
+            out["items"] = dict(p.get("items", {"type": "string"}))
+        desc = p.get("description", "")
+        if dest in positional:
+            desc = f"(positional {positional.index(dest) + 1}) {desc}".strip()
+        if desc:
+            out["description"] = desc
+        for key in ("enum", "default"):
+            if key in p:
+                out[key] = p[key]
+        props[dest] = out
+    props["argv"] = {"type": "array", "items": {"type": "string"}, "description": "raw CLI arguments (non-canonical compatibility path; when present every other key is ignored)"}
+    structured: Dict[str, Any] = {}
+    if src.get("required"):
+        structured["required"] = list(src["required"])
+    all_of: List[Dict[str, Any]] = []
+    for group in src.get("mutually_exclusive", []):
+        for i, a in enumerate(group):
+            for b in group[i + 1:]:
+                all_of.append({"not": {"required": [a, b]}})
+    if all_of:
+        structured["allOf"] = all_of
+    one_of = [[{"required": [d]} for d in group] for group in src.get("one_of_required", [])]
+    if one_of:
+        structured["anyOf"] = one_of[0] if len(one_of) == 1 else [{"allOf": [{"anyOf": g} for g in one_of]}]
+    schema: Dict[str, Any] = {"type": "object", "properties": props, "additionalProperties": False}
+    if structured:
+        schema["anyOf"] = [{"required": ["argv"]}, structured]
+    return schema
+
+
+def mcp_tool(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """The MCP tools/list entry for a ToolSpec: name, description and the derived inputSchema."""
+    return {"name": spec["name"], "description": f"{spec['description']} {MCP_STRUCTURED_NOTE}".strip(), "inputSchema": mcp_input_schema(spec)}
+
+
+def mcp_tools(detect: bool = False) -> List[Dict[str, Any]]:
+    return [mcp_tool(spec) for spec in build(detect=detect)["tools"]]
 
 
 def build(detect: bool = True) -> Dict[str, Any]:
