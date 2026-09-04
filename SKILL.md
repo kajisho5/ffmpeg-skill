@@ -49,7 +49,8 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    crops keeping the subject, colours not washed out, transitions landing
    where intended. The job is not finished until the report's `Look:` line
    names that PNG; a probe alone cannot see a caption sitting on someone's
-   face. Audio-only jobs (sync, loudness, silence) write `Look: not needed`.
+   face. Audio-only jobs (sync, loudness, silence, or any job whose input is
+   an audio file) write `Look: not needed`; there is no picture to inspect.
 
 
 ## Before you run anything: what to ask, what to assume
@@ -111,6 +112,34 @@ Do not ask for things `probe.py` can tell you.
 | "TikTok-style captions with the words popping / highlighted" | `caption.py input.mp4 --text cues.txt --animate pop --karaoke` |
 | "it's a phone video with variable frame rate" | nothing extra: every re-encoding script conforms VFR to constant fps automatically; `fit.py --fps 30` to pick the rate |
 
+
+## Audio-only files
+
+Audio files are a first-class input, not a special case. `probe.py`, `cut.py`,
+`silence.py`, `loudness.py`, `audio.py`, `sync.py` and `check.py --platform
+podcast` all accept WAV, FLAC, MP3, M4A/AAC, OGG and Opus (any container ffmpeg
+can read) and write the codec that fits the output extension, so the same
+commands work with `talk.wav` in place of `talk.mp4`. What changes:
+
+- The output extension picks the format: `-o out.mp3` converts, `-o out.wav`
+  keeps PCM, `-o out.m4a` writes AAC. `audio.py in.wav -o out.mp3` with no
+  other flag is a plain conversion.
+- `cut.py` stream-copies audio too, so trims are lossless unless the format
+  cannot be cut on a packet boundary.
+- `Look: not needed` in the report; `Check:` still applies for loudness
+  (`check.py file.wav --platform podcast` measures LUFS and true peak).
+- Scripts that need a picture (`fit`, `caption`, `overlay`, `graphics`,
+  `color`, `export`, `join`, `scenes`, `look`) refuse an audio file with
+  "input has no video stream". Say so instead of forcing a video wrapper.
+
+| User says (audio file) | Do |
+|-----------|----|
+| "normalise this WAV to -14 LUFS", "podcast levels" | `loudness.py talk.wav -I -14 --tp -1 -o talk_norm.wav` (`-I -16 --tp -1.5` for podcasts) |
+| "remove the silence from this recording" | `silence.py talk.wav -o talk_tight.wav` |
+| "clean up the noise in this M4A" | `audio.py talk.m4a --voice -o talk_clean.m4a` (speech) or `--denoise` |
+| "convert this WAV to MP3" | `audio.py talk.wav -o talk.mp3` |
+| "trim this audio from 00:30 to 02:00" | `cut.py talk.wav --start 0:30 --end 2:00 -o talk_cut.wav` |
+| "is this loud enough for Apple Podcasts?" | `check.py talk.m4a --platform podcast` |
 
 ## Report format
 

@@ -1,0 +1,62 @@
+[
+ {
+  "id": "a01-lufs-wav",
+  "lang": "en",
+  "prompt": "Normalize /home/user/ffmpeg-skill/tests/out/lavmic.wav to -14 LUFS. Save to OUTDIR.",
+  "expect": [
+   "loudness"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "a02-silence-m4a",
+  "lang": "en",
+  "prompt": "Remove the silence from this recording: /home/user/ffmpeg-skill/tests/out/gappy.m4a. Save to OUTDIR.",
+  "expect": [
+   "silence"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "a03-clean-m4a",
+  "lang": "en",
+  "prompt": "Clean up the noise in this M4A: /home/user/ffmpeg-skill/tests/out/gappy.m4a. Save to OUTDIR.",
+  "expect": [
+   "audio"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "a04-wav-to-mp3",
+  "lang": "en",
+  "prompt": "Convert /home/user/ffmpeg-skill/tests/out/lavmic.wav to MP3. Save to OUTDIR.",
+  "expect": [
+   "audio"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "a05-trim-wav",
+  "lang": "en",
+  "prompt": "Trim /home/user/ffmpeg-skill/tests/out/lavmic.wav from 00:02 to 00:06. Save to OUTDIR.",
+  "expect": [
+   "cut"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "a06-podcast-ja",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/lavmic.wav をポッドキャスト用に音量を整えて m4a で書き出して。OUTDIR に保存。",
+  "expect": [
+   "loudness"
+  ],
+  "refuse": false,
+  "audio_only": true
+ }
+]

@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Grade iteration-2: routing, refusal honesty, language, report format, visual check, command count."""
+"""Grade agent runs: routing, refusal honesty, language, report format, visual check, command count.
+
+    python3 evals/grade_runs_24.py ITERATION_DIR [PROMPTS_JSON]
+
+PROMPTS_JSON defaults to evals/agent_prompts_24.json; pass evals/agent_prompts_audio.json for the
+audio-only set. Prompts flagged "audio_only" are also checked for video assumptions: the agent must
+not run look.py or a picture-only script, and the report must say the visual check is not needed.
+"""
 import json, re, sys
 from pathlib import Path
 W = Path(__file__).resolve().parent
-P = {p["id"]: p for p in json.loads((W.parent / "agent_prompts_24.json").read_text())}
-it = W / (sys.argv[1] if len(sys.argv) > 1 else "iteration-2")
+PROMPTS = Path(sys.argv[2]) if len(sys.argv) > 2 else W / "agent_prompts_24.json"
+P = {p["id"]: p for p in json.loads(PROMPTS.read_text())}
+it = Path(sys.argv[1]) if len(sys.argv) > 1 else W / "iteration-2"
+VIDEO_ONLY = {"fit", "caption", "overlay", "graphics", "color", "export", "join", "scenes", "look"}
 JA = re.compile(r"[぀-ヿ一-鿿]")
 PICTURE = {"e01-reel","e03-logo","e07-hdr","e09-join","e12-vfr","j01-reel","j03-lower","j08-project"}
 rows = []
@@ -31,8 +40,14 @@ for pid, p in P.items():
     body = text.split("Final report")[-1] if "Final report" in text else text.split("# ")[-1]
     ja_chars = len(JA.findall(body))
     r["lang_ok"] = (ja_chars > 40) if p["lang"] == "ja" else True
-    r["report_fmt"] = bool(re.search(r"(?im)^\s*(\*\*)?(done|完了)", text)) and ("Look" in text or "目視" in text or "look" in text.lower())
+    r["report_fmt"] = bool(re.search(r"(?im)^\s*(\*\*)?(done|完了)", text)) and ("Look" in text or "目視" in text or "確認画像" in text or "look" in text.lower())
     r["look"] = ("look" in used) if pid in PICTURE else None
+    if p.get("audio_only"):
+        # audio-only: no picture-only script, no look.py, and the report says the visual check is not needed
+        video_scripts = sorted(used & VIDEO_ONLY)
+        says_not_needed = bool(re.search(r"(?i)(look|目視|確認画像)[:：]\s*(not needed|n/a|none|不要)", text))
+        r["audio_ok"] = not video_scripts and says_not_needed
+        r["audio_notes"] = (", ".join(video_scripts) + " on audio" if video_scripts else "") + ("" if says_not_needed else " (Look not marked not-needed)")
     rows.append(r)
 acts = [r for r in rows if "score" in r and not P[r["id"]]["refuse"]]
 refs = [r for r in rows if "score" in r and P[r["id"]]["refuse"]]
@@ -54,3 +69,9 @@ print(f"report format: {sum(1 for r in fm if r['report_fmt'])}/{len(fm)}")
 lk = [r for r in rows if r.get("look") is not None]
 if lk:
     print(f"visual check when picture changed: {sum(1 for r in lk if r['look'])}/{len(lk)}")
+au = [r for r in rows if "audio_ok" in r]
+if au:
+    print(f"audio-only handled as audio (no picture script, Look: not needed): {sum(1 for r in au if r['audio_ok'])}/{len(au)}")
+    for r in au:
+        if not r["audio_ok"]:
+            print(f"  {r['id']}: {r['audio_notes'].strip()}")

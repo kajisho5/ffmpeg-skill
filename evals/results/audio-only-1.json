@@ -1,0 +1,22 @@
+{
+ "iteration": "audio-only-1",
+ "date": "2026-09-04",
+ "runs": 6,
+ "prompts_file": "evals/agent_prompts_audio.json",
+ "grader": "evals/grade_runs_24.py ITER evals/agent_prompts_audio.json",
+ "skill_version": "0.8.4 + SKILL.md 'Audio-only files' section (uncommitted at time of run)",
+ "routing": "6/6",
+ "japanese_report": "1/1",
+ "report_format": "6/6",
+ "audio_only_handled_as_audio": "6/6 (no picture-only script run, Look marked not needed)",
+ "mean_commands": 4.2,
+ "per_prompt": {
+  "a01-lufs-wav": "loudness -14/-1 -> wav, check podcast, explained the -16 preset mismatch",
+  "a02-silence-m4a": "silence.py on m4a, 5.25 s removed",
+  "a03-clean-m4a": "audio.py --denoise, offered --voice",
+  "a04-wav-to-mp3": "audio.py -o .mp3 plain conversion",
+  "a05-trim-wav": "cut.py stream copy 0:02-0:06",
+  "a06-podcast-ja": "loudness -16/-1.5 -> m4a, check podcast 4/4, Japanese report"
+ },
+ "trigger": "t11 (WAV->MP3) and t12 (silence on M4A) both routed to ffmpeg-skill by an independent model (evals/trigger/results-2026-09-04.json)"
+}

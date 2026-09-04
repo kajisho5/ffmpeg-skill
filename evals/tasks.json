@@ -24,6 +24,11 @@
     {"id": 21, "request": "Test the toolkit on my GoPro and OBS files first.", "expect": ["verify.py"], "args_hint": "folder --report"},
     {"id": 22, "request": "Set up the whole edit so I can tweak numbers and re-render.", "expect": ["render.py"], "args_hint": "--init project.json then render"},
     {"id": 23, "request": "Tell me what you'd run before actually rendering.", "expect": ["--dry-run"], "args_hint": "any script with --dry-run"},
-    {"id": 24, "request": "Why is the video stuttering after the cut? It's a screen recording.", "expect": ["probe.py", "fit.py"], "args_hint": "VFR suspected -> --fps 30 / accurate"}
+    {"id": 24, "request": "Why is the video stuttering after the cut? It's a screen recording.", "expect": ["probe.py", "fit.py"], "args_hint": "VFR suspected -> --fps 30 / accurate"},
+    {"id": 25, "request": "Normalize this WAV to -14 LUFS.", "expect": ["loudness.py"], "args_hint": "-I -14 --tp -1 -o out.wav (audio-only: Look not needed)"},
+    {"id": 26, "request": "Remove the silence from this recording (M4A).", "expect": ["silence.py"], "args_hint": "-o out.m4a (audio-only)"},
+    {"id": 27, "request": "Clean up the noise in this M4A.", "expect": ["audio.py"], "args_hint": "--voice for speech, --denoise otherwise (audio-only)"},
+    {"id": 28, "request": "Convert this WAV to MP3.", "expect": ["audio.py"], "args_hint": "-o out.mp3 with no filter flags (extension picks the codec)"},
+    {"id": 29, "request": "Trim this audio from 00:30 to 02:00.", "expect": ["cut.py"], "args_hint": "--start 0:30 --end 2:00 -o out.wav (stream copy)"}
   ]
 }
