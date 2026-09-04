@@ -39,10 +39,11 @@ TOOLS: Dict[str, str] = {
     "scenes": "Scene changes, audio peaks, highlight proposals. Args: input, highlights, target, edl, sheet.",
     "look": "Contact sheet / frames / before-after PNG for visual checks. Args: input, at (list), tiles, compare, output.",
     "render": "Render a whole edit from project.json. Args: project, fast, stop_after, init.",
+    "batch": "Apply a step recipe or render project to every file in a folder (content-hash cached). Args: folder, recipe, force, watch, work.",
     "verify": "Run the toolchain on real files and report PASS/FAIL. Args: paths (list), quick, report.",
     "report": "HTML delivery report. Args: after, before, platform, commands, notes, title, output.",
 }
-POSITIONAL = {"probe": ["inputs"], "sync": ["reference", "second"], "multicam": ["inputs"], "join": ["inputs"], "verify": ["paths"], "render": ["project"]}
+POSITIONAL = {"probe": ["inputs"], "sync": ["reference", "second"], "multicam": ["inputs"], "join": ["inputs"], "verify": ["paths"], "render": ["project"], "batch": ["folder"]}
 
 
 def build_argv(name: str, args: Dict[str, Any]) -> List[str]:

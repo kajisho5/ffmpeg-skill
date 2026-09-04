@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg-skill",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "description": "Agent Skill that lets coding agents (Claude Code, Cursor, Codex) do professional video editing with local FFmpeg: MCP server, batch processing, declarative project rendering, brand kits, motion-graphics templates, HTML delivery reports, scene detection, delivery checks, cut, silence removal, transitions, multicam, captions, sync with drift correction, HDR to SDR, LUTs, audio clean-up and ducking, loudness, platform exports. No API keys, no cloud, no dependencies.",
   "keywords": ["ffmpeg", "video", "agent-skill", "claude-code", "cursor", "codex", "skill", "video-editing"],
   "license": "MIT",
@@ -24,9 +24,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "python3 tests/test_all.py",
+    "test": "python3 tests/test_all.py && python3 tests/test_contract.py",
     "release-check": "bash tests/release_check.sh",
-    "demo": "bash examples/make_demo.sh"
+    "demo": "bash examples/make_demo.sh",
+    "contract": "python3 scripts/_contract.py --json",
+    "doctor": "python3 scripts/_contract.py doctor"
   },
   "engines": {
     "node": ">=16"

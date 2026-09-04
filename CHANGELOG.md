@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0 — machine-readable execution contract
+
+`ffmpeg-skill contract --json` (`python3 scripts/_contract.py --json`) describes the skill for agent frameworks: `contract_version` 1.0 separate from the skill version; one ToolSpec per public script (`ffmpeg-skill/<name>`) with an input schema generated from its argparse parser, an output schema, role (analysis / analysis_and_execution / execution / verification), required and conditional ffmpeg capabilities, dry-run support, `mutates_input: false`, the verification tools to run afterwards, and whether a visual check is required. `ffmpeg-skill doctor` reports which capabilities the machine has. `docs/contract.md` explains the fields and how a planner consumes them.
+
+- `--json` results now carry `"status": "completed"`; failures under `--json` also print `{"status": "failed", "error": {"kind", "message"}}` on stdout (stderr message and exit codes unchanged).
+- `--dry-run` no longer writes the generated SRT (`caption.py --text`) or the HTML (`report.py`).
+- MCP server lists `batch` (the one script it was missing); `tools/list` now equals the contract's tool list, and a test keeps it that way.
+- Installer copies `package.json` so an installed skill knows its version, and answers `contract` / `doctor`.
+- `tests/test_contract.py` (unit + integration, including a fake-ffmpeg dry-run guard and the real-device corpus when present), `evals/contract/`, `npm run release-check` extended.
+- No new editing features; no script changed its media behaviour.
+
 ## 0.8.5 — audio-only inputs, spelled out
 
 - SKILL.md: "Audio-only files" section. WAV, FLAC, MP3, M4A/AAC, OGG and Opus go through `probe`, `cut`, `silence`, `loudness`, `audio`, `sync` and `check --platform podcast` unchanged; the output extension picks the codec; `Look: not needed`; picture scripts refuse with "input has no video stream". Six audio-only request→script rows.

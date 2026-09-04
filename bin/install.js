@@ -12,6 +12,8 @@
  *   npx ffmpeg-skill --dir ./skills  # custom parent directory
  *   npx ffmpeg-skill --project       # ./.claude/skills/ffmpeg-skill in the current project
  *   npx ffmpeg-skill --uninstall     # remove from the selected targets
+ *   npx ffmpeg-skill contract --json # machine-readable execution contract (see docs/contract.md)
+ *   npx ffmpeg-skill doctor [--json] # which required ffmpeg capabilities this machine has
  */
 'use strict';
 
@@ -22,7 +24,7 @@ const { spawnSync } = require('child_process');
 
 const SKILL_NAME = 'ffmpeg-skill';
 const ROOT = path.resolve(__dirname, '..');
-const PAYLOAD = ['SKILL.md', 'scripts', 'references', 'mcp'];
+const PAYLOAD = ['SKILL.md', 'scripts', 'references', 'mcp', 'package.json'];
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(flag);
@@ -34,6 +36,12 @@ const optValue = (flag) => {
 if (has('--help') || has('-h')) {
   console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^\/\*\*?\s?|^\s\*\s?/gm, ''));
   process.exit(0);
+}
+
+// `contract` / `doctor` are answered by scripts/_contract.py; everything else installs.
+if (args[0] === 'contract' || args[0] === 'doctor') {
+  const py = spawnSync('python3', [path.join(ROOT, 'scripts', '_contract.py'), ...args], { stdio: 'inherit' });
+  process.exit(py.error ? 127 : py.status);
 }
 
 const home = os.homedir();

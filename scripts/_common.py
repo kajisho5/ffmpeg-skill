@@ -31,8 +31,12 @@ INSTALL_HINTS = {
 }
 
 
-def die(msg: str, code: int = 1) -> "None":
+def die(msg: str, code: int = 1, kind: str = "input") -> "None":
+    """Exit with a message. Under --json also print a machine-readable failure document
+    (status: failed) on stdout so callers get the same shape as a success; exit codes are unchanged."""
     sys.stderr.write(f"error: {msg}\n")
+    if STATE.json:
+        print_json({"status": "failed", "error": {"kind": kind, "message": msg}})
     sys.exit(code)
 
 
@@ -53,7 +57,7 @@ def require_tool(name: str) -> str:
     die(
         f"'{name}' was not found on PATH.\n"
         f"Install FFmpeg (which includes ffprobe) for {system}:\n{hint}",
-        code=127,
+        code=127, kind="missing_tool",
     )
     return ""  # unreachable
 
@@ -122,7 +126,7 @@ def apply_common(args: "argparse.Namespace") -> None:
 def emit(output: Optional[str], **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json."""
     if STATE.json:
-        doc: Dict[str, Any] = {"output": output, "dry_run": STATE.dry_run, "commands": list(STATE.commands)}
+        doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": STATE.dry_run, "commands": list(STATE.commands)}
         if output and not STATE.dry_run and os.path.exists(output):
             doc["probe"] = probe(output)
         doc.update(extra)
@@ -141,7 +145,7 @@ def _is_ffmpeg(cmd: Sequence[str]) -> bool:
 
 def _fail(cmd: Sequence[str], returncode: int, stderr: str) -> None:
     tail = "\n".join(stderr.strip().splitlines()[-15:])
-    die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=returncode or 1)
+    die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=returncode or 1, kind="ffmpeg")
 
 
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:

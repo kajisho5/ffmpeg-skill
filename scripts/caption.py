@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _common import color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
+from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -352,7 +352,8 @@ def main() -> int:
             srt_path = os.path.splitext(out_guess)[0] + ".srt"
         else:
             srt_path = os.path.splitext(args.text)[0] + ".srt"
-        write_srt(cues, srt_path)
+        if not STATE.dry_run:
+            write_srt(cues, srt_path)
         info(f"wrote {srt_path} ({len(cues)} cues)")
         if not args.input:
             print(srt_path)
@@ -382,7 +383,7 @@ def main() -> int:
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
     else:
-        if not srt_path or not os.path.exists(srt_path):
+        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and args.text)):
             die(f"SRT file not found: {srt_path}")
         style = [
             f"FontName={args.font}",
