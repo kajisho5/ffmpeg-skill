@@ -18,6 +18,7 @@
     "bin/",
     "scripts/",
     "mcp/",
+    "references/",
     "SKILL.md",
     "README.md",
     "LICENSE"

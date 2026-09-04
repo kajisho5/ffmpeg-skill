@@ -20,6 +20,12 @@ from _common import add_common, apply_common, die, emit, escape_drawtext, ffmpeg
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
 
+def fmt_hms(sec: float) -> str:
+    h, rem = divmod(sec, 3600)
+    m, s_ = divmod(rem, 60)
+    return f"{int(h):02d}:{int(m):02d}:{s_:06.3f}"
+
+
 def timecode_filter() -> str:
     return f"drawtext=text='%{{pts\\:hms}}':{FONT}"
 
@@ -61,7 +67,9 @@ def main() -> int:
             sec = parse_time(t)
             out = args.output or os.path.join(outdir, f"{stem}_vs_{Path(args.compare).stem}_{sec:.3f}s.png")
             half = args.width // 2
-            fc = (f"[0:v]scale={half}:-2{tc}[a];[1:v]scale={half}:-2{tc}[b];"
+            stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{FONT}"
+            tcs = tc.replace("," + timecode_filter(), "") + stamp
+            fc = (f"[0:v]scale={half}:-2{tcs}[a];[1:v]scale={half}:-2{tcs}[b];"
                   f"[a][b]scale2ref=w=iw:h=ih[a2][b2];[a2][b2]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-ss", f"{sec:.3f}", "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", out]
@@ -73,7 +81,8 @@ def main() -> int:
             if dur and sec > dur:
                 die(f"--at {t} is beyond the duration ({dur:.2f}s)")
             out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc}", "-frames:v", "1", out]
+            stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{FONT}"
+            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(), '')}{stamp}", "-frames:v", "1", out]
             run(cmd)
             outputs.append(out)
     else:
