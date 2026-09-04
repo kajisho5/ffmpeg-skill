@@ -810,6 +810,12 @@ class FFmpegSkillTests(unittest.TestCase):
         proc = script("loudness.py", silent, "-o", OUT / "silent_norm.mp4", expect_fail=True)
         self.assertIn("silent", proc.stderr)
 
+    def test_overlay_fade_without_start_end_fades_at_video_edges(self):
+        proc = script("overlay.py", self.src, "--image", self.logo, "--fade", "0.5", "--dry-run")
+        self.assertIn("fade=t=in:st=0.000", proc.stderr)
+        self.assertIn("fade=t=out:st=11.500", proc.stderr)
+        self.assertNotIn("\nwrote ", proc.stderr, "dry-run must not claim a file was written")
+
     # ---------------------------------------------------------------- _common
     def test_context_attribute_and_mapping_access_agree(self):
         from _common import Context

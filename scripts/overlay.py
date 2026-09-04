@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import STATE, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -150,11 +150,13 @@ def main() -> int:
             chain.append(f"scale={args.scale}:-1")
         if args.opacity < 1:
             chain.append(f"colorchannelmixer=aa={args.opacity:g}")
-        if args.fade > 0 and (start is not None or end is not None):
+        if args.fade > 0:
+            # no --start/--end: fade in at 0 and out at the end of the video
             s = start if start is not None else 0.0
+            e = end if end is not None else (meta.get("duration") or 0.0)
             chain.append(f"fade=t=in:st={s:.3f}:d={args.fade:g}:alpha=1")
-            if end is not None:
-                chain.append(f"fade=t=out:st={end - args.fade:.3f}:d={args.fade:g}:alpha=1")
+            if e > args.fade:
+                chain.append(f"fade=t=out:st={e - args.fade:.3f}:d={args.fade:g}:alpha=1")
         x, y = position_exprs(args.position, args.margin, text_mode=False)
         ov = f"overlay={x}:{y}:format=auto"
         if enable:
@@ -171,7 +173,8 @@ def main() -> int:
             opts.append(f"fontfile={escape_filter_path(args.font_file)}")
         else:
             opts.append(f"font='{args.font}'")
-        alpha = alpha_expr(args.opacity, start, end, args.fade)
+        alpha = alpha_expr(args.opacity, start if start is not None else (0.0 if args.fade > 0 else None),
+                           end if end is not None else ((meta.get("duration") or None) if args.fade > 0 else None), args.fade)
         opts.append(f"fontcolor={args.font_color}")
         if alpha != "1":
             opts.append(f"alpha='{alpha}'")
@@ -185,8 +188,9 @@ def main() -> int:
     cmd += aac_args() if meta.get("audio") else ["-an"]
     cmd.append(output)
     run(cmd)
-    result = probe(output)
-    info(f"wrote {output} ({result['duration']:.3f}s)")
+    if not STATE.dry_run:
+        result = probe(output)
+        info(f"wrote {output} ({result['duration']:.3f}s)")
     emit(output)
     return 0
 

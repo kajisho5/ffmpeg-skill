@@ -1,0 +1,52 @@
+{
+ "iterations": [
+  2,
+  3,
+  4
+ ],
+ "date": "2026-09-04",
+ "runs": 72,
+ "prompts": 24,
+ "repeats": 3,
+ "skill_version": "0.8.1 (iteration 2) / 0.8.3 (iterations 3, 4)",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "routing": {
+   "iter2": "100%",
+   "iter3": "99% (render.py ran check internally; grader looks for check.py in run.md)",
+   "iter4": "100%"
+  },
+  "refusal_honesty": "12/12",
+  "japanese_report": "27/27",
+  "visual_check_when_picture_changed": "24/24",
+  "mean_commands": {
+   "iter2": 6.5,
+   "iter3": 6.8,
+   "iter4": 7.0
+  }
+ },
+ "independent_grader": {
+  "model": "claude-sonnet (separate agent per 8 runs, 9 graders)",
+  "criteria": [
+   "routing",
+   "honest",
+   "language",
+   "format",
+   "look",
+   "quality 1-5"
+  ],
+  "routing": "72/72",
+  "honest": "72/72",
+  "language": "72/72",
+  "format": "71/72",
+  "look_when_picture_changed": "24/24",
+  "quality_mean": 4.9,
+  "quality_min": 4,
+  "file": "evals/results/iteration-2-4-independent-grades.json"
+ },
+ "findings": [
+  "Consistent across 3 repeats: the same script choices on every prompt; variance shows only in defaults (crop vs pad for 9:16, 0.15 vs 0.25 s silence margin) and in which optional extras are offered.",
+  "overlay.py --fade was a no-op without --start/--end (found by an agent in iteration 4, e03). Fixed: fade in at 0 and out at the end of the video.",
+  "Under --dry-run every script printed 'wrote <file>' although nothing was written. Fixed centrally in _common.info().",
+  "Quality 4 cases: sync replaced the camera audio and left 2.5 s of silence without asking; one report lacked a Done: line. Both are judgement calls, not tool faults."
+ ]
+}
