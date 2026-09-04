@@ -1,0 +1,30 @@
+{
+ "eval": "contract",
+ "date": "2026-09-04",
+ "contract_version": "1.0",
+ "skill_version": "0.9.0",
+ "method": "each model got the contract JSON (--static) and evals/contract/questions.json only; answers graded by evals/contract/check.py --grade",
+ "runs": [
+  {
+   "model": "claude-sonnet",
+   "score": "10/10"
+  },
+  {
+   "model": "claude-haiku-4-5",
+   "score": "10/10"
+  }
+ ],
+ "deterministic_check": "evals/contract/check.py: 10 expected answers agree with the live contract",
+ "questions": [
+  "tool for a task",
+  "required capability",
+  "visual verification needed",
+  "no visual check for audio",
+  "input preserved",
+  "dry-run available",
+  "analysis/execution/verification roles",
+  "argv from schema without a shell",
+  "stable tool ids",
+  "verification tools after export"
+ ]
+}

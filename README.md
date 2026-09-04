@@ -140,13 +140,22 @@ python3 tests/corpus.py --fetch --verify     # ~1.4 GB download, then verify (sl
 python3 tests/bench_sync.py --cases 100
 ```
 
+## Machine-readable contract
+
+```bash
+npx ffmpeg-skill contract --json     # every tool as a ToolSpec: schema from argparse, role, capabilities, verification, dry-run
+npx ffmpeg-skill doctor              # which required ffmpeg components this machine has
+```
+
+For agent frameworks that treat ffmpeg-skill as an execution skill: `contract --json` lists the 21 tools as `ffmpeg-skill/<name>` with input/output schemas, `analysis` / `execution` / `verification` roles, the ffmpeg encoders and filters each one needs, whether the result must be probed, checked or looked at, and that no tool modifies its input or runs a shell. `contract_version` (1.0) is separate from the skill version. Details in [docs/contract.md](docs/contract.md).
+
 ## MCP
 
 ```json
 {"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["/Users/you/.claude/skills/ffmpeg-skill/mcp/server.py"]}}}
 ```
 
-`python3 mcp/server.py --list` prints the tools; `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
+`python3 mcp/server.py --list` prints the tools (the same set as `contract --json`); `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
 
 ## Requirements
 

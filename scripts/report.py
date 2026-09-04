@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from _common import add_common, apply_common, die, emit, info, probe
+from _common import STATE, add_common, apply_common, die, emit, info, probe
 
 HERE = Path(__file__).resolve().parent
 
@@ -150,8 +150,11 @@ def main() -> int:
     .foot{color:var(--ink2);font-size:12px;margin-top:36px;border-top:1px solid var(--line);padding-top:10px}
     """
     doc = f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{html.escape(title)}</title><style>{css}</style></head><body><div class='wrap'>{''.join(parts)}</div></body></html>"
-    Path(output).write_text(doc, encoding="utf-8")
-    info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
+    if STATE.dry_run:
+        info(f"wrote {output}")  # printed as "[dry-run] would write"; nothing is written
+    else:
+        Path(output).write_text(doc, encoding="utf-8")
+        info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
     emit(None, report=output, check=chk)
     if not args.json:
         print(output)
