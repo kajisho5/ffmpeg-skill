@@ -118,7 +118,7 @@ def main() -> int:
                 plan.append(("overlay text", ["overlay.py", cut, "--text", "verify", "--position", "top-left", "-o", f"{stem}_ovl.mp4"] + fast))
                 plan.append(("look sheet", ["look.py", cut, "-o", f"{stem}_sheet.png"]))
                 if (meta.get("video") or {}).get("hdr"):
-                    plan.append(("color to-sdr", ["color.py", str(f), "--to-sdr", "-o", f"{stem}_sdr.mp4"] + fast))
+                    plan.append(("color to-sdr", ["color.py", f"{stem}_acc.mp4", "--to-sdr", "-o", f"{stem}_sdr.mp4"] + fast))
                     plan.append(("hdr preserved", ["__check_hdr__", f"{stem}_acc.mp4"]))
                 plan.append(("probe analyze", ["probe.py", cut, "--analyze"]))
             plan.append(("export x", ["export.py", cut, "--preset", "x", "-o", f"{stem}_x.mp4"]))

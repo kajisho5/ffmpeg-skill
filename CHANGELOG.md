@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0 — validation release
+
+Measured instead of assumed. New `tests/corpus.py` pulls public real-device videos (GoPro HERO 4K 10-bit, DJI 4K60 no-audio, two iPhones incl. Dolby Vision 4K60, two Android screen recordings incl. 18 fps VFR and 120 fps, an HDR10 PQ test pattern, a 24p clip, and Blender's Tears of Steel) and runs `verify.py` over them; `tests/bench_*.py` score algorithms against known ground truth.
+
+- `sync.py`: normalised cross-correlation over the overlap (prefix-sum energies) with a runner-up-aware confidence. Lags with under 35 % overlap are ignored and scores carry a sqrt(overlap) weight so partial coincidental matches cannot beat the true alignment. Benchmark on real dialogue/music (±30 s offsets, gain, noise, EQ): 120 s windows 40/40 within 10 ms (max 1.1 ms); 60 s stress windows went from 86 % to 95 %, with 4 of the 5 remaining misses flagged by confidence < 0.3.
+- `scenes.py`: cuts are now one-frame spikes (score above threshold and > 3× the neighbouring median), not any frame over a threshold; motion, flashes and pans stop registering. `--ratio` added. Benchmark on 53 hard cuts between single-take corpus clips: precision 0.95, recall 1.00 (F1 0.97) at the default threshold 8; 0.98 / 0.94 at 12.
+- `loudness.py`: silent input is reported (`"silent": true`) instead of crashing; normalisation refuses with a clear message.
+- `verify.py`: tone-maps the HDR-preserved cut instead of the whole file (a 10-minute 4K HDR source timed out).
+- Corpus results: 90/92 verify steps pass on first run; both failures fixed above. Silence benchmark: 0 missed gaps, ≤1 ms leftover silence over 20 cases.
+- SKILL.md: sync guidance now cites the benchmark and the 4× window rule.
+
 ## 0.7.0
 
 - `mcp/server.py` (new): the whole toolkit as an MCP server over stdio (JSON-RPC 2.0, standard library only). Every script is a tool; named args or raw argv; results as structured JSON. Installed alongside scripts by `npx ffmpeg-skill`.

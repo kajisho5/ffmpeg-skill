@@ -34,7 +34,9 @@ def measure(path: str, I: float, tp: float, lra: float) -> dict:
     data = json.loads(m.group(0))
     for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
         if data.get(k) in (None, "-inf", "inf", "nan"):
-            die(f"loudnorm returned unusable value for {k}: {data.get(k)} (silent input?)")
+            data["silent"] = True
+            return data
+    data["silent"] = False
     return data
 
 
@@ -57,6 +59,12 @@ def main() -> int:
         die("input has no audio stream")
 
     stats = measure(args.input, args.lufs, args.tp, args.lra)
+    if stats.get("silent"):
+        info("audio is silent (integrated loudness -inf); nothing to normalise")
+        if args.measure_only:
+            print(json.dumps({"silent": True, "input_i": "-inf"}, indent=2))
+            return 0
+        die("input audio is silent; loudness normalisation is meaningless (use audio.py --replace to add a track)")
     info(f"measured: {float(stats['input_i']):.1f} LUFS, TP {float(stats['input_tp']):.1f} dBTP, LRA {float(stats['input_lra']):.1f} LU")
     if args.measure_only:
         print(json.dumps({k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}, indent=2))
@@ -79,7 +87,8 @@ def main() -> int:
     run(cmd)
 
     after = measure(output, args.lufs, args.tp, args.lra)
-    info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {args.lufs} LUFS)")
+    if not after.get("silent"):
+        info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {args.lufs} LUFS)")
     emit(output)
     return 0
 

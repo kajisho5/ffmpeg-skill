@@ -167,8 +167,12 @@ scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECON
 Lists scenes with audio energy, the loudest moments, and (with
 `--highlights`) proposes N ranges that add up to `--target` seconds, biased to
 the loudest window of each scene. Review the sheet + JSON, adjust the EDL, then
-`cut.py --segments`. It is a proposal engine, not a judgement of content:
-tell the user what it picked and why (energy, scene length).
+`cut.py --segments`. Cut detection is a one-frame spike test (benchmark on
+hard cuts between real single takes: precision 0.95, recall 1.00 at the default
+threshold; raise `--threshold` to 12 for 0.98 precision at 0.94 recall).
+Dissolves and very slow fades are not cuts and will be missed. Highlights are
+a proposal engine, not a judgement of content: tell the user what it picked
+and why (energy, scene length).
 
 ### check.py — pre-delivery compliance
 ```
@@ -300,7 +304,12 @@ video with the second file's audio aligned (video stream copied).
 the clock difference in ppm, and resamples the second file so a 60-minute
 take stays in sync (typical consumer devices drift 20-500 ppm = up to 1.8 s/h).
 Use it whenever the recording is longer than ~10 minutes. Check `confidence`
-(0–1); below ~0.3 the match is doubtful — use a window with a clear event.
+(0–1, normalised correlation with a runner-up penalty); below 0.3 the match is
+doubtful. Benchmark on real dialogue/music (±30 s offsets, gain, noise, EQ):
+with the default 120 s window 40/40 within 10 ms (max 1.1 ms); with a 60 s
+window 95 %, misses flagged below 0.3. Keep `--analyze-seconds` at least 4×
+`--max-offset` (default 120 s vs 30 s): lags with under 35 % overlap are
+ignored, so an offset larger than ~60 % of the window cannot be found.
 
 ### color.py — HDR to SDR, LUTs, colour tags, Dolby Vision
 ```
