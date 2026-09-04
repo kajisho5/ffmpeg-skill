@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.2 — second agent-run evaluation
+
+24 prompts (12 English edits, 8 Japanese edits, 4 that must be declined) run by independent agents against the 0.8.1 skill (`evals/agent_prompts_24.json`, `evals/grade_runs_24.py`, `evals/results/iteration-2.json`). Routing 24/24, honest refusals 4/4, Japanese reports 9/9, visual check whenever the picture changed 8/8, mean 6.5 commands per job.
+
+- `caption.py --text` now writes the generated SRT beside the output file, not beside the source.
+- `probe.py` accepts the common flags (`--json`, `--field` etc.) like every other script.
+- `audio.py`: `--music-fade-out` fades only the bed; `--fade-out` fades the whole mix (previously both were applied at once). `render.py` project audio gained `music_fade_out`.
+- SKILL.md: how to find a CJK font before burning Japanese captions.
+- Tests for all of the above; render test no longer depends on a clean output directory.
+
 ## 0.8.1 — skill craft
 
 The skill file itself, measured. Six realistic prompts were run by independent agents with the old and the restructured SKILL.md (`evals/agent_prompts.json`, `evals/grade_runs.py`, results in `evals/results/`).

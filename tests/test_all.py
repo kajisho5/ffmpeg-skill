@@ -104,6 +104,10 @@ class FFmpegSkillTests(unittest.TestCase):
         compact = script("probe.py", self.src, "--compact").stdout
         self.assertIn("1280x720", compact)
 
+    def test_probe_accepts_common_flags(self):
+        out = script("probe.py", self.src, "--json", "--field", "duration").stdout.strip()
+        self.assertClose(float(out), 12.0, 0.1)
+
     def test_probe_missing_file_fails(self):
         proc = script("probe.py", OUT / "nope.mp4", expect_fail=True)
         self.assertIn("not found", proc.stderr)
@@ -165,6 +169,14 @@ class FFmpegSkillTests(unittest.TestCase):
         proc = script("caption.py", "--text", self.cues, "--write-srt", srt)
         self.assertTrue(srt.exists())
         self.assertEqual(proc.stdout.strip(), str(srt))
+
+    def test_caption_srt_lands_next_to_output_not_source(self):
+        sub = OUT / "capdir"
+        sub.mkdir(exist_ok=True)
+        out = sub / "cap_side.mp4"
+        script("caption.py", self.src, "--text", self.cues, "--preset", "veryfast", "-o", out)
+        self.assertTrue((sub / "cap_side.srt").exists(), "SRT written beside the output")
+        self.assertFalse((OUT / "source.srt").exists(), "no SRT dropped next to the source")
 
     # ---------------------------------------------------------------- overlay
     def test_overlay_image_and_text(self):
@@ -303,8 +315,11 @@ class FFmpegSkillTests(unittest.TestCase):
         a = probe(str(out))["audio"]
         self.assertEqual(a["channels"], 2)
         out2 = OUT / "ducked.mp4"
-        proc = script("audio.py", self.src, "--music", self.long_ref, "--duck", "--fade-out", "2", "-o", out2)
+        proc = script("audio.py", self.src, "--music", self.long_ref, "--duck", "--music-fade-out", "2", "-o", out2)
         self.assertIn("sidechaincompress", proc.stderr)
+        self.assertEqual(proc.stderr.count("afade=t=out"), 1, "only the bed fades, not the whole mix")
+        proc_mix = script("audio.py", self.src, "--fade-out", "1", "--dry-run")
+        self.assertEqual(proc_mix.stderr.count("afade=t=out"), 1)
         self.assertClose(probe(str(out2))["duration"], 12.0, 0.2)
         out3 = OUT / "replaced.mp4"
         script("audio.py", self.src, "--replace", self.mic, "--stereo", "-o", out3)
@@ -556,6 +571,10 @@ class FFmpegSkillTests(unittest.TestCase):
             script("export.py", self.src, "--preset", "reels", "--fit", "crop", "-o", reels)
         data = json.loads(script("check.py", reels, "--platform", "reels", "--json", expect_fail=True).stdout)
         names = {r["check"]: r["status"] for r in data["checks"]}
+        kinds = {r["check"]: r["kind"] for r in data["checks"]}
+        self.assertEqual(kinds["loudness"], "judgement")
+        self.assertEqual(kinds["video codec"], "format")
+        self.assertIn("ambience", [r["fix"] for r in data["checks"] if r["check"] == "loudness"][0])
         self.assertEqual(names["aspect"], "PASS")
         self.assertEqual(names["pixel format"], "PASS")
         self.assertEqual(names["loudness"], "FAIL", "unnormalised test tone is far from -14 LUFS")
@@ -613,6 +632,7 @@ class FFmpegSkillTests(unittest.TestCase):
         }), encoding="utf-8")
         if not (OUT / "cues.txt").exists():
             (OUT / "cues.txt").write_text("0:00-0:03 Hello world\n", encoding="utf-8")
+        (OUT / "render_final.mp4").unlink(missing_ok=True)
         plan = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
         self.assertTrue(plan["dry_run"])
         self.assertFalse((OUT / "render_final.mp4").exists())

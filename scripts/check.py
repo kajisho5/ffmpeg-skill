@@ -86,12 +86,17 @@ def main() -> int:
     v, a = meta.get("video") or {}, meta.get("audio") or {}
     rows: List[Dict[str, Any]] = []
 
+    JUDGEMENT = {"duration", "aspect", "loudness", "fps", "resolution"}
+
     def row(name: str, status: str, value: Any, expect: Any, fix: str = "") -> None:
-        rows.append({"check": name, "status": status, "value": value, "expected": expect, "fix": fix})
+        # "format" rows are safe to fix mechanically; "judgement" rows change the content
+        # (what is cut, what is cropped, how loud ambience gets) and need a decision
+        rows.append({"check": name, "status": status, "value": value, "expected": expect, "fix": fix,
+                     "kind": "judgement" if name in JUDGEMENT else "format"})
 
     dur = meta.get("duration") or 0.0
     if spec["max_duration"]:
-        row("duration", "PASS" if dur <= spec["max_duration"] else "FAIL", f"{dur:.2f}s", f"<= {spec['max_duration']:g}s", "fit.py --duration N or cut.py")
+        row("duration", "PASS" if dur <= spec["max_duration"] else "FAIL", f"{dur:.2f}s", f"<= {spec['max_duration']:g}s", "decide with the user: cut.py keeps quality but drops content; fit.py --duration speeds up (audio pitch-preserved, motion faster)")
     else:
         row("duration", "PASS", f"{dur:.2f}s", "any")
 
@@ -101,7 +106,7 @@ def main() -> int:
             w, h = h, w
         asp = aspect_name(w, h)
         if spec["aspects"]:
-            row("aspect", "PASS" if asp in spec["aspects"] else "FAIL", asp, "/".join(spec["aspects"]), f"fit.py --aspect {spec['aspects'][0]} --fit pad|crop")
+            row("aspect", "PASS" if asp in spec["aspects"] else "FAIL", asp, "/".join(spec["aspects"]), f"fit.py --aspect {spec['aspects'][0]} --fit pad (keeps everything, adds bars) or crop (fills the frame, loses the edges: check the subject with look.py)")
         else:
             row("aspect", "PASS", asp, "any")
         short = min(w, h)
@@ -109,7 +114,7 @@ def main() -> int:
             row("resolution", "PASS" if short >= spec["min_height"] else "WARN", f"{w}x{h}", f"short side >= {spec['min_height']}", "upscaling will not add detail; re-export from the master")
         fps = v.get("fps") or 0
         if spec["fps_max"]:
-            row("fps", "PASS" if fps <= spec["fps_max"] + 0.01 else "FAIL", f"{fps:g}", f"<= {spec['fps_max']}", "fit.py --fps 30")
+            row("fps", "PASS" if fps <= spec["fps_max"] + 0.01 else "FAIL", f"{fps:g}", f"<= {spec['fps_max']}", "fit.py --fps 30 (drops half the frames of 60 fps motion; fine for talking heads, visible on sports/gaming)")
         row("vfr", "PASS" if not v.get("variable_frame_rate_suspected") else "WARN", "variable" if v.get("variable_frame_rate_suspected") else "constant", "constant", "fit.py --fps N (any re-encode conforms it)")
         if spec["codecs"]:
             row("video codec", "PASS" if v.get("codec") in spec["codecs"] else "FAIL", v.get("codec"), "/".join(spec["codecs"]), "export.py --preset " + args.platform.replace("shorts", "reels").replace("tiktok", "reels").replace("linkedin", "youtube"))
@@ -143,7 +148,7 @@ def main() -> int:
             lm = measure_loudness(args.input)
             if lm:
                 diff = abs(lm["lufs"] - spec["lufs"])
-                row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g}")
+                row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g} for speech or music; leave ambience/near-silence (<= -40 LUFS) alone and say so")
                 row("true peak", "PASS" if lm["tp"] <= spec["tp"] + 0.05 else "FAIL", f"{lm['tp']:.1f} dBTP", f"<= {spec['tp']:g} dBTP", f"loudness.py --tp {spec['tp']:g}")
     elif args.platform in ("podcast",):
         row("audio", "FAIL", "none", "audio stream", "audio.py --replace")
@@ -157,6 +162,8 @@ def main() -> int:
         print(f"{args.input} — {args.platform}")
         for r in rows:
             line = f"  {r['status']:4s} {r['check']:{width}s}  {r['value']}  (expected {r['expected']})"
+            if r["status"] != "PASS" and r["kind"] == "judgement":
+                line += "  [judgement]"
             if r["status"] != "PASS" and r["fix"]:
                 line += f"  -> {r['fix']}"
             print(line)

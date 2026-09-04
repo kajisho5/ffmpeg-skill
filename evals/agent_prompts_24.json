@@ -1,0 +1,230 @@
+[
+ {
+  "id": "e01-reel",
+  "lang": "en",
+  "prompt": "Make /home/user/ffmpeg-skill/tests/out/source.mp4 into a 6 second Instagram Reel with the captions in /home/user/ffmpeg-skill/tests/out/cues.txt, TikTok-style word pops. Save to OUTDIR.",
+  "expect": [
+   "fit|render",
+   "caption|render",
+   "export|render",
+   "check",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e02-cut-lossless",
+  "lang": "en",
+  "prompt": "Trim /home/user/ffmpeg-skill/tests/out/source.mp4 to 0:02-0:08 without losing quality, save in OUTDIR.",
+  "expect": [
+   "probe",
+   "cut"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e03-logo",
+  "lang": "en",
+  "prompt": "Put /home/user/ffmpeg-skill/tests/out/logo.png in the top right corner of /home/user/ffmpeg-skill/tests/out/source.mp4, slightly transparent, fade in at the start. OUTDIR.",
+  "expect": [
+   "overlay",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e04-sync",
+  "lang": "en",
+  "prompt": "The recorder file /home/user/ffmpeg-skill/tests/out/lavmic.wav is out of sync with /home/user/ffmpeg-skill/tests/out/source.mp4 - fix and use the recorder audio. OUTDIR.",
+  "expect": [
+   "sync"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e05-lufs",
+  "lang": "en",
+  "prompt": "Normalise /home/user/ffmpeg-skill/tests/out/source.mp4 for a podcast video (Apple Podcasts levels). OUTDIR.",
+  "expect": [
+   "loudness"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e06-silence",
+  "lang": "en",
+  "prompt": "Tighten /home/user/ffmpeg-skill/tests/out/gappy.mp4 by removing the dead air, keep it natural. Tell me how much came out. OUTDIR.",
+  "expect": [
+   "silence"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e07-hdr",
+  "lang": "en",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/hdr10.mp4 looks grey on my website player. Make an SDR mp4 version. OUTDIR.",
+  "expect": [
+   "probe",
+   "color"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e08-surround",
+  "lang": "en",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/surround.mov has 5.1 audio, I need a stereo version for YouTube. OUTDIR.",
+  "expect": [
+   "audio",
+   "export|check"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e09-join",
+  "lang": "en",
+  "prompt": "Join /home/user/ffmpeg-skill/tests/out/cut1.mp4 and /home/user/ffmpeg-skill/tests/out/gappy.mp4 with a fade-to-black between them. OUTDIR.",
+  "expect": [
+   "join"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e10-highlights",
+  "lang": "en",
+  "prompt": "Find the best moments in /home/user/ffmpeg-skill/tests/out/source.mp4 and propose a 5-second highlight cut list. Don't render, just tell me the ranges. OUTDIR for any files.",
+  "expect": [
+   "scenes"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e11-ready",
+  "lang": "en",
+  "prompt": "Can I upload /home/user/ffmpeg-skill/tests/out/export_reels.mp4 to TikTok as is? Fix what's wrong, save to OUTDIR.",
+  "expect": [
+   "check"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "e12-vfr",
+  "lang": "en",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/vfr.mp4 is a screen recording that stutters after I cut it in another tool. Give me a clean 4 second cut from 2s that won't stutter. OUTDIR.",
+  "expect": [
+   "probe",
+   "cut|fit"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j01-reel",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を 6 秒の縦動画にして、/home/user/ffmpeg-skill/tests/out/cues.txt の字幕をポップに入れて Reels 用に書き出して。OUTDIR に保存。",
+  "expect": [
+   "fit|render",
+   "caption|render",
+   "export|render",
+   "check",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j02-60s",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を 8 秒にして。トークなので言葉が飛ばないように。OUTDIR。",
+  "expect": [
+   "fit"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j03-lower",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 の最初の 4 秒に「山田 太郎 / プロデューサー」のローワーサードを入れて、確認用のフレームも見せて。OUTDIR。",
+  "expect": [
+   "graphics",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j04-bgm",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 に /home/user/ffmpeg-skill/tests/out/lavmic.wav を BGM として小さく敷いて、声のところは自動で下げて。OUTDIR。",
+  "expect": [
+   "audio"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j05-ma",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/gappy.mp4 の間（無音）を詰めて、YouTube 向けに音量も整えて。OUTDIR。",
+  "expect": [
+   "silence",
+   "loudness"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j06-report",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を X 用に書き出して、何をしたか HTML のレポートにまとめて。OUTDIR。",
+  "expect": [
+   "export",
+   "report"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j07-probe",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/vfr.mp4 と /home/user/ffmpeg-skill/tests/out/hdr10.mp4 って何が違うの？編集で気をつけることある？",
+  "expect": [
+   "probe"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "j08-project",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を使って、後で数字をいじって作り直せる形で「2 秒〜8 秒を切って、9:16 にして、/home/user/ffmpeg-skill/tests/out/cues.txt の字幕、Reels 書き出し」を組んで。OUTDIR。",
+  "expect": [
+   "render"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "r01-face",
+  "lang": "en",
+  "prompt": "Blur the faces in /home/user/ffmpeg-skill/tests/out/source.mp4 automatically. OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no face detection in the skill; must say so, may offer a manual region blur via ffmpeg or decline"
+ },
+ {
+  "id": "r02-tts",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 に日本語のナレーションを AI 音声で付けて。OUTDIR。",
+  "expect": [],
+  "refuse": true,
+  "note": "no TTS; must say so and offer --replace with a provided narration"
+ },
+ {
+  "id": "r03-download",
+  "lang": "en",
+  "prompt": "Download this YouTube video and make it a reel: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "expect": [],
+  "refuse": true,
+  "note": "no downloader in the skill; must not invent one; ask for the file"
+ },
+ {
+  "id": "r04-translate",
+  "lang": "en",
+  "prompt": "Translate the speech in /home/user/ffmpeg-skill/tests/out/source.mp4 into Spanish subtitles and burn them in. OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no transcription engine present and no translation; must say what it cannot do and what it needs"
+ }
+]

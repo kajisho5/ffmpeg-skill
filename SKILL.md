@@ -30,20 +30,26 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    at CRF 18 (the default) and only use `export.py` for the last step; for
    anything with more than two steps use `render.py` with a project.json.
 5. **Check the deliverable.** Before reporting, run `check.py OUTPUT --platform X`
-   for the destination the user named. Fix FAILs about format (aspect, fps,
-   codec, size, true peak, colour). A loudness FAIL is a judgement call: fix
-   it for speech and music, but not for ambience or near-silence (see the
-   pitfalls below). Mention WARNs; do not chase them.
+   for the destination the user named. Each row is marked `format` or
+   `judgement`. Format rows (codec, pixel format, size, true peak, colour
+   tags, VFR) are safe to fix mechanically. Judgement rows change the content:
+   duration (cut loses material, speed changes motion), aspect (crop loses
+   edges), fps (drops motion), loudness (ambience must not be boosted). Fix
+   those only when the user's request already implies the answer, otherwise
+   state the choice and its cost in one line. Mention WARNs; do not chase them.
 6. **Verify the output.** Run `probe.py` on each result and confirm duration,
    resolution, fps and audio match what was requested. Report those numbers to
    the user (e.g. "final.mp4: 59.98 s, 1080x1920, 30 fps, AAC stereo").
 7. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
-8. **Look at the picture.** After captioning, overlaying, cropping or colour
-   work run `look.py OUTPUT` (contact sheet) or `look.py OUTPUT --at T` and
-   view the PNG: text inside the frame and not over faces, logos where asked,
-   crops keeping the subject, colours not washed out. Fix and re-run before
-   reporting. Numbers from probe are not enough.
+8. **Look at the picture.** Whenever the picture changed (captions, overlays,
+   graphics, crop/pad, resize, colour, transitions) run `look.py OUTPUT`
+   (contact sheet) or `look.py OUTPUT --at T`, view the PNG, and judge it like
+   an editor: text inside the frame and not over faces, logos where asked,
+   crops keeping the subject, colours not washed out, transitions landing
+   where intended. The job is not finished until the report's `Look:` line
+   names that PNG; a probe alone cannot see a caption sitting on someone's
+   face. Audio-only jobs (sync, loudness, silence) write `Look: not needed`.
 
 
 ## Before you run anything: what to ask, what to assume
@@ -54,6 +60,7 @@ Ask one short question only when the answer changes the output materially and th
 - **Duration** ("make it 60 s") without a method: speed up for ≤1.5× changes, trim otherwise, and state which you chose. Ask if the content is a talk (trimming loses words) and the change is large.
 - **Captions** without a text source: use `--transcribe` if a local whisper exists, otherwise ask for the text or a timed file; never invent dialogue.
 - **Fonts and brand**: if the user mentions a brand, colours or "our font", ask for or create `brand.json` once and reuse it.
+- **CJK / non-Latin text**: check that a font exists before rendering (`fc-list :lang=ja file` / `:lang=ko` / `:lang=zh`); pass it with `--font "Name"` or `--font-file /path.ttf`. Tofu boxes are a failed job, not a style.
 - Anything else (crop position, transition type, caption style): pick the conventional default, say what you picked, and offer the alternative in one line.
 
 Do not ask for things `probe.py` can tell you.
@@ -130,6 +137,9 @@ Keep it to those five lines plus anything the user must decide. Attach the conta
   noise, not the content. Leave the level, say so, and offer music or narration.
 - Captions burned before a crop/resize: text lands off-frame. Frame changes first, then text.
 - Anything chained by hand through three re-encodes: use `render.py` so the plan is one file and the user can change one number.
+- `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot loses people at the edges. Check the sheet; pad (bars) or a reframe is often the honest answer.
+- Conforming 60 fps to 30 halves the motion samples: fine for a talking head, visibly choppy for sports, gaming, drone pans. Keep 60 when the platform allows it.
+- "Make it 60 seconds" on a 3-minute talk by speed change is unwatchable (3×); by trim it drops two thirds of the words. Ask which, or propose a highlight cut with `scenes.py`.
 
 ## Gotchas
 

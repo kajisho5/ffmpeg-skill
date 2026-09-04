@@ -1,0 +1,33 @@
+{
+ "iteration": 2,
+ "date": "2026-09-04",
+ "runs": 24,
+ "prompts": 24,
+ "variants": [
+  "with_skill (0.8.1 SKILL.md + fixes below)"
+ ],
+ "prompt_mix": {
+  "english_edit": 12,
+  "japanese_edit": 8,
+  "must_refuse": 4
+ },
+ "routing_accuracy": {
+  "with_skill": 1.0
+ },
+ "mean_commands": {
+  "with_skill": 6.5
+ },
+ "refusal_honesty": "4/4 (face blur, TTS narration, URL download, speech translation: all declined honestly, nearest alternative offered)",
+ "japanese_report_for_japanese_prompt": "9/9",
+ "report_format_followed": "20/24 (the 4 misses are refusal / probe-only answers where the Done/Look template does not apply)",
+ "visual_check_when_picture_changed": "8/8",
+ "findings": [
+  "caption.py --text wrote the generated SRT next to the SOURCE file when -o pointed elsewhere; agents then had to explain a stray file. Now written next to the output.",
+  "probe.py did not accept --json / the common flags although SKILL.md says every script does; agents retried. Now accepts them.",
+  "audio.py --fade-out was applied to the music bed AND the whole mix (double fade on the last seconds). Split into --music-fade-out (bed only) and --fade-out (whole mix).",
+  "Japanese caption prompts: agents did not know how to find a CJK font. SKILL.md now shows `fc-list :lang=ja file`.",
+  "Not done in this iteration: 3 repeats per prompt and grading by an independent model. Grades are regex-based (evals/grade_runs_24.py) plus manual reading of every run.md."
+ ],
+ "grader": "evals/grade_runs_24.py",
+ "prompts_file": "evals/agent_prompts_24.json"
+}
