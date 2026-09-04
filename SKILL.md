@@ -122,6 +122,9 @@ Keep it to those five lines plus anything the user must decide. Attach the conta
 - Lossless `-c copy` cuts on VFR or non-keyframe boundaries: the file "works" but starts on a frozen or wrong frame. `cut.py` re-encodes automatically when the snap exceeds 0.5 s; respect that.
 - A sync with `confidence` under 0.3, or an offset larger than 60 % of the analysis window: probably wrong; enlarge `--analyze-seconds` or find a clap.
 - "Normalised" audio that still clips: check true peak, not just LUFS (`check.py` does both).
+- Normalising ambience or near-silence to a speech target: a clip measured at
+  -40 LUFS or below is room tone, wind or nothing; raising it 25 dB raises the
+  noise, not the content. Leave the level, say so, and offer music or narration.
 - Captions burned before a crop/resize: text lands off-frame. Frame changes first, then text.
 - Anything chained by hand through three re-encodes: use `render.py` so the plan is one file and the user can change one number.
 
