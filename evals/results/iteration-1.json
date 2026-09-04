@@ -1,0 +1,34 @@
+{
+  "iteration": 1,
+  "date": "2026-09-04",
+  "runs": 12,
+  "prompts": 6,
+  "variants": [
+    "with_skill (restructured SKILL.md)",
+    "old_skill (0.8.0 SKILL.md)"
+  ],
+  "routing_accuracy": {
+    "with_skill": 1.0,
+    "old_skill": 1.0
+  },
+  "mean_commands": {
+    "with_skill": 7.7,
+    "old_skill": 9.0
+  },
+  "report_format_followed": {
+    "with_skill": "6/6",
+    "old_skill": "4/6"
+  },
+  "visual_check_when_picture_changed": {
+    "with_skill": "3/6",
+    "old_skill": "3/6"
+  },
+  "findings": [
+    "Both versions chose the right scripts on all 6 prompts; the skill body length was not hurting routing.",
+    "Old SKILL.md on the Reels prompt: 16 commands, three chained re-encodes, then a loudness FAIL forced a full redo. New: render.py project in one pass (9 commands incl. checks).",
+    "check.py WARN on untagged 8-bit H.264 made both versions add a pointless color --retag step; check.py now passes untagged 8-bit as BT.709.",
+    "New SKILL.md's 'fix FAILs' made the agent normalise -44 LUFS park ambience to -14 (30 dB of noise gain); old version judged it correctly. Added the pitfall and softened the check step.",
+    "look.py --at stamped 00:00:00.000 on every frame (post-seek pts); both agents had to explain it away. Fixed to stamp the requested time.",
+    "Old version spent 4 exploratory commands (--help, --list, unused --init) on the HDR prompt; the new references/scripts.md is meant to replace that."
+  ]
+}

@@ -120,8 +120,14 @@ def main() -> int:
             row("colour", "FAIL", v.get("hdr_format"), "SDR BT.709", "color.py --to-sdr")
         else:
             tags = (v.get("color_primaries"), v.get("color_transfer"))
-            ok = v.get("hdr") or tags == ("bt709", "bt709") or (args.platform in ("podcast", "custom"))
-            row("colour", "PASS" if ok else "WARN", f"{tags[0]}/{tags[1]}" + (f" ({v.get('hdr_format')})" if v.get("hdr") else ""), "bt709/bt709 tagged (or HDR)", "color.py --retag bt709 when the picture really is 709")
+            untagged = not tags[0] and not tags[1]
+            if v.get("hdr") or tags == ("bt709", "bt709") or args.platform in ("podcast", "custom"):
+                row("colour", "PASS", f"{tags[0]}/{tags[1]}" + (f" ({v.get('hdr_format')})" if v.get("hdr") else ""), "bt709/bt709 tagged (or HDR)")
+            elif untagged and (v.get("bit_depth") or 8) == 8:
+                # untagged 8-bit video is treated as BT.709 by every player and platform; nothing to fix
+                row("colour", "PASS", "untagged (players assume bt709)", "bt709/bt709 tagged (or HDR)")
+            else:
+                row("colour", "WARN", f"{tags[0]}/{tags[1]}", "bt709/bt709 tagged (or HDR)", "color.py --retag bt709 when the picture really is 709; color.py --to-sdr when it is HDR")
     elif args.platform not in ("podcast", "custom"):
         row("video", "FAIL", "none", "video stream", "")
 

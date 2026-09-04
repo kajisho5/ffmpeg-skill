@@ -1,0 +1,14 @@
+[
+ {"id":"reel-captions","prompt":"Turn /home/user/ffmpeg-skill/tests/out/source.mp4 into a 6-second vertical Instagram Reel with the captions from /home/user/ffmpeg-skill/tests/out/cues.txt burned in, TikTok style (words popping in). Put the result in OUTDIR and tell me what you did.",
+  "expect":["probe.py","fit.py|render.py","caption.py|render.py","export.py|render.py","check.py","look.py"]},
+ {"id":"lav-sync-loudness","prompt":"My lav mic recording /home/user/ffmpeg-skill/tests/out/lavmic.wav is out of sync with the camera video /home/user/ffmpeg-skill/tests/out/source.mp4. Fix the sync, use the lav audio, and make the loudness right for YouTube. Save to OUTDIR.",
+  "expect":["probe.py","sync.py","loudness.py"]},
+ {"id":"iphone-hdr-for-x","prompt":"/home/user/ffmpeg-skill/tests/corpus/iphone13pro_4K60p.mov is a phone video that looks washed out when I post it on X (Twitter). Give me a 6-second version from the start that looks right on X. Save to OUTDIR. Use --fast for any encoding.",
+  "expect":["probe.py","color.py","export.py","check.py"]},
+ {"id":"remove-pauses","prompt":"Cut all the pauses / dead air out of /home/user/ffmpeg-skill/tests/out/gappy.mp4 and tell me exactly how many seconds you removed. Save to OUTDIR.",
+  "expect":["silence.py"]},
+ {"id":"stitch-lower-third","prompt":"Stitch these three clips with a short crossfade: /home/user/ffmpeg-skill/tests/out/cut1.mp4, /home/user/ffmpeg-skill/tests/out/source.mp4, /home/user/ffmpeg-skill/tests/out/gappy.mp4. Then add a lower third that says 'Ada Lovelace' with the title 'Analyst' during the first 5 seconds. Save to OUTDIR and show me a frame so I can check the lower third.",
+  "expect":["join.py","graphics.py","look.py"]},
+ {"id":"reels-ready","prompt":"Is /home/user/ffmpeg-skill/tests/out/export_reels.mp4 ready to upload to Instagram Reels? If anything is wrong, fix it and save the fixed file to OUTDIR.",
+  "expect":["check.py","loudness.py"]}
+]
