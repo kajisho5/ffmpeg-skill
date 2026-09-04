@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.3 — internals and triggering
+
+- `_common.py`: the shared flag state is an explicit `Context` object (`STATE.dry_run` etc., dict-style access kept), `run()` is split into recording, dry-run, captured and progress paths with one failure handler. Behaviour unchanged: 54/54 tests and the sync benchmark give identical numbers before and after.
+- `sync.py`: the 35 % minimum-overlap and the square-root overlap weight are named constants with the benchmark rationale (what 0.2 / 0.5 and exponents 0.25 / 1.0 did) written next to them.
+- Trigger tests (`evals/trigger/`): 10 should-trigger and 10 should-not requests judged by an independent model against a catalog with four decoy skills. 20/20 on this description.
+
 ## 0.8.2 — second agent-run evaluation
 
 24 prompts (12 English edits, 8 Japanese edits, 4 that must be declined) run by independent agents against the 0.8.1 skill (`evals/agent_prompts_24.json`, `evals/grade_runs_24.py`, `evals/results/iteration-2.json`). Routing 24/24, honest refusals 4/4, Japanese reports 9/9, visual check whenever the picture changed 8/8, mean 6.5 commands per job.
