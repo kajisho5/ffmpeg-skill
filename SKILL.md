@@ -30,7 +30,10 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    at CRF 18 (the default) and only use `export.py` for the last step; for
    anything with more than two steps use `render.py` with a project.json.
 5. **Check the deliverable.** Before reporting, run `check.py OUTPUT --platform X`
-   for the destination the user named; fix FAILs, mention WARNs.
+   for the destination the user named. Fix FAILs about format (aspect, fps,
+   codec, size, true peak, colour). A loudness FAIL is a judgement call: fix
+   it for speech and music, but not for ambience or near-silence (see the
+   pitfalls below). Mention WARNs; do not chase them.
 6. **Verify the output.** Run `probe.py` on each result and confirm duration,
    resolution, fps and audio match what was requested. Report those numbers to
    the user (e.g. "final.mp4: 59.98 s, 1080x1920, 30 fps, AAC stereo").

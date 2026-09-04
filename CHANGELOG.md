@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1 — skill craft
+
+The skill file itself, measured. Six realistic prompts were run by independent agents with the old and the restructured SKILL.md (`evals/agent_prompts.json`, `evals/grade_runs.py`, results in `evals/results/`).
+
+- SKILL.md rewritten for the agent, not as a catalogue: a description that says when to trigger; body 402 → 169 lines with workflow, what to ask vs assume, request→script map, report format and "looks right but is wrong" pitfalls; per-script CLI reference moved to `references/scripts.md`, real-device notes to `references/devices.md` (both installed and packaged).
+- Results: routing 100 % for both versions; mean commands per job 9.0 → 7.7 (the Reels job went from 16 commands with a forced redo to a single `render.py` pass); report format followed 4/6 → 6/6.
+- Found and fixed from the transcripts: `check.py` warned on untagged 8-bit H.264 and agents added a pointless retag (now PASS); `look.py --at` stamped 00:00:00.000 on every frame (now the requested time); the "fix FAILs" instruction made an agent boost -44 LUFS park ambience by 30 dB (check step reworded, pitfall added).
+
 ## 0.8.0 — validation release
 
 Measured instead of assumed. New `tests/corpus.py` pulls public real-device videos (GoPro HERO 4K 10-bit, DJI 4K60 no-audio, two iPhones incl. Dolby Vision 4K60, two Android screen recordings incl. 18 fps VFR and 120 fps, an HDR10 PQ test pattern, a 24p clip, and Blender's Tears of Steel) and runs `verify.py` over them; `tests/bench_*.py` score algorithms against known ground truth.
