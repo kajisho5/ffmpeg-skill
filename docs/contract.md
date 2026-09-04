@@ -159,10 +159,42 @@ before, and, when `--json` was given, on stdout:
 
 ## MCP relationship
 
-`mcp/server.py` is a transport. Its `tools/list` is the same set of names as the
-contract's tools (tested), and its argument mapping is the one the contract describes.
-The MCP `inputSchema` is deliberately loose; the contract's `input_schema` is the
-semantic definition. Do not treat the MCP schema as a second source of truth.
+`mcp/server.py` is a transport. It holds no tool table and no schema of its own:
+
+```
+argparse parser  →  ToolSpec.input_schema  →  contract  →  MCP tools/list inputSchema
+```
+
+At start-up the server builds the ToolSpecs (`_contract.build(detect=False)`) and
+derives each `tools/list` entry with `_contract.mcp_tool`: the name is the ToolSpec
+name, the order is the contract's sorted order, and `inputSchema` is
+`_contract.mcp_input_schema(ToolSpec)`. `tools/call` maps structured arguments to
+argv with the ToolSpec's `mcp.positional` and `mcp.argument_exceptions`. A new
+public script, a removed one, or a changed parser therefore changes the MCP surface
+with no edit to `mcp/`; `tests/test_contract.py` proves this by copying the skill,
+adding, removing and editing scripts, and reading `tools/list` again.
+
+### Translation, and what JSON Schema cannot say
+
+| ToolSpec.input_schema | MCP inputSchema |
+|---|---|
+| `properties.<dest>.type / enum / default / description / items` | copied as is |
+| `properties.<dest>.cli`, `.common` | dropped (ffmpeg-skill-only keys) |
+| `positional` | same properties, passed by name; description gets a `(positional N)` prefix |
+| `required` | `required` of the structured branch |
+| `mutually_exclusive` groups | `allOf: [{not: {required: [a, b]}} …]` for every pair |
+| `one_of_required` groups | `anyOf: [{required: [a]}, …]` |
+| raw `argv` compatibility | an `argv` array property; top-level `anyOf: [{required: [argv]}, <structured branch>]` |
+| `additionalProperties: false` | kept |
+
+Two things are documented rather than encoded, because JSON Schema has no way to
+express them: when `argv` is present every other key is ignored (stated in the `argv`
+description), and MCP has no notion of positional order, so positionals are named
+properties whose order is only informative. `%(default)s` help interpolation is
+already applied when the ToolSpec is built.
+
+The `tools/list` document is deterministic (byte-identical across processes and
+identical to the translation of `contract --json`), which the tests check.
 
 ## Consuming the contract from an agent
 
@@ -184,6 +216,6 @@ ffmpeg-skill contains no agent-specific code.
 
 - `scripts/_contract.py`: the generator (`--json`, `--static`, `doctor`)
 - `bin/install.js`: `ffmpeg-skill contract` and `ffmpeg-skill doctor`
-- `tests/test_contract.py`: schema, consistency (scripts = MCP = installer), dry-run, JSON shapes, verification policy, real-media run
+- `tests/test_contract.py`: schema, consistency (scripts = MCP = installer), MCP inputSchema derived from the contract (equality, determinism, drift, round trips), dry-run, JSON shapes, verification policy, real-media run
 - `evals/contract/`: questions an agent must answer from the contract alone, with the expected answers checked against the live contract
 - `tests/release_check.sh`: runs the contract from the packed and installed copies before a release

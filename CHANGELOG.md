@@ -7,6 +7,7 @@
 - `--json` results now carry `"status": "completed"`; failures under `--json` also print `{"status": "failed", "error": {"kind", "message"}}` on stdout (stderr message and exit codes unchanged).
 - `--dry-run` no longer writes the generated SRT (`caption.py --text`) or the HTML (`report.py`).
 - MCP server lists `batch` (the one script it was missing); `tools/list` now equals the contract's tool list, and a test keeps it that way.
+- MCP `tools/list` is derived from the contract: no tool table or hand-written `inputSchema` in `mcp/server.py` any more. Names, order, `inputSchema` (translated from `ToolSpec.input_schema`: types, enums, defaults, descriptions, required fields, mutually exclusive groups, the non-canonical `argv` branch) and the structured-argument mapping all come from `scripts/_contract.py`. Tests: schema equality for all 21 tools, byte-identical `tools/list`, drift (add / remove / edit a script), and JSON-RPC round trips of probe, cut, silence, loudness, export and render built from the derived schema.
 - Installer copies `package.json` so an installed skill knows its version, and answers `contract` / `doctor`.
 - `tests/test_contract.py` (unit + integration, including a fake-ffmpeg dry-run guard and the real-device corpus when present), `evals/contract/`, `npm run release-check` extended.
 - No new editing features; no script changed its media behaviour.
