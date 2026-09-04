@@ -163,6 +163,10 @@ python3 evals/run.py --list     # routing eval prompts (see evals/)
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
 
+## Support
+
+If this skill saves you time, you can help keep it maintained through [GitHub Sponsors](https://github.com/sponsors/kajisho5). Issues and pull requests are just as welcome.
+
 ## License
 
 [MIT](LICENSE)
