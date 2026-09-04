@@ -556,6 +556,10 @@ class FFmpegSkillTests(unittest.TestCase):
             script("export.py", self.src, "--preset", "reels", "--fit", "crop", "-o", reels)
         data = json.loads(script("check.py", reels, "--platform", "reels", "--json", expect_fail=True).stdout)
         names = {r["check"]: r["status"] for r in data["checks"]}
+        kinds = {r["check"]: r["kind"] for r in data["checks"]}
+        self.assertEqual(kinds["loudness"], "judgement")
+        self.assertEqual(kinds["video codec"], "format")
+        self.assertIn("ambience", [r["fix"] for r in data["checks"] if r["check"] == "loudness"][0])
         self.assertEqual(names["aspect"], "PASS")
         self.assertEqual(names["pixel format"], "PASS")
         self.assertEqual(names["loudness"], "FAIL", "unnormalised test tone is far from -14 LUFS")

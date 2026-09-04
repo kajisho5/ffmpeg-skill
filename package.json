@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "test": "python3 tests/test_all.py",
+    "release-check": "bash tests/release_check.sh",
     "demo": "bash examples/make_demo.sh"
   },
   "engines": {
