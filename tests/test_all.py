@@ -810,6 +810,22 @@ class FFmpegSkillTests(unittest.TestCase):
         proc = script("loudness.py", silent, "-o", OUT / "silent_norm.mp4", expect_fail=True)
         self.assertIn("silent", proc.stderr)
 
+    # ---------------------------------------------------------------- _common
+    def test_context_attribute_and_mapping_access_agree(self):
+        from _common import Context
+        ctx = Context()
+        ctx["dry_run"] = True
+        self.assertTrue(ctx.dry_run)
+        ctx.fast = True
+        self.assertTrue(ctx["fast"])
+        self.assertIsNone(ctx.get("duration_hint"))
+        self.assertIsNone(ctx.get("nonexistent"))
+        with self.assertRaises(KeyError):
+            ctx["nonexistent"] = 1
+        ctx.commands.append("x")
+        ctx.reset()
+        self.assertEqual((ctx.dry_run, ctx.fast, ctx.commands), (False, False, []))
+
     # ---------------------------------------------------------------- help
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):
