@@ -56,7 +56,46 @@ def require_tool(name: str) -> str:
 
 
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo")
-STATE: Dict[str, Any] = {"dry_run": False, "json": False, "commands": [], "progress": False, "fast": False, "duration_hint": None}
+
+
+class Context:
+    """Per-process settings that the shared flags (--dry-run, --json, --progress, --fast) set once.
+
+    Scripts read it as attributes (``STATE.dry_run``) or, for older call sites, like a dict
+    (``STATE["dry_run"]``). Keeping it a single explicit object rather than module globals makes
+    it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
+    """
+
+    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands")
+    _KEYS = ("dry_run", "json", "progress", "fast", "duration_hint", "commands")
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.dry_run = False      # print ffmpeg commands, run nothing (ffprobe still runs)
+        self.json = False         # emit() prints a JSON document instead of the output path
+        self.progress = False     # run() streams percent / ETA to stderr for ffmpeg
+        self.fast = False         # x264 preset forced to veryfast
+        self.duration_hint: Optional[float] = None  # expected output length, for the progress percent
+        self.commands: List[str] = []               # every ffmpeg command line, for --json and --dry-run
+
+    # mapping-style access kept for backwards compatibility
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._KEYS:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key not in self._KEYS:
+            raise KeyError(key)
+        setattr(self, key, value)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default) if key in self._KEYS else default
+
+
+STATE = Context()
 
 
 def add_common(ap: "argparse.ArgumentParser") -> None:
@@ -69,19 +108,19 @@ def add_common(ap: "argparse.ArgumentParser") -> None:
 
 
 def apply_common(args: "argparse.Namespace") -> None:
-    STATE["dry_run"] = bool(getattr(args, "dry_run", False))
-    STATE["json"] = bool(getattr(args, "json", False))
-    STATE["progress"] = bool(getattr(args, "progress", False))
-    STATE["fast"] = bool(getattr(args, "fast", False))
-    if STATE["fast"] and getattr(args, "preset", None) in X264_PRESETS:
+    STATE.dry_run = bool(getattr(args, "dry_run", False))
+    STATE.json = bool(getattr(args, "json", False))
+    STATE.progress = bool(getattr(args, "progress", False))
+    STATE.fast = bool(getattr(args, "fast", False))
+    if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
 
 
 def emit(output: Optional[str], **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json."""
-    if STATE["json"]:
-        doc: Dict[str, Any] = {"output": output, "dry_run": STATE["dry_run"], "commands": list(STATE["commands"])}
-        if output and not STATE["dry_run"] and os.path.exists(output):
+    if STATE.json:
+        doc: Dict[str, Any] = {"output": output, "dry_run": STATE.dry_run, "commands": list(STATE.commands)}
+        if output and not STATE.dry_run and os.path.exists(output):
             doc["probe"] = probe(output)
         doc.update(extra)
         print_json(doc)
@@ -89,32 +128,58 @@ def emit(output: Optional[str], **extra: Any) -> None:
         print(output)
 
 
+def _cmdline(cmd: Sequence[str]) -> str:
+    return " ".join(shell_quote(c) for c in cmd)
+
+
+def _is_ffmpeg(cmd: Sequence[str]) -> bool:
+    return os.path.basename(cmd[0]).startswith("ffmpeg")
+
+
+def _fail(cmd: Sequence[str], returncode: int, stderr: str) -> None:
+    tail = "\n".join(stderr.strip().splitlines()[-15:])
+    die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=returncode or 1)
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
-    With --dry-run, ffmpeg invocations are printed and skipped (ffprobe still runs so
-    scripts can plan); a fake successful CompletedProcess is returned.
+    ffmpeg invocations are recorded in STATE.commands (for --json), skipped under --dry-run
+    (a fake successful CompletedProcess is returned so scripts can keep planning), and run
+    with a progress readout under --progress. ffprobe and other tools always run.
     """
-    is_ffmpeg = os.path.basename(cmd[0]).startswith("ffmpeg")
+    is_ffmpeg = _is_ffmpeg(cmd)
     if is_ffmpeg:
-        STATE["commands"].append(" ".join(shell_quote(c) for c in cmd))
+        STATE.commands.append(_cmdline(cmd))
     if not quiet:
-        info(("[dry-run] $ " if STATE["dry_run"] and is_ffmpeg else "$ ") + " ".join(shell_quote(c) for c in cmd))
-    if STATE["dry_run"] and is_ffmpeg:
+        info(("[dry-run] $ " if STATE.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd))
+    if STATE.dry_run and is_ffmpeg:
         return subprocess.CompletedProcess(list(cmd), 0, "", "")
-    if STATE["progress"] and is_ffmpeg and cmd[-1] != "-":
+    if STATE.progress and is_ffmpeg and cmd[-1] != "-":
         return _run_with_progress(list(cmd), check)
+    return _run_captured(list(cmd), check)
+
+
+def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
+    """Plain run with stdout/stderr captured."""
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if check and proc.returncode != 0:
-        tail = "\n".join(proc.stderr.strip().splitlines()[-15:])
-        die(f"command failed ({proc.returncode}): {cmd[0]}\n{tail}", code=proc.returncode or 1)
+        _fail(cmd, proc.returncode, proc.stderr)
     return proc
+
+
+def _progress_line(done: float, total: float, elapsed: float) -> str:
+    if total > 0:
+        pct = min(99.9, done / total * 100)
+        eta = (elapsed / pct * (100 - pct)) if pct > 0.5 else 0
+        return f"\r  {pct:5.1f}%  {done:7.1f}s / {total:.1f}s  ETA {eta:4.0f}s"
+    return f"\r  {done:7.1f}s encoded"
 
 
 def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Run ffmpeg with -progress on a pipe and print percent/ETA to stderr."""
     import time
-    total = STATE.get("duration_hint") or 0.0
+    total = STATE.duration_hint or 0.0
     full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
     t0 = time.time()
     proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -126,13 +191,7 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
                 done = int(line.split("=")[1]) / 1_000_000
             except ValueError:
                 continue
-            if total > 0:
-                pct = min(99.9, done / total * 100)
-                elapsed = time.time() - t0
-                eta = (elapsed / pct * (100 - pct)) if pct > 0.5 else 0
-                msg = f"\r  {pct:5.1f}%  {done:7.1f}s / {total:.1f}s  ETA {eta:4.0f}s"
-            else:
-                msg = f"\r  {done:7.1f}s encoded"
+            msg = _progress_line(done, total, time.time() - t0)
             if msg != last:
                 sys.stderr.write(msg)
                 sys.stderr.flush()
@@ -140,11 +199,9 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     _, err = proc.communicate()
     if last:
         sys.stderr.write("\r" + " " * len(last) + "\r")
-    result = subprocess.CompletedProcess(full, proc.returncode, "", err)
     if check and proc.returncode != 0:
-        tail = "\n".join(err.strip().splitlines()[-15:])
-        die(f"command failed ({proc.returncode}): {cmd[0]}\n{tail}", code=proc.returncode or 1)
-    return result
+        _fail(cmd, proc.returncode, err)
+    return subprocess.CompletedProcess(full, proc.returncode, "", err)
 
 
 def shell_quote(s: str) -> str:

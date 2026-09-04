@@ -30,6 +30,22 @@ from _common import video_args, add_common, apply_common, emit, aac_args, audio_
 
 SR = 8000  # decode sample rate
 
+# Scoring constants for coarse alignment. Both come from tests/bench_sync.py on real dialogue and
+# music with +/-30 s offsets, gain, noise and EQ (see evals/results and CHANGELOG 0.8.0):
+#
+# MIN_OVERLAP_FRACTION: lags whose overlap with the other track is shorter than this share of the
+#   shorter track are never candidates. With the documented rule "analysis window >= 4x the largest
+#   expected offset" a true offset keeps >= 75 % overlap, so 0.35 costs nothing there, while the
+#   coincidental peaks on quasi-periodic material (music, tone beds) live below it. Raising it to
+#   0.5 started rejecting true 28 s offsets in 60 s windows; lowering it to 0.2 let the partial
+#   matches back in (86 % -> 95 % of 60 s stress cases fixed by this alone).
+# OVERLAP_WEIGHT_EXP: normalised similarity is multiplied by (overlap fraction) ** exponent so a
+#   perfect match over 55 % of the window cannot tie a perfect match over 100 %. 0.5 keeps a true
+#   75 % overlap at x0.87 and a 53 % one (28 s in 60 s) at x0.73 while a coincidental 40 % match
+#   drops to x0.63; exponent 1.0 over-penalised large true offsets, 0.25 left exact ties.
+MIN_OVERLAP_FRACTION = 0.35
+OVERLAP_WEIGHT_EXP = 0.5
+
 
 def decode_mono(path: str, seconds: float, start: float = 0.0) -> List[float]:
     ffmpeg = require_tool("ffmpeg")
@@ -119,10 +135,7 @@ def cross_correlate(ref: List[float], other: List[float], max_lag: int):
     lr, lo = len(ref), len(other)
     max_lag = min(max_lag, n // 2 - 1)
     best_lag, best_val, second = 0, -float("inf"), -float("inf")
-    # ignore lags with less than 35 % overlap: with the documented rule (analysis window >= 4x the
-    # largest expected offset) true offsets always keep >= 75 % overlap, while short-overlap lags are
-    # where coincidental matches on quasi-periodic material (music, tone beds) live
-    min_overlap = max(10, int(0.35 * min(lr, lo)))
+    min_overlap = max(10, int(MIN_OVERLAP_FRACTION * min(lr, lo)))  # see constants above
     scores = []
     for lag in range(-max_lag, max_lag + 1):
         # corr[lag] = sum_i ref[i] * other[i - lag]  -> ref index range and other index range overlap:
@@ -135,10 +148,8 @@ def cross_correlate(ref: List[float], other: List[float], max_lag: int):
         if denom <= 0:
             continue
         val = corr[lag % n].real / denom
-        # mild preference for longer overlaps: a perfect match over 55 % of the window must not tie
-        # with a perfect match over 100 % (quasi-periodic material). Exponent 0.5: with the window rule (>= 4x offset) a true match keeps >= 75 % overlap (x0.87) while a coincidental 55 % match drops to x0.74; keeps large true
-        # offsets (28 s in 60 s = 53 % overlap -> x0.94) competitive while still breaking exact ties.
-        val *= ((r1 - r0) / min(lr, lo)) ** 0.5
+        val *= ((r1 - r0) / min(lr, lo)) ** OVERLAP_WEIGHT_EXP  # longer overlap wins ties
+
         scores.append((val, lag))
         if val > best_val:
             second = best_val

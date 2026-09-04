@@ -1,0 +1,122 @@
+[
+ {
+  "id": "t01",
+  "lang": "en",
+  "prompt": "Can you make this clip 60 seconds? /Users/me/Desktop/IMG_4412.MOV",
+  "should_trigger": true
+ },
+ {
+  "id": "t02",
+  "lang": "ja",
+  "prompt": "この動画、縦にしてインスタのリールに上げたい。字幕もつけて。",
+  "should_trigger": true
+ },
+ {
+  "id": "t03",
+  "lang": "en",
+  "prompt": "the audio on the interview is way too quiet compared to the intro, can you fix the levels in interview.mp4",
+  "should_trigger": true
+ },
+ {
+  "id": "t04",
+  "lang": "ja",
+  "prompt": "Zoom の録画（zoom_0.mp4）から無音の部分を全部カットしてほしい",
+  "should_trigger": true
+ },
+ {
+  "id": "t05",
+  "lang": "en",
+  "prompt": "I recorded with a Rode mic separately, sync mic.wav to camera.mov please",
+  "should_trigger": true
+ },
+ {
+  "id": "t06",
+  "lang": "ja",
+  "prompt": "iPhone で撮った HDR の動画が YouTube で白っぽく見える。直せる？",
+  "should_trigger": true
+ },
+ {
+  "id": "t07",
+  "lang": "en",
+  "prompt": "put our logo top right on all the videos in ./exports and add a fade at the end",
+  "should_trigger": true
+ },
+ {
+  "id": "t08",
+  "lang": "ja",
+  "prompt": "podcast_ep12.wav を -16 LUFS にして m4a で書き出して",
+  "should_trigger": true
+ },
+ {
+  "id": "t09",
+  "lang": "en",
+  "prompt": "Does this file meet TikTok's specs? final_v3.mp4",
+  "should_trigger": true
+ },
+ {
+  "id": "t10",
+  "lang": "ja",
+  "prompt": "2 台のカメラで撮った結婚式の動画、いいところだけ 3 分にまとめられる？",
+  "should_trigger": true
+ },
+ {
+  "id": "n01",
+  "lang": "en",
+  "prompt": "Resize this PNG logo to 512x512 and make the background transparent: logo.png",
+  "should_trigger": false
+ },
+ {
+  "id": "n02",
+  "lang": "ja",
+  "prompt": "Windows に ffmpeg をインストールする方法を教えて",
+  "should_trigger": false
+ },
+ {
+  "id": "n03",
+  "lang": "en",
+  "prompt": "Download this YouTube video for me: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "should_trigger": false
+ },
+ {
+  "id": "n04",
+  "lang": "ja",
+  "prompt": "新商品紹介動画の台本（60 秒）を書いて",
+  "should_trigger": false
+ },
+ {
+  "id": "n05",
+  "lang": "en",
+  "prompt": "What's the keyboard shortcut for ripple delete in Premiere Pro?",
+  "should_trigger": false
+ },
+ {
+  "id": "n06",
+  "lang": "en",
+  "prompt": "Design a YouTube thumbnail in Figma for my cooking channel",
+  "should_trigger": false
+ },
+ {
+  "id": "n07",
+  "lang": "ja",
+  "prompt": "このCSVをJSONに変換して: sales.csv",
+  "should_trigger": false
+ },
+ {
+  "id": "n08",
+  "lang": "en",
+  "prompt": "Explain the difference between H.264 and H.265 in simple terms",
+  "should_trigger": false
+ },
+ {
+  "id": "n09",
+  "lang": "en",
+  "prompt": "Generate a 10-second video of a cat surfing with AI",
+  "should_trigger": false
+ },
+ {
+  "id": "n10",
+  "lang": "ja",
+  "prompt": "会議の音声を文字起こしして議事録にまとめて（meeting.m4a）",
+  "should_trigger": false
+ }
+]
