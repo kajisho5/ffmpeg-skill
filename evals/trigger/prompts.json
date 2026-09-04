@@ -118,5 +118,17 @@
   "lang": "ja",
   "prompt": "会議の音声を文字起こしして議事録にまとめて（meeting.m4a）",
   "should_trigger": false
+ },
+ {
+  "id": "t11",
+  "lang": "en",
+  "prompt": "Convert this WAV to MP3: interview_raw.wav",
+  "should_trigger": true
+ },
+ {
+  "id": "t12",
+  "lang": "en",
+  "prompt": "Remove the silence from this recording, it's a 40 minute M4A",
+  "should_trigger": true
  }
 ]

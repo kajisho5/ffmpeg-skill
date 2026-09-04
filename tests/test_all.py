@@ -801,6 +801,44 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(data["offset_seconds"], -28.0, 0.02)
         self.assertGreater(data["confidence"], 0.3)
 
+    def test_audio_only_inputs_through_the_audio_scripts(self):
+        """WAV / M4A / MP3 with no video stream: loudness, silence, audio (voice, convert), cut, check."""
+        m4a = OUT / "gappy.m4a"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
+           "-t", "12", "-c:a", "aac", "-b:a", "128k", m4a)
+        self.assertIsNone(probe(str(m4a)).get("video"))
+        # loudness: wav -> m4a, codec follows the output extension
+        norm = OUT / "lav_norm.m4a"
+        script("loudness.py", self.mic, "-I", "-16", "--tp", "-1.5", "-o", norm)
+        a = probe(str(norm))["audio"]
+        self.assertEqual(a["codec"], "aac")
+        self.assertIn("PASS", script("check.py", norm, "--platform", "podcast").stdout)
+        # silence removal on an m4a
+        tight = OUT / "gappy_tight.m4a"
+        data = json.loads(script("silence.py", m4a, "-o", tight, "--json").stdout)
+        self.assertClose(data["removed_seconds"], 5.25, 0.3)
+        self.assertClose(probe(str(tight))["duration"], 6.75, 0.3)
+        # voice clean-up keeps the container, plain -o converts
+        clean = OUT / "gappy_clean.m4a"
+        script("audio.py", m4a, "--voice", "-o", clean)
+        self.assertEqual(probe(str(clean))["audio"]["codec"], "aac")
+        mp3 = OUT / "lav.mp3"
+        script("audio.py", self.mic, "-o", mp3)
+        self.assertEqual(probe(str(mp3))["audio"]["codec"], "mp3")
+        # trim is a stream copy on wav and mp3
+        cut_wav = OUT / "lav_cut.wav"
+        proc = script("cut.py", self.mic, "--start", "0:02", "--end", "0:06", "-o", cut_wav)
+        self.assertIn("lossless", proc.stderr)
+        self.assertClose(probe(str(cut_wav))["duration"], 4.0, 0.05)
+        cut_mp3 = OUT / "lav_cut.mp3"
+        script("cut.py", mp3, "--start", "2", "--end", "6", "-o", cut_mp3)
+        self.assertClose(probe(str(cut_mp3))["duration"], 4.0, 0.1)
+        # picture-only scripts refuse clearly instead of failing inside ffmpeg
+        for argv in (("fit.py", "--duration", "5"), ("export.py", "--preset", "youtube"), ("look.py",)):
+            proc = script(argv[0], self.mic, *argv[1:], "-o", OUT / "nope.out", expect_fail=True)
+            self.assertIn("no video stream", proc.stderr)
+
     def test_loudness_silent_input_is_reported_not_crashed(self):
         silent = OUT / "silent.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",

@@ -181,11 +181,29 @@
    "chosen": "meeting-notes",
    "model": "sonnet",
    "correct": true
+  },
+  {
+   "id": "t11",
+   "lang": "en",
+   "prompt": "Convert this WAV to MP3: interview_raw.wav",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true
+  },
+  {
+   "id": "t12",
+   "lang": "en",
+   "prompt": "Remove the silence from this recording, it's a 40 minute M4A",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true
   }
  ],
  "summary": {
-  "should_trigger": "10/10",
+  "should_trigger": "12/12",
   "should_not_trigger": "10/10",
-  "note": "Haiku judged 11 of the 20 (session rate limit hit on the rest); Sonnet judged 9. Five Sonnet runs refused when the prompt was delivered via a file and were re-run with the prompt inline. Reference decoys are hypothetical skill descriptions written for this test."
+  "note": "Haiku judged 11 of the 20 (session rate limit hit on the rest); Sonnet judged 9. Five Sonnet runs refused when the prompt was delivered via a file and were re-run with the prompt inline. Reference decoys are hypothetical skill descriptions written for this test. t11/t12 (audio-only requests) added later the same day, judged by Sonnet."
  }
 }
