@@ -344,7 +344,14 @@ def main() -> int:
         args.text = None
     if args.text:
         cues = parse_text_cues(args.text, args.auto_seconds, args.gap)
-        srt_path = args.write_srt or os.path.splitext(args.text)[0] + ".srt"
+        if args.write_srt:
+            srt_path = args.write_srt
+        elif args.input:
+            # keep generated files next to the output, not in the user's source folder
+            out_guess = args.output or default_output(args.input, "captioned")
+            srt_path = os.path.splitext(out_guess)[0] + ".srt"
+        else:
+            srt_path = os.path.splitext(args.text)[0] + ".srt"
         write_srt(cues, srt_path)
         info(f"wrote {srt_path} ({len(cues)} cues)")
         if not args.input:

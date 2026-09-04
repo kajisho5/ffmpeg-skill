@@ -24,7 +24,7 @@ Project format (all keys optional except clips):
     {"logo": true},
     {"text": "Episode 12", "position": "bottom", "start": 1, "end": 5, "fade": 0.3, "box": true}
   ],
-  "audio": {"voice": true, "music": "bed.mp3", "music_volume": -16, "duck": true, "fade_out": 2},
+  "audio": {"voice": true, "music": "bed.mp3", "music_volume": -16, "duck": true, "music_fade_out": 2},
   "loudness": {"lufs": -14, "tp": -1},
   "fit": {"duration": 60},
   "export": {"preset": "reels"},
@@ -289,7 +289,7 @@ def main() -> int:
         for k, flag in (("music", "--music"), ("replace", "--replace")):
             if au.get(k):
                 argv += [flag, rel(au[k])]
-        for k, flag in (("music_volume", "--music-volume"), ("fade_in", "--fade-in"), ("fade_out", "--fade-out"), ("gain", "--gain"), ("duck_amount", "--duck-amount")):
+        for k, flag in (("music_volume", "--music-volume"), ("fade_in", "--fade-in"), ("fade_out", "--fade-out"), ("music_fade_out", "--music-fade-out"), ("gain", "--gain"), ("duck_amount", "--duck-amount")):
             if au.get(k) is not None:
                 argv += [flag, str(au[k])]
         for k, flag in (("voice", "--voice"), ("denoise", "--denoise"), ("duck", "--duck"), ("music_loop", "--music-loop"), ("stereo", "--stereo"), ("mono", "--mono"), ("downmix", "--downmix")):

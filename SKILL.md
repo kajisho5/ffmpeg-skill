@@ -60,6 +60,7 @@ Ask one short question only when the answer changes the output materially and th
 - **Duration** ("make it 60 s") without a method: speed up for ≤1.5× changes, trim otherwise, and state which you chose. Ask if the content is a talk (trimming loses words) and the change is large.
 - **Captions** without a text source: use `--transcribe` if a local whisper exists, otherwise ask for the text or a timed file; never invent dialogue.
 - **Fonts and brand**: if the user mentions a brand, colours or "our font", ask for or create `brand.json` once and reuse it.
+- **CJK / non-Latin text**: check that a font exists before rendering (`fc-list :lang=ja file` / `:lang=ko` / `:lang=zh`); pass it with `--font "Name"` or `--font-file /path.ttf`. Tofu boxes are a failed job, not a style.
 - Anything else (crop position, transition type, caption style): pick the conventional default, say what you picked, and offer the alternative in one line.
 
 Do not ask for things `probe.py` can tell you.

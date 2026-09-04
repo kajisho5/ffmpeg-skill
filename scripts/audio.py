@@ -6,7 +6,7 @@ Examples:
   python3 audio.py interview.mp4 --denoise                      # FFT noise reduction
   python3 audio.py interview.mp4 --voice                        # highpass + de-esser + compressor + denoise
   python3 audio.py talk.mp4 --music bed.mp3 --duck              # music under speech, auto-ducked
-  python3 audio.py talk.mp4 --music bed.mp3 --music-volume -18 --fade-out 3
+  python3 audio.py talk.mp4 --music bed.mp3 --music-volume -18 --music-fade-out 3   # bed fades, voice does not
   python3 audio.py clip.mp4 --fade-in 0.5 --fade-out 1 --stereo
   python3 audio.py surround.mov --downmix                       # 5.1 -> stereo with proper centre/LFE weights
   python3 audio.py clip.mp4 --replace narration.wav             # swap the audio track entirely
@@ -37,7 +37,8 @@ def main() -> int:
     music.add_argument("--music-loop", action="store_true", help="loop the music if shorter than the video")
     fades = ap.add_argument_group("fades / layout")
     fades.add_argument("--fade-in", type=float, default=0.0, help="seconds")
-    fades.add_argument("--fade-out", type=float, default=0.0, help="seconds")
+    fades.add_argument("--fade-out", type=float, default=0.0, help="seconds; fades the whole final mix (voice included)")
+    music.add_argument("--music-fade-out", type=float, default=0.0, help="seconds; fades only the music bed at the end, voice untouched")
     fades.add_argument("--stereo", action="store_true", help="force 2-channel output (mono is duplicated to both sides)")
     fades.add_argument("--mono", action="store_true", help="force 1-channel output")
     fades.add_argument("--downmix", action="store_true", help="downmix 5.1/7.1 to stereo using standard weights")
@@ -90,8 +91,8 @@ def main() -> int:
         m = f"{idx}:a:0"
         idx += 1
         mfx = [f"volume={args.music_volume:g}dB", f"atrim=0:{dur:.3f}" if dur else "anull"]
-        if args.fade_out:
-            mfx.append(f"afade=t=out:st={max(0.0, dur - args.fade_out):.3f}:d={args.fade_out:g}")
+        if args.music_fade_out and dur:
+            mfx.append(f"afade=t=out:st={max(0.0, dur - args.music_fade_out):.3f}:d={args.music_fade_out:g}")
         graph.append(f"[{m}]{','.join(mfx)}[music]")
         if args.duck:
             graph.append("[main]asplit=2[mainA][sc]")
