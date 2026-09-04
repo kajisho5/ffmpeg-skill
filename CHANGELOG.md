@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.4 — three repeats, independent grading
+
+The 24-prompt evaluation was run three times (72 agent runs, `evals/results/iteration-2-4.json`) and every run was graded by a separate model (`evals/results/iteration-2-4-independent-grades.json`): routing 72/72, honest 72/72, user's language 72/72, report format 71/72, visual check whenever the picture changed 24/24, mean quality 4.9 / 5. Script choices were identical across repeats; only defaults (crop vs pad, silence margin) varied.
+
+- `overlay.py --fade` without `--start`/`--end` now fades in at 0 and out at the end of the video (it was silently ignored; found by an agent during the runs).
+- `--dry-run` no longer prints "wrote <file>" for a file that was not written (central fix in `_common.info`).
+
 ## 0.8.3 — internals and triggering
 
 - `_common.py`: the shared flag state is an explicit `Context` object (`STATE.dry_run` etc., dict-style access kept), `run()` is split into recording, dry-run, captured and progress paths with one failure handler. Behaviour unchanged: 54/54 tests and the sync benchmark give identical numbers before and after.

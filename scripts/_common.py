@@ -37,6 +37,9 @@ def die(msg: str, code: int = 1) -> "None":
 
 
 def info(msg: str) -> None:
+    # under --dry-run nothing is written; do not let scripts claim otherwise
+    if msg.startswith("wrote ") and STATE.dry_run:
+        msg = "[dry-run] would write " + msg[len("wrote "):]
     sys.stderr.write(f"{msg}\n")
 
 
