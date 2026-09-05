@@ -63,8 +63,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "probe": dict(role="analysis", inputs=["media (video or audio, any container ffprobe reads)"], outputs=["measurement JSON on stdout (no file)"],
                   required=["ffprobe"], optional=[{"capability": "ffmpeg", "when": "--analyze"}, {"capability": "filter:signalstats", "when": "--analyze"}],
                   video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=False, idempotency="bit_exact", deterministic=True),
-    "cut": dict(role="execution", inputs=["video or audio asset"], outputs=["cut video/audio artifact (same container family)"],
-                required=FF, optional=[{"capability": X264, "when": "re-encode: --accurate, VFR source, or a keyframe farther than --tolerance"}, HDR_X265, {"capability": AAC, "when": "re-encode of a video container"}],
+    "cut": dict(role="execution", inputs=["video or audio asset"], outputs=["cut video/audio artifact (same container family, or audio extracted when -o has an audio extension)"],
+                required=FF, optional=[{"capability": X264, "when": "re-encode: --accurate, VFR source, or a keyframe farther than --tolerance"}, HDR_X265, {"capability": AAC, "when": "re-encode of a video container"}] + AUDIO_OUT,
                 video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "fit": dict(role="execution", inputs=["video asset"], outputs=["video artifact at the requested duration / aspect / fps"],
                 required=FF + [X264, AAC], optional=[HDR_X265, {"capability": "filter:minterpolate", "when": "--smooth interpolate"}],
@@ -84,8 +84,9 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "multicam": dict(role="execution", inputs=["reference camera", "other cameras / recorders"], outputs=["switched multicam video artifact"],
                      required=FF + [X264, AAC], optional=[HDR_X265],
                      video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "audio": dict(role="execution", inputs=["video or audio asset", "music bed (--music) or replacement track (--replace)"], outputs=["artifact with the processed audio (video stream-copied)"],
-                  required=FF + [AAC], optional=[{"capability": "filter:afftdn", "when": "--denoise / --voice"}, {"capability": "filter:sidechaincompress", "when": "--duck"}] + AUDIO_OUT,
+    "audio": dict(role="execution", inputs=["video or audio asset", "music bed (--music) or replacement track (--replace)"], outputs=["artifact with the processed audio (video stream-copied, or dropped when -o has an audio extension)"],
+                  required=FF + [AAC], optional=[{"capability": "filter:afftdn", "when": "--denoise / --voice"}, {"capability": "filter:sidechaincompress", "when": "--duck"},
+                                                {"capability": "filter:acompressor", "when": "--compress / --voice"}, {"capability": "filter:alimiter", "when": "--limit"}, {"capability": "filter:agate", "when": "--gate"}] + AUDIO_OUT,
                   video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video stream-copied)"],
                      required=FF + ["filter:loudnorm", AAC], optional=AUDIO_OUT,
@@ -93,9 +94,9 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": X264, "when": "removing silences from a video"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"}] + AUDIO_OUT,
                     video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "join": dict(role="execution", inputs=["two or more video assets"], outputs=["concatenated video artifact"],
-                 required=FF + [X264, AAC, "filter:xfade", "filter:acrossfade"], optional=[HDR_X265],
-                 video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "join": dict(role="execution", inputs=["two or more video assets, or two or more audio-only assets"], outputs=["concatenated video artifact", "concatenated audio artifact (audio-only inputs, audio output extension)"],
+                 required=FF + [X264, AAC, "filter:xfade", "filter:acrossfade"], optional=[HDR_X265] + AUDIO_OUT,
+                 video_required=False, audio_only=True, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "color": dict(role="execution", inputs=["video asset", ".cube LUT (--lut)"], outputs=["video artifact with converted colour"],
                   required=FF, optional=[{"capability": X264, "when": "--to-sdr / --lut"}, {"capability": "filter:zscale", "when": "--to-sdr"}, {"capability": "filter:tonemap", "when": "--to-sdr"},
                                          {"capability": "filter:lut3d", "when": "--lut"}, {"capability": "bsf:filter_units", "when": "--strip-dovi"}, {"capability": X265, "when": "--lut on an HDR source"}, {"capability": AAC, "when": "re-encode"}],
@@ -288,24 +289,65 @@ def public_tools() -> List[str]:
     return sorted(p.stem for p in HERE.glob("*.py") if not p.name.startswith("_"))
 
 
-def _ff_list(binary: str, flag: str) -> List[str]:
-    """Names from `ffmpeg -encoders` / `-filters` / `-bsfs` (empty list when ffmpeg is missing)."""
-    exe = shutil.which(binary)
-    if not exe:
-        return []
-    proc = subprocess.run([exe, "-hide_banner", flag], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+# `ffmpeg -filters` rows: FFmpeg <= 7 prints three flag characters (`..C acompressor A->A ...`),
+# FFmpeg 8 prints two (`T. acompressor A->A ...`). The row is recognised by its io-spec token
+# (`A->A`, `|->V`, `N->N`, ...) so the flag width does not matter; a legend line never carries `->`.
+_FILTER_ROW = re.compile(r"^\s*(?:[A-Z.]{1,6}\s+)?([A-Za-z0-9_]+)\s+(\S*->\S*)(?:\s|$)")
+# `ffmpeg -encoders` rows follow a ` ------` separator: flags (six characters today; any width of
+# letters and dots is accepted) then the encoder name. A legend line has `=` where the name would be.
+_ENCODER_ROW = re.compile(r"^\s*[A-Z.]{2,10}\s+([A-Za-z0-9_-]+)(?:\s|$)")
+_LIST_SEPARATOR = re.compile(r"^\s*-{3,}\s*$")
+
+
+def _parse_ff_list(flag: str, text: str) -> List[str]:
+    """Names in the stdout of `ffmpeg <flag>`; empty when no row was recognised."""
     names: List[str] = []
-    flags = {"-encoders": r"[VASFXBD.]{6}", "-filters": r"[TSC.]{3}"}.get(flag)
-    for line in proc.stdout.splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        if flag == "-bsfs":
+    if flag == "-filters":
+        for line in text.splitlines():
+            m = _FILTER_ROW.match(line)
+            if m:
+                names.append(m.group(1))
+    elif flag == "-encoders":
+        lines = text.splitlines()
+        sep = next((i for i, l in enumerate(lines) if _LIST_SEPARATOR.match(l)), None)
+        rows = lines[sep + 1:] if sep is not None else lines
+        for line in rows:
+            m = _ENCODER_ROW.match(line)
+            if m and m.group(1) != "=":
+                names.append(m.group(1))
+    elif flag == "-bsfs":
+        for line in text.splitlines():
+            parts = line.split()
             if len(parts) == 1 and not parts[0].endswith(":"):
                 names.append(parts[0])
-        elif flags and len(parts) >= 2 and re.fullmatch(flags, parts[0]):
-            names.append(parts[1])
     return names
+
+
+def _ff_listing(binary: str, flag: str) -> Dict[str, Any]:
+    """`{"names": [...], "status": parsed | unparsed | failed | missing, "detail": str}` for `ffmpeg <flag>`.
+
+    `parsed`: rows recognised. `unparsed`: ffmpeg ran but no row matched, so the capabilities it
+    covers are unknown, not absent. `failed`: ffmpeg exited non-zero. `missing`: no binary on PATH.
+    """
+    exe = shutil.which(binary)
+    if not exe:
+        return {"names": [], "status": "missing", "detail": f"{binary} not on PATH"}
+    try:
+        proc = subprocess.run([exe, "-hide_banner", flag], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError as e:
+        return {"names": [], "status": "failed", "detail": f"{binary} {flag}: {e}"}
+    if proc.returncode != 0:
+        tail = " ".join(proc.stderr.strip().splitlines()[-2:])
+        return {"names": [], "status": "failed", "detail": f"{binary} {flag} exited {proc.returncode}: {tail}"}
+    names = _parse_ff_list(flag, proc.stdout)
+    if not names:
+        return {"names": [], "status": "unparsed", "detail": f"no row recognised in `{binary} {flag}` output ({len(proc.stdout.splitlines())} lines)"}
+    return {"names": names, "status": "parsed", "detail": f"{len(names)} entries"}
+
+
+def _ff_list(binary: str, flag: str) -> List[str]:
+    """Names from `ffmpeg -encoders` / `-filters` / `-bsfs` (empty list when ffmpeg is missing or unparsed)."""
+    return _ff_listing(binary, flag)["names"]
 
 
 def _version_line(binary: str) -> Optional[str]:
@@ -335,30 +377,51 @@ def required_capabilities() -> Dict[str, List[str]]:
 
 
 def doctor() -> Dict[str, Any]:
-    """Detect which declared capabilities this machine has. No secrets, no environment variables."""
-    encoders = set(_ff_list("ffmpeg", "-encoders"))
-    filters = set(_ff_list("ffmpeg", "-filters"))
-    bsfs = set(_ff_list("ffmpeg", "-bsfs"))
-    have: Dict[str, bool] = {}
+    """Detect which declared capabilities this machine has. No secrets, no environment variables.
+
+    Three states per capability: available, missing, unknown. `unknown` means the ffmpeg listing
+    that would prove it could not be read (unparsed output, ffmpeg failure); it is never folded into
+    `missing` (a filter that exists is not reported absent) nor into `available` (a failed detection
+    is not a pass). `ok` is true only when nothing required is missing or unknown.
+    """
+    listings = {
+        "encoders": _ff_listing("ffmpeg", "-encoders"),
+        "filters": _ff_listing("ffmpeg", "-filters"),
+        "bsfs": _ff_listing("ffmpeg", "-bsfs"),
+    }
+    sets = {k: set(v["names"]) for k, v in listings.items()}
+    state: Dict[str, str] = {}  # capability -> available | missing | unknown
     wanted = required_capabilities()
+
+    def _from(kind: str, name: str) -> str:
+        lst = listings[kind]
+        if lst["status"] == "parsed":
+            return "available" if name in sets[kind] else "missing"
+        if lst["status"] == "missing":
+            return "missing"  # no ffmpeg at all: nothing it provides is available
+        return "unknown"
+
     for cap in wanted["required"] + wanted["optional"]:
         if cap == "ffmpeg":
-            have[cap] = shutil.which("ffmpeg") is not None
+            state[cap] = "available" if shutil.which("ffmpeg") else "missing"
         elif cap == "ffprobe":
-            have[cap] = shutil.which("ffprobe") is not None
+            state[cap] = "available" if shutil.which("ffprobe") else "missing"
         elif cap.startswith("encoder:"):
-            have[cap] = cap[8:] in encoders
+            state[cap] = _from("encoders", cap[8:])
         elif cap.startswith("filter:"):
-            have[cap] = cap[7:] in filters
+            state[cap] = _from("filters", cap[7:])
         elif cap.startswith("bsf:"):
-            have[cap] = cap[4:] in bsfs
+            state[cap] = _from("bsfs", cap[4:])
         elif cap == "external:whisper":
-            have[cap] = _whisper_available()
+            state[cap] = "available" if _whisper_available() else "missing"
         else:
-            have[cap] = False
-    available = sorted(c for c, ok in have.items() if ok)
-    missing_required = sorted(c for c in wanted["required"] if not have.get(c))
-    missing_optional = sorted(c for c in wanted["optional"] if not have.get(c))
+            state[cap] = "missing"
+    available = sorted(c for c, st in state.items() if st == "available")
+    missing_required = sorted(c for c in wanted["required"] if state[c] == "missing")
+    missing_optional = sorted(c for c in wanted["optional"] if state[c] == "missing")
+    unknown = sorted(c for c, st in state.items() if st == "unknown")
+    unknown_required = [c for c in unknown if c in wanted["required"]]
+    errors = [f"{k}: {v['detail']}" for k, v in listings.items() if v["status"] in ("unparsed", "failed")]
     return {
         "python": ".".join(str(x) for x in sys.version_info[:3]),
         "ffmpeg": _version_line("ffmpeg"),
@@ -366,7 +429,10 @@ def doctor() -> Dict[str, Any]:
         "available": available,
         "missing": missing_required,
         "missing_optional": missing_optional,
-        "ok": not missing_required,
+        "unknown": unknown,
+        "detection": {k: {"status": v["status"], "count": len(v["names"]), "detail": v["detail"]} for k, v in listings.items()},
+        "errors": errors,
+        "ok": not missing_required and not unknown_required,
     }
 
 
@@ -496,7 +562,8 @@ def build(detect: bool = True) -> Dict[str, Any]:
     caps: Dict[str, Any] = {"required": wanted["required"], "optional": wanted["optional"], "naming": "ffmpeg | ffprobe | encoder:<name> | filter:<name> | bsf:<name> | external:whisper"}
     if detect:
         d = doctor()
-        caps.update({"available": d["available"], "missing": d["missing"], "missing_optional": d["missing_optional"], "detected_by": "doctor"})
+        caps.update({"available": d["available"], "missing": d["missing"], "missing_optional": d["missing_optional"],
+                     "unknown": d["unknown"], "detection": d["detection"], "detected_by": "doctor"})
     return {
         "contract_version": CONTRACT_VERSION,
         "skill": {
@@ -568,7 +635,14 @@ def main() -> int:
             print(f"available: {', '.join(d['available'])}")
             print(f"missing required: {', '.join(d['missing']) or 'none'}")
             print(f"missing optional: {', '.join(d['missing_optional']) or 'none'}")
-        return 0 if d["ok"] else 1
+            if d["unknown"]:
+                print(f"unknown (detection failed, not proven missing): {', '.join(d['unknown'])}")
+            for err in d["errors"]:
+                print(f"detection error: {err}", file=sys.stderr)
+        if d["ok"]:
+            return 0
+        # 1: something required is missing; 2: nothing proven missing but a required capability is unknown
+        return 1 if d["missing"] else 2
     print(json.dumps(build(detect=not args.static), indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

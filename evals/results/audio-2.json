@@ -1,0 +1,21 @@
+{
+ "iteration": "audio-2",
+ "date": "2026-09-05",
+ "runs": 6,
+ "prompts_file": "evals/agent_prompts_audio2.json",
+ "grader": "evals/grade_runs_24.py ITER evals/agent_prompts_audio2.json",
+ "skill_version": "0.9.1 (feat/ffmpeg8-audio, before merge)",
+ "routing": "6/6",
+ "japanese_report": "2/2",
+ "report_format": "6/6",
+ "audio_only_handled_as_audio": "6/6 (no picture-only script run, Look marked not needed)",
+ "mean_commands": 4.2,
+ "per_prompt": {
+  "b01-join-audio": "join.py wav+wav+m4a -> flac with 0.5 s acrossfade; resampled to 48 kHz stereo, expected/measured duration reported (12.53/12.55 s), check podcast",
+  "b02-extract-wav": "audio.py mp4 -o wav; no video stream, PCM 48 kHz mono",
+  "b03-extract-clean-ja": "audio.py mp4 --denoise -o m4a; Japanese report, offered --voice",
+  "b04-second-track": "probe listed audio_streams; audio.py --audio-stream 1 -> 44.1 kHz wav",
+  "b05-sample-trim": "cut.py --accurate; agent verified by byte comparison: start error 0 samples, end 0.2 sample rounding (53,333 samples)",
+  "b06-dynamics-ja": "audio.py --compress -20 dB 4:1 --limit -1 dBFS -> wav; noted the limiter did not engage on a low-peak source"
+ }
+}

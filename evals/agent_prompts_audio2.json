@@ -1,0 +1,62 @@
+[
+ {
+  "id": "b01-join-audio",
+  "lang": "en",
+  "prompt": "Join these three recordings into one file in this order with a short crossfade between them: /home/user/ffmpeg-skill/tests/out/c_tone.wav, /home/user/ffmpeg-skill/tests/out/c_mic.wav, /tmp/capx/p1/s44.m4a. Save to OUTDIR as FLAC.",
+  "expect": [
+   "join"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "b02-extract-wav",
+  "lang": "en",
+  "prompt": "Extract the audio from /home/user/ffmpeg-skill/tests/out/c_source.mp4 as a WAV file. Save to OUTDIR.",
+  "expect": [
+   "audio|cut"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "b03-extract-clean-ja",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/c_source.mp4 の音声だけを取り出して、ノイズを取って M4A で OUTDIR に保存してください。",
+  "expect": [
+   "audio"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "b04-second-track",
+  "lang": "en",
+  "prompt": "/tmp/capx/p1/two.mkv has two audio tracks. Give me the second one (the 44.1 kHz track) as a WAV in OUTDIR.",
+  "expect": [
+   "audio"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "b05-sample-trim",
+  "lang": "en",
+  "prompt": "Cut /home/user/ffmpeg-skill/tests/out/c_tone.wav from 1.2345 s to 2.3456 s exactly, sample-accurate, and tell me how accurate the cut actually is. Save to OUTDIR.",
+  "expect": [
+   "cut"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "b06-dynamics-ja",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/c_mic.wav の声にコンプレッサー（スレッショルド -20 dB、レシオ 4:1）をかけて、ピークを -1 dBFS で制限した WAV を OUTDIR に保存してください。",
+  "expect": [
+   "audio"
+  ],
+  "refuse": false,
+  "audio_only": true
+ }
+]

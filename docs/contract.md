@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`0.9.0`) | any release |
+| `skill.version` | the npm / package.json version (`0.9.1`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -32,7 +32,7 @@ for provenance.
 ```json
 {
   "contract_version": "1.0",
-  "skill": {"id": "ffmpeg-skill", "version": "0.9.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "0.9.1", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0"},
@@ -66,6 +66,7 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `requires_visual_verification` | the picture changed; run `ffmpeg-skill/look` and inspect the PNG |
 | `audio_only` | accepts an audio-only input (WAV, MP3, M4A, FLAC, OGG, Opus) |
 | `video_required` | refuses an input without a video stream ("input has no video stream") |
+| | `join` has `audio_only: true` and `video_required: false` since 0.9.1: audio-only inputs are joined as audio (no `look` needed then); mixing audio and video inputs is refused |
 | `deterministic_inputs`, `idempotency_hint` | see Repeatability |
 | `mcp` | the MCP tool name and its positional arguments |
 
@@ -128,7 +129,20 @@ Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
 to omit detection. Nothing from the environment other than those lists and the
 ffmpeg/ffprobe/python versions is printed; no environment variables, no paths.
 
-`ffmpeg-skill doctor` exits non-zero when a required capability is missing.
+`doctor` has three states per capability. `available` and `missing` come from a listing
+that was read; `unknown` means the listing that would prove the capability could not be
+read (`ffmpeg -filters` in a layout the parser does not recognise, or ffmpeg exiting
+non-zero), and it is never folded into `missing`, so an installed filter is not reported
+absent, nor into `available`, so a failed detection is not a pass. `detection` gives the
+status (`parsed`, `unparsed`, `failed`, `missing`), row count and detail of each listing;
+`errors` lists the unreadable ones. The filter parser recognises the FFmpeg 6/7 layout
+(three flag characters, `..C acompressor A->A`) and the FFmpeg 8 layout (two, `T.
+acompressor A->A`) by the io-spec token, so the flag width does not matter; fixtures for
+both live in `tests/fixtures/`.
+
+`ffmpeg-skill doctor` exits 0 when every required capability is available, 1 when one is
+missing, 2 when none is missing but a required one is unknown. `ok` is true only for 0.
+The keys of 0.9.0 (`available`, `missing`, `missing_optional`, `ok`) are unchanged.
 
 ## Invocation
 

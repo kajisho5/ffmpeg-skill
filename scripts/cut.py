@@ -5,10 +5,19 @@ Lossless stream copy (-c copy) is preferred. Cuts snap to keyframes in that
 mode, so if frame accuracy matters pass --accurate to re-encode. Multiple
 segments are cut individually and concatenated with the concat demuxer.
 
+Audio: a stream copy lands on a packet boundary (about 21 ms for AAC, one
+demuxer block for WAV); --accurate decodes and trims to the sample. The output
+extension picks the codec: -o out.wav writes PCM (never an AAC packet inside a
+WAV), -o out.m4a writes AAC; an audio extension on a video input drops the
+picture (mp4 -> wav extraction). The result reports `precision`
+(packet / sample / codec_frame / frame) and the measured duration error.
+
 Examples:
   python3 cut.py input.mp4 --start 00:00:10 --end 00:00:25
   python3 cut.py input.mp4 --segments 0:05-0:12,1:00-1:20 -o highlights.mp4
   python3 cut.py input.mp4 --start 3.5 --duration 10 --accurate
+  python3 cut.py talk.wav --start 1.2345 --end 2.3456 --accurate -o part.wav   # sample-exact
+  python3 cut.py talk.mp4 --start 1:00 --end 2:00 -o part.wav                   # audio extraction
 """
 import argparse
 import os
@@ -16,7 +25,7 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run
 
 
 def parse_segments(spec: str) -> List[Tuple[float, float]]:
@@ -37,15 +46,62 @@ def parse_segments(spec: str) -> List[Tuple[float, float]]:
     return segs
 
 
+def encode_args(meta: dict, dst: str, crf: int, preset: str) -> List[str]:
+    """Codec arguments for a re-encoded cut: video + AAC into a video container, otherwise the codec
+    the audio extension names (PCM for .wav, FLAC, MP3, AAC...) with no video stream."""
+    if is_audio_output(dst) or not meta.get("video"):
+        return ["-vn"] + audio_codec_for(dst)
+    return video_args(meta, crf, preset) + cfr_args(meta) + aac_args()
+
+
+def copy_args(meta: dict, dst: str) -> List[str]:
+    """Stream-copy arguments: everything into a video container, audio only into an audio extension."""
+    if is_audio_output(dst) and meta.get("video"):
+        return ["-vn", "-c:a", "copy"]
+    return ["-c", "copy"]
+
+
+LOSSLESS_AUDIO = {"pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "flac"}
+
+
+def precision_of(meta: dict, dst: str, reencoded: bool) -> str:
+    """How exact the cut is, measured on what was written:
+
+    packet      stream copy; the cut lands on a packet (audio) or keyframe (video) boundary
+    sample      decoded audio trimmed to the sample and written losslessly (PCM / FLAC)
+    codec_frame decoded audio trimmed to the sample, then framed by a lossy encoder (AAC 1024,
+                MP3 1152, Opus 960 samples) which also adds its priming delay to the reported length
+    frame       re-encoded video: the picture is frame-exact, the audio underneath is sample-trimmed
+    """
+    if not reencoded:
+        return "packet"
+    if is_audio_output(dst) or not meta.get("video"):
+        codec = audio_codec_for(dst)[1]
+        return "sample" if codec in LOSSLESS_AUDIO else "codec_frame"
+    return "frame"
+
+
 def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5, meta: dict = None) -> bool:
     """Cut one segment. Returns True if the result was re-encoded."""
     dur = end - start
     meta = meta or probe(src)
+    audio_only = is_audio_output(dst) or not meta.get("video")
+    if not reencode and audio_only and audio_codec_for(dst)[1].startswith("pcm") and not str((meta.get("audio") or {}).get("codec", "")).startswith("pcm"):
+        info(f"{(meta.get('audio') or {}).get('codec')} packets cannot be copied into a PCM container; decoding to PCM")
+        reencode = True
     if reencode:
-        cmd = ffmpeg_base() + ["-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}"]
-        cmd += video_args(meta, crf, preset) + cfr_args(meta) + aac_args() + ["-avoid_negative_ts", "make_zero", dst]
+        # -ss before -i seeks, then decoding discards samples up to the exact start (accurate_seek);
+        # atrim bounds the decoded stream to the requested length at sample resolution.
+        cmd = ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"]
+        if is_audio_output(dst) or not meta.get("video"):
+            cmd += ["-af", f"atrim=end={dur:.6f},asetpts=PTS-STARTPTS"]
+        cmd += encode_args(meta, dst, crf, preset) + ["-avoid_negative_ts", "make_zero", dst]
+    elif audio_only:
+        # output-side seek: an input seek on a video file lands on the previous video keyframe and on
+        # FLAC/MP3 on a coarse index; reading from the start and dropping packets is exact to the packet
+        cmd = ffmpeg_base() + ["-i", src, "-ss", f"{start:.6f}", "-t", f"{dur:.6f}"] + copy_args(meta, dst) + ["-avoid_negative_ts", "make_zero", dst]
     else:
-        cmd = ffmpeg_base() + ["-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}", "-c", "copy", "-avoid_negative_ts", "make_zero", dst]
+        cmd = ffmpeg_base() + ["-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}"] + copy_args(meta, dst) + ["-avoid_negative_ts", "make_zero", dst]
     proc = run(cmd, check=False)
     if proc.returncode != 0:
         if not reencode:
@@ -70,7 +126,7 @@ def main() -> int:
     g.add_argument("--end", help="end time")
     g.add_argument("--duration", help="duration instead of --end")
     ap.add_argument("--segments", help="comma separated START-END list, e.g. '0:05-0:12,1:00-1:20' (joined in order)")
-    ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
+    ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF when re-encoding (default 18)")
     ap.add_argument("--preset", default="medium", help="x264 preset when re-encoding")
@@ -126,14 +182,17 @@ def main() -> int:
             proc = run(cmd, check=False)
             if proc.returncode != 0:
                 info("concat with stream copy failed, re-encoding the join")
-                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + video_args(meta, args.crf, args.preset) + cfr_args(meta) + aac_args() + [output]
+                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + encode_args(meta, output, args.crf, args.preset) + [output]
                 run(cmd)
 
     result = probe(output)
     expected = sum(e - s for s, e in segments)
-    info(f"wrote {output} ({result.get('duration'):.3f}s, expected ~{expected:.3f}s, "
-         + ("re-encoded" if reencoded else "lossless stream copy") + ")")
-    emit(output)
+    precision = precision_of(meta, output, reencoded)
+    got = result.get("duration")
+    error_ms = round((got - expected) * 1000, 3) if got is not None and not STATE["dry_run"] else None
+    info(f"wrote {output} ({got:.3f}s, expected ~{expected:.3f}s, "
+         + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
+    emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded)
     return 0
 
 

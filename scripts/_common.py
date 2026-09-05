@@ -322,6 +322,16 @@ def probe(path: str) -> Dict[str, Any]:
             "sample_rate": _to_int(audio.get("sample_rate")),
             "bitrate": _to_int(audio.get("bit_rate")),
         }
+        # every audio stream in file order: index n here is `-map 0:a:n` (audio.py --audio-stream n)
+        out["audio_streams"] = [{
+            "index": n,
+            "codec": a.get("codec_name"),
+            "channels": _to_int(a.get("channels")),
+            "channel_layout": a.get("channel_layout"),
+            "sample_rate": _to_int(a.get("sample_rate")),
+            "language": (a.get("tags") or {}).get("language"),
+            "title": (a.get("tags") or {}).get("title"),
+        } for n, a in enumerate(s for s in streams if s.get("codec_type") == "audio")]
     return out
 
 
@@ -434,6 +444,19 @@ def audio_codec_for(output_path: str, default_bitrate: str = "192k") -> List[str
     """Pick an audio codec that the output container can actually hold."""
     ext = os.path.splitext(output_path)[1].lower()
     return list(AUDIO_CODECS.get(ext, ["-c:a", "aac", "-b:a", default_bitrate]))
+
+
+def is_audio_output(output_path: str) -> bool:
+    """True when the output extension is an audio-only container (.wav, .flac, .mp3, .m4a, .aac, .ogg, .opus).
+
+    Such a file cannot hold a video stream and, for .wav, cannot hold compressed audio: scripts use
+    this to drop the picture (-vn) and to pick the codec from the extension instead of AAC.
+    """
+    return os.path.splitext(output_path)[1].lower() in AUDIO_CODECS
+
+
+def db_to_linear(db: float) -> float:
+    return 10 ** (db / 20.0)
 
 
 def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:

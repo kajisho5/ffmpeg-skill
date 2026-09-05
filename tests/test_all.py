@@ -871,6 +871,174 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual((ctx.dry_run, ctx.fast, ctx.commands), (False, False, []))
 
     # ---------------------------------------------------------------- help
+
+    # ------------------------------------------------------------------ audio: extraction, concat, precision, dynamics
+    @staticmethod
+    def _samples(path):
+        """(codec, sample_rate, duration_ts) of the first audio stream as ffprobe sees it."""
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,sample_rate,duration_ts",
+                              "-of", "csv=p=0", str(path)], stdout=subprocess.PIPE, text=True, check=True).stdout.strip().split(",")
+        return out[0], int(out[1]), int(out[2])
+
+    @staticmethod
+    def _peak_rms(path):
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path), "-af", "astats=measure_overall=Peak_level+RMS_level:measure_perchannel=none",
+                               "-f", "null", "-"], stderr=subprocess.PIPE, text=True)
+        vals = dict(re.findall(r"(Peak level|RMS level) dB: (-?[\d.]+)", proc.stderr))
+        return float(vals["Peak level"]), float(vals["RMS level"])
+
+    def test_audio_extraction_from_video_container(self):
+        """mp4 -> wav / m4a through audio.py and cut.py: no video stream, codec from the extension, stream selection."""
+        wav = OUT / "ex_audio.wav"
+        data = json.loads(script("audio.py", self.src, "-o", wav, "--json").stdout)
+        self.assertIsNone(data["probe"]["video"])
+        self.assertEqual(data["probe"]["audio"]["codec"], "pcm_s16le")
+        self.assertFalse(data["video"])
+        m4a = OUT / "ex_voice.m4a"
+        data = json.loads(script("audio.py", self.src, "--voice", "-o", m4a, "--json").stdout)
+        self.assertIsNone(data["probe"]["video"])
+        self.assertEqual(data["probe"]["audio"]["codec"], "aac")
+        # a video output keeps the stream-copied picture as before
+        mp4 = OUT / "ex_keep.mp4"
+        data = json.loads(script("audio.py", self.src, "--denoise", "-o", mp4, "--json").stdout)
+        self.assertIsNotNone(data["probe"]["video"])
+        self.assertTrue(data["video"])
+        # two audio streams: --audio-stream 1 picks the 880 Hz / 44.1 kHz track, an index past the end fails as input
+        two = OUT / "two_streams.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100",
+           "-t", "4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", two)
+        self.assertEqual(len(probe(str(two))["audio_streams"]), 2)
+        self.assertEqual(probe(str(two))["audio_streams"][1]["sample_rate"], 44100)
+        s1 = OUT / "two_s1.wav"
+        data = json.loads(script("audio.py", two, "--audio-stream", "1", "-o", s1, "--json").stdout)
+        self.assertEqual(data["audio_stream"], 1)
+        self.assertEqual(self._samples(s1)[1], 44100)
+        proc = script("audio.py", two, "--audio-stream", "2", "-o", OUT / "nope.wav", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertIn("2 audio stream", proc.stderr)
+        # cut.py with an audio extension extracts too, and never copies AAC packets into a WAV
+        cw = OUT / "ex_cut.wav"
+        data = json.loads(script("cut.py", self.src, "--start", "1", "--end", "3", "-o", cw, "--json").stdout)
+        self.assertIsNone(data["probe"]["video"])
+        self.assertEqual(self._samples(cw)[0], "pcm_s16le")
+        self.assertEqual(data["precision"], "sample")
+
+    def test_join_audio_only_inputs(self):
+        """WAV + M4A + MP3 of different rates and channel counts join as audio; video containers and mixed inputs are refused."""
+        st = OUT / "j_stereo44.m4a"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100", "-t", "3", "-ac", "2", "-c:a", "aac", st)
+        mp3 = OUT / "j_mono.mp3"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=500:sample_rate=48000", "-t", "3", "-c:a", "libmp3lame", mp3)
+        mic_dur = probe(str(self.mic))["duration"]
+        # crossfade -> flac: rate of the first clip, widest layout
+        out = OUT / "j_audio.flac"
+        data = json.loads(script("join.py", self.mic, st, mp3, "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "audio")
+        self.assertEqual((data["sample_rate"], data["channels"]), (48000, 2))
+        self.assertIsNone(data["probe"]["video"])
+        self.assertEqual(data["probe"]["audio"]["codec"], "flac")
+        self.assertClose(data["probe"]["duration"], mic_dur + 3 + 3 - 2 * 0.5, 0.15)
+        # butt join -> wav, explicit rate and channels
+        out2 = OUT / "j_audio.wav"
+        data = json.loads(script("join.py", st, mp3, "--transition", "none", "--sample-rate", "44100", "--channels", "1", "-o", out2, "--json").stdout)
+        self.assertEqual(self._samples(out2)[:2], ("pcm_s16le", 44100))
+        self.assertEqual(data["probe"]["audio"]["channels"], 1)
+        self.assertClose(data["probe"]["duration"], 6.0, 0.1)
+        # refusals are input errors, before ffmpeg runs
+        proc = script("join.py", self.mic, mp3, "-o", OUT / "j_audio.mp4", "--json", expect_fail=True)
+        self.assertIn("audio extension", json.loads(proc.stdout)["error"]["message"])
+        self.assertNotIn("ffmpeg ", proc.stderr.replace("/usr/bin/", ""), "refused before ffmpeg ran")
+        proc = script("join.py", self.src, self.mic, "-o", OUT / "j_mixed.mp4", "--json", expect_fail=True)
+        self.assertIn("has no video stream", proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        # dry-run plans the audio join and writes nothing
+        planned = OUT / "j_dry.wav"
+        data = json.loads(script("join.py", self.mic, mp3, "-o", planned, "--dry-run", "--json").stdout)
+        self.assertTrue(data["dry_run"])
+        self.assertIn("acrossfade", data["commands"][0])
+        self.assertFalse(planned.exists())
+
+    def test_cut_audio_precision_is_measured(self):
+        """Stream copy is packet-accurate, --accurate is sample-exact on PCM/FLAC, lossy outputs say codec_frame."""
+        start, end = 1.2345, 2.3456
+        want = round((end - start) * 48000)  # 53333 samples
+        # WAV copy: packet boundary, reported as such, within a few ms
+        cw = OUT / "prec_copy.wav"
+        data = json.loads(script("cut.py", self.mic, "--start", str(start), "--end", str(end), "-o", cw, "--json").stdout)
+        self.assertEqual(data["precision"], "packet")
+        self.assertFalse(data["reencoded"])
+        self.assertLess(abs(data["duration_error_ms"]), 50)
+        self.assertEqual(self._samples(cw)[0], "pcm_s16le")
+        # WAV --accurate: exactly the requested number of samples
+        ca = OUT / "prec_acc.wav"
+        data = json.loads(script("cut.py", self.mic, "--start", str(start), "--end", str(end), "--accurate", "-o", ca, "--json").stdout)
+        self.assertEqual(data["precision"], "sample")
+        self.assertEqual(self._samples(ca), ("pcm_s16le", 48000, want))
+        self.assertLess(abs(data["duration_error_ms"]), 0.05)
+        # 44.1 kHz FLAC, --accurate: exact at its own rate
+        flac = OUT / "prec_44.flac"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100", "-t", "3", "-c:a", "flac", flac)
+        fa = OUT / "prec_44_cut.flac"
+        data = json.loads(script("cut.py", flac, "--start", "0.5", "--end", "1.7", "--accurate", "-o", fa, "--json").stdout)
+        self.assertEqual(data["precision"], "sample")
+        self.assertEqual(self._samples(fa), ("flac", 44100, round(1.2 * 44100)))
+        # compressed source (AAC in mp4) decoded to PCM with --accurate: exact; to AAC: codec_frame, not "sample"
+        ma = OUT / "prec_from_aac.wav"
+        data = json.loads(script("cut.py", self.src, "--start", str(start), "--end", str(end), "--accurate", "-o", ma, "--json").stdout)
+        self.assertEqual(data["precision"], "sample")
+        self.assertEqual(self._samples(ma)[2], want)
+        m4a = OUT / "prec_to_aac.m4a"
+        data = json.loads(script("cut.py", self.src, "--start", str(start), "--end", str(end), "--accurate", "-o", m4a, "--json").stdout)
+        self.assertEqual(data["precision"], "codec_frame")
+        self.assertEqual(self._samples(m4a)[0], "aac")
+        # video re-encode keeps reporting frame precision; a plain copy keeps packet
+        mp4 = OUT / "prec_video.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "1", "--end", "3", "--accurate", "--preset", "ultrafast", "-o", mp4, "--json").stdout)
+        self.assertEqual(data["precision"], "frame")
+        self.assertIsNotNone(data["probe"]["video"])
+
+    def test_audio_typed_dynamics(self):
+        """--gate / --compress / --limit map typed flags onto acompressor, alimiter, agate; ranges are enforced; the ceiling holds."""
+        out = OUT / "dyn.wav"
+        data = json.loads(script("audio.py", self.mic, "--gate", "--gate-threshold", "-50", "--compress", "--comp-threshold", "-20",
+                                 "--comp-ratio", "4", "--comp-attack", "5", "--comp-release", "80", "--comp-makeup", "6",
+                                 "--limit", "--limit-ceiling", "-3", "-o", out, "--json").stdout)
+        self.assertEqual(data["dynamics"], ["agate", "acompressor", "alimiter"])
+        cmd = data["commands"][0]
+        self.assertIn("agate=threshold=0.00316228", cmd)
+        self.assertIn("acompressor=threshold=0.1:ratio=4:attack=5:release=80:makeup=1.99526", cmd)
+        self.assertIn("alimiter=limit=0.707946:level=disabled", cmd)
+        peak, rms = self._peak_rms(out)
+        self.assertLessEqual(peak, -3.0 + 0.1, "limiter ceiling")
+        # the compressor alone on a full-scale sine: threshold -20 dB, ratio 4 settle far below 0 dB and above the threshold
+        sine = OUT / "dyn_sine.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "3", "-af", "volume=18.06dB", "-c:a", "pcm_s16le", sine)
+        comp = OUT / "dyn_comp.wav"
+        script("audio.py", sine, "--compress", "--comp-threshold", "-20", "--comp-ratio", "4", "--comp-attack", "5", "--comp-release", "80", "-o", comp)
+        peak_c, _ = self._peak_rms(comp)
+        self.assertGreater(self._peak_rms(sine)[0], -0.5)
+        self.assertLess(peak_c, -3.0, "compressor reduced a 0 dBFS tone (measured -7.5 dB: ffmpeg detects RMS, knee 2.83 dB)")
+        self.assertGreater(peak_c, -20.0, "compression, not a gate")
+        # every flag is range-checked before ffmpeg runs
+        for flags, text in ((("--compress", "--comp-ratio", "50"), "1..20"),
+                            (("--limit", "--limit-ceiling", "1"), "-24..0"),
+                            (("--gate", "--gate-attack", "0"), "0.01..9000"),
+                            (("--compress", "--comp-makeup", "40"), "0..36")):
+            proc = script("audio.py", self.mic, *flags, "-o", OUT / "dyn_bad.wav", "--json", expect_fail=True)
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["error"]["kind"], "input")
+            self.assertIn(text, doc["error"]["message"])
+            self.assertNotIn("$ ", proc.stderr, "refused before ffmpeg ran")
+        # a parameter without its switch is an error, not silently ignored
+        proc = script("audio.py", self.mic, "--comp-ratio", "4", "-o", OUT / "dyn_bad.wav", expect_fail=True)
+        self.assertIn("add --compress", proc.stderr)
+        # the limiter alone on a video input keeps the picture
+        mp4 = OUT / "dyn_video.mp4"
+        data = json.loads(script("audio.py", self.src, "--limit", "--limit-ceiling", "-1", "-o", mp4, "--json").stdout)
+        self.assertIsNotNone(data["probe"]["video"])
+        self.assertLessEqual(self._peak_rms(mp4)[0], -1.0 + 0.3)
+
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):
             with self.subTest(script=name):
