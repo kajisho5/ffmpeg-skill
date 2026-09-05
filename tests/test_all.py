@@ -304,6 +304,42 @@ class FFmpegSkillTests(unittest.TestCase):
         script("color.py", self.src, "--lut", lut, "--lut-strength", "0.5", "--preset", "veryfast", "-o", out)
         self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
 
+    def test_color_correct_defaults_are_near_identity(self):
+        out = OUT / "correct_neutral.mp4"
+        data = json.loads(script("color.py", self.src, "--correct", "--preset", "veryfast", "-o", out, "--json").stdout)
+        m = data["measurements"]
+        self.assertIn("y_avg", m["input"])
+        self.assertAlmostEqual(m["input"]["y_avg"], m["output"]["y_avg"], delta=2.0)
+        self.assertAlmostEqual(m["input"]["saturation_avg"], m["output"]["saturation_avg"], delta=2.0)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (1280, 720))
+
+    def test_color_correct_exposure_and_saturation_change_measured_levels(self):
+        brighter = OUT / "correct_bright.mp4"
+        data = json.loads(script("color.py", self.src, "--correct", "--exposure", "0.6", "--preset", "veryfast", "-o", brighter, "--json").stdout)
+        m = data["measurements"]
+        self.assertGreater(m["output"]["y_avg"], m["input"]["y_avg"], "positive exposure must raise measured luma")
+
+        gray = OUT / "correct_gray.mp4"
+        data2 = json.loads(script("color.py", self.src, "--correct", "--saturation", "0", "--preset", "veryfast", "-o", gray, "--json").stdout)
+        m2 = data2["measurements"]
+        self.assertLess(m2["output"]["saturation_avg"], m2["input"]["saturation_avg"], "saturation 0 must desaturate")
+        self.assertLess(m2["output"]["saturation_avg"], 5.0, "saturation 0 must be close to grayscale")
+
+    def test_color_correct_temperature_and_tint_run_and_preserve_geometry(self):
+        out = OUT / "correct_wb.mp4"
+        script("color.py", self.src, "--correct", "--temperature", "3200", "--tint", "-0.3", "--contrast", "1.1", "--preset", "veryfast", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (1280, 720))
+        self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
+
+    def test_color_correct_rejects_out_of_safe_range_parameters(self):
+        for flag, bad in (("--exposure", "5"), ("--contrast", "3"), ("--saturation", "-1"), ("--temperature", "40000"), ("--tint", "2")):
+            out = OUT / "correct_reject.mp4"
+            proc = script("color.py", self.src, "--correct", flag, bad, "-o", out, expect_fail=True)
+            self.assertIn("outside", proc.stderr, f"{flag} {bad} should be refused as out of range")
+            self.assertFalse(out.exists(), f"{flag} {bad}: no partial output on refusal")
+
     def test_export_warns_on_hdr(self):
         out = OUT / "hdr_youtube.mp4"
         proc = script("export.py", self.hdr, "--preset", "x", "-o", out)

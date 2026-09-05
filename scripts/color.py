@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Colour management: convert HDR (HDR10/PQ, HLG, BT.2020) to SDR BT.709 with
-real tone mapping, apply a .cube LUT (Log footage, creative grades), or fix
-wrong colour tags without re-encoding.
+real tone mapping, apply a .cube LUT (Log footage, creative grades), fix wrong
+colour tags without re-encoding, or apply typed primary colour correction
+(exposure, contrast, saturation, white balance).
 
 Examples:
   python3 color.py iphone_hdr.mov --to-sdr                       # PQ/HLG -> BT.709 SDR, hable tonemap
@@ -11,15 +12,60 @@ Examples:
   python3 color.py wrongly_tagged.mp4 --retag bt709                # metadata only, stream copy
   python3 color.py iphone_dv.mov --strip-dovi                       # drop Dolby Vision RPU, keep HLG base layer
   python3 color.py iphone_dv.mov --to-sdr                           # DV 8.4 = HLG base layer -> tone-mapped SDR
+  python3 color.py flat.mp4 --correct --exposure 0.3 --contrast 1.1 --saturation 1.05 --temperature 5600 --tint -0.05
 """
 import argparse
 import os
 import sys
 from typing import List
 
-from _common import add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, x264_args
+from _common import add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, x264_args
 
 TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
+
+# Typed primary correction: each flag is one option of one real, always-available libavfilter filter
+# (never a caller-supplied filter string). Range is this script's own safe subset of what the filter
+# documents (`ffmpeg -h filter=<name>`), not the filter's full technical range. default is each filter's
+# own documented no-op value, so every stage below is always emitted and the chain never depends on
+# which flags were actually given.
+CORRECTION = {
+    #      flag           default  lo      hi       unit
+    "exposure":    (0.0,   -3.0,    3.0,   "stops"),   # exposure filter's own full range (linear-domain stops)
+    "contrast":    (1.0,    0.0,    2.0,   "x"),       # eq filter; 0=flat grey, 1=unchanged, 2=double contrast
+    "saturation":  (1.0,    0.0,    2.0,   "x"),       # eq filter; 0=grayscale, 1=unchanged, 2=double saturation
+    "temperature": (6500.0, 2000.0, 12000.0, "K"),     # colortemperature filter; 6500=unchanged (its own default)
+    "tint":        (0.0,   -1.0,    1.0,   "x"),       # mapped to colorbalance midtones, see correction_chain()
+}
+
+
+def _checked(args: argparse.Namespace, flag: str) -> float:
+    _, lo, hi, unit = CORRECTION[flag]
+    value = getattr(args, flag)
+    if not (lo <= value <= hi):
+        die(f"--{flag} {value:g} is outside {lo:g}..{hi:g} {unit} (the safe range this tool guarantees)")
+    return value
+
+
+def correction_chain(args: argparse.Namespace) -> str:
+    """Four always-present filter stages, in a fixed order chosen so each stage sees a picture already
+    corrected by the previous one: exposure (linear light level) -> white balance (temperature/tint, so
+    contrast/saturation act on colour-balanced footage) -> contrast -> saturation (the most creative-
+    adjacent stage, applied last). `tint` (-1 green .. +1 magenta) is not a single ffmpeg option: it is
+    expressed as colorbalance's three midtone channels (gm=-tint, rm=bm=tint/2) so a positive tint shifts
+    midtones toward magenta and a negative one toward green without changing overall midtone lightness,
+    the same balanced-axis convention colour tools use for a one-dial tint control."""
+    exposure = _checked(args, "exposure")
+    contrast = _checked(args, "contrast")
+    saturation = _checked(args, "saturation")
+    temperature = _checked(args, "temperature")
+    tint = _checked(args, "tint")
+    gm, rm, bm = -tint, tint / 2.0, tint / 2.0
+    return ",".join([
+        f"exposure=exposure={exposure:g}",
+        f"colortemperature=temperature={temperature:g}",
+        f"colorbalance=rm={rm:g}:gm={gm:g}:bm={bm:g}",
+        f"eq=contrast={contrast:g}:saturation={saturation:g}",
+    ])
 
 
 def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:
@@ -48,11 +94,17 @@ def main() -> int:
     mode.add_argument("--lut", help=".cube LUT to apply (3D)")
     mode.add_argument("--retag", choices=["bt709", "bt2020-pq", "bt2020-hlg", "bt601"], help="rewrite colour tags only (no re-encode)")
     mode.add_argument("--strip-dovi", action="store_true", help="remove the Dolby Vision RPU (profile 8.4 iPhone clips) so players use the plain HLG/HDR10 base layer; stream copy")
+    mode.add_argument("--correct", action="store_true", help="typed primary colour correction: --exposure/--contrast/--saturation/--temperature/--tint")
     ap.add_argument("--tonemap", choices=TONEMAPS, default="hable", help="tone-mapping curve (default hable)")
     ap.add_argument("--peak", type=float, default=1000.0, help="source peak brightness in nits used for PQ (default 1000)")
     ap.add_argument("--desat", type=float, default=0.0, help="tonemap desaturation strength (default 0)")
     ap.add_argument("--lut-strength", type=float, default=1.0, help="blend LUT result with the original, 0..1 (default 1)")
     ap.add_argument("--force", action="store_true", help="run --to-sdr even if the file is not tagged as HDR (treat as PQ)")
+    ap.add_argument("--exposure", type=float, default=CORRECTION["exposure"][0], help="--correct: exposure in stops, -3..3 (default 0)")
+    ap.add_argument("--contrast", type=float, default=CORRECTION["contrast"][0], help="--correct: contrast, 0..2, 1=unchanged (default 1)")
+    ap.add_argument("--saturation", type=float, default=CORRECTION["saturation"][0], help="--correct: saturation, 0..2, 1=unchanged (default 1)")
+    ap.add_argument("--temperature", type=float, default=CORRECTION["temperature"][0], help="--correct: white-balance temperature in Kelvin, 2000..12000, 6500=unchanged (default 6500)")
+    ap.add_argument("--tint", type=float, default=CORRECTION["tint"][0], help="--correct: green(-1)/magenta(+1) tint, 0=unchanged (default 0)")
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="medium")
     add_common(ap)
@@ -106,12 +158,20 @@ def main() -> int:
         emit(output)
         return 0
 
+    measurements = None
     if args.to_sdr:
         if not v.get("hdr") and not args.force:
             die(f"{args.input} is not tagged as HDR (transfer={v.get('color_transfer')}, primaries={v.get('color_primaries')}). Use --force to tone-map anyway.")
         vf = hdr_to_sdr_chain(meta, args.tonemap, args.peak, args.desat)
         output = args.output or default_output(args.input, "sdr")
         tag = "sdr"
+    elif args.correct:
+        vf = correction_chain(args)
+        output = args.output or default_output(args.input, "correct")
+        tag = "correct"
+        # OBSERVED technical measurements (signalstats: luma / saturation distribution), never a
+        # "looks better" judgement -- the same primitive probe.py --analyze uses for Log detection.
+        measurements = {"input": analyze_levels(args.input)}
     else:
         if not os.path.exists(args.lut):
             die(f"LUT not found: {args.lut}")
@@ -130,7 +190,11 @@ def main() -> int:
     r = probe(output)
     info(f"wrote {output} ({r['duration']:.3f}s, {r['video']['width']}x{r['video']['height']}, "
          f"{r['video']['color_transfer']}/{r['video']['color_primaries']}, {tag})")
-    emit(output)
+    if measurements is not None:
+        measurements["output"] = analyze_levels(output)
+        emit(output, measurements=measurements)
+    else:
+        emit(output)
     return 0
 
 

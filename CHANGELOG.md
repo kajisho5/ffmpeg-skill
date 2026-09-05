@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.2 — typed primary colour correction
+
+- **color.py**: `--correct` (exposure / contrast / saturation / white balance), a fourth colour mode
+  alongside `--to-sdr` / `--lut` / `--retag` / `--strip-dovi`. Each flag is one option of one real,
+  always-available libavfilter filter — `--exposure` (`exposure` filter, -3..3 stops), `--contrast` /
+  `--saturation` (`eq` filter, 0..2, 1=unchanged), `--temperature` (`colortemperature`, 2000..12000 K,
+  6500=unchanged) and `--tint` (green -1 .. +1 magenta, mapped to `colorbalance`'s three midtone
+  channels: `gm=-tint`, `rm=bm=tint/2`) — range-checked against this script's own safe subset of what
+  each filter documents (`ffmpeg -h filter=<name>`) before ffmpeg runs; no filter string, `filter_complex`
+  or raw argv is ever accepted from the caller. The four stages (exposure → white balance → contrast →
+  saturation) are always chained in that fixed order, each one always present at its filter's own
+  documented no-op default, so the pipeline is one stable four-filter chain regardless of which flags
+  were given. `--json`'s `measurements` field carries `analyze_levels()` (signalstats luma/saturation)
+  for the input and the output side by side — an OBSERVED technical measurement, never a "looks better"
+  judgement.
+- Contract: `color`'s optional capabilities gain `filter:exposure` / `filter:eq` / `filter:colorbalance` /
+  `filter:colortemperature` (declared `when: "--correct"`); `X264` now also lists `--correct` among its
+  callers. No change to any existing flag, contract field, MCP schema or tool semantics.
+- Tests: 4 real-media tests in `tests/test_all.py` (defaults are near-identity, positive exposure raises
+  measured luma, `--saturation 0` desaturates, temperature/tint run and preserve geometry, five
+  out-of-range parameters are each refused with no partial output).
+
 ## 0.9.1 — FFmpeg 8 capability detection; audio extraction, audio join, sample-accurate trims, typed dynamics
 
 - **doctor / contract on FFmpeg 8.** `ffmpeg -filters` prints two flag characters on FFmpeg 8 (`T. acompressor A->A`) where 6 and 7 print three (`..C`); 0.9.0 anchored on three and reported every `filter:*` capability missing on FFmpeg 8 (macOS / Windows CI of consumers). Rows are now recognised by their `A->A` io-spec token, encoders by the `------` separator, so the flag width no longer matters. A listing that cannot be read yields a third state, `unknown`, distinct from `missing` (an installed filter is never reported absent) and from `available` (a failed detection is never a pass); `detection` and `errors` say which listing failed and why; exit 2 for "required but unknown". Existing keys unchanged. Fixtures for the 6.1 capture and the 7 / 8 layouts in `tests/fixtures/`, tests through a fake ffmpeg.
