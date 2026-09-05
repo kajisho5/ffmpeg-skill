@@ -260,6 +260,20 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         extra = {"report": {"type": "string"}, "check": {"type": ["object", "null"]}}
     elif name == "loudness":
         extra = {"measured": {"type": "object", "description": "--measure-only prints the loudnorm measurement instead (input_i, input_tp, input_lra, input_thresh, target_offset)"}}
+    elif name == "cut":
+        extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
+                 "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},
+                 "precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
+                               "description": "packet: stream copy on a packet/keyframe boundary; sample: decoded audio trimmed to the sample, lossless output; codec_frame: sample-trimmed then framed by a lossy encoder (priming delay adds to the length); frame: re-encoded video"},
+                 "reencoded": {"type": "boolean"}}
+    elif name == "join":
+        extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"}, "expected_duration": {"type": "number"},
+                 "sample_rate": {"type": "integer", "description": "audio mode only"}, "channels": {"type": "integer", "description": "audio mode only"},
+                 "video": {"type": "boolean", "description": "false in audio mode: the output has no video stream"}}
+    elif name == "audio":
+        extra = {"video": {"type": "boolean", "description": "true when the input's video stream was copied; false for an audio output extension (extraction)"},
+                 "audio_stream": {"type": "integer", "description": "which input audio stream was processed (--audio-stream)"},
+                 "dynamics": {"type": "array", "items": {"enum": ["agate", "acompressor", "alimiter"]}, "description": "typed dynamics filters applied, in graph order"}}
     props = dict(base)
     props.update(extra)
     required = ["status", "output", "dry_run", "commands"]
