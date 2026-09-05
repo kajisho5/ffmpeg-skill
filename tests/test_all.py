@@ -23,7 +23,7 @@ TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(
 
 
 def sh(*cmd, expect_fail=False):
-    proc = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     if expect_fail:
         assert proc.returncode != 0, f"expected failure but succeeded: {cmd}"
         return proc
@@ -1038,6 +1038,83 @@ class FFmpegSkillTests(unittest.TestCase):
         data = json.loads(script("audio.py", self.src, "--limit", "--limit-ceiling", "-1", "-o", mp4, "--json").stdout)
         self.assertIsNotNone(data["probe"]["video"])
         self.assertLessEqual(self._peak_rms(mp4)[0], -1.0 + 0.3)
+
+
+    # ------------------------------------------------------------------ FFmpeg 8+ / Windows compatibility
+    @staticmethod
+    def _psnr(a, b):
+        """Average PSNR of b against a (dB); lower means the picture changed more. inf when identical."""
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"],
+                              stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        m = re.search(r"average:(inf|[\d.]+)", proc.stderr)
+        assert m, proc.stderr[-400:]
+        return float("inf") if m.group(1) == "inf" else float(m.group(1))
+
+    def test_filter_paths_with_drive_colon_spaces_and_unicode(self):
+        """subtitles= / ass= / lut3d=file= / fontfile= take a path with a colon, spaces and non-ASCII.
+
+        A Windows path `D:\\a\\x.srt` is what broke on the Windows CI: the filter option value is
+        parsed twice, so the colon needs two levels of escaping. On POSIX a directory literally named
+        `D:` reproduces it; on Windows the real drive letter does.
+        """
+        base = OUT / "compat dir ünïcode"
+        d = base if os.name == "nt" else base / "D:"
+        d.mkdir(parents=True, exist_ok=True)
+        src = d / "src vid.mp4"
+        shutil.copyfile(self.src, src)
+        cues = d / "cues täxt.txt"
+        cues.write_text("0:00-0:06 Hello caption\n", encoding="utf-8")
+        # captions via subtitles= (SRT) and ass=, both re-parsed by libass
+        cap = d / "cap.mp4"
+        script("caption.py", src, "--text", cues, "--size", "40", "--fast", "-o", cap)
+        self.assertLess(self._psnr(self.src, cap), 45, "burned caption changed the picture")
+        capa = d / "cap ass.mp4"
+        script("caption.py", src, "--text", cues, "--animate", "pop", "--fast", "-o", capa)
+        self.assertTrue((d / "cap ass.ass").exists())
+        self.assertLess(self._psnr(self.src, capa), 45)
+        # a fonts dir with the same kind of path
+        script("caption.py", src, "--text", cues, "--fonts-dir", d, "--fast", "-o", d / "cap fonts.mp4")
+        # LUT file: full strength inverts the picture, half strength goes through the split/blend graph
+        lut = d / "invert lut.cube"
+        lines = ["LUT_3D_SIZE 2"] + [f"{1 - r} {1 - g} {1 - b}" for b in (0, 1) for g in (0, 1) for r in (0, 1)]
+        lut.write_text("\n".join(lines) + "\n")
+        inv = d / "lut.mp4"
+        script("color.py", src, "--lut", lut, "--preset", "veryfast", "-o", inv)
+        self.assertLess(self._psnr(self.src, inv), 15, "inverted LUT changed every pixel")
+        half = d / "lut half.mp4"
+        script("color.py", src, "--lut", lut, "--lut-strength", "0.5", "--preset", "veryfast", "-o", half)
+        self.assertClose(probe(str(half))["duration"], 12.0, 0.2)
+        # drawtext fontfile= with the same path shape (when a TTF is available to copy)
+        font = self._any_ttf()
+        if font:
+            ttf = d / "my font.ttf"
+            shutil.copyfile(font, ttf)
+            script("overlay.py", src, "--text", "Hi", "--font-file", ttf, "--fast", "-o", d / "ov.mp4")
+
+    @staticmethod
+    def _any_ttf():
+        for root in ("/usr/share/fonts", "/usr/local/share/fonts", "/Library/Fonts", "/System/Library/Fonts", "C:/Windows/Fonts"):
+            for pat in ("**/DejaVuSans.ttf", "**/Arial.ttf", "**/arial.ttf", "**/*.ttf"):
+                hits = list(Path(root).glob(pat)) if Path(root).exists() else []
+                if hits:
+                    return hits[0]
+        return None
+
+    def test_overlay_still_is_bounded_by_the_video_length(self):
+        """A looped still (-loop 1) must not make the output longer than the video (FFmpeg 7+ -shortest keeps a buffer)."""
+        out = OUT / "ov_bound.mp4"
+        data = json.loads(script("overlay.py", self.src, "--image", self.logo, "--fast", "-o", out, "--json").stdout)
+        self.assertIn("-t", data["commands"][0])
+        self.assertClose(data["probe"]["duration"], 12.0, 0.15)
+
+    def test_help_survives_a_legacy_console_encoding(self):
+        """--help contains non-ASCII (Japanese example, arrows); a cp1252 console must not raise UnicodeEncodeError."""
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        for name in ("overlay.py", "render.py", "caption.py"):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / name), "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  env=env, encoding="utf-8", errors="replace")
+            self.assertEqual(proc.returncode, 0, f"{name}: {proc.stderr[-300:]}")
+            self.assertIn("usage:", proc.stdout)
 
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):

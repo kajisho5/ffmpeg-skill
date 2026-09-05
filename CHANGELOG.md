@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
+
+- **Filter file paths on Windows.** `subtitles=`, `ass=`, `lut3d=file=`, `fontfile=` and `fontsdir=` values are parsed twice by ffmpeg (graph, then filter options), so a drive letter needs two levels of colon escaping (`D\\\\:/x.srt`). 0.9.1 escaped once and every caption / LUT job on Windows failed with `Unable to parse "original_size" option value` or `Error parsing a filter description`. `escape_filter_path` now escapes for both passes; `;` is escaped too. Reproduced and tested on Linux with a directory literally named `D:` plus spaces and non-ASCII in the path.
+- **`overlay.py --image` length on FFmpeg 7+.** `-shortest` alone left up to 2 s of the looped still after the video ended (8.1 / 9.0); the command now also passes `-t <video duration>`.
+- **`--help` on a legacy Windows console.** stdout / stderr are reconfigured to UTF-8 (with replacement) by `_common`, so non-ASCII help text (Japanese example, arrows) no longer raises `UnicodeEncodeError`; the test harness decodes script output as UTF-8.
+- **macOS CI** installs `ffmpeg-full`: Homebrew's `ffmpeg` formula no longer links libass / freetype / harfbuzz / zimg, so it has no `subtitles`, `ass`, `drawtext` or `zscale` filter. README and the installer hint say so.
+- Tests: the contract-test fixture used `-vsync vfr`, an option FFmpeg 9 removed (`-fps_mode vfr` since 5.1); filter paths with a drive colon, spaces and Unicode through caption (SRT, ASS, fonts dir), color (LUT full and blended) and overlay (`fontfile`), with PSNR proving the caption and LUT changed the picture; overlay still bounded by the video length; `--help` under a cp1252 console.
+
+
 ## 0.9.1 — FFmpeg 8 capability detection; audio extraction, audio join, sample-accurate trims, typed dynamics
 
 - **doctor / contract on FFmpeg 8.** `ffmpeg -filters` prints two flag characters on FFmpeg 8 (`T. acompressor A->A`) where 6 and 7 print three (`..C`); 0.9.0 anchored on three and reported every `filter:*` capability missing on FFmpeg 8 (macOS / Windows CI of consumers). Rows are now recognised by their `A->A` io-spec token, encoders by the `------` separator, so the flag width no longer matters. A listing that cannot be read yields a third state, `unknown`, distinct from `missing` (an installed filter is never reported absent) and from `available` (a failed detection is never a pass); `detection` and `errors` say which listing failed and why; exit 2 for "required but unknown". Existing keys unchanged. Fixtures for the 6.1 capture and the 7 / 8 layouts in `tests/fixtures/`, tests through a fake ffmpeg.

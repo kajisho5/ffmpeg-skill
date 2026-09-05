@@ -16,6 +16,16 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+# Every script prints paths, help text and reports that may contain non-ASCII (Japanese examples,
+# arrows). On Windows the console streams default to a legacy code page and raise
+# UnicodeEncodeError; make them UTF-8 with replacement so a --help never crashes on encoding.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if getattr(_stream, "encoding", "").lower().replace("-", "") != "utf8":
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 INSTALL_HINTS = {
     "Darwin": "  brew install ffmpeg",
     "Linux": (
@@ -366,10 +376,21 @@ def fmt_srt_time(seconds: float) -> str:
 
 
 def escape_filter_path(path: str) -> str:
-    """Escape a path for use inside an ffmpeg filter graph option value."""
+    """Escape a file path for use as a filter option value (subtitles=, ass=, lut3d=file=, fontfile=, fontsdir=).
+
+    A filter option value is parsed twice: the graph parser splits filters on `,` / `;` and options
+    on `:`, then the filter's own option parser splits key=value pairs on `:` again. A character that
+    must survive both passes needs two levels of escaping, so a Windows drive letter `D:/x.srt` is
+    written `D\\\\:/x.srt`; with a single backslash the second pass still splits at the colon and
+    ffmpeg reads `/x.srt` as the next option (`Unable to parse "original_size" option value`).
+    Backslashes are turned into forward slashes first (ffmpeg accepts them on Windows), so a backslash
+    never has to be escaped itself; `'`, `,`, `;`, `[` and `]` are graph-level characters.
+    """
     p = str(Path(path))
     p = p.replace("\\", "/")
-    p = p.replace(":", "\\:").replace("'", "\\'").replace(",", "\\,").replace("[", "\\[").replace("]", "\\]")
+    p = p.replace(":", "\\\\:")
+    for ch in ("'", ",", ";", "[", "]"):
+        p = p.replace(ch, "\\" + ch)
     return p
 
 

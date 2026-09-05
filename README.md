@@ -289,7 +289,7 @@ FFmpeg itself:
 
 | OS | Command |
 |----|---------|
-| macOS | `brew install ffmpeg` |
+| macOS | `brew install ffmpeg-full` (the plain `ffmpeg` formula lacks the subtitles, drawtext and zscale filters) |
 | Ubuntu / Debian | `sudo apt install ffmpeg` |
 | Windows | `winget install Gyan.FFmpeg` |
 

@@ -77,7 +77,7 @@ function checkFfmpeg() {
   const r = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' });
   if (r.error || r.status !== 0) {
     console.warn('\n  warning: ffmpeg was not found on PATH. The skill needs FFmpeg to run:');
-    console.warn('    macOS:   brew install ffmpeg');
+    console.warn('    macOS:   brew install ffmpeg-full   (the plain ffmpeg formula lacks subtitles/drawtext/zscale)');
     console.warn('    Ubuntu:  sudo apt install ffmpeg');
     console.warn('    Windows: winget install Gyan.FFmpeg\n');
     return false;

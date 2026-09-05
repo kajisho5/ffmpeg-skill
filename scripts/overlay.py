@@ -165,6 +165,11 @@ def main() -> int:
         cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", "-i", args.image]
         fc = f"[1:v]{','.join(chain)},setpts=PTS-STARTPTS[ov];[0:v][ov]{ov}[out]"
         cmd += ["-filter_complex", fc, "-map", "[out]", "-map", "0:a:0?", "-shortest"]
+        # -shortest alone is not exact on FFmpeg 7+: the muxer keeps up to shortest_buf_duration (10 s)
+        # of the looped still after the video ended, and the file came out 2 s long on 8.1 / 9.0.
+        # The output must be as long as the main input, so say so explicitly.
+        if meta.get("duration"):
+            cmd += ["-t", f"{meta['duration']:.3f}"]
     else:
         x, y = position_exprs(args.position, args.margin, text_mode=True)
         opts = [f"text='{escape_drawtext(args.text)}'", f"fontsize={args.font_size}", f"x={x}", f"y={y}",
