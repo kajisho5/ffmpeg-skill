@@ -610,23 +610,38 @@ class DoctorDetectionTests(unittest.TestCase):
         proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False)
         return json.loads(proc.stdout), proc.returncode
 
-    def test_parser_reads_ffmpeg_6_7_8_layouts(self):
-        for name in ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_7.1_constructed.txt", "ffmpeg_filters_8.0_constructed.txt"):
+    # 6.1 and 9.0.1 are captures (Ubuntu apt, Windows gyan.dev build); 7.1 and 8.0 are constructed layouts
+    FILTER_FIXTURES = ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_7.1_constructed.txt", "ffmpeg_filters_8.0_constructed.txt", "ffmpeg_filters_9.0.1_windows.txt")
+
+    def test_parser_reads_ffmpeg_6_7_8_9_layouts(self):
+        for name in self.FILTER_FIXTURES:
             names = _contract._parse_ff_list("-filters", (self.FIX / name).read_text())
             self.assertGreater(len(names), 500, name)
             for f in ("xfade", "loudnorm", "acompressor", "abuffer", "concat", "scale", "drawtext"):
                 self.assertIn(f, names, f"{f} in {name}")
             self.assertNotIn("=", names, name)
             self.assertNotIn("Filters:", names, name)
-        enc = _contract._parse_ff_list("-encoders", (self.FIX / "ffmpeg_encoders_6.1.txt").read_text())
-        self.assertIn("libx264", enc)
-        self.assertIn("aac", enc)
-        self.assertNotIn("=", enc)
+            self.assertNotIn("------", names, name)
+            self.assertEqual(len(names), len(set(names)), f"{name}: no row read twice")
+        # the real 9.0.1 capture: two flag characters per row, a three-character legend, a separator, CRLF
+        raw = (self.FIX / "ffmpeg_filters_9.0.1_windows.txt").read_bytes()
+        self.assertIn(b"\r\n", raw)
+        self.assertIn(b" TS aap ", raw)
+        names9 = _contract._parse_ff_list("-filters", raw.decode())
+        self.assertEqual(len(names9), 527)
+        self.assertIn("aap", names9)  # a two-flag row with a two-input io-spec (AA->A)
+        for enc_name in ("ffmpeg_encoders_6.1.txt", "ffmpeg_encoders_9.0.1_windows.txt"):
+            enc = _contract._parse_ff_list("-encoders", (self.FIX / enc_name).read_text())
+            self.assertIn("libx264", enc, enc_name)
+            self.assertIn("aac", enc, enc_name)
+            self.assertNotIn("=", enc, enc_name)
+        for bsf_name in ("ffmpeg_bsfs_6.1.txt", "ffmpeg_bsfs_9.0.1_windows.txt"):
+            self.assertIn("filter_units", _contract._parse_ff_list("-bsfs", (self.FIX / bsf_name).read_text()), bsf_name)
         self.assertEqual(_contract._parse_ff_list("-filters", (self.FIX / "ffmpeg_filters_garbage.txt").read_text()), [])
 
     def test_two_character_flags_do_not_hide_filters(self):
         """The FFmpeg 8 layout: every declared filter is found, nothing is reported missing or unknown."""
-        for name in ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_7.1_constructed.txt", "ffmpeg_filters_8.0_constructed.txt"):
+        for name in self.FILTER_FIXTURES:
             d, code = self._doctor(name)
             declared = [c for c in _contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"] if c.startswith("filter:")]
             self.assertTrue(declared)

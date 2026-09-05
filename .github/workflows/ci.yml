@@ -39,8 +39,12 @@ jobs:
           ffmpeg -hide_banner -encoders > listings/ffmpeg_encoders.txt
           ffmpeg -hide_banner -bsfs > listings/ffmpeg_bsfs.txt
           head -9 listings/ffmpeg_filters.txt
-          python scripts/_contract.py doctor --json | tee listings/doctor.json
+          # doctor exits 1 when a required capability is missing on this build (e.g. Homebrew without libass);
+          # that is reported, not hidden, but the listings must still be uploaded
+          python scripts/_contract.py doctor --json > listings/doctor.json || echo "doctor exit $?"
+          cat listings/doctor.json
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ffmpeg-listings-${{ matrix.os }}
           path: listings/
