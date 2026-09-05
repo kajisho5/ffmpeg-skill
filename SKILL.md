@@ -107,6 +107,8 @@ Do not ask for things `probe.py` can tell you.
 | "add background music under the talking" | `audio.py input.mp4 --music bed.mp3 --duck --fade-out 3` |
 | "convert the 5.1 to stereo" | `audio.py input.mov --downmix` |
 | "swap in the narration track" | `audio.py input.mp4 --replace narration.wav` |
+| "pull the audio out of this video", "give me the sound as WAV" | `audio.py input.mp4 -o input.wav` (any audio extension drops the picture; `--audio-stream 1` picks another track) |
+| "compress the voice", "limit the peaks to -1 dB", "gate the room noise" | `audio.py input.mp4 --compress --comp-threshold -20 --comp-ratio 4` / `--limit --limit-ceiling -1` / `--gate --gate-threshold -45` (typed acompressor / alimiter / agate options, range-checked) |
 | "the audio drifts out of sync over the hour" | `sync.py camera.mp4 recorder.wav --fix-drift --replace-audio` |
 | "smooth slow motion", "half speed but fluid" | `fit.py input.mp4 --duration 2x --smooth interpolate` (slow) or `--smooth blend` |
 | "TikTok-style captions with the words popping / highlighted" | `caption.py input.mp4 --text cues.txt --animate pop --karaoke` |
@@ -124,12 +126,22 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 - The output extension picks the format: `-o out.mp3` converts, `-o out.wav`
   keeps PCM, `-o out.m4a` writes AAC. `audio.py in.wav -o out.mp3` with no
   other flag is a plain conversion.
-- `cut.py` stream-copies audio too, so trims are lossless unless the format
-  cannot be cut on a packet boundary.
+- `cut.py` stream-copies audio too, so trims land on a packet boundary
+  (`precision: packet`, a few ms; the JSON reports `duration_error_ms`). Pass
+  `--accurate` for a sample-exact trim: `precision: sample` when the output is
+  PCM or FLAC, `codec_frame` when a lossy codec (AAC, MP3, Opus) frames it
+  again. A `.wav` output is always PCM, never AAC packets inside a WAV.
+- `join.py` joins audio-only clips as audio (`acrossfade` or a butt join) at
+  one sample rate and channel layout; the output must have an audio extension.
+  Video and audio clips cannot be mixed in one join.
+- An audio extension on a video input (`audio.py talk.mp4 -o talk.wav`,
+  `cut.py talk.mp4 --start 1:00 --end 2:00 -o part.wav`) extracts the audio; the
+  output has no video stream. `audio.py --audio-stream N` picks a track when
+  `probe` lists several under `audio_streams`.
 - `Look: not needed` in the report; `Check:` still applies for loudness
   (`check.py file.wav --platform podcast` measures LUFS and true peak).
 - Scripts that need a picture (`fit`, `caption`, `overlay`, `graphics`,
-  `color`, `export`, `join`, `scenes`, `look`) refuse an audio file with
+  `color`, `export`, `scenes`, `look`) refuse an audio file with
   "input has no video stream". Say so instead of forcing a video wrapper.
 
 | User says (audio file) | Do |
@@ -138,7 +150,10 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 | "remove the silence from this recording" | `silence.py talk.wav -o talk_tight.wav` |
 | "clean up the noise in this M4A" | `audio.py talk.m4a --voice -o talk_clean.m4a` (speech) or `--denoise` |
 | "convert this WAV to MP3" | `audio.py talk.wav -o talk.mp3` |
-| "trim this audio from 00:30 to 02:00" | `cut.py talk.wav --start 0:30 --end 2:00 -o talk_cut.wav` |
+| "trim this audio from 00:30 to 02:00" | `cut.py talk.wav --start 0:30 --end 2:00 -o talk_cut.wav` (`--accurate` for sample-exact) |
+| "join these recordings", "intro + episode + outro" | `join.py intro.wav episode.m4a outro.wav -o full.flac` (`--transition none` for a butt join) |
+| "extract the audio from the video", "mp4 to wav" | `audio.py talk.mp4 -o talk.wav` (`--voice -o talk.m4a` to clean it on the way) |
+| "compress / limit / gate the voice" | `audio.py talk.wav --compress --comp-threshold -20 --comp-ratio 4 --limit --limit-ceiling -1 -o talk_dyn.wav` |
 | "is this loud enough for Apple Podcasts?" | `check.py talk.m4a --platform podcast` |
 
 ## Report format

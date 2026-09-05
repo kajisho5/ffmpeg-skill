@@ -208,15 +208,18 @@ class ContractTests(unittest.TestCase):
 
     def test_visual_verification_metadata(self):
         picture = {"fit", "caption", "overlay", "graphics", "color", "join", "multicam", "render"}
+        # join is the one picture tool that also accepts audio-only inputs (audio concat); look applies
+        # to its video output only, which SKILL.md states next to "Look: not needed"
+        both = {"join"}
         for t in self.contract["tools"]:
             self.assertEqual(t["requires_visual_verification"], t["name"] in picture, t["name"])
             if t["requires_visual_verification"]:
                 self.assertIn("ffmpeg-skill/look", t["verification"]["tools"])
-                self.assertTrue(t["video_required"])
-                self.assertFalse(t["audio_only"])
-            if t["audio_only"]:
+                self.assertEqual(t["video_required"], t["name"] not in both, t["name"])
+                self.assertEqual(t["audio_only"], t["name"] in both, t["name"])
+            if t["audio_only"] and t["name"] not in both:
                 self.assertFalse(t["requires_visual_verification"], f"{t['name']}: audio-only tools never need look.py")
-        for name in ("loudness", "silence", "audio", "cut", "sync", "probe", "check"):
+        for name in ("loudness", "silence", "audio", "cut", "sync", "probe", "check", "join"):
             self.assertTrue(self.tools[name]["audio_only"], name)
         # SKILL.md says the same thing
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -573,6 +576,126 @@ class ContractTests(unittest.TestCase):
                 self._run_structured("look", {"input": doc["output"], "output": str(self.out(p.stem + "_look.png")), "json": True})
             after = self._sha(p) if p.stat().st_size < 50_000_000 else p.stat().st_size
             self.assertEqual(before, after, f"{p.name} modified")
+
+
+class DoctorDetectionTests(unittest.TestCase):
+    """Capability detection reads every `ffmpeg -filters` layout and never confuses "unreadable" with "absent".
+
+    FFmpeg 8 shortened the flag column of `ffmpeg -filters` from three characters (`..C`) to two
+    (`T.`); ffmpeg-skill 0.9.0 anchored on the three-character column and reported every filter
+    missing on FFmpeg 8. These tests drive `doctor` through a fake `ffmpeg` on PATH that prints a
+    fixture from tests/fixtures/ for each listing flag.
+    """
+
+    FIX = ROOT / "tests" / "fixtures"
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="doctor-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.work, ignore_errors=True)
+
+    def _doctor(self, filters, encoders="ffmpeg_encoders_6.1.txt", bsfs="ffmpeg_bsfs_6.1.txt", filters_exit=0):
+        """`doctor --json` with a fake ffmpeg that prints the named fixtures (stdout cat, no shell interpolation of names)."""
+        shim = self.work / "shim"
+        shim.mkdir(exist_ok=True)
+        script = "#!/bin/sh\ncase \"$2\" in\n"
+        for flag, name, code in (("-filters", filters, filters_exit), ("-encoders", encoders, 0), ("-bsfs", bsfs, 0)):
+            script += f"  {flag}) cat '{self.FIX / name}'; exit {code};;\n"
+        script += "esac\ncase \"$1\" in -version) echo 'ffmpeg version 8.0-fixture'; exit 0;; esac\nexit 1\n"
+        (shim / "ffmpeg").write_text(script)
+        (shim / "ffmpeg").chmod(0o755)
+        # ffprobe stays the real one; PATH keeps the rest so python/whisper detection is unchanged
+        env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+        proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False)
+        return json.loads(proc.stdout), proc.returncode
+
+    # 6.1, 8.1.2 and 9.0.1 are captures (Ubuntu apt, Homebrew on the macOS runner, gyan.dev build on the Windows runner);
+    # 7.1 is a constructed layout (FFmpeg 7 prints the 6.x layout, no capture at hand)
+    FILTER_FIXTURES = ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_7.1_constructed.txt", "ffmpeg_filters_8.1.2_macos.txt", "ffmpeg_filters_9.0.1_windows.txt")
+
+    def test_parser_reads_ffmpeg_6_7_8_9_layouts(self):
+        for name in self.FILTER_FIXTURES:
+            names = _contract._parse_ff_list("-filters", (self.FIX / name).read_text())
+            self.assertGreater(len(names), 450, name)
+            for f in ("xfade", "loudnorm", "acompressor", "abuffer", "concat", "scale"):
+                self.assertIn(f, names, f"{f} in {name}")
+            self.assertNotIn("=", names, name)
+            self.assertNotIn("Filters:", names, name)
+            self.assertNotIn("------", names, name)
+            self.assertEqual(len(names), len(set(names)), f"{name}: no row read twice")
+        # the real 9.0.1 capture: two flag characters per row, a three-character legend, a separator, CRLF
+        raw = (self.FIX / "ffmpeg_filters_9.0.1_windows.txt").read_bytes()
+        self.assertIn(b"\r\n", raw)
+        self.assertIn(b" TS aap ", raw)
+        names9 = _contract._parse_ff_list("-filters", raw.decode())
+        self.assertEqual(len(names9), 527)
+        self.assertIn("aap", names9)  # a two-flag row with a two-input io-spec (AA->A)
+        # the Homebrew 8.1.2 build has no libfreetype / libass: drawtext is absent from its listing, which is
+        # what doctor must report (missing), and the other three builds do carry it
+        self.assertNotIn("drawtext", _contract._parse_ff_list("-filters", (self.FIX / "ffmpeg_filters_8.1.2_macos.txt").read_text()))
+        for name in ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_9.0.1_windows.txt"):
+            self.assertIn("drawtext", _contract._parse_ff_list("-filters", (self.FIX / name).read_text()), name)
+        for enc_name in ("ffmpeg_encoders_6.1.txt", "ffmpeg_encoders_8.1.2_macos.txt", "ffmpeg_encoders_9.0.1_windows.txt"):
+            enc = _contract._parse_ff_list("-encoders", (self.FIX / enc_name).read_text())
+            self.assertIn("libx264", enc, enc_name)
+            self.assertIn("aac", enc, enc_name)
+            self.assertNotIn("=", enc, enc_name)
+        for bsf_name in ("ffmpeg_bsfs_6.1.txt", "ffmpeg_bsfs_8.1.2_macos.txt", "ffmpeg_bsfs_9.0.1_windows.txt"):
+            self.assertIn("filter_units", _contract._parse_ff_list("-bsfs", (self.FIX / bsf_name).read_text()), bsf_name)
+        self.assertEqual(_contract._parse_ff_list("-filters", (self.FIX / "ffmpeg_filters_garbage.txt").read_text()), [])
+
+    def test_two_character_flags_do_not_hide_filters(self):
+        """The FFmpeg 8 layout: every declared filter is found, nothing is reported missing or unknown."""
+        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale"}  # not built into Homebrew's 8.1.2
+        for name in self.FILTER_FIXTURES:
+            d, code = self._doctor(name)
+            declared = [c for c in _contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"] if c.startswith("filter:")]
+            self.assertTrue(declared)
+            expected_missing = absent_in_brew if "8.1.2" in name else set()
+            for cap in declared:
+                self.assertIn(cap, d["missing"] + d["missing_optional"] if cap in expected_missing else d["available"], f"{cap} with {name}")
+            self.assertEqual({c for c in d["missing"] + d["missing_optional"] if c.startswith("filter:")}, expected_missing, name)
+            self.assertEqual(d["unknown"], [], name)
+            self.assertEqual(d["detection"]["filters"]["status"], "parsed", name)
+            self.assertEqual(d["ok"], not expected_missing, name)
+            self.assertEqual(code, 1 if expected_missing else 0, name)
+
+    def test_unparsed_listing_is_unknown_not_missing(self):
+        """Output no parser understands: filters become `unknown`, `ok` is false, exit 2, and nothing is claimed available."""
+        d, code = self._doctor("ffmpeg_filters_garbage.txt")
+        self.assertTrue(d["unknown"])
+        self.assertTrue(all(c.startswith("filter:") for c in d["unknown"]))
+        self.assertEqual([c for c in d["missing"] if c.startswith("filter:")], [])
+        self.assertEqual([c for c in d["available"] if c.startswith("filter:")], [])
+        self.assertEqual(d["detection"]["filters"]["status"], "unparsed")
+        self.assertTrue(any("filters" in e for e in d["errors"]))
+        self.assertFalse(d["ok"])
+        self.assertEqual(code, 2)
+        # encoders came from a readable listing and are still detected
+        self.assertIn("encoder:libx264", d["available"])
+
+    def test_failed_listing_is_unknown_not_missing(self):
+        """`ffmpeg -filters` exiting non-zero is a structured detection error, not a missing filter."""
+        d, code = self._doctor("ffmpeg_filters_8.0_constructed.txt", filters_exit=3)
+        self.assertEqual(d["detection"]["filters"]["status"], "failed")
+        self.assertIn("exited 3", d["detection"]["filters"]["detail"])
+        self.assertTrue(d["unknown"])
+        self.assertEqual([c for c in d["missing"] if c.startswith("filter:")], [])
+        self.assertFalse(d["ok"])
+        self.assertEqual(code, 2)
+
+    def test_doctor_json_keeps_its_keys(self):
+        """Consumers of 0.9.0 read available / missing / missing_optional / ok; those keys and types stay."""
+        d, _ = self._doctor("ffmpeg_filters_8.0_constructed.txt")
+        for key in ("python", "ffmpeg", "ffprobe", "available", "missing", "missing_optional", "ok"):
+            self.assertIn(key, d)
+        for key in ("available", "missing", "missing_optional", "unknown", "errors"):
+            self.assertIsInstance(d[key], list)
+        self.assertIsInstance(d["ok"], bool)
+        contract = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json").stdout)
+        for key in ("available", "missing", "missing_optional", "unknown", "detection", "detected_by"):
+            self.assertIn(key, contract["capabilities"])
 
 
 if __name__ == "__main__":

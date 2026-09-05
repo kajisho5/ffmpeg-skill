@@ -1,11 +1,14 @@
-# Manual-only for now: the account's Actions minutes are exhausted for this cycle.
-# After the reset (Oct 1), add:
-#   push: { branches: [main] }
-#   pull_request:
-# under `on:` to run on every change.
+# Runs on every pull request and on pushes to main (workflow_dispatch stays for manual runs).
+# Three OSes give three FFmpeg majors today: Ubuntu 24.04 apt = 6.1, Homebrew and Chocolatey = 8.x.
+# The "ffmpeg listings" artifact holds each runner's `ffmpeg -filters / -encoders / -bsfs` output
+# and `doctor --json`, so a parser regression on a new FFmpeg layout is visible in the log and the
+# capture can be copied into tests/fixtures/.
 name: tests
 on:
   workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
 jobs:
   test:
     strategy:
@@ -27,7 +30,27 @@ jobs:
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
         run: choco install ffmpeg -y --no-progress
-      - run: ffmpeg -version | head -1
+      - name: ffmpeg version, listings and doctor
         shell: bash
+        run: |
+          mkdir -p listings
+          ffmpeg -version | head -1 | tee listings/version.txt
+          ffmpeg -hide_banner -filters > listings/ffmpeg_filters.txt
+          ffmpeg -hide_banner -encoders > listings/ffmpeg_encoders.txt
+          ffmpeg -hide_banner -bsfs > listings/ffmpeg_bsfs.txt
+          head -9 listings/ffmpeg_filters.txt
+          # doctor exits 1 when a required capability is missing on this build (e.g. Homebrew without libass);
+          # that is reported, not hidden, but the listings must still be uploaded
+          python scripts/_contract.py doctor --json > listings/doctor.json || echo "doctor exit $?"
+          cat listings/doctor.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ffmpeg-listings-${{ matrix.os }}
+          path: listings/
       - run: python tests/test_all.py
+      # the contract tests drive the tools through POSIX shell shims (fake ffmpeg on PATH); not portable to Windows yet.
+      # They run even when test_all is red so the doctor / parser results on this runner's FFmpeg are always in the log.
+      - run: python tests/test_contract.py
+        if: runner.os != 'Windows' && !cancelled()
       - run: node bin/install.js
