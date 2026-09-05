@@ -103,6 +103,7 @@ Do not ask for things `probe.py` can tell you.
 | "the colours look washed out / it's an iPhone HDR video" | `color.py input.mov --to-sdr` (probe shows `hdr: true`) |
 | "apply this LUT", "convert the S-Log / V-Log footage" | `color.py input.mp4 --lut grade.cube [--lut-strength 0.7]` |
 | "the colours are tagged wrong" | `color.py input.mp4 --retag bt709` (no re-encode) |
+| "brighten it a touch / punch up the contrast and saturation / fix the white balance" | `color.py input.mp4 --correct --exposure 0.3 --contrast 1.1 --saturation 1.05 --temperature 5600 --tint -0.05` (typed, no filter string) |
 | "clean up the audio", "remove the hiss / room noise" | `audio.py input.mp4 --voice` (speech) or `--denoise` |
 | "add background music under the talking" | `audio.py input.mp4 --music bed.mp3 --duck --fade-out 3` |
 | "convert the 5.1 to stereo" | `audio.py input.mov --downmix` |

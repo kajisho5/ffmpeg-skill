@@ -154,7 +154,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 | `caption.py` | Burn SRT/ASS with font, size, colour, outline, position; build SRT from timed plain text; animated and word-by-word karaoke timed to the speech energy; optional local transcription |
 | `overlay.py` | Logos, watermarks and titles with position, time range, opacity, fades |
 | `graphics.py` | Lower-thirds, title cards, chapter chips, progress bars, countdowns, corner bugs drawn by FFmpeg from a brand kit |
-| `color.py` | HDR10 / HLG / Dolby Vision → SDR BT.709 tone mapping, DV layer stripping, 3D LUT (.cube), colour-tag rewriting |
+| `color.py` | HDR10 / HLG / Dolby Vision → SDR BT.709 tone mapping, DV layer stripping, 3D LUT (.cube), colour-tag rewriting, typed primary correction (exposure/contrast/saturation/white balance) |
 
 **Delivery**
 

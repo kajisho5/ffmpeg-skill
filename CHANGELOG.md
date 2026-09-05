@@ -8,6 +8,27 @@
 - **macOS CI** installs `ffmpeg-full`: Homebrew's `ffmpeg` formula no longer links libass / freetype / harfbuzz / zimg, so it has no `subtitles`, `ass`, `drawtext` or `zscale` filter. README and the installer hint say so.
 - Tests: the contract-test fixture used `-vsync vfr`, an option FFmpeg 9 removed (`-fps_mode vfr` since 5.1); filter paths with a drive colon, spaces and Unicode through caption (SRT, ASS, fonts dir), color (LUT full and blended) and overlay (`fontfile`), with PSNR proving the caption and LUT changed the picture; overlay still bounded by the video length; `--help` under a cp1252 console.
 
+## 0.9.2 — typed primary colour correction
+
+- **color.py**: `--correct` (exposure / contrast / saturation / white balance), a fourth colour mode
+  alongside `--to-sdr` / `--lut` / `--retag` / `--strip-dovi`. Each flag is one option of one real,
+  always-available libavfilter filter — `--exposure` (`exposure` filter, -3..3 stops), `--contrast` /
+  `--saturation` (`eq` filter, 0..2, 1=unchanged), `--temperature` (`colortemperature`, 2000..12000 K,
+  6500=unchanged) and `--tint` (green -1 .. +1 magenta, mapped to `colorbalance`'s three midtone
+  channels: `gm=-tint`, `rm=bm=tint/2`) — range-checked against this script's own safe subset of what
+  each filter documents (`ffmpeg -h filter=<name>`) before ffmpeg runs; no filter string, `filter_complex`
+  or raw argv is ever accepted from the caller. The four stages (exposure → white balance → contrast →
+  saturation) are always chained in that fixed order, each one always present at its filter's own
+  documented no-op default, so the pipeline is one stable four-filter chain regardless of which flags
+  were given. `--json`'s `measurements` field carries `analyze_levels()` (signalstats luma/saturation)
+  for the input and the output side by side — an OBSERVED technical measurement, never a "looks better"
+  judgement.
+- Contract: `color`'s optional capabilities gain `filter:exposure` / `filter:eq` / `filter:colorbalance` /
+  `filter:colortemperature` (declared `when: "--correct"`); `X264` now also lists `--correct` among its
+  callers. No change to any existing flag, contract field, MCP schema or tool semantics.
+- Tests: 4 real-media tests in `tests/test_all.py` (defaults are near-identity, positive exposure raises
+  measured luma, `--saturation 0` desaturates, temperature/tint run and preserve geometry, five
+  out-of-range parameters are each refused with no partial output).
 
 ## 0.9.1 — FFmpeg 8 capability detection; audio extraction, audio join, sample-accurate trims, typed dynamics
 
