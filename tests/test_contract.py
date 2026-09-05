@@ -610,14 +610,15 @@ class DoctorDetectionTests(unittest.TestCase):
         proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False)
         return json.loads(proc.stdout), proc.returncode
 
-    # 6.1 and 9.0.1 are captures (Ubuntu apt, Windows gyan.dev build); 7.1 and 8.0 are constructed layouts
-    FILTER_FIXTURES = ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_7.1_constructed.txt", "ffmpeg_filters_8.0_constructed.txt", "ffmpeg_filters_9.0.1_windows.txt")
+    # 6.1, 8.1.2 and 9.0.1 are captures (Ubuntu apt, Homebrew on the macOS runner, gyan.dev build on the Windows runner);
+    # 7.1 is a constructed layout (FFmpeg 7 prints the 6.x layout, no capture at hand)
+    FILTER_FIXTURES = ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_7.1_constructed.txt", "ffmpeg_filters_8.1.2_macos.txt", "ffmpeg_filters_9.0.1_windows.txt")
 
     def test_parser_reads_ffmpeg_6_7_8_9_layouts(self):
         for name in self.FILTER_FIXTURES:
             names = _contract._parse_ff_list("-filters", (self.FIX / name).read_text())
-            self.assertGreater(len(names), 500, name)
-            for f in ("xfade", "loudnorm", "acompressor", "abuffer", "concat", "scale", "drawtext"):
+            self.assertGreater(len(names), 450, name)
+            for f in ("xfade", "loudnorm", "acompressor", "abuffer", "concat", "scale"):
                 self.assertIn(f, names, f"{f} in {name}")
             self.assertNotIn("=", names, name)
             self.assertNotIn("Filters:", names, name)
@@ -630,28 +631,35 @@ class DoctorDetectionTests(unittest.TestCase):
         names9 = _contract._parse_ff_list("-filters", raw.decode())
         self.assertEqual(len(names9), 527)
         self.assertIn("aap", names9)  # a two-flag row with a two-input io-spec (AA->A)
-        for enc_name in ("ffmpeg_encoders_6.1.txt", "ffmpeg_encoders_9.0.1_windows.txt"):
+        # the Homebrew 8.1.2 build has no libfreetype / libass: drawtext is absent from its listing, which is
+        # what doctor must report (missing), and the other three builds do carry it
+        self.assertNotIn("drawtext", _contract._parse_ff_list("-filters", (self.FIX / "ffmpeg_filters_8.1.2_macos.txt").read_text()))
+        for name in ("ffmpeg_filters_6.1.txt", "ffmpeg_filters_9.0.1_windows.txt"):
+            self.assertIn("drawtext", _contract._parse_ff_list("-filters", (self.FIX / name).read_text()), name)
+        for enc_name in ("ffmpeg_encoders_6.1.txt", "ffmpeg_encoders_8.1.2_macos.txt", "ffmpeg_encoders_9.0.1_windows.txt"):
             enc = _contract._parse_ff_list("-encoders", (self.FIX / enc_name).read_text())
             self.assertIn("libx264", enc, enc_name)
             self.assertIn("aac", enc, enc_name)
             self.assertNotIn("=", enc, enc_name)
-        for bsf_name in ("ffmpeg_bsfs_6.1.txt", "ffmpeg_bsfs_9.0.1_windows.txt"):
+        for bsf_name in ("ffmpeg_bsfs_6.1.txt", "ffmpeg_bsfs_8.1.2_macos.txt", "ffmpeg_bsfs_9.0.1_windows.txt"):
             self.assertIn("filter_units", _contract._parse_ff_list("-bsfs", (self.FIX / bsf_name).read_text()), bsf_name)
         self.assertEqual(_contract._parse_ff_list("-filters", (self.FIX / "ffmpeg_filters_garbage.txt").read_text()), [])
 
     def test_two_character_flags_do_not_hide_filters(self):
         """The FFmpeg 8 layout: every declared filter is found, nothing is reported missing or unknown."""
+        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale"}  # not built into Homebrew's 8.1.2
         for name in self.FILTER_FIXTURES:
             d, code = self._doctor(name)
             declared = [c for c in _contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"] if c.startswith("filter:")]
             self.assertTrue(declared)
+            expected_missing = absent_in_brew if "8.1.2" in name else set()
             for cap in declared:
-                self.assertIn(cap, d["available"], f"{cap} with {name}")
-            self.assertEqual([c for c in d["missing"] if c.startswith("filter:")], [], name)
+                self.assertIn(cap, d["missing"] + d["missing_optional"] if cap in expected_missing else d["available"], f"{cap} with {name}")
+            self.assertEqual({c for c in d["missing"] + d["missing_optional"] if c.startswith("filter:")}, expected_missing, name)
             self.assertEqual(d["unknown"], [], name)
             self.assertEqual(d["detection"]["filters"]["status"], "parsed", name)
-            self.assertTrue(d["ok"], name)
-            self.assertEqual(code, 0, name)
+            self.assertEqual(d["ok"], not expected_missing, name)
+            self.assertEqual(code, 1 if expected_missing else 0, name)
 
     def test_unparsed_listing_is_unknown_not_missing(self):
         """Output no parser understands: filters become `unknown`, `ok` is false, exit 2, and nothing is claimed available."""

@@ -49,7 +49,8 @@ jobs:
           name: ffmpeg-listings-${{ matrix.os }}
           path: listings/
       - run: python tests/test_all.py
-      # the contract tests drive the tools through POSIX shell shims (fake ffmpeg on PATH); not portable to Windows yet
+      # the contract tests drive the tools through POSIX shell shims (fake ffmpeg on PATH); not portable to Windows yet.
+      # They run even when test_all is red so the doctor / parser results on this runner's FFmpeg are always in the log.
       - run: python tests/test_contract.py
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !cancelled()
       - run: node bin/install.js

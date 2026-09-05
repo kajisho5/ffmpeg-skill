@@ -1,16 +1,18 @@
 Filters:
-  T. = Timeline support
-  .S = Slice threading
+  T.. = Timeline support
+  .S. = Slice threading
   A = Audio input/output
   V = Video input/output
   N = Dynamic number and/or type of input/output
   | = Source or sink filter
+  ------
+ TS aap               AA->A      Apply Affine Projection algorithm to first audio stream.
  .. abench            A->A       Benchmark part of a filtergraph.
  .. acompressor       A->A       Audio compressor.
  .. acontrast         A->A       Simple audio dynamic range compression/expansion filter.
  .. acopy             A->A       Copy the input audio unchanged to the output.
  .. acue              A->A       Delay filtering to match a cue.
- .. acrossfade        AA->A      Cross fade two input audio streams.
+ .. acrossfade        N->A       Cross fade two input audio streams.
  .S acrossover        A->N       Split audio into per-bands streams.
  T. acrusher          A->A       Reduce audio bit resolution.
  TS adeclick          A->A       Remove impulsive noise from input audio.
@@ -29,7 +31,7 @@ Filters:
  T. afade             A->A       Fade in/out input audio.
  TS afftdn            A->A       Denoise audio samples using FFT.
  TS afftfilt          A->A       Apply arbitrary expressions to samples in frequency domain.
- .S afir              N->N       Apply Finite Impulse Response filter with supplied coefficients in additional stream(s).
+ TS afir              N->A       Apply Finite Impulse Response filter with supplied coefficients in additional stream(s).
  .. aformat           A->A       Convert the input audio to one of the specified formats.
  TS afreqshift        A->A       Apply frequency shifting to input audio.
  TS afwtdn            A->A       Denoise audio stream using Wavelets.
@@ -76,7 +78,6 @@ Filters:
  TS asoftclip         A->A       Audio Soft Clipper.
  .S aspectralstats    A->A       Show frequency domain statistics about audio frames.
  .. asplit            A->N       Pass on the audio input to N audio outputs.
- .. asr               A->A       Automatic Speech Recognition.
  .S astats            A->A       Show time domain statistics about audio frames.
  .. astreamselect     N->N       Select audio streams
  TS asubboost         A->A       Boost subwoofer frequencies.
@@ -88,12 +89,10 @@ Filters:
  TS atilt             A->A       Apply spectral tilt to audio.
  .. atrim             A->A       Pick one continuous section from the input, drop the rest.
  .. axcorrelate       AA->A      Cross-correlate two audio streams.
- .. azmq              A->A       Receive commands through ZMQ and broker them to filters.
  TS bandpass          A->A       Apply a two-pole Butterworth band-pass filter.
  TS bandreject        A->A       Apply a two-pole Butterworth band-reject filter.
  TS bass              A->A       Boost or cut lower frequencies.
  TS biquad            A->A       Apply a biquad IIR filter with the given coefficients.
- .. bs2b              A->A       Bauer stereo-to-binaural filter.
  .. channelmap        A->A       Remap audio channels.
  .. channelsplit      A->N       Split audio into per-channel streams.
  .. chorus            A->A       Add a chorus effect to the audio.
@@ -118,20 +117,16 @@ Filters:
  TS highpass          A->A       Apply a high-pass filter with 3dB point frequency.
  TS highshelf         A->A       Apply a high shelf filter.
  .. join              N->A       Join multiple audio streams into multi-channel output.
- .. ladspa            N->A       Apply LADSPA effect.
  .. loudnorm          A->A       EBU R128 loudness normalization
  TS lowpass           A->A       Apply a low-pass filter with 3dB point frequency.
  TS lowshelf          A->A       Apply a low shelf filter.
- .. lv2               N->A       Apply LV2 effect.
  .. mcompand          A->A       Multiband Compress or expand audio dynamic range.
  .. pan               A->A       Remix channels with coefficients (panning).
  .. replaygain        A->A       ReplayGain scanner.
- .. rubberband        A->A       Apply time-stretching and pitch-shifting.
  .. sidechaincompress AA->A      Sidechain compressor.
  T. sidechaingate     AA->A      Audio sidechain gate.
  .. silencedetect     A->A       Detect silence.
  T. silenceremove     A->A       Remove silence.
- .S sofalizer         A->A       SOFAlizer (Spatially Oriented Format for Acoustics).
  T. speechnorm        A->A       Speech Normalizer.
  T. stereotools       A->A       Apply various stereo tools.
  T. stereowiden       A->A       Apply stereo widening effect.
@@ -150,7 +145,6 @@ Filters:
  .. afirsrc           |->A       Generate a FIR coefficients audio stream.
  .. anoisesrc         |->A       Generate a noise audio signal.
  .. anullsrc          |->A       Null audio source, return empty audio frames.
- .. flite             |->A       Synthesize voice from text using libflite.
  .. hilbert           |->A       Generate a Hilbert transform FIR coefficients.
  .. sinc              |->A       Generate a sinc kaiser-windowed low-pass, high-pass, band-pass, or band-reject FIR coefficients.
  .. sine              |->A       Generate sine wave audio signal.
@@ -159,35 +153,25 @@ Filters:
  .. alphaextract      V->V       Extract an alpha channel as a grayscale image component.
  T. alphamerge        VV->V      Copy the luma value of the second input into the alpha channel of the first input.
  TS amplify           V->V       Amplify changes between successive video frames.
- .. ass               V->V       Render ASS subtitles onto input video using the libass library.
  TS atadenoise        V->V       Apply an Adaptive Temporal Averaging Denoiser.
  T. avgblur           V->V       Apply Average Blur filter.
- .. avgblur_opencl    V->V       Apply average blur filter
- .. avgblur_vulkan    V->V       Apply avgblur mask to input video
  TS backgroundkey     V->V       Turns a static background into transparency.
  T. bbox              V->V       Compute bounding box for each frame.
  .. bench             V->V       Benchmark part of a filtergraph.
  TS bilateral         V->V       Apply Bilateral filter.
- .. bilateral_cuda    V->V       GPU accelerated bilateral filter
  T. bitplanenoise     V->V       Measure bit plane noise.
  .S blackdetect       V->V       Detect video intervals that are (almost) black.
- .. blackframe        V->V       Detect frames that are (almost) black.
+ .S blackframe        V->V       Detect frames that are (almost) black.
  TS blend             VV->V      Blend two video frames into each other.
- .. blend_vulkan      VV->V      Blend two video frames in Vulkan
  .. blockdetect       V->V       Blockdetect filter.
  .. blurdetect        V->V       Blurdetect filter.
  TS bm3d              N->V       Block-Matching 3D denoiser.
  T. boxblur           V->V       Blur the input.
- .. boxblur_opencl    V->V       Apply boxblur filter to input video
  TS bwdif             V->V       Deinterlace the input image.
- T. bwdif_cuda        V->V       Deinterlace CUDA frames
- T. bwdif_vulkan      V->V       Deinterlace Vulkan frames via bwdif
  TS cas               V->V       Contrast Adaptive Sharpen.
  .. ccrepack          V->V       Repack CEA-708 closed caption metadata
- .. chromaber_vulkan  V->V       Offset chroma of input video (chromatic aberration)
  TS chromahold        V->V       Turns a certain color range into gray.
  TS chromakey         V->V       Turns a certain color into transparency. Operates on YUV colors.
- .. chromakey_cuda    V->V       GPU accelerated chromakey filter
  TS chromanr          V->V       Reduce chrominance noise.
  TS chromashift       V->V       Shift chroma.
  .. ciescope          V->V       Video CIE scope.
@@ -196,21 +180,20 @@ Filters:
  TS colorchannelmixer V->V       Adjust colors by mixing color channels.
  TS colorcontrast     V->V       Adjust color contrast between RGB components.
  TS colorcorrect      V->V       Adjust color white balance selectively for blacks and whites.
+ .S colordetect       V->V       Detect video color properties.
  TS colorize          V->V       Overlay a solid color on the video stream.
  TS colorkey          V->V       Turns a certain color into transparency. Operates on RGB colors.
- .. colorkey_opencl   V->V       Turns a certain color into transparency. Operates on RGB colors.
  TS colorhold         V->V       Turns a certain color range into gray. Operates on RGB colors.
  TS colorlevels       V->V       Adjust the color levels.
  TS colormap          VVV->V     Apply custom Color Maps to video stream.
  TS colormatrix       V->V       Convert color matrix.
  TS colorspace        V->V       Convert between colorspaces.
- .. colorspace_cuda   V->V       CUDA accelerated video color converter
  TS colortemperature  V->V       Adjust color temperature of video.
  TS convolution       V->V       Apply convolution filter.
- .. convolution_opencl V->V       Apply convolution mask to input video
  TS convolve          VV->V      Convolve first video stream with second video stream.
  .. copy              V->V       Copy the input video unchanged to the output.
- T. corr              VV->V      Calculate the correlation between two video streams.
+ .. coreimage         V->V       Video filtering using CoreImage API.
+ TS corr              VV->V      Calculate the correlation between two video streams.
  .. cover_rect        V->V       Find and cover a user specified object.
  .. crop              V->V       Crop the input video.
  T. cropdetect        V->V       Auto-detect crop size.
@@ -226,39 +209,28 @@ Filters:
  TS dedot             V->V       Reduce cross-luminance and cross-color.
  TS deflate           V->V       Apply deflate effect.
  .. deflicker         V->V       Remove temporal frame luminance variations.
- .. deinterlace_qsv   V->V       Quick Sync Video "deinterlacing"
- .. deinterlace_vaapi V->V       Deinterlacing of VAAPI surfaces
  .. dejudder          V->V       Remove judder produced by pullup.
  T. delogo            V->V       Remove logo from input video.
- .. denoise_vaapi     V->V       VAAPI VPP for de-noise
- T. derain            V->V       Apply derain filter to the input.
  .. deshake           V->V       Stabilize shaky video.
- .. deshake_opencl    V->V       Feature-point based video stabilization filter
  TS despill           V->V       Despill video.
  .. detelecine        V->V       Apply an inverse telecine pattern.
  TS dilation          V->V       Apply dilation effect.
- .. dilation_opencl   V->V       Apply dilation effect
  TS displace          VVV->V     Displace pixels.
- .. dnn_classify      V->V       Apply DNN classify filter to the input.
- .. dnn_detect        V->V       Apply DNN detect filter to the input.
- .. dnn_processing    V->V       Apply DNN processing filter to the input.
  .S doubleweave       V->V       Weave input video fields into double number of frames.
  T. drawbox           V->V       Draw a colored box on the input video.
  .. drawgraph         V->V       Draw a graph using input video metadata.
  T. drawgrid          V->V       Draw a colored grid on the input video.
- T. drawtext          V->V       Draw text on top of video frames using libfreetype library.
  T. edgedetect        V->V       Detect and draw edge.
  .. elbg              V->V       Apply posterize effect, using the ELBG algorithm.
  T. entropy           V->V       Measure video frames entropy.
  .S epx               V->V       Scale the input using EPX algorithm.
  T. eq                V->V       Adjust brightness, contrast, gamma, and saturation.
  TS erosion           V->V       Apply erosion effect.
- .. erosion_opencl    V->V       Apply erosion effect
  TS estdif            V->V       Apply Edge Slope Tracing deinterlace.
  TS exposure          V->V       Adjust exposure of the video stream.
  .. extractplanes     V->N       Extract planes as grayscale frames.
  TS fade              V->V       Fade in/out input video.
- .. feedback          VV->VV     Apply feedback video filter.
+ T. feedback          VV->VV     Apply feedback video filter.
  TS fftdnoiz          V->V       Denoise frames using 3D FFT.
  TS fftfilt           V->V       Apply arbitrary expressions to pixels in frequency domain.
  .. field             V->V       Extract a field from the input video.
@@ -267,7 +239,6 @@ Filters:
  T. fieldorder        V->V       Set the field order.
  T. fillborders       V->V       Fill borders of the input video.
  .. find_rect         V->V       Find a user specified object.
- .. flip_vulkan       V->V       Flip both horizontally and vertically
  T. floodfill         V->V       Fill area with same color with another color.
  .. format            V->V       Convert the input video to one of the specified pixel formats.
  .. fps               V->V       Force constant framerate.
@@ -276,10 +247,9 @@ Filters:
  T. framestep         V->V       Select one frame every N frames.
  .. freezedetect      V->V       Detects frozen video input.
  .. freezeframes      VV->V      Freeze video frames.
- T. frei0r            V->V       Apply a frei0r effect.
  T. fspp              V->V       Apply Fast Simple Post-processing filter.
+ .. fsync             V->V       Synchronize video frames from external source.
  TS gblur             V->V       Apply Gaussian Blur filter.
- .. gblur_vulkan      V->V       Gaussian Blur in Vulkan
  TS geq               V->V       Apply generic equation to each pixel.
  T. gradfun           V->V       Debands video quickly using gradients.
  .. graphmonitor      V->V       Show various filtergraph stats.
@@ -288,7 +258,6 @@ Filters:
  TS guided            N->V       Apply Guided filter.
  TS haldclut          VV->V      Adjust colors using a Hald CLUT.
  TS hflip             V->V       Horizontally flip the input video.
- .. hflip_vulkan      V->V       Horizontally flip the input video in Vulkan
  T. histeq            V->V       Apply global color histogram equalization.
  .. histogram         V->V       Compute and draw a histogram.
  TS hqdn3d            V->V       Apply a High Quality 3D Denoiser.
@@ -301,7 +270,6 @@ Filters:
  .. hwdownload        V->V       Download a hardware frame to a normal frame
  .. hwmap             V->V       Map hardware frames
  .. hwupload          V->V       Upload a normal frame to a hardware frame
- .. hwupload_cuda     V->V       Upload a system memory frame to a CUDA device.
  T. hysteresis        VV->V      Grow first stream into second stream by connecting components.
  TS identity          VV->V      Calculate the Identity between two video streams.
  .. idet              V->V       Interlace detect Filter.
@@ -314,7 +282,7 @@ Filters:
  TS lagfun            V->V       Slowly update darker pixels.
  T. latency           V->V       Report video filtering latency.
  TS lenscorrection    V->V       Rectify the image by correcting for lens distortion.
- .. libplacebo        N->V       Apply various GPU filters from libplacebo
+ .. libvmaf           VV->V      Calculate the VMAF between two video streams.
  TS limitdiff         N->V       Apply filtering with limiting difference.
  TS limiter           V->V       Limit pixels components to the specified range.
  .. loop              V->V       Loop video frames.
@@ -346,8 +314,6 @@ Filters:
  TS multiply          VV->V      Multiply first video stream with second video stream.
  TS negate            V->V       Negate input video.
  TS nlmeans           V->V       Non-local means denoiser.
- .. nlmeans_opencl    V->V       Non-local means denoiser through OpenCL
- .. nlmeans_vulkan    V->V       Non-local means denoiser (Vulkan)
  TS nnedi             V->V       Apply neural network edge directed interpolation intra-only deinterlacer.
  .. noformat          V->V       Force libavfilter not to use any of the specified pixel formats for the input to the next filter.
  TS noise             V->V       Add noise.
@@ -355,14 +321,8 @@ Filters:
  .. null              V->V       Pass the source unchanged to the output.
  T. oscilloscope      V->V       2D Video Oscilloscope.
  TS overlay           VV->V      Overlay a video source on top of the input.
- .. overlay_opencl    VV->V      Overlay one video on top of another
- .. overlay_qsv       VV->V      Quick Sync Video overlay.
- .. overlay_vaapi     VV->V      Overlay one video on top of another
- .. overlay_vulkan    VV->V      Overlay a source on top of another
- .. overlay_cuda      VV->V      Overlay one video on top of another using CUDA
  T. owdenoise         V->V       Denoise using wavelets.
  .. pad               V->V       Pad the input video.
- .. pad_opencl        V->V       Pad the input video.
  .. palettegen        V->V       Find the optimal palette for a given stream.
  .. paletteuse        VV->V      Use a palette to downsample an input video stream.
  T. perms             V->V       Set permissions for the output video frame.
@@ -372,13 +332,10 @@ Filters:
  .. pixdesctest       V->V       Test pixel format definitions.
  TS pixelize          V->V       Pixelize video.
  T. pixscope          V->V       Pixel data analysis.
- T. pp                V->V       Filter video using libpostproc.
  T. pp7               V->V       Apply Postprocessing 7 filter.
  TS premultiply       N->V       PreMultiply first stream with first plane of second stream.
+ .S premultiply_dynamic V->V       Premultiply or unpremultiply an image in-place, as needed.
  TS prewitt           V->V       Apply prewitt operator.
- .. prewitt_opencl    V->V       Apply prewitt operator
- .. procamp_vaapi     V->V       ProcAmp (color balance) adjustments for hue, saturation, brightness, contrast
- .. program_opencl    N->V       Filter video using an OpenCL program
  TS pseudocolor       V->V       Make pseudocolored video frames.
  TS psnr              VV->V      Calculate the PSNR between two video streams.
  .. pullup            V->V       Pullup from field sequence to frames.
@@ -388,21 +345,16 @@ Filters:
  .. readvitc          V->V       Read vertical interval timecode and write it to frame metadata.
  .. realtime          V->V       Slow down filtering to match realtime.
  .S remap             VVV->V     Remap pixels.
- .. remap_opencl      VVV->V     Remap pixels using OpenCL.
  TS removegrain       V->V       Remove grain.
  T. removelogo        V->V       Remove a TV logo based on a mask image.
  .. repeatfields      V->V       Hard repeat fields based on MPEG repeat field flag.
  .. reverse           V->V       Reverse a clip.
  TS rgbashift         V->V       Shift RGBA.
  TS roberts           V->V       Apply roberts cross operator.
- .. roberts_opencl    V->V       Apply roberts operator
  TS rotate            V->V       Rotate the input image.
  T. sab               V->V       Apply shape adaptive blur.
  .. scale             V->V       Scale the input video size and/or convert the image format.
- .. scale_cuda        V->V       GPU accelerated video resizer
- .. scale_qsv         V->V       Quick Sync Video "scaling and format conversion"
- .. scale_vaapi       V->V       Scale to/from VAAPI surfaces.
- .. scale_vulkan      V->V       Scale Vulkan frames
+ .. scale_vt          V->V       Scale Videotoolbox frames
  .. scale2ref         VV->VV     Scale the input video size and/or convert the image format to the given reference.
  .. scdet             V->V       Detect video scene change
  TS scharr            V->V       Apply scharr operator.
@@ -419,7 +371,6 @@ Filters:
  .. setrange          V->V       Force color range for the output video frame.
  .. setsar            V->V       Set the pixel sample aspect ratio.
  .. settb             V->V       Set timebase for the video output link.
- .. sharpness_vaapi   V->V       VAAPI VPP for sharpness
  TS shear             V->V       Shear transform the input image.
  .. showinfo          V->V       Show textual information for each video frame.
  .. showpalette       V->V       Display frame palette.
@@ -432,15 +383,12 @@ Filters:
  .. siti              V->V       Calculate spatial information (SI) and temporal information (TI).
  T. smartblur         V->V       Blur the input video without impacting the outlines.
  TS sobel             V->V       Apply sobel operator.
- .. sobel_opencl      V->V       Apply sobel operator
  .. split             V->N       Pass on the input to N video outputs.
  T. spp               V->V       Apply a simple post processing filter.
- .. sr                V->V       Apply DNN-based image super resolution to the input.
  TS ssim              VV->V      Calculate the SSIM between two video streams.
  .. ssim360           VV->V      Calculate the SSIM between two 360 video streams.
  .S stereo3d          V->V       Convert video stereoscopic 3D view.
  .. streamselect      N->N       Select video streams
- .. subtitles         V->V       Render text subtitles onto input video using the libass library.
  .S super2xsai        V->V       Scale the input by 2x using the Super2xSaI pixel art algorithm.
  T. swaprect          V->V       Swap 2 rectangular objects in video.
  T. swapuv            V->V       Swap U and V components.
@@ -449,25 +397,20 @@ Filters:
  .. thistogram        V->V       Compute and draw a temporal histogram.
  TS threshold         VVVV->V    Threshold first video stream using other video streams.
  TS thumbnail         V->V       Select the most representative frame in a given sequence of consecutive frames.
- .. thumbnail_cuda    V->V       Select the most representative frame in a given sequence of consecutive frames.
  .. tile              V->V       Tile several successive frames together.
+ .. tiltandshift      V->V       Generate a tilt-and-shift'd video.
  .. tinterlace        V->V       Perform temporal field interlacing.
  TS tlut2             V->V       Compute and apply a lookup table from two successive frames.
  TS tmedian           V->V       Pick median pixels from successive frames.
  T. tmidequalizer     V->V       Apply Temporal Midway Equalization.
  TS tmix              V->V       Mix successive video frames.
  .S tonemap           V->V       Conversion to/from different dynamic ranges.
- .. tonemap_opencl    V->V       Perform HDR to SDR conversion with tonemapping.
- .. tonemap_vaapi     V->V       VAAPI VPP for tone-mapping
  .. tpad              V->V       Temporarily pad video frames.
  .S transpose         V->V       Transpose input video.
- .. transpose_opencl  V->V       Transpose input video
- .. transpose_vaapi   V->V       VAAPI VPP for transpose
- .. transpose_vulkan  V->V       Transpose Vulkan Filter
+ .. transpose_vt      V->V       Transpose Videotoolbox frames
  .. trim              V->V       Pick one continuous section from the input, drop the rest.
  TS unpremultiply     N->V       UnPreMultiply first stream with first plane of second stream.
  TS unsharp           V->V       Sharpen or blur the input video.
- .. unsharp_opencl    V->V       Apply unsharp mask to input video
  .. untile            V->V       Untile a frame into a sequence of frames.
  TS uspp              V->V       Apply Ultra Simple / Slow Post-processing filter.
  .S v360              V->V       Convert 360 projection of video.
@@ -475,15 +418,11 @@ Filters:
  TS varblur           VV->V      Apply Variable Blur filter.
  .. vectorscope       V->V       Video vectorscope.
  T. vflip             V->V       Flip the input video vertically.
- .. vflip_vulkan      V->V       Vertically flip the input video in Vulkan
  .. vfrdet            V->V       Variable frame rate detect filter.
  TS vibrance          V->V       Boost or alter saturation.
- .. vidstabdetect     V->V       Extract relative transformations, pass 1 of 2 for stabilization (see vidstabtransform for pass 2).
- .. vidstabtransform  V->V       Transform the frames, pass 2 of 2 for stabilization (see vidstabdetect for pass 1).
  TS vif               VV->V      Calculate the VIF between two video streams.
  T. vignette          V->V       Make or reverse a vignette effect.
  .. vmafmotion        V->V       Calculate the VMAF Motion score.
- .. vpp_qsv           V->V       Quick Sync Video "VPP"
  .S vstack            N->V       Stack video inputs vertically.
  TS w3fdif            V->V       Apply Martin Weston three field deinterlace.
  .S waveform          V->V       Video waveform monitor.
@@ -491,39 +430,29 @@ Filters:
  .S xbr               V->V       Scale the input using xBR algorithm.
  TS xcorrelate        VV->V      Cross-correlate first video stream with second video stream.
  .S xfade             VV->V      Cross fade one video with another video.
- .. xfade_opencl      VV->V      Cross fade one video with another video.
- .. xfade_vulkan      VV->V      Cross fade one video with another video.
  TS xmedian           N->V       Pick median pixels from several video inputs.
+ T. xpsnr             VV->V      Calculate the extended perceptually weighted peak signal-to-noise ratio (XPSNR) between two video streams.
  .S xstack            N->V       Stack video inputs into custom layout.
  TS yadif             V->V       Deinterlace the input image.
- T. yadif_cuda        V->V       Deinterlace CUDA frames
+ T. yadif_videotoolbox V->V       YADIF for VideoToolbox frames using Metal compute
  TS yaepblur          V->V       Yet another edge preserving blur filter.
- .. zmq               V->V       Receive commands through ZMQ and broker them to filters.
  .. zoompan           V->V       Apply Zoom & Pan effect.
- .S zscale            V->V       Apply resizing, colorspace and bit depth conversion.
- .. hstack_vaapi      N->V       "VA-API" hstack
- .. vstack_vaapi      N->V       "VA-API" vstack
- .. xstack_vaapi      N->V       "VA-API" xstack
- .. hstack_qsv        N->V       "Quick Sync Video" hstack
- .. vstack_qsv        N->V       "Quick Sync Video" vstack
- .. xstack_qsv        N->V       "Quick Sync Video" xstack
  .. allrgb            |->V       Generate all RGB colors.
  .. allyuv            |->V       Generate all yuv colors.
  .. cellauto          |->V       Create pattern generated by an elementary cellular automaton.
  .. color             |->V       Provide an uniformly colored input.
- .. color_vulkan      |->V       Generate a constant color (Vulkan)
  .. colorchart        |->V       Generate color checker chart.
  .. colorspectrum     |->V       Generate colors spectrum.
- .. frei0r_src        |->V       Generate a frei0r source.
+ .. coreimagesrc      |->V       Video source using image generators of CoreImage API.
  .S gradients         |->V       Draw a gradients.
  .. haldclutsrc       |->V       Provide an identity Hald CLUT.
  .. life              |->V       Create life.
  .. mandelbrot        |->V       Render a Mandelbrot fractal.
  .. mptestsrc         |->V       Generate various test pattern.
  .. nullsrc           |->V       Null video source, return unprocessed video frames.
- .. openclsrc         |->V       Generate video using an OpenCL program
  .. pal75bars         |->V       Generate PAL 75% color bars.
  .. pal100bars        |->V       Generate PAL 100% color bars.
+ .. perlin            |->V       Generate Perlin noise
  .. rgbtestsrc        |->V       Generate RGB test pattern.
  .S sierpinski        |->V       Render a Sierpinski fractal.
  .. smptebars         |->V       Generate SMPTE color bars.
@@ -554,8 +483,6 @@ Filters:
  .. avsynctest        |->AV      Generate an Audio Video Sync Test.
  .. amovie            |->N       Read audio from a movie source.
  .. movie             |->N       Read from a movie source.
- .. afifo             A->A       Buffer input frames and send them when they are requested.
- .. fifo              V->V       Buffer input images and send them when they are requested.
  .. abuffer           |->A       Buffer audio frames, and make them accessible to the filterchain.
  .. buffer            |->V       Buffer video frames, and make them accessible to the filterchain.
  .. abuffersink       A->|       Buffer audio frames, and make them available to the end of the filter graph.
