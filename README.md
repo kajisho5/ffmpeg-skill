@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="FFmpeg Skill: media processing for AI agents" width="320">
+  <img src="assets/logo.png" alt="FFmpeg Skill: media processing for AI agents" width="760">
 </p>
 
 <h1 align="center">ffmpeg-skill</h1>
