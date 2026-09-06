@@ -2,6 +2,8 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
+- **`multicam.py` low-confidence warning.** `sync.py` warns on stderr when its cross-correlation confidence is below 0.1 ("check that both files contain the same audio event"); `multicam.py` used the same measurement per camera but never warned, even though it applies the offset to a rendered cut rather than just reporting it. It now warns per camera below the same threshold. SKILL.md's existing "check `confidence` before trusting a sync" guidance now names `multicam.py`'s per-camera confidence explicitly.
+- **`sync.py`/`multicam.py` documentation: audio sync is not lip sync.** Both align audio tracks to each other by cross-correlation; neither has ever done any face or mouth detection, and a high `confidence` only means the audio matched well, not that the final picture looks in sync. This was previously undocumented; `sync.py`'s docstring, `multicam.py`'s docstring and SKILL.md now say so explicitly. No behaviour change.
 - **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
   keep the source resolution). A caller with nothing to change — the deliverable already matches
   the source, no platform target — had no way to get a real, delivered file out of `export.py`

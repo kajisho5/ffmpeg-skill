@@ -593,6 +593,18 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(probe(str(auto))["duration"], 12.0, 0.2)
         script("multicam.py", self.src, camB, "--switch", "0-3:5", expect_fail=True)
 
+    def test_multicam_warns_on_a_camera_with_no_shared_audio_event(self):
+        """A camera whose audio has nothing in common with the reference must not align silently."""
+        unrelated = OUT / "camC_unrelated.mp4"
+        # a flat-envelope tone: nothing for the envelope-based cross-correlation to lock onto,
+        # unlike the reference's gated tones -- unrelated in the way a different room's constant hum would be
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=233:sample_rate=48000", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", unrelated)
+        proc = script("multicam.py", self.src, unrelated, "--offsets-only", "--json")
+        data = json.loads(proc.stdout)
+        self.assertLess(data["confidence"][1], 0.1)
+        self.assertIn("low correlation confidence", proc.stderr)
+
     def test_verify_kit_runs_on_real_world_fixtures(self):
         folder = OUT / "vfx"
         folder.mkdir(exist_ok=True)
