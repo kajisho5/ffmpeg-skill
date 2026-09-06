@@ -756,6 +756,20 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(out["stages"], ["clips", "join"])
         self.assertTrue(Path(out["output"]).exists())
 
+    def test_render_exits_nonzero_when_the_check_stage_fails(self):
+        """A render whose deliverable fails its own check stage must not report success."""
+        proj = OUT / "project_bad_check.json"
+        proj.write_text(json.dumps({
+            "output": "render_bad.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:04"}],
+            "export": {"preset": "reels"},  # portrait 9:16 output
+            "check": {"platform": "broadcast"},  # broadcast requires 16:9 -- guaranteed aspect FAIL
+        }), encoding="utf-8")
+        proc = script("render.py", proj, "--fast", "--json", expect_fail=True)
+        data = json.loads(proc.stdout)
+        self.assertGreater(data["check"]["failed"], 0, data["check"])
+        self.assertTrue(Path(data["output"]).exists(), "the deliverable is still written even though it fails delivery spec")
+
     def test_join_width_keeps_aspect(self):
         out = OUT / "join_w.mp4"
         script("join.py", self.src, self.src, "--transition", "none", "--width", "640", "--fast", "-o", out)

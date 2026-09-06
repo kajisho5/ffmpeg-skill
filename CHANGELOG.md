@@ -2,6 +2,7 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
+- **`render.py`'s check stage now sets the exit code.** A `project.json` with a `"check"` stage always returned 0, even when the delivery-spec check failed or `check.py` itself couldn't run — `render.py` was the one tool in the skill that could report a broken deliverable as a success. It now exits 1 in both cases, matching `check.py`'s own exit code exactly; `--json`'s `check` field still carries the full row-by-row result either way, and the output file is still written (this changes the exit code, not what gets rendered).
 - **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
   keep the source resolution). A caller with nothing to change — the deliverable already matches
   the source, no platform target — had no way to get a real, delivered file out of `export.py`

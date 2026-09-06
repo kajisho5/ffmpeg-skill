@@ -549,9 +549,11 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(Path(look["output"]).exists())
         project = self.out("project.json")
         project.write_text(json.dumps({"output": str(self.out("render.mp4")), "frame": {"aspect": "9:16", "width": 360, "fps": 30},
-                                       "clips": [{"src": str(self.src), "in": 0, "out": 3}], "export": {"preset": "reels"}, "check": {"platform": "reels"}}), encoding="utf-8")
+                                       "clips": [{"src": str(self.src), "in": 0, "out": 3}], "loudness": {"lufs": -14, "tp": -1},
+                                       "export": {"preset": "reels"}, "check": {"platform": "reels"}}), encoding="utf-8")
         doc = self._run_structured("render", {"project": str(project), "fast": True})
         self.assertEqual(doc["status"], "completed")
+        self.assertEqual(doc["check"]["failed"], 0, doc["check"])
         self._verify("render", doc["output"])
 
     def test_mcp_tool_call_round_trip(self):
