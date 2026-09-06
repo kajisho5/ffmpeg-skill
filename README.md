@@ -75,6 +75,10 @@ npx ffmpeg-skill doctor
 npx ffmpeg-skill contract --json | head -40
 ```
 
+Already installed? re-run `npx ffmpeg-skill` to refresh `~/.claude/skills/ffmpeg-skill`. Copies are not updated automatically.
+
+`doctor`'s overall `ok` and a single tool's `usable: no` are different signals: `ok` means nothing *required by every tool* is missing, but a plain Homebrew `ffmpeg` on macOS can still be `ok` while `caption.py` specifically can't run (no `subtitles` filter) — check `doctor --json`'s `tools` field for the per-tool answer, not just `ok`.
+
 Then talk to your agent:
 
 > "Take `interview.mp4`, keep 0:45–3:10 and 5:00–6:30, and make it exactly 60 seconds for Reels."
@@ -315,6 +319,8 @@ FFmpeg itself:
 - Python 3.9+, standard library only
 - Node 16+ only for the `npx` installer
 
+`doctor`'s own introspection calls (`ffmpeg -filters`/`-encoders`/`-bsfs`/`-version`) time out after 10s and report `failed` rather than hanging forever — those are meant to be fast. Every tool's actual media-processing `ffmpeg` invocation (cut, fit, caption, ...) has no timeout: a legitimate `--accurate` re-encode of a long file can genuinely take a long time, so bounding it would risk killing real work. `-nostdin` is always passed, so a hung ffmpeg process waiting on stdin cannot happen; a caller that needs a hard ceiling on a specific job should apply its own external timeout/kill around that one invocation.
+
 ## Development
 
 ```bash
@@ -326,6 +332,8 @@ node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.
 ```
 
 CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, on Ubuntu (FFmpeg 6.1), macOS (Homebrew FFmpeg 8.x) and Windows (gyan.dev FFmpeg 9.x), and uploads each runner's FFmpeg listings as an artifact.
+
+`tests/test_contract.py` runs on all three OSes, but a handful of its tests build a fake `ffmpeg` as a `#!/bin/sh` script on a PATH shim to force specific FFmpeg 6/7/8/9 fixture layouts through `doctor`'s parser — that technique isn't portable to Windows, so `test_dry_run_never_runs_ffmpeg_and_writes_nothing` and the whole `DoctorDetectionTests` class (fixture-driven layout parsing) are individually `skipIf`'d there and show as `skipped`, not silently absent, in the Windows job's log. Everything else — contract schema, `reencodes_*`, `doctor.tools`, MCP derivation, and every tool exercised through the contract, including `cut.py`'s provenance fields — runs against the real Windows `ffmpeg` on every PR.
 
 **Releasing**: bump `version` in `package.json`, merge to `main`, then tag that commit (`git tag vX.Y.Z && git push origin vX.Y.Z`) and cut a GitHub Release from the tag, with the matching `CHANGELOG.md` section as its body. A repo that depends on this one (an editing skill, an agent) should pin an `ffmpeg-skill` version by tag or npm version, not by tracking `main` — `main` can be ahead of the last published npm version.
 

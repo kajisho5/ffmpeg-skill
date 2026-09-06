@@ -14,6 +14,9 @@
  *   npx ffmpeg-skill --uninstall     # remove from the selected targets
  *   npx ffmpeg-skill contract --json # machine-readable execution contract (see docs/contract.md)
  *   npx ffmpeg-skill doctor [--json] # which required ffmpeg capabilities this machine has
+ *
+ * Already installed? re-run `npx ffmpeg-skill` to refresh ~/.claude/skills/ffmpeg-skill
+ * Copies are not updated automatically.
  */
 'use strict';
 

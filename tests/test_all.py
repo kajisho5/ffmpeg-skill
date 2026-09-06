@@ -164,6 +164,23 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(data4["requested_segments"], [[1.0, 3.0], [6.0, 9.0]])
         self.assertEqual(data4["requested_duration"], 5.0)
 
+    def test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta(self):
+        """Pins the actual failure mode `mode`/`keyframe_snapped`/`duration_delta_seconds` exist to
+        surface: a non-keyframe-aligned request that stays within --tolerance keeps the fast
+        stream copy (mode=copy) rather than upgrading to hybrid, but the copy still snapped to an
+        earlier keyframe and pulled in extra content -- output_duration and requested_duration
+        genuinely diverge, and a caller must be told this happened, not left to assume the file
+        starts exactly where it asked."""
+        out = OUT / "cut_copy_keyframe_snap.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "2.0", "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertFalse(data["reencoded"])
+        actual = probe(str(out))["duration"]
+        self.assertAlmostEqual(data["output_duration"], actual, places=2)
+        self.assertGreater(abs(data["duration_delta_seconds"]), 0.05, "this scenario must produce a real, visible divergence, not a rounding artefact")
+        self.assertAlmostEqual(data["duration_delta_seconds"], data["output_duration"] - data["requested_duration"], places=6)
+
     def test_cut_bad_range_fails(self):
         script("cut.py", self.src, "--start", "5", "--end", "2", expect_fail=True)
 

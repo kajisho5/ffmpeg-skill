@@ -33,6 +33,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 SKILL_ID = "ffmpeg-skill"
 CONTRACT_VERSION = "1.0"
+# `doctor`'s own introspection calls (-filters/-encoders/-bsfs/-version) are meant to be fast,
+# bounded, non-media operations; a hang here would silently freeze the one tool meant to report
+# whether the machine is broken. Media-processing scripts (cut, fit, ...) are NOT bounded this
+# way -- a legitimate --accurate re-encode of a long file can take a long time, so no timeout is
+# applied there (see README, "Development").
+_DETECT_TIMEOUT = 10
 
 ROLES = {
     "analysis": "reads media and reports measurements; writes no media",
@@ -382,7 +388,9 @@ def _ff_listing(binary: str, flag: str) -> Dict[str, Any]:
     if not exe:
         return {"names": [], "status": "missing", "detail": f"{binary} not on PATH"}
     try:
-        proc = subprocess.run([exe, "-hide_banner", flag], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.run([exe, "-hide_banner", flag], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=_DETECT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"names": [], "status": "failed", "detail": f"{binary} {flag} did not exit within {_DETECT_TIMEOUT}s"}
     except OSError as e:
         return {"names": [], "status": "failed", "detail": f"{binary} {flag}: {e}"}
     if proc.returncode != 0:
@@ -403,7 +411,10 @@ def _version_line(binary: str) -> Optional[str]:
     exe = shutil.which(binary)
     if not exe:
         return None
-    proc = subprocess.run([exe, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        proc = subprocess.run([exe, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=_DETECT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None
     first = (proc.stdout or proc.stderr).splitlines()[:1]
     m = re.match(rf"{binary} version (\S+)", first[0]) if first else None
     return m.group(1) if m else (first[0] if first else "unknown")
@@ -427,6 +438,12 @@ def required_capabilities() -> Dict[str, List[str]]:
 
 def doctor() -> Dict[str, Any]:
     """Detect which declared capabilities this machine has. No secrets, no environment variables.
+
+    `version` is this INSTALLED COPY's own version (read from its local package.json, same value
+    `contract --json`'s `skill.version` reports) -- never fetched from the network or compared
+    against the latest published release. A copy installed with `npx ffmpeg-skill` is not updated
+    automatically; re-run the installer to refresh it, then `doctor` again to confirm the version
+    changed. This exists so a stale installed copy is visible locally, not to check for updates.
 
     Three states per capability: available, missing, unknown. `unknown` means the ffmpeg listing
     that would prove it could not be read (unparsed output, ffmpeg failure); it is never folded into
@@ -472,6 +489,7 @@ def doctor() -> Dict[str, Any]:
     unknown_required = [c for c in unknown if c in wanted["required"]]
     errors = [f"{k}: {v['detail']}" for k, v in listings.items() if v["status"] in ("unparsed", "failed")]
     return {
+        "version": skill_version(),
         "python": ".".join(str(x) for x in sys.version_info[:3]),
         "ffmpeg": _version_line("ffmpeg"),
         "ffprobe": _version_line("ffprobe"),
@@ -492,7 +510,13 @@ def _capability_fix_hint(cap: str) -> str:
         from _common import INSTALL_HINTS
         hint = INSTALL_HINTS.get(platform.system(), "see https://ffmpeg.org/download.html").strip().splitlines()[0].strip()
         return f"install ffmpeg: {hint}"
-    full_hint = "on macOS, brew install ffmpeg-full (the plain formula lacks subtitles/drawtext/zscale)" if platform.system() == "Darwin" else "install/build ffmpeg with it enabled"
+    system = platform.system()
+    if system == "Darwin":
+        full_hint = "on macOS, brew install ffmpeg-full (the plain formula lacks subtitles/drawtext/zscale)"
+    elif system == "Windows":
+        full_hint = "on Windows, winget install Gyan.FFmpeg (the gyan.dev full build carries subtitles/drawtext/zscale; a plain choco ffmpeg package can lack them)"
+    else:
+        full_hint = "install/build ffmpeg with it enabled"
     if cap.startswith("encoder:"):
         return f"this ffmpeg build has no {cap[8:]} encoder; {full_hint}"
     if cap.startswith("filter:"):
@@ -737,12 +761,16 @@ def main() -> int:
         if args.json:
             print(json.dumps(d, indent=2, sort_keys=True))
         else:
+            print(f"ffmpeg-skill {d['version']} (this installed copy; re-run `npx ffmpeg-skill` to refresh it -- copies are not updated automatically)")
             print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}")
             print(f"available: {', '.join(d['available'])}")
             print(f"missing required: {', '.join(d['missing']) or 'none'}")
             print(f"missing optional: {', '.join(d['missing_optional']) or 'none'}")
             if d["unknown"]:
                 print(f"unknown (detection failed, not proven missing): {', '.join(d['unknown'])}")
+            not_usable = sorted(name for name, t in d["tools"].items() if t["usable"] != "yes")
+            if not_usable and d["ok"]:
+                print(f"note: overall 'ok' means nothing REQUIRED BY EVERY TOOL is missing -- {len(not_usable)} tool(s) still can't run today: {', '.join(not_usable)} (see doctor --json .tools for why)")
             for err in d["errors"]:
                 print(f"detection error: {err}", file=sys.stderr)
         if d["ok"]:
