@@ -76,7 +76,7 @@ This skill cuts, joins, measures, syncs, exports and checks files — it execute
 - **Thumbnail or cover-image composition** — that's a design decision, not a measurement; a thumbnail-generation skill or the user makes it.
 - **Understanding what a video is *about*** — this skill has no transcription or vision beyond `look.py`'s contact sheets, which exist for the calling agent's own eyes, not for this skill to interpret on its own.
 
-If a request needs an FFmpeg feature none of the 21 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
+If a request needs an FFmpeg feature none of the 22 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
 
 ## Request → script
 
@@ -95,6 +95,7 @@ If a request needs an FFmpeg feature none of the 21 scripts expose, say so and n
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast) |
 | "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
+| "make a small/low-res proxy for an analysis pass", "a cheap preview file" | `proxy.py input.mp4 [--width 640 --no-audio]` — not a delivery preset, see `export.py` for those |
 | "cut out the pauses / dead air", "tighten it up", "jump cuts" | `silence.py input.mp4 [--threshold -40 --min-silence 0.8]` |
 | "stitch these clips together", "add a crossfade between them" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` |
 | "show me what it looks like", "check the captions are readable" | `look.py output.mp4` then view the PNG |

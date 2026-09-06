@@ -128,6 +128,28 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(p["lifecycle"], "EXPERIMENTAL")
             self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
 
+    def test_capability_map_resolves_to_real_tools_and_params(self):
+        """capability_map is a hand-authored, descriptive lookup (abstract id -> tool + fixed
+        params), not generated like `provides` -- so unlike that test, this doesn't check
+        coverage of every tool. It checks the table can't silently drift: every tool_id must
+        be a real tool, every fixed param a real input_schema property of that tool, and no
+        capability id may collide or duplicate a tool_id 1:1 (this is many:one by design, e.g.
+        video.reframe pins fit.py to fit=crop -- it never executes anything itself)."""
+        cap_map = self.contract["capability_map"]
+        ids = [c["capability"] for c in cap_map]
+        self.assertEqual(len(ids), len(set(ids)), "capability ids are unique")
+        specs_by_id = {t["id"]: t for t in self.contract["tools"]}
+        for entry in cap_map:
+            self.assertEqual(set(entry), {"capability", "tool_id", "params"})
+            self.assertRegex(entry["capability"], r"^[a-z]+(\.[a-z]+)+$")
+            spec = specs_by_id.get(entry["tool_id"])
+            self.assertIsNotNone(spec, f"{entry['capability']} maps to unknown tool_id {entry['tool_id']!r}")
+            props = spec["input_schema"]["properties"]
+            for key, value in entry["params"].items():
+                self.assertIn(key, props, f"{entry['capability']}: {key!r} is not a real param of {entry['tool_id']}")
+                if "enum" in props[key]:
+                    self.assertIn(value, props[key]["enum"])
+
     def test_docstring_examples_use_flags_that_actually_exist(self):
         """A docstring's own runnable examples are the first thing a reader tries and trusts.
         scenes.py once claimed (in prose, not an example) that highlight ranking used motion --
@@ -244,7 +266,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.tools["cut"]["verification"]["tools"], ["ffmpeg-skill/probe"])
 
     def test_visual_verification_metadata(self):
-        picture = {"fit", "caption", "overlay", "graphics", "color", "join", "multicam", "render"}
+        picture = {"fit", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy"}
         # join is the one picture tool that also accepts audio-only inputs (audio concat); look applies
         # to its video output only, which SKILL.md states next to "Look: not needed"
         both = {"join"}

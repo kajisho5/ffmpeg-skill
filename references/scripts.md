@@ -27,6 +27,7 @@ Every script prints the same information with `--help`; this file exists so the 
 - audio.py — clean-up, music, ducking, layout
 - loudness.py — EBU R128 normalisation
 - export.py — delivery presets
+- proxy.py — low-bitrate proxy for analysis/preview
 
 ## Scripts
 
@@ -291,4 +292,14 @@ export.py --list
 ```
 Scales into the preset frame (pad by default), tags BT.709, sets `+faststart`,
 trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`.
+
+### proxy.py — low-bitrate proxy for analysis/preview
+```
+proxy.py INPUT [--width W | --scale F] [--crf N] [--fps N] [--no-audio] [-o OUT]
+```
+Not a delivery preset: resizes to `--width` (default 640) or by `--scale`
+factor, re-encodes at a proxy-grade `--crf` (default 30) with the fastest
+x264/x265 preset, keeps the source's own dynamic range (HDR stays HDR;
+run `color.py --to-sdr` first if SDR is wanted). Only executes the spec
+given — does not decide which asset to proxy or what for.
 

@@ -25,7 +25,7 @@ npx ffmpeg-skill
 
 ![before / after demo](assets/demo.gif)
 
-`ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **21 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also an MCP tool, and the whole set is described by a machine-readable contract.
+`ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **22 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also an MCP tool, and the whole set is described by a machine-readable contract.
 
 If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
 
@@ -127,7 +127,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 1. **Probe first.** No tool decides from the file name. `probe.py` measures duration, fps (with variable-frame-rate detection), resolution, rotation, bit depth, HDR format including Dolby Vision, colour tags and every audio stream before anything is cut.
 2. **Lossless when possible.** `cut.py`, `join.py` and `loudness.py` stream-copy what they do not need to touch. Re-encoding happens only when it must: frame-accurate cuts, filters, format changes, or a keyframe farther than the tolerance.
 3. **Plan before render.** Every tool takes `--dry-run` (print the ffmpeg command lines, write nothing), `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress` (percent and ETA). A test runs every tool under `--dry-run` behind a fake ffmpeg and asserts that no ffmpeg call happened and no file appeared.
-4. **Machine-readable contract.** `contract --json` describes all 21 tools: input schema generated from the parser, output schema, role, required and conditional FFmpeg capabilities, dry-run support, the verification tools to run afterwards, whether a visual check is required, `mutates_input: false`. `provides` lists all 21 by a cross-repository Capability id (`ffmpeg-skill.cut`, `ffmpeg-skill.loudness`, ...) for [`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS)'s `CapabilityContract.provides` — see `docs/contract.md`.
+4. **Machine-readable contract.** `contract --json` describes all 22 tools: input schema generated from the parser, output schema, role, required and conditional FFmpeg capabilities, dry-run support, the verification tools to run afterwards, whether a visual check is required, `mutates_input: false`. `provides` lists all 22 by a cross-repository Capability id (`ffmpeg-skill.cut`, `ffmpeg-skill.loudness`, ...) for [`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS)'s `CapabilityContract.provides` — see `docs/contract.md`.
 5. **Contract-derived MCP.** `mcp/server.py` builds its `tools/list` from the contract. Tool names, order and `inputSchema` cannot drift from the scripts; a test keeps the two byte-identical.
 6. **Capability detection.** `doctor` reads `ffmpeg -encoders / -filters / -bsfs` and reports which of the components the tools need are present on this build (libx264, libass, zscale, loudnorm, xfade, …), before a job fails inside ffmpeg.
 7. **Unknown is not missing.** When a listing cannot be read (a layout the parser does not know, ffmpeg exiting non-zero) the affected capabilities are `unknown`: never `missing`, never silently `available`. An installed filter is not reported absent; a failed detection is not a pass.
@@ -136,7 +136,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 ## Tools
 
-21 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, non-zero exit and a reason on stderr on failure.
+22 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, non-zero exit and a reason on stderr on failure.
 
 **Analysis and inspection**
 
@@ -177,6 +177,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 | Tool | What it does |
 |---|---|
 | `export.py` | Presets `youtube`, `youtube4k`, `reels`, `x`, `prores`, `h265`, `gif`, all tagged BT.709 |
+| `proxy.py` | Small, low-bitrate proxy for downstream AI analysis/preview/editing decisions — resize by `--width`/`--scale`, proxy-grade `--crf`, `--fps`, `--no-audio`; not a delivery preset |
 | `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, broadcast and podcast specs, with the fix for each failure and a `format` / `judgement` kind per row |
 | `report.py` | Single-file HTML delivery report: before/after sheets, media facts, loudness, compliance, the commands run |
 
@@ -212,7 +213,7 @@ npx ffmpeg-skill contract --json            # or: python3 scripts/_contract.py -
 npx ffmpeg-skill contract --json --static   # without environment detection
 ```
 
-The contract is generated from the code that runs, not maintained beside it. For each of the 21 tools (`ffmpeg-skill/<name>`) it states:
+The contract is generated from the code that runs, not maintained beside it. For each of the 22 tools (`ffmpeg-skill/<name>`) it states:
 
 | Field | Meaning |
 |---|---|

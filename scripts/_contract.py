@@ -104,6 +104,9 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                          {"capability": "filter:exposure", "when": "--correct"}, {"capability": "filter:eq", "when": "--correct"},
                                          {"capability": "filter:colorbalance", "when": "--correct"}, {"capability": "filter:colortemperature", "when": "--correct"}],
                   video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "proxy": dict(role="execution", inputs=["video asset"], outputs=["low-resolution, low-bitrate proxy artifact for downstream analysis, preview or editing decisions"],
+                  required=FF + [X264, AAC], optional=[HDR_X265],
+                  video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "export": dict(role="execution", inputs=["video asset"], outputs=["delivery artifact in the preset's format"],
                    required=FF, optional=[{"capability": X264, "when": "preset youtube / youtube4k / reels / x"}, {"capability": AAC, "when": "any preset except gif"},
                                           {"capability": X265, "when": "preset h265"}, {"capability": "encoder:prores_ks", "when": "preset prores"},
@@ -169,6 +172,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "silence":   dict(video="always", audio="always", note="removing gaps requires cutting on non-keyframe boundaries"),
     "join":      dict(video="always", audio="always"),
     "color":     dict(video="always", audio="always"),
+    "proxy":     dict(video="always", audio="conditional", note="video is always re-encoded at proxy-grade quality; audio is re-encoded when present, dropped entirely with --no-audio or when the source has none"),
     "export":    dict(video="conditional", audio="conditional", note="--preset copy is -c:v copy -c:a copy (no re-encode); every other preset re-encodes both"),
     "check":     dict(video="never", audio="never", note="read-only, no artifact"),
     "scenes":    dict(video="never", audio="never", note="analysis only; --sheet renders a new contact-sheet PNG, not a re-encode of the source"),
@@ -536,6 +540,52 @@ def capability_provides() -> List[Dict[str, str]]:
     return [{"id": f"{SKILL_ID}.{name}", "lifecycle": "EXPERIMENTAL", "tool_id": f"{SKILL_ID}/{name}"} for name in public_tools()]
 
 
+# Abstract, domain-shaped capability ids (`<domain>.<verb>`, matching the convention `provides`
+# already documents for cross-repo Capability ids) that a planning agent can resolve without
+# already knowing this skill's tool names. Unlike `provides` (one entry per tool, id derived
+# from the tool name), this is a hand-authored, many-to-one table: several of these ids name a
+# tool PLUS the fixed parameters that pin it to that specific behaviour (`video.reframe` is
+# `fit.py` with `fit=crop` fixed, not bare `fit.py`, which also speed-ramps and pads). This is
+# still purely descriptive -- a caller still builds and runs the named tool's own CLI/MCP call
+# from its `input_schema`; nothing here executes or chooses on the caller's behalf. Deliberately
+# excludes any capability that would require judgment to resolve (e.g. no `video.highlight`:
+# `scenes.py --highlights` ranks by a measured proxy, never by understood content -- see
+# SKILL.md "What this skill does and does not decide" -- so it is not offered as a capability
+# a planner can blindly delegate to). `media.proxy` (a low-bitrate, fast-decode proxy, distinct
+# from `export.py`'s delivery presets, which target visual quality over size/speed) resolves to
+# `proxy.py` -- itself a purely mechanical resize+re-encode with no opinion on which asset should
+# be proxied or what for.
+CAPABILITY_MAP: List[Dict[str, Any]] = [
+    {"capability": "video.trim", "tool_id": f"{SKILL_ID}/cut", "params": {}},
+    {"capability": "video.reframe", "tool_id": f"{SKILL_ID}/fit", "params": {"fit": "crop"}},
+    {"capability": "audio.loudness", "tool_id": f"{SKILL_ID}/loudness", "params": {}},
+    {"capability": "subtitle.burn", "tool_id": f"{SKILL_ID}/caption", "params": {}},
+    {"capability": "media.stream.inspect", "tool_id": f"{SKILL_ID}/probe", "params": {}},
+    {"capability": "media.frames.extract", "tool_id": f"{SKILL_ID}/look", "params": {}},
+    {"capability": "media.proxy", "tool_id": f"{SKILL_ID}/proxy", "params": {}},
+]
+
+
+def capability_map(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Validate CAPABILITY_MAP against the live tool specs before returning it. A fixed param
+    that isn't a real input_schema property is drift, not a typo to ship silently (same "fail
+    loudly" posture as tool_spec()'s missing-TOOL_META check). A tool_id that no longer exists
+    is not drift in that sense -- a tool can legitimately be removed -- so that capability is
+    dropped from the map rather than crashing the whole contract build."""
+    by_id = {t["id"]: t for t in tools}
+    result = []
+    for entry in CAPABILITY_MAP:
+        spec = by_id.get(entry["tool_id"])
+        if spec is None:
+            continue
+        props = spec["input_schema"]["properties"]
+        for key in entry["params"]:
+            if key not in props:
+                raise RuntimeError(f"capability {entry['capability']!r} sets param {key!r} which is not in {entry['tool_id']}'s input_schema")
+        result.append(dict(entry))
+    return result
+
+
 # ----------------------------------------------------------------------------- contract
 def tool_spec(name: str, version: str) -> Dict[str, Any]:
     if name not in TOOL_META:
@@ -723,6 +773,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
         "capabilities": caps,
         "tools": tools,
         "provides": capability_provides(),
+        "capability_map": capability_map(tools),
     }
 
 

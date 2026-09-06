@@ -122,7 +122,7 @@ gives you:
 
 ## `provides`
 
-`provides` lists these 21 tools by a cross-repository Capability id, for
+`provides` lists these 22 tools by a cross-repository Capability id, for
 `kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
 (`docs/SPEC.md` there), matching the ids already assigned to this Skill in
 that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's
@@ -136,6 +136,38 @@ Capability ids use elsewhere in that project (`video.trim`, `audio.gain`,
 contract's own slash-shaped `id` (`ffmpeg-skill/cut`) unchanged. It is
 purely additive: derived from `public_tools()`, saying nothing `tools[]`
 doesn't already say, only indexed by Capability id instead of tool name.
+
+## `capability_map`
+
+`provides` re-indexes each tool by an id shaped like the tool name
+(`ffmpeg-skill.cut`); it doesn't tell a caller that "I need to trim a
+video" resolves to `cut`. `capability_map` is the small, hand-authored
+table that closes that gap: `[{"capability": "<domain>.<verb>", "tool_id":
+"ffmpeg-skill/<tool>", "params": {...}}, ...]`. A planner that only knows
+an abstract goal (`video.trim`, `audio.loudness`, `subtitle.burn`,
+`media.stream.inspect`, `media.frames.extract`, `media.proxy`) looks it up here to find
+the tool, then builds and runs that tool's own call from its
+`input_schema` exactly as it would have if it already knew the tool name -
+`capability_map` never executes anything itself, and this skill never
+picks a capability on the caller's behalf.
+
+Some entries also fix one or more `params` where the capability names a
+*specific* behaviour narrower than the whole tool: `video.reframe` maps
+to `fit` with `params: {"fit": "crop"}`, because `fit.py` also does
+duration-fit and letterbox padding, and only the crop mode is a
+"reframe". A caller resolving `video.reframe` should treat those params
+as fixed inputs to that tool's own schema, not as optional defaults.
+
+This list is deliberately short and will stay short: a capability is only
+added when resolving it is a mechanical, no-judgment lookup. There is no
+`video.highlight` entry, for instance, because `scenes.py --highlights`
+ranks candidates by a measured proxy (audio energy or duration), never by
+understood content - offering it as a blindly-delegable capability would
+misrepresent what it does (see SKILL.md, "What this skill does and does
+not decide"). `media.proxy` (a low-bitrate, fast-decode proxy for
+downstream analysis/preview, distinct from `export.py`'s delivery
+presets) resolves to `proxy` - itself a mechanical resize + re-encode
+with no opinion on which asset should be proxied or what for.
 
 ## Capabilities
 
