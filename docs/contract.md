@@ -119,6 +119,23 @@ gives you:
 | `cached` | batch (content-hash cache, re-runs skip unchanged inputs) |
 | `environment_dependent` | verify |
 
+## `provides`
+
+`provides` lists these 21 tools by a cross-repository Capability id, for
+`kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
+(`docs/SPEC.md` there), matching the ids already assigned to this Skill in
+that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's
+21 raw tools ... are Capabilities in their own right, independent of the
+higher-level Skills that delegate to them"): `[{"id": "ffmpeg-skill.<tool>",
+"lifecycle": "EXPERIMENTAL", "tool_id": "ffmpeg-skill/<tool>"}, ...]`, one
+entry per tool, sorted by id. The Capability id uses a dot
+(`ffmpeg-skill.cut`) - the `<domain>.<verb>` shape every other Skill's
+Capability ids use elsewhere in that project (`video.trim`, `audio.gain`,
+...), with `ffmpeg-skill` as the domain - while `tool_id` carries this
+contract's own slash-shaped `id` (`ffmpeg-skill/cut`) unchanged. It is
+purely additive: derived from `public_tools()`, saying nothing `tools[]`
+doesn't already say, only indexed by Capability id instead of tool name.
+
 ## Capabilities
 
 Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,

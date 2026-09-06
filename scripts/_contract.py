@@ -452,6 +452,18 @@ def doctor() -> Dict[str, Any]:
     }
 
 
+# Cross-repository Capability ids (kajisho5/AI-video-production-OS docs/SPEC.md
+# `CapabilityContract.provides`), matching the ids already assigned to these 21 tools in
+# that project's own docs/CAPABILITY_MATRIX.md section 9: "ffmpeg-skill's 21 raw tools ...
+# are Capabilities in their own right, independent of the higher-level Skills that
+# delegate to them". Each tool's own id is `ffmpeg-skill/<tool>` (a slash, matching every
+# ToolSpec.id here); the Capability id uses a dot - `ffmpeg-skill.<tool>` - the same
+# `<domain>.<verb>`-shaped convention every other Skill's Capability ids use elsewhere in
+# that project (`video.trim`, `audio.gain`, ...), with "ffmpeg-skill" as the domain.
+def capability_provides() -> List[Dict[str, str]]:
+    return [{"id": f"{SKILL_ID}.{name}", "lifecycle": "EXPERIMENTAL", "tool_id": f"{SKILL_ID}/{name}"} for name in public_tools()]
+
+
 # ----------------------------------------------------------------------------- contract
 def tool_spec(name: str, version: str) -> Dict[str, Any]:
     if name not in TOOL_META:
@@ -633,6 +645,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
         },
         "capabilities": caps,
         "tools": tools,
+        "provides": capability_provides(),
     }
 
 

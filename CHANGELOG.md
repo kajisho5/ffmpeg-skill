@@ -7,6 +7,7 @@
 - **`--help` on a legacy Windows console.** stdout / stderr are reconfigured to UTF-8 (with replacement) by `_common`, so non-ASCII help text (Japanese example, arrows) no longer raises `UnicodeEncodeError`; the test harness decodes script output as UTF-8.
 - **macOS CI** installs `ffmpeg-full`: Homebrew's `ffmpeg` formula no longer links libass / freetype / harfbuzz / zimg, so it has no `subtitles`, `ass`, `drawtext` or `zscale` filter. README and the installer hint say so.
 - Tests: the contract-test fixture used `-vsync vfr`, an option FFmpeg 9 removed (`-fps_mode vfr` since 5.1); filter paths with a drive colon, spaces and Unicode through caption (SRT, ASS, fonts dir), color (LUT full and blended) and overlay (`fontfile`), with PSNR proving the caption and LUT changed the picture; overlay still bounded by the video length; `--help` under a cp1252 console.
+- **`provides`**: `contract --json` gains a top-level `provides` field listing all 21 tools by a cross-repository Capability id (`ffmpeg-skill.<tool>`) for `kajisho5/AI-video-production-OS`'s `CapabilityContract.provides` — see `docs/contract.md`.
 
 ## 0.9.2 — typed primary colour correction
 

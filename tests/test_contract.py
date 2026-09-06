@@ -116,6 +116,18 @@ class ContractTests(unittest.TestCase):
             self.assertTrue(re.fullmatch(r"[a-z]+", t["name"]), t["id"])
         self.assertEqual(ids, sorted(ids), "tools are listed in a stable, sorted order")
 
+    def test_provides_covers_every_tool_with_the_dotted_capability_id(self):
+        provides = self.contract["provides"]
+        ids = [p["id"] for p in provides]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(ids, sorted(ids), "provides is listed in a stable, sorted order")
+        tool_ids = {t["id"] for t in self.contract["tools"]}
+        self.assertEqual({p["tool_id"] for p in provides}, tool_ids, "provides covers exactly the tools this build has")
+        for p in provides:
+            self.assertEqual(p["id"], p["tool_id"].replace("/", ".", 1))
+            self.assertEqual(p["lifecycle"], "EXPERIMENTAL")
+            self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
+
     def test_every_tool_executable_exists_and_internal_scripts_are_hidden(self):
         for t in self.contract["tools"]:
             self.assertTrue((ROOT / t["executable"]).is_file(), t["executable"])
