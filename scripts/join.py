@@ -141,15 +141,22 @@ def main() -> int:
     n = len(args.inputs)
     for i, (p, m) in enumerate(zip(args.inputs, metas)):
         cmd += ["-i", p]
-    # silent audio for clips without an audio track
+    # silent audio for clips without an audio track. `idx` is this ffmpeg input's position, i.e. n +
+    # how many synthetic inputs were already added -- not len(extra_inputs), which counts the six
+    # argv tokens ("-f", "lavfi", "-t", duration, "-i", "anullsrc=...") each synthetic input adds, not
+    # the input itself. With one no-audio clip both counts coincide (n + 0); from the second no-audio
+    # clip onward they diverge, and the previous `n + len(extra_inputs)` named a nonexistent, far-out-of-
+    # range ffmpeg input index -- found via a real multi-camera join where every clip lacked audio.
     audio_src: List[str] = []
+    added = 0
     for i, m in enumerate(metas):
         if m.get("audio"):
             audio_src.append(f"{i}:a:0")
         else:
-            idx = n + len(extra_inputs)
+            idx = n + added
             extra_inputs += ["-f", "lavfi", "-t", f"{durs[i]:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
             audio_src.append(f"{idx}:a:0")
+            added += 1
     cmd += extra_inputs
 
     if args.fit == "crop":

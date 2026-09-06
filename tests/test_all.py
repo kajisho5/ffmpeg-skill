@@ -536,6 +536,30 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(probe(str(out2))["duration"], 16.0, 0.3)
         script("join.py", self.src, expect_fail=True)
 
+    def test_join_two_or_more_audio_less_clips(self):
+        """Every no-audio clip gets a synthetic silent audio track added as an extra ffmpeg input (join.py
+        builds this itself, not this test's fixtures) -- `idx` must be this ffmpeg input's actual position
+        (n + how many synthetic inputs were already added), not `n + len(extra_inputs)` (the six argv tokens
+        each synthetic input contributes, not a count of inputs). With exactly one no-audio clip both counts
+        happen to agree; a real multi-camera join where every clip lacked audio is what caught the divergence
+        starting from the second one -- ffmpeg refused with "Invalid file index" naming an input far past the
+        real count, since the miscomputed index grew by 6 (not 1) per extra no-audio clip."""
+        silent_a = OUT / "silent_a.mp4"
+        silent_b = OUT / "silent_b.mp4"
+        silent_c = OUT / "silent_c.mp4"
+        for out, size in ((silent_a, "640x360"), (silent_b, "480x270"), (silent_c, "960x540")):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=25", "-t", "3", "-c:v", "libx264", "-preset", "veryfast", out)
+        out = OUT / "joined_all_silent.mp4"
+        script("join.py", silent_a, silent_b, silent_c, "--transition", "none", "--preset", "veryfast", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 9.0, 0.3)
+        self.assertEqual(m["audio"]["channels"], 2, "every clip's missing track became silent stereo, not a dropped audio stream")
+        # mixed: audio-bearing clip first, then two without -- exercises the same off-by-more-than-one index
+        # for the second and third synthetic input regardless of which position the real audio clip sits in
+        out2 = OUT / "joined_mixed_silent.mp4"
+        script("join.py", self.src, silent_a, silent_b, "--transition", "none", "--preset", "veryfast", "-o", out2)
+        self.assertClose(probe(str(out2))["duration"], 12 + 3 + 3, 0.3)
+
     def test_dry_run_and_json_on_every_script(self):
         cases = [
             ("cut.py", [self.src, "--start", "1", "--end", "3"]),

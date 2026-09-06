@@ -2,6 +2,21 @@
 
 > `main` moves ahead of the last published npm/GitHub release; a dependent repo should pin a tagged version, not `main`. See README § Development, "Releasing".
 
+## Unreleased
+
+- **`join.py`: joining two or more audio-less clips together failed.** Each clip missing an audio
+  track gets a synthetic silent input (`-f lavfi -i anullsrc=...`) appended to the ffmpeg command;
+  the filtergraph index for that input was computed as `n + len(extra_inputs)`, but
+  `extra_inputs` is a flat argv list (six tokens per synthetic input: `-f`, `lavfi`, `-t`,
+  duration, `-i`, `anullsrc=...`), not a count of inputs added so far. With exactly one no-audio
+  clip the two counts happen to coincide (`n + 0`); from the second no-audio clip onward the
+  computed index overshoots the real one by a multiple of 6, and ffmpeg refused the whole command
+  with "Invalid file index" naming an input far past the actual count. Found joining five real,
+  audio-less camera samples (a genuine multi-camera source with no audio channel is not an edge
+  case in real footage). Fixed by tracking the number of synthetic inputs added directly, instead
+  of inferring it from the argv list's length. No change to the single-no-audio-clip path, which
+  was already correct.
+
 ## 0.10.0 — 2026-09-06 — FFmpeg 8+/Windows compatibility, per-tool doctor/contract usability, provenance and honesty fixes
 
 - **`doctor --json`: per-tool `usable`.** `doctor` reported capability-level `available`/`missing`/`unknown`, but a caller had to cross-reference each tool's own required capabilities by hand to answer "can I run `caption.py` on this machine today" -- a plain Homebrew `ffmpeg` on macOS is `ok` overall (nothing *required by every tool* is missing) while `caption.py` specifically cannot run at all. The new `tools` field folds the same per-capability state into `{"<tool>": {"usable": "yes"|"no"|"unknown", "missing": [...], "fix": "one-line remedy", "unknown": [...]}}` per tool, following the same "unknown is not missing" rule doctor already uses. Additive; every existing `doctor` key is unchanged.
