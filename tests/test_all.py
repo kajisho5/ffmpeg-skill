@@ -666,6 +666,14 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(names["pixel format"], "PASS")
         self.assertEqual(names["loudness"], "FAIL", "unnormalised test tone is far from -14 LUFS")
         self.assertFalse(data["ok"])
+        # FAILs a non-technical caller would ask "so what?" about carry a plain-language reason,
+        # distinct from `fix` (the command); PASS rows never carry one
+        loudness_row = [r for r in data["checks"] if r["check"] == "loudness"][0]
+        self.assertTrue(loudness_row["reason"])
+        self.assertNotEqual(loudness_row["reason"], loudness_row["fix"])
+        pass_rows = [r for r in data["checks"] if r["status"] == "PASS"]
+        self.assertTrue(pass_rows)
+        self.assertTrue(all(r["reason"] == "" for r in pass_rows))
         # after loudness.py the same file passes
         norm = OUT / "reels_norm.mp4"
         script("loudness.py", reels, "-o", norm)
@@ -673,7 +681,9 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(data["ok"], [r for r in data["checks"] if r["status"] != "PASS"])
         # HDR on an SDR-only platform fails the colour check
         data = json.loads(script("check.py", self.hdr, "--platform", "x", "--no-loudness", "--json", expect_fail=True).stdout)
-        self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["colour"], "FAIL")
+        colour_row = [r for r in data["checks"] if r["check"] == "colour"][0]
+        self.assertEqual(colour_row["status"], "FAIL")
+        self.assertTrue(colour_row["reason"])
         # custom overrides
         data = json.loads(script("check.py", self.src, "--platform", "custom", "--max-duration", "5", "--no-loudness", "--json", expect_fail=True).stdout)
         self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["duration"], "FAIL")

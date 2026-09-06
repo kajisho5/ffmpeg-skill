@@ -2,6 +2,7 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
+- **`check.py`: plain-language `reason` on the less obvious FAILs.** Every row already had `fix` (the command that resolves it); video codec, pixel format, HDR colour and loudness FAILs now also carry `reason` ("QuickTime and iOS commonly reject video that isn't 8-bit 4:2:0") for a caller reporting the result to someone who doesn't already know why the spec value matters. Empty on PASS rows and every other check. Additive, no existing field changed.
 - **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
   keep the source resolution). A caller with nothing to change — the deliverable already matches
   the source, no platform target — had no way to get a real, delivered file out of `export.py`
