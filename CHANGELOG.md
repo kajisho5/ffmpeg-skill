@@ -2,7 +2,7 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
-- **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
+- **Test: docstring examples can't drift from the parser.** `scenes.py`'s docstring once claimed a ranking option (motion) that was never implemented; that was prose, not an example, so nothing caught it. A new `test_contract.py` test at least closes the more common version of this gap: every `--flag` used in a script's own `Examples:` lines must exist in that script's real argparse parser, checked via the contract's `input_schema`. Verified to catch a deliberately introduced typo before writing this entry. Does not (and cannot) catch a false claim made only in prose. Every existing preset re-encodes (even `prores`/`h265`, which
   keep the source resolution). A caller with nothing to change — the deliverable already matches
   the source, no platform target — had no way to get a real, delivered file out of `export.py`
   without paying for and risking a needless re-encode. `copy` is a genuine stream copy (`-c:v

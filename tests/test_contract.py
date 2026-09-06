@@ -128,6 +128,31 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(p["lifecycle"], "EXPERIMENTAL")
             self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
 
+    def test_docstring_examples_use_flags_that_actually_exist(self):
+        """A docstring's own runnable examples are the first thing a reader tries and trusts.
+        scenes.py once claimed (in prose, not an example) that highlight ranking used motion --
+        it never did. This can't catch a false prose claim, but it does catch the more common
+        drift: an Examples: line for script X naming a --flag that X's own parser doesn't have
+        (renamed, removed, or typo'd), which is exactly the kind of docs-vs-code gap that let
+        that claim go unnoticed for as long as it did."""
+        cli_by_tool = {t["name"]: set() for t in self.contract["tools"]}
+        for t in self.contract["tools"]:
+            for prop in t["input_schema"]["properties"].values():
+                cli_by_tool[t["name"]].update(prop.get("cli") or [])
+        flag_re = re.compile(r"(--[a-z][a-z0-9-]*)")
+        for script in sorted(SCRIPTS.glob("*.py")):
+            if script.name.startswith("_"):
+                continue
+            name = script.stem
+            doc = script.read_text(encoding="utf-8").split('"""')[1]
+            for line in doc.splitlines():
+                line = line.strip()
+                if not line.startswith(f"python3 {name}.py"):
+                    continue
+                code = line.split("#", 1)[0]
+                for flag in flag_re.findall(code):
+                    self.assertIn(flag, cli_by_tool[name], f"{name}.py's own docstring example uses {flag}, which its parser does not have: {line!r}")
+
     def test_every_tool_executable_exists_and_internal_scripts_are_hidden(self):
         for t in self.contract["tools"]:
             self.assertTrue((ROOT / t["executable"]).is_file(), t["executable"])
