@@ -171,6 +171,8 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 
 ## Report format
 
+Reply in the language the user wrote their request in — a Japanese request gets a Japanese report, English gets English, Chinese gets Chinese, and so on for any other language. Keep the shape below and the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English (they read like log fields, not prose, and stay recognisable across languages); the sentences around them, any question asked, and any explanation of a judgement call are in the user's language. Never default to English because the tool names and flags happen to be English. A mid-conversation language switch follows the user's latest message, not the first one.
+
 Finish every job with this shape (numbers from `probe.py`/`check.py`, not memory):
 
 ```
@@ -187,7 +189,8 @@ Keep it to those five lines plus anything the user must decide. Attach the conta
 
 - Re-encoding an HDR (iPhone, HDR10) source through the SDR path: colours go flat. The scripts keep HDR; if you hand-write ffmpeg, do not tag BT.709 on BT.2020 pixels.
 - Lossless `-c copy` cuts on VFR or non-keyframe boundaries: the file "works" but starts on a frozen or wrong frame. `cut.py` re-encodes automatically when the snap exceeds 0.5 s; respect that.
-- A sync with `confidence` under 0.3, or an offset larger than 60 % of the analysis window: probably wrong; enlarge `--analyze-seconds` or find a clap.
+- A sync or multicam alignment with `confidence` under 0.3, or an offset larger than 60 % of the analysis window: probably wrong; enlarge `--analyze-seconds` or find a clap. `multicam.py` reports one `confidence` per camera — check all of them, not just that the command succeeded, before trusting the cut.
+- `sync.py`/`multicam.py` align audio tracks to each other, never lip sync (mouth movement vs. audio) — there is no face or mouth detection anywhere in this skill. A high confidence means the audio matched well, not that the picture looks right; if the user asks whether lip sync is correct, that needs a look at the actual video, not just the reported offset.
 - "Normalised" audio that still clips: check true peak, not just LUFS (`check.py` does both).
 - Normalising ambience or near-silence to a speech target: a clip measured at
   -40 LUFS or below is room tone, wind or nothing; raising it 25 dB raises the

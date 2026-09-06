@@ -3,7 +3,12 @@
 
 Checks duration, frame size / aspect, fps, codec, pixel format, colour tags,
 file size, integrated loudness and true peak against the chosen platform
-and prints a PASS/WARN/FAIL table. Exit code 1 when anything FAILs.
+and prints a PASS/WARN/FAIL table. Exit code 1 when anything FAILs. Each
+row's `fix` is the command that resolves it; a few of the less obvious FAILs
+(video codec, pixel format, HDR colour, loudness) also carry a plain-language
+`reason` -- "QuickTime and iOS commonly reject video that isn't 8-bit 4:2:0",
+not a restatement of the spec value -- for a caller reporting this to someone
+who doesn't already know why the spec says what it says.
 
 Platforms: youtube, shorts, reels, tiktok, x, linkedin, broadcast (EBU R128), podcast, custom
 
@@ -88,10 +93,13 @@ def main() -> int:
 
     JUDGEMENT = {"duration", "aspect", "loudness", "fps", "resolution"}
 
-    def row(name: str, status: str, value: Any, expect: Any, fix: str = "") -> None:
+    def row(name: str, status: str, value: Any, expect: Any, fix: str = "", reason: str = "") -> None:
         # "format" rows are safe to fix mechanically; "judgement" rows change the content
-        # (what is cut, what is cropped, how loud ambience gets) and need a decision
+        # (what is cut, what is cropped, how loud ambience gets) and need a decision.
+        # "fix" is the command that resolves it; "reason" (only on the FAILs a non-technical
+        # person would ask "so what?" about) is why it matters in plain terms, not the spec clause.
         rows.append({"check": name, "status": status, "value": value, "expected": expect, "fix": fix,
+                     "reason": reason if status != "PASS" else "",
                      "kind": "judgement" if name in JUDGEMENT else "format"})
 
     dur = meta.get("duration") or 0.0
@@ -117,12 +125,15 @@ def main() -> int:
             row("fps", "PASS" if fps <= spec["fps_max"] + 0.01 else "FAIL", f"{fps:g}", f"<= {spec['fps_max']}", "fit.py --fps 30 (drops half the frames of 60 fps motion; fine for talking heads, visible on sports/gaming)")
         row("vfr", "PASS" if not v.get("variable_frame_rate_suspected") else "WARN", "variable" if v.get("variable_frame_rate_suspected") else "constant", "constant", "fit.py --fps N (any re-encode conforms it)")
         if spec["codecs"]:
-            row("video codec", "PASS" if v.get("codec") in spec["codecs"] else "FAIL", v.get("codec"), "/".join(spec["codecs"]), "export.py --preset " + args.platform.replace("shorts", "reels").replace("tiktok", "reels").replace("linkedin", "youtube"))
+            row("video codec", "PASS" if v.get("codec") in spec["codecs"] else "FAIL", v.get("codec"), "/".join(spec["codecs"]), "export.py --preset " + args.platform.replace("shorts", "reels").replace("tiktok", "reels").replace("linkedin", "youtube"),
+                reason="the platform's player may refuse to decode this codec at all, not just look worse")
         pf = v.get("pix_fmt") or ""
         if args.platform in ("reels", "tiktok", "x", "linkedin"):
-            row("pixel format", "PASS" if pf == "yuv420p" else "FAIL", pf, "yuv420p (8-bit 4:2:0)", "export.py preset re-encodes to yuv420p")
+            row("pixel format", "PASS" if pf == "yuv420p" else "FAIL", pf, "yuv420p (8-bit 4:2:0)", "export.py preset re-encodes to yuv420p",
+                reason="QuickTime and iOS commonly reject video that isn't 8-bit 4:2:0")
         if spec["sdr_only"] and v.get("hdr"):
-            row("colour", "FAIL", v.get("hdr_format"), "SDR BT.709", "color.py --to-sdr")
+            row("colour", "FAIL", v.get("hdr_format"), "SDR BT.709", "color.py --to-sdr",
+                reason="a platform or player without HDR support will show this washed-out, too dark, or with wrong colours -- not a rendering glitch, a colour space mismatch")
         else:
             tags = (v.get("color_primaries"), v.get("color_transfer"))
             untagged = not tags[0] and not tags[1]
@@ -148,7 +159,8 @@ def main() -> int:
             lm = measure_loudness(args.input)
             if lm:
                 diff = abs(lm["lufs"] - spec["lufs"])
-                row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g} for speech or music; leave ambience/near-silence (<= -40 LUFS) alone and say so")
+                row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g} for speech or music; leave ambience/near-silence (<= -40 LUFS) alone and say so",
+                    reason="the platform will auto-normalise it to its own target anyway, which can pump or duck the mix in ways you did not choose")
                 row("true peak", "PASS" if lm["tp"] <= spec["tp"] + 0.05 else "FAIL", f"{lm['tp']:.1f} dBTP", f"<= {spec['tp']:g} dBTP", f"loudness.py --tp {spec['tp']:g}")
     elif args.platform in ("podcast",):
         row("audio", "FAIL", "none", "audio stream", "audio.py --replace")
@@ -164,6 +176,8 @@ def main() -> int:
             line = f"  {r['status']:4s} {r['check']:{width}s}  {r['value']}  (expected {r['expected']})"
             if r["status"] != "PASS" and r["kind"] == "judgement":
                 line += "  [judgement]"
+            if r["status"] != "PASS" and r["reason"]:
+                line += f"  ({r['reason']})"
             if r["status"] != "PASS" and r["fix"]:
                 line += f"  -> {r['fix']}"
             print(line)

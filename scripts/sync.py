@@ -9,6 +9,14 @@ Python (coarse, 20 ms), then refined by direct correlation at 1 ms.
 Offset semantics: a positive offset means the SECOND input starts LATER
 than the reference, i.e. `second` must be shifted earlier by that amount.
 
+This aligns two AUDIO tracks to each other; it does not check or guarantee
+lip sync (mouth movement matching the audio). It assumes each recording's
+own audio is already correctly timed against its own picture, which holds
+for ordinary cameras and phones (same device, same clock) but not for a
+capture device with its own internal audio/video offset. There is no
+face or mouth detection anywhere in this codebase to verify that; the only
+way to confirm the final result actually looks in sync is to watch it.
+
 Examples:
   python3 sync.py camera.mp4 lavmic.wav                       # print offset only
   python3 sync.py camera.mp4 lavmic.wav --replace-audio -o synced.mp4
