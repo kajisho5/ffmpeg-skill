@@ -7,7 +7,11 @@ window with --from-center). Aspect: --aspect 16:9|9:16|1:1|4:5|W:H with
 --fit pad (letterbox/pillarbox with --pad-color, default black) or --fit crop.
 --width and/or --height set the output size: give one and the other follows
 the aspect (source aspect if --aspect is not also given); give both for an
-exact frame.
+exact frame. --rotate 90|180|270 (clockwise) and --flip h|v apply a new
+rotation/mirror to the picture -- distinct from the rotation metadata a
+source already carries (read automatically to compute the displayed size,
+never altered by these flags unless asked). Both can be combined; rotate is
+applied before flip.
 
 Crop keeps the centre of the frame by default, which is a guess: going from
 16:9 to 9:16 throws away most of the width, and whatever isn't in the middle
@@ -24,6 +28,8 @@ Examples:
   python3 fit.py input.mp4 --aspect 9:16 --fit crop --crop-x 1   # keep the right edge (e.g. product held stage-right)
   python3 fit.py input.mp4 --height 1080                         # width follows the source aspect
   python3 fit.py input.mp4 --width 1920 --height 1080            # exact frame, no aspect needed
+  python3 fit.py input.mp4 --rotate 90                           # rotate 90 degrees clockwise
+  python3 fit.py input.mp4 --flip h                              # mirror horizontally
 """
 import argparse
 import math
@@ -85,6 +91,9 @@ def main() -> int:
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
     a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop, horizontal anchor 0=left, 0.5=centre (default), 1=right")
     a.add_argument("--crop-y", type=float, default=0.5, help="with --fit crop, vertical anchor 0=top, 0.5=centre (default), 1=bottom")
+    r = ap.add_argument_group("rotate / flip")
+    r.add_argument("--rotate", type=int, choices=[90, 180, 270], help="rotate the picture clockwise by this many degrees")
+    r.add_argument("--flip", choices=["h", "v"], help="mirror the picture horizontally (h) or vertically (v)")
     e = ap.add_argument_group("encoding")
     e.add_argument("--crf", type=int, default=18)
     e.add_argument("--preset", default="medium")
@@ -93,8 +102,8 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
-    if not args.duration and not args.aspect and not args.width and not args.height and not args.fps:
-        die("nothing to do: give --duration, --aspect, --width/--height and/or --fps")
+    if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip:
+        die("nothing to do: give --duration, --aspect, --width/--height, --rotate/--flip and/or --fps")
     if not 0.0 <= args.crop_x <= 1.0:
         die(f"--crop-x must be 0..1, got {args.crop_x}")
     if not 0.0 <= args.crop_y <= 1.0:
@@ -107,6 +116,8 @@ def main() -> int:
     sw, sh = meta["video"]["width"], meta["video"]["height"]
     if meta["video"].get("rotation") in (90, -90, 270, -270):
         sw, sh = sh, sw
+    if args.rotate in (90, 270):
+        sw, sh = sh, sw
     has_audio = bool(meta.get("audio"))
 
     vf: List[str] = []
@@ -114,6 +125,18 @@ def main() -> int:
     pre_input: List[str] = []
     post: List[str] = []
     factor = 1.0
+
+    # ---- rotate / flip
+    if args.rotate == 90:
+        vf.append("transpose=1")
+    elif args.rotate == 270:
+        vf.append("transpose=2")
+    elif args.rotate == 180:
+        vf.append("transpose=2,transpose=2")
+    if args.flip == "h":
+        vf.append("hflip")
+    elif args.flip == "v":
+        vf.append("vflip")
 
     # ---- duration
     if args.duration:

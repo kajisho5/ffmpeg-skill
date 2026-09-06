@@ -4,6 +4,64 @@
 
 ## Unreleased
 
+- **`fit.py --rotate`/`--flip`.** New rotate 90/180/270 (clockwise; 90/270 swap width and
+  height) and horizontal/vertical flip flags -- distinct from the rotation *metadata* fit.py
+  already reads to size a source correctly, which is never altered by these. Verified against
+  a real red/left, blue/right test fixture: `--flip h` swaps the two halves and `--rotate 90`
+  rotates the left column into the top row, both confirmed pixel-exact, not just by output
+  dimensions.
+- **`overlay.py --video`: video-on-video picture-in-picture.** `overlay.py` could only
+  composite a still image or text onto a video; there was no way to place a second *video* as
+  a layer. `--video CLIP` composites it with the same `--position`/`--scale`/`--opacity`/
+  `--start`/`--end` knobs `--image` already has (`scale2ref`-style scale + `format=yuva420p` +
+  `colorchannelmixer` for opacity + `overlay` with a timeline `enable`). Only the main input's
+  audio is kept; the PiP layer's own audio is dropped -- mixing two audio tracks is a job for
+  `audio.py`. Verified with a real composite: a blue clip lands at the exact expected
+  bottom-right pixel position, the rest of the frame is unaffected.
+- **`overlay.py --chromakey`: green-screen compositing.** With `--video`, `--chromakey COLOR`
+  (plus `--chromakey-similarity`/`--chromakey-blend`) keys that colour transparent before
+  compositing, for green-screen foreground-over-background work. Verified: a green background
+  behind a white square is correctly replaced by the destination clip's colour, the white
+  square is untouched.
+- **`insert.py --zoom`/`--pan`: Ken Burns effect.** A slow linear zoom in/out (`--zoom-amount`
+  sets the end/start factor, default 1.3) and, with `--zoom`, a pan across the image while
+  zoomed, built from typed enums into a generated `zoompan` expression -- never a raw
+  expression from the caller. Verified against a real image with a centred marker at a known
+  position: the exact screen pixel the marker's edge should reach at the final zoom factor
+  changes from background to marker colour between the first and last frame, and a panned
+  clip differs (PSNR ~13) from the same zoom without pan at the same timestamp -- proving the
+  frame actually changes scale/position over the clip, not just that the command ran.
+- **`background.py`: generate a solid-colour or gradient clip.** New tool, no input file:
+  ffmpeg's own `color`/`gradients` source filters generate an exact-size, exact-duration clip
+  directly, for a title-card background or a base layer for `overlay.py` to composite onto.
+  Verified: a solid-colour clip's pixel matches the requested colour; a gradient's left and
+  right edges are measurably different colours in the requested direction.
+- **`reverse.py`: reverse playback.** New tool wrapping ffmpeg's `reverse`/`areverse` filters
+  (video always, audio unless `--no-audio`). These filters buffer the whole clip in memory, so
+  this is for clips it makes sense to reverse (seconds to a couple of minutes) rather than
+  something the tool limits for the caller. Verified against a real two-colour clip (first
+  half red, second half blue): the reversed output starts with the original's last half and
+  ends with its first half, confirmed by sampled pixel colour, not just duration/dimensions.
+- **`stabilize.py`: motion stabilisation.** New tool wrapping ffmpeg's two-pass
+  `vidstabdetect`/`vidstabtransform` (`--shakiness`, `--smoothing`, `--zoom` to hide the black
+  edges stabilizing can introduce). The transforms file passed between the two passes lives in
+  a `tempfile.TemporaryDirectory` for the run only -- this is the first tool in the codebase to
+  need an on-disk intermediate between two ffmpeg passes (existing two-pass tools, like
+  `loudness.py`, pass their intermediate measurement through stdout JSON instead). Requires an
+  ffmpeg built with `--enable-libvidstab`; `doctor` correctly reports `stabilize` as
+  `usable: no` (not a crash) on builds that lack it, such as Homebrew's default macOS build --
+  verified against this repo's own `ffmpeg_filters_8.1.2_macos.txt` fixture, where
+  `vidstabdetect`/`vidstabtransform` are genuinely absent from the real `-filters` listing.
+  Verified the actual stabilizing effect, not just that the command runs: a synthetic shaky
+  clip's measured frame-to-frame motion (via `signalstats` on a `tblend=difference` pass) drops
+  from ~7.4 to ~2.9 after stabilization.
+- **`sequence.py`: numbered/globbed image sequence to video.** New tool: `--pattern` accepts
+  either a printf-style numbered pattern (`frame_%04d.png`) or a glob (`*.png`, sorted
+  alphabetically), with the match checked against the real filesystem before ffmpeg runs (an
+  empty match or a missing first frame is refused here, not discovered from an opaque ffmpeg
+  error). Verified frame order is preserved end to end with a real 5-frame red/blue/red/blue/red
+  sequence, both in numbered and glob mode.
+
 - **`fit.py --height`.** Only `--width` existed ("output width ... height follows the aspect").
   Added a symmetric `--height` that mirrors `join.py`'s existing width/height resolution: give
   one and the other follows the aspect (the source aspect, or `--aspect` if also given); give

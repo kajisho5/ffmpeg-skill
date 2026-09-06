@@ -222,6 +222,37 @@ class FFmpegSkillTests(unittest.TestCase):
         m = probe(str(out))
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
 
+    def test_fit_rotate_90_swaps_dimensions(self):
+        out = OUT / "fit_rot90.mp4"
+        script("fit.py", self.src, "--rotate", "90", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (720, 1280))
+
+    def test_fit_rotate_and_flip_change_actual_pixels(self):
+        """Not just that dimensions are right -- a known left/right split must actually swap or rotate."""
+        quad = OUT / "quad_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=100x50",
+           "-f", "lavfi", "-i", "color=c=blue:s=100x50", "-filter_complex", "[0][1]hstack", "-frames:v", "1", "-t", "1",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", quad)
+
+        def px(path, x, y):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                                 "-vf", f"crop=2:2:{x}:{y}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        fliph = OUT / "quad_fliph.mp4"
+        script("fit.py", quad, "--flip", "h", "-o", fliph)
+        self.assertGreater(px(fliph, 10, 10)[2], 100, "flip h: left side should now be blue (high B channel)")
+        self.assertGreater(px(fliph, 150, 10)[0], 100, "flip h: right side should now be red (high R channel)")
+
+        rot90 = OUT / "quad_rot90.mp4"
+        script("fit.py", quad, "--rotate", "90", "-o", rot90)
+        self.assertGreater(px(rot90, 10, 10)[0], 100, "rotate 90cw: original left (red) column becomes the top row")
+
+    def test_fit_nothing_to_do_is_refused(self):
+        script("fit.py", self.src, expect_fail=True)
+
     # ---------------------------------------------------------------- crop
     def test_crop_exact_rectangle(self):
         out = OUT / "crop1.mp4"
@@ -258,6 +289,153 @@ class FFmpegSkillTests(unittest.TestCase):
 
     def test_insert_refuses_zero_duration(self):
         script("insert.py", self.logo, "--duration", "0", expect_fail=True)
+
+    def test_insert_ken_burns_zoom_in_actually_scales_over_time(self):
+        """The frame must actually change scale over the clip, not just accept the flag."""
+        kb_src = OUT / "kb_src.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=800x800",
+           "-vf", "drawbox=x=300:y=300:w=200:h=200:color=red:t=fill", "-frames:v", "1", kb_src)
+        out = OUT / "kb1.mp4"
+        script("insert.py", kb_src, "--duration", "3", "--zoom", "in", "--zoom-amount", "1.3",
+               "--width", "640", "--height", "640", "--fps", "10", "-o", out)
+
+        def px(path, t, x, y):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-ss", str(t),
+                                 "-vf", f"crop=2:2:{x}:{y}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        # a screen point between the square's edge at zoom=1 (0.625 normalised) and zoom=1.3 (0.6625):
+        # white at the start (not yet covered by the square), red by the end (zoomed in enough to cover it)
+        self.assertEqual(px(out, 0.1, 410, 410), b"\xff\xff\xff")
+        self.assertEqual(px(out, 2.9, 410, 410), b"\xff\x17\x00")
+
+    def test_insert_pan_without_zoom_is_refused(self):
+        script("insert.py", self.logo, "--duration", "2", "--pan", "left", expect_fail=True)
+
+    def test_insert_bad_zoom_amount_refused(self):
+        script("insert.py", self.logo, "--duration", "2", "--zoom", "in", "--zoom-amount", "1.0", expect_fail=True)
+
+    # ---------------------------------------------------------------- background
+    def test_background_solid_color(self):
+        out = OUT / "bg_solid.mp4"
+        script("background.py", "-o", out, "--duration", "2", "--width", "640", "--height", "360", "--color", "0x00ff00")
+        m = probe(str(out))
+        self.assertClose(m["duration"], 2.0, 0.1)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+
+    def test_background_gradient_has_two_distinct_colors(self):
+        out = OUT / "bg_grad.mp4"
+        script("background.py", "-o", out, "--duration", "1", "--width", "640", "--height", "360",
+               "--gradient", "0xff0000:0x0000ff")
+
+        def px(path, x, y):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                                 "-vf", f"crop=2:2:{x}:{y}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        left = px(out, 10, 180)
+        right = px(out, 620, 180)
+        self.assertGreater(left[0], right[0], "left edge should be redder than the right edge")
+        self.assertGreater(right[2], left[2], "right edge should be bluer than the left edge")
+
+    def test_background_odd_dimensions_refused(self):
+        script("background.py", "-o", OUT / "bg_bad.mp4", "--duration", "1", "--width", "641", "--height", "360", expect_fail=True)
+
+    def test_background_zero_duration_refused(self):
+        script("background.py", "-o", OUT / "bg_bad2.mp4", "--duration", "0", "--width", "640", "--height", "360", expect_fail=True)
+
+    # ---------------------------------------------------------------- reverse
+    def test_reverse_swaps_start_and_end(self):
+        halfcolor = OUT / "halfcolor.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1.5",
+           "-f", "lavfi", "-i", "color=c=blue:s=64x64:d=1.5", "-filter_complex", "[0][1]concat=n=2:v=1:a=0",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", halfcolor)
+        out = OUT / "rev1.mp4"
+        script("reverse.py", halfcolor, "-o", out)
+
+        def px(path, t):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-ss", str(t),
+                                 "-vf", "crop=2:2:10:10", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        self.assertGreater(px(out, 0.2)[2], 100, "reversed clip starts with the original's last half (blue)")
+        self.assertGreater(px(out, 2.8)[0], 100, "reversed clip ends with the original's first half (red)")
+
+    def test_reverse_no_audio_drops_track(self):
+        out = OUT / "rev_noaudio.mp4"
+        script("reverse.py", self.src, "--no-audio", "-o", out)
+        m = probe(str(out))
+        self.assertIsNone(m["audio"])
+
+    # ---------------------------------------------------------------- stabilize
+    def test_stabilize_reduces_frame_to_frame_motion(self):
+        """Proves the actual effect, not just that the command runs: measured motion must drop."""
+        shaky = OUT / "shaky.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1400x1000:rate=30",
+           "-t", "4", "-vf", "crop=1280:720:x='60+40*sin(2*PI*t*3)':y='60+40*cos(2*PI*t*2)'",
+           "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", shaky)
+        out = OUT / "stab1.mp4"
+        script("stabilize.py", shaky, "-o", out)
+
+        def motion_score(path):
+            cmd = ["ffprobe", "-hide_banner", "-f", "lavfi", "-i", f"movie={path},tblend=all_mode=difference,signalstats",
+                   "-show_entries", "frame_tags=lavfi.signalstats.YAVG", "-of", "csv=p=0"]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return [float(x) for x in proc.stdout.split() if x.strip()]
+
+        shaky_scores = motion_score(shaky)
+        stab_scores = motion_score(out)
+        shaky_avg = sum(shaky_scores) / len(shaky_scores)
+        stab_avg = sum(stab_scores) / len(stab_scores)
+        self.assertLess(stab_avg, shaky_avg * 0.7, f"stabilized motion ({stab_avg:.2f}) should be well below shaky ({shaky_avg:.2f})")
+
+    def test_stabilize_bad_shakiness_refused(self):
+        script("stabilize.py", self.src, "--shakiness", "11", expect_fail=True)
+
+    # ---------------------------------------------------------------- sequence
+    def test_sequence_numbered_pattern_preserves_order(self):
+        frames_dir = OUT / "seqframes"
+        frames_dir.mkdir(exist_ok=True)
+        for i in range(5):
+            color = "red" if i % 2 == 0 else "blue"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", f"-i", f"color=c={color}:s=64x48",
+               "-frames:v", "1", frames_dir / f"frame_{i:04d}.png")
+        out = OUT / "seq1.mp4"
+        script("sequence.py", "--dir", frames_dir, "--pattern", "frame_%04d.png", "--fps", "5", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 1.0, 0.1)
+
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(out), "-vf", "crop=2:2:10:10",
+                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+        frame_px = [raw[i * 12:i * 12 + 3] for i in range(len(raw) // 12)]
+        self.assertEqual(len(frame_px), 5)
+        for i, px in enumerate(frame_px):
+            if i % 2 == 0:
+                self.assertGreater(px[0], 100, f"frame {i} should be red")
+            else:
+                self.assertGreater(px[2], 100, f"frame {i} should be blue")
+
+    def test_sequence_glob_pattern(self):
+        frames_dir = OUT / "seqframes_glob"
+        frames_dir.mkdir(exist_ok=True)
+        for i in range(5):
+            color = "red" if i % 2 == 0 else "blue"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", f"-i", f"color=c={color}:s=64x48",
+               "-frames:v", "1", frames_dir / f"frame_{i:04d}.png")
+        out = OUT / "seq2.mp4"
+        script("sequence.py", "--dir", frames_dir, "--pattern", "*.png", "--fps", "5", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 1.0, 0.1)
+
+    def test_sequence_no_match_refused(self):
+        frames_dir = OUT / "seqframes"
+        script("sequence.py", "--dir", frames_dir, "--pattern", "*.jpg", "--fps", "5", expect_fail=True)
+
+    def test_sequence_missing_dir_refused(self):
+        script("sequence.py", "--dir", str(OUT / "does_not_exist"), "--pattern", "*.png", "--fps", "5", expect_fail=True)
 
     # ---------------------------------------------------------------- caption
     def test_caption_text_to_srt_and_burn(self):
@@ -1361,6 +1539,51 @@ class FFmpegSkillTests(unittest.TestCase):
         data = json.loads(script("overlay.py", self.src, "--image", self.logo, "--fast", "-o", out, "--json").stdout)
         self.assertIn("-t", data["commands"][0])
         self.assertClose(data["probe"]["duration"], 12.0, 0.15)
+
+    def test_overlay_video_pip_composites_at_the_right_position(self):
+        red_bg = OUT / "red_bg.mp4"
+        blue_quad = OUT / "blue_quad.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=1280x720:d=1",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", red_bg)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=200x50:d=1",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", blue_quad)
+        out = OUT / "pip1.mp4"
+        script("overlay.py", red_bg, "--video", blue_quad, "--position", "bottom-right", "--scale", "200", "-o", out)
+
+        def px(path, x, y):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                                 "-vf", f"crop=2:2:{x}:{y}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        # PiP at bottom-right, 200 wide (50 tall for the 4:1 source), default margin 24:
+        # x=1280-200-24=1056, y=720-50-24=646
+        self.assertGreater(px(out, 1100, 660)[2], 100, "PiP area should show the blue overlay")
+        self.assertGreater(px(out, 100, 100)[0], 100, "outside the PiP area, the red background must remain")
+
+    def test_overlay_chromakey_removes_the_key_color(self):
+        red_bg = OUT / "ck_red_bg.mp4"
+        green_fg = OUT / "ck_green_fg.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=100x100:d=1",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", red_bg)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x00ff00:s=100x100:d=1",
+           "-f", "lavfi", "-i", "color=c=white:s=20x20:d=1", "-filter_complex", "[0][1]overlay=40:40",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", green_fg)
+        out = OUT / "ck1.mp4"
+        script("overlay.py", red_bg, "--video", green_fg, "--chromakey", "0x00ff00", "--position", "top-left",
+               "--margin", "0", "--scale", "100", "-o", out)
+
+        def px(path, x, y):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                                 "-vf", f"crop=2:2:{x}:{y}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        self.assertGreater(px(out, 10, 10)[0], 100, "keyed-out green should show the red background through it")
+        self.assertGreater(min(px(out, 45, 45)), 100, "the white square inside the green should be unaffected")
+
+    def test_overlay_chromakey_without_video_refused(self):
+        script("overlay.py", self.src, "--chromakey", "green", expect_fail=True)
 
     def test_help_survives_a_legacy_console_encoding(self):
         """--help contains non-ASCII (Japanese example, arrows); a cp1252 console must not raise UnicodeEncodeError."""

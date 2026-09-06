@@ -244,7 +244,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.tools["cut"]["verification"]["tools"], ["ffmpeg-skill/probe"])
 
     def test_visual_verification_metadata(self):
-        picture = {"fit", "crop", "insert", "caption", "overlay", "graphics", "color", "join", "multicam", "render"}
+        picture = {"fit", "crop", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render"}
         # join is the one picture tool that also accepts audio-only inputs (audio concat); look applies
         # to its video output only, which SKILL.md states next to "Look: not needed"
         both = {"join"}
@@ -697,7 +697,7 @@ class DoctorDetectionTests(unittest.TestCase):
 
     def test_two_character_flags_do_not_hide_filters(self):
         """The FFmpeg 8 layout: every declared filter is found, nothing is reported missing or unknown."""
-        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale"}  # not built into Homebrew's 8.1.2
+        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale", "filter:vidstabdetect", "filter:vidstabtransform"}  # not built into Homebrew's 8.1.2 (no --enable-libvidstab)
         for name in self.FILTER_FIXTURES:
             d, code = self._doctor(name)
             declared = [c for c in _contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"] if c.startswith("filter:")]
