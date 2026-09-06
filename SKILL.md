@@ -185,6 +185,7 @@ Keep it to those five lines plus anything the user must decide. Attach the conta
 - `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot loses people at the edges. Check the sheet; pad (bars) or a reframe is often the honest answer.
 - Conforming 60 fps to 30 halves the motion samples: fine for a talking head, visibly choppy for sports, gaming, drone pans. Keep 60 when the platform allows it.
 - "Make it 60 seconds" on a 3-minute talk by speed change is unwatchable (3×); by trim it drops two thirds of the words. Ask which, or propose a highlight cut with `scenes.py`.
+- `scenes.py --highlights` defaults to the loudest scenes (`--rank-by audio`): a quiet but important moment (a confession, a punchline landing in silence) is skipped, and pure crowd noise or a mic bump can outrank it. `--rank-by duration` picks the longest unbroken scenes instead. Neither is "the best parts" — check the contact sheet (`--sheet`) before treating the picks as final.
 
 ## Gotchas
 

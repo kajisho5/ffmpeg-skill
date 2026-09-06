@@ -115,7 +115,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 5. **Contract-derived MCP.** `mcp/server.py` builds its `tools/list` from the contract. Tool names, order and `inputSchema` cannot drift from the scripts; a test keeps the two byte-identical.
 6. **Capability detection.** `doctor` reads `ffmpeg -encoders / -filters / -bsfs` and reports which of the components the tools need are present on this build (libx264, libass, zscale, loudnorm, xfade, …), before a job fails inside ffmpeg.
 7. **Unknown is not missing.** When a listing cannot be read (a layout the parser does not know, ffmpeg exiting non-zero) the affected capabilities are `unknown`: never `missing`, never silently `available`. An installed filter is not reported absent; a failed detection is not a pass.
-8. **Verify the result.** The output is probed, and when the picture changed (captions, overlays, crops, colour, transitions) the agent runs `look.py` and inspects the PNG. The report is not finished until its `Look:` line names that image; audio-only jobs say `Look: not needed`.
+8. **Verify the result.** The output is probed, and when the picture changed (captions, overlays, crops, colour, transitions) the agent runs `look.py` and inspects the PNG. The report is not finished until its `Look:` line names that image; audio-only jobs say `Look: not needed`. **"Inspects" means the calling agent's own vision, not a feature of this skill:** nothing in this repository detects faces, subjects or "the interesting part" of a frame or a scene. `scenes.py --highlights` ranks candidate scenes by a measured proxy (`--rank-by audio` or `--rank-by duration`, see [Tools](#tools)), never by content; it is the agent that turns a look at the sheet into a judgement.
 9. **Keep originals.** No tool overwrites its input. Outputs are new files named `<input>_<operation>.<ext>` unless told otherwise, and a test hashes every input after the run.
 
 ## Tools
@@ -127,7 +127,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 | Tool | What it does |
 |---|---|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision, colour space, rotation, every audio stream; `--analyze` flags Log footage |
-| `scenes.py` | Scene changes, audio peaks, highlight proposals and a per-scene sheet; cut list for `cut.py --segments` |
+| `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments` |
 | `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made |
 
 **Editing**

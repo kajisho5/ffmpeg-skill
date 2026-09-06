@@ -652,6 +652,24 @@ class FFmpegSkillTests(unittest.TestCase):
         script("cut.py", src, "--segments", segs, "--accurate", "--fast", "-o", out)
         self.assertClose(probe(str(out))["duration"], 6.0, 0.6)
 
+    def test_scenes_rank_by_duration_picks_longest_scenes_not_loudest(self):
+        src = OUT / "scenes_rank_src.mp4"
+        # three scenes: 2s, 6s (longest, silent), 4s (loud tone) -- audio and duration ranking must disagree
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:d=2", "-f", "lavfi", "-i", "smptebars=size=640x360:rate=30:d=6",
+           "-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
+           "-f", "lavfi", "-i", "aevalsrc='0.6*sin(2*PI*440*t)*between(t\\,8\\,11)':s=48000",
+           "-filter_complex", "[2:v]trim=0:4,setpts=PTS-STARTPTS[m];[0:v][1:v][m]concat=n=3:v=1:a=0[v]",
+           "-map", "[v]", "-map", "3:a", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", src)
+        by_audio = json.loads(script("scenes.py", src, "--highlights", "1", "--json").stdout)
+        by_duration = json.loads(script("scenes.py", src, "--highlights", "1", "--rank-by", "duration", "--json").stdout)
+        self.assertEqual(by_audio["highlights_rank_by"], "audio")
+        self.assertEqual(by_duration["highlights_rank_by"], "duration")
+        # audio ranking picks the loud scene (8-11s window, inside scene 3 at 8-12s)
+        self.assertTrue(any(h["start"] >= 7.5 for h in by_audio["highlights"]), by_audio["highlights"])
+        # duration ranking picks the longest (silent) scene, which starts at 2s
+        self.assertTrue(any(round(h["start"]) == 2 for h in by_duration["highlights"]), by_duration["highlights"])
+
     def test_render_project(self):
         proj = OUT / "project.json"
         proj.write_text(json.dumps({
