@@ -147,6 +147,38 @@ DRY_RUN_NOTES = {
     "verify": "not supported: the flag is accepted but the steps run and outputs are written",
 }
 
+# Whether a tool re-encodes each stream *when that stream is present in the input* -- not whether
+# the tool touches the file at all. "always"/"never" are unconditional given that stream exists;
+# "conditional" means it depends on flags or on how far a lossless attempt misses (see "note").
+# Read from each script's actual encode/copy args, not from role or intent, since several tools
+# (fit, caption, overlay, graphics, color, join, multicam, silence) always transcode audio to AAC
+# alongside a video filter even though the audio itself is untouched content -- there is no
+# "-c:a copy while re-encoding video" path in this codebase, so a soft-subtitle-style passthrough
+# of the original audio codec never happens on those tools.
+REENCODE_META: Dict[str, Dict[str, str]] = {
+    "probe":     dict(video="never", audio="never", note="analysis only, no artifact"),
+    "cut":       dict(video="conditional", audio="conditional", note="lossless -c copy preferred; re-encodes on --accurate, a VFR source, or a keyframe snap past --tolerance (see cut.py --json: mode, keyframe_snapped)"),
+    "fit":       dict(video="always", audio="always", note="always re-encodes to AAC when audio is present, even if only --fps or --aspect was asked for"),
+    "caption":   dict(video="always", audio="always", note="burn-in only: no soft-subtitle mux path exists, so captions always cost a full re-encode of both streams"),
+    "overlay":   dict(video="always", audio="always"),
+    "graphics":  dict(video="always", audio="always"),
+    "sync":      dict(video="never", audio="conditional", note="video is never touched; audio is copied or re-encoded depending on --trim-second / --replace-audio / --fix-drift"),
+    "multicam":  dict(video="always", audio="always"),
+    "audio":     dict(video="never", audio="always", note="video stream is always -c:v copy when present; this tool's job is the audio"),
+    "loudness":  dict(video="never", audio="always"),
+    "silence":   dict(video="always", audio="always", note="removing gaps requires cutting on non-keyframe boundaries"),
+    "join":      dict(video="always", audio="always"),
+    "color":     dict(video="always", audio="always"),
+    "export":    dict(video="conditional", audio="conditional", note="--preset copy is -c:v copy -c:a copy (no re-encode); every other preset re-encodes both"),
+    "check":     dict(video="never", audio="never", note="read-only, no artifact"),
+    "scenes":    dict(video="never", audio="never", note="analysis only; --sheet renders a new contact-sheet PNG, not a re-encode of the source"),
+    "look":      dict(video="never", audio="never", note="renders a new contact-sheet/frame PNG, not a re-encode of the source"),
+    "render":    dict(video="conditional", audio="conditional", note="delegated: depends on which stages a project.json runs and how each one behaves"),
+    "batch":     dict(video="conditional", audio="conditional", note="delegated: depends on which script each recipe step runs"),
+    "verify":    dict(video="conditional", audio="conditional", note="delegated: runs cut/fit/caption/export/loudness/color internally as checks"),
+    "report":    dict(video="never", audio="never", note="measures via look/check; produces an HTML report, not a re-encoded artifact"),
+}
+
 IDEMPOTENCY = {
     "bit_exact": "same inputs and flags give byte-identical output",
     "content_equivalent": "same inputs and flags give the same media content; bytes may differ between encoder builds",
@@ -546,6 +578,11 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "mutates_input": False,
         "produces_artifact": meta["produces_artifact"],
         "verification": {"required": bool(meta["verify"]), "tools": [f"{SKILL_ID}/{t}" for t in meta["verify"]]},
+        # a tool with no declared entry reports "conditional" rather than guessing "always" or
+        # "never" -- same "unknown is not missing" principle as doctor's capability detection
+        "reencodes_video": REENCODE_META.get(name, {}).get("video", "conditional"),
+        "reencodes_audio": REENCODE_META.get(name, {}).get("audio", "conditional"),
+        **({"reencode_note": REENCODE_META[name]["note"]} if REENCODE_META.get(name, {}).get("note") else {}),
         "requires_visual_verification": meta["visual"],
         "audio_only": meta["audio_only"],
         "video_required": meta["video_required"],

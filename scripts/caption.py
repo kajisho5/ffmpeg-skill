@@ -4,6 +4,12 @@
 Styling (font, size, colour, outline, position) applies to SRT input via
 libass force_style. ASS files carry their own styles and are rendered as-is.
 
+This only burns subtitles into the picture. There is no soft-subtitle (mux a
+subtitle stream, toggleable by the player) path -- every call re-encodes the
+whole video and its audio (see contract --json: reencodes_video/reencodes_audio
+are both "always" for this tool), even for a source that only needed the
+subtitle track added.
+
 Text-to-SRT input format (one cue per line, blank lines ignored):
   0:00-0:03 Hello and welcome
   00:00:03.500 --> 00:00:06 Second line | with a manual line break

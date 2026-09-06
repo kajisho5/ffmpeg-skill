@@ -128,6 +128,31 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(p["lifecycle"], "EXPERIMENTAL")
             self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
 
+    def test_docstring_examples_use_flags_that_actually_exist(self):
+        """A docstring's own runnable examples are the first thing a reader tries and trusts.
+        scenes.py once claimed (in prose, not an example) that highlight ranking used motion --
+        it never did. This can't catch a false prose claim, but it does catch the more common
+        drift: an Examples: line for script X naming a --flag that X's own parser doesn't have
+        (renamed, removed, or typo'd), which is exactly the kind of docs-vs-code gap that let
+        that claim go unnoticed for as long as it did."""
+        cli_by_tool = {t["name"]: set() for t in self.contract["tools"]}
+        for t in self.contract["tools"]:
+            for prop in t["input_schema"]["properties"].values():
+                cli_by_tool[t["name"]].update(prop.get("cli") or [])
+        flag_re = re.compile(r"(--[a-z][a-z0-9-]*)")
+        for script in sorted(SCRIPTS.glob("*.py")):
+            if script.name.startswith("_"):
+                continue
+            name = script.stem
+            doc = script.read_text(encoding="utf-8").split('"""')[1]
+            for line in doc.splitlines():
+                line = line.strip()
+                if not line.startswith(f"python3 {name}.py"):
+                    continue
+                code = line.split("#", 1)[0]
+                for flag in flag_re.findall(code):
+                    self.assertIn(flag, cli_by_tool[name], f"{name}.py's own docstring example uses {flag}, which its parser does not have: {line!r}")
+
     def test_every_tool_executable_exists_and_internal_scripts_are_hidden(self):
         for t in self.contract["tools"]:
             self.assertTrue((ROOT / t["executable"]).is_file(), t["executable"])
@@ -236,6 +261,17 @@ class ContractTests(unittest.TestCase):
         # SKILL.md says the same thing
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("Look: not needed", skill)
+
+    def test_reencodes_video_and_audio_declared_for_every_tool(self):
+        for t in self.contract["tools"]:
+            self.assertIn(t["reencodes_video"], ("always", "never", "conditional"), t["name"])
+            self.assertIn(t["reencodes_audio"], ("always", "never", "conditional"), t["name"])
+        # a handful of the least intuitive ones, checked against what the scripts actually do
+        self.assertEqual((self.tools["cut"]["reencodes_video"], self.tools["cut"]["reencodes_audio"]), ("conditional", "conditional"))
+        self.assertEqual((self.tools["export"]["reencodes_video"], self.tools["export"]["reencodes_audio"]), ("conditional", "conditional"))
+        self.assertEqual((self.tools["caption"]["reencodes_video"], self.tools["caption"]["reencodes_audio"]), ("always", "always"))
+        self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
+        self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
 
     def test_original_preservation_and_roles(self):
         for t in self.contract["tools"]:
@@ -549,9 +585,11 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(Path(look["output"]).exists())
         project = self.out("project.json")
         project.write_text(json.dumps({"output": str(self.out("render.mp4")), "frame": {"aspect": "9:16", "width": 360, "fps": 30},
-                                       "clips": [{"src": str(self.src), "in": 0, "out": 3}], "export": {"preset": "reels"}, "check": {"platform": "reels"}}), encoding="utf-8")
+                                       "clips": [{"src": str(self.src), "in": 0, "out": 3}], "loudness": {"lufs": -14, "tp": -1},
+                                       "export": {"preset": "reels"}, "check": {"platform": "reels"}}), encoding="utf-8")
         doc = self._run_structured("render", {"project": str(project), "fast": True})
         self.assertEqual(doc["status"], "completed")
+        self.assertEqual(doc["check"]["failed"], 0, doc["check"])
         self._verify("render", doc["output"])
 
     def test_mcp_tool_call_round_trip(self):
