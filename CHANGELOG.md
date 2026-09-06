@@ -2,6 +2,7 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
+- **SKILL.md: explicit language-matching instruction.** The agent has always been graded on replying in the user's language (see the 24-prompt eval), but SKILL.md never actually said to — it worked by the model's own default, not by instruction. The Report format section now says explicitly: reply in whatever language the request was written in (Japanese, English, Chinese, or any other), keep only the field labels (`Done:`, `Steps:`, ...) in English, and follow a language switch mid-conversation. No code change; this only affects the model-facing instructions.
 - **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
   keep the source resolution). A caller with nothing to change — the deliverable already matches
   the source, no platform target — had no way to get a real, delivered file out of `export.py`
