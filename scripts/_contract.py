@@ -21,6 +21,7 @@ import argparse
 import importlib.util
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -449,7 +450,46 @@ def doctor() -> Dict[str, Any]:
         "detection": {k: {"status": v["status"], "count": len(v["names"]), "detail": v["detail"]} for k, v in listings.items()},
         "errors": errors,
         "ok": not missing_required and not unknown_required,
+        "tools": _tool_usability(state),
     }
+
+
+def _capability_fix_hint(cap: str) -> str:
+    """One-line, plain-language remedy for a single missing/unknown capability."""
+    if cap in ("ffmpeg", "ffprobe"):
+        from _common import INSTALL_HINTS
+        hint = INSTALL_HINTS.get(platform.system(), "see https://ffmpeg.org/download.html").strip().splitlines()[0].strip()
+        return f"install ffmpeg: {hint}"
+    full_hint = "on macOS, brew install ffmpeg-full (the plain formula lacks subtitles/drawtext/zscale)" if platform.system() == "Darwin" else "install/build ffmpeg with it enabled"
+    if cap.startswith("encoder:"):
+        return f"this ffmpeg build has no {cap[8:]} encoder; {full_hint}"
+    if cap.startswith("filter:"):
+        return f"this ffmpeg build has no {cap[7:]} filter; {full_hint}"
+    if cap.startswith("bsf:"):
+        return f"this ffmpeg build has no {cap[4:]} bitstream filter; {full_hint}"
+    if cap == "external:whisper":
+        return "install a local whisper (whisper-cli, whisper-cpp, faster-whisper or openai-whisper) for --transcribe"
+    return f"'{cap}' is not available; see docs/contract.md"
+
+
+def _tool_usability(state: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+    """Per-tool usable/missing/unknown, folded from the same capability `state` doctor already
+    computed. Answers "can I run this tool on this machine today", not just "what capabilities
+    exist" -- a caller reading only `available`/`missing` still has to cross-reference each tool's
+    own required-capability list by hand to answer that."""
+    tools: Dict[str, Dict[str, Any]] = {}
+    for name, meta in TOOL_META.items():
+        required = list(meta["required"])
+        missing = [c for c in required if state.get(c) == "missing"]
+        unknown = [c for c in required if state.get(c) == "unknown"]
+        entry: Dict[str, Any] = {"usable": "no" if missing else ("unknown" if unknown else "yes")}
+        if missing:
+            entry["missing"] = missing
+            entry["fix"] = "; ".join(dict.fromkeys(_capability_fix_hint(c) for c in missing))
+        if unknown:
+            entry["unknown"] = unknown
+        tools[name] = entry
+    return tools
 
 
 # Cross-repository Capability ids (kajisho5/AI-video-production-OS docs/SPEC.md

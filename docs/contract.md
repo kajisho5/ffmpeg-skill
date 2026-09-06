@@ -161,6 +161,16 @@ both live in `tests/fixtures/`.
 missing, 2 when none is missing but a required one is unknown. `ok` is true only for 0.
 The keys of 0.9.0 (`available`, `missing`, `missing_optional`, `ok`) are unchanged.
 
+`doctor`'s `tools` field folds that same per-capability `state` into a per-tool answer:
+`{"<tool>": {"usable": "yes"|"no"|"unknown", "missing": [...], "fix": "...", "unknown": [...]}}`.
+`missing`/`unknown` list only that tool's own required capabilities that are in that state
+(`missing` is absent when there is none, same for `unknown`); `fix` is a one-line, plain-language
+remedy for each missing capability, joined with "; " when there is more than one. This exists so
+a caller does not have to cross-reference `available`/`missing` against each tool's own required
+capabilities by hand to answer "can I run `caption.py` on this machine right now" -- `doctor`
+passing overall does not mean every tool is usable (a plain Homebrew `ffmpeg` on macOS is `ok`
+for tools that don't need `subtitles`/`drawtext`/`zscale`, but `caption.usable` is `"no"`).
+
 ## Invocation
 
 Structured arguments are the canonical way to call a tool, on the CLI or through MCP.

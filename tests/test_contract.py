@@ -697,6 +697,25 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertFalse(d["ok"])
         self.assertEqual(code, 2)
 
+    def test_tool_usability_answers_can_i_run_this_today(self):
+        """`doctor`'s tools map answers "usable on this machine now", not just "what capabilities exist" --
+        a caller should not have to cross-reference each tool's own required-capability list by hand."""
+        # plain Homebrew ffmpeg on macOS: no libass/freetype/harfbuzz/zimg, so no
+        # subtitles/ass/drawtext/zscale filters -- caption.py cannot run, cut.py still can
+        d, code = self._doctor("ffmpeg_filters_8.1.2_macos.txt", encoders="ffmpeg_encoders_8.1.2_macos.txt", bsfs="ffmpeg_bsfs_8.1.2_macos.txt")
+        self.assertEqual(d["tools"]["caption"]["usable"], "no")
+        self.assertIn("filter:subtitles", d["tools"]["caption"]["missing"])
+        self.assertIn("subtitles", d["tools"]["caption"]["fix"])
+        self.assertEqual(d["tools"]["cut"]["usable"], "yes")
+        self.assertNotIn("missing", d["tools"]["cut"])
+        # a listing that could not be read makes every tool needing it "unknown", never "yes" or a false "no"
+        d2, code2 = self._doctor("ffmpeg_filters_garbage.txt")
+        self.assertEqual(d2["tools"]["caption"]["usable"], "unknown")
+        self.assertIn("filter:subtitles", d2["tools"]["caption"]["unknown"])
+        self.assertNotIn("missing", d2["tools"]["caption"])
+        # a tool needing only ffprobe/ffmpeg binaries (not a specific filter) is unaffected by the filter listing
+        self.assertEqual(d2["tools"]["probe"]["usable"], "yes")
+
     def test_doctor_json_keeps_its_keys(self):
         """Consumers of 0.9.0 read available / missing / missing_optional / ok; those keys and types stay."""
         d, _ = self._doctor("ffmpeg_filters_8.0_constructed.txt")
