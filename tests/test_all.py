@@ -151,6 +151,24 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_fit_refuses_extreme_speed(self):
         script("fit.py", self.src, "--duration", "1", expect_fail=True)
 
+    def test_fit_crop_anchor_keeps_a_chosen_edge_not_just_the_centre(self):
+        """A centre crop can cut a subject held to one side; --crop-x/-y say what to keep."""
+        left = OUT / "fit_crop_left.mp4"
+        right = OUT / "fit_crop_right.mp4"
+        center = OUT / "fit_crop_center.mp4"
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--width", "360", "--crop-x", "0", "-o", left)
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--width", "360", "--crop-x", "1", "-o", right)
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--width", "360", "-o", center)
+        for out in (left, right, center):
+            m = probe(str(out))
+            self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
+        # different horizontal anchors must crop different content, not just resize the same crop
+        self.assertLess(self._psnr(left, right), 40, "crop-x=0 vs crop-x=1 kept the same picture")
+
+    def test_fit_crop_anchor_out_of_range_is_refused(self):
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-x", "1.5", expect_fail=True)
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-y", "-0.1", expect_fail=True)
+
     # ---------------------------------------------------------------- caption
     def test_caption_text_to_srt_and_burn(self):
         srt = OUT / "cues.srt"
