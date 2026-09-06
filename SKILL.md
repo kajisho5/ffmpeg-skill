@@ -62,7 +62,8 @@ Ask one short question only when the answer changes the output materially and th
 - **Captions** without a text source: use `--transcribe` if a local whisper exists, otherwise ask for the text or a timed file; never invent dialogue.
 - **Fonts and brand**: if the user mentions a brand, colours or "our font", ask for or create `brand.json` once and reuse it.
 - **CJK / non-Latin text**: check that a font exists before rendering (`fc-list :lang=ja file` / `:lang=ko` / `:lang=zh`); pass it with `--font "Name"` or `--font-file /path.ttf`. Tofu boxes are a failed job, not a style.
-- Anything else (crop position, transition type, caption style): pick the conventional default, say what you picked, and offer the alternative in one line.
+- **Crop position** for `--fit crop`: default to centre, but if the request or the source names an off-centre subject ("keep the product on the right", "don't cut off my hands", a logo/person visibly off-centre in `look.py`'s sheet) use `--crop-x`/`--crop-y` (0=left/top, 1=right/bottom) instead of the silent centre guess. Ask which edge to keep when the sheet shows the subject near an edge and the request doesn't say.
+- Anything else (transition type, caption style): pick the conventional default, say what you picked, and offer the alternative in one line.
 
 Do not ask for things `probe.py` can tell you.
 
@@ -182,7 +183,7 @@ Keep it to those five lines plus anything the user must decide. Attach the conta
   noise, not the content. Leave the level, say so, and offer music or narration.
 - Captions burned before a crop/resize: text lands off-frame. Frame changes first, then text.
 - Anything chained by hand through three re-encodes: use `render.py` so the plan is one file and the user can change one number.
-- `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot loses people at the edges. Check the sheet; pad (bars) or a reframe is often the honest answer.
+- `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot loses people at the edges. Check the sheet; pad (bars), `--crop-x`/`--crop-y` toward the subject, or a reframe is often the honest answer — a silent centre crop is a guess, not a decision.
 - Conforming 60 fps to 30 halves the motion samples: fine for a talking head, visibly choppy for sports, gaming, drone pans. Keep 60 when the platform allows it.
 - "Make it 60 seconds" on a 3-minute talk by speed change is unwatchable (3×); by trim it drops two thirds of the words. Ask which, or propose a highlight cut with `scenes.py`.
 - `scenes.py --highlights` defaults to the loudest scenes (`--rank-by audio`): a quiet but important moment (a confession, a punchline landing in silence) is skipped, and pure crowd noise or a mic bump can outrank it. `--rank-by duration` picks the longest unbroken scenes instead. Neither is "the best parts" — check the contact sheet (`--sheet`) before treating the picks as final.
