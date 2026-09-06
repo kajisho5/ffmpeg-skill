@@ -11,15 +11,19 @@ Presets:
   prores    ProRes 422 HQ .mov, PCM 16-bit audio (editing master)
   h265      HEVC CRF 24 (libx265) with hvc1 tag for Apple compatibility
   gif       480px wide palette-optimised GIF at 12 fps (short previews)
+  copy      stream copy, no re-encode: same codecs, container and colour
+            tags as the source (a delivery target with nothing to change)
 
 Examples:
   python3 export.py final.mp4 --preset youtube
   python3 export.py final.mp4 --preset reels --fit crop
   python3 export.py final.mp4 --preset prores -o master.mov
+  python3 export.py final.mp4 --preset copy -o delivered.mp4
   python3 export.py --list
 """
 import argparse
 import sys
+from pathlib import Path
 from typing import Dict, List
 
 from _common import STATE, add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run
@@ -32,6 +36,7 @@ PRESETS: Dict[str, Dict] = {
     "prores": {"w": None, "h": None, "ext": "mov", "video": ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"], "audio": ["-c:a", "pcm_s16le"], "max": None, "desc": "ProRes 422 HQ master, PCM audio, source resolution"},
     "h265": {"w": None, "h": None, "ext": "mp4", "video": ["-c:v", "libx265", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"], "audio": ["-c:a", "aac", "-b:a", "160k"], "max": None, "desc": "HEVC CRF 24, hvc1 tag, source resolution"},
     "gif": {"w": 480, "h": None, "ext": "gif", "video": [], "audio": [], "max": None, "desc": "480px palette GIF, 12fps"},
+    "copy": {"w": None, "h": None, "ext": None, "video": ["-c:v", "copy"], "audio": ["-c:a", "copy"], "max": None, "desc": "stream copy, no re-encode (source codecs/container/colour tags unchanged)"},
 }
 
 BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
@@ -63,10 +68,11 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    if meta["video"].get("hdr") and args.preset != "prores":
+    if meta["video"].get("hdr") and args.preset not in ("prores", "copy"):
         info("warning: source is HDR (%s). This preset outputs SDR BT.709 tags without tone mapping; run color.py --to-sdr first for correct colours." % meta["video"].get("hdr_format"))
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, args.preset, p["ext"])
+    out_ext = Path(output).suffix.lstrip(".").lower()
 
     vf: List[str] = []
     if p["w"] and not args.no_scale:
@@ -97,11 +103,14 @@ def main() -> int:
     if STATE["fast"] and "-preset" in video:
         video[video.index("-preset") + 1] = "veryfast"
     cmd += video
-    if "-r" not in video:
-        cmd += cfr_args(meta)
-    if args.preset not in ("prores",):
-        cmd += BT709
-    if p["ext"] == "mp4":
+    if args.preset != "copy":
+        # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
+        # no longer be a copy, and would silently mislabel colour the agent never actually looked at
+        if "-r" not in video:
+            cmd += cfr_args(meta)
+        if args.preset not in ("prores",):
+            cmd += BT709
+    if out_ext == "mp4":
         cmd += ["-movflags", "+faststart"]
     cmd += (p["audio"] if has_audio else ["-an"])
     if p["max"] and not args.allow_long and (meta.get("duration") or 0) > p["max"]:

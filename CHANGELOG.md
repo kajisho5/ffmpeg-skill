@@ -2,6 +2,20 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
+- **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
+  keep the source resolution). A caller with nothing to change — the deliverable already matches
+  the source, no platform target — had no way to get a real, delivered file out of `export.py`
+  without paying for and risking a needless re-encode. `copy` is a genuine stream copy (`-c:v
+  copy -c:a copy`, no `-an` unless the source truly has no audio track): same codecs, same
+  container (keeps the source's own extension unless `-o` names one), same colour tags — it
+  skips the CFR-conforming (`-r`/`-fps_mode cfr`) and BT.709-retagging steps every re-encoding
+  preset applies, since neither is meaningful (or safe) without decoding the picture, and it
+  never issues the HDR "outputs SDR BT.709 tags" warning other presets do, because it doesn't
+  touch colour at all. `-movflags +faststart` still applies when the resolved output is `.mp4`
+  (a real optimisation a copy can do for free). Verified codec/resolution/frame-count/HDR-tags
+  stay byte-for-byte the source's, not just nominally unchanged (frame count via `ffprobe
+  -count_frames`, which a re-encode could silently drop or duplicate).
+
 - **`scenes.py --rank-by`.** `--highlights` ranked candidate scenes by audio energy only, and the docstring falsely claimed motion was also used (it never was — dead documentation). `--rank-by {audio,duration}` (default audio, unchanged) makes the criterion explicit and adds a real second option (longest scene first); the result JSON now reports `highlights_rank_by`.
 - **`fit.py --crop-x` / `--crop-y`.** `--fit crop` always cropped from the centre, so reframing a wide shot to 9:16 could cut off a subject held to one side (a product, a person off-centre). `--crop-x`/`--crop-y` (0=left/top, 0.5=centre default, 1=right/bottom) pick which edge to keep instead; range-checked before ffmpeg runs. No change to the default (centre) behaviour.
 - **Filter file paths on Windows.** `subtitles=`, `ass=`, `lut3d=file=`, `fontfile=` and `fontsdir=` values are parsed twice by ffmpeg (graph, then filter options), so a drive letter needs two levels of colon escaping (`D\\\\:/x.srt`). 0.9.1 escaped once and every caption / LUT job on Windows failed with `Unable to parse "original_size" option value` or `Error parsing a filter description`. `escape_filter_path` now escapes for both passes; `;` is escaped too. Reproduced and tested on Linux with a directory literally named `D:` plus spaces and non-ASCII in the path.

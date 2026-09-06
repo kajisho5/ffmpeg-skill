@@ -263,6 +263,39 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_export_list(self):
         self.assertIn("youtube", script("export.py", "--list").stdout)
 
+    def test_export_copy_is_a_real_stream_copy(self):
+        """`--preset copy`: same bytes as a source→same-container remux would produce, not a re-encode — verified by
+        codec/resolution/bitrate/frame-count staying exactly the source's, not by trusting the preset name."""
+        out = OUT / "export_copy.mp4"
+        script("export.py", self.src, "--preset", "copy", "-o", out)
+        src_m, out_m = probe(str(self.src)), probe(str(out))
+        self.assertEqual(out_m["video"]["codec"], src_m["video"]["codec"])
+        self.assertEqual((out_m["video"]["width"], out_m["video"]["height"]), (src_m["video"]["width"], src_m["video"]["height"]))
+        self.assertEqual(out_m["audio"]["codec"], src_m["audio"]["codec"])
+        self.assertClose(out_m["duration"], src_m["duration"], 0.05)
+        src_frames = sh("ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", self.src).stdout.strip()
+        out_frames = sh("ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", out).stdout.strip()
+        self.assertEqual(out_frames, src_frames, "a re-encode could drop/duplicate frames; a copy cannot")
+        # a genuinely untouched source has no colour tags to begin with (never asserts a re-encoder's own default)
+        self.assertEqual(out_m["video"]["color_space"], src_m["video"]["color_space"])
+        # no audio in the source: copy must not invent a silent track, and must not error demanding one
+        noaudio = OUT / "noaudio_source.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-t", "2", "-an", "-c:v", "copy", noaudio)
+        out_na = OUT / "export_copy_noaudio.mp4"
+        script("export.py", noaudio, "--preset", "copy", "-o", out_na)
+        self.assertIsNone(probe(str(out_na)).get("audio"))
+
+    def test_export_copy_preserves_hdr_tags_untouched(self):
+        """The HDR-warning branch that every re-encoding preset trips (`export.py` docstring: "outputs SDR BT.709
+        tags without tone mapping") must not apply to `copy` — it doesn't touch colour at all, so the source's own
+        HDR tags must survive exactly, not get silently flattened to BT.709 like every other preset does."""
+        out = OUT / "export_copy_hdr.mov"
+        proc = script("export.py", self.hdr, "--preset", "copy", "-o", out)
+        self.assertNotIn("BT.709", proc.stdout + proc.stderr, "copy re-encodes nothing, so it never issues the SDR-flattening warning")
+        m = probe(str(out))
+        self.assertTrue(m["video"]["hdr"], "the source's real HDR tags must survive a stream copy")
+        self.assertNotEqual(m["video"]["color_space"], "bt709", "copy must never relabel HDR content as bt709")
+
     # ---------------------------------------------------------------- real-world material
     def test_probe_detects_vfr_rotation_surround_hdr(self):
         self.assertTrue(probe(str(self.vfr))["video"]["variable_frame_rate_suspected"])
