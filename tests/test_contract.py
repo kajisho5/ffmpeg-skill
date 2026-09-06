@@ -471,7 +471,11 @@ class ContractTests(unittest.TestCase):
 
     def test_contract_from_installed_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = dict(os.environ, HOME=tmp)
+            # Node's os.homedir() reads HOME on POSIX but USERPROFILE on Windows (falling back to
+            # HOMEDRIVE+HOMEPATH); HOME alone silently installs into the real runner's home dir on
+            # Windows instead of this redirected tmp one, and the file this test then reaches for
+            # is not there. Set both so install.js is redirected on every OS.
+            env = dict(os.environ, HOME=tmp, USERPROFILE=tmp)
             sh("node", ROOT / "bin" / "install.js", env=env)
             installed = Path(tmp) / ".claude" / "skills" / "ffmpeg-skill"
             doc = json.loads(sh(sys.executable, installed / "scripts" / "_contract.py", "--json", "--static").stdout)
