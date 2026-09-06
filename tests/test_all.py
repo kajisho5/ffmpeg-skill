@@ -203,6 +203,62 @@ class FFmpegSkillTests(unittest.TestCase):
         script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-x", "1.5", expect_fail=True)
         script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-y", "-0.1", expect_fail=True)
 
+    def test_fit_height_alone_follows_source_aspect(self):
+        out = OUT / "fit_h.mp4"
+        script("fit.py", self.src, "--height", "480", "-o", out)
+        m = probe(str(out))
+        # source is 1280x720 (16:9); height 480 -> width 853.33 rounds to even 854
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (854, 480))
+
+    def test_fit_width_and_height_both_given_is_exact(self):
+        out = OUT / "fit_wh.mp4"
+        script("fit.py", self.src, "--width", "500", "--height", "500", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (500, 500))
+
+    def test_fit_width_alone_still_works(self):
+        out = OUT / "fit_w.mp4"
+        script("fit.py", self.src, "--width", "640", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+
+    # ---------------------------------------------------------------- crop
+    def test_crop_exact_rectangle(self):
+        out = OUT / "crop1.mp4"
+        script("crop.py", self.src, "--x", "100", "--y", "0", "--width", "1080", "--height", "720", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 720))
+        self.assertClose(m["duration"], 12.0, 0.2)
+
+    def test_crop_out_of_bounds_is_refused(self):
+        script("crop.py", self.src, "--x", "1200", "--y", "0", "--width", "200", "--height", "200", expect_fail=True)
+
+    def test_crop_odd_dimensions_refused(self):
+        script("crop.py", self.src, "--x", "0", "--y", "0", "--width", "101", "--height", "100", expect_fail=True)
+
+    def test_crop_negative_offset_refused(self):
+        script("crop.py", self.src, "--x", "-5", "--y", "0", "--width", "100", "--height", "100", expect_fail=True)
+
+    # ---------------------------------------------------------------- insert
+    def test_insert_native_size_and_duration(self):
+        out = OUT / "insert1.mp4"
+        script("insert.py", self.logo, "--duration", "3", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 3.0, 0.15)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (240, 90))
+        self.assertIsNone(m["audio"])
+
+    def test_insert_exact_frame_size_and_fps(self):
+        out = OUT / "insert2.mp4"
+        script("insert.py", self.logo, "--duration", "2", "--width", "500", "--height", "500", "--fps", "24", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 2.0, 0.15)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (500, 500))
+        self.assertClose(m["video"]["fps"], 24.0, 0.01)
+
+    def test_insert_refuses_zero_duration(self):
+        script("insert.py", self.logo, "--duration", "0", expect_fail=True)
+
     # ---------------------------------------------------------------- caption
     def test_caption_text_to_srt_and_burn(self):
         srt = OUT / "cues.srt"

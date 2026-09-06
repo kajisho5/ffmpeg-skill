@@ -6,6 +6,7 @@ Every script prints the same information with `--help`; this file exists so the 
 - probe.py — inspect
 - cut.py — cut / join segments
 - fit.py — target duration and/or aspect
+- crop.py — crop to an exact pixel rectangle
 - silence.py — remove dead air / jump cuts
 - join.py — concatenate with transitions
 - render.py — the whole edit in one project.json
@@ -51,15 +52,29 @@ the result was "lossless stream copy" or "re-encoded".
 ### fit.py — target duration and/or aspect
 ```
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
-             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--pad-color black]]
+             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black]]
              [--fps N] [-o OUT]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`); it
 refuses factors beyond `--max-speed`. For slow motion add `--smooth blend`
 (frame blending, fast) or `--smooth interpolate` (motion-compensated
 `minterpolate`, fluid but roughly 10-20x slower than realtime). `trim` keeps
-the head (or the middle with `--from-center`). `--fps` forces a constant frame
-rate; VFR sources are conformed automatically even without it.
+the head (or the middle with `--from-center`). `--width`/`--height` set the
+output size: give one and the other follows the aspect (source aspect if
+`--aspect` isn't also given); give both for an exact frame. `--fps` forces a
+constant frame rate; VFR sources are conformed automatically even without it.
+
+### crop.py — crop to an exact pixel rectangle
+```
+crop.py INPUT --x X --y Y --width W --height H [-o OUT]
+```
+Crops to a literal `{x, y, width, height}` rectangle in source pixels —
+distinct from `fit.py --fit crop`, which crops to an *aspect ratio* and picks
+the rectangle for you. Use this when the rectangle is already known (a
+face-detection box, a saved crop, a hand-picked region). The rectangle must
+lie entirely inside the source frame (after accounting for display rotation);
+`--width`/`--height` must be even (4:2:0 chroma) and are refused, never
+rounded, if they aren't.
 
 ### silence.py — remove dead air / jump cuts
 ```

@@ -4,6 +4,24 @@
 
 ## Unreleased
 
+- **`fit.py --height`.** Only `--width` existed ("output width ... height follows the aspect").
+  Added a symmetric `--height` that mirrors `join.py`'s existing width/height resolution: give
+  one and the other follows the aspect (the source aspect, or `--aspect` if also given); give
+  both for an exact frame. `--width` alone still behaves exactly as before.
+- **`crop.py`: crop to an exact pixel rectangle.** `fit.py --fit crop` crops to a target *aspect
+  ratio*, computing the rectangle itself; there was no way to crop to a rectangle the caller
+  already knows (a face-detection box, a saved crop, a hand-picked region). New tool takes
+  `--x --y --width --height` in source pixels, validated before ffmpeg runs: refuses negative
+  offsets, non-positive or odd width/height (4:2:0 chroma, this codebase's even-size convention
+  — refused rather than silently rounded, since a caller-specified rectangle should do exactly
+  what was asked or fail loudly), and a rectangle that doesn't fit inside the source frame
+  (accounting for display rotation).
+- **`insert.py`: still image to a timed silent video clip.** Given one image, a duration, and
+  optional target frame size / fps, produces a silent, constant-frame-rate clip of exactly that
+  duration and size — for title cards, end slates, or placeholders alongside real footage in
+  `join.py`. `--width`/`--height` resolve the same way `fit.py`'s do (one given -> the other
+  follows the image's aspect; both given -> exact frame, scaled to fill and centre-cropped, never
+  distorted). Refuses non-positive `--duration`/`--fps`.
 - **`join.py`: joining two or more audio-less clips together failed.** Each clip missing an audio
   track gets a synthetic silent input (`-f lavfi -i anullsrc=...`) appended to the ffmpeg command;
   the filtergraph index for that input was computed as `n + len(extra_inputs)`, but

@@ -5,7 +5,9 @@ Duration: --duration N with --method speed (retime video+audio, pitch-preserving
 via atempo chaining) or --method trim (keep the first N seconds, or a centred
 window with --from-center). Aspect: --aspect 16:9|9:16|1:1|4:5|W:H with
 --fit pad (letterbox/pillarbox with --pad-color, default black) or --fit crop.
---width sets the output width; height follows the aspect.
+--width and/or --height set the output size: give one and the other follows
+the aspect (source aspect if --aspect is not also given); give both for an
+exact frame.
 
 Crop keeps the centre of the frame by default, which is a guess: going from
 16:9 to 9:16 throws away most of the width, and whatever isn't in the middle
@@ -20,6 +22,8 @@ Examples:
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --width 1080
   python3 fit.py input.mp4 --aspect 1:1 --fit crop --duration 15
   python3 fit.py input.mp4 --aspect 9:16 --fit crop --crop-x 1   # keep the right edge (e.g. product held stage-right)
+  python3 fit.py input.mp4 --height 1080                         # width follows the source aspect
+  python3 fit.py input.mp4 --width 1920 --height 1080            # exact frame, no aspect needed
 """
 import argparse
 import math
@@ -76,7 +80,8 @@ def main() -> int:
     a = ap.add_argument_group("aspect")
     a.add_argument("--aspect", help="target aspect ratio, e.g. 16:9, 9:16, 1:1, 4:5")
     a.add_argument("--fit", choices=["pad", "crop"], default="pad", help="pad (letterbox) or crop to reach the aspect (default pad)")
-    a.add_argument("--width", type=int, help="output width in px (default: keep source width or the width implied by the aspect)")
+    a.add_argument("--width", type=int, help="output width in px (default: keep source width or the width implied by the aspect); with --height also given, both are used directly")
+    a.add_argument("--height", type=int, help="output height in px (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
     a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop, horizontal anchor 0=left, 0.5=centre (default), 1=right")
     a.add_argument("--crop-y", type=float, default=0.5, help="with --fit crop, vertical anchor 0=top, 0.5=centre (default), 1=bottom")
@@ -88,8 +93,8 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
-    if not args.duration and not args.aspect and not args.width and not args.fps:
-        die("nothing to do: give --duration, --aspect, --width and/or --fps")
+    if not args.duration and not args.aspect and not args.width and not args.height and not args.fps:
+        die("nothing to do: give --duration, --aspect, --width/--height and/or --fps")
     if not 0.0 <= args.crop_x <= 1.0:
         die(f"--crop-x must be 0..1, got {args.crop_x}")
     if not 0.0 <= args.crop_y <= 1.0:
@@ -142,14 +147,20 @@ def main() -> int:
                 info(f"source ({src_dur:.2f}s) is already shorter than {target:.2f}s; trim does nothing")
 
     # ---- aspect / size
-    if args.aspect or args.width:
+    if args.aspect or args.width or args.height:
         src_ratio = Fraction(sw, sh)
         ratio = parse_aspect(args.aspect) if args.aspect else src_ratio
-        if args.width:
+        if args.width and args.height:
+            out_w, out_h = even(args.width), even(args.height)
+        elif args.width:
             out_w = even(args.width)
+            out_h = even(out_w / ratio)
+        elif args.height:
+            out_h = even(args.height)
+            out_w = even(out_h * ratio)
         else:
             out_w = even(sw if ratio <= src_ratio else sh * ratio)
-        out_h = even(out_w / ratio)
+            out_h = even(out_w / ratio)
         if args.fit == "crop":
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")

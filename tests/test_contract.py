@@ -244,7 +244,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.tools["cut"]["verification"]["tools"], ["ffmpeg-skill/probe"])
 
     def test_visual_verification_metadata(self):
-        picture = {"fit", "caption", "overlay", "graphics", "color", "join", "multicam", "render"}
+        picture = {"fit", "crop", "insert", "caption", "overlay", "graphics", "color", "join", "multicam", "render"}
         # join is the one picture tool that also accepts audio-only inputs (audio concat); look applies
         # to its video output only, which SKILL.md states next to "Look: not needed"
         both = {"join"}
