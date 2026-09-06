@@ -67,6 +67,17 @@ Ask one short question only when the answer changes the output materially and th
 
 Do not ask for things `probe.py` can tell you.
 
+## What this skill does and does not decide
+
+This skill cuts, joins, measures, syncs, exports and checks files — it executes an edit, it does not decide one. Some things that sound like part of the job but belong to the human, the calling agent, or another skill instead:
+
+- **Which cut is the right one, or whether a deliverable is approvable for release** — this skill measures and reports (`check.py`'s PASS/WARN/FAIL, `cut.py`'s measured duration error); a production agent or the user decides whether that's good enough to ship.
+- **What makes a highlight interesting** — `scenes.py --highlights` ranks by a measured proxy (audio energy or scene duration, see its own docs), never by understanding the content; treat its output as candidates, not a verdict.
+- **Thumbnail or cover-image composition** — that's a design decision, not a measurement; a thumbnail-generation skill or the user makes it.
+- **Understanding what a video is *about*** — this skill has no transcription or vision beyond `look.py`'s contact sheets, which exist for the calling agent's own eyes, not for this skill to interpret on its own.
+
+If a request needs an FFmpeg feature none of the 21 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
+
 ## Request → script
 
 | User says | Do |

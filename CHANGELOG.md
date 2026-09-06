@@ -2,6 +2,8 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
+- **SKILL.md: explicit "what this skill does and does not decide".** Added a section naming what belongs to a production agent (approval, which cut is right), another skill (thumbnail composition), or nobody in this skill (content understanding, judging a highlight's interest beyond a measured proxy) -- and an explicit rule against ever falling back to a raw `ffmpeg`/`filter_complex` invocation when a request needs something none of the 21 scripts expose. The trigger description (frontmatter) is intentionally left as-is: it stays broad on purpose (any video/audio file touch), since narrowing it risks under-triggering on requests that do belong here; what changed is what the skill does once triggered. `evals/agent_prompts_24.json` gains one refusal case (`r05-no-raw-ffmpeg`) asking directly for a raw `-filter_complex` command.
+
 - **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
   keep the source resolution). A caller with nothing to change — the deliverable already matches
   the source, no platform target — had no way to get a real, delivered file out of `export.py`
