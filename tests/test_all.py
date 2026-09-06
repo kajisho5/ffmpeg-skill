@@ -130,6 +130,40 @@ class FFmpegSkillTests(unittest.TestCase):
         script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out)
         self.assertClose(probe(str(out))["duration"], 5.0, 0.15)
 
+    def test_cut_json_reports_requested_vs_actual_and_mode(self):
+        # exact-second cut on a keyframe-aligned GOP: expect a clean lossless copy
+        out = OUT / "cut_honest_copy.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertEqual(data["requested_start"], 2.0)
+        self.assertEqual(data["requested_end"], 6.0)
+        self.assertEqual(data["requested_duration"], 4.0)
+        self.assertAlmostEqual(data["output_duration"], probe(str(out))["duration"], places=2)
+        self.assertAlmostEqual(data["duration_delta_seconds"], data["duration_error_ms"] / 1000, places=6)
+
+        # --accurate: forced re-encode, never "hybrid"
+        out2 = OUT / "cut_honest_accurate.mp4"
+        data2 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--accurate", "-o", out2, "--json").stdout)
+        self.assertEqual(data2["mode"], "accurate")
+        self.assertFalse(data2["keyframe_snapped"])
+
+        # a start/end that doesn't land on a keyframe, with a tight tolerance, must silently
+        # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true"
+        out3 = OUT / "cut_honest_hybrid.mp4"
+        data3 = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "0.02", "-o", out3, "--json").stdout)
+        self.assertTrue(data3["reencoded"])
+        self.assertEqual(data3["mode"], "hybrid")
+        self.assertFalse(data3["keyframe_snapped"])
+
+        # multi-segment: requested_start/end are None, requested_segments lists each range
+        out4 = OUT / "cut_honest_segments.mp4"
+        data4 = json.loads(script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out4, "--json").stdout)
+        self.assertIsNone(data4["requested_start"])
+        self.assertIsNone(data4["requested_end"])
+        self.assertEqual(data4["requested_segments"], [[1.0, 3.0], [6.0, 9.0]])
+        self.assertEqual(data4["requested_duration"], 5.0)
+
     def test_cut_bad_range_fails(self):
         script("cut.py", self.src, "--start", "5", "--end", "2", expect_fail=True)
 

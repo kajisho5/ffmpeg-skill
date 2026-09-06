@@ -2,6 +2,7 @@
 
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
+- **`cut.py --json`: full requested-vs-actual provenance.** `expected_duration`/`duration_error_ms`/`precision`/`reencoded` already existed (0.9.1); added `requested_start`/`requested_end` (or `requested_segments` for `--segments`), `requested_duration`, `output_duration`, `duration_delta_seconds` (seconds-unit alias of `duration_error_ms`) and `mode` (`copy`/`accurate`/`hybrid` — "hybrid" means a lossless cut silently re-encoded because the keyframe snap exceeded `--tolerance`) and `keyframe_snapped`. Additive only, no existing field changed. Intended for a downstream repo (an editing skill, an agent) that wants this in its own provenance/audit trail without re-deriving it from `reencoded`+`precision`.
 - **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
   keep the source resolution). A caller with nothing to change — the deliverable already matches
   the source, no platform target — had no way to get a real, delivered file out of `export.py`
