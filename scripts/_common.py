@@ -27,7 +27,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 INSTALL_HINTS = {
-    "Darwin": "  brew install ffmpeg",
+    "Darwin": "  brew install ffmpeg-full   (the plain ffmpeg formula lacks subtitles/drawtext/zscale)",
     "Linux": (
         "  Debian/Ubuntu: sudo apt install ffmpeg\n"
         "  Fedora:        sudo dnf install ffmpeg\n"
