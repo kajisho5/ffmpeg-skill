@@ -10,7 +10,12 @@ demuxer block for WAV); --accurate decodes and trims to the sample. The output
 extension picks the codec: -o out.wav writes PCM (never an AAC packet inside a
 WAV), -o out.m4a writes AAC; an audio extension on a video input drops the
 picture (mp4 -> wav extraction). The result reports `precision`
-(packet / sample / codec_frame / frame) and the measured duration error.
+(packet / sample / codec_frame / frame) and the measured duration error, plus
+`mode` (copy / accurate / hybrid -- "hybrid" means a lossless cut silently
+re-encoded because the keyframe snap exceeded --tolerance), `keyframe_snapped`,
+`requested_start`/`requested_end` (or `requested_segments` for --segments),
+`requested_duration`, `output_duration` and `duration_delta_seconds` -- so a
+caller never has to trust "it probably cut where I asked" on faith.
 
 Examples:
   python3 cut.py input.mp4 --start 00:00:10 --end 00:00:25
@@ -190,9 +195,19 @@ def main() -> int:
     precision = precision_of(meta, output, reencoded)
     got = result.get("duration")
     error_ms = round((got - expected) * 1000, 3) if got is not None and not STATE["dry_run"] else None
+    # mode: "copy" (untouched lossless), "accurate" (--accurate was asked for), "hybrid" (asked for
+    # lossless but the keyframe snap exceeded --tolerance so this segment silently re-encoded instead)
+    mode = "copy" if not reencoded else ("accurate" if args.accurate else "hybrid")
+    keyframe_snapped = precision == "packet"
     info(f"wrote {output} ({got:.3f}s, expected ~{expected:.3f}s, "
          + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
-    emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded)
+    emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
+         requested_start=round(segments[0][0], 6) if len(segments) == 1 else None,
+         requested_end=round(segments[0][1], 6) if len(segments) == 1 else None,
+         requested_segments=[[round(s, 6), round(e, 6)] for s, e in segments] if len(segments) > 1 else None,
+         requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None else None,
+         duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
+         mode=mode, keyframe_snapped=keyframe_snapped)
     return 0
 
 

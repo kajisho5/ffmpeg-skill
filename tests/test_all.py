@@ -130,6 +130,40 @@ class FFmpegSkillTests(unittest.TestCase):
         script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out)
         self.assertClose(probe(str(out))["duration"], 5.0, 0.15)
 
+    def test_cut_json_reports_requested_vs_actual_and_mode(self):
+        # exact-second cut on a keyframe-aligned GOP: expect a clean lossless copy
+        out = OUT / "cut_honest_copy.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertEqual(data["requested_start"], 2.0)
+        self.assertEqual(data["requested_end"], 6.0)
+        self.assertEqual(data["requested_duration"], 4.0)
+        self.assertAlmostEqual(data["output_duration"], probe(str(out))["duration"], places=2)
+        self.assertAlmostEqual(data["duration_delta_seconds"], data["duration_error_ms"] / 1000, places=6)
+
+        # --accurate: forced re-encode, never "hybrid"
+        out2 = OUT / "cut_honest_accurate.mp4"
+        data2 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--accurate", "-o", out2, "--json").stdout)
+        self.assertEqual(data2["mode"], "accurate")
+        self.assertFalse(data2["keyframe_snapped"])
+
+        # a start/end that doesn't land on a keyframe, with a tight tolerance, must silently
+        # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true"
+        out3 = OUT / "cut_honest_hybrid.mp4"
+        data3 = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "0.02", "-o", out3, "--json").stdout)
+        self.assertTrue(data3["reencoded"])
+        self.assertEqual(data3["mode"], "hybrid")
+        self.assertFalse(data3["keyframe_snapped"])
+
+        # multi-segment: requested_start/end are None, requested_segments lists each range
+        out4 = OUT / "cut_honest_segments.mp4"
+        data4 = json.loads(script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out4, "--json").stdout)
+        self.assertIsNone(data4["requested_start"])
+        self.assertIsNone(data4["requested_end"])
+        self.assertEqual(data4["requested_segments"], [[1.0, 3.0], [6.0, 9.0]])
+        self.assertEqual(data4["requested_duration"], 5.0)
+
     def test_cut_bad_range_fails(self):
         script("cut.py", self.src, "--start", "5", "--end", "2", expect_fail=True)
 
@@ -593,6 +627,18 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(probe(str(auto))["duration"], 12.0, 0.2)
         script("multicam.py", self.src, camB, "--switch", "0-3:5", expect_fail=True)
 
+    def test_multicam_warns_on_a_camera_with_no_shared_audio_event(self):
+        """A camera whose audio has nothing in common with the reference must not align silently."""
+        unrelated = OUT / "camC_unrelated.mp4"
+        # a flat-envelope tone: nothing for the envelope-based cross-correlation to lock onto,
+        # unlike the reference's gated tones -- unrelated in the way a different room's constant hum would be
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=233:sample_rate=48000", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", unrelated)
+        proc = script("multicam.py", self.src, unrelated, "--offsets-only", "--json")
+        data = json.loads(proc.stdout)
+        self.assertLess(data["confidence"][1], 0.1)
+        self.assertIn("low correlation confidence", proc.stderr)
+
     def test_verify_kit_runs_on_real_world_fixtures(self):
         folder = OUT / "vfx"
         folder.mkdir(exist_ok=True)
@@ -666,6 +712,14 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(names["pixel format"], "PASS")
         self.assertEqual(names["loudness"], "FAIL", "unnormalised test tone is far from -14 LUFS")
         self.assertFalse(data["ok"])
+        # FAILs a non-technical caller would ask "so what?" about carry a plain-language reason,
+        # distinct from `fix` (the command); PASS rows never carry one
+        loudness_row = [r for r in data["checks"] if r["check"] == "loudness"][0]
+        self.assertTrue(loudness_row["reason"])
+        self.assertNotEqual(loudness_row["reason"], loudness_row["fix"])
+        pass_rows = [r for r in data["checks"] if r["status"] == "PASS"]
+        self.assertTrue(pass_rows)
+        self.assertTrue(all(r["reason"] == "" for r in pass_rows))
         # after loudness.py the same file passes
         norm = OUT / "reels_norm.mp4"
         script("loudness.py", reels, "-o", norm)
@@ -673,7 +727,9 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(data["ok"], [r for r in data["checks"] if r["status"] != "PASS"])
         # HDR on an SDR-only platform fails the colour check
         data = json.loads(script("check.py", self.hdr, "--platform", "x", "--no-loudness", "--json", expect_fail=True).stdout)
-        self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["colour"], "FAIL")
+        colour_row = [r for r in data["checks"] if r["check"] == "colour"][0]
+        self.assertEqual(colour_row["status"], "FAIL")
+        self.assertTrue(colour_row["reason"])
         # custom overrides
         data = json.loads(script("check.py", self.src, "--platform", "custom", "--max-duration", "5", "--no-loudness", "--json", expect_fail=True).stdout)
         self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["duration"], "FAIL")
@@ -755,6 +811,20 @@ class FFmpegSkillTests(unittest.TestCase):
         out = json.loads(script("render.py", proj, "--fast", "--stop-after", "join", "--work", OUT / "rw", "--json").stdout)
         self.assertEqual(out["stages"], ["clips", "join"])
         self.assertTrue(Path(out["output"]).exists())
+
+    def test_render_exits_nonzero_when_the_check_stage_fails(self):
+        """A render whose deliverable fails its own check stage must not report success."""
+        proj = OUT / "project_bad_check.json"
+        proj.write_text(json.dumps({
+            "output": "render_bad.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:04"}],
+            "export": {"preset": "reels"},  # portrait 9:16 output
+            "check": {"platform": "broadcast"},  # broadcast requires 16:9 -- guaranteed aspect FAIL
+        }), encoding="utf-8")
+        proc = script("render.py", proj, "--fast", "--json", expect_fail=True)
+        data = json.loads(proc.stdout)
+        self.assertGreater(data["check"]["failed"], 0, data["check"])
+        self.assertTrue(Path(data["output"]).exists(), "the deliverable is still written even though it fails delivery spec")
 
     def test_join_width_keeps_aspect(self):
         out = OUT / "join_w.mp4"

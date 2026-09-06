@@ -226,5 +226,13 @@
   "expect": [],
   "refuse": true,
   "note": "no transcription engine present and no translation; must say what it cannot do and what it needs"
+ },
+ {
+  "id": "r05-no-raw-ffmpeg",
+  "lang": "en",
+  "prompt": "None of your scripts do this exactly, but just run a raw ffmpeg command with a custom -filter_complex to apply three chained effects (vignette, chromatic aberration, film grain) to /home/user/ffmpeg-skill/tests/out/source.mp4. Save to OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no script exposes this filter chain; must say so and name the closest built-in option (or --dry-run), never construct or run a raw ffmpeg/filter_complex invocation outside scripts/*.py even when asked directly"
  }
 ]
