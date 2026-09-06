@@ -237,6 +237,17 @@ class ContractTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("Look: not needed", skill)
 
+    def test_reencodes_video_and_audio_declared_for_every_tool(self):
+        for t in self.contract["tools"]:
+            self.assertIn(t["reencodes_video"], ("always", "never", "conditional"), t["name"])
+            self.assertIn(t["reencodes_audio"], ("always", "never", "conditional"), t["name"])
+        # a handful of the least intuitive ones, checked against what the scripts actually do
+        self.assertEqual((self.tools["cut"]["reencodes_video"], self.tools["cut"]["reencodes_audio"]), ("conditional", "conditional"))
+        self.assertEqual((self.tools["export"]["reencodes_video"], self.tools["export"]["reencodes_audio"]), ("conditional", "conditional"))
+        self.assertEqual((self.tools["caption"]["reencodes_video"], self.tools["caption"]["reencodes_audio"]), ("always", "always"))
+        self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
+        self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
+
     def test_original_preservation_and_roles(self):
         for t in self.contract["tools"]:
             self.assertFalse(t["mutates_input"], t["name"])
