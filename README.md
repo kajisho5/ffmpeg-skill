@@ -115,7 +115,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 5. **Contract-derived MCP.** `mcp/server.py` builds its `tools/list` from the contract. Tool names, order and `inputSchema` cannot drift from the scripts; a test keeps the two byte-identical.
 6. **Capability detection.** `doctor` reads `ffmpeg -encoders / -filters / -bsfs` and reports which of the components the tools need are present on this build (libx264, libass, zscale, loudnorm, xfade, …), before a job fails inside ffmpeg.
 7. **Unknown is not missing.** When a listing cannot be read (a layout the parser does not know, ffmpeg exiting non-zero) the affected capabilities are `unknown`: never `missing`, never silently `available`. An installed filter is not reported absent; a failed detection is not a pass.
-8. **Verify the result.** The output is probed, and when the picture changed (captions, overlays, crops, colour, transitions) the agent runs `look.py` and inspects the PNG. The report is not finished until its `Look:` line names that image; audio-only jobs say `Look: not needed`.
+8. **Verify the result.** The output is probed, and when the picture changed (captions, overlays, crops, colour, transitions) the agent runs `look.py` and inspects the PNG. The report is not finished until its `Look:` line names that image; audio-only jobs say `Look: not needed`. **"Inspects" means the calling agent's own vision, not a feature of this skill:** `look.py` only renders a PNG; nothing in this repository detects faces, products or any other subject. When a crop or reframe needs to keep a specific part of the frame (`fit.py --fit crop --crop-x/-y`, see [Tools](#tools)), it is the multimodal agent looking at that PNG and choosing the anchor — a non-visual caller (a script, a CLI user without eyes on the sheet) has to supply that decision itself; the default is a plain centre crop.
 9. **Keep originals.** No tool overwrites its input. Outputs are new files named `<input>_<operation>.<ext>` unless told otherwise, and a test hashes every input after the run.
 
 ## Tools
@@ -137,7 +137,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio; reports `precision` |
 | `join.py` | Concatenate clips with xfade transitions, normalising size, fps and audio; audio-only inputs are joined as audio |
 | `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech; list or export the cut list |
-| `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo) and/or aspect ratio (pad or crop); force constant fps |
+| `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo) and/or aspect ratio (pad or crop, with `--crop-x`/`--crop-y` to keep an off-centre subject); force constant fps |
 
 **Audio**
 
