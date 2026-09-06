@@ -11,6 +11,14 @@ Switch list format: "START-END:CAM,START-END:CAM,..." with times on the
 reference timeline (seconds or mm:ss) and CAM = input index (0 = reference).
 Gaps fall back to camera 0.
 
+Each camera's `confidence` (in the report, and warned on stderr below 0.1)
+is how well its audio matched the reference's, not a guarantee the cut lands
+in sync: a source with no shared audio event (music-only vs. a silent room,
+or two rooms recording different conversations) can score low and still get
+an offset applied. Check it before trusting a low-confidence multicam edit.
+This aligns audio tracks to each other, the same as sync.py, and does not
+check lip sync (mouth movement vs. audio) at all -- see sync.py's docstring.
+
 Examples:
   python3 multicam.py camA.mp4 camB.mp4 --offsets-only                    # just report the offsets
   python3 multicam.py camA.mp4 camB.mp4 --switch "0-12:0,12-30:1,30-45:0" -o edit.mp4
@@ -108,6 +116,8 @@ def main() -> int:
         ratios.append(ratio)
         conf.append(score)
         info(f"{p}: offset {off:+.3f}s (confidence {score:.2f})" + (f", drift {(ratio - 1) * 1e6:+.0f} ppm" if args.fix_drift else ""))
+        if score < 0.1:
+            info(f"warning: {p} has low correlation confidence ({score:.2f}); check that it shares an audio event with the reference before trusting this offset")
 
     report = {"inputs": args.inputs, "offsets_seconds": [round(o, 4) for o in offsets],
               "confidence": [round(c, 3) for c in conf]}
