@@ -1,5 +1,7 @@
 # Changelog
 
+> `main` moves ahead of the last published npm/GitHub release; a dependent repo should pin a tagged version, not `main`. See README § Development, "Releasing".
+
 ## Unreleased — FFmpeg 8+ / Windows compatibility for caption and color
 
 - **`export.py --preset copy`.** Every existing preset re-encodes (even `prores`/`h265`, which
