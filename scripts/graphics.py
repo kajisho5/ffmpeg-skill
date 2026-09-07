@@ -40,6 +40,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_gfx.<ext>)")
+    ap.add_argument("--audio-stream", type=int, default=0,
+                     help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
+                          "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
+                          "the first track, same as leaving it unset always did")
     ap.add_argument("--template", choices=TEMPLATES, required=True)
     ap.add_argument("--brand", help="brand.json for colours, font, safe margin")
     ap.add_argument("--name", help="lower-third: name line")
@@ -70,6 +74,11 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    audio_streams = meta.get("audio_streams") or []
+    if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
+        die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
+    if args.audio_stream and not audio_streams:
+        die("--audio-stream needs an input with audio streams")
     W, H = meta["video"]["width"], meta["video"]["height"]
     if meta["video"].get("rotation") in (90, -90, 270, -270):
         W, H = H, W
@@ -149,9 +158,9 @@ def main() -> int:
     output = args.output or default_output(args.input, "gfx")
     cmd = ffmpeg_base() + ["-i", args.input]
     if fc:
-        cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "0:a:0?"]
+        cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", f"0:a:{args.audio_stream}?"]
     else:
-        cmd += ["-vf", ",".join(filters), "-map", "0:v:0", "-map", "0:a:0?"]
+        cmd += ["-vf", ",".join(filters), "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
     cmd.append(output)

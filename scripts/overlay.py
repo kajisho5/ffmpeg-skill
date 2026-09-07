@@ -85,6 +85,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_overlay.<ext>)")
+    ap.add_argument("--audio-stream", type=int, default=0,
+                     help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
+                          "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
+                          "the first track, same as leaving it unset always did")
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--image", help="PNG/JPG (alpha respected) to composite")
     src.add_argument("--text", help="text to draw (drawtext)")
@@ -143,6 +147,11 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    audio_streams = meta.get("audio_streams") or []
+    if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
+        die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
+    if args.audio_stream and not audio_streams:
+        die("--audio-stream needs an input with audio streams")
     vw = meta["video"]["width"]
     start = parse_time(args.start) if args.start else None
     end = parse_time(args.end) if args.end else None
@@ -184,7 +193,7 @@ def main() -> int:
         # -loop 1 turns the still into a timed stream so fade/enable expressions see real timestamps
         cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", "-i", args.image]
         fc = f"[1:v]{','.join(chain)},setpts=PTS-STARTPTS[ov];[0:v][ov]{ov}[out]"
-        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", "0:a:0?", "-shortest"]
+        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", f"0:a:{args.audio_stream}?", "-shortest"]
         # -shortest alone is not exact on FFmpeg 7+: the muxer keeps up to shortest_buf_duration (10 s)
         # of the looped still after the video ended, and the file came out 2 s long on 8.1 / 9.0.
         # The output must be as long as the main input, so say so explicitly.
@@ -210,7 +219,7 @@ def main() -> int:
             ov += f":enable='{enable}'"
         cmd = ffmpeg_base() + ["-i", args.input, "-i", args.video]
         fc = f"[1:v]{','.join(chain)}[ov];[0:v][ov]{ov}[out]"
-        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", "0:a:0?", "-shortest"]
+        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", f"0:a:{args.audio_stream}?", "-shortest"]
         if meta.get("duration"):
             cmd += ["-t", f"{meta['duration']:.3f}"]
     else:
@@ -230,7 +239,9 @@ def main() -> int:
             opts += ["box=1", f"boxcolor={args.box_color}", "boxborderw=12"]
         if enable:
             opts.append(f"enable='{enable}'")
-        cmd += ["-vf", "drawtext=" + ":".join(opts)]
+        cmd += ["-vf", "drawtext=" + ":".join(opts), "-map", "0:v:0"]
+        if meta.get("audio"):
+            cmd += ["-map", f"0:a:{args.audio_stream}"]
 
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]

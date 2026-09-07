@@ -105,6 +105,12 @@ def main() -> int:
     ap.add_argument("--saturation", type=float, default=CORRECTION["saturation"][0], help="--correct: saturation, 0..2, 1=unchanged (default 1)")
     ap.add_argument("--temperature", type=float, default=CORRECTION["temperature"][0], help="--correct: white-balance temperature in Kelvin, 2000..12000, 6500=unchanged (default 6500)")
     ap.add_argument("--tint", type=float, default=CORRECTION["tint"][0], help="--correct: green(-1)/magenta(+1) tint, 0=unchanged (default 0)")
+    ap.add_argument("--audio-stream", type=int, default=0,
+                     help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
+                          "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
+                          "the first track, same as leaving it unset always did. Only affects modes that re-encode "
+                          "audio (--to-sdr, --lut, --correct, and --retag's re-encode fallback) -- --strip-dovi and "
+                          "a successful --retag stream-copy all streams untouched, so the flag has nothing to select there.")
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="medium")
     add_common(ap)
@@ -116,6 +122,11 @@ def main() -> int:
         die("input has no video stream")
     v = meta["video"]
     has_audio = bool(meta.get("audio"))
+    audio_streams = meta.get("audio_streams") or []
+    if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
+        die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
+    if args.audio_stream and not audio_streams:
+        die("--audio-stream needs an input with audio streams")
 
     if args.strip_dovi:
         output = args.output or default_output(args.input, "nodv")
@@ -151,7 +162,7 @@ def main() -> int:
         if proc.returncode != 0:
             # some codecs cannot carry retagged colour info without a bitstream filter; fall back to re-encode
             info("stream copy could not rewrite tags, re-encoding")
-            cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", "0:a:0?"] + x264_args(args.crf, args.preset, keep_bt709=False)
+            cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"] + x264_args(args.crf, args.preset, keep_bt709=False)
             cmd += ["-colorspace", tags[0], "-color_primaries", tags[1], "-color_trc", tags[2]] + (aac_args() if has_audio else []) + [output]
             run(cmd)
         info(f"wrote {output} (tags -> {args.retag})")
@@ -184,7 +195,7 @@ def main() -> int:
         output = args.output or default_output(args.input, "lut")
         tag = "lut"
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", "0:a:0?"]
+    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     cmd += x264_args(args.crf, args.preset) + cfr_args(meta) + (aac_args() if has_audio else []) + [output]
     run(cmd)
     r = probe(output, role="output")

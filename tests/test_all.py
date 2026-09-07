@@ -271,6 +271,19 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_fit_nothing_to_do_is_refused(self):
         script("fit.py", self.src, expect_fail=True)
 
+    def test_fit_audio_stream_selects_the_requested_track_not_always_the_first(self):
+        two = OUT / "fit_two_streams.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100",
+           "-t", "4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", two)
+        self.assertEqual(len(probe(str(two))["audio_streams"]), 2)
+        out1 = OUT / "fit_two_s1.mp4"
+        script("fit.py", two, "--audio-stream", "1", "--width", "160", "-o", out1, "--preset", "veryfast")
+        self.assertIsNotNone(probe(str(out1))["audio"], "default fit.py now explicitly maps audio too, not just the automatic 'best stream' pick")
+        proc = script("fit.py", two, "--audio-stream", "5", "--width", "160", "-o", OUT / "fit_nope.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertIn("audio-stream", proc.stderr)
+
     # ---------------------------------------------------------------- crop
     def test_crop_exact_rectangle(self):
         out = OUT / "crop1.mp4"
@@ -793,6 +806,19 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertIn("-c copy", proc.stderr)
         self.assertEqual(probe(str(out))["video"]["color_transfer"], "smpte170m")
 
+    def test_color_audio_stream_selects_the_requested_track_not_always_the_first(self):
+        two = OUT / "color_two_streams.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100",
+           "-t", "4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", two)
+        self.assertEqual(len(probe(str(two))["audio_streams"]), 2)
+        out1 = OUT / "color_two_correct1.mp4"
+        script("color.py", two, "--correct", "--exposure", "0.2", "--audio-stream", "1", "-o", out1, "--preset", "veryfast")
+        self.assertIsNotNone(probe(str(out1))["audio"])
+        proc = script("color.py", two, "--correct", "--audio-stream", "5", "-o", OUT / "color_nope.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertIn("audio-stream", proc.stderr)
+
     def test_color_lut(self):
         lut = OUT / "invert.cube"
         lines = ["LUT_3D_SIZE 2"]
@@ -1297,6 +1323,22 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertNotEqual(a[200:4000], b[200:4000])
         script("graphics.py", self.src, "--template", "lower-third", expect_fail=True)
 
+    def test_graphics_audio_stream_selects_the_requested_track_not_always_the_first(self):
+        two = OUT / "gfx_two_streams.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100",
+           "-t", "4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", two)
+        self.assertEqual(len(probe(str(two))["audio_streams"]), 2)
+        out1 = OUT / "gfx_two_s1.mp4"
+        script("graphics.py", two, "--template", "bug", "--title", "@handle", "--audio-stream", "1", "-o", out1, "--fast")
+        self.assertIsNotNone(probe(str(out1))["audio"])
+        out_prog = OUT / "gfx_two_progress.mp4"
+        script("graphics.py", two, "--template", "progress", "--audio-stream", "1", "-o", out_prog, "--fast")
+        self.assertIsNotNone(probe(str(out_prog))["audio"])
+        proc = script("graphics.py", two, "--template", "bug", "--title", "x", "--audio-stream", "5", "-o", OUT / "gfx_nope.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertIn("audio-stream", proc.stderr)
+
     def test_brand_defaults_apply_to_caption_and_logo(self):
         brand = OUT / "brand.json"
         if not brand.exists():
@@ -1737,6 +1779,23 @@ class FFmpegSkillTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(proc.returncode, 0, f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
         self.assertClose(probe(str(out))["duration"], probe(str(noaudio))["duration"], 0.15)
+
+    def test_overlay_audio_stream_selects_the_requested_track_not_always_the_first(self):
+        two = OUT / "ov_two_streams.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100",
+           "-t", "4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", two)
+        self.assertEqual(len(probe(str(two))["audio_streams"]), 2)
+        out_text = OUT / "ov_two_text.mp4"
+        script("overlay.py", two, "--text", "hi", "--audio-stream", "1", "-o", out_text, "--preset", "veryfast")
+        self.assertIsNotNone(probe(str(out_text))["audio"])
+        out_img = OUT / "ov_two_img.mp4"
+        script("overlay.py", two, "--image", self.logo, "--audio-stream", "1", "-o", out_img, "--preset", "veryfast")
+        self.assertIsNotNone(probe(str(out_img))["audio"])
+        proc = script("overlay.py", two, "--text", "hi", "--audio-stream", "5", "-o", OUT / "ov_nope.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertIn("audio-stream", proc.stderr)
+
     def test_overlay_video_pip_composites_at_the_right_position(self):
         red_bg = OUT / "red_bg.mp4"
         blue_quad = OUT / "blue_quad.mp4"

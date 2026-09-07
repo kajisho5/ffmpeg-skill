@@ -76,6 +76,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_fit.<ext>)")
+    ap.add_argument("--audio-stream", type=int, default=0,
+                     help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
+                          "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
+                          "the first track, same as leaving it unset always did")
     d = ap.add_argument_group("duration")
     d.add_argument("--duration", help="target duration (seconds or mm:ss)")
     d.add_argument("--method", choices=["speed", "trim"], default="speed", help="how to reach the duration (default speed)")
@@ -114,6 +118,11 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    audio_streams = meta.get("audio_streams") or []
+    if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
+        die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
+    if args.audio_stream and not audio_streams:
+        die("--audio-stream needs an input with audio streams")
     src_dur = meta["duration"] or 0.0
     sw, sh = meta["video"]["width"], meta["video"]["height"]
     if meta["video"].get("rotation") in (90, -90, 270, -270):
@@ -205,6 +214,9 @@ def main() -> int:
         cmd += ["-vf", ",".join(vf)]
     if af:
         cmd += ["-af", ",".join(af)]
+    cmd += ["-map", "0:v:0"]
+    if has_audio:
+        cmd += ["-map", f"0:a:{args.audio_stream}"]
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta, args.fps) if not args.fps else []
     if has_audio:
