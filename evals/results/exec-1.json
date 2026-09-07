@@ -22,5 +22,6 @@
    "f05-unsupported": "no reverse tool; declined, offered a plain-ffmpeg alternative without running it"
   }
  },
- "finding_from_runs": "x04 agent noticed export --dry-run --json returned status failed ('output verification failed: not written') after the first version of the verify_output change; fixed before recording (probe(role='output') now honours --dry-run)"
+ "finding_from_runs": "x04 agent noticed export --dry-run --json returned status failed ('output verification failed: not written') after the first version of the verify_output change; fixed before recording (probe(role='output') now honours --dry-run)",
+ "superseded": "f05-unsupported in this historical run graded the WRONG answer as correct: reverse.py has existed in this skill the whole time (see SKILL.md's Request->script table), so 'declined, offered a plain-ffmpeg alternative' was a false-refusal + a raw-ffmpeg fallback the skill's own policy forbids, not honest failure reporting. Fixed in evals/agent_prompts_exec.json (issue #79): f05-unsupported now names a genuinely unsupported operation (a custom -filter_complex chain no script exposes), and a new x06-reverse case covers the real reverse.py success path. This record is left unedited as a historical artifact of the bug, not as a still-valid result."
 }
