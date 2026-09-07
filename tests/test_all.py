@@ -610,6 +610,52 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(m["video"]["hdr"], "the source's real HDR tags must survive a stream copy")
         self.assertNotEqual(m["video"]["color_space"], "bt709", "copy must never relabel HDR content as bt709")
 
+    def test_proxy_default_width_and_crf_keeps_audio(self):
+        out = OUT / "proxy_default.mp4"
+        script("proxy.py", self.src, "-o", out)
+        m = probe(str(out))
+        self.assertEqual(m["video"]["width"], 640)
+        self.assertEqual(m["video"]["codec"], "h264")
+        self.assertIsNotNone(m.get("audio"), "default keeps audio when the source has it")
+        self.assertClose(m["duration"], 12.0, 0.2)
+
+    def test_proxy_scale_and_no_audio(self):
+        out = OUT / "proxy_scale.mp4"
+        script("proxy.py", self.src, "--scale", "0.25", "--no-audio", "-o", out)
+        src_w = probe(str(self.src))["video"]["width"]
+        m = probe(str(out))
+        self.assertEqual(m["video"]["width"], src_w // 4)
+        self.assertIsNone(m.get("audio"), "--no-audio must drop the track, not just mute it")
+
+    def test_proxy_forces_fps(self):
+        out = OUT / "proxy_fps.mp4"
+        script("proxy.py", self.vfr, "--fps", "10", "-o", out)
+        m = probe(str(out))
+        self.assertFalse(m["video"]["variable_frame_rate_suspected"], "an explicit --fps must conform a VFR source to CFR")
+        self.assertClose(m["video"]["fps"], 10.0, 0.5)
+
+    def test_proxy_keeps_hdr_dynamic_range_like_every_other_reencode(self):
+        """A proxy meant for machine consumption still shouldn't silently wash out HDR to a
+        mislabelled BT.709 file — same posture as fit.py/caption.py: keep HDR as HEVC10, and
+        let color.py --to-sdr be the tool that makes the SDR-vs-HDR call, not this one."""
+        out = OUT / "proxy_hdr.mp4"
+        script("proxy.py", self.hdr, "-o", out)
+        m = probe(str(out))
+        self.assertTrue(m["video"]["hdr"])
+        self.assertEqual(m["video"]["codec"], "hevc")
+
+    def test_proxy_rejects_bad_scale_and_width(self):
+        script("proxy.py", self.src, "--scale", "1.5", expect_fail=True)
+        script("proxy.py", self.src, "--scale", "0", expect_fail=True)
+        script("proxy.py", self.src, "--width", "0", expect_fail=True)
+
+    def test_proxy_dry_run_writes_nothing(self):
+        out = OUT / "proxy_dry_run_absent.mp4"
+        proc = script("proxy.py", self.src, "-o", out, "--dry-run", "--json")
+        doc = json.loads(proc.stdout)
+        self.assertTrue(doc["dry_run"])
+        self.assertFalse(out.exists())
+
     # ---------------------------------------------------------------- real-world material
     def test_probe_detects_vfr_rotation_surround_hdr(self):
         self.assertTrue(probe(str(self.vfr))["video"]["variable_frame_rate_suspected"])
