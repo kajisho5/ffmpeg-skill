@@ -4,6 +4,103 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 0.12.0 — 2026-09-07 — Hardening pass: stream/input safety, contract-vs-implementation drift, SKILL.md/eval consistency
+
+A hardening-focused release: no new tools, no new features. Everything here closes a gap between
+what the contract/docs/evals claimed and what the implementation actually did, or fixes a real
+runtime defect found by reproducing it first. `contract_version` is unchanged — every contract
+field addition here is additive.
+
+- **Safety: a tool could be made to overwrite its own input via a same-file-different-string
+  output path.** `-o ./same.mp4` against an input opened as `same.mp4` (or any relative/absolute
+  pair, `..` segment, or symlink) resolves to the same file but passed ffmpeg's own
+  byte-identical-string "Output same as Input" guard — `-y` then silently clobbered the source
+  mid-encode. Reproduced on `crop.py` before the fix. `_check_no_overwrite_input()` in
+  `_common.py`'s `run()` compares `os.path.realpath()` of every `-i` argument against the output
+  path and refuses before ffmpeg starts, covering every writing tool from one choke point.
+- **Safety: a failed `run()` call could leave a partial (often 0-byte) output file behind.**
+  `verify_output()`'s cleanup only ran on the success path; a failure after ffmpeg had already
+  opened the output (muxer header written, then a mid-stream error) left a stray file a caller
+  could mistake for a real artifact. `_cleanup_partial_output()` now runs for every nonzero
+  ffmpeg exit, `check=True` or `check=False`.
+- **`color.py --retag`'s re-encode fallback used to silently drop every stream beyond
+  video+audio-0.** The stream-copy path (`-map 0 -c copy`) keeps every stream — extra audio
+  tracks, subtitles, chapters; the re-encode fallback (triggered when the copy fails) dropped all
+  of them with no signal in `--json`. Added a middle tier that tries to keep subtitle/data
+  streams via `-c:s`/`-c:d copy` alongside the required video/audio re-encode, and `--json` now
+  reports `reencoded`/`dropped_non_av_streams` honestly instead of a bare `"completed"`.
+- **`sync.py`'s `REENCODE_META` claimed `video="never"`; `--trim-second` actually re-encodes
+  video** whenever the second recording starts later than the reference (the common case,
+  `offset>=0`) or `--fix-drift` is used — only the `offset<0` stream-copy path leaves video
+  untouched. Fixed to `"conditional"`/`"conditional"` with a note.
+- **Error taxonomy (additive): `error.code` and `error.retryable`** now sit alongside every
+  failure's existing `error.kind`/`error.message` — `code` is a static relabelling of the same 4
+  kinds this codebase has always used (`INPUT_INVALID`/`DEPENDENCY_MISSING`/
+  `FFMPEG_EXECUTION_FAILED`/`OUTPUT_INVALID`, `INTERNAL_ERROR` fallback), not a new taxonomy the
+  code can't back up; `retryable` is currently always `false` (no kind is distinguishable from a
+  deterministic failure without exit-code/stderr sniffing this codebase doesn't do). `kind`'s
+  existing values and the rest of the JSON shape are unchanged.
+- **`loudness.py --json` now includes the second-pass (post-normalization) measurement** as a
+  `result` field — it was computed but only ever printed to stderr, so a caller had to make a
+  separate `--measure-only` call to learn what loudness was actually achieved.
+- **`--audio-stream N` extended to `overlay.py`, `graphics.py`, `color.py`; `fit.py` gained
+  explicit audio mapping.** Every tool that re-encodes audio from a multi-track input now behaves
+  consistently instead of silently defaulting to track 0 (or, for `fit.py`, to ffmpeg's own
+  implicit "best stream" heuristic, which for audio favours channel count over track order).
+  `join.py`/`multicam.py` are out of scope — they combine separate input files, a different
+  problem shape.
+- **`doctor --json` gains a `fonts` field**, informational like `gpu_encoders`: drawtext's default
+  font (`caption.py --animate`/`--karaoke`, `graphics.py`) can silently substitute a different
+  family when the requested one isn't installed — a drawtext exit code can't detect this
+  (fontconfig substitutes for any name, valid or not), so `fc-match` is queried directly.
+  Never gates `ok`/`usable`; a substituted font doesn't make the tool unusable, just possibly
+  styled differently than intended.
+- **`probe.py` gains `subtitle_stream_details`**, a detailed per-subtitle-stream array
+  (`index`/`codec`/`language`/`title`) mirroring `audio_streams`' shape — `subtitle_streams`'
+  existing int-count type and meaning are unchanged.
+- **Doc-vs-implementation drift fixes**, each with a regression test pinning the doc text against
+  the live code so the same drift can't recur silently:
+  - `docs/contract.md`'s hand-copied `skill.version` example had drifted to a stale `0.9.1`
+    while `package.json` had moved to `0.11.0`.
+  - `docs/contract.md`'s failure-JSON example was missing the `code`/`retryable` fields above.
+  - `SKILL.md`/`references/scripts.md` claimed unconditionally that every script's `--dry-run`
+    runs nothing; `sync`/`multicam`/`scenes`/`report` genuinely run ffmpeg/ffprobe to measure or
+    analyse under `--dry-run` (they just don't write the final artifact), and `verify` accepts
+    the flag but ignores it — all three doc locations now name the real exception set.
+  - `SKILL.md`'s Workflow section never mentioned `doctor`/`contract` at all, so an agent on an
+    unfamiliar machine had no documented step to check capability before running a tool that
+    depends on an optional filter/encoder. Added a step 0.
+  - `SKILL.md`'s "Look at the picture" step told the agent to judge subject framing and
+    text-over-faces as part of its own job, directly contradicting "What this skill does and does
+    not decide"'s statement that this belongs to the calling agent. Split into a mechanical tier
+    this skill verifies directly and a judgement tier reported to the calling agent — explicitly
+    *not* flagging `fit.py --fit pad`'s letterboxing as a defect, since that's that mode's correct
+    output. Also formalized `Look: PATH (pixels not inspected; agent has no image view)` for an
+    execution environment that can't actually view images.
+  - `bin/install.js`'s `contract`/`doctor` subcommand hardcoded `python3`; Windows Python
+    installers commonly expose `python`/`py` instead (only the Microsoft Store package ships
+    `python3`) — now falls back through `python3` → `python` → `py` on Windows. The same
+    hardcoding was also present, unfixed by that change, in `mcp/server.py`'s and README's MCP
+    client config examples — both now note the Windows alternative.
+  - `evals/agent_prompts_exec.json`'s `f05-unsupported` claimed "no reverse tool in the skill"
+    and scored refusing a reverse request as correct — `reverse.py` has existed the whole time
+    and `SKILL.md`'s own routing table names it. It also endorsed a hand-written raw-ffmpeg
+    fallback as acceptable, contradicting this project's own "never fall back to raw ffmpeg"
+    policy stated elsewhere. Replaced with a genuinely unsupported case and a normal `reverse.py`
+    success case; `evals/results/exec-1.json`'s historical record is left unedited with a note
+    explaining the old grading was wrong.
+- **Cross-platform: end-to-end non-ASCII filename coverage.** Filter-graph *string* escaping for
+  Unicode paths was already tested; nothing exercised a non-ASCII filename as the actual `-i`/
+  output argument through `subprocess` argv. Added a test copying a fixture to a CJK/accented
+  filename and running `probe`/`cut` against it both directions — passes on all 3 CI platforms.
+- **Docs: `CONTRIBUTING.md`**, a `.github/workflows/release.yml` that automates GitHub Release
+  creation once a version tag is pushed (tag creation itself stays a manual, deliberate act), and
+  a one-line honest note that GPU-accelerated encoding stays off the roadmap without a
+  real-hardware-verified design (build-presence detection, which `gpu_encoders` already limits
+  itself to, is not proof a job succeeds).
+
 - **`probe.py`: `subtitle_stream_details`.** `subtitle_streams` was a plain integer count while `audio_streams` was already a detailed array, so nothing could tell which subtitle index was which language on a multi-track input (e.g. an MKV with Japanese and English subs already muxed in). `subtitle_stream_details` adds that detail as a new, purely additive array — `[{"index", "codec", "language", "title"}, ...]`, one entry per embedded subtitle stream in file order (index n is `-map 0:s:n`), mirroring `audio_streams`' shape minus the audio-only fields (channels, layout, sample rate) ffprobe doesn't expose for subtitle streams. `subtitle_streams`' existing type and meaning (the int count) are unchanged. No writing tool selects among existing embedded subtitle streams yet; this is a `probe.py`-only enrichment. Closes [#63](https://github.com/kajisho5/ffmpeg-skill/issues/63).
 - **`caption.py --audio-stream N`: explicit multi-audio-track selection.** Confirmed `caption.py` did silently pick a track on a multi-audio-track input (dubbed languages, M&E stems): burn mode had no `-map` at all (ffmpeg's own automatic stream-selection heuristic, not necessarily index 0, decided), mux mode and the karaoke energy-timing/`--transcribe` audio extraction both hardcoded `0:a:0`. `--audio-stream N` (default 0, matching `audio.py`'s existing flag and unchanged prior behaviour) now threads the same explicit track index through all four: burn's re-encoded audio, mux's stream-copied audio, `--transcribe`'s speech-to-text source, and karaoke's energy-timing analysis, refusing an out-of-range index the same way `audio.py --audio-stream` already does. Closes [#55](https://github.com/kajisho5/ffmpeg-skill/issues/55).
 - **`caption.py --text`: SMPTE non-drop-frame timecode cues.** Cues were positioned by decimal seconds only; broadcast-style deliverables often supply cue timing as `hh:mm:ss:ff` frame timecode instead. `--text` cue lines now also accept that format (e.g. `00:00:03:15 --> 00:00:06:00 ...`) — the frame count is converted to seconds with `--fps`, or the input video's own probed fps when `--input` is given and `--fps` is not. A cue that is shaped like a timecode but has no fps available (no `--fps`, no `--input`) is refused with a clear error naming the missing `--fps`, rather than silently misread as a plain text line the way an ordinary unparseable cue line already is. `_common.py` gains the reusable pieces other tools can build on later: `parse_time()` takes an optional `fps` argument for the `hh:mm:ss:ff` case (raising the new `MissingFpsError`, a `ValueError` subclass, when fps is needed but absent), and `fmt_smpte_time()` formats seconds back to `hh:mm:ss:ff` — used here to echo the interpreted cue range in the `wrote ... .srt` report line so a caller can confirm the timecode was read correctly. The written `.srt` itself stays decimal-millisecond SRT timing, since that is the only timing SRT/mux subtitle codecs actually carry; nothing claims frame-exact precision it can't hold. Drop-frame (29.97/59.94 fps) counting is out of scope. Closes [#54](https://github.com/kajisho5/ffmpeg-skill/issues/54).
