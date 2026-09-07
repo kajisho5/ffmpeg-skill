@@ -261,13 +261,20 @@ before, and, when `--json` was given, on stdout:
 
 ```json
 {"status": "failed", "exit_code": 1,
- "error": {"kind": "input | ffmpeg | output | missing_tool", "message": "..."},
+ "error": {"kind": "input | ffmpeg | output | missing_tool", "message": "...",
+           "code": "INPUT_INVALID | DEPENDENCY_MISSING | FFMPEG_EXECUTION_FAILED | OUTPUT_INVALID | INTERNAL_ERROR",
+           "retryable": false},
  "commands": ["ffmpeg ..."]}
 ```
 
 `message` carries the script's own reason (missing input, ffprobe failure, the last
 stderr lines of ffmpeg, the verification that failed); `commands` lists what was planned
-or run so the caller can retry or report without re-deriving the command.
+or run so the caller can retry or report without re-deriving the command. `code` is a
+purely additive, statically-mapped relabelling of `kind` (never a new distinction `kind`
+doesn't already make) for a caller that wants a stable enum instead of matching `kind`
+strings. `retryable` is currently always `false`: none of the four kinds are distinguishable
+today from a deterministic failure that would fail identically on a blind retry, so nothing
+here claims otherwise until real exit-code/stderr sniffing exists to back that up.
 
 ## MCP relationship
 

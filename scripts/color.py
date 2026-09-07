@@ -159,14 +159,30 @@ def main() -> int:
             cmd += ["-movflags", "+faststart"]
         cmd.append(output)
         proc = run(cmd, check=False)
+        dropped_streams = False
         if proc.returncode != 0:
-            # some codecs cannot carry retagged colour info without a bitstream filter; fall back to re-encode
-            info("stream copy could not rewrite tags, re-encoding")
-            cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"] + x264_args(args.crf, args.preset, keep_bt709=False)
-            cmd += ["-colorspace", tags[0], "-color_primaries", tags[1], "-color_trc", tags[2]] + (aac_args() if has_audio else []) + [output]
-            run(cmd)
+            # Some codecs cannot carry retagged colour info without a bitstream filter, so the
+            # stream copy above fails and we fall back to re-encoding video+audio. The copy path
+            # (-map 0 -c copy) keeps every stream -- extra audio tracks, subtitles, chapters,
+            # attached pictures -- byte-for-byte; -c:s/-c:d copy here keeps that same guarantee
+            # for subtitle/data streams even though video/audio must be re-encoded. Only if THAT
+            # also fails (e.g. a subtitle codec genuinely incompatible with the target container)
+            # do we drop to video+selected-audio-only, and even then we say so explicitly rather
+            # than silently reporting "completed" with streams missing.
+            info("stream copy could not rewrite tags, re-encoding video/audio (subtitles/data streams kept)")
+            cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?",
+                                    "-map", "0:s?", "-map", "0:d?"] + x264_args(args.crf, args.preset, keep_bt709=False)
+            cmd += ["-colorspace", tags[0], "-color_primaries", tags[1], "-color_trc", tags[2]]
+            cmd += (aac_args() if has_audio else []) + ["-c:s", "copy", "-c:d", "copy"] + [output]
+            proc2 = run(cmd, check=False)
+            if proc2.returncode != 0:
+                info("re-encode with subtitles/data streams kept also failed; dropping them")
+                dropped_streams = True
+                cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"] + x264_args(args.crf, args.preset, keep_bt709=False)
+                cmd += ["-colorspace", tags[0], "-color_primaries", tags[1], "-color_trc", tags[2]] + (aac_args() if has_audio else []) + [output]
+                run(cmd)
         info(f"wrote {output} (tags -> {args.retag})")
-        emit(output)
+        emit(output, reencoded=proc.returncode != 0, dropped_non_av_streams=dropped_streams)
         return 0
 
     measurements = None

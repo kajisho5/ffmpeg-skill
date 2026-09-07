@@ -196,7 +196,28 @@ def _is_ffmpeg(cmd: Sequence[str]) -> bool:
     return os.path.basename(cmd[0]).startswith("ffmpeg")
 
 
+def _cleanup_partial_output(cmd: Sequence[str]) -> None:
+    """A failed ffmpeg command can still have opened its output container (muxer header
+    written) before erroring out mid-stream -- unlike a failure that happens before ffmpeg ever
+    touches the output path (a bad filter argument, a missing input), which never creates the
+    file at all. Both are reported the same way (status: failed), but only the first case used
+    to leave a stray, usually-0-byte file behind: verify_output()'s cleanup only runs on the
+    success path, so a failed run() call never routed through it. Remove whatever ffmpeg managed
+    to write so a caller scanning the output directory after a failure never mistakes a partial
+    artifact for a real (if unverified) one."""
+    output = cmd[-1]
+    if output in ("-", "pipe:0", "pipe:1") or output.startswith("pipe:") or output.startswith("-"):
+        return
+    try:
+        if os.path.exists(output):
+            os.remove(output)
+    except OSError:
+        pass
+
+
 def _fail(cmd: Sequence[str], returncode: int, stderr: str) -> None:
+    # Partial-output cleanup already ran in the caller (_run_captured/_run_with_progress) for
+    # every failed ffmpeg invocation, not just this check=True path -- see _cleanup_partial_output.
     tail = "\n".join(stderr.strip().splitlines()[-15:])
     die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=returncode or 1, kind="ffmpeg")
 
@@ -251,8 +272,17 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
 def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if check and proc.returncode != 0:
-        _fail(cmd, proc.returncode, proc.stderr)
+    if proc.returncode != 0:
+        # Cleanup happens for every failed ffmpeg invocation, not just the check=True/_fail()
+        # path: a handful of scripts (cut.py, loudness.py, silence.py, sync.py) call run() with
+        # check=False so they can compose their own die() message from proc.stderr, but the
+        # partial-output risk is identical either way -- and for a script that retries into the
+        # same output path after a check=False failure (e.g. color.py's --retag copy-then-
+        # reencode fallback), removing the stale partial first is strictly safer than leaving it
+        # for -y to overwrite.
+        _cleanup_partial_output(cmd)
+        if check:
+            _fail(cmd, proc.returncode, proc.stderr)
     return proc
 
 
@@ -287,8 +317,10 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     _, err = proc.communicate()
     if last:
         sys.stderr.write("\r" + " " * len(last) + "\r")
-    if check and proc.returncode != 0:
-        _fail(cmd, proc.returncode, err)
+    if proc.returncode != 0:
+        _cleanup_partial_output(cmd)
+        if check:
+            _fail(cmd, proc.returncode, err)
     return subprocess.CompletedProcess(full, proc.returncode, "", err)
 
 
@@ -344,8 +376,15 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         if role == "output" and not STATE["dry_run"]:
             _output_failed(path, "not written")
         if STATE["dry_run"]:
+            # duration/size_bytes are already 0 here as an obvious "not computed" placeholder,
+            # not a real measurement -- width/height/fps used to be 1920x1080/30.0, which looks
+            # like plausible real data and was echoed verbatim into every writing tool's
+            # dry-run summary line (e.g. "would write out.mp4 (0.000s, 1920x1080)") regardless of
+            # what was actually planned (a --width 100 crop, a --aspect 9:16 fit, ...). Zero
+            # matches the same "not computed" convention duration/size_bytes already use, so the
+            # summary line reads as an obvious placeholder instead of a specific wrong answer.
             return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
-                    "video": {"codec": None, "width": 1920, "height": 1080, "fps": 30.0, "pix_fmt": None, "hdr": False,
+                    "video": {"codec": None, "width": 0, "height": 0, "fps": 0.0, "pix_fmt": None, "hdr": False,
                               "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
                     "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0}
         die(f"input not found: {path}")
