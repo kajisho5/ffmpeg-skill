@@ -354,6 +354,7 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `mai
 | [references/scripts.md](references/scripts.md) | per-flag reference for every tool |
 | [references/devices.md](references/devices.md) | real-device notes (iPhone HDR, GoPro, DJI, screen recordings) |
 | [references/ci-platform-pitfalls.md](references/ci-platform-pitfalls.md) | per-OS ffmpeg/CI behaviour differences already diagnosed once — read before re-diagnosing a Windows/macOS-only test failure |
+| [references/process-pitfalls.md](references/process-pitfalls.md) | process mistakes already made once (breaking a pinned test by narrowing a capability list, retrying a git/GitHub operation this environment can't do, re-designing a fixture instead of recognising a real platform difference) — a living record, add to it whenever one recurs |
 | [docs/contract.md](docs/contract.md) | the execution contract field by field, MCP relationship, how a planner consumes it |
 | [examples/README.md](examples/README.md) | natural-language requests and the commands behind them, `brand.json`, `project.json`, batch recipes |
 | [tests/fixtures/README.md](tests/fixtures/README.md) | captured and constructed FFmpeg listings, which is which |
