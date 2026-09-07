@@ -1,6 +1,6 @@
 # Script reference
 
-Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `-o OUT`.
+Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `-o OUT` -- but `--dry-run` only guarantees nothing is written for writing tools: `sync`/`multicam`/`scenes`/`report` still run ffmpeg/ffprobe to measure or analyse (they just don't write the final artifact), and `verify` accepts the flag but ignores it. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
 
 ## Contents
 - probe.py — inspect

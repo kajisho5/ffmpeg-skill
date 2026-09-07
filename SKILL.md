@@ -5,10 +5,20 @@ description: Edit video and audio with local FFmpeg from natural-language reques
 
 # ffmpeg-skill
 
-Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`. Every script has `--help`, and all of them accept `--dry-run` (print the ffmpeg commands, run nothing), `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress`. Details for every flag: `references/scripts.md`. Device-specific behaviour (iPhone HDR, GoPro, DJI, screen recordings, Zoom): `references/devices.md`.
+Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`. Every script has `--help`, and all of them accept `--dry-run`, `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress`. Writing tools run nothing under `--dry-run`; `probe`/`check`/`sync`/`multicam`/`scenes`/`report` may still run ffmpeg/ffprobe to measure or analyse — they just don't write their final artifact; `verify` accepts the flag but ignores it. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`). Details for every flag: `references/scripts.md`. Device-specific behaviour (iPhone HDR, GoPro, DJI, screen recordings, Zoom): `references/devices.md`.
 
 ## Workflow (always follow this order)
 
+0. **Check the environment once per session, if unfamiliar.** On a machine
+   you haven't confirmed capability on this session, run `doctor --json`
+   once: check `ok` and the target tool's `usable` before relying on it. If
+   `usable` isn't `yes`, don't run that tool — report the missing capability
+   instead of discovering it via a runtime failure (a missing `libass`,
+   `zscale`, or encoder is the common case, e.g. `caption.py`). Don't re-run
+   `doctor` per job — it queries `ffmpeg -filters`/`-encoders`, not free, and
+   once per session/unfamiliar machine is enough. `contract --json`'s full
+   tool schema is for a *planning* agent deciding which tool/params to use
+   from an abstract goal — not part of this per-job workflow.
 1. **Probe first.** Run `probe.py` on every input before touching it. Read the
    duration, fps, resolution, codecs, audio channels and the
    `variable_frame_rate_suspected` flag. Plan the edit from real numbers, never
@@ -18,10 +28,13 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    `cut.py` and `loudness.py` stream-copy video by default; only pass
    `--accurate` to `cut.py` when the user needs frame-exact cuts.
 3. **Plan with `--dry-run --json`, then execute.** Every script accepts
-   `--dry-run` (prints the ffmpeg commands, runs nothing) and `--json`
-   (structured result: output path, probe of the output, commands run). Use
-   them to confirm a plan before long encodes and to report exact facts.
-   `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
+   `--dry-run` (prints the ffmpeg commands that would run) and `--json`
+   (structured result: output path, probe of the output, commands run). For
+   writing tools this means nothing is written; a few tools (`sync`,
+   `multicam`, `scenes`, `report`) still run ffmpeg/ffprobe to measure or
+   analyse under `--dry-run` — see `contract --json`'s `dry_run` field per
+   tool. Use them to confirm a plan before long encodes and to report exact
+   facts. `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
    prints percent and ETA on stderr for long encodes.
 4. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
    join → silence → fit → caption/overlay → sync → audio → loudness → export.
@@ -48,13 +61,28 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    files next to the input or where the user asked.
 8. **Look at the picture.** Whenever the picture changed (captions, overlays,
    graphics, crop/pad, resize, colour, transitions) run `look.py OUTPUT`
-   (contact sheet) or `look.py OUTPUT --at T`, view the PNG, and judge it like
-   an editor: text inside the frame and not over faces, logos where asked,
-   crops keeping the subject, colours not washed out, transitions landing
-   where intended. The job is not finished until the report's `Look:` line
-   names that PNG; a probe alone cannot see a caption sitting on someone's
-   face. Audio-only jobs (sync, loudness, silence, or any job whose input is
-   an audio file) write `Look: not needed`; there is no picture to inspect.
+   (contact sheet) or `look.py OUTPUT --at T`, view the PNG. The job is not
+   finished until the report's `Look:` line names that PNG; a probe alone
+   cannot see a caption sitting on someone's face. Audio-only jobs (sync,
+   loudness, silence, or any job whose input is an audio file) write
+   `Look: not needed`; there is no picture to inspect. What to look for
+   splits the same way `check.py`'s rows do in step 5:
+   - **Mechanical (verify and report as this skill's own job):** the
+     specified text/logo is present at the specified position, subtitles/text
+     appear at the specified timestamps, resolution has even dimensions.
+     Letterboxing/pillarboxing from `fit.py --fit pad` is the *correct*
+     result of that mode, not a defect — never flag it.
+   - **Judgement (report to the calling agent/user, don't silently pass or
+     fail):** whether a subject or face is cut off, whether text sits over a
+     face, whether colours look washed out, whether a transition "lands"
+     well or the edit feels cinematic. These require deciding what the
+     subject *is*, which belongs to the calling agent (see "What this skill
+     does and does not decide") — state what you see in one line and let the
+     calling agent or user judge it, don't decide it here.
+   If the execution environment cannot actually view images (no vision
+   capability), write `Look: PATH (pixels not inspected; agent has no image
+   view)` — never claim a picture was inspected when it wasn't, and don't
+   stall indefinitely waiting for a capability that isn't there.
 
 
 ## Before you run anything: what to ask, what to assume

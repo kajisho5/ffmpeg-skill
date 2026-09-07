@@ -343,6 +343,36 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(t["supports_dry_run"], has_flag, t["name"])
             self.assertEqual(t["dry_run"]["supported"], t["supports_dry_run"])
 
+    def test_skill_and_scripts_docs_name_the_real_dry_run_exceptions(self):
+        """SKILL.md and references/scripts.md used to claim "every script accepts --dry-run
+        (runs nothing)" unconditionally, in three places, which was false for sync/multicam/
+        scenes/report (they still run ffmpeg/ffprobe to measure/analyze under --dry-run --
+        see _contract.py's DRY_RUN_ANALYSIS) and for verify (accepts the flag but ignores it).
+        Pin the doc text naming those exact tools against the real exception set so a future
+        tool gaining/losing an analysis-only dry-run mode is caught here instead of the docs
+        silently drifting out of sync with _contract.py again (issue #82)."""
+        analysis_tools = set(_contract.DRY_RUN_ANALYSIS.keys())
+        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report"},
+                          "the analysis-only dry-run tool set changed -- update SKILL.md/references/scripts.md's exception list to match")
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        scripts_ref = (ROOT / "references" / "scripts.md").read_text(encoding="utf-8")
+        for name in analysis_tools:
+            self.assertIn(name, skill, f"SKILL.md's dry-run exception note is missing {name!r}")
+            self.assertIn(name, scripts_ref, f"references/scripts.md's dry-run exception note is missing {name!r}")
+        self.assertIn("verify", skill)
+        self.assertIn("verify", scripts_ref)
+
+    def test_skill_workflow_mentions_doctor_and_contract(self):
+        """SKILL.md's Workflow section (the first thing an agent reads) used to never mention
+        `doctor`/`contract` at all -- an agent on an unfamiliar machine had no documented step to
+        check capability before running a tool that depends on an optional filter/encoder,
+        discovering it only via a runtime failure (issue #81). Pin their presence in the workflow
+        section specifically, not just anywhere in the file."""
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        workflow = skill.split("## Workflow", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("doctor", workflow)
+        self.assertIn("contract", workflow)
+
     def test_verification_metadata_matches_skill_workflow(self):
         for t in self.contract["tools"]:
             v = t["verification"]
