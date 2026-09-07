@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- **Tests: `overlay.py --image` on an audio-less video is now covered.** Every existing overlay test used a
+  source with audio; investigating a downstream report of `overlay.py` "hanging" on audio-less input (the
+  historical 0.9.x defect this tool's own `-t <duration>` fix, added in 0.10.0, was meant to close) found the
+  fix already works — the run had just been mistaken for a hang under a too-short timeout while it was still
+  transcoding a 1080p60 frame with a fade filter. No code change; `test_overlay_on_audio_less_video_terminates`
+  closes the coverage gap so this defect class can't silently regress.
 - **`join.py`: joining two or more audio-less clips together failed.** Each clip missing an audio
   track gets a synthetic silent input (`-f lavfi -i anullsrc=...`) appended to the ffmpeg command;
   the filtergraph index for that input was computed as `n + len(extra_inputs)`, but

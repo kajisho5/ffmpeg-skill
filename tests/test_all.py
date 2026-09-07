@@ -1306,6 +1306,22 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertIn("-t", data["commands"][0])
         self.assertClose(data["probe"]["duration"], 12.0, 0.15)
 
+    def test_overlay_on_audio_less_video_terminates(self):
+        """Every other overlay test uses self.src, which has audio. Cover the audio-less case too:
+        overlay is documented elsewhere as risky on inputs with no audio stream to help -shortest
+        bound the looped-image (-loop 1) input, so pin down that it completes and the output duration
+        matches the source exactly (the explicit -t, not -shortest, is what actually bounds it)."""
+        noaudio = OUT / "overlay_noaudio_source.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-an", "-c:v", "copy", noaudio)
+        self.assertIsNone(probe(str(noaudio)).get("audio"))
+        out = OUT / "overlay_noaudio.mp4"
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS / "overlay.py"), str(noaudio), "--image", str(self.logo),
+             "--position", "bottom-right", "--start", "1", "--end", "5", "--fade", "0.3", "-o", str(out)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(proc.returncode, 0, f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+        self.assertClose(probe(str(out))["duration"], probe(str(noaudio))["duration"], 0.15)
+
     def test_help_survives_a_legacy_console_encoding(self):
         """--help contains non-ASCII (Japanese example, arrows); a cp1252 console must not raise UnicodeEncodeError."""
         env = dict(os.environ, PYTHONIOENCODING="cp1252")
