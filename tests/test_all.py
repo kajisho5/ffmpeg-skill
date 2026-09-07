@@ -306,9 +306,15 @@ class FFmpegSkillTests(unittest.TestCase):
             return r.stdout[:3]
 
         # a screen point between the square's edge at zoom=1 (0.625 normalised) and zoom=1.3 (0.6625):
-        # white at the start (not yet covered by the square), red by the end (zoomed in enough to cover it)
-        self.assertEqual(px(out, 0.1, 410, 410), b"\xff\xff\xff")
-        self.assertEqual(px(out, 2.9, 410, 410), b"\xff\x17\x00")
+        # white at the start (not yet covered by the square), red by the end (zoomed in enough to cover it).
+        # Tolerant of lossy x264 rounding (e.g. macOS's build lands white at 0xfd, not a pure 0xff).
+        start_r, start_g, start_b = px(out, 0.1, 410, 410)
+        self.assertGreater(start_r, 240, "should still be white/unpainted before the zoom covers it")
+        self.assertGreater(start_g, 240)
+        self.assertGreater(start_b, 240)
+        end_r, end_g, end_b = px(out, 2.9, 410, 410)
+        self.assertGreater(end_r, 200, "should be red by the end (zoomed in enough to cover this point)")
+        self.assertLess(end_b, 60)
 
     def test_insert_pan_without_zoom_is_refused(self):
         script("insert.py", self.logo, "--duration", "2", "--pan", "left", expect_fail=True)
