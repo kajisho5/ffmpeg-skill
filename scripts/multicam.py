@@ -197,7 +197,7 @@ def main() -> int:
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + ["-shortest", output]
     run(cmd)
-    r = probe(output)
+    r = probe(output, role="output")
     info(f"wrote {output} ({r['duration']:.3f}s, {len(filled)} cuts, audio from input {a})")
     emit(output, cuts=[[round(s, 3), round(e, 3), c] for s, e, c in filled], **report)
     return 0

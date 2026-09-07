@@ -7,6 +7,7 @@ verification policy) holds when the tool actually runs.
 """
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -75,6 +76,12 @@ class ContractTests(unittest.TestCase):
         ffmpeg("-f", "lavfi", "-i", "color=c=red@0.8:s=120x40,format=rgba", "-frames:v", "1", cls.logo)
         cls.cues = OUT / "c_cues.txt"
         cls.cues.write_text("0:00-0:02 Hello\n0:02-0:04 World\n", encoding="utf-8")
+        cls.garbage = OUT / "c_garbage.mp4"
+        cls.garbage.write_bytes(bytes((i * 7919) % 256 for i in range(200_000)))
+        cls.empty = OUT / "c_empty.mp4"
+        cls.empty.write_bytes(b"")
+        cls.badlut = OUT / "c_bad.cube"
+        cls.badlut.write_text("this is not a LUT\n", encoding="utf-8")
         cls.work = Path(tempfile.mkdtemp(prefix="ffskill_contract_"))
         cls.input_hashes = {p: cls._sha(p) for p in (cls.src, cls.wav, cls.mic, cls.camb, cls.vfr, cls.hdr, cls.surround)}
 
@@ -127,6 +134,28 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(p["id"], p["tool_id"].replace("/", ".", 1))
             self.assertEqual(p["lifecycle"], "EXPERIMENTAL")
             self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
+
+    def test_capability_map_resolves_to_real_tools_and_params(self):
+        """capability_map is a hand-authored, descriptive lookup (abstract id -> tool + fixed
+        params), not generated like `provides` -- so unlike that test, this doesn't check
+        coverage of every tool. It checks the table can't silently drift: every tool_id must
+        be a real tool, every fixed param a real input_schema property of that tool, and no
+        capability id may collide or duplicate a tool_id 1:1 (this is many:one by design, e.g.
+        video.reframe pins fit.py to fit=crop -- it never executes anything itself)."""
+        cap_map = self.contract["capability_map"]
+        ids = [c["capability"] for c in cap_map]
+        self.assertEqual(len(ids), len(set(ids)), "capability ids are unique")
+        specs_by_id = {t["id"]: t for t in self.contract["tools"]}
+        for entry in cap_map:
+            self.assertEqual(set(entry), {"capability", "tool_id", "params"})
+            self.assertRegex(entry["capability"], r"^[a-z]+(\.[a-z]+)+$")
+            spec = specs_by_id.get(entry["tool_id"])
+            self.assertIsNotNone(spec, f"{entry['capability']} maps to unknown tool_id {entry['tool_id']!r}")
+            props = spec["input_schema"]["properties"]
+            for key, value in entry["params"].items():
+                self.assertIn(key, props, f"{entry['capability']}: {key!r} is not a real param of {entry['tool_id']}")
+                if "enum" in props[key]:
+                    self.assertIn(value, props[key]["enum"])
 
     def test_docstring_examples_use_flags_that_actually_exist(self):
         """A docstring's own runnable examples are the first thing a reader tries and trusts.
@@ -244,7 +273,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.tools["cut"]["verification"]["tools"], ["ffmpeg-skill/probe"])
 
     def test_visual_verification_metadata(self):
-        picture = {"fit", "caption", "overlay", "graphics", "color", "join", "multicam", "render"}
+        picture = {"fit", "crop", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy"}
         # join is the one picture tool that also accepts audio-only inputs (audio concat); look applies
         # to its video output only, which SKILL.md states next to "Look: not needed"
         both = {"join"}
@@ -272,6 +301,29 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((self.tools["caption"]["reencodes_video"], self.tools["caption"]["reencodes_audio"]), ("always", "always"))
         self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
         self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
+
+    def test_doctor_reports_this_installed_copys_own_version(self):
+        """`doctor`'s `version` is this installed copy's own version (never fetched from the
+        network or compared against the latest published release) -- so a stale copy that was
+        never updated is visible locally, matching `contract --json`'s `skill.version`."""
+        d = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json").stdout)
+        pkg = json.loads((ROOT / "package.json").read_text())
+        self.assertEqual(d["version"], pkg["version"])
+        self.assertEqual(d["version"], self.contract["skill"]["version"])
+        human = sh(sys.executable, SCRIPTS / "_contract.py", "doctor").stdout
+        self.assertIn(d["version"], human)
+        self.assertIn("re-run", human, "the human-readable doctor output must say how to refresh a stale install")
+
+    def test_windows_fix_hint_matches_readme_install_guidance(self):
+        """A missing subtitles/drawtext/zscale filter on Windows should point to the same fix
+        README documents for that platform (the gyan.dev full build), not a generic message --
+        mirrors the equivalent macOS `brew install ffmpeg-full` hint."""
+        from unittest import mock
+        with mock.patch("platform.system", return_value="Windows"):
+            hint = _contract._capability_fix_hint("filter:subtitles")
+        self.assertIn("Gyan.FFmpeg", hint)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Gyan.FFmpeg", readme)
 
     def test_original_preservation_and_roles(self):
         for t in self.contract["tools"]:
@@ -447,7 +499,11 @@ class ContractTests(unittest.TestCase):
 
     def test_contract_from_installed_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = dict(os.environ, HOME=tmp)
+            # Node's os.homedir() reads HOME on POSIX but USERPROFILE on Windows (falling back to
+            # HOMEDRIVE+HOMEPATH); HOME alone silently installs into the real runner's home dir on
+            # Windows instead of this redirected tmp one, and the file this test then reaches for
+            # is not there. Set both so install.js is redirected on every OS.
+            env = dict(os.environ, HOME=tmp, USERPROFILE=tmp)
             sh("node", ROOT / "bin" / "install.js", env=env)
             installed = Path(tmp) / ".claude" / "skills" / "ffmpeg-skill"
             doc = json.loads(sh(sys.executable, installed / "scripts" / "_contract.py", "--json", "--static").stdout)
@@ -457,6 +513,7 @@ class ContractTests(unittest.TestCase):
                 self.assertTrue((installed / t["executable"]).is_file())
 
     # ------------------------------------------------------------------ integration: claims hold at run time
+    @unittest.skipIf(platform.system() == "Windows", "fake ffmpeg is a #!/bin/sh script on a POSIX-only PATH shim; not portable to Windows. The claim itself (run() never invokes ffmpeg under --dry-run) is still exercised on Windows by every --dry-run case in tests/test_all.py, just without a shim proving no *other* ffmpeg-shaped binary would have run.")
     def test_dry_run_never_runs_ffmpeg_and_writes_nothing(self):
         """A fake ffmpeg first on PATH records every invocation; ffprobe stays real."""
         shim = self.work / "shim"
@@ -527,6 +584,95 @@ class ContractTests(unittest.TestCase):
         proc = tool("loudness", self.src, "--json", env=env, check=False)
         self.assertEqual(proc.returncode, 127)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "missing_tool")
+
+    # ------------------------------------------------------------------ fail loudly
+    def _fails(self, name, *args, kind=None, code=None):
+        proc = tool(name, *args, "--json", check=False)
+        self.assertNotEqual(proc.returncode, 0, f"{name} {args}: exit 0 on a failure")
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed", name)
+        # kind="ffmpeg" means the real ffmpeg subprocess itself failed, not our own die() -- on at
+        # least one Windows build, an abnormally-terminated ffmpeg (corrupt LUT input, a target
+        # directory that doesn't exist) reports a wraparound-looking exit code to the OS that does
+        # not exactly match what we captured and reported in the JSON. The failure itself (status
+        # "failed", the reported kind, the message, a non-zero exit) is still verified either way;
+        # only the exact numeric equality between doc["exit_code"] and the OS-observed exit code
+        # is not something ffmpeg's own crash behaviour on that platform guarantees bit-for-bit.
+        if kind == "ffmpeg" and platform.system() == "Windows":
+            self.assertNotEqual(doc["exit_code"], 0)
+        else:
+            self.assertEqual(doc["exit_code"], proc.returncode)
+        self.assertIn("commands", doc)
+        self.assertTrue(doc["error"]["message"], name)
+        if kind:
+            self.assertEqual(doc["error"]["kind"], kind, f"{name}: {doc['error']}")
+        if code:
+            self.assertEqual(proc.returncode, code)
+        self.assertIn("error:", proc.stderr)
+        return doc
+
+    def test_input_failures_are_loud(self):
+        missing = self.work / "does_not_exist.mp4"
+        self._fails("cut", missing, "--start", "1", "--end", "2", "-o", self.out("f1.mp4"), kind="input")
+        self._fails("cut", self.garbage, "--start", "1", "--end", "2", "-o", self.out("f2.mp4"), kind="input")
+        self._fails("cut", self.empty, "--start", "1", "--end", "2", "-o", self.out("f3.mp4"), kind="input")
+        self._fails("probe", self.garbage, kind="input")
+        self._fails("loudness", self.garbage, "-o", self.out("f4.wav"), kind="input")
+        self._fails("audio", self.wav, "--replace", missing, "-o", self.out("f5.wav"), kind="input")
+        self._fails("export", self.wav, "--preset", "youtube", "-o", self.out("f6.mp4"), kind="input")  # no video stream
+        self._fails("cut", self.src, "--start", "20", "--end", "30", "-o", self.out("f7.mp4"), kind="input")  # beyond duration
+        self._fails("fit", self.src, "--duration", "3", "--fps", "0", "-o", self.out("f8.mp4"), kind="input")
+        self.assertEqual(sorted(p.name for p in self.work.glob("f[0-9].*")), [], "no partial outputs left behind")
+
+    def test_ffmpeg_failures_are_loud(self):
+        doc = self._fails("color", self.src, "--lut", self.badlut, "--fast", "-o", self.out("g1.mp4"), kind="ffmpeg")
+        self.assertTrue(any("ffmpeg" in c for c in doc["commands"]), "the failing command is reported")
+        self._fails("loudness", self.wav, "-o", self.work / "no_such_dir" / "g2.wav", kind="ffmpeg")
+        self._fails("cut", self.src, "--start", "1", "--end", "3", "-o", self.out("g3.txt"))  # unknown container
+        self.assertFalse(self.out("g1.mp4").exists())
+
+    @unittest.skipIf(platform.system() == "Windows", "the fake ffmpeg is a #!/bin/sh script on a POSIX-only PATH shim; "
+                      "not portable to Windows (see the identical rationale on the shim-based tests above).")
+    def test_output_verification_failures_are_loud(self):
+        """A fake ffmpeg that exits 0 but writes an empty file: every writing tool must still fail."""
+        shim = self.work / "shim0"
+        shim.mkdir(exist_ok=True)
+        (shim / "ffmpeg").write_text("#!/bin/sh\nfor last; do :; done\ncase \"$last\" in -|*null*) exit 0;; esac\n: > \"$last\"\nexit 0\n")
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+        cases = {
+            "cut": [self.src, "--start", "1", "--end", "3", "--accurate", "-o", self.out("v_cut.mp4")],
+            "audio": [self.wav, "-o", self.out("v_au.mp3")],
+            "silence": [self.src, "-o", self.out("v_sil.mp4")],
+            "fit": [self.src, "--duration", "3", "-o", self.out("v_fit.mp4")],
+            "export": [self.src, "--preset", "x", "-o", self.out("v_exp.mp4")],
+            "caption": [self.src, "--text", self.cues, "-o", self.out("v_cap.mp4")],
+            "overlay": [self.src, "--image", self.logo, "-o", self.out("v_ov.mp4")],
+            "color": [self.hdr, "--to-sdr", "-o", self.out("v_col.mp4")],
+            "look": [self.src, "-o", self.out("v_look.png")],
+        }
+        for name, args in cases.items():
+            proc = tool(name, *args, "--json", env=env, check=False)
+            self.assertNotEqual(proc.returncode, 0, f"{name}: exit 0 with an unusable output")
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["status"], "failed", name)
+            self.assertEqual(doc["error"]["kind"], "output", f"{name}: {doc['error']}")
+            self.assertIn("output verification failed", doc["error"]["message"])
+            self.assertNotIn("probe", doc)
+            self.assertFalse(Path(args[-1]).exists(), f"{name}: empty output left behind")
+        # the same path with the real ffmpeg succeeds and carries a probe of the output
+        doc = json.loads(tool("cut", self.wav, "--start", "1", "--end", "3", "-o", self.out("v_ok.wav"), "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertGreater(doc["probe"]["duration"], 1.5)
+
+    def test_success_requires_a_verified_output(self):
+        import _common
+        for name in ("cut", "audio", "loudness", "silence", "fit", "export", "caption", "overlay", "color", "join", "graphics", "multicam"):
+            src = (SCRIPTS / f"{name}.py").read_text(encoding="utf-8")
+            self.assertIn("emit(", src, f"{name} does not go through emit()")
+        self.assertIn("verify_output(output)", (SCRIPTS / "_common.py").read_text(encoding="utf-8"))
+        with self.assertRaises(SystemExit):
+            _common.verify_output(str(self.work / "never_written.mp4"))
 
     def _run_structured(self, name, args):
         """Drive a tool the way an agent adapter would: structured args -> argv (same mapping as MCP)."""
@@ -628,6 +774,7 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(before, after, f"{p.name} modified")
 
 
+@unittest.skipIf(platform.system() == "Windows", "every test here drives a fake ffmpeg via a #!/bin/sh POSIX shell shim on PATH to force specific fixture layouts; not portable to Windows. doctor's own detection logic still runs against the REAL ffmpeg on Windows CI through ContractTests' setUpClass and test_doctor_reports_this_installed_copys_own_version -- what's untested on Windows specifically is the fixture-driven FFmpeg 6/7/8/9 layout-parsing behaviour this class exists to pin. See README, 'Development'.")
 class DoctorDetectionTests(unittest.TestCase):
     """Capability detection reads every `ffmpeg -filters` layout and never confuses "unreadable" with "absent".
 
@@ -697,7 +844,7 @@ class DoctorDetectionTests(unittest.TestCase):
 
     def test_two_character_flags_do_not_hide_filters(self):
         """The FFmpeg 8 layout: every declared filter is found, nothing is reported missing or unknown."""
-        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale"}  # not built into Homebrew's 8.1.2
+        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale", "filter:vidstabdetect", "filter:vidstabtransform"}  # not built into Homebrew's 8.1.2 (no --enable-libvidstab)
         for name in self.FILTER_FIXTURES:
             d, code = self._doctor(name)
             declared = [c for c in _contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"] if c.startswith("filter:")]

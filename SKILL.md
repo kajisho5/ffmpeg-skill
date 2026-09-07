@@ -40,6 +40,10 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
 6. **Verify the output.** Run `probe.py` on each result and confirm duration,
    resolution, fps and audio match what was requested. Report those numbers to
    the user (e.g. "final.mp4: 59.98 s, 1080x1920, 30 fps, AAC stereo").
+   A step is done only when the script exited 0 and the output probes as
+   expected. Writing the command is not doing the job; a non-zero exit, a
+   missing or empty file, or a probe that contradicts the request is a
+   failure, and the report says so with the script's error message.
 7. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
 8. **Look at the picture.** Whenever the picture changed (captions, overlays,
@@ -75,8 +79,12 @@ This skill cuts, joins, measures, syncs, exports and checks files — it execute
 - **What makes a highlight interesting** — `scenes.py --highlights` ranks by a measured proxy (audio energy or scene duration, see its own docs), never by understanding the content; treat its output as candidates, not a verdict.
 - **Thumbnail or cover-image composition** — that's a design decision, not a measurement; a thumbnail-generation skill or the user makes it.
 - **Understanding what a video is *about*** — this skill has no transcription or vision beyond `look.py`'s contact sheets, which exist for the calling agent's own eyes, not for this skill to interpret on its own.
+- **Judging what looks good** — "apply this LUT" or "correct exposure by +0.3 stops" (`color.py`) is mechanical, parameter-determined execution and belongs here; "grade this scene to look cinematic" is a subjective judgement about what looks right and belongs in a colour-grading skill ([`color-grading-skill`](https://github.com/kajisho5/color-grading-skill), see README's "Standalone, and in an ecosystem") that decides the parameters and then calls `color.py` to apply them.
+- **Picking a subject or region without being told one** — "crop to this exact box" or "crop to 9:16 keeping x=200,y=0" (`crop.py`/`fit.py --fit crop --crop-x/-y`) is mechanical once the box is known; "crop to keep the speaker in frame" requires deciding *what* the speaker is, which is a vision/composition judgement for the calling agent (from a `look.py` contact sheet) or a motion-graphics skill, not this one.
 
-If a request needs an FFmpeg feature none of the 21 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
+The line in general: if the same input and the same explicit parameters always produce the same, verifiable output, it belongs here. If the "right" answer depends on taste, content understanding, or what looks or sounds good, it belongs to whichever skill or agent makes that judgement — this skill only ever executes parameters it's given, never infers them from what something looks or sounds like.
+
+If a request needs an FFmpeg feature none of the 28 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
 
 ## Request → script
 
@@ -87,14 +95,26 @@ If a request needs an FFmpeg feature none of the 21 scripts expose, say so and n
 | "keep only these parts", "remove the middle" | `cut.py input.mp4 --segments 0-1:00,1:30-2:00` |
 | "make it exactly 60 seconds", "fit it in 30s" | `fit.py input.mp4 --duration 60` (speed) or `--method trim` |
 | "make it vertical / for TikTok / 9:16", "square for Instagram" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`) |
+| "resize to a specific height, width follows" | `fit.py input.mp4 --height 1080` (or `--width`, or both for an exact frame) |
+| "crop to this exact box/rectangle" (known x/y/width/height, not an aspect ratio) | `crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920` |
+| "turn this image into a N-second clip", "title card / end slate" | `insert.py title.png --duration 3` |
+| "slow zoom on a photo", "Ken Burns effect" | `insert.py photo.jpg --duration 6 --zoom in --pan right --width 1920 --height 1080` |
+| "rotate this 90 degrees", "mirror it horizontally" | `fit.py input.mp4 --rotate 90` / `fit.py input.mp4 --flip h` |
+| "reverse this clip", "play it backwards" | `reverse.py input.mp4` |
+| "stabilize this shaky footage" | `stabilize.py input.mp4` |
+| "make a blank/colour background clip" | `background.py -o bg.mp4 --duration 3 --width 1920 --height 1080 --color 0x101010` |
+| "turn these numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |
 | "put our logo top-right", "add a watermark" | `overlay.py input.mp4 --image logo.png --position top-right --scale 200` |
 | "add a title for the first 4 seconds" | `overlay.py input.mp4 --text "Title" --position top --start 0 --end 4 --fade 0.4` |
+| "put this webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |
+| "remove the green screen", "chroma key this" | `overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00` |
 | "sync the lav mic to the camera", "line up the two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` / `sync.py camA.mp4 camB.mp4 --trim-second` |
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast) |
 | "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
+| "make a small/low-res proxy for an analysis pass", "a cheap preview file" | `proxy.py input.mp4 [--width 640 --no-audio]` — not a delivery preset, see `export.py` for those |
 | "cut out the pauses / dead air", "tighten it up", "jump cuts" | `silence.py input.mp4 [--threshold -40 --min-silence 0.8]` |
 | "stitch these clips together", "add a crossfade between them" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` |
 | "show me what it looks like", "check the captions are readable" | `look.py output.mp4` then view the PNG |
@@ -184,6 +204,16 @@ Notes: source was VFR, conformed to 30 fps; audio was mono, made stereo
 ```
 
 Keep it to those five lines plus anything the user must decide. Attach the contact sheet when the edit touched the picture. Never report success without the probe of the output; never describe a fix you did not run.
+
+When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
+
+```
+Failed: color.py --lut grade.cube exited 1 — ffmpeg: "Unable to parse LUT file" (the .cube is not a valid LUT)
+Steps: probe -> color (failed); nothing written
+Notes: send a valid .cube, or say if you want the clip left as is
+```
+
+Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
 
 ## Things that look right but are wrong
 

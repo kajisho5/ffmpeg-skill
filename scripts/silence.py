@@ -27,7 +27,7 @@ def detect(path: str, threshold: float, min_silence: float) -> List[Tuple[float,
            f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
     proc = run(cmd, quiet=True, check=False)
     if proc.returncode != 0:
-        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}")
+        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
     silences: List[Tuple[float, float]] = []
     start = None
     for kind, val in SIL_RE.findall(proc.stderr):
@@ -113,7 +113,7 @@ def main() -> int:
         cmd += ["-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += ["-af", af] + aac_args() + [output]
     run(cmd)
-    r = probe(output)
+    r = probe(output, role="output")
     info(f"wrote {output} ({r['duration']:.3f}s, expected ~{kept:.3f}s)")
     emit(output, **summary)
     return 0

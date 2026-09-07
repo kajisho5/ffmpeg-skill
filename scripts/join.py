@@ -187,7 +187,7 @@ def main() -> int:
     cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
     expected = sum(durs) - d * (n - 1)
-    r = probe(output)
+    r = probe(output, role="output")
     info(f"wrote {output} ({r['duration']:.3f}s, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
     emit(output, mode="video", clips=n, transition=args.transition, expected_duration=round(expected, 3))
     return 0

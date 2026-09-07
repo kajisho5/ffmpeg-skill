@@ -10,6 +10,119 @@
   fix already works — the run had just been mistaken for a hang under a too-short timeout while it was still
   transcoding a 1080p60 frame with a fade filter. No code change; `test_overlay_on_audio_less_video_terminates`
   closes the coverage gap so this defect class can't silently regress.
+
+## 0.11.0 — 2026-09-07 — Pixel crop, still-to-clip, rotate/flip/PiP/reverse/chromakey/stabilize/sequence/Ken Burns, fail-loudly output verification, capability map
+
+Closes the video-editing-skill ADR-002/ADR-003 gap investigation (11 confirmed gaps): `crop.py`, `insert.py` (incl. Ken Burns), `fit.py --rotate`/`--flip`, `overlay.py --video`/`--chromakey` (video-on-video PiP, chroma key), `reverse.py`, `stabilize.py`, `sequence.py`, `background.py`, `proxy.py`, `contract --json`'s `capability_map`, and a repo-wide "fail loudly" pass making `verify_output()` the single success criterion for every writing tool. 28 tools total (was 21 at 0.10.0); README/package.json's stale "21"/"22" tool-count strings are also corrected to the real count here — see [#50](https://github.com/kajisho5/ffmpeg-skill/issues/50) for making that count self-maintaining going forward.
+
+- **SKILL.md: two more worked examples of the mechanical-vs-judgement line.** "What this skill does and does not decide" already named categories (which cut is right, highlight ranking, thumbnails, content understanding) but not the line itself. Adds "apply this LUT" (mechanical, in scope) vs. "grade this scene to look cinematic" (judgement, belongs to a colour-grading skill) and "crop to this exact box" vs. "crop to keep the speaker in frame" (needs a subject decision this skill doesn't make), plus one sentence stating the general rule: same input + same explicit parameters -> same verifiable output stays here; anything depending on taste or understanding goes to whichever skill or agent makes that call. Docs-only; no behaviour changed. Closes [#53](https://github.com/kajisho5/ffmpeg-skill/issues/53).
+- **`references/ci-platform-pitfalls.md`: known per-OS ffmpeg/CI behaviour differences.** Several fixes in this repo exist only because of platform-specific, empirically observed behaviour (Windows Chocolatey ffmpeg lacking `-pattern_type glob` support, the concat demuxer's end-of-list duration trick over-counting by a frame, `#!/bin/sh` PATH shims not being portable to Windows, Windows reporting a crashed ffmpeg subprocess's exit code differently from what this repo captured, and macOS's libvidstab build disagreeing with Linux's on whether a shake fixture got better or worse) — each was independently diagnosed once, at the cost of a full CI cycle and log-reading. Writing them down means the next platform-only test failure gets checked against this list before spending another cycle re-diagnosing it. Docs-only; no behaviour changed.
+- **`proxy.py`: low-bitrate proxy for downstream AI analysis, preview and editing decisions.** No tool here served a "cheap for a machine to decode" output distinct from `export.py`'s delivery presets, which all target near-visually-lossless platform delivery (CRF 18-24) rather than size/speed. `proxy.py` resizes to `--width` (default 640) or by `--scale` factor, re-encodes at a proxy-grade `--crf` (default 30) with the fastest x264/x265 preset, supports `--fps` and `--no-audio`, and keeps the source's own dynamic range (an HDR source proxies to HEVC10, same as every other re-encoding tool here — run `color.py --to-sdr` first if SDR is wanted). Pure mechanical resize+re-encode, same primitives `fit.py`/`export.py` already use: no new dependency, no GPU requirement, works identically regardless of source resolution (1080p/4K/6K/8K) or codec (H.264/H.265/ProRes, since ffmpeg's own decoders are already codec-agnostic everywhere in this repo). This tool only executes the spec it is given — it does not decide which asset should be proxied or what the proxy will be used for; that stays with the calling agent. `capability_map` gains `media.proxy` -> `proxy` (see below). Tests cover default width/CRF, `--scale`/`--no-audio`, forcing CFR on a VFR source, HDR passthrough, and dry-run.
+- **`contract --json`: `capability_map`.** `provides` re-indexes each tool by an id shaped like its own name (`ffmpeg-skill.cut`); it doesn't let a planner that only knows an abstract goal ("I need to trim a video") find the right tool. `capability_map` is a new, small, hand-authored table: `[{"capability": "<domain>.<verb>", "tool_id": "ffmpeg-skill/<tool>", "params": {...}}, ...]`, covering `video.trim`, `video.reframe` (pins `fit` to `fit=crop`, since `fit.py` also duration-fits and pads), `audio.loudness`, `subtitle.burn`, `media.stream.inspect`, `media.frames.extract` and `media.proxy`. It is purely descriptive — a caller still builds and runs the named tool's own CLI/MCP call from its `input_schema`; this skill never picks a capability or executes on the caller's behalf. Deliberately excludes anything that would require judgment to resolve (no `video.highlight`, since `scenes.py --highlights` ranks by a measured proxy, not understood content). `docs/contract.md` documents the table and why it stays short; `tests/test_contract.py` verifies every entry resolves to a real tool and real params. Additive; no existing field changed.
+- **`doctor`: this installed copy's own `version`.** `doctor --json` and the human-readable `doctor` now report the version of the copy answering, read locally from its own `package.json` (same value `contract --json`'s `skill.version` reports) — never fetched from the network, never compared against the latest published release. A copy installed with `npx ffmpeg-skill` is not updated automatically; the human-readable output and the installer `--help`/README Quick start now say to re-run the installer to refresh it. Additive; every existing `doctor` key is unchanged.
+- **`doctor`: `ok` vs. per-tool `usable` clarified.** The human-readable `doctor` output now adds one line when `ok` is true but at least one tool's `usable` isn't `"yes"` (e.g. a plain Homebrew `ffmpeg` on macOS: overall `ok` since nothing required by *every* tool is missing, while `caption.py` specifically can't run). README Quick start says the same. No field changed, no behaviour changed — a caller reading `doctor` no longer has to already know to check `tools` separately from `ok`.
+- **`doctor`'s Windows fix hint for a missing subtitles/drawtext/zscale filter** now names the same remedy README documents for that platform (`winget install Gyan.FFmpeg`, since the gyan.dev full build carries them and a plain choco package can lack them) instead of falling through to a generic "install/build it" message — matching the existing macOS `brew install ffmpeg-full` hint. No change on any other platform.
+- **`doctor`'s own introspection calls get a 10s timeout.** `ffmpeg -filters`/`-encoders`/`-bsfs`/`-version` are meant to be fast, bounded, non-media operations; a hang here would silently freeze the one tool meant to report whether the machine is broken. They now time out and report `failed` rather than blocking forever. Deliberately NOT applied to any tool's actual media-processing ffmpeg invocation (cut, fit, caption, ...): a legitimate long re-encode must not be killed by an arbitrary ceiling. `-nostdin` was already passed everywhere (0.9.0), so a hang waiting on stdin was not possible; this closes the other silent-hang path. See README, "Requirements", for what remains the caller's own responsibility.
+- **`tests/test_contract.py` now runs on Windows CI.** Only two spots (`test_dry_run_never_runs_ffmpeg_and_writes_nothing` and the whole `DoctorDetectionTests` class) actually depend on a POSIX `#!/bin/sh` PATH shim to force specific FFmpeg fixture layouts; everything else in the file — contract schema, `reencodes_*`, `doctor.tools`, MCP derivation, and every tool exercised through the contract including `cut.py`'s provenance fields — already ran against the real `ffmpeg` on whichever OS the test ran on, but CI skipped the *entire file* on Windows regardless. The two shim-dependent spots are now `skipIf`'d individually (visible as `skipped` in the Windows job's log, not silently absent) and CI runs the rest of the file on all three OSes. Doing this surfaced a real, previously-invisible bug: `test_contract_from_installed_copy` redirects the installer's target directory by overriding `HOME`, which Node's `os.homedir()` ignores on Windows (it reads `USERPROFILE`), so the test silently installed into the runner's real home directory instead of its temp one and then failed to find the file it expected — fixed by setting both. See README, "Development".
+- **Test: `cut.py`'s copy-mode keyframe snap can genuinely change the output's duration, not just its precision label.** A non-keyframe-aligned `--start`/`--end` within `--tolerance` stays in fast stream-copy mode (`mode: "copy"`), but the underlying `-ss` seek still snaps to an earlier keyframe and pulls in extra content — `output_duration` and `requested_duration` can diverge by more than a rounding error while `keyframe_snapped` stays `true`. This was already reported in `cut.py --json` (0.10.0); a new test in `tests/test_all.py` pins a real, measured, non-trivial divergence so a regression that silently reports `duration_delta_seconds: 0.0` in this scenario would be caught. No field or behaviour changed.
+- **Fail loudly: `verify_output()` is now the single success criterion for every writing tool.**
+  Audit of the execution chain (natural language → script → real ffmpeg → exit status → output
+  verification → report) against 17 input/ffmpeg failure scenarios and a fake ffmpeg that exits 0
+  with an empty output. Every scenario already failed with a non-zero exit; the fixes below make
+  the failures precise and leave nothing misleading behind.
+  - `verify_output()` in `_common.py`: exists, non-empty, ffprobe reads a stream. `emit()` runs it
+    before printing any success, with or without `--json`.
+  - Output problems are reported as `kind: "output"` ("output verification failed: <path>: not
+    written | 0 bytes | ffprobe cannot read it"), no longer as an input error; a 0-byte artifact
+    is removed.
+  - Failure JSON carries `exit_code` and `commands` (what was planned or run) next to
+    `error.kind` / `error.message`. ffmpeg failures raised by cut, loudness, silence and sync
+    carry `kind: "ffmpeg"`.
+  - `fit.py --fps 0` was silently treated as "no fps requested"; it is now an error.
+  - SKILL.md: what "done" means (exit 0 and a probe that matches the request), and a `Failed:`
+    report shape.
+  - Tests: input failures (missing, corrupt, empty, wrong stream, beyond duration, bad fps),
+    ffmpeg failures (invalid LUT, unwritable directory, unknown container), output verification
+    with a fake ffmpeg across nine tools, no partial files left behind.
+  - Evals: `evals/agent_prompts_exec.json`, five success and five failure prompts graded for real
+    execution (an ffprobe-readable output exists) and honest failure (no `Done:` and no output
+    when the tool failed).
+- **`fit.py --rotate`/`--flip`.** New rotate 90/180/270 (clockwise; 90/270 swap width and
+  height) and horizontal/vertical flip flags -- distinct from the rotation *metadata* fit.py
+  already reads to size a source correctly, which is never altered by these. Verified against
+  a real red/left, blue/right test fixture: `--flip h` swaps the two halves and `--rotate 90`
+  rotates the left column into the top row, both confirmed pixel-exact, not just by output
+  dimensions.
+- **`overlay.py --video`: video-on-video picture-in-picture.** `overlay.py` could only
+  composite a still image or text onto a video; there was no way to place a second *video* as
+  a layer. `--video CLIP` composites it with the same `--position`/`--scale`/`--opacity`/
+  `--start`/`--end` knobs `--image` already has (`scale2ref`-style scale + `format=yuva420p` +
+  `colorchannelmixer` for opacity + `overlay` with a timeline `enable`). Only the main input's
+  audio is kept; the PiP layer's own audio is dropped -- mixing two audio tracks is a job for
+  `audio.py`. Verified with a real composite: a blue clip lands at the exact expected
+  bottom-right pixel position, the rest of the frame is unaffected.
+- **`overlay.py --chromakey`: green-screen compositing.** With `--video`, `--chromakey COLOR`
+  (plus `--chromakey-similarity`/`--chromakey-blend`) keys that colour transparent before
+  compositing, for green-screen foreground-over-background work. Verified: a green background
+  behind a white square is correctly replaced by the destination clip's colour, the white
+  square is untouched.
+- **`insert.py --zoom`/`--pan`: Ken Burns effect.** A slow linear zoom in/out (`--zoom-amount`
+  sets the end/start factor, default 1.3) and, with `--zoom`, a pan across the image while
+  zoomed, built from typed enums into a generated `zoompan` expression -- never a raw
+  expression from the caller. Verified against a real image with a centred marker at a known
+  position: the exact screen pixel the marker's edge should reach at the final zoom factor
+  changes from background to marker colour between the first and last frame, and a panned
+  clip differs (PSNR ~13) from the same zoom without pan at the same timestamp -- proving the
+  frame actually changes scale/position over the clip, not just that the command ran.
+- **`background.py`: generate a solid-colour or gradient clip.** New tool, no input file:
+  ffmpeg's own `color`/`gradients` source filters generate an exact-size, exact-duration clip
+  directly, for a title-card background or a base layer for `overlay.py` to composite onto.
+  Verified: a solid-colour clip's pixel matches the requested colour; a gradient's left and
+  right edges are measurably different colours in the requested direction.
+- **`reverse.py`: reverse playback.** New tool wrapping ffmpeg's `reverse`/`areverse` filters
+  (video always, audio unless `--no-audio`). These filters buffer the whole clip in memory, so
+  this is for clips it makes sense to reverse (seconds to a couple of minutes) rather than
+  something the tool limits for the caller. Verified against a real two-colour clip (first
+  half red, second half blue): the reversed output starts with the original's last half and
+  ends with its first half, confirmed by sampled pixel colour, not just duration/dimensions.
+- **`stabilize.py`: motion stabilisation.** New tool wrapping ffmpeg's two-pass
+  `vidstabdetect`/`vidstabtransform` (`--shakiness`, `--smoothing`, `--zoom` to hide the black
+  edges stabilizing can introduce). The transforms file passed between the two passes lives in
+  a `tempfile.TemporaryDirectory` for the run only -- this is the first tool in the codebase to
+  need an on-disk intermediate between two ffmpeg passes (existing two-pass tools, like
+  `loudness.py`, pass their intermediate measurement through stdout JSON instead). Requires an
+  ffmpeg built with `--enable-libvidstab`; `doctor` correctly reports `stabilize` as
+  `usable: no` (not a crash) on builds that lack it, such as Homebrew's default macOS build --
+  verified against this repo's own `ffmpeg_filters_8.1.2_macos.txt` fixture, where
+  `vidstabdetect`/`vidstabtransform` are genuinely absent from the real `-filters` listing.
+  Verified the actual stabilizing effect, not just that the command runs: a synthetic shaky
+  clip's measured frame-to-frame motion (via `signalstats` on a `tblend=difference` pass) drops
+  from ~7.4 to ~2.9 after stabilization.
+- **`sequence.py`: numbered/globbed image sequence to video.** New tool: `--pattern` accepts
+  either a printf-style numbered pattern (`frame_%04d.png`) or a glob (`*.png`, sorted
+  alphabetically), with the match checked against the real filesystem before ffmpeg runs (an
+  empty match or a missing first frame is refused here, not discovered from an opaque ffmpeg
+  error). Verified frame order is preserved end to end with a real 5-frame red/blue/red/blue/red
+  sequence, both in numbered and glob mode.
+
+- **`fit.py --height`.** Only `--width` existed ("output width ... height follows the aspect").
+  Added a symmetric `--height` that mirrors `join.py`'s existing width/height resolution: give
+  one and the other follows the aspect (the source aspect, or `--aspect` if also given); give
+  both for an exact frame. `--width` alone still behaves exactly as before.
+- **`crop.py`: crop to an exact pixel rectangle.** `fit.py --fit crop` crops to a target *aspect
+  ratio*, computing the rectangle itself; there was no way to crop to a rectangle the caller
+  already knows (a face-detection box, a saved crop, a hand-picked region). New tool takes
+  `--x --y --width --height` in source pixels, validated before ffmpeg runs: refuses negative
+  offsets, non-positive or odd width/height (4:2:0 chroma, this codebase's even-size convention
+  — refused rather than silently rounded, since a caller-specified rectangle should do exactly
+  what was asked or fail loudly), and a rectangle that doesn't fit inside the source frame
+  (accounting for display rotation).
+- **`insert.py`: still image to a timed silent video clip.** Given one image, a duration, and
+  optional target frame size / fps, produces a silent, constant-frame-rate clip of exactly that
+  duration and size — for title cards, end slates, or placeholders alongside real footage in
+  `join.py`. `--width`/`--height` resolve the same way `fit.py`'s do (one given -> the other
+  follows the image's aspect; both given -> exact frame, scaled to fill and centre-cropped, never
+  distorted). Refuses non-positive `--duration`/`--fps`.
 - **`join.py`: joining two or more audio-less clips together failed.** Each clip missing an audio
   track gets a synthetic silent input (`-f lavfi -i anullsrc=...`) appended to the ffmpeg command;
   the filtergraph index for that input was computed as `n + len(extra_inputs)`, but

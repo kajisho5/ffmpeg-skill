@@ -33,6 +33,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 SKILL_ID = "ffmpeg-skill"
 CONTRACT_VERSION = "1.0"
+# `doctor`'s own introspection calls (-filters/-encoders/-bsfs/-version) are meant to be fast,
+# bounded, non-media operations; a hang here would silently freeze the one tool meant to report
+# whether the machine is broken. Media-processing scripts (cut, fit, ...) are NOT bounded this
+# way -- a legitimate --accurate re-encode of a long file can take a long time, so no timeout is
+# applied there (see README, "Development").
+_DETECT_TIMEOUT = 10
 
 ROLES = {
     "analysis": "reads media and reports measurements; writes no media",
@@ -70,11 +76,29 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "fit": dict(role="execution", inputs=["video asset"], outputs=["video artifact at the requested duration / aspect / fps"],
                 required=FF + [X264, AAC], optional=[HDR_X265, {"capability": "filter:minterpolate", "when": "--smooth interpolate"}],
                 video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "crop": dict(role="execution", inputs=["video asset"], outputs=["video artifact cropped to the given pixel rectangle"],
+                 required=FF + [X264, AAC], optional=[HDR_X265],
+                 video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "insert": dict(role="execution", inputs=["still image"], outputs=["silent video artifact of the requested duration / frame size / fps"],
+                   required=FF + [X264], optional=[{"capability": "filter:zoompan", "when": "--zoom / --pan"}],
+                   video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "background": dict(role="execution", inputs=[], outputs=["generated solid-colour or gradient video artifact"],
+                        required=FF + [X264], optional=[{"capability": "filter:gradients", "when": "--gradient"}],
+                        video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="bit_exact", deterministic=True),
+    "reverse": dict(role="execution", inputs=["video asset"], outputs=["reversed video artifact"],
+                    required=FF + [X264, "filter:reverse"], optional=[HDR_X265, {"capability": "filter:areverse", "when": "the input has audio and --no-audio is not given"}, {"capability": AAC, "when": "the input has audio and --no-audio is not given"}],
+                    video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "stabilize": dict(role="execution", inputs=["video asset"], outputs=["motion-stabilised video artifact"],
+                       required=FF + [X264, "filter:vidstabdetect", "filter:vidstabtransform"], optional=[HDR_X265, {"capability": AAC, "when": "the input has audio"}],
+                       video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "sequence": dict(role="execution", inputs=["a directory of numbered/globbed still images"], outputs=["video artifact built from the frame sequence"],
+                      required=FF + [X264], optional=[],
+                      video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "caption": dict(role="execution", inputs=["video asset", "SRT/ASS file or timed text (--text)"], outputs=["video artifact with burnt-in captions", "generated .srt / .ass sidecar"],
                     required=FF + [X264, AAC, "filter:subtitles"], optional=[{"capability": "filter:ass", "when": "--animate / --karaoke"}, HDR_X265, {"capability": "external:whisper", "when": "--transcribe"}],
                     video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "overlay": dict(role="execution", inputs=["video asset", "image (--image / --logo) or text (--text)"], outputs=["video artifact with the overlay composited"],
-                    required=FF + [X264, AAC], optional=[{"capability": "filter:drawtext", "when": "--text"}, HDR_X265],
+    "overlay": dict(role="execution", inputs=["video asset", "image (--image / --logo), text (--text), or a second video (--video) to composite"], outputs=["video artifact with the overlay composited"],
+                    required=FF + [X264, AAC], optional=[{"capability": "filter:drawtext", "when": "--text"}, {"capability": "filter:chromakey", "when": "--chromakey"}, HDR_X265],
                     video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "graphics": dict(role="execution", inputs=["video asset"], outputs=["video artifact with the drawn template"],
                      required=FF + [X264, AAC, "filter:drawtext"], optional=[HDR_X265],
@@ -103,6 +127,9 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                          {"capability": "filter:lut3d", "when": "--lut"}, {"capability": "bsf:filter_units", "when": "--strip-dovi"}, {"capability": X265, "when": "--lut on an HDR source"}, {"capability": AAC, "when": "re-encode"},
                                          {"capability": "filter:exposure", "when": "--correct"}, {"capability": "filter:eq", "when": "--correct"},
                                          {"capability": "filter:colorbalance", "when": "--correct"}, {"capability": "filter:colortemperature", "when": "--correct"}],
+                  video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "proxy": dict(role="execution", inputs=["video asset"], outputs=["low-resolution, low-bitrate proxy artifact for downstream analysis, preview or editing decisions"],
+                  required=FF + [X264, AAC], optional=[HDR_X265],
                   video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "export": dict(role="execution", inputs=["video asset"], outputs=["delivery artifact in the preset's format"],
                    required=FF, optional=[{"capability": X264, "when": "preset youtube / youtube4k / reels / x"}, {"capability": AAC, "when": "any preset except gif"},
@@ -159,6 +186,12 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "probe":     dict(video="never", audio="never", note="analysis only, no artifact"),
     "cut":       dict(video="conditional", audio="conditional", note="lossless -c copy preferred; re-encodes on --accurate, a VFR source, or a keyframe snap past --tolerance (see cut.py --json: mode, keyframe_snapped)"),
     "fit":       dict(video="always", audio="always", note="always re-encodes to AAC when audio is present, even if only --fps or --aspect was asked for"),
+    "crop":      dict(video="always", audio="always", note="the crop filter always forces a re-encode of both streams"),
+    "insert":    dict(video="always", audio="never", note="always encodes a fresh silent clip from the still image; there is no audio stream to touch"),
+    "background": dict(video="always", audio="never", note="always encodes a fresh generated clip; there is no input to copy from"),
+    "reverse":   dict(video="always", audio="conditional", note="video always re-encodes (reverse buffers and re-emits every frame); audio re-encodes to AAC when present and not dropped by --no-audio"),
+    "stabilize": dict(video="always", audio="conditional", note="video always re-encodes (two-pass vidstab); audio is re-encoded to AAC when present, never touched by the stabilization filters themselves"),
+    "sequence":  dict(video="always", audio="never", note="always encodes a fresh clip from the frame sequence; there is no audio stream"),
     "caption":   dict(video="always", audio="always", note="burn-in only: no soft-subtitle mux path exists, so captions always cost a full re-encode of both streams"),
     "overlay":   dict(video="always", audio="always"),
     "graphics":  dict(video="always", audio="always"),
@@ -169,6 +202,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "silence":   dict(video="always", audio="always", note="removing gaps requires cutting on non-keyframe boundaries"),
     "join":      dict(video="always", audio="always"),
     "color":     dict(video="always", audio="always"),
+    "proxy":     dict(video="always", audio="conditional", note="video is always re-encoded at proxy-grade quality; audio is re-encoded when present, dropped entirely with --no-audio or when the source has none"),
     "export":    dict(video="conditional", audio="conditional", note="--preset copy is -c:v copy -c:a copy (no re-encode); every other preset re-encodes both"),
     "check":     dict(video="never", audio="never", note="read-only, no artifact"),
     "scenes":    dict(video="never", audio="never", note="analysis only; --sheet renders a new contact-sheet PNG, not a re-encode of the source"),
@@ -382,7 +416,9 @@ def _ff_listing(binary: str, flag: str) -> Dict[str, Any]:
     if not exe:
         return {"names": [], "status": "missing", "detail": f"{binary} not on PATH"}
     try:
-        proc = subprocess.run([exe, "-hide_banner", flag], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.run([exe, "-hide_banner", flag], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=_DETECT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"names": [], "status": "failed", "detail": f"{binary} {flag} did not exit within {_DETECT_TIMEOUT}s"}
     except OSError as e:
         return {"names": [], "status": "failed", "detail": f"{binary} {flag}: {e}"}
     if proc.returncode != 0:
@@ -403,7 +439,10 @@ def _version_line(binary: str) -> Optional[str]:
     exe = shutil.which(binary)
     if not exe:
         return None
-    proc = subprocess.run([exe, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        proc = subprocess.run([exe, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=_DETECT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None
     first = (proc.stdout or proc.stderr).splitlines()[:1]
     m = re.match(rf"{binary} version (\S+)", first[0]) if first else None
     return m.group(1) if m else (first[0] if first else "unknown")
@@ -427,6 +466,12 @@ def required_capabilities() -> Dict[str, List[str]]:
 
 def doctor() -> Dict[str, Any]:
     """Detect which declared capabilities this machine has. No secrets, no environment variables.
+
+    `version` is this INSTALLED COPY's own version (read from its local package.json, same value
+    `contract --json`'s `skill.version` reports) -- never fetched from the network or compared
+    against the latest published release. A copy installed with `npx ffmpeg-skill` is not updated
+    automatically; re-run the installer to refresh it, then `doctor` again to confirm the version
+    changed. This exists so a stale installed copy is visible locally, not to check for updates.
 
     Three states per capability: available, missing, unknown. `unknown` means the ffmpeg listing
     that would prove it could not be read (unparsed output, ffmpeg failure); it is never folded into
@@ -472,6 +517,7 @@ def doctor() -> Dict[str, Any]:
     unknown_required = [c for c in unknown if c in wanted["required"]]
     errors = [f"{k}: {v['detail']}" for k, v in listings.items() if v["status"] in ("unparsed", "failed")]
     return {
+        "version": skill_version(),
         "python": ".".join(str(x) for x in sys.version_info[:3]),
         "ffmpeg": _version_line("ffmpeg"),
         "ffprobe": _version_line("ffprobe"),
@@ -492,7 +538,13 @@ def _capability_fix_hint(cap: str) -> str:
         from _common import INSTALL_HINTS
         hint = INSTALL_HINTS.get(platform.system(), "see https://ffmpeg.org/download.html").strip().splitlines()[0].strip()
         return f"install ffmpeg: {hint}"
-    full_hint = "on macOS, brew install ffmpeg-full (the plain formula lacks subtitles/drawtext/zscale)" if platform.system() == "Darwin" else "install/build ffmpeg with it enabled"
+    system = platform.system()
+    if system == "Darwin":
+        full_hint = "on macOS, brew install ffmpeg-full (the plain formula lacks subtitles/drawtext/zscale)"
+    elif system == "Windows":
+        full_hint = "on Windows, winget install Gyan.FFmpeg (the gyan.dev full build carries subtitles/drawtext/zscale; a plain choco ffmpeg package can lack them)"
+    else:
+        full_hint = "install/build ffmpeg with it enabled"
     if cap.startswith("encoder:"):
         return f"this ffmpeg build has no {cap[8:]} encoder; {full_hint}"
     if cap.startswith("filter:"):
@@ -534,6 +586,52 @@ def _tool_usability(state: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
 # that project (`video.trim`, `audio.gain`, ...), with "ffmpeg-skill" as the domain.
 def capability_provides() -> List[Dict[str, str]]:
     return [{"id": f"{SKILL_ID}.{name}", "lifecycle": "EXPERIMENTAL", "tool_id": f"{SKILL_ID}/{name}"} for name in public_tools()]
+
+
+# Abstract, domain-shaped capability ids (`<domain>.<verb>`, matching the convention `provides`
+# already documents for cross-repo Capability ids) that a planning agent can resolve without
+# already knowing this skill's tool names. Unlike `provides` (one entry per tool, id derived
+# from the tool name), this is a hand-authored, many-to-one table: several of these ids name a
+# tool PLUS the fixed parameters that pin it to that specific behaviour (`video.reframe` is
+# `fit.py` with `fit=crop` fixed, not bare `fit.py`, which also speed-ramps and pads). This is
+# still purely descriptive -- a caller still builds and runs the named tool's own CLI/MCP call
+# from its `input_schema`; nothing here executes or chooses on the caller's behalf. Deliberately
+# excludes any capability that would require judgment to resolve (e.g. no `video.highlight`:
+# `scenes.py --highlights` ranks by a measured proxy, never by understood content -- see
+# SKILL.md "What this skill does and does not decide" -- so it is not offered as a capability
+# a planner can blindly delegate to). `media.proxy` (a low-bitrate, fast-decode proxy, distinct
+# from `export.py`'s delivery presets, which target visual quality over size/speed) resolves to
+# `proxy.py` -- itself a purely mechanical resize+re-encode with no opinion on which asset should
+# be proxied or what for.
+CAPABILITY_MAP: List[Dict[str, Any]] = [
+    {"capability": "video.trim", "tool_id": f"{SKILL_ID}/cut", "params": {}},
+    {"capability": "video.reframe", "tool_id": f"{SKILL_ID}/fit", "params": {"fit": "crop"}},
+    {"capability": "audio.loudness", "tool_id": f"{SKILL_ID}/loudness", "params": {}},
+    {"capability": "subtitle.burn", "tool_id": f"{SKILL_ID}/caption", "params": {}},
+    {"capability": "media.stream.inspect", "tool_id": f"{SKILL_ID}/probe", "params": {}},
+    {"capability": "media.frames.extract", "tool_id": f"{SKILL_ID}/look", "params": {}},
+    {"capability": "media.proxy", "tool_id": f"{SKILL_ID}/proxy", "params": {}},
+]
+
+
+def capability_map(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Validate CAPABILITY_MAP against the live tool specs before returning it. A fixed param
+    that isn't a real input_schema property is drift, not a typo to ship silently (same "fail
+    loudly" posture as tool_spec()'s missing-TOOL_META check). A tool_id that no longer exists
+    is not drift in that sense -- a tool can legitimately be removed -- so that capability is
+    dropped from the map rather than crashing the whole contract build."""
+    by_id = {t["id"]: t for t in tools}
+    result = []
+    for entry in CAPABILITY_MAP:
+        spec = by_id.get(entry["tool_id"])
+        if spec is None:
+            continue
+        props = spec["input_schema"]["properties"]
+        for key in entry["params"]:
+            if key not in props:
+                raise RuntimeError(f"capability {entry['capability']!r} sets param {key!r} which is not in {entry['tool_id']}'s input_schema")
+        result.append(dict(entry))
+    return result
 
 
 # ----------------------------------------------------------------------------- contract
@@ -717,12 +815,14 @@ def build(detect: bool = True) -> Dict[str, Any]:
         },
         "json_output": {
             "success": {"status": "completed", "exit_code": 0, "stdout": "one JSON document (output_schema)"},
-            "failure": {"status": "failed", "exit_code": "non-zero (127 when ffmpeg/ffprobe is missing)", "stdout": "{\"status\": \"failed\", \"error\": {\"kind\": ..., \"message\": ...}} when --json was given", "stderr": "human-readable message"},
-            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error", "missing_tool": "ffmpeg or ffprobe not on PATH"},
+            "failure": {"status": "failed", "exit_code": "non-zero (127 when ffmpeg/ffprobe is missing)", "stdout": "{\"status\": \"failed\", \"exit_code\": N, \"error\": {\"kind\": ..., \"message\": ...}, \"commands\": [...]} when --json was given", "stderr": "human-readable message"},
+            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error (message carries the last stderr lines)", "output": "ffmpeg exited 0 but the artifact is missing, empty or unreadable (an empty file is removed)", "missing_tool": "ffmpeg or ffprobe not on PATH"},
+            "success_criterion": "exit 0 AND the output exists AND is non-empty AND ffprobe reads a stream from it; only then is status completed printed and the output probe attached",
         },
         "capabilities": caps,
         "tools": tools,
         "provides": capability_provides(),
+        "capability_map": capability_map(tools),
     }
 
 
@@ -737,12 +837,16 @@ def main() -> int:
         if args.json:
             print(json.dumps(d, indent=2, sort_keys=True))
         else:
+            print(f"ffmpeg-skill {d['version']} (this installed copy; re-run `npx ffmpeg-skill` to refresh it -- copies are not updated automatically)")
             print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}")
             print(f"available: {', '.join(d['available'])}")
             print(f"missing required: {', '.join(d['missing']) or 'none'}")
             print(f"missing optional: {', '.join(d['missing_optional']) or 'none'}")
             if d["unknown"]:
                 print(f"unknown (detection failed, not proven missing): {', '.join(d['unknown'])}")
+            not_usable = sorted(name for name, t in d["tools"].items() if t["usable"] != "yes")
+            if not_usable and d["ok"]:
+                print(f"note: overall 'ok' means nothing REQUIRED BY EVERY TOOL is missing -- {len(not_usable)} tool(s) still can't run today: {', '.join(not_usable)} (see doctor --json .tools for why)")
             for err in d["errors"]:
                 print(f"detection error: {err}", file=sys.stderr)
         if d["ok"]:

@@ -122,7 +122,7 @@ gives you:
 
 ## `provides`
 
-`provides` lists these 21 tools by a cross-repository Capability id, for
+`provides` lists these 28 tools by a cross-repository Capability id, for
 `kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
 (`docs/SPEC.md` there), matching the ids already assigned to this Skill in
 that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's
@@ -136,6 +136,38 @@ Capability ids use elsewhere in that project (`video.trim`, `audio.gain`,
 contract's own slash-shaped `id` (`ffmpeg-skill/cut`) unchanged. It is
 purely additive: derived from `public_tools()`, saying nothing `tools[]`
 doesn't already say, only indexed by Capability id instead of tool name.
+
+## `capability_map`
+
+`provides` re-indexes each tool by an id shaped like the tool name
+(`ffmpeg-skill.cut`); it doesn't tell a caller that "I need to trim a
+video" resolves to `cut`. `capability_map` is the small, hand-authored
+table that closes that gap: `[{"capability": "<domain>.<verb>", "tool_id":
+"ffmpeg-skill/<tool>", "params": {...}}, ...]`. A planner that only knows
+an abstract goal (`video.trim`, `audio.loudness`, `subtitle.burn`,
+`media.stream.inspect`, `media.frames.extract`, `media.proxy`) looks it up here to find
+the tool, then builds and runs that tool's own call from its
+`input_schema` exactly as it would have if it already knew the tool name -
+`capability_map` never executes anything itself, and this skill never
+picks a capability on the caller's behalf.
+
+Some entries also fix one or more `params` where the capability names a
+*specific* behaviour narrower than the whole tool: `video.reframe` maps
+to `fit` with `params: {"fit": "crop"}`, because `fit.py` also does
+duration-fit and letterbox padding, and only the crop mode is a
+"reframe". A caller resolving `video.reframe` should treat those params
+as fixed inputs to that tool's own schema, not as optional defaults.
+
+This list is deliberately short and will stay short: a capability is only
+added when resolving it is a mechanical, no-judgment lookup. There is no
+`video.highlight` entry, for instance, because `scenes.py --highlights`
+ranks candidates by a measured proxy (audio energy or duration), never by
+understood content - offering it as a blindly-delegable capability would
+misrepresent what it does (see SKILL.md, "What this skill does and does
+not decide"). `media.proxy` (a low-bitrate, fast-decode proxy for
+downstream analysis/preview, distinct from `export.py`'s delivery
+presets) resolves to `proxy` - itself a mechanical resize + re-encode
+with no opinion on which asset should be proxied or what for.
 
 ## Capabilities
 
@@ -192,12 +224,23 @@ Success (`exit 0`): one document matching `output_schema`, always with
 `status: "completed"`, `output`, `dry_run`, `commands`, and `probe` of the output when a
 file was written. `probe` prints its measurement document directly.
 
+Success is decided by `verify_output` in `_common.py`, not by the ffmpeg exit code alone:
+the file must exist, be non-empty and give ffprobe at least one stream. A tool that ran
+ffmpeg successfully but has no usable artifact fails with `kind: output` (a 0-byte file is
+removed so a later step cannot mistake it for a result).
+
 Failure (non-zero exit; 127 when ffmpeg/ffprobe is missing): the message on stderr as
 before, and, when `--json` was given, on stdout:
 
 ```json
-{"status": "failed", "error": {"kind": "input | ffmpeg | missing_tool", "message": "..."}}
+{"status": "failed", "exit_code": 1,
+ "error": {"kind": "input | ffmpeg | output | missing_tool", "message": "..."},
+ "commands": ["ffmpeg ..."]}
 ```
+
+`message` carries the script's own reason (missing input, ffprobe failure, the last
+stderr lines of ffmpeg, the verification that failed); `commands` lists what was planned
+or run so the caller can retry or report without re-deriving the command.
 
 ## MCP relationship
 

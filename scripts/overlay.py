@@ -5,11 +5,20 @@ opacity and fade in/out.
 Positions: top-left, top, top-right, left, center, right, bottom-left, bottom,
 bottom-right, or explicit "X,Y" pixels (negative counts from the far edge).
 
+--video composites a second VIDEO as a picture-in-picture layer (position,
+scale, opacity, time-range -- same knobs as --image), instead of a still
+image or text. Only the main input's audio is kept; the PiP layer's own
+audio track, if any, is dropped -- mixing two audio tracks is a job for
+audio.py, not this tool. --chromakey COLOR (with --video) turns that colour
+transparent first (green-screen removal) before compositing.
+
 Examples:
   python3 overlay.py input.mp4 --image logo.png --position top-right --scale 200 --opacity 0.8
   python3 overlay.py input.mp4 --image lower_third.png --position bottom-left --start 2 --end 8 --fade 0.5
   python3 overlay.py input.mp4 --text "Episode 12" --position bottom --font-size 48 --start 1 --end 5 --fade 0.3
   python3 overlay.py input.mp4 --text "こんにちは" --font-file /path/NotoSansCJK-Bold.ttc --box
+  python3 overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480 --opacity 0.9
+  python3 overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00 --chromakey-similarity 0.15
 """
 import argparse
 import sys
@@ -80,6 +89,11 @@ def main() -> int:
     src.add_argument("--image", help="PNG/JPG (alpha respected) to composite")
     src.add_argument("--text", help="text to draw (drawtext)")
     src.add_argument("--logo", action="store_true", help="composite the brand logo from --brand (position/scale/opacity from brand.json)")
+    src.add_argument("--video", help="a second video to composite as a picture-in-picture layer")
+    ck = ap.add_argument_group("chroma key (with --video)")
+    ck.add_argument("--chromakey", help="colour to key out (green-screen removal), e.g. 0x00ff00 or green")
+    ck.add_argument("--chromakey-similarity", type=float, default=0.15, help="how close a pixel must be to --chromakey to become transparent, 0..1 (default 0.15)")
+    ck.add_argument("--chromakey-blend", type=float, default=0.05, help="soften the key edge, 0..1 (default 0.05)")
     ap.add_argument("--brand", help="brand.json (logo, font, colours, safe margin)")
     ap.add_argument("--position", default="top-right", help="named position or X,Y (default top-right)")
     ap.add_argument("--margin", type=int, default=24, help="margin from the edges in px (default 24)")
@@ -117,8 +131,8 @@ def main() -> int:
             args.scale = int(brand.get("logo_scale", 160))
         if args.opacity == 1.0:
             args.opacity = float(brand.get("logo_opacity", 1.0))
-    if not (args.image or args.text):
-        die("give --image, --text or --logo")
+    if not (args.image or args.text or args.video):
+        die("give --image, --text, --logo or --video")
     if args.brand:
         if args.margin == ap.get_default("margin"):
             args.margin = int(brand.get("safe_margin", args.margin))
@@ -136,6 +150,12 @@ def main() -> int:
         die("--end must be after --start")
     if not 0 <= args.opacity <= 1:
         die("--opacity must be within 0..1")
+    if args.chromakey and not args.video:
+        die("--chromakey needs --video")
+    if not 0 < args.chromakey_similarity <= 1:
+        die("--chromakey-similarity must be within (0, 1]")
+    if not 0 <= args.chromakey_blend <= 1:
+        die("--chromakey-blend must be within 0..1")
 
     output = args.output or default_output(args.input, "overlay")
     enable = enable_expr(start, end)
@@ -170,6 +190,29 @@ def main() -> int:
         # The output must be as long as the main input, so say so explicitly.
         if meta.get("duration"):
             cmd += ["-t", f"{meta['duration']:.3f}"]
+    elif args.video:
+        pip_meta = probe(args.video)
+        if not pip_meta.get("video"):
+            die(f"--video {args.video} has no video stream")
+        chain = []
+        if args.scale_percent:
+            chain.append(f"scale={int(vw * args.scale_percent / 100)}:-2")
+        elif args.scale:
+            chain.append(f"scale={args.scale}:-2")
+        chain.append("format=yuva420p")
+        if args.chromakey:
+            chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
+        if args.opacity < 1:
+            chain.append(f"colorchannelmixer=aa={args.opacity:g}")
+        x, y = position_exprs(args.position, args.margin, text_mode=False)
+        ov = f"overlay={x}:{y}:format=auto"
+        if enable:
+            ov += f":enable='{enable}'"
+        cmd = ffmpeg_base() + ["-i", args.input, "-i", args.video]
+        fc = f"[1:v]{','.join(chain)}[ov];[0:v][ov]{ov}[out]"
+        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", "0:a:0?", "-shortest"]
+        if meta.get("duration"):
+            cmd += ["-t", f"{meta['duration']:.3f}"]
     else:
         x, y = position_exprs(args.position, args.margin, text_mode=True)
         opts = [f"text='{escape_drawtext(args.text)}'", f"fontsize={args.font_size}", f"x={x}", f"y={y}",
@@ -194,7 +237,7 @@ def main() -> int:
     cmd.append(output)
     run(cmd)
     if not STATE.dry_run:
-        result = probe(output)
+        result = probe(output, role="output")
         info(f"wrote {output} ({result['duration']:.3f}s)")
     emit(output)
     return 0

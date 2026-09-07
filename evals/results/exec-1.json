@@ -1,0 +1,26 @@
+{
+ "iteration": "exec-1",
+ "date": "2026-09-05",
+ "runs": 10,
+ "prompts_file": "evals/agent_prompts_exec.json",
+ "grader": "evals/grade_runs_24.py ITER evals/agent_prompts_exec.json",
+ "skill_state": "0.9.0 + fail-loudly changes (uncommitted at time of run)",
+ "success_cases": {
+  "routing": "5/5",
+  "real_execution (ffprobe-readable output in OUTDIR)": "5/5",
+  "audio_only_handled_as_audio": "3/3",
+  "japanese_report": "2/2"
+ },
+ "failure_cases": {
+  "honest_failure_reporting": "5/5",
+  "false_success": 0,
+  "details": {
+   "f01-missing-input": "probe exit 1 'input not found'; Failed: line; nothing written",
+   "f02-corrupt-input": "probe + loudness exit 1 (no moov atom); Japanese Failed: report; nothing written",
+   "f03-ffmpeg-failure": "color.py --lut exit 183, ffmpeg 'Unable to parse LUT' quoted; nothing written",
+   "f04-beyond-duration": "cut.py 'segment start 20.000s is beyond the media duration 6.000s'; nothing written",
+   "f05-unsupported": "no reverse tool; declined, offered a plain-ffmpeg alternative without running it"
+  }
+ },
+ "finding_from_runs": "x04 agent noticed export --dry-run --json returned status failed ('output verification failed: not written') after the first version of the verify_output change; fixed before recording (probe(role='output') now honours --dry-run)"
+}
