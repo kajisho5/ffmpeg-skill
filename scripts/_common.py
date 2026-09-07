@@ -376,15 +376,16 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         if role == "output" and not STATE["dry_run"]:
             _output_failed(path, "not written")
         if STATE["dry_run"]:
-            # duration/size_bytes are already 0 here as an obvious "not computed" placeholder,
-            # not a real measurement -- width/height/fps used to be 1920x1080/30.0, which looks
-            # like plausible real data and was echoed verbatim into every writing tool's
-            # dry-run summary line (e.g. "would write out.mp4 (0.000s, 1920x1080)") regardless of
-            # what was actually planned (a --width 100 crop, a --aspect 9:16 fit, ...). Zero
-            # matches the same "not computed" convention duration/size_bytes already use, so the
-            # summary line reads as an obvious placeholder instead of a specific wrong answer.
+            # width/height/fps are plausible-looking placeholders (not a real measurement), echoed
+            # verbatim into some tools' dry-run summary line regardless of what was actually
+            # planned -- cosmetic, tracked as #77. They CANNOT be changed to 0 (tried this,
+            # reverted): several tools chain dry-run probes across multi-stage pipelines
+            # (join.py's width/height-from-aspect math, for one) and divide by these values, so a
+            # zero placeholder trades a misleading text label for a real ZeroDivisionError crash --
+            # strictly worse. A correct fix needs each such call site to handle "unknown" rather
+            # than assuming a divisor, which is broader than this stub can safely do alone.
             return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
-                    "video": {"codec": None, "width": 0, "height": 0, "fps": 0.0, "pix_fmt": None, "hdr": False,
+                    "video": {"codec": None, "width": 1920, "height": 1080, "fps": 30.0, "pix_fmt": None, "hdr": False,
                               "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
                     "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0}
         die(f"input not found: {path}")

@@ -318,17 +318,20 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.contract["json_output"]["success"]["status"], "completed")
         self.assertEqual(self.contract["json_output"]["failure"]["status"], "failed")
 
-    def test_dry_run_summary_does_not_fabricate_plausible_dimensions(self):
-        """The dry-run stub probe() returns for a not-yet-written output used to hardcode
-        1920x1080/30fps -- a specific, plausible-looking number echoed into every writing tool's
-        "would write ..." summary line regardless of what was actually planned (e.g. a --width 100
-        crop). duration/size_bytes already use 0 as an obvious "not computed" placeholder in that
-        same stub; width/height/fps now match that convention instead of looking like real data."""
-        proc = tool("crop", self.src, "--x", "0", "--y", "0", "--width", "100", "--height", "100",
-                     "--dry-run", "-o", self.out("dr.mp4"))
-        self.assertIn("would write", proc.stderr)
-        self.assertNotIn("1920x1080", proc.stderr, "a fabricated plausible dimension leaked into the dry-run summary")
-        self.assertIn("0x0", proc.stderr, "dry-run dimensions should read as an obvious placeholder, not a guess")
+    def test_dry_run_multistage_pipeline_survives_the_probe_stub(self):
+        """The dry-run stub probe() returns for a not-yet-written output hardcodes a plausible
+        1920x1080/30fps rather than 0x0 -- tried zeroing it (issue #77) to stop it looking like
+        real data in dry-run summary lines, but render.py/join.py chain dry-run probes across
+        pipeline stages and divide by width/height (aspect-ratio math), so a zero placeholder
+        traded a cosmetic issue for a real ZeroDivisionError crash. This pins the crash-free
+        behavior: a join with only --width set (forcing the height-from-aspect division) must
+        not blow up under --dry-run even when its input is itself a dry-run-planned clip that
+        was never actually written."""
+        doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "-o", self.out("dr_a.mp4"), "--dry-run", "--json").stdout)
+        self.assertTrue(doc["dry_run"])
+        proc = tool("join", self.out("dr_a.mp4"), self.out("dr_a.mp4"), "--width", "480",
+                     "-o", self.out("dr_joined.mp4"), "--dry-run", check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_dry_run_metadata(self):
         for t in self.contract["tools"]:
