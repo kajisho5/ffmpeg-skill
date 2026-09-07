@@ -24,7 +24,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import STATE, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import STATE, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -245,12 +245,11 @@ def main() -> int:
 
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
-    cmd.append(output)
-    run(cmd)
+    proc, dropped_streams = run_keeping_subtitles(cmd, output)
     if not STATE.dry_run:
         result = probe(output, role="output")
         info(f"wrote {output} ({result['duration']:.3f}s)")
-    emit(output)
+    emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 
 

@@ -269,6 +269,20 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     return _run_captured(list(cmd), check)
 
 
+def run_keeping_subtitles(cmd: List[str], output: str) -> "tuple[subprocess.CompletedProcess, bool]":
+    """Run an ffmpeg command that already maps its video/audio, trying first to also
+    stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
+    there are none). A source whose subtitle codec cannot be copied into the target container
+    (e.g. a container change) makes that first attempt fail; retry the same command without the
+    extra maps rather than let a tool that never touched subtitles start hard-failing because of
+    them. `cmd` is the full argv *without* the output path. Returns (proc, dropped) -- dropped is
+    True only when the retry-without-subtitles path was actually needed."""
+    proc = run(cmd + ["-map", "0:s?", "-map", "0:d?", "-c:s", "copy", "-c:d", "copy", output], check=False)
+    if proc.returncode == 0:
+        return proc, False
+    return run(cmd + [output]), True
+
+
 def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

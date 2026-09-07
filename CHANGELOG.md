@@ -6,6 +6,38 @@
 
 (nothing yet)
 
+## 0.12.1 — Stream-preservation audit: subtitle/data streams no longer silently dropped by picture-only edits
+
+Prompted by an external review pushing back that "feature-complete" for this project now means
+proving reliability, not adding tools. Audited all 28 tools against a real fixture carrying
+video + audio + subtitle + chapters, by actually running each tool and `ffprobe`-ing its output
+rather than reading the code and guessing.
+
+- **`fit.py`, `color.py` (`--correct`/`--lut`/`--to-sdr`), `graphics.py`, `overlay.py`: kept the
+  source's subtitle/data streams instead of silently dropping them.** Each of these builds an
+  explicit `-map` list naming only the video and audio streams it re-encodes; a source with an
+  embedded subtitle track (or a data stream) lost it with no signal to the caller, even though
+  the operation never touched it. `chapters` already survived regardless (`-map_chapters`
+  defaults independently of `-map`) — this was specifically about subtitle/data. Each of the four
+  now tries `-map 0:s? -map 0:d? -c:s copy -c:d copy` alongside its existing maps first (a no-op
+  via `?` when the source has none), falling back to the original video+audio-only command only
+  if that combined attempt fails (e.g. a subtitle codec that can't be stream-copied into a
+  changed output container) — the same fallback shape `color.py --retag` already used for this
+  in 0.12.0. `--json` gains `dropped_non_av_streams` (`true` only when that fallback was actually
+  needed), matching the field name `--retag` already introduced.
+- **Deliberately left as-is, tracked in [#91](https://github.com/kajisho5/ffmpeg-skill/issues/91):**
+  `caption.py`'s burn mode (whether a pre-existing embedded subtitle should coexist with a newly
+  *burned-in* one is a real design question, not a clear-cut preservation fix); `audio.py` when
+  its output is a video container; `join.py`/`multicam.py`/`sync.py`, which combine multiple
+  separate input files or replace the audio track outright — "which input's subtitle survives"
+  has no single correct answer the way a single-input picture/colour edit does, matching the
+  existing "different problem shape" carve-out already used for the 0.12.0 `--audio-stream`
+  extension. Attachments (`-map 0:t?`, e.g. embedded ASS fonts) are also not covered yet — no
+  tool here currently reads/writes ASS-with-fonts end to end, so the risk is theoretical for now.
+- Test: `test_picture_only_edits_keep_the_sources_subtitle_streams` runs all four fixed tools
+  against `c_subbed.mkv` (two real embedded SRT tracks, already used by other tests) and asserts
+  the subtitle survives and `dropped_non_av_streams` is `false`.
+
 ## 0.12.0 — 2026-09-07 — Hardening pass: stream/input safety, contract-vs-implementation drift, SKILL.md/eval consistency
 
 A hardening-focused release: no new tools, no new features. Everything here closes a gap between

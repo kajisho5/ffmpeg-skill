@@ -359,6 +359,27 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(meta["video"]["height"], 0)
         self.assertEqual(meta["video"]["fps"], 0.0)
 
+    def test_picture_only_edits_keep_the_sources_subtitle_streams(self):
+        """fit.py/color.py/graphics.py/overlay.py used to build an explicit, selective -map
+        list naming only video+audio, silently dropping any subtitle track the source had --
+        found auditing all 28 tools for stream preservation (#91). Each now tries
+        run_keeping_subtitles() first (stream-copies subtitle/data alongside the re-encoded
+        picture) before falling back to the original video+audio-only command. c_subbed.mkv
+        (built in setUpClass) has two real SRT subtitle tracks; every tool below must keep at
+        least one, and --json must report dropped_non_av_streams: false since nothing here
+        should need the fallback."""
+        cases = [
+            ("fit", [self.subbed, "--width", "480", "-o", self.out("keepsub_fit.mkv"), "--json"]),
+            ("color", [self.subbed, "--correct", "--exposure", "0.3", "-o", self.out("keepsub_color.mkv"), "--json"]),
+            ("graphics", [self.subbed, "--template", "lower-third", "--name", "X", "-o", self.out("keepsub_graphics.mkv"), "--json"]),
+            ("overlay", [self.subbed, "--text", "hi", "-o", self.out("keepsub_overlay.mkv"), "--json"]),
+        ]
+        for name, args in cases:
+            doc = json.loads(tool(name, *args).stdout)
+            self.assertFalse(doc["dropped_non_av_streams"], name)
+            kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout
+            self.assertIn("subtitle", kinds, f"{name} dropped the source's subtitle track")
+
     def test_changelog_mentions_every_closed_issue_since_last_tag(self):
         """A merged fix can land after CHANGELOG.md's current-version section was already
         written (this happened for real: #77's fix, PR #88, merged after the 0.12.0 section was
