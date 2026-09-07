@@ -362,12 +362,13 @@ class ContractTests(unittest.TestCase):
     def test_picture_only_edits_keep_the_sources_subtitle_streams(self):
         """fit.py/color.py/graphics.py/overlay.py used to build an explicit, selective -map
         list naming only video+audio, silently dropping any subtitle track the source had --
-        found auditing all 28 tools for stream preservation (#91). Each now tries
-        run_keeping_subtitles() first (stream-copies subtitle/data alongside the re-encoded
-        picture) before falling back to the original video+audio-only command. c_subbed.mkv
-        (built in setUpClass) has two real SRT subtitle tracks; every tool below must keep at
-        least one, and --json must report dropped_non_av_streams: false since nothing here
-        should need the fallback."""
+        found by an ad hoc audit of all 28 tools for stream preservation (#91), not itself
+        checked in. Each now tries run_keeping_subtitles() first (stream-copies subtitle/data
+        alongside the re-encoded picture) before falling back to the original video+audio-only
+        command. c_subbed.mkv (built in setUpClass) has two real SRT subtitle tracks; every tool
+        below must keep BOTH (a partial loss -- e.g. only one surviving -- is still a real
+        regression this asserts against), and --json must report dropped_non_av_streams: false
+        since nothing here should need the fallback."""
         cases = [
             ("fit", [self.subbed, "--width", "480", "-o", self.out("keepsub_fit.mkv"), "--json"]),
             ("color", [self.subbed, "--correct", "--exposure", "0.3", "-o", self.out("keepsub_color.mkv"), "--json"]),
@@ -377,8 +378,33 @@ class ContractTests(unittest.TestCase):
         for name, args in cases:
             doc = json.loads(tool(name, *args).stdout)
             self.assertFalse(doc["dropped_non_av_streams"], name)
-            kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout
-            self.assertIn("subtitle", kinds, f"{name} dropped the source's subtitle track")
+            kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout.split()
+            self.assertEqual(kinds.count("subtitle"), 2, f"{name}: expected both source subtitle tracks, got {kinds}")
+
+    def test_overlay_image_keeping_a_short_subtitle_does_not_truncate_the_output(self):
+        """Real regression caught in review of #91's fix, before it shipped: overlay.py's
+        --image branch used -shortest (needed to stop the looped still running forever) alongside
+        -t <duration> (an FFmpeg-7+-precision belt-and-suspenders). Once run_keeping_subtitles()
+        also mapped the source's subtitle track, -shortest's "-stop at whichever mapped stream
+        ends first" semantics meant a subtitle that ends early (c_subbed.mkv's covers only 0-2s
+        of its 6s video) silently truncated the WHOLE output to ~2s -- reproduced directly before
+        the fix (6s in, ~1s out). Fixed by only falling back to -shortest when no duration is
+        known at all; -t alone (exact, bounds only the main input) is used whenever it is."""
+        doc = json.loads(tool("overlay", self.subbed, "--image", self.logo, "-o", self.out("keepsub_overlay_img.mkv"), "--json").stdout)
+        result = doc["probe"]
+        self.assertGreater(result["duration"], 5.0, f"output was truncated to the subtitle's length: {result['duration']}s")
+
+    def test_fit_speed_change_drops_subtitles_instead_of_desyncing_them(self):
+        """A stream-copied subtitle keeps the source's original timestamps; --method speed
+        retimes video (setpts) and audio (atempo) but has no way to retime a copied subtitle
+        track along with them, so keeping it would silently desync captions from the now-faster
+        or -slower picture (caught in review of #91's fix, before it shipped). fit.py must not
+        call run_keeping_subtitles() when it's changing speed -- dropping the subtitle track is
+        the honest outcome, reported via dropped_non_av_streams: true, not a silently-wrong one."""
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "-o", self.out("speed_fit.mkv"), "--json").stdout)
+        self.assertTrue(doc["dropped_non_av_streams"])
+        kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout
+        self.assertNotIn("subtitle", kinds)
 
     def test_changelog_mentions_every_closed_issue_since_last_tag(self):
         """A merged fix can land after CHANGELOG.md's current-version section was already

@@ -11,7 +11,9 @@
 Prompted by an external review pushing back that "feature-complete" for this project now means
 proving reliability, not adding tools. Audited all 28 tools against a real fixture carrying
 video + audio + subtitle + chapters, by actually running each tool and `ffprobe`-ing its output
-rather than reading the code and guessing.
+rather than reading the code and guessing (an ad hoc pass, not itself checked in as a test). The
+checked-in regression test below covers the four tools this pass actually changed, against a
+narrower existing fixture (video + audio + two subtitle tracks, no chapters).
 
 - **`fit.py`, `color.py` (`--correct`/`--lut`/`--to-sdr`), `graphics.py`, `overlay.py`: kept the
   source's subtitle/data streams instead of silently dropping them.** Each of these builds an

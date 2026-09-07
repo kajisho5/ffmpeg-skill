@@ -213,7 +213,7 @@ def main() -> int:
 
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     cmd += x264_args(args.crf, args.preset) + cfr_args(meta) + (aac_args() if has_audio else [])
-    proc, dropped_streams = run_keeping_subtitles(cmd, output)
+    dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
     info(f"wrote {output} ({r['duration']:.3f}s, {r['video']['width']}x{r['video']['height']}, "
          f"{r['video']['color_transfer']}/{r['video']['color_primaries']}, {tag})")

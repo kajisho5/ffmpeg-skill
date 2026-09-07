@@ -163,7 +163,7 @@ def main() -> int:
         cmd += ["-vf", ",".join(filters), "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
-    proc, dropped_streams = run_keeping_subtitles(cmd, output)
+    dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
     info(f"wrote {output} ({r['duration']:.3f}s, {args.template})")
     emit(output, template=args.template, dropped_non_av_streams=dropped_streams)

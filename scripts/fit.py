@@ -226,7 +226,16 @@ def main() -> int:
     else:
         cmd += ["-an"]
     cmd += post
-    proc, dropped_streams = run_keeping_subtitles(cmd, output)
+    if abs(factor - 1.0) > 1e-4:
+        # A subtitle/data stream stream-copied by run_keeping_subtitles keeps the source's
+        # original timestamps; --method speed retimes video (setpts) and audio (atempo) but has
+        # no equivalent way to retime a copied subtitle track, so it would desync from the
+        # now-faster/slower picture. Drop them here rather than ship a captions track that lies
+        # about when a line is spoken.
+        run(cmd + [output])
+        dropped_streams = bool(meta.get("subtitle_streams"))
+    else:
+        dropped_streams = run_keeping_subtitles(cmd, output)
 
     result = probe(output, role="output")
     msg = f"wrote {output} ({result['duration']:.3f}s, {result['video']['width']}x{result['video']['height']})"
