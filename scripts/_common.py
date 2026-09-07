@@ -41,12 +41,52 @@ INSTALL_HINTS = {
 }
 
 
+# `kind` (below) has been the only machine-readable failure axis since 0.1: a flat, 4-value
+# vocabulary (input / missing_tool / ffmpeg / output) set at the ~7 call sites that ever pass one
+# explicitly, defaulting to "input" everywhere else. `ERROR_CODE` is an additive, purely
+# informational refinement layered on top for agents that want a stable enum to switch on instead
+# of pattern-matching `kind` strings -- it is a static 1:1 relabelling of the exact same 4 buckets,
+# not a new taxonomy. It intentionally does NOT introduce categories this codebase cannot actually
+# distinguish today (e.g. a separate ffprobe-vs-ffmpeg code, or an environment-vs-content-cause
+# split of ffmpeg failures): every ffmpeg subprocess failure is currently one undifferentiated
+# bucket regardless of whether ffmpeg rejected a bad filter argument or died from a full disk,
+# and every "kind": "input" failure covers both a missing file and a bad flag value alike. Adding
+# codes for distinctions the code can't actually make would be guessing, not reporting -- if a
+# future call site can genuinely tell capability-missing apart from bad-argument (see doctor()'s
+# available/missing/unknown states, which already model this for detection but aren't wired into
+# any die() call), split ERROR_CODE then, with evidence, not speculatively now.
+ERROR_CODE = {
+    "input": "INPUT_INVALID",
+    "missing_tool": "DEPENDENCY_MISSING",
+    "ffmpeg": "FFMPEG_EXECUTION_FAILED",
+    "output": "OUTPUT_INVALID",
+}
+
+# None of the four kinds above are retryable in practice: an "input"/"missing_tool" failure is
+# always deterministic (the same bad path or absent binary fails identically every time), and a
+# "ffmpeg"/"output" failure -- while it COULD in principle be caused by a transient environment
+# condition (full disk, OOM) rather than a bad command -- is never distinguishable from a
+# deterministic content-cause failure without exit-code/stderr sniffing this codebase does not do.
+# Reporting retryable=True for a code we can't actually back up would invite an agent into a blind
+# retry loop against a command that will fail the same way every time; false-for-everything is the
+# honest answer until real sniffing exists to justify anything else.
+ERROR_RETRYABLE = False
+
+
 def die(msg: str, code: int = 1, kind: str = "input") -> "None":
     """Exit with a message. Under --json also print a machine-readable failure document
     (status: failed) on stdout so callers get the same shape as a success; exit codes are unchanged."""
     sys.stderr.write(f"error: {msg}\n")
     if STATE.json:
-        print_json({"status": "failed", "exit_code": code, "error": {"kind": kind, "message": msg}, "commands": list(STATE.commands)})
+        print_json({
+            "status": "failed", "exit_code": code,
+            "error": {
+                "kind": kind, "message": msg,
+                "code": ERROR_CODE.get(kind, "INTERNAL_ERROR"),
+                "retryable": ERROR_RETRYABLE,
+            },
+            "commands": list(STATE.commands),
+        })
     sys.exit(code)
 
 
@@ -161,6 +201,33 @@ def _fail(cmd: Sequence[str], returncode: int, stderr: str) -> None:
     die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=returncode or 1, kind="ffmpeg")
 
 
+def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
+    """Refuse an ffmpeg command whose output path resolves to the same file as one of its
+    inputs. ffmpeg's own "Output same as Input" guard only catches byte-identical path
+    strings; a relative/absolute pair, a leading "./", a redundant ".." segment, or a symlink
+    all resolve to the same file but pass that check, so "-o ./same.mp4" on an input opened as
+    "same.mp4" would otherwise silently let ffmpeg's -y clobber the source mid-encode. Every
+    write-side script routes through this one run() choke point rather than each computing its
+    own output path defensively, so the guard lives here once instead of at 25+ call sites."""
+    output = cmd[-1]
+    if output in ("-", "pipe:0", "pipe:1") or output.startswith("pipe:") or output.startswith("-"):
+        return
+    try:
+        out_real = os.path.realpath(output)
+    except OSError:
+        return
+    for i, a in enumerate(cmd):
+        if a == "-i" and i + 1 < len(cmd):
+            inp = cmd[i + 1]
+            try:
+                if os.path.realpath(inp) == out_real:
+                    die(f"refusing to run: output {output!r} is the same file as input {inp!r} "
+                        f"(would overwrite it while ffmpeg is still reading it) -- choose a different --output/-o path",
+                        kind="input")
+            except OSError:
+                continue
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
@@ -170,6 +237,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     """
     is_ffmpeg = _is_ffmpeg(cmd)
     if is_ffmpeg:
+        _check_no_overwrite_input(cmd)
         STATE.commands.append(_cmdline(cmd))
     if not quiet:
         info(("[dry-run] $ " if STATE.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd))

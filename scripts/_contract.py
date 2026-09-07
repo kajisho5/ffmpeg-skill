@@ -196,7 +196,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "caption":   dict(video="conditional", audio="conditional", note="--mode burn (default) always re-encodes both streams to render pixels; --mode mux copies video and audio untouched and only adds a subtitle stream"),
     "overlay":   dict(video="always", audio="always"),
     "graphics":  dict(video="always", audio="always"),
-    "sync":      dict(video="never", audio="conditional", note="video is never touched; audio is copied or re-encoded depending on --trim-second / --replace-audio / --fix-drift"),
+    "sync":      dict(video="conditional", audio="conditional", note="video is -c:v copy only for --trim-second when the second file started earlier (offset<0) and the copy succeeds; it is re-encoded whenever --replace-audio's stream copy fails, or in --trim-second when the second file started later (offset>=0, the common case) or --fix-drift is used"),
     "multicam":  dict(video="always", audio="always"),
     "audio":     dict(video="never", audio="always", note="video stream is always -c:v copy when present; this tool's job is the audio"),
     "loudness":  dict(video="never", audio="always"),

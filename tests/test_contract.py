@@ -356,6 +356,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((self.tools["caption"]["reencodes_video"], self.tools["caption"]["reencodes_audio"]), ("conditional", "conditional"))
         self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
         self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
+        # sync was declared video="never" but --trim-second re-encodes video whenever the second
+        # file starts later (offset >= 0, the common case) or --fix-drift is used -- only the
+        # offset<0 stream-copy path leaves video untouched (Hardening Phase 2 P0).
+        self.assertEqual((self.tools["sync"]["reencodes_video"], self.tools["sync"]["reencodes_audio"]), ("conditional", "conditional"))
         # color is conditional, not "always": --strip-dovi and --retag are a stream copy of both
         # streams (see test_color_strip_dovi_and_retag_are_stream_copies below), only --to-sdr /
         # --lut / --correct re-encode.
@@ -676,6 +680,15 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(doc["error"]["message"], name)
         if kind:
             self.assertEqual(doc["error"]["kind"], kind, f"{name}: {doc['error']}")
+        # "code"/"retryable" are additive to "kind" (Hardening Phase 2): a static, honest
+        # relabelling of the same 4 kinds, not a new taxonomy the code can't actually back up --
+        # see _common.ERROR_CODE. Every failure carries both; retryable is always False today
+        # since no kind is distinguishable from a deterministic content-cause failure without
+        # exit-code/stderr sniffing this codebase doesn't do.
+        import _common
+        self.assertIn("code", doc["error"], f"{name}: {doc['error']}")
+        self.assertEqual(doc["error"]["code"], _common.ERROR_CODE.get(doc["error"]["kind"], "INTERNAL_ERROR"))
+        self.assertEqual(doc["error"]["retryable"], False, f"{name}: {doc['error']}")
         if code:
             self.assertEqual(proc.returncode, code)
         self.assertIn("error:", proc.stderr)
@@ -693,6 +706,20 @@ class ContractTests(unittest.TestCase):
         self._fails("cut", self.src, "--start", "20", "--end", "30", "-o", self.out("f7.mp4"), kind="input")  # beyond duration
         self._fails("fit", self.src, "--duration", "3", "--fps", "0", "-o", self.out("f8.mp4"), kind="input")
         self.assertEqual(sorted(p.name for p in self.work.glob("f[0-9].*")), [], "no partial outputs left behind")
+
+    def test_output_path_resolving_to_the_same_file_as_input_is_refused(self):
+        """A byte-different but same-file output path ("./x.mp4" for an input opened as "x.mp4",
+        or an absolute/relative pair) is not caught by ffmpeg's own "Output same as Input" guard,
+        which only compares path strings. Without our own realpath check, "-o ./same.mp4" would
+        silently let ffmpeg's -y clobber the source mid-encode (Hardening Phase 2 P0)."""
+        clone = self.out("clobber_src.mp4")
+        shutil.copyfile(self.src, clone)
+        before = self._sha(clone)
+        same_but_different_string = self.work / ("." + os.sep + clone.name)
+        doc = self._fails("crop", clone, "--x", "0", "--y", "0", "--width", "32", "--height", "32",
+                           "-o", same_but_different_string, kind="input")
+        self.assertIn("same file", doc["error"]["message"])
+        self.assertEqual(self._sha(clone), before, "input must be byte-identical after the refusal")
 
     def test_ffmpeg_failures_are_loud(self):
         doc = self._fails("color", self.src, "--lut", self.badlut, "--fast", "-o", self.out("g1.mp4"), kind="ffmpeg")
