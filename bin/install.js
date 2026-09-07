@@ -43,7 +43,18 @@ if (has('--help') || has('-h')) {
 
 // `contract` / `doctor` are answered by scripts/_contract.py; everything else installs.
 if (args[0] === 'contract' || args[0] === 'doctor') {
-  const py = spawnSync('python3', [path.join(ROOT, 'scripts', '_contract.py'), ...args], { stdio: 'inherit' });
+  // Windows Python installers commonly expose `python`/`py`, not `python3` (only the
+  // Microsoft Store package does); try python3 first (macOS/Linux convention), then fall
+  // back so `npx ffmpeg-skill doctor` doesn't silently fail with ENOENT on Windows.
+  const candidates = process.platform === 'win32' ? ['python3', 'python', 'py'] : ['python3'];
+  let py;
+  for (const cmd of candidates) {
+    py = spawnSync(cmd, [path.join(ROOT, 'scripts', '_contract.py'), ...args], { stdio: 'inherit' });
+    if (!py.error) break;
+  }
+  if (py.error) {
+    console.error(`error: could not find a Python interpreter (tried: ${candidates.join(', ')}). Install Python 3.9+ and ensure it is on PATH.`);
+  }
   process.exit(py.error ? 127 : py.status);
 }
 
