@@ -30,11 +30,17 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
 3. **Plan with `--dry-run --json`, then execute.** Every script accepts
    `--dry-run` (prints the ffmpeg commands that would run) and `--json`
    (structured result: output path, probe of the output, commands run). For
-   writing tools this means nothing is written; a few tools (`sync`,
-   `multicam`, `scenes`, `report`) still run ffmpeg/ffprobe to measure or
-   analyse under `--dry-run` — see `contract --json`'s `dry_run` field per
-   tool. Use them to confirm a plan before long encodes and to report exact
-   facts. `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
+   writing tools this means nothing is written; `probe`/`check` still run
+   ffprobe/loudness-measurement passes (they're read-only, so `--dry-run`
+   changes nothing for `probe`, and only skips the loudness pass for
+   `check`), `sync`/`multicam`/`scenes`/`report` still run ffmpeg/ffprobe to
+   measure or analyse, and `verify` accepts the flag but ignores it entirely
+   (its steps run regardless) — see `contract --json`'s `dry_run` field per
+   tool for exact semantics. Trust `--json`, not a dry-run's human-readable
+   summary line, for any number after the plan (dimensions in that line can
+   be a placeholder, not a computed preview — see `docs/contract.md`). Use
+   them to confirm a plan before long encodes and to report exact facts.
+   `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
    prints percent and ETA on stderr for long encodes.
 4. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
    join → silence → fit → caption/overlay → sync → audio → loudness → export.
@@ -163,7 +169,7 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "show me progress", "quick preview first" | any encoding script with `--progress` and/or `--fast` |
 | "the colours look washed out / it's an iPhone HDR video" | `color.py input.mov --to-sdr` (probe shows `hdr: true`) |
 | "apply this LUT", "convert the S-Log / V-Log footage" | `color.py input.mp4 --lut grade.cube [--lut-strength 0.7]` |
-| "the colours are tagged wrong" | `color.py input.mp4 --retag bt709` (no re-encode) |
+| "the colours are tagged wrong" | `color.py input.mp4 --retag bt709` (stream copy; re-encodes only if the copy can't carry the retagged colour info — check `reencoded` in `--json`) |
 | "brighten it a touch / punch up the contrast and saturation / fix the white balance" | `color.py input.mp4 --correct --exposure 0.3 --contrast 1.1 --saturation 1.05 --temperature 5600 --tint -0.05` (typed, no filter string) |
 | "clean up the audio", "remove the hiss / room noise" | `audio.py input.mp4 --voice` (speech) or `--denoise` |
 | "add background music under the talking" | `audio.py input.mp4 --music bed.mp3 --duck --fade-out 3` |
