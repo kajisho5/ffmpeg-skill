@@ -347,6 +347,21 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((self.tools["caption"]["reencodes_video"], self.tools["caption"]["reencodes_audio"]), ("conditional", "conditional"))
         self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
         self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
+        # color is conditional, not "always": --strip-dovi and --retag are a stream copy of both
+        # streams (see test_color_strip_dovi_and_retag_are_stream_copies below), only --to-sdr /
+        # --lut / --correct re-encode.
+        self.assertEqual((self.tools["color"]["reencodes_video"], self.tools["color"]["reencodes_audio"]), ("conditional", "conditional"))
+
+    def test_color_strip_dovi_and_retag_are_stream_copies(self):
+        """color's REENCODE_META claimed "always" re-encodes both streams for years, but
+        --strip-dovi and --retag actually run "-c copy" of both streams (SKILL.md always
+        documented --retag as "no re-encode") -- pin the real ffmpeg invocation so this class
+        of contract-vs-implementation drift fails CI instead of only being caught by reading
+        the script by hand."""
+        doc = tool("color", self.hdr, "--retag", "bt709", "-o", self.out("v_retag.mp4"), "--json").stdout
+        data = json.loads(doc)
+        self.assertIn("-c copy", data["commands"][0])
+        self.assertNotIn("-c:v", data["commands"][0])
 
     def test_doctor_reports_this_installed_copys_own_version(self):
         """`doctor`'s `version` is this installed copy's own version (never fetched from the

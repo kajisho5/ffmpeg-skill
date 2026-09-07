@@ -202,7 +202,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "loudness":  dict(video="never", audio="always"),
     "silence":   dict(video="always", audio="always", note="removing gaps requires cutting on non-keyframe boundaries"),
     "join":      dict(video="always", audio="always"),
-    "color":     dict(video="always", audio="always"),
+    "color":     dict(video="conditional", audio="conditional", note="--strip-dovi and --retag (when the stream copy succeeds) are -c copy of both streams; --retag falls back to re-encoding only if the copy attempt fails; --to-sdr / --lut / --correct always re-encode both"),
     "proxy":     dict(video="always", audio="conditional", note="video is always re-encoded at proxy-grade quality; audio is re-encoded when present, dropped entirely with --no-audio or when the source has none"),
     "export":    dict(video="conditional", audio="conditional", note="--preset copy is -c:v copy -c:a copy (no re-encode); every other preset re-encodes both"),
     "check":     dict(video="never", audio="never", note="read-only, no artifact"),
