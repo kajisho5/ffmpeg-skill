@@ -85,6 +85,10 @@ class ContractTests(unittest.TestCase):
                "-c:v", "copy", "-c:a", "copy", "-c:s", "srt",
                "-metadata:s:s:0", "language=eng", "-metadata:s:s:0", "title=English",
                "-metadata:s:s:1", "language=jpn", "-metadata:s:s:1", "title=Japanese", cls.subbed)
+        cls.data_stream = OUT / "c_data_stream.mov"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONE}':s=48000",
+               "-t", "3", "-timecode", "00:00:00:00", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", cls.data_stream)
         cls.garbage = OUT / "c_garbage.mp4"
         cls.garbage.write_bytes(bytes((i * 7919) % 256 for i in range(200_000)))
         cls.empty = OUT / "c_empty.mp4"
@@ -1073,6 +1077,10 @@ class ContractTests(unittest.TestCase):
         # with no data/attachment stream reports 0, same additive-field convention as
         # subtitle_streams above.
         self.assertEqual(doc2["data_streams"], 0)
+        # positive case: c_data_stream.mov has a real data stream (a -timecode track, the
+        # standard way to get one in mov/mp4) -- confirms detection isn't just "always 0".
+        doc3 = self._run_structured("probe", {"inputs": [str(self.data_stream)]})
+        self.assertEqual(doc3["data_streams"], 1)
 
     def test_color_overlay_caption_export_check_look_render_via_contract(self):
         doc = self._run_structured("color", {"input": str(self.hdr), "to_sdr": True, "fast": True, "output": str(self.out("sdr.mp4"))})
