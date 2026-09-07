@@ -135,6 +135,32 @@ class ContractTests(unittest.TestCase):
         for t in self.contract["tools"]:
             self.assertEqual(t["version"], pkg["version"])
 
+    def test_docs_contract_example_version_matches_package_json(self):
+        """docs/contract.md's illustrative JSON example of the Skill object hand-copies a
+        skill.version value; it drifted to a stale "0.9.1" while package.json moved on to
+        0.11.0 and nothing caught it (test_skill_metadata_and_version_separation only checks
+        the live-generated contract, never the hand-written doc example). Parse every fenced
+        ```json block in the doc and pin any skill.version found inside it to the real version,
+        so this exact class of drift fails CI instead of sitting silently in the docs."""
+        pkg = json.loads((ROOT / "package.json").read_text())
+        text = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        blocks = re.findall(r"```json\s*\n(.*?)```", text, re.DOTALL)
+        self.assertTrue(blocks, "docs/contract.md: no fenced ```json blocks found to check")
+        checked = 0
+        for block in blocks:
+            try:
+                data = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            version = data.get("skill", {}).get("version") if isinstance(data, dict) else None
+            if version is None:
+                continue
+            checked += 1
+            self.assertEqual(version, pkg["version"],
+                              f"docs/contract.md: example skill.version is {version!r}, "
+                              f"but package.json is {pkg['version']!r} -- update the stale example")
+        self.assertGreater(checked, 0, "docs/contract.md: no example block contained skill.version to check")
+
     def test_tool_ids_unique_and_canonical(self):
         ids = [t["id"] for t in self.contract["tools"]]
         self.assertEqual(len(ids), len(set(ids)))
