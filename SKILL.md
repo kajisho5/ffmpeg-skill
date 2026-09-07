@@ -106,6 +106,7 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "turn these numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |
+| "add subtitles but keep them toggleable / editable", "mux in an SRT, don't burn it" | `caption.py input.mp4 --srt subs.srt --mode mux` |
 | "put our logo top-right", "add a watermark" | `overlay.py input.mp4 --image logo.png --position top-right --scale 200` |
 | "add a title for the first 4 seconds" | `overlay.py input.mp4 --text "Title" --position top --start 0 --end 4 --fade 0.4` |
 | "put this webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |

@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Burn SRT/ASS subtitles into a video, or generate an SRT from plain text.
+"""Burn SRT/ASS subtitles into a video, or mux one in as a soft (toggleable)
+subtitle stream, or generate an SRT from plain text.
 
 Styling (font, size, colour, outline, position) applies to SRT input via
 libass force_style. ASS files carry their own styles and are rendered as-is.
+Styling and animation only apply to --mode burn (the default): they render
+pixels, so they have no meaning for a soft subtitle stream.
 
-This only burns subtitles into the picture. There is no soft-subtitle (mux a
-subtitle stream, toggleable by the player) path -- every call re-encodes the
-whole video and its audio (see contract --json: reencodes_video/reencodes_audio
-are both "always" for this tool), even for a source that only needed the
-subtitle track added.
+--mode mux copies the video and audio streams untouched (see contract --json:
+reencodes_video/reencodes_audio are "never" for this mode) and adds the SRT
+as a separate subtitle stream a player can toggle -- the source is never
+touched. It takes only a plain SRT (from --srt, --text or --transcribe), not
+--ass: ASS styling has no equivalent soft-subtitle representation across
+containers, so --mode mux --ass is refused with a pointer to --mode burn.
+The subtitle codec is picked from the output container: mov_text for
+.mp4/.m4v/.mov, srt for .mkv, webvtt for .webm.
 
 Text-to-SRT input format (one cue per line, blank lines ignored):
   0:00-0:03 Hello and welcome
@@ -272,6 +278,18 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         fh.write("\n".join(header + lines) + "\n")
 
 
+def mux_subtitle_codec(output: str) -> str:
+    ext = Path(output).suffix.lower()
+    if ext in (".mp4", ".m4v", ".mov"):
+        return "mov_text"
+    if ext == ".mkv":
+        return "srt"
+    if ext == ".webm":
+        return "webvtt"
+    die(f"--mode mux: don't know a soft-subtitle codec for '{ext}' output "
+        "(know .mp4/.m4v/.mov, .mkv, .webm) -- use --mode burn, or pick one of those containers with -o")
+
+
 def ass_color(hex_rgb: str, alpha: int = 0) -> str:
     h = hex_rgb.lstrip("#")
     if len(h) != 6:
@@ -284,12 +302,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", nargs="?", help="video to burn captions into (omit with --write-srt to only generate)")
     ap.add_argument("-o", "--output", help="output video (default: <name>_captioned.<ext>)")
+    ap.add_argument("--mode", choices=["burn", "mux"], default="burn",
+                     help="'burn' renders subtitles into the picture (default); "
+                          "'mux' copies video/audio untouched and adds the SRT as a soft, toggleable subtitle stream")
     src = ap.add_argument_group("subtitle source")
     src.add_argument("--srt", help="SRT file to burn")
     src.add_argument("--ass", help="ASS file to burn (styles inside the file are used)")
     src.add_argument("--text", help="plain text cue file to convert into SRT (see format above)")
     src.add_argument("--transcribe", action="store_true", help="generate the SRT from the audio with a local speech-to-text engine if one is installed (whisper-cli / whisper / faster-whisper); never required")
-    src.add_argument("--language", help="language code for --transcribe (e.g. en, ja); default auto")
+    src.add_argument("--language", help="language code for --transcribe (e.g. en, ja; default auto), also tagged on the subtitle stream with --mode mux")
     src.add_argument("--model", default="base", help="whisper model name/path for --transcribe (default base)")
     src.add_argument("--write-srt", help="where to save the generated SRT (default: <text>.srt)")
     src.add_argument("--auto-seconds", type=float, default=3.0, help="duration for cues without timing (default 3)")
@@ -339,6 +360,12 @@ def main() -> int:
         args.fonts_dir = str(Path(brand["font_file"]).parent)
     if not (args.srt or args.ass or args.text or args.transcribe):
         die("give one of --srt, --ass, --text or --transcribe")
+    if args.mode == "mux":
+        if args.ass:
+            die("--mode mux takes --srt (or --text/--transcribe), not --ass -- "
+                "ASS carries burn-only styling with no soft-subtitle equivalent; use --mode burn for an ASS file")
+        if args.animate != "none" or args.karaoke:
+            die("--animate/--karaoke render pixels into the picture and require --mode burn")
 
     srt_path = args.srt
     if args.transcribe:
@@ -372,6 +399,26 @@ def main() -> int:
         die("input has no video stream")
 
     output = args.output or default_output(args.input, "captioned")
+
+    if args.mode == "mux":
+        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and args.text)):
+            die(f"SRT file not found: {srt_path}")
+        codec = mux_subtitle_codec(output)
+        maps = ["-map", "0:v:0"]
+        cmd = ffmpeg_base() + ["-i", args.input, "-i", srt_path]
+        if meta.get("audio"):
+            maps += ["-map", "0:a:0"]
+        maps += ["-map", "1:0"]
+        cmd += maps + ["-c:v", "copy"] + (["-c:a", "copy"] if meta.get("audio") else []) + ["-c:s", codec]
+        if args.language:
+            cmd += ["-metadata:s:s:0", f"language={args.language}"]
+        cmd += [output]
+        run(cmd)
+        result = probe(output, role="output")
+        info(f"wrote {output} ({result.get('duration'):.3f}s, mux, subtitle codec {codec})")
+        emit(output)
+        return 0
+
     if (args.animate != "none" or args.karaoke) and not args.ass:
         cues_for_ass = cues if args.text else parse_srt(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"

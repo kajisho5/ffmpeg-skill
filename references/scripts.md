@@ -283,6 +283,7 @@ frame like an editor would. Use `--compare` to show before/after to the user.
 ### caption.py — subtitles (static, animated, karaoke)
 ```
 caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
+           [--mode burn|mux]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
            [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
            [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass] [-o OUT]
@@ -295,6 +296,13 @@ SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
 word from `--color` to `--highlight-color` evenly across the cue (word timing
 is distributed, not transcribed). The ASS is kept next to the output so the
 user can hand-tune timings and re-run with `--ass`.
+`--mode burn` (default) renders subtitles into the picture and always
+re-encodes both streams. `--mode mux` copies video and audio untouched and
+adds the SRT as a separate, player-toggleable subtitle stream instead —
+takes only a plain SRT (`--srt`/`--text`/`--transcribe`, not `--ass`, since
+styling has no soft-subtitle equivalent) and no `--animate`/`--karaoke`. The
+subtitle codec follows the output container: `mov_text` for `.mp4`/`.m4v`/`.mov`,
+`srt` for `.mkv`, `webvtt` for `.webm`.
 
 ### overlay.py — logo, image, title, video picture-in-picture, chroma key
 ```
