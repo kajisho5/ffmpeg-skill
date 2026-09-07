@@ -4,6 +4,28 @@
 
 ## Unreleased
 
+- **Fail loudly: `verify_output()` is now the single success criterion for every writing tool.**
+  Audit of the execution chain (natural language → script → real ffmpeg → exit status → output
+  verification → report) against 17 input/ffmpeg failure scenarios and a fake ffmpeg that exits 0
+  with an empty output. Every scenario already failed with a non-zero exit; the fixes below make
+  the failures precise and leave nothing misleading behind.
+  - `verify_output()` in `_common.py`: exists, non-empty, ffprobe reads a stream. `emit()` runs it
+    before printing any success, with or without `--json`.
+  - Output problems are reported as `kind: "output"` ("output verification failed: <path>: not
+    written | 0 bytes | ffprobe cannot read it"), no longer as an input error; a 0-byte artifact
+    is removed.
+  - Failure JSON carries `exit_code` and `commands` (what was planned or run) next to
+    `error.kind` / `error.message`. ffmpeg failures raised by cut, loudness, silence and sync
+    carry `kind: "ffmpeg"`.
+  - `fit.py --fps 0` was silently treated as "no fps requested"; it is now an error.
+  - SKILL.md: what "done" means (exit 0 and a probe that matches the request), and a `Failed:`
+    report shape.
+  - Tests: input failures (missing, corrupt, empty, wrong stream, beyond duration, bad fps),
+    ffmpeg failures (invalid LUT, unwritable directory, unknown container), output verification
+    with a fake ffmpeg across nine tools, no partial files left behind.
+  - Evals: `evals/agent_prompts_exec.json`, five success and five failure prompts graded for real
+    execution (an ffprobe-readable output exists) and honest failure (no `Done:` and no output
+    when the tool failed).
 - **`fit.py --rotate`/`--flip`.** New rotate 90/180/270 (clockwise; 90/270 swap width and
   height) and horizontal/vertical flip flags -- distinct from the rotation *metadata* fit.py
   already reads to size a source correctly, which is never altered by these. Verified against

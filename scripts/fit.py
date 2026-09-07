@@ -102,6 +102,8 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
+    if args.fps is not None and args.fps <= 0:
+        die(f"--fps must be positive, got {args.fps:g}")
     if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip:
         die("nothing to do: give --duration, --aspect, --width/--height, --rotate/--flip and/or --fps")
     if not 0.0 <= args.crop_x <= 1.0:
@@ -212,7 +214,7 @@ def main() -> int:
     cmd += post + [output]
     run(cmd)
 
-    result = probe(output)
+    result = probe(output, role="output")
     msg = f"wrote {output} ({result['duration']:.3f}s, {result['video']['width']}x{result['video']['height']})"
     if abs(factor - 1.0) > 1e-4:
         msg += f", speed {factor:.3f}x"

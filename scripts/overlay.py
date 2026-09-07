@@ -237,7 +237,7 @@ def main() -> int:
     cmd.append(output)
     run(cmd)
     if not STATE.dry_run:
-        result = probe(output)
+        result = probe(output, role="output")
         info(f"wrote {output} ({result['duration']:.3f}s)")
     emit(output)
     return 0

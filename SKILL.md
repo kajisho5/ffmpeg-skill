@@ -40,6 +40,10 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
 6. **Verify the output.** Run `probe.py` on each result and confirm duration,
    resolution, fps and audio match what was requested. Report those numbers to
    the user (e.g. "final.mp4: 59.98 s, 1080x1920, 30 fps, AAC stereo").
+   A step is done only when the script exited 0 and the output probes as
+   expected. Writing the command is not doing the job; a non-zero exit, a
+   missing or empty file, or a probe that contradicts the request is a
+   failure, and the report says so with the script's error message.
 7. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
 8. **Look at the picture.** Whenever the picture changed (captions, overlays,
@@ -195,6 +199,16 @@ Notes: source was VFR, conformed to 30 fps; audio was mono, made stereo
 ```
 
 Keep it to those five lines plus anything the user must decide. Attach the contact sheet when the edit touched the picture. Never report success without the probe of the output; never describe a fix you did not run.
+
+When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
+
+```
+Failed: color.py --lut grade.cube exited 1 — ffmpeg: "Unable to parse LUT file" (the .cube is not a valid LUT)
+Steps: probe -> color (failed); nothing written
+Notes: send a valid .cube, or say if you want the clip left as is
+```
+
+Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
 
 ## Things that look right but are wrong
 

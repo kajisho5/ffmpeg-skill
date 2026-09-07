@@ -112,7 +112,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         if not reencode:
             info("stream copy failed, falling back to re-encode")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
-        die(f"ffmpeg failed:\n{proc.stderr.strip()}")
+        die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
     if not reencode and tolerance >= 0 and not STATE["dry_run"]:
         got = probe(dst).get("duration") or 0.0
         if abs(got - dur) > tolerance:
@@ -190,7 +190,7 @@ def main() -> int:
                 cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + encode_args(meta, output, args.crf, args.preset) + [output]
                 run(cmd)
 
-    result = probe(output)
+    result = probe(output, role="output")
     expected = sum(e - s for s, e in segments)
     precision = precision_of(meta, output, reencoded)
     got = result.get("duration")

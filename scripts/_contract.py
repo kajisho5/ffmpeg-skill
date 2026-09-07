@@ -741,8 +741,9 @@ def build(detect: bool = True) -> Dict[str, Any]:
         },
         "json_output": {
             "success": {"status": "completed", "exit_code": 0, "stdout": "one JSON document (output_schema)"},
-            "failure": {"status": "failed", "exit_code": "non-zero (127 when ffmpeg/ffprobe is missing)", "stdout": "{\"status\": \"failed\", \"error\": {\"kind\": ..., \"message\": ...}} when --json was given", "stderr": "human-readable message"},
-            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error", "missing_tool": "ffmpeg or ffprobe not on PATH"},
+            "failure": {"status": "failed", "exit_code": "non-zero (127 when ffmpeg/ffprobe is missing)", "stdout": "{\"status\": \"failed\", \"exit_code\": N, \"error\": {\"kind\": ..., \"message\": ...}, \"commands\": [...]} when --json was given", "stderr": "human-readable message"},
+            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error (message carries the last stderr lines)", "output": "ffmpeg exited 0 but the artifact is missing, empty or unreadable (an empty file is removed)", "missing_tool": "ffmpeg or ffprobe not on PATH"},
+            "success_criterion": "exit 0 AND the output exists AND is non-empty AND ffprobe reads a stream from it; only then is status completed printed and the output probe attached",
         },
         "capabilities": caps,
         "tools": tools,

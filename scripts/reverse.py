@@ -46,7 +46,7 @@ def main() -> int:
     cmd.append(output)
     run(cmd)
 
-    result = probe(output)
+    result = probe(output, role="output")
     info(f"wrote {output} ({result['duration']:.3f}s, {result['video']['width']}x{result['video']['height']})")
     emit(output)
     return 0
