@@ -655,6 +655,38 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 127)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "missing_tool")
 
+    def test_probe_and_cut_on_a_non_ascii_filename(self):
+        """A file whose *name itself* (not just a path referenced inside a filter-graph string,
+        which test_filter_paths_with_drive_colon_spaces_and_unicode already covers) contains CJK
+        and accented characters must round-trip correctly as -i/output argv through subprocess.
+
+        Python 3.9 (this repo's CI-pinned version) uses CreateProcessW for subprocess argv on
+        Windows, and the filesystem encoding is UTF-8 on macOS/Linux, so this is expected to work
+        on all three OSes -- but this sandbox can only actually execute on Linux. This test is
+        the mechanism by which the claim gets verified on Windows and macOS too, once this runs
+        through the existing CI matrix (see .github/workflows/ci.yml).
+        """
+        src = self.work / "日本語_ünïcödé.mp4"
+        shutil.copyfile(self.src, src)
+        # read tool: probe.py against the non-ASCII input path
+        meta = json.loads(tool("probe", src, "--json").stdout)
+        self.assertAlmostEqual(meta["duration"], 6.0, delta=0.3)
+        self.assertEqual(meta["video"]["width"], 640)
+        # write tool: cut.py, non-ASCII input -> plain-ASCII output
+        out_ascii = self.out("nonascii_cut.mp4")
+        doc = json.loads(tool("cut", src, "--start", "1", "--end", "3", "-o", out_ascii, "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertAlmostEqual(doc["probe"]["duration"], 2.0, delta=0.6)
+        reprobed = json.loads(tool("probe", out_ascii, "--json").stdout)
+        self.assertAlmostEqual(reprobed["duration"], 2.0, delta=0.6)
+        # and the other direction: plain-ASCII input -> non-ASCII output path
+        out_unicode = self.work / "出力_prüfung.mp4"
+        doc2 = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "-o", out_unicode, "--json").stdout)
+        self.assertEqual(doc2["status"], "completed")
+        self.assertTrue(out_unicode.exists())
+        reprobed2 = json.loads(tool("probe", out_unicode, "--json").stdout)
+        self.assertAlmostEqual(reprobed2["duration"], 2.0, delta=0.6)
+
     # ------------------------------------------------------------------ fail loudly
     def _fails(self, name, *args, kind=None, code=None):
         proc = tool(name, *args, "--json", check=False)
