@@ -118,7 +118,7 @@ def main() -> int:
         cmd += ["-t", f"{p['max']:.3f}"]
     cmd.append(output)
     run(cmd)
-    result = probe(output)
+    result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {v['codec']})")
     emit(output)

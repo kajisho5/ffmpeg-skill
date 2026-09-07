@@ -122,7 +122,7 @@ gives you:
 
 ## `provides`
 
-`provides` lists these 21 tools by a cross-repository Capability id, for
+`provides` lists these 27 tools by a cross-repository Capability id, for
 `kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
 (`docs/SPEC.md` there), matching the ids already assigned to this Skill in
 that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's
@@ -192,12 +192,23 @@ Success (`exit 0`): one document matching `output_schema`, always with
 `status: "completed"`, `output`, `dry_run`, `commands`, and `probe` of the output when a
 file was written. `probe` prints its measurement document directly.
 
+Success is decided by `verify_output` in `_common.py`, not by the ffmpeg exit code alone:
+the file must exist, be non-empty and give ffprobe at least one stream. A tool that ran
+ffmpeg successfully but has no usable artifact fails with `kind: output` (a 0-byte file is
+removed so a later step cannot mistake it for a result).
+
 Failure (non-zero exit; 127 when ffmpeg/ffprobe is missing): the message on stderr as
 before, and, when `--json` was given, on stdout:
 
 ```json
-{"status": "failed", "error": {"kind": "input | ffmpeg | missing_tool", "message": "..."}}
+{"status": "failed", "exit_code": 1,
+ "error": {"kind": "input | ffmpeg | output | missing_tool", "message": "..."},
+ "commands": ["ffmpeg ..."]}
 ```
+
+`message` carries the script's own reason (missing input, ffprobe failure, the last
+stderr lines of ffmpeg, the verification that failed); `commands` lists what was planned
+or run so the caller can retry or report without re-deriving the command.
 
 ## MCP relationship
 

@@ -156,7 +156,7 @@ def main() -> int:
     cmd += aac_args() if meta.get("audio") else ["-an"]
     cmd.append(output)
     run(cmd)
-    r = probe(output)
+    r = probe(output, role="output")
     info(f"wrote {output} ({r['duration']:.3f}s, {args.template})")
     emit(output, template=args.template)
     return 0
