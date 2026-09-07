@@ -100,6 +100,20 @@ field addition here is additive.
   a one-line honest note that GPU-accelerated encoding stays off the roadmap without a
   real-hardware-verified design (build-presence detection, which `gpu_encoders` already limits
   itself to, is not proof a job succeeds).
+- **`--dry-run`'s probe stub no longer fabricates plausible-looking `1920x1080`/`30fps` dimensions
+  for a not-yet-written output.** A first attempt at this (reporting the honest `0`/`0.0` "not
+  measured" value instead, matching `duration`/`size_bytes`'s existing convention in the same
+  stub) had to be reverted mid-pass: `join.py` and `fit.py` both divide by a probed source
+  width/height when computing the other dimension from an aspect ratio, and dry-run probes chain
+  across multi-stage pipelines (a prior stage's still-unwritten dry-run output gets probed as the
+  next stage's input), so a zero source dimension reached those divisions and crashed with
+  `ZeroDivisionError`. Root-cause fixed instead: both division sites now treat a zero/unknown
+  source dimension as "can't compute a ratio" and fall back to the requested dimension rather than
+  dividing by it; every other tool touching probed width/height for aspect-ratio math was audited
+  and either doesn't divide by it or hands it straight to an ffmpeg filter (moot under `--dry-run`,
+  since ffmpeg never runs). `--json` was never affected by any of this — it always omitted the
+  placeholder; only a dry-run's human-readable summary line could echo the fake number. Closes
+  [#77](https://github.com/kajisho5/ffmpeg-skill/issues/77).
 
 - **`probe.py`: `subtitle_stream_details`.** `subtitle_streams` was a plain integer count while `audio_streams` was already a detailed array, so nothing could tell which subtitle index was which language on a multi-track input (e.g. an MKV with Japanese and English subs already muxed in). `subtitle_stream_details` adds that detail as a new, purely additive array — `[{"index", "codec", "language", "title"}, ...]`, one entry per embedded subtitle stream in file order (index n is `-map 0:s:n`), mirroring `audio_streams`' shape minus the audio-only fields (channels, layout, sample rate) ffprobe doesn't expose for subtitle streams. `subtitle_streams`' existing type and meaning (the int count) are unchanged. No writing tool selects among existing embedded subtitle streams yet; this is a `probe.py`-only enrichment. Closes [#63](https://github.com/kajisho5/ffmpeg-skill/issues/63).
 - **`caption.py --audio-stream N`: explicit multi-audio-track selection.** Confirmed `caption.py` did silently pick a track on a multi-audio-track input (dubbed languages, M&E stems): burn mode had no `-map` at all (ffmpeg's own automatic stream-selection heuristic, not necessarily index 0, decided), mux mode and the karaoke energy-timing/`--transcribe` audio extraction both hardcoded `0:a:0`. `--audio-stream N` (default 0, matching `audio.py`'s existing flag and unchanged prior behaviour) now threads the same explicit track index through all four: burn's re-encoded audio, mux's stream-copied audio, `--transcribe`'s speech-to-text source, and karaoke's energy-timing analysis, refusing an out-of-range index the same way `audio.py --audio-stream` already does. Closes [#55](https://github.com/kajisho5/ffmpeg-skill/issues/55).
