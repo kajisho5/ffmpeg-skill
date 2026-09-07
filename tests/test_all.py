@@ -379,12 +379,15 @@ class FFmpegSkillTests(unittest.TestCase):
     # ---------------------------------------------------------------- stabilize
     def test_stabilize_reduces_frame_to_frame_motion(self):
         """Proves the actual effect, not just that the command runs: measured motion must drop."""
-        # Irregular, multi-frequency handheld-like jitter (not a single clean sine, which can alias
+        # Irregular, two-frequency handheld-like jitter (not a single clean sine, which can alias
         # with vidstab's default smoothing window on some builds and make the "shaky" source an
-        # unrepresentative test case).
+        # unrepresentative test case). Kept within real hand-tremor range (roughly 1-3 Hz): a
+        # first version added a ~9 Hz component that, at 30 fps, is only ~3 frames per cycle --
+        # too fast for vidstab's optical-flow tracking to resolve on at least one real ffmpeg
+        # build, which measured the "stabilized" output as *more* jittery than the source.
         shaky = OUT / "shaky.mp4"
-        jitter_x = "60+22*sin(2*PI*t*2.7)+11*sin(2*PI*t*5.3+1)+7*sin(2*PI*t*9.1+2)"
-        jitter_y = "60+18*cos(2*PI*t*1.9)+13*sin(2*PI*t*4.1+0.5)+6*cos(2*PI*t*7.7+1.5)"
+        jitter_x = "60+18*sin(2*PI*t*1.3)+9*sin(2*PI*t*2.1+1)"
+        jitter_y = "60+14*cos(2*PI*t*0.9)+8*sin(2*PI*t*1.7+0.5)"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1400x1000:rate=30",
            "-t", "4", "-vf", f"crop=1280:720:x='{jitter_x}':y='{jitter_y}'",
            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", shaky)
