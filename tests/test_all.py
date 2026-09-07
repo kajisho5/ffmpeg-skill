@@ -510,6 +510,33 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue((sub / "cap_side.srt").exists(), "SRT written beside the output")
         self.assertFalse((OUT / "source.srt").exists(), "no SRT dropped next to the source")
 
+    def test_caption_smpte_timecode_cues_convert_frames_to_seconds(self):
+        tc = OUT / "tc_cues.txt"
+        tc.write_text("00:00:00:12 --> 00:00:02:00 Hello\n00:00:02:00 --> 00:00:04:00 World\n", encoding="utf-8")
+        srt = OUT / "tc.srt"
+        script("caption.py", "--text", tc, "--write-srt", srt, "--fps", "24")
+        text = srt.read_text(encoding="utf-8")
+        self.assertIn("00:00:00,500 --> 00:00:02,000", text, "frame 12 at 24fps is exactly 0.5s")
+
+    def test_caption_smpte_timecode_without_fps_fails_loudly(self):
+        """A cue that looks like hh:mm:ss:ff but has no --fps must not be silently swallowed as auto-timed text."""
+        tc = OUT / "tc_no_fps.txt"
+        tc.write_text("00:00:00:12 --> 00:00:02:00 Hello\n", encoding="utf-8")
+        proc = script("caption.py", "--text", tc, "--write-srt", OUT / "tc_no_fps.srt", "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("fps", doc["error"]["message"])
+        self.assertFalse((OUT / "tc_no_fps.srt").exists())
+
+    def test_caption_fps_defaults_to_the_input_videos_own_fps(self):
+        tc = OUT / "tc_auto_fps.txt"
+        tc.write_text("00:00:00:15 --> 00:00:02:00 Hello\n", encoding="utf-8")
+        out = OUT / "tc_auto.mp4"
+        script("caption.py", self.src, "--text", tc, "-o", out, "--preset", "veryfast")
+        srt_text = (OUT / "tc_auto.srt").read_text(encoding="utf-8")
+        # self.src is 30fps: frame 15 is exactly 0.5s
+        self.assertIn("00:00:00,500 --> 00:00:02,000", srt_text)
+
     def test_caption_mux_copies_streams_and_adds_a_subtitle_track(self):
         srt = OUT / "mux_cues.srt"
         out = OUT / "cap_mux.mp4"

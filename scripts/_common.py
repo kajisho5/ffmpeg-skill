@@ -392,12 +392,30 @@ def default_output(input_path: str, suffix: str, ext: Optional[str] = None) -> s
     return str(p.with_name(f"{p.stem}_{suffix}.{new_ext}"))
 
 
-def parse_time(value: str) -> float:
-    """Accept seconds ('12.5'), mm:ss ('1:30'), hh:mm:ss(.ms) ('00:01:30.250') or SRT '00:01:30,250'."""
+class MissingFpsError(ValueError):
+    """parse_time() saw an hh:mm:ss:ff SMPTE timecode but no fps was given to convert it -- distinct
+    from a plain ValueError so a caller that falls back to treating unparseable text as a literal
+    line (e.g. caption.py's free-text cue format) can still fail loudly on this one, instead of
+    silently swallowing a mistyped/missing --fps as an auto-timed line of digits."""
+
+
+def parse_time(value: str, fps: Optional[float] = None) -> float:
+    """Accept seconds ('12.5'), mm:ss ('1:30'), hh:mm:ss(.ms) ('00:01:30.250'), SRT '00:01:30,250',
+    or -- when `fps` is given -- SMPTE non-drop-frame timecode 'hh:mm:ss:ff' ('00:01:30:15')."""
     v = value.strip().replace(",", ".")
     if not v:
         raise ValueError("empty time")
     parts = v.split(":")
+    if len(parts) == 4:
+        if fps is None or fps <= 0:
+            raise MissingFpsError(f"'{value}' looks like an hh:mm:ss:ff SMPTE timecode, but no fps was given to convert its frame count to seconds")
+        h, m, s, f = parts
+        if "." in f:
+            raise ValueError(f"bad SMPTE timecode: {value}")
+        frame, whole_fps = int(f), int(round(fps))
+        if not (0 <= frame < whole_fps):
+            raise ValueError(f"bad SMPTE timecode '{value}': frame {frame} is out of range for {fps:g} fps (0-{whole_fps - 1})")
+        return int(h) * 3600 + int(m) * 60 + int(s) + frame / fps
     if len(parts) > 3:
         raise ValueError(f"bad time: {value}")
     total = 0.0
@@ -414,6 +432,20 @@ def fmt_srt_time(seconds: float) -> str:
     m, rem = divmod(rem, 60_000)
     s, ms = divmod(rem, 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def fmt_smpte_time(seconds: float, fps: float) -> str:
+    """SMPTE non-drop-frame timecode 'hh:mm:ss:ff' for a real fps (not the fractional NTSC rates
+    -- 29.97/59.94 need drop-frame counting to stay wall-clock accurate, which this does not do)."""
+    if seconds < 0:
+        seconds = 0.0
+    whole_fps = int(round(fps))
+    total_frames = int(round(seconds * fps))
+    frame = total_frames % whole_fps
+    secs_total = total_frames // whole_fps
+    h, rem = divmod(secs_total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}:{frame:02d}"
 
 
 def escape_filter_path(path: str) -> str:

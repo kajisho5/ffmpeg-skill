@@ -19,6 +19,7 @@ The subtitle codec is picked from the output container: mov_text for
 Text-to-SRT input format (one cue per line, blank lines ignored):
   0:00-0:03 Hello and welcome
   00:00:03.500 --> 00:00:06 Second line | with a manual line break
+  00:00:03:15 --> 00:00:06:00 SMPTE non-drop-frame timecode (hh:mm:ss:ff, needs --fps)
   Text without a time is auto-timed after the previous cue (--auto-seconds)
 
 Examples:
@@ -35,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, info, parse_time, probe, run, x264_args
+from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -44,7 +45,7 @@ TIME_RE = re.compile(
 )
 
 
-def parse_text_cues(path: str, auto_seconds: float, gap: float) -> List[Tuple[float, float, str]]:
+def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[float] = None) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
     cursor = 0.0
     with open(path, encoding="utf-8") as fh:
@@ -55,7 +56,9 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float) -> List[Tuple[fl
             m = TIME_RE.match(line)
             if m:
                 try:
-                    start, end = parse_time(m.group("a")), parse_time(m.group("b"))
+                    start, end = parse_time(m.group("a"), fps), parse_time(m.group("b"), fps)
+                except MissingFpsError as e:
+                    die(f"cue '{line}': {e} -- pass --fps, or --input's own fps is used automatically when given")
                 except ValueError:
                     start, end, text = cursor, cursor + auto_seconds, line.strip()
                 else:
@@ -320,6 +323,9 @@ def main() -> int:
     src.add_argument("--write-srt", help="where to save the generated SRT (default: <text>.srt)")
     src.add_argument("--auto-seconds", type=float, default=3.0, help="duration for cues without timing (default 3)")
     src.add_argument("--gap", type=float, default=0.0, help="gap after auto-timed cues in seconds")
+    src.add_argument("--fps", type=float, default=None,
+                      help="frame rate for interpreting hh:mm:ss:ff SMPTE timecode cues in --text (non-drop-frame); "
+                           "defaults to the input video's own fps when --input is given, required otherwise")
     sty = ap.add_argument_group("style (SRT only)")
     sty.add_argument("--brand", help="brand.json: font, colours, caption size/position/animation defaults")
     sty.add_argument("--font", default=None, help="font family, e.g. 'Noto Sans CJK JP' for Japanese (default DejaVu Sans or brand font)")
@@ -382,6 +388,9 @@ def main() -> int:
             die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
         if args.audio_stream and not audio_streams:
             die("--audio-stream needs an input with audio streams")
+    fps_for_tc = args.fps
+    if fps_for_tc is None and meta is not None:
+        fps_for_tc = meta.get("video", {}).get("fps")
 
     srt_path = args.srt
     if args.transcribe:
@@ -392,7 +401,7 @@ def main() -> int:
         info(f"wrote {srt_path} ({len(cues)} cues)")
         args.text = None
     if args.text:
-        cues = parse_text_cues(args.text, args.auto_seconds, args.gap)
+        cues = parse_text_cues(args.text, args.auto_seconds, args.gap, fps_for_tc)
         if args.write_srt:
             srt_path = args.write_srt
         elif args.input:
@@ -403,7 +412,8 @@ def main() -> int:
             srt_path = os.path.splitext(args.text)[0] + ".srt"
         if not STATE.dry_run:
             write_srt(cues, srt_path)
-        info(f"wrote {srt_path} ({len(cues)} cues)")
+        tc_range = f", {fmt_smpte_time(cues[0][0], fps_for_tc)}-{fmt_smpte_time(cues[-1][1], fps_for_tc)} @ {fps_for_tc:g}fps" if fps_for_tc else ""
+        info(f"wrote {srt_path} ({len(cues)} cues{tc_range})")
         if not args.input:
             print(srt_path)
             return 0
