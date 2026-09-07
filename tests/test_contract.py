@@ -356,6 +356,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((self.tools["caption"]["reencodes_video"], self.tools["caption"]["reencodes_audio"]), ("conditional", "conditional"))
         self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
         self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
+        # sync was declared video="never" but --trim-second re-encodes video whenever the second
+        # file starts later (offset >= 0, the common case) or --fix-drift is used -- only the
+        # offset<0 stream-copy path leaves video untouched (Hardening Phase 2 P0).
+        self.assertEqual((self.tools["sync"]["reencodes_video"], self.tools["sync"]["reencodes_audio"]), ("conditional", "conditional"))
         # color is conditional, not "always": --strip-dovi and --retag are a stream copy of both
         # streams (see test_color_strip_dovi_and_retag_are_stream_copies below), only --to-sdr /
         # --lut / --correct re-encode.
@@ -655,6 +659,38 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 127)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "missing_tool")
 
+    def test_probe_and_cut_on_a_non_ascii_filename(self):
+        """A file whose *name itself* (not just a path referenced inside a filter-graph string,
+        which test_filter_paths_with_drive_colon_spaces_and_unicode already covers) contains CJK
+        and accented characters must round-trip correctly as -i/output argv through subprocess.
+
+        Python 3.9 (this repo's CI-pinned version) uses CreateProcessW for subprocess argv on
+        Windows, and the filesystem encoding is UTF-8 on macOS/Linux, so this is expected to work
+        on all three OSes -- but this sandbox can only actually execute on Linux. This test is
+        the mechanism by which the claim gets verified on Windows and macOS too, once this runs
+        through the existing CI matrix (see .github/workflows/ci.yml).
+        """
+        src = self.work / "日本語_ünïcödé.mp4"
+        shutil.copyfile(self.src, src)
+        # read tool: probe.py against the non-ASCII input path
+        meta = json.loads(tool("probe", src, "--json").stdout)
+        self.assertAlmostEqual(meta["duration"], 6.0, delta=0.3)
+        self.assertEqual(meta["video"]["width"], 640)
+        # write tool: cut.py, non-ASCII input -> plain-ASCII output
+        out_ascii = self.out("nonascii_cut.mp4")
+        doc = json.loads(tool("cut", src, "--start", "1", "--end", "3", "-o", out_ascii, "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertAlmostEqual(doc["probe"]["duration"], 2.0, delta=0.6)
+        reprobed = json.loads(tool("probe", out_ascii, "--json").stdout)
+        self.assertAlmostEqual(reprobed["duration"], 2.0, delta=0.6)
+        # and the other direction: plain-ASCII input -> non-ASCII output path
+        out_unicode = self.work / "出力_prüfung.mp4"
+        doc2 = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "-o", out_unicode, "--json").stdout)
+        self.assertEqual(doc2["status"], "completed")
+        self.assertTrue(out_unicode.exists())
+        reprobed2 = json.loads(tool("probe", out_unicode, "--json").stdout)
+        self.assertAlmostEqual(reprobed2["duration"], 2.0, delta=0.6)
+
     # ------------------------------------------------------------------ fail loudly
     def _fails(self, name, *args, kind=None, code=None):
         proc = tool(name, *args, "--json", check=False)
@@ -676,6 +712,15 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(doc["error"]["message"], name)
         if kind:
             self.assertEqual(doc["error"]["kind"], kind, f"{name}: {doc['error']}")
+        # "code"/"retryable" are additive to "kind" (Hardening Phase 2): a static, honest
+        # relabelling of the same 4 kinds, not a new taxonomy the code can't actually back up --
+        # see _common.ERROR_CODE. Every failure carries both; retryable is always False today
+        # since no kind is distinguishable from a deterministic content-cause failure without
+        # exit-code/stderr sniffing this codebase doesn't do.
+        import _common
+        self.assertIn("code", doc["error"], f"{name}: {doc['error']}")
+        self.assertEqual(doc["error"]["code"], _common.ERROR_CODE.get(doc["error"]["kind"], "INTERNAL_ERROR"))
+        self.assertEqual(doc["error"]["retryable"], False, f"{name}: {doc['error']}")
         if code:
             self.assertEqual(proc.returncode, code)
         self.assertIn("error:", proc.stderr)
@@ -693,6 +738,20 @@ class ContractTests(unittest.TestCase):
         self._fails("cut", self.src, "--start", "20", "--end", "30", "-o", self.out("f7.mp4"), kind="input")  # beyond duration
         self._fails("fit", self.src, "--duration", "3", "--fps", "0", "-o", self.out("f8.mp4"), kind="input")
         self.assertEqual(sorted(p.name for p in self.work.glob("f[0-9].*")), [], "no partial outputs left behind")
+
+    def test_output_path_resolving_to_the_same_file_as_input_is_refused(self):
+        """A byte-different but same-file output path ("./x.mp4" for an input opened as "x.mp4",
+        or an absolute/relative pair) is not caught by ffmpeg's own "Output same as Input" guard,
+        which only compares path strings. Without our own realpath check, "-o ./same.mp4" would
+        silently let ffmpeg's -y clobber the source mid-encode (Hardening Phase 2 P0)."""
+        clone = self.out("clobber_src.mp4")
+        shutil.copyfile(self.src, clone)
+        before = self._sha(clone)
+        same_but_different_string = self.work / ("." + os.sep + clone.name)
+        doc = self._fails("crop", clone, "--x", "0", "--y", "0", "--width", "32", "--height", "32",
+                           "-o", same_but_different_string, kind="input")
+        self.assertIn("same file", doc["error"]["message"])
+        self.assertEqual(self._sha(clone), before, "input must be byte-identical after the refusal")
 
     def test_ffmpeg_failures_are_loud(self):
         doc = self._fails("color", self.src, "--lut", self.badlut, "--fast", "-o", self.out("g1.mp4"), kind="ffmpeg")
