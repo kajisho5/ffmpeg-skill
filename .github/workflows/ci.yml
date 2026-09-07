@@ -53,8 +53,12 @@ jobs:
           name: ffmpeg-listings-${{ matrix.os }}
           path: listings/
       - run: python tests/test_all.py
-      # the contract tests drive the tools through POSIX shell shims (fake ffmpeg on PATH); not portable to Windows yet.
-      # They run even when test_all is red so the doctor / parser results on this runner's FFmpeg are always in the log.
+      # A handful of tests here drive the tools through POSIX shell shims (fake ffmpeg on PATH)
+      # to force specific FFmpeg 6/7/8/9 fixture layouts; those are individually skipIf'd on
+      # Windows (not portable), not the whole file -- everything else (schema, reencodes_*,
+      # doctor.tools, MCP derivation, cut/fit/... via the contract against the REAL Windows
+      # ffmpeg) runs on all three OSes. They run even when test_all is red so the doctor /
+      # parser results on this runner's FFmpeg are always in the log.
       - run: python tests/test_contract.py
-        if: runner.os != 'Windows' && !cancelled()
+        if: "!cancelled()"
       - run: node bin/install.js

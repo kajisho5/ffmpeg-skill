@@ -302,6 +302,29 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
         self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
 
+    def test_doctor_reports_this_installed_copys_own_version(self):
+        """`doctor`'s `version` is this installed copy's own version (never fetched from the
+        network or compared against the latest published release) -- so a stale copy that was
+        never updated is visible locally, matching `contract --json`'s `skill.version`."""
+        d = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json").stdout)
+        pkg = json.loads((ROOT / "package.json").read_text())
+        self.assertEqual(d["version"], pkg["version"])
+        self.assertEqual(d["version"], self.contract["skill"]["version"])
+        human = sh(sys.executable, SCRIPTS / "_contract.py", "doctor").stdout
+        self.assertIn(d["version"], human)
+        self.assertIn("re-run", human, "the human-readable doctor output must say how to refresh a stale install")
+
+    def test_windows_fix_hint_matches_readme_install_guidance(self):
+        """A missing subtitles/drawtext/zscale filter on Windows should point to the same fix
+        README documents for that platform (the gyan.dev full build), not a generic message --
+        mirrors the equivalent macOS `brew install ffmpeg-full` hint."""
+        from unittest import mock
+        with mock.patch("platform.system", return_value="Windows"):
+            hint = _contract._capability_fix_hint("filter:subtitles")
+        self.assertIn("Gyan.FFmpeg", hint)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Gyan.FFmpeg", readme)
+
     def test_original_preservation_and_roles(self):
         for t in self.contract["tools"]:
             self.assertFalse(t["mutates_input"], t["name"])
@@ -476,7 +499,11 @@ class ContractTests(unittest.TestCase):
 
     def test_contract_from_installed_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = dict(os.environ, HOME=tmp)
+            # Node's os.homedir() reads HOME on POSIX but USERPROFILE on Windows (falling back to
+            # HOMEDRIVE+HOMEPATH); HOME alone silently installs into the real runner's home dir on
+            # Windows instead of this redirected tmp one, and the file this test then reaches for
+            # is not there. Set both so install.js is redirected on every OS.
+            env = dict(os.environ, HOME=tmp, USERPROFILE=tmp)
             sh("node", ROOT / "bin" / "install.js", env=env)
             installed = Path(tmp) / ".claude" / "skills" / "ffmpeg-skill"
             doc = json.loads(sh(sys.executable, installed / "scripts" / "_contract.py", "--json", "--static").stdout)
@@ -486,6 +513,7 @@ class ContractTests(unittest.TestCase):
                 self.assertTrue((installed / t["executable"]).is_file())
 
     # ------------------------------------------------------------------ integration: claims hold at run time
+    @unittest.skipIf(platform.system() == "Windows", "fake ffmpeg is a #!/bin/sh script on a POSIX-only PATH shim; not portable to Windows. The claim itself (run() never invokes ffmpeg under --dry-run) is still exercised on Windows by every --dry-run case in tests/test_all.py, just without a shim proving no *other* ffmpeg-shaped binary would have run.")
     def test_dry_run_never_runs_ffmpeg_and_writes_nothing(self):
         """A fake ffmpeg first on PATH records every invocation; ffprobe stays real."""
         shim = self.work / "shim"
@@ -746,6 +774,7 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(before, after, f"{p.name} modified")
 
 
+@unittest.skipIf(platform.system() == "Windows", "every test here drives a fake ffmpeg via a #!/bin/sh POSIX shell shim on PATH to force specific fixture layouts; not portable to Windows. doctor's own detection logic still runs against the REAL ffmpeg on Windows CI through ContractTests' setUpClass and test_doctor_reports_this_installed_copys_own_version -- what's untested on Windows specifically is the fixture-driven FFmpeg 6/7/8/9 layout-parsing behaviour this class exists to pin. See README, 'Development'.")
 class DoctorDetectionTests(unittest.TestCase):
     """Capability detection reads every `ffmpeg -filters` layout and never confuses "unreadable" with "absent".
 
