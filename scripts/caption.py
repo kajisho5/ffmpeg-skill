@@ -72,7 +72,7 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float) -> List[Tuple[fl
     return cues
 
 
-def transcribe(video: str, out_srt: str, language: Optional[str], model: str) -> List[Tuple[float, float, str]]:
+def transcribe(video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int = 0) -> List[Tuple[float, float, str]]:
     """Optional local ASR bridge. Tries, in order: whisper-cli / main (whisper.cpp), faster-whisper (python),
     whisper (openai-whisper CLI). Produces an SRT with word timings where the engine supports it.
     No engine installed -> clear error with install hints; the skill never depends on one."""
@@ -83,7 +83,8 @@ def transcribe(video: str, out_srt: str, language: Optional[str], model: str) ->
     ffmpeg = require_tool("ffmpeg")
     tmpdir = tempfile.mkdtemp(prefix="ffskill_asr_")
     wav = os.path.join(tmpdir, "audio.wav")
-    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav], check=True)
+    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
+                     "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav], check=True)
     # 1. whisper.cpp
     cli = shutil.which("whisper-cli") or shutil.which("whisper-cpp") or shutil.which("main")
     if cli and (shutil.which("whisper-cli") or shutil.which("whisper-cpp")):
@@ -164,7 +165,7 @@ def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
             fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
 
 
-def word_durations_from_audio(video: str, start: float, end: float, n_words: int) -> List[int]:
+def word_durations_from_audio(video: str, start: float, end: float, n_words: int, audio_stream: int = 0) -> List[int]:
     """Split a cue's time across n_words in proportion to speech energy (centiseconds each).
 
     Decodes the cue window to 8 kHz mono, builds a 10 ms RMS envelope, removes the noise floor,
@@ -179,7 +180,7 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
         return [total_cs]
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", video,
-           "-t", f"{end - start:.3f}", "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+           "-map", f"0:a:{audio_stream}", "-t", f"{end - start:.3f}", "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
     proc = sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
     n = len(proc.stdout) // 2
     if proc.returncode != 0 or n < 800:
@@ -263,7 +264,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
             segments = body.split("\\N")
             words = [w for seg in segments for w in seg.split(" ") if w]
             if getattr(args, "karaoke_timing", "even") == "energy" and video:
-                durs = word_durations_from_audio(video, start, end, len(words))
+                durs = word_durations_from_audio(video, start, end, len(words), getattr(args, "audio_stream", 0))
             else:
                 per = max(1, dur_cs // max(1, len(words)))
                 durs = [per] * len(words)
@@ -305,6 +306,10 @@ def main() -> int:
     ap.add_argument("--mode", choices=["burn", "mux"], default="burn",
                      help="'burn' renders subtitles into the picture (default); "
                           "'mux' copies video/audio untouched and adds the SRT as a soft, toggleable subtitle stream")
+    ap.add_argument("--audio-stream", type=int, default=0,
+                     help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
+                          "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
+                          "the first track, same as leaving it unset always did")
     src = ap.add_argument_group("subtitle source")
     src.add_argument("--srt", help="SRT file to burn")
     src.add_argument("--ass", help="ASS file to burn (styles inside the file are used)")
@@ -367,12 +372,23 @@ def main() -> int:
         if args.animate != "none" or args.karaoke:
             die("--animate/--karaoke render pixels into the picture and require --mode burn")
 
+    meta = None
+    if args.input:
+        meta = probe(args.input)
+        if not meta.get("video"):
+            die("input has no video stream")
+        audio_streams = meta.get("audio_streams") or []
+        if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
+            die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
+        if args.audio_stream and not audio_streams:
+            die("--audio-stream needs an input with audio streams")
+
     srt_path = args.srt
     if args.transcribe:
         if not args.input:
             die("--transcribe needs the input video")
         srt_path = args.write_srt or os.path.splitext(args.input)[0] + ".srt"
-        cues = transcribe(args.input, srt_path, args.language, args.model)
+        cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream)
         info(f"wrote {srt_path} ({len(cues)} cues)")
         args.text = None
     if args.text:
@@ -394,9 +410,6 @@ def main() -> int:
 
     if not args.input:
         die("input video is required unless you only use --text/--write-srt")
-    meta = probe(args.input)
-    if not meta.get("video"):
-        die("input has no video stream")
 
     output = args.output or default_output(args.input, "captioned")
 
@@ -407,7 +420,7 @@ def main() -> int:
         maps = ["-map", "0:v:0"]
         cmd = ffmpeg_base() + ["-i", args.input, "-i", srt_path]
         if meta.get("audio"):
-            maps += ["-map", "0:a:0"]
+            maps += ["-map", f"0:a:{args.audio_stream}"]
         maps += ["-map", "1:0"]
         cmd += maps + ["-c:v", "copy"] + (["-c:a", "copy"] if meta.get("audio") else []) + ["-c:s", codec]
         if args.language:
@@ -456,7 +469,10 @@ def main() -> int:
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
+    cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0"]
+    if meta.get("audio"):
+        cmd += ["-map", f"0:a:{args.audio_stream}"]
+    cmd += ["-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
     run(cmd)
     result = probe(output, role="output")

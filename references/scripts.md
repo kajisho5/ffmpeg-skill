@@ -283,7 +283,7 @@ frame like an editor would. Use `--compare` to show before/after to the user.
 ### caption.py — subtitles (static, animated, karaoke)
 ```
 caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
-           [--mode burn|mux]
+           [--mode burn|mux] [--audio-stream N]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
            [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
            [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass] [-o OUT]
@@ -303,6 +303,12 @@ takes only a plain SRT (`--srt`/`--text`/`--transcribe`, not `--ass`, since
 styling has no soft-subtitle equivalent) and no `--animate`/`--karaoke`. The
 subtitle codec follows the output container: `mov_text` for `.mp4`/`.m4v`/`.mov`,
 `srt` for `.mkv`, `webvtt` for `.webm`.
+`--audio-stream N` (default 0, the first track) picks which audio stream of a
+multi-track input (dubbed languages, M&E stems) is kept — applies to burn's
+re-encoded audio, mux's stream-copied audio, `--transcribe`'s speech-to-text
+source, and karaoke's energy-timing analysis alike, so all four agree on the
+same track instead of each silently defaulting to whichever one ffmpeg's own
+stream selection would have picked.
 
 ### overlay.py — logo, image, title, video picture-in-picture, chroma key
 ```
