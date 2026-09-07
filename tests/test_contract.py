@@ -105,6 +105,26 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(c["invocation"]["structured"]["canonical"])
         self.assertFalse(c["invocation"]["raw_argv"]["canonical"])
 
+    def test_docs_tool_count_matches_the_real_tool_list(self):
+        """README/SKILL.md/docs/contract.md each state the tool count in prose (not generated,
+        since it reads naturally in a sentence); this pins every stated count against the real
+        one so a new/removed tool that forgets to update one of them fails CI instead of
+        drifting silently -- see #50, filed after README said 28 twice, 22 once (stale), and
+        package.json's description said 21, all at the same time."""
+        real_count = len(self.contract["tools"])
+        checks = [
+            (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?tools\b")),
+            (ROOT / "docs" / "contract.md", re.compile(r"\b(\d+)\s+tools\b")),
+            (ROOT / "package.json", re.compile(r"(\d+)\s+FFmpeg tools\b")),
+        ]
+        for path, pattern in checks:
+            text = path.read_text(encoding="utf-8")
+            counts = {int(m.group(1)) for m in pattern.finditer(text)}
+            self.assertTrue(counts, f"{path.relative_to(ROOT)}: no '<N> tools' wording found to check")
+            self.assertEqual(counts, {real_count},
+                              f"{path.relative_to(ROOT)}: states tool count(s) {sorted(counts)}, "
+                              f"but scripts/ actually has {real_count} public tools -- update the stale wording")
+
     def test_skill_metadata_and_version_separation(self):
         pkg = json.loads((ROOT / "package.json").read_text())
         self.assertEqual(self.contract["skill"]["version"], pkg["version"])
