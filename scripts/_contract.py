@@ -477,6 +477,44 @@ def _whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None or importlib.util.find_spec("whisper") is not None
 
 
+def _default_font() -> str:
+    from _common import BRAND_DEFAULTS
+    return str(BRAND_DEFAULTS["font"])
+
+
+def _font_available(font_name: str) -> Dict[str, Any]:
+    """Whether `font_name` (a fontconfig family name, as passed to drawtext's `font=`) is actually
+    installed, distinct from silently resolving to a substitute.
+
+    This cannot be answered by running drawtext and checking its exit code: fontconfig substitutes
+    the closest match for ANY name, known or not, so `ffmpeg -vf drawtext=font='<garbage>'` still
+    exits 0 (verified against this repo's own sandbox ffmpeg -- a deliberately bogus family name
+    produces the same success exit code as "DejaVu Sans"). That is exactly the "false success" this
+    capability exists to catch (see issue #66): a missing font never fails the encode, it just
+    silently renders with a different typeface. `fc-match` is queried instead, since it reports the
+    family fontconfig actually resolved to; that only equals the request when the font is installed.
+    """
+    exe = shutil.which("fc-match")
+    if not exe:
+        return {"status": "unknown", "detail": "fc-match not on PATH; drawtext succeeding proves nothing (fontconfig substitutes silently), so availability cannot be verified"}
+    try:
+        proc = subprocess.run([exe, "--format=%{family}\n", font_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=_DETECT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"status": "unknown", "detail": f"fc-match did not exit within {_DETECT_TIMEOUT}s"}
+    except OSError as e:
+        return {"status": "unknown", "detail": f"fc-match: {e}"}
+    if proc.returncode != 0:
+        tail = " ".join(proc.stderr.strip().splitlines()[-2:])
+        return {"status": "unknown", "detail": f"fc-match exited {proc.returncode}: {tail}"}
+    lines = [l for l in proc.stdout.splitlines() if l.strip()]
+    resolved = lines[0].strip() if lines else ""
+    if not resolved:
+        return {"status": "unknown", "detail": "fc-match produced no output"}
+    if resolved.lower() == font_name.lower():
+        return {"status": "available", "detail": f"fc-match resolves '{font_name}' to itself"}
+    return {"status": "missing", "detail": f"fc-match substitutes '{resolved}' for '{font_name}' -- '{font_name}' is not installed"}
+
+
 def required_capabilities() -> Dict[str, List[str]]:
     req: set = set()
     opt: set = set()
@@ -507,6 +545,13 @@ def doctor() -> Dict[str, Any]:
     still assumes CPU x264/x265 -- so `gpu_encoders` never affects `ok` or any tool's `usable`. It
     only proves the build shipped the capability, never that the GPU/driver on this machine will
     actually accept a job (that needs a real encode, which this introspection never runs).
+
+    `fonts` is the same kind of informational answer for the default drawtext font (caption.py's
+    --animate/--karaoke, graphics.py's templates -- see issue #66): available/missing/unknown for
+    whether BRAND_DEFAULTS["font"] ("DejaVu Sans") is actually installed, not silently substituted
+    by fontconfig. It never affects `ok` or a tool's `usable` -- a missing font is not a broken
+    tool, drawtext still runs and still writes an artifact, it may just render with a different
+    typeface than requested (which is why this exists: that substitution is otherwise invisible).
     """
     listings = {
         "encoders": _ff_listing("ffmpeg", "-encoders"),
@@ -560,7 +605,14 @@ def doctor() -> Dict[str, Any]:
         "ok": not missing_required and not unknown_required,
         "tools": _tool_usability(state),
         "gpu_encoders": _gpu_encoders(listings["encoders"]),
+        "fonts": _fonts_capability(),
     }
+
+
+def _fonts_capability() -> Dict[str, Any]:
+    font = _default_font()
+    result = _font_available(font)
+    return {"default_font": font, "status": result["status"], "detail": result["detail"]}
 
 
 def _capability_fix_hint(cap: str) -> str:
@@ -881,6 +933,8 @@ def main() -> int:
             gpu = d["gpu_encoders"]
             if gpu["status"] == "parsed":
                 print(f"GPU-backed encoders in this build: {', '.join(gpu['present']) or 'none'} (no tool here uses one yet; this build-presence check does not prove the GPU/driver will accept a job)")
+            fonts = d["fonts"]
+            print(f"default drawtext font '{fonts['default_font']}': {fonts['status']} ({fonts['detail']})")
             for err in d["errors"]:
                 print(f"detection error: {err}", file=sys.stderr)
         if d["ok"]:

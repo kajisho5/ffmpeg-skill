@@ -220,6 +220,17 @@ encode, which this introspection never runs). No tool declares or requires a GPU
 the same honest yes/no/unknown question about GPU support that filter/encoder detection already
 answers for everything else, without a tool here needing to use one.
 
+`doctor`'s `fonts` field reports whether the default drawtext font (`caption.py`'s
+`--animate`/`--karaoke`, `graphics.py`'s templates — `BRAND_DEFAULTS["font"]`, `"DejaVu Sans"`)
+is actually installed — `{"default_font": "...", "status": "available"|"missing"|"unknown",
+"detail": "..."}`. drawtext's `font=` is a fontconfig name lookup, and fontconfig silently
+substitutes the closest match for *any* name, known or not — a missing font never fails the
+encode, so drawtext's own exit code cannot detect it. `fc-match` is queried instead: `available`
+when it resolves the name to itself, `missing` when it substitutes a different family, `unknown`
+when `fc-match` itself is not on PATH or fails. Like `gpu_encoders`, this is purely informational
+and never affects `ok` or any tool's `usable` — a substituted font is not a broken tool, just a
+typeface the caller didn't ask for.
+
 ## Invocation
 
 Structured arguments are the canonical way to call a tool, on the CLI or through MCP.

@@ -1029,6 +1029,65 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertNotEqual(d_fail["gpu_encoders"]["status"], "parsed")
         self.assertEqual(d_fail["gpu_encoders"]["present"], [])
 
+    # ------------------------------------------------------------------- font availability (issue #66)
+    def _fc_match_shim(self, script_body):
+        """PATH with a fake fc-match on it, real ffmpeg/ffprobe/everything else untouched."""
+        shim = self.work / "fcshim"
+        shim.mkdir(exist_ok=True)
+        (shim / "fc-match").write_text("#!/bin/sh\n" + script_body)
+        (shim / "fc-match").chmod(0o755)
+        return dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+
+    def test_default_drawtext_font_is_available_on_this_sandbox(self):
+        """This sandbox actually has DejaVu Sans (fonts-dejavu-core); the real fc-match confirms it,
+        not a fixture -- exercising the genuine success path end to end."""
+        self.assertIsNotNone(shutil.which("fc-match"), "sandbox is expected to carry fontconfig for this test")
+        d, code = self._doctor("ffmpeg_filters_6.1.txt")
+        self.assertEqual(d["fonts"]["default_font"], "DejaVu Sans")
+        self.assertEqual(d["fonts"]["status"], "available")
+        self.assertIn("DejaVu Sans", d["fonts"]["detail"])
+        # informational only: a missing/available font never affects ok or any tool's usable
+        self.assertTrue(d["ok"])
+
+    def test_missing_font_is_reported_missing_not_unknown(self):
+        """A real fc-match that substitutes a different family for the request: reported `missing`,
+        the same "silent substitution is the risk" case drawtext's own exit code can never catch."""
+        env = self._fc_match_shim("echo 'Liberation Sans'\nexit 0\n")
+        proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False)
+        d = json.loads(proc.stdout)
+        self.assertEqual(d["fonts"]["status"], "missing")
+        self.assertIn("Liberation Sans", d["fonts"]["detail"])
+        self.assertIn("DejaVu Sans", d["fonts"]["detail"])
+        self.assertTrue(d["ok"], "a missing default font never fails doctor's ok -- caption/graphics still run, just with a substituted typeface")
+
+    def test_font_detection_failure_is_unknown_not_missing(self):
+        """fc-match exiting non-zero, or absent entirely, is `unknown` -- never folded into `missing`
+        (same three-state invariant as every other capability doctor detects)."""
+        env = self._fc_match_shim("exit 1\n")
+        proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False)
+        d = json.loads(proc.stdout)
+        self.assertEqual(d["fonts"]["status"], "unknown")
+
+        # fc-match not on PATH at all
+        stripped = os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if not (Path(p) / "fc-match").exists())
+        env2 = dict(os.environ, PATH=stripped)
+        proc2 = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env2, check=False)
+        d2 = json.loads(proc2.stdout)
+        self.assertEqual(d2["fonts"]["status"], "unknown")
+        self.assertIn("fc-match", d2["fonts"]["detail"])
+
+    def test_font_capability_is_informational_like_gpu_encoders(self):
+        """fonts, like gpu_encoders, is reported but never gates ok/usable -- it answers a question
+        none of the required/optional capabilities ask."""
+        declared = set(_contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"])
+        self.assertFalse(any(c.startswith("font:") for c in declared), "font availability is informational, not a required/optional capability")
+        env = self._fc_match_shim("echo 'Liberation Sans'\nexit 0\n")
+        proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False)
+        d = json.loads(proc.stdout)
+        self.assertTrue(d["ok"])
+        for tool_name in ("caption", "graphics"):
+            self.assertEqual(d["tools"][tool_name]["usable"], "yes")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
