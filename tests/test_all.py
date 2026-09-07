@@ -510,6 +510,37 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue((sub / "cap_side.srt").exists(), "SRT written beside the output")
         self.assertFalse((OUT / "source.srt").exists(), "no SRT dropped next to the source")
 
+    def test_caption_mux_copies_streams_and_adds_a_subtitle_track(self):
+        srt = OUT / "mux_cues.srt"
+        out = OUT / "cap_mux.mp4"
+        script("caption.py", self.src, "--text", self.cues, "--write-srt", srt, "--mode", "mux", "-o", out)
+        m = probe(str(out))
+        self.assertEqual(m["subtitle_streams"], 1)
+        self.assertEqual(m["video"]["codec"], "h264", "video must be copied, not re-encoded to a different codec")
+        self.assertEqual(m["audio"]["codec"], "aac", "audio must be copied untouched")
+        self.assertClose(m["duration"], 12.0, 0.15)
+
+    def test_caption_mux_picks_the_subtitle_codec_from_the_container(self):
+        srt = OUT / "mux_container_cues.srt"
+        script("caption.py", "--text", self.cues, "--write-srt", srt)
+        for ext, expect_codec in ((".mp4", "mov_text"), (".mkv", "subrip")):
+            out = OUT / f"cap_mux{ext}"
+            script("caption.py", self.src, "--srt", srt, "--mode", "mux", "-o", out)
+            streams = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                         "-of", "csv=p=0", out).stdout.strip()
+            self.assertEqual(streams, expect_codec, f"{ext} output")
+
+    def test_caption_mux_refuses_ass_and_animation(self):
+        script("caption.py", self.src, "--ass", "/nonexistent.ass", "--mode", "mux", "-o", OUT / "x.mp4", expect_fail=True)
+        srt = OUT / "mux_refuse_cues.srt"
+        script("caption.py", "--text", self.cues, "--write-srt", srt)
+        script("caption.py", self.src, "--srt", srt, "--mode", "mux", "--karaoke", "-o", OUT / "x2.mp4", expect_fail=True)
+
+    def test_caption_mux_refuses_an_unrecognized_container(self):
+        srt = OUT / "mux_avi_cues.srt"
+        script("caption.py", "--text", self.cues, "--write-srt", srt)
+        script("caption.py", self.src, "--srt", srt, "--mode", "mux", "-o", OUT / "x.avi", expect_fail=True)
+
     # ---------------------------------------------------------------- overlay
     def test_overlay_image_and_text(self):
         out1 = OUT / "ov_img.mp4"
