@@ -141,15 +141,22 @@ def main() -> int:
     n = len(args.inputs)
     for i, (p, m) in enumerate(zip(args.inputs, metas)):
         cmd += ["-i", p]
-    # silent audio for clips without an audio track
+    # silent audio for clips without an audio track. `idx` is this ffmpeg input's position, i.e. n +
+    # how many synthetic inputs were already added -- not len(extra_inputs), which counts the six
+    # argv tokens ("-f", "lavfi", "-t", duration, "-i", "anullsrc=...") each synthetic input adds, not
+    # the input itself. With one no-audio clip both counts coincide (n + 0); from the second no-audio
+    # clip onward they diverge, and the previous `n + len(extra_inputs)` named a nonexistent, far-out-of-
+    # range ffmpeg input index -- found via a real multi-camera join where every clip lacked audio.
     audio_src: List[str] = []
+    added = 0
     for i, m in enumerate(metas):
         if m.get("audio"):
             audio_src.append(f"{i}:a:0")
         else:
-            idx = n + len(extra_inputs)
+            idx = n + added
             extra_inputs += ["-f", "lavfi", "-t", f"{durs[i]:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
             audio_src.append(f"{idx}:a:0")
+            added += 1
     cmd += extra_inputs
 
     if args.fit == "crop":
@@ -180,7 +187,7 @@ def main() -> int:
     cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
     expected = sum(durs) - d * (n - 1)
-    r = probe(output)
+    r = probe(output, role="output")
     info(f"wrote {output} ({r['duration']:.3f}s, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
     emit(output, mode="video", clips=n, transition=args.transition, expected_duration=round(expected, 3))
     return 0

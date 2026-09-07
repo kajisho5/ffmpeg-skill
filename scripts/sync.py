@@ -61,7 +61,7 @@ def decode_mono(path: str, seconds: float, start: float = 0.0) -> List[float]:
            "-vn", "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0 or not proc.stdout:
-        die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}")
+        die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
     n = len(proc.stdout) // 2
     return [v / 32768.0 for v in struct.unpack(f"<{n}h", proc.stdout[: n * 2])]
 

@@ -46,7 +46,7 @@ def die(msg: str, code: int = 1, kind: str = "input") -> "None":
     (status: failed) on stdout so callers get the same shape as a success; exit codes are unchanged."""
     sys.stderr.write(f"error: {msg}\n")
     if STATE.json:
-        print_json({"status": "failed", "error": {"kind": kind, "message": msg}})
+        print_json({"status": "failed", "exit_code": code, "error": {"kind": kind, "message": msg}, "commands": list(STATE.commands)})
     sys.exit(code)
 
 
@@ -135,10 +135,13 @@ def apply_common(args: "argparse.Namespace") -> None:
 
 def emit(output: Optional[str], **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json."""
+    meta: Dict[str, Any] = {}
+    if output and not STATE.dry_run:
+        meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
     if STATE.json:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": STATE.dry_run, "commands": list(STATE.commands)}
-        if output and not STATE.dry_run and os.path.exists(output):
-            doc["probe"] = probe(output)
+        if meta:
+            doc["probe"] = meta
         doc.update(extra)
         print_json(doc)
     elif output:
@@ -233,9 +236,45 @@ def ffmpeg_base(overwrite: bool = True) -> List[str]:
     return cmd
 
 
-def probe(path: str) -> Dict[str, Any]:
-    """Return a compact, script-friendly description of a media file."""
+MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".gif", ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".png", ".jpg", ".jpeg"}
+
+
+def _output_failed(path: str, why: str) -> "None":
+    """An ffmpeg run reported success but the artifact is not usable: say so, and do not leave a
+    0-byte file behind that a later step could mistake for a result."""
+    try:
+        if os.path.exists(path) and os.path.getsize(path) == 0:
+            os.remove(path)
+            why += " (empty file removed)"
+    except OSError:
+        pass
+    die(f"output verification failed: {path}: {why}", kind="output")
+
+
+def verify_output(path: str) -> Dict[str, Any]:
+    """The success criterion for every writing tool: the file exists, is not empty and ffprobe
+    can read at least one stream from it. Non-media artifacts (srt, edl, html, md) only need to
+    exist and be non-empty. Returns the probe (empty dict for non-media)."""
     if not os.path.exists(path):
+        _output_failed(path, "not written")
+    if os.path.getsize(path) == 0:
+        _output_failed(path, "0 bytes")
+    if os.path.splitext(path)[1].lower() not in MEDIA_EXT:
+        return {}
+    meta = probe(path, role="output")
+    if not meta.get("video") and not meta.get("audio"):
+        _output_failed(path, "no video or audio stream")
+    return meta
+
+
+def probe(path: str, role: str = "input") -> Dict[str, Any]:
+    """Return a compact, script-friendly description of a media file.
+
+    role="output" marks a file this tool just wrote: a read failure is then reported as an
+    output-verification failure (kind "output") instead of an input problem."""
+    if not os.path.exists(path):
+        if role == "output" and not STATE["dry_run"]:
+            _output_failed(path, "not written")
         if STATE["dry_run"]:
             return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
                     "video": {"codec": None, "width": 1920, "height": 1080, "fps": 30.0, "pix_fmt": None, "hdr": False,
@@ -249,6 +288,8 @@ def probe(path: str) -> Dict[str, Any]:
         check=False,
     )
     if proc.returncode != 0:
+        if role == "output":
+            _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
         die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
     raw = json.loads(proc.stdout or "{}")
     fmt = raw.get("format", {})

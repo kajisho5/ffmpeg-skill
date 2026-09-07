@@ -5,7 +5,13 @@ Every script prints the same information with `--help`; this file exists so the 
 ## Contents
 - probe.py — inspect
 - cut.py — cut / join segments
-- fit.py — target duration and/or aspect
+- fit.py — target duration and/or aspect, rotate/flip
+- crop.py — crop to an exact pixel rectangle
+- insert.py — still image to a timed silent clip, with Ken Burns zoom/pan
+- background.py — generate a solid-colour or gradient clip
+- reverse.py — reverse playback
+- stabilize.py — motion stabilisation (vidstab)
+- sequence.py — numbered/globbed image sequence to video
 - silence.py — remove dead air / jump cuts
 - join.py — concatenate with transitions
 - render.py — the whole edit in one project.json
@@ -21,7 +27,7 @@ Every script prints the same information with `--help`; this file exists so the 
 - verify.py — real-footage verification kit
 - look.py — see the result
 - caption.py — subtitles (static, animated, karaoke)
-- overlay.py — logo, image, title
+- overlay.py — logo, image, title, video picture-in-picture, chroma key
 - sync.py — offset detection, alignment, drift correction
 - color.py — HDR to SDR, LUTs, colour tags, Dolby Vision
 - audio.py — clean-up, music, ducking, layout
@@ -49,18 +55,90 @@ keyframes, instant, lossless); if the snapped result deviates more than
 Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded".
 
-### fit.py — target duration and/or aspect
+### fit.py — target duration and/or aspect, rotate/flip
 ```
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
-             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--pad-color black]]
-             [--fps N] [-o OUT]
+             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black]]
+             [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`); it
 refuses factors beyond `--max-speed`. For slow motion add `--smooth blend`
 (frame blending, fast) or `--smooth interpolate` (motion-compensated
 `minterpolate`, fluid but roughly 10-20x slower than realtime). `trim` keeps
-the head (or the middle with `--from-center`). `--fps` forces a constant frame
-rate; VFR sources are conformed automatically even without it.
+the head (or the middle with `--from-center`). `--width`/`--height` set the
+output size: give one and the other follows the aspect (source aspect if
+`--aspect` isn't also given); give both for an exact frame. `--rotate` applies
+a new clockwise rotation (90/180/270 swap width/height for 90 and 270 — this
+is separate from the rotation *metadata* fit.py already reads to size a
+source correctly); `--flip h|v` mirrors the picture; both can combine, rotate
+first. `--fps` forces a constant frame rate; VFR sources are conformed
+automatically even without it.
+
+### crop.py — crop to an exact pixel rectangle
+```
+crop.py INPUT --x X --y Y --width W --height H [-o OUT]
+```
+Crops to a literal `{x, y, width, height}` rectangle in source pixels —
+distinct from `fit.py --fit crop`, which crops to an *aspect ratio* and picks
+the rectangle for you. Use this when the rectangle is already known (a
+face-detection box, a saved crop, a hand-picked region). The rectangle must
+lie entirely inside the source frame (after accounting for display rotation);
+`--width`/`--height` must be even (4:2:0 chroma) and are refused, never
+rounded, if they aren't.
+
+### insert.py — still image to a timed silent clip
+```
+insert.py IMAGE --duration T [--width W] [--height H] [--fps N]
+                 [--zoom in|out [--zoom-amount 1.3]] [--pan left|right|up|down] [-o OUT]
+```
+Produces a silent, exact-duration clip from one image. `--width`/`--height`
+resolve like `fit.py`'s (one given -> the other follows the image's aspect;
+both given -> exact frame, scaled to fill and centre-cropped, never
+distorted). `--zoom in|out` is a Ken Burns effect: a slow linear zoom across
+the whole clip, ending (zoom in) or starting (zoom out) at `--zoom-amount`
+(default 1.3). `--pan` drifts the visible window across the image while
+zoomed — it needs `--zoom` (panning uses the extra image area a zoom exposes).
+
+### background.py — generate a solid-colour or gradient clip
+```
+background.py -o OUT --duration T --width W --height H
+              [--color C | --gradient C1:C2 [--angle DEG]]
+```
+No input file: ffmpeg's own `color`/`gradients` source filters generate the
+clip directly. For a title-card background, a placeholder layer, or a base
+for `overlay.py` to composite onto. `--width`/`--height` must be even.
+
+### reverse.py — reverse playback
+```
+reverse.py INPUT [--no-audio] [-o OUT]
+```
+Reverses video (and audio, unless `--no-audio`) with ffmpeg's `reverse`/
+`areverse` filters, which buffer the whole clip in memory — keep this to
+clips it makes sense to reverse (seconds to a couple of minutes), not
+something this tool limits for you.
+
+### stabilize.py — motion stabilisation
+```
+stabilize.py INPUT [--shakiness 1-10] [--smoothing N] [--zoom 0-100] [-o OUT]
+```
+Two-pass `vidstabdetect`/`vidstabtransform`: pass 1 analyses camera motion to
+a temporary transforms file (deleted after the run), pass 2 smooths and
+re-renders. `--shakiness` (default 5) trades analysis time for how much
+motion it looks for; `--smoothing` (default 15) is how many neighbouring
+frames the camera path is averaged over; `--zoom` crops in slightly to hide
+the black edges stabilizing can introduce. Needs an ffmpeg built with
+`--enable-libvidstab`; `doctor` reports this tool `usable: no` when that's
+missing (a plain Homebrew ffmpeg build, for example) rather than failing at
+run time.
+
+### sequence.py — numbered/globbed image sequence to video
+```
+sequence.py --dir DIR --pattern "frame_%04d.png"|"*.png" --fps N
+            [--start-number N] [--width W] [--height H] [-o OUT]
+```
+Turns a numbered or glob-matched set of still images into a video. The match
+is checked on disk before ffmpeg runs (an empty match or a missing first
+frame is refused here, not discovered from an opaque ffmpeg error).
 
 ### silence.py — remove dead air / jump cuts
 ```
@@ -218,12 +296,17 @@ word from `--color` to `--highlight-color` evenly across the cue (word timing
 is distributed, not transcribed). The ASS is kept next to the output so the
 user can hand-tune timings and re-run with `--ass`.
 
-### overlay.py — logo, image, title
+### overlay.py — logo, image, title, video picture-in-picture, chroma key
 ```
 overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--font-file F.ttf] [--font-size N] [--box]
+                  | --video CLIP [--chromakey COLOR [--chromakey-similarity 0-1] [--chromakey-blend 0-1]]
            [--position top-right|bottom-left|center|X,Y] [--margin N] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
 ```
-Alpha in PNGs is respected. Fades apply to the overlay only; the video keeps playing.
+Alpha in PNGs is respected. Fades apply to the overlay only; the video keeps
+playing. `--video` composites a second video as a picture-in-picture layer
+(same position/scale/opacity/time-range knobs as `--image`); only the main
+input's audio is kept, the PiP layer's own audio is dropped. `--chromakey`
+(with `--video`) keys out that colour first for green-screen compositing.
 
 ### sync.py — offset detection, alignment, drift correction
 ```

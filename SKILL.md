@@ -40,6 +40,10 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
 6. **Verify the output.** Run `probe.py` on each result and confirm duration,
    resolution, fps and audio match what was requested. Report those numbers to
    the user (e.g. "final.mp4: 59.98 s, 1080x1920, 30 fps, AAC stereo").
+   A step is done only when the script exited 0 and the output probes as
+   expected. Writing the command is not doing the job; a non-zero exit, a
+   missing or empty file, or a probe that contradicts the request is a
+   failure, and the report says so with the script's error message.
 7. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
 8. **Look at the picture.** Whenever the picture changed (captions, overlays,
@@ -76,7 +80,7 @@ This skill cuts, joins, measures, syncs, exports and checks files — it execute
 - **Thumbnail or cover-image composition** — that's a design decision, not a measurement; a thumbnail-generation skill or the user makes it.
 - **Understanding what a video is *about*** — this skill has no transcription or vision beyond `look.py`'s contact sheets, which exist for the calling agent's own eyes, not for this skill to interpret on its own.
 
-If a request needs an FFmpeg feature none of the 22 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
+If a request needs an FFmpeg feature none of the 28 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
 
 ## Request → script
 
@@ -87,10 +91,21 @@ If a request needs an FFmpeg feature none of the 22 scripts expose, say so and n
 | "keep only these parts", "remove the middle" | `cut.py input.mp4 --segments 0-1:00,1:30-2:00` |
 | "make it exactly 60 seconds", "fit it in 30s" | `fit.py input.mp4 --duration 60` (speed) or `--method trim` |
 | "make it vertical / for TikTok / 9:16", "square for Instagram" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`) |
+| "resize to a specific height, width follows" | `fit.py input.mp4 --height 1080` (or `--width`, or both for an exact frame) |
+| "crop to this exact box/rectangle" (known x/y/width/height, not an aspect ratio) | `crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920` |
+| "turn this image into a N-second clip", "title card / end slate" | `insert.py title.png --duration 3` |
+| "slow zoom on a photo", "Ken Burns effect" | `insert.py photo.jpg --duration 6 --zoom in --pan right --width 1920 --height 1080` |
+| "rotate this 90 degrees", "mirror it horizontally" | `fit.py input.mp4 --rotate 90` / `fit.py input.mp4 --flip h` |
+| "reverse this clip", "play it backwards" | `reverse.py input.mp4` |
+| "stabilize this shaky footage" | `stabilize.py input.mp4` |
+| "make a blank/colour background clip" | `background.py -o bg.mp4 --duration 3 --width 1920 --height 1080 --color 0x101010` |
+| "turn these numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |
 | "put our logo top-right", "add a watermark" | `overlay.py input.mp4 --image logo.png --position top-right --scale 200` |
 | "add a title for the first 4 seconds" | `overlay.py input.mp4 --text "Title" --position top --start 0 --end 4 --fade 0.4` |
+| "put this webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |
+| "remove the green screen", "chroma key this" | `overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00` |
 | "sync the lav mic to the camera", "line up the two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` / `sync.py camA.mp4 camB.mp4 --trim-second` |
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast) |
 | "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` |
@@ -185,6 +200,16 @@ Notes: source was VFR, conformed to 30 fps; audio was mono, made stereo
 ```
 
 Keep it to those five lines plus anything the user must decide. Attach the contact sheet when the edit touched the picture. Never report success without the probe of the output; never describe a fix you did not run.
+
+When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
+
+```
+Failed: color.py --lut grade.cube exited 1 — ffmpeg: "Unable to parse LUT file" (the .cube is not a valid LUT)
+Steps: probe -> color (failed); nothing written
+Notes: send a valid .cube, or say if you want the clip left as is
+```
+
+Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
 
 ## Things that look right but are wrong
 

@@ -412,7 +412,7 @@ def main() -> int:
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
     run(cmd)
-    result = probe(output)
+    result = probe(output, role="output")
     info(f"wrote {output} ({result.get('duration'):.3f}s)")
     emit(output)
     return 0

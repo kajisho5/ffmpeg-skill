@@ -209,7 +209,7 @@ def main() -> int:
         cmd += ["-vn"]  # audio extension: the picture is dropped, not copied into a container that cannot hold it
     cmd += audio_codec_for(output, args.bitrate) + ["-shortest", output]
     run(cmd)
-    r = probe(output)
+    r = probe(output, role="output")
     a = r["audio"]
     if r.get("video") and audio_out and not STATE["dry_run"]:
         die(f"{output} unexpectedly contains a video stream")

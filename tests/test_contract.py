@@ -75,6 +75,12 @@ class ContractTests(unittest.TestCase):
         ffmpeg("-f", "lavfi", "-i", "color=c=red@0.8:s=120x40,format=rgba", "-frames:v", "1", cls.logo)
         cls.cues = OUT / "c_cues.txt"
         cls.cues.write_text("0:00-0:02 Hello\n0:02-0:04 World\n", encoding="utf-8")
+        cls.garbage = OUT / "c_garbage.mp4"
+        cls.garbage.write_bytes(bytes((i * 7919) % 256 for i in range(200_000)))
+        cls.empty = OUT / "c_empty.mp4"
+        cls.empty.write_bytes(b"")
+        cls.badlut = OUT / "c_bad.cube"
+        cls.badlut.write_text("this is not a LUT\n", encoding="utf-8")
         cls.work = Path(tempfile.mkdtemp(prefix="ffskill_contract_"))
         cls.input_hashes = {p: cls._sha(p) for p in (cls.src, cls.wav, cls.mic, cls.camb, cls.vfr, cls.hdr, cls.surround)}
 
@@ -266,7 +272,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.tools["cut"]["verification"]["tools"], ["ffmpeg-skill/probe"])
 
     def test_visual_verification_metadata(self):
-        picture = {"fit", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy"}
+        picture = {"fit", "crop", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy"}
         # join is the one picture tool that also accepts audio-only inputs (audio concat); look applies
         # to its video output only, which SKILL.md states next to "Look: not needed"
         both = {"join"}
@@ -550,6 +556,83 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 127)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "missing_tool")
 
+    # ------------------------------------------------------------------ fail loudly
+    def _fails(self, name, *args, kind=None, code=None):
+        proc = tool(name, *args, "--json", check=False)
+        self.assertNotEqual(proc.returncode, 0, f"{name} {args}: exit 0 on a failure")
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed", name)
+        self.assertEqual(doc["exit_code"], proc.returncode)
+        self.assertIn("commands", doc)
+        self.assertTrue(doc["error"]["message"], name)
+        if kind:
+            self.assertEqual(doc["error"]["kind"], kind, f"{name}: {doc['error']}")
+        if code:
+            self.assertEqual(proc.returncode, code)
+        self.assertIn("error:", proc.stderr)
+        return doc
+
+    def test_input_failures_are_loud(self):
+        missing = self.work / "does_not_exist.mp4"
+        self._fails("cut", missing, "--start", "1", "--end", "2", "-o", self.out("f1.mp4"), kind="input")
+        self._fails("cut", self.garbage, "--start", "1", "--end", "2", "-o", self.out("f2.mp4"), kind="input")
+        self._fails("cut", self.empty, "--start", "1", "--end", "2", "-o", self.out("f3.mp4"), kind="input")
+        self._fails("probe", self.garbage, kind="input")
+        self._fails("loudness", self.garbage, "-o", self.out("f4.wav"), kind="input")
+        self._fails("audio", self.wav, "--replace", missing, "-o", self.out("f5.wav"), kind="input")
+        self._fails("export", self.wav, "--preset", "youtube", "-o", self.out("f6.mp4"), kind="input")  # no video stream
+        self._fails("cut", self.src, "--start", "20", "--end", "30", "-o", self.out("f7.mp4"), kind="input")  # beyond duration
+        self._fails("fit", self.src, "--duration", "3", "--fps", "0", "-o", self.out("f8.mp4"), kind="input")
+        self.assertEqual(sorted(p.name for p in self.work.glob("f[0-9].*")), [], "no partial outputs left behind")
+
+    def test_ffmpeg_failures_are_loud(self):
+        doc = self._fails("color", self.src, "--lut", self.badlut, "--fast", "-o", self.out("g1.mp4"), kind="ffmpeg")
+        self.assertTrue(any("ffmpeg" in c for c in doc["commands"]), "the failing command is reported")
+        self._fails("loudness", self.wav, "-o", self.work / "no_such_dir" / "g2.wav", kind="ffmpeg")
+        self._fails("cut", self.src, "--start", "1", "--end", "3", "-o", self.out("g3.txt"))  # unknown container
+        self.assertFalse(self.out("g1.mp4").exists())
+
+    def test_output_verification_failures_are_loud(self):
+        """A fake ffmpeg that exits 0 but writes an empty file: every writing tool must still fail."""
+        shim = self.work / "shim0"
+        shim.mkdir(exist_ok=True)
+        (shim / "ffmpeg").write_text("#!/bin/sh\nfor last; do :; done\ncase \"$last\" in -|*null*) exit 0;; esac\n: > \"$last\"\nexit 0\n")
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+        cases = {
+            "cut": [self.src, "--start", "1", "--end", "3", "--accurate", "-o", self.out("v_cut.mp4")],
+            "audio": [self.wav, "-o", self.out("v_au.mp3")],
+            "silence": [self.src, "-o", self.out("v_sil.mp4")],
+            "fit": [self.src, "--duration", "3", "-o", self.out("v_fit.mp4")],
+            "export": [self.src, "--preset", "x", "-o", self.out("v_exp.mp4")],
+            "caption": [self.src, "--text", self.cues, "-o", self.out("v_cap.mp4")],
+            "overlay": [self.src, "--image", self.logo, "-o", self.out("v_ov.mp4")],
+            "color": [self.hdr, "--to-sdr", "-o", self.out("v_col.mp4")],
+            "look": [self.src, "-o", self.out("v_look.png")],
+        }
+        for name, args in cases.items():
+            proc = tool(name, *args, "--json", env=env, check=False)
+            self.assertNotEqual(proc.returncode, 0, f"{name}: exit 0 with an unusable output")
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["status"], "failed", name)
+            self.assertEqual(doc["error"]["kind"], "output", f"{name}: {doc['error']}")
+            self.assertIn("output verification failed", doc["error"]["message"])
+            self.assertNotIn("probe", doc)
+            self.assertFalse(Path(args[-1]).exists(), f"{name}: empty output left behind")
+        # the same path with the real ffmpeg succeeds and carries a probe of the output
+        doc = json.loads(tool("cut", self.wav, "--start", "1", "--end", "3", "-o", self.out("v_ok.wav"), "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertGreater(doc["probe"]["duration"], 1.5)
+
+    def test_success_requires_a_verified_output(self):
+        import _common
+        for name in ("cut", "audio", "loudness", "silence", "fit", "export", "caption", "overlay", "color", "join", "graphics", "multicam"):
+            src = (SCRIPTS / f"{name}.py").read_text(encoding="utf-8")
+            self.assertIn("emit(", src, f"{name} does not go through emit()")
+        self.assertIn("verify_output(output)", (SCRIPTS / "_common.py").read_text(encoding="utf-8"))
+        with self.assertRaises(SystemExit):
+            _common.verify_output(str(self.work / "never_written.mp4"))
+
     def _run_structured(self, name, args):
         """Drive a tool the way an agent adapter would: structured args -> argv (same mapping as MCP)."""
         argv = mcp_server.build_argv(name, args)
@@ -719,7 +802,7 @@ class DoctorDetectionTests(unittest.TestCase):
 
     def test_two_character_flags_do_not_hide_filters(self):
         """The FFmpeg 8 layout: every declared filter is found, nothing is reported missing or unknown."""
-        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale"}  # not built into Homebrew's 8.1.2
+        absent_in_brew = {"filter:drawtext", "filter:subtitles", "filter:ass", "filter:zscale", "filter:vidstabdetect", "filter:vidstabtransform"}  # not built into Homebrew's 8.1.2 (no --enable-libvidstab)
         for name in self.FILTER_FIXTURES:
             d, code = self._doctor(name)
             declared = [c for c in _contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"] if c.startswith("filter:")]
