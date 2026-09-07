@@ -560,6 +560,28 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(m["audio"]["codec"], "aac", "audio must be copied untouched")
         self.assertClose(m["duration"], 12.0, 0.15)
 
+    def test_caption_mux_chained_keeps_every_language_track(self):
+        """--mode mux used to drop any subtitle track the input already had when adding a new
+        one (its map list never included 0:s?), so chaining it once per language -- the natural
+        way to build a multi-language subtitle set (e.g. an English track, then a Japanese one)
+        -- silently lost every earlier language but the last (#93). Each call must now keep what
+        was already there."""
+        srt_en = OUT / "mux_chain_en.srt"
+        srt_en.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
+        srt_ja = OUT / "mux_chain_ja.srt"
+        srt_ja.write_text("1\n00:00:00,000 --> 00:00:02,000\nこんにちは\n", encoding="utf-8")
+        step1 = OUT / "cap_mux_chain1.mkv"
+        script("caption.py", self.src, "--srt", srt_en, "--mode", "mux", "--language", "en", "-o", step1)
+        step2 = OUT / "cap_mux_chain2.mkv"
+        script("caption.py", step1, "--srt", srt_ja, "--mode", "mux", "--language", "ja", "-o", step2)
+        m = probe(str(step2))
+        self.assertEqual(m["subtitle_streams"], 2)
+        langs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream_tags=language",
+                   "-of", "csv=p=0", step2).stdout.split()
+        self.assertEqual(langs, ["en", "ja"])
+        self.assertEqual(m["video"]["codec"], "h264", "video must stay copied through both chained calls")
+        self.assertEqual(m["audio"]["codec"], "aac", "audio must stay copied through both chained calls")
+
     def test_caption_mux_picks_the_subtitle_codec_from_the_container(self):
         srt = OUT / "mux_container_cues.srt"
         script("caption.py", "--text", self.cues, "--write-srt", srt)

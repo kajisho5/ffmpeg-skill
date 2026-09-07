@@ -6,6 +6,21 @@
 
 (nothing yet)
 
+## 0.12.2 — `caption.py --mode mux` no longer drops the input's existing subtitle track(s)
+
+Found while discussing a real use case (adding both an English and a Japanese soft subtitle
+track to a foreign video) and reproduced directly: chaining `--mode mux` once per language —
+the natural way to build a multi-language subtitle set — silently dropped every earlier
+language but the last, because the mode's `-map` list never included the main input's own
+existing subtitle stream(s), only the freshly-added one. Same class of bug fixed across
+`fit.py`/`color.py`/`graphics.py`/`overlay.py` in 0.12.1/#91 (deliberately scoped out of that
+pass since burn mode raises a real design question mux mode doesn't have: mux mode explicitly
+promises "copies video/audio untouched, adds the SRT as a soft, toggleable subtitle stream", so
+keeping what was already there has one obvious answer). Existing tracks are now mapped and
+stream-copied (`-c:s:i copy` per existing index) ahead of the new one, whose own `-c:s`/
+`-metadata:s:s:N` now target its real index instead of always `0`. Closes
+[#93](https://github.com/kajisho5/ffmpeg-skill/issues/93).
+
 ## 0.12.1 — Stream-preservation audit: subtitle/data streams no longer silently dropped by picture-only edits
 
 Prompted by an external review pushing back that "feature-complete" for this project now means

@@ -427,14 +427,23 @@ def main() -> int:
         if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and args.text)):
             die(f"SRT file not found: {srt_path}")
         codec = mux_subtitle_codec(output)
+        # Keep any subtitle track(s) the input already has (e.g. chaining --mode mux once per
+        # language to build a multi-language set) -- copied byte-identical, distinct from the
+        # newly-added SRT's own codec below.
+        existing_subs = meta.get("subtitle_streams") or 0
         maps = ["-map", "0:v:0"]
         cmd = ffmpeg_base() + ["-i", args.input, "-i", srt_path]
         if meta.get("audio"):
             maps += ["-map", f"0:a:{args.audio_stream}"]
+        if existing_subs:
+            maps += ["-map", "0:s?"]
         maps += ["-map", "1:0"]
-        cmd += maps + ["-c:v", "copy"] + (["-c:a", "copy"] if meta.get("audio") else []) + ["-c:s", codec]
+        cmd += maps + ["-c:v", "copy"] + (["-c:a", "copy"] if meta.get("audio") else [])
+        for i in range(existing_subs):
+            cmd += [f"-c:s:{i}", "copy"]
+        cmd += [f"-c:s:{existing_subs}", codec]
         if args.language:
-            cmd += ["-metadata:s:s:0", f"language={args.language}"]
+            cmd += [f"-metadata:s:s:{existing_subs}", f"language={args.language}"]
         cmd += [output]
         run(cmd)
         result = probe(output, role="output")
