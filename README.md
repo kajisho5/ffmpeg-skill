@@ -252,10 +252,12 @@ The contract is generated from the code that runs, not maintained beside it. For
 
 ```bash
 npx ffmpeg-skill doctor          # human-readable
-npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unknown / detection / errors / tools
+npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unknown / detection / errors / tools / gpu_encoders
 ```
 
 `doctor` reads `ffmpeg -encoders`, `-filters` and `-bsfs` and resolves every capability the contract declares against this machine's build. Three states per capability: `available`, `missing`, `unknown`. Exit 0 when everything required is available, 1 when something required is missing, 2 when nothing is proven missing but a required capability is unknown. With detection on (the default), `contract --json` carries the same lists under `capabilities`. `doctor --json`'s `tools` field folds that down to one answer per tool — `{"caption": {"usable": "no", "missing": ["filter:subtitles"], "fix": "..."}, ...}` — so "is `doctor` overall `ok`" and "can I run `caption.py` on this machine" are answered separately: a plain Homebrew `ffmpeg` is `ok` for tools that don't need `subtitles`/`drawtext`/`zscale`, while `caption`'s own `usable` is `"no"`.
+
+`doctor --json`'s `gpu_encoders` reports which GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`, `vaapi`, `amf`) this ffmpeg *build* was compiled with — read from `-encoders` alone, so it proves the capability shipped, not that the GPU/driver on this machine will actually accept a job (that needs a real encode, which `doctor`'s introspection never runs). No tool here uses one yet — every tool still assumes CPU x264/x265 — so this is purely informational and never affects `ok` or any tool's `usable`.
 
 ## FFmpeg compatibility
 
