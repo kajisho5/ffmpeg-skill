@@ -38,7 +38,19 @@ narrower existing fixture (video + audio + two subtitle tracks, no chapters).
   tool here currently reads/writes ASS-with-fonts end to end, so the risk is theoretical for now.
 - Test: `test_picture_only_edits_keep_the_sources_subtitle_streams` runs all four fixed tools
   against `c_subbed.mkv` (two real embedded SRT tracks, already used by other tests) and asserts
-  the subtitle survives and `dropped_non_av_streams` is `false`.
+  BOTH subtitle tracks survive and `dropped_non_av_streams` is `false`.
+- **Two real regressions caught in code review before this shipped, both fixed and covered by a
+  new test:** `overlay.py`'s `--image`/`--video` branches combined the pre-existing `-shortest`
+  with the new subtitle map -- a subtitle ending before the main video could truncate the WHOLE
+  output to the subtitle's length (reproduced: 6s video, 1s subtitle -> 1.04s output). `-shortest`
+  is now used only when the source's duration is unknown; the existing `-t <duration>` (already
+  there for FFmpeg 7+ precision) is used alone whenever it's known, since it only bounds the main
+  input. Separately, `fit.py --method speed` retimes video/audio (`setpts`/`atempo`) but a
+  stream-copied subtitle keeps its original timestamps, so it would silently desync from the
+  now-faster/slower picture; `fit.py` now skips subtitle preservation specifically when changing
+  speed and reports `dropped_non_av_streams: true` honestly instead. `probe()` gains an additive
+  `data_streams` count (alongside the existing `subtitle_streams`) so that determination also
+  catches a data-only stream with no subtitle track.
 
 ## 0.12.0 — 2026-09-07 — Hardening pass: stream/input safety, contract-vs-implementation drift, SKILL.md/eval consistency
 

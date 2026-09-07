@@ -233,7 +233,7 @@ def main() -> int:
         # now-faster/slower picture. Drop them here rather than ship a captions track that lies
         # about when a line is spoken.
         run(cmd + [output])
-        dropped_streams = bool(meta.get("subtitle_streams"))
+        dropped_streams = bool(meta.get("subtitle_streams") or meta.get("data_streams"))
     else:
         dropped_streams = run_keeping_subtitles(cmd, output)
 

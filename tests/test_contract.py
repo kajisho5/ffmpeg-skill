@@ -1069,6 +1069,10 @@ class ContractTests(unittest.TestCase):
         doc2 = self._run_structured("probe", {"inputs": [str(self.src)]})
         self.assertEqual(doc2["subtitle_streams"], 0)
         self.assertEqual(doc2["subtitle_stream_details"], [])
+        # data_streams (added alongside run_keeping_subtitles(), #91 review): a plain fixture
+        # with no data/attachment stream reports 0, same additive-field convention as
+        # subtitle_streams above.
+        self.assertEqual(doc2["data_streams"], 0)
 
     def test_color_overlay_caption_export_check_look_render_via_contract(self):
         doc = self._run_structured("color", {"input": str(self.hdr), "to_sdr": True, "fast": True, "output": str(self.out("sdr.mp4"))})
