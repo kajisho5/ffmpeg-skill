@@ -18,6 +18,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history (not the default shallow depth-1 clone): test_contract.py's
+          # test_changelog_mentions_every_closed_issue_since_last_tag walks git log back to the
+          # latest tag to check CHANGELOG.md against "Closes #N" in commit bodies -- a shallow
+          # clone would make that check silently a no-op (no tag reachable to diff against).
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.9"

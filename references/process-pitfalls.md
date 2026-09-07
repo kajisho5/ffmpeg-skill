@@ -63,3 +63,23 @@ on the *same* platform in a different way: stop redesigning the fixture. Either 
 the strict assertion to the platform where it's provably correct (keeping a weaker,
 platform-general check — output exists, has the right duration — everywhere), or escalate
 before spending a third CI cycle on it.
+
+## A fix merged after CHANGELOG.md's current-version section was drafted can silently miss it
+
+`CHANGELOG.md`'s `## 0.12.0` section was written once, covering everything merged up to
+that point. Two fixes that closed real issues after that point (#62's `--audio-stream`
+extension via PR #72, #77's dry-run-dims fix via PR #88) landed with no further nudge to
+go back and add a bullet — #62's fix actually got a bullet (its content is genuinely
+described) but the `Closes #62` link was left off, and #77 was missed outright until a
+direct question ("shouldn't this bump the version?") prompted a manual check. Neither was
+caught by CI, because nothing checked CHANGELOG.md against what had actually been closed.
+
+Caught by hand both times, then closed properly with `tests/test_contract.py`'s
+`test_changelog_mentions_every_closed_issue_since_last_tag`, which walks `git log` back to
+the latest release tag, extracts every `Closes #N.` from a commit body, and fails if that
+issue number doesn't appear anywhere in `CHANGELOG.md`. This needs real history (`ci.yml`'s
+`actions/checkout` step now passes `fetch-depth: 0` for exactly this reason — the default
+shallow clone leaves no tag reachable to diff against, which would make the test silently
+skip itself in CI, not fail). If this test ever needs to skip a genuinely changelog-less
+closed issue (a pure process note, a duplicate, a revert of an unreleased change), name the
+exemption in the test itself with a reason — don't just widen the regex or drop the check.

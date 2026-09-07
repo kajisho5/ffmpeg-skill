@@ -50,7 +50,8 @@ field addition here is additive.
   consistently instead of silently defaulting to track 0 (or, for `fit.py`, to ffmpeg's own
   implicit "best stream" heuristic, which for audio favours channel count over track order).
   `join.py`/`multicam.py` are out of scope — they combine separate input files, a different
-  problem shape.
+  problem shape. Closes [#62](https://github.com/kajisho5/ffmpeg-skill/issues/62) (the same gap
+  `caption.py`/`audio.py` already closed in [#55](https://github.com/kajisho5/ffmpeg-skill/issues/55)).
 - **`doctor --json` gains a `fonts` field**, informational like `gpu_encoders`: drawtext's default
   font (`caption.py --animate`/`--karaoke`, `graphics.py`) can silently substitute a different
   family when the requested one isn't installed — a drawtext exit code can't detect this

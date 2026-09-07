@@ -359,6 +359,25 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(meta["video"]["height"], 0)
         self.assertEqual(meta["video"]["fps"], 0.0)
 
+    def test_changelog_mentions_every_closed_issue_since_last_tag(self):
+        """A merged fix can land after CHANGELOG.md's current-version section was already
+        written (this happened for real: #77's fix, PR #88, merged after the 0.12.0 section was
+        drafted and initially missed it -- caught by hand, not by a test, and fixed in a
+        follow-up commit). Every "Closes #N." in a commit body since the last release tag should
+        show up somewhere in CHANGELOG.md; if it doesn't, either the changelog needs an entry or
+        the issue was closed without one on purpose (rare -- e.g. a pure process/doc note) and
+        this test's exemption set below should say why. Needs real git history: skips itself on
+        a shallow clone (see ci.yml's fetch-depth: 0) where no tag is reachable at all."""
+        tags = sh("git", "tag", "--list", "v*", "--sort=-creatordate", cwd=ROOT, check=False).stdout.split()
+        if not tags:
+            self.skipTest("no reachable release tag (shallow clone?) -- nothing to diff against")
+        last_tag = tags[0]
+        log = sh("git", "log", f"{last_tag}..HEAD", "--format=%B----COMMIT----", cwd=ROOT, check=False).stdout
+        closed = sorted(set(int(n) for n in re.findall(r"(?im)^closes\s+#(\d+)\.?\s*$", log)))
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        missing = [n for n in closed if f"#{n}" not in changelog]
+        self.assertEqual(missing, [], f"issue(s) closed since {last_tag} but not mentioned in CHANGELOG.md: {missing}")
+
     def test_dry_run_metadata(self):
         for t in self.contract["tools"]:
             has_flag = "dry_run" in t["input_schema"]["properties"]
