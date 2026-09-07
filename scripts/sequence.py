@@ -106,7 +106,11 @@ def main() -> int:
         vf = [f"scale={out_w}:{out_h}", "setsar=1", f"fps={args.fps:g}"]
         cmd += ["-vf", ",".join(vf)]
         cmd += video_args(None, args.crf, args.preset)
-        cmd += ["-an", output]
+        # The concat demuxer's trailing repeated-last-file trick (needed so the last real file's
+        # duration line takes effect) has been observed to produce an extra frame's worth of
+        # duration on some ffmpeg builds -- force the exact intended length rather than trust it.
+        total_duration = len(frames) * frame_duration
+        cmd += ["-t", f"{total_duration:.6f}", "-an", output]
         run(cmd)
 
     result = probe(output)
