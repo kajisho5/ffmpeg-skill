@@ -5,6 +5,12 @@
 ## Unreleased
 
 - **Test: the prose tool count in README/`docs/contract.md`/`package.json` is now checked against the real tool list.** 0.11.0 was cut to fix exactly this drift (README said 28 twice and 22 once; `package.json` said 21) by hand, with nothing to stop it recurring. `tests/test_contract.py`'s `test_docs_tool_count_matches_the_real_tool_list` scans all three for `"<N> tools"` wording and fails if any number doesn't match `scripts/`'s actual public-tool count, so the next tool added/removed without updating every mention fails CI instead of drifting silently. `contract_version`/`skill.version` were already split (0.9.0) and already documented as "additive keeps `contract_version`, breaking bumps it" — `docs/contract.md` now also repeats the tagged-version pin guidance next to that table, since `capability_map` makes this the most cross-repo-facing part of the contract. Closes [#50](https://github.com/kajisho5/ffmpeg-skill/issues/50).
+- **Tests: `overlay.py --image` on an audio-less video is now covered.** Every existing overlay test used a
+  source with audio; investigating a downstream report of `overlay.py` "hanging" on audio-less input (the
+  historical 0.9.x defect this tool's own `-t <duration>` fix, added in 0.10.0, was meant to close) found the
+  fix already works — the run had just been mistaken for a hang under a too-short timeout while it was still
+  transcoding a 1080p60 frame with a fade filter. No code change; `test_overlay_on_audio_less_video_terminates`
+  closes the coverage gap so this defect class can't silently regress.
 
 ## 0.11.0 — 2026-09-07 — Pixel crop, still-to-clip, rotate/flip/PiP/reverse/chromakey/stabilize/sequence/Ken Burns, fail-loudly output verification, capability map
 
