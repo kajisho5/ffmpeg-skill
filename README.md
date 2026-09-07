@@ -140,7 +140,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 ## Tools
 
-22 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, non-zero exit and a reason on stderr on failure.
+28 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, non-zero exit and a reason on stderr on failure.
 
 **Analysis and inspection**
 
