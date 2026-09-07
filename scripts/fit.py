@@ -182,19 +182,21 @@ def main() -> int:
 
     # ---- aspect / size
     if args.aspect or args.width or args.height:
-        src_ratio = Fraction(sw, sh)
+        src_ratio = Fraction(sw, sh) if sh else None
         ratio = parse_aspect(args.aspect) if args.aspect else src_ratio
         if args.width and args.height:
             out_w, out_h = even(args.width), even(args.height)
         elif args.width:
             out_w = even(args.width)
-            out_h = even(out_w / ratio)
+            out_h = even(out_w / ratio) if ratio else args.width
         elif args.height:
             out_h = even(args.height)
-            out_w = even(out_h * ratio)
-        else:
+            out_w = even(out_h * ratio) if ratio else args.height
+        elif ratio and src_ratio:
             out_w = even(sw if ratio <= src_ratio else sh * ratio)
             out_h = even(out_w / ratio)
+        else:
+            out_w, out_h = even(sw), even(sh)
         if args.fit == "crop":
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")

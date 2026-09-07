@@ -319,19 +319,45 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.contract["json_output"]["failure"]["status"], "failed")
 
     def test_dry_run_multistage_pipeline_survives_the_probe_stub(self):
-        """The dry-run stub probe() returns for a not-yet-written output hardcodes a plausible
-        1920x1080/30fps rather than 0x0 -- tried zeroing it (issue #77) to stop it looking like
-        real data in dry-run summary lines, but render.py/join.py chain dry-run probes across
-        pipeline stages and divide by width/height (aspect-ratio math), so a zero placeholder
-        traded a cosmetic issue for a real ZeroDivisionError crash. This pins the crash-free
-        behavior: a join with only --width set (forcing the height-from-aspect division) must
-        not blow up under --dry-run even when its input is itself a dry-run-planned clip that
-        was never actually written."""
+        """The dry-run stub probe() returns for a not-yet-written output honestly reports
+        width/height/fps as 0/0/0.0 ("not measured", issue #77) instead of the plausible-looking
+        1920x1080/30fps placeholder it used to fabricate. render.py/join.py/fit.py chain dry-run
+        probes across pipeline stages and used to divide by width/height for aspect-ratio math,
+        which is exactly why the first attempt at zeroing this stub was reverted (real
+        ZeroDivisionError). Each such call site now treats a zero/unknown source dimension as
+        "can't compute a ratio" and falls back sanely instead of dividing by it, so this pins the
+        crash-free behavior: a join with only --width set (forcing the height-from-aspect
+        division) must not blow up under --dry-run even when its input is itself a dry-run-planned
+        clip that was never actually written."""
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "-o", self.out("dr_a.mp4"), "--dry-run", "--json").stdout)
         self.assertTrue(doc["dry_run"])
         proc = tool("join", self.out("dr_a.mp4"), self.out("dr_a.mp4"), "--width", "480",
                      "-o", self.out("dr_joined.mp4"), "--dry-run", check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        proc = tool("fit", self.out("dr_a.mp4"), "--width", "480", "--aspect", "9:16",
+                     "-o", self.out("dr_fit_w.mp4"), "--dry-run", check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        proc = tool("fit", self.out("dr_a.mp4"), "--height", "480", "--aspect", "9:16",
+                     "-o", self.out("dr_fit_h.mp4"), "--dry-run", check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        proc = tool("fit", self.out("dr_a.mp4"), "--width", "480", "--height", "480",
+                     "-o", self.out("dr_fit_wh.mp4"), "--dry-run", check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_dry_run_probe_stub_does_not_fabricate_plausible_dimensions(self):
+        """Companion to the crash-safety test above: now that every division site that consumes
+        the dry-run probe stub's width/height guards against zero, the stub itself can go back to
+        reporting the honest "not measured" 0/0/0.0 instead of a fabricated 1920x1080/30fps that
+        looked like a real computed preview in a tool's human-readable dry-run summary line."""
+        import _common
+        _common.STATE["dry_run"] = True
+        try:
+            meta = _common.probe(str(self.out("does_not_exist_and_never_will.mp4")))
+        finally:
+            _common.STATE["dry_run"] = False
+        self.assertEqual(meta["video"]["width"], 0)
+        self.assertEqual(meta["video"]["height"], 0)
+        self.assertEqual(meta["video"]["fps"], 0.0)
 
     def test_dry_run_metadata(self):
         for t in self.contract["tools"]:

@@ -121,9 +121,11 @@ def main() -> int:
     if args.width and args.height:
         w, h = args.width, args.height
     elif args.width:
-        w, h = args.width, int(round(args.width * fh / fw))
+        w = args.width
+        h = int(round(args.width * fh / fw)) if fw else args.width
     elif args.height:
-        w, h = int(round(args.height * fw / fh)), args.height
+        h = args.height
+        w = int(round(args.height * fw / fh)) if fh else args.height
     else:
         w, h = fw, fh
     fps = args.fps or first.get("fps") or 30.0
