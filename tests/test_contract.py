@@ -933,6 +933,32 @@ class DoctorDetectionTests(unittest.TestCase):
         for key in ("available", "missing", "missing_optional", "unknown", "detection", "detected_by"):
             self.assertIn(key, contract["capabilities"])
 
+    def test_gpu_encoders_are_reported_from_the_build_alone(self):
+        """gpu_encoders answers only "did this ffmpeg build ship the capability" -- never affects ok/usable."""
+        # the real macOS capture carries VideoToolbox (h264/hevc), the Windows capture carries nvenc/qsv/amf/vaapi
+        d_mac, _ = self._doctor("ffmpeg_filters_8.1.2_macos.txt", encoders="ffmpeg_encoders_8.1.2_macos.txt", bsfs="ffmpeg_bsfs_8.1.2_macos.txt")
+        self.assertEqual(d_mac["gpu_encoders"]["status"], "parsed")
+        self.assertIn("h264_videotoolbox", d_mac["gpu_encoders"]["present"])
+        self.assertIn("hevc_videotoolbox", d_mac["gpu_encoders"]["present"])
+        self.assertNotIn("h264_nvenc", d_mac["gpu_encoders"]["present"], "macOS build has no nvenc")
+        d_win, _ = self._doctor("ffmpeg_filters_9.0.1_windows.txt", encoders="ffmpeg_encoders_9.0.1_windows.txt", bsfs="ffmpeg_bsfs_9.0.1_windows.txt")
+        self.assertEqual(d_win["gpu_encoders"]["status"], "parsed")
+        self.assertGreater(len(d_win["gpu_encoders"]["present"]), 0)
+        for name in d_win["gpu_encoders"]["present"]:
+            self.assertTrue(name.endswith(("_nvenc", "_videotoolbox", "_qsv", "_vaapi", "_amf")), name)
+        # no tool declares or requires a GPU encoder, so its presence/absence never affects ok or any tool's usability
+        # (the Windows gyan.dev capture is a full build with nothing missing, unlike the macOS one above)
+        self.assertTrue(d_win["ok"])
+        self.assertEqual(d_win["tools"]["export"]["usable"], "yes")
+        declared = set(_contract.required_capabilities()["required"] + _contract.required_capabilities()["optional"])
+        self.assertFalse(any(c.startswith("encoder:") and c[8:] in d_win["gpu_encoders"]["present"] for c in declared),
+                          "no tool declares a GPU encoder as required/optional -- gpu_encoders is purely informational")
+        # an unreadable encoder listing (fed the filters-garbage fixture as "encoders" to force
+        # unparsed output) is reported honestly by status, never silently claimed as an empty pass
+        d_fail, _ = self._doctor("ffmpeg_filters_6.1.txt", encoders="ffmpeg_filters_garbage.txt")
+        self.assertNotEqual(d_fail["gpu_encoders"]["status"], "parsed")
+        self.assertEqual(d_fail["gpu_encoders"]["present"], [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

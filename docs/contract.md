@@ -211,6 +211,15 @@ capabilities by hand to answer "can I run `caption.py` on this machine right now
 passing overall does not mean every tool is usable (a plain Homebrew `ffmpeg` on macOS is `ok`
 for tools that don't need `subtitles`/`drawtext`/`zscale`, but `caption.usable` is `"no"`).
 
+`doctor`'s `gpu_encoders` field reports GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`,
+`vaapi`, `amf`) present in this ffmpeg *build*, read from `-encoders` alone — `{"status":
+"parsed"|"unparsed"|"failed"|"missing", "present": [...]}`. It proves the build shipped the
+capability, not that the GPU/driver on this machine will accept a job (that needs a real
+encode, which this introspection never runs). No tool declares or requires a GPU encoder, so
+`gpu_encoders` never affects `ok` or any tool's `usable` — it exists purely so a caller can ask
+the same honest yes/no/unknown question about GPU support that filter/encoder detection already
+answers for everything else, without a tool here needing to use one.
+
 ## Invocation
 
 Structured arguments are the canonical way to call a tool, on the CLI or through MCP.

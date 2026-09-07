@@ -436,6 +436,28 @@ def _ff_list(binary: str, flag: str) -> List[str]:
     return _ff_listing(binary, flag)["names"]
 
 
+# GPU-backed encoders are named `<codec>_<backend>` by every ffmpeg build (h264_nvenc,
+# hevc_videotoolbox, av1_qsv, h264_vaapi, hevc_amf, ...); recognised by the backend suffix so a
+# new codec in a future ffmpeg build needs no change here.
+_GPU_ENCODER_SUFFIXES = ("_nvenc", "_videotoolbox", "_qsv", "_vaapi", "_amf")
+
+
+def _gpu_encoders(encoders_listing: Dict[str, Any]) -> Dict[str, Any]:
+    """GPU-backed encoders this ffmpeg BUILD was compiled with, read from `-encoders` alone.
+
+    This proves the build carries e.g. h264_nvenc; it does NOT prove the GPU/driver on this
+    machine will accept a job -- that would require actually running an encode, which doctor's
+    introspection deliberately never does beyond listing/-version (see doctor()'s own docstring).
+    A caller that needs to know "will a GPU encode actually work here" has to try one; this only
+    answers "did this ffmpeg build even ship the capability."
+    """
+    status = encoders_listing["status"]
+    if status != "parsed":
+        return {"status": status, "detail": encoders_listing["detail"], "present": []}
+    present = sorted(n for n in encoders_listing["names"] if n.endswith(_GPU_ENCODER_SUFFIXES))
+    return {"status": "parsed", "present": present}
+
+
 def _version_line(binary: str) -> Optional[str]:
     exe = shutil.which(binary)
     if not exe:
@@ -478,6 +500,13 @@ def doctor() -> Dict[str, Any]:
     that would prove it could not be read (unparsed output, ffmpeg failure); it is never folded into
     `missing` (a filter that exists is not reported absent) nor into `available` (a failed detection
     is not a pass). `ok` is true only when nothing required is missing or unknown.
+
+    `gpu_encoders` is a separate, honest answer to a question none of the required/optional
+    capabilities above ask: which GPU-backed encoders (nvenc, videotoolbox, qsv, vaapi, amf) this
+    ffmpeg BUILD carries, from `-encoders` alone. No tool here requires or uses one -- every tool
+    still assumes CPU x264/x265 -- so `gpu_encoders` never affects `ok` or any tool's `usable`. It
+    only proves the build shipped the capability, never that the GPU/driver on this machine will
+    actually accept a job (that needs a real encode, which this introspection never runs).
     """
     listings = {
         "encoders": _ff_listing("ffmpeg", "-encoders"),
@@ -530,6 +559,7 @@ def doctor() -> Dict[str, Any]:
         "errors": errors,
         "ok": not missing_required and not unknown_required,
         "tools": _tool_usability(state),
+        "gpu_encoders": _gpu_encoders(listings["encoders"]),
     }
 
 
@@ -848,6 +878,9 @@ def main() -> int:
             not_usable = sorted(name for name, t in d["tools"].items() if t["usable"] != "yes")
             if not_usable and d["ok"]:
                 print(f"note: overall 'ok' means nothing REQUIRED BY EVERY TOOL is missing -- {len(not_usable)} tool(s) still can't run today: {', '.join(not_usable)} (see doctor --json .tools for why)")
+            gpu = d["gpu_encoders"]
+            if gpu["status"] == "parsed":
+                print(f"GPU-backed encoders in this build: {', '.join(gpu['present']) or 'none'} (no tool here uses one yet; this build-presence check does not prove the GPU/driver will accept a job)")
             for err in d["errors"]:
                 print(f"detection error: {err}", file=sys.stderr)
         if d["ok"]:
