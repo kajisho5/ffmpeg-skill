@@ -76,6 +76,15 @@ class ContractTests(unittest.TestCase):
         ffmpeg("-f", "lavfi", "-i", "color=c=red@0.8:s=120x40,format=rgba", "-frames:v", "1", cls.logo)
         cls.cues = OUT / "c_cues.txt"
         cls.cues.write_text("0:00-0:02 Hello\n0:02-0:04 World\n", encoding="utf-8")
+        cls.srt_en = OUT / "c_en.srt"
+        cls.srt_en.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
+        cls.srt_ja = OUT / "c_ja.srt"
+        cls.srt_ja.write_text("1\n00:00:00,000 --> 00:00:02,000\nこんにちは\n", encoding="utf-8")
+        cls.subbed = OUT / "c_subbed.mkv"
+        ffmpeg("-i", cls.src, "-i", cls.srt_en, "-i", cls.srt_ja, "-map", "0", "-map", "1", "-map", "2",
+               "-c:v", "copy", "-c:a", "copy", "-c:s", "srt",
+               "-metadata:s:s:0", "language=eng", "-metadata:s:s:0", "title=English",
+               "-metadata:s:s:1", "language=jpn", "-metadata:s:s:1", "title=Japanese", cls.subbed)
         cls.garbage = OUT / "c_garbage.mp4"
         cls.garbage.write_bytes(bytes((i * 7919) % 256 for i in range(200_000)))
         cls.empty = OUT / "c_empty.mp4"
@@ -733,6 +742,26 @@ class ContractTests(unittest.TestCase):
         doc = self._run_structured("audio", {"input": str(self.surround), "downmix": True, "output": str(self.out("stereo.mov"))})
         self.assertEqual(doc["probe"]["audio"]["channels"], 2)
         self._verify("audio", doc["output"])
+
+    def test_probe_subtitle_stream_details(self):
+        """subtitle_streams stays the existing int count; subtitle_stream_details is the new,
+        additive, audio_streams-shaped array (index/codec/language/title per embedded track)."""
+        doc = self._run_structured("probe", {"inputs": [str(self.subbed)]})
+        self.assertEqual(doc["subtitle_streams"], 2)
+        details = doc["subtitle_stream_details"]
+        self.assertEqual(len(details), 2)
+        self.assertEqual(details[0]["index"], 0)
+        self.assertEqual(details[0]["codec"], "subrip")
+        self.assertEqual(details[0]["language"], "eng")
+        self.assertEqual(details[0]["title"], "English")
+        self.assertEqual(details[1]["index"], 1)
+        self.assertEqual(details[1]["codec"], "subrip")
+        self.assertEqual(details[1]["language"], "jpn")
+        self.assertEqual(details[1]["title"], "Japanese")
+        # no subtitle tracks at all: still present, just an empty list; subtitle_streams stays 0
+        doc2 = self._run_structured("probe", {"inputs": [str(self.src)]})
+        self.assertEqual(doc2["subtitle_streams"], 0)
+        self.assertEqual(doc2["subtitle_stream_details"], [])
 
     def test_color_overlay_caption_export_check_look_render_via_contract(self):
         doc = self._run_structured("color", {"input": str(self.hdr), "to_sdr": True, "fast": True, "output": str(self.out("sdr.mp4"))})

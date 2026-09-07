@@ -315,6 +315,13 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         "video": None,
         "audio": None,
         "subtitle_streams": len(subs),
+        # every subtitle stream in file order: index n here is `-map 0:s:n`
+        "subtitle_stream_details": [{
+            "index": n,
+            "codec": s.get("codec_name"),
+            "language": (s.get("tags") or {}).get("language"),
+            "title": (s.get("tags") or {}).get("title"),
+        } for n, s in enumerate(subs)],
     }
     if video:
         r_rate = _fraction(video.get("r_frame_rate"))
