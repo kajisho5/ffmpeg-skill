@@ -259,7 +259,7 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 `doctor` reads `ffmpeg -encoders`, `-filters` and `-bsfs` and resolves every capability the contract declares against this machine's build. Three states per capability: `available`, `missing`, `unknown`. Exit 0 when everything required is available, 1 when something required is missing, 2 when nothing is proven missing but a required capability is unknown. With detection on (the default), `contract --json` carries the same lists under `capabilities`. `doctor --json`'s `tools` field folds that down to one answer per tool — `{"caption": {"usable": "no", "missing": ["filter:subtitles"], "fix": "..."}, ...}` — so "is `doctor` overall `ok`" and "can I run `caption.py` on this machine" are answered separately: a plain Homebrew `ffmpeg` is `ok` for tools that don't need `subtitles`/`drawtext`/`zscale`, while `caption`'s own `usable` is `"no"`.
 
-`doctor --json`'s `gpu_encoders` reports which GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`, `vaapi`, `amf`) this ffmpeg *build* was compiled with — read from `-encoders` alone, so it proves the capability shipped, not that the GPU/driver on this machine will actually accept a job (that needs a real encode, which `doctor`'s introspection never runs). No tool here uses one yet — every tool still assumes CPU x264/x265 — so this is purely informational and never affects `ok` or any tool's `usable`.
+`doctor --json`'s `gpu_encoders` reports which GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`, `vaapi`, `amf`) this ffmpeg *build* was compiled with — read from `-encoders` alone, so it proves the capability shipped, not that the GPU/driver on this machine will actually accept a job (that needs a real encode, which `doctor`'s introspection never runs). No tool here uses one yet — every tool still assumes CPU x264/x265 — so this is purely informational and never affects `ok` or any tool's `usable`. GPU-accelerated encoding stays deliberately off the roadmap until there's a real-hardware-verified design for it (build-presence alone is not proof a job will succeed) — not a promised feature, just an honest "not yet, and not without proof it actually works."
 
 ## FFmpeg compatibility
 
@@ -346,12 +346,15 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `mai
 
 `tests/test_contract.py` runs on all three OSes, but a handful of its tests build a fake `ffmpeg` as a `#!/bin/sh` script on a PATH shim to force specific FFmpeg 6/7/8/9 fixture layouts through `doctor`'s parser — that technique isn't portable to Windows, so `test_dry_run_never_runs_ffmpeg_and_writes_nothing` and the whole `DoctorDetectionTests` class (fixture-driven layout parsing) are individually `skipIf`'d there and show as `skipped`, not silently absent, in the Windows job's log. Everything else — contract schema, `reencodes_*`, `doctor.tools`, MCP derivation, and every tool exercised through the contract, including `cut.py`'s provenance fields — runs against the real Windows `ffmpeg` on every PR. See [references/ci-platform-pitfalls.md](references/ci-platform-pitfalls.md) for this and other per-OS behaviour differences already diagnosed, before spending a CI cycle re-diagnosing a platform-only failure.
 
-**Releasing**: bump `version` in `package.json`, merge to `main`, then tag that commit (`git tag vX.Y.Z && git push origin vX.Y.Z`) and cut a GitHub Release from the tag, with the matching `CHANGELOG.md` section as its body. A repo that depends on this one (an editing skill, an agent) should pin an `ffmpeg-skill` version by tag or npm version, not by tracking `main` — `main` can be ahead of the last published npm version.
+**Releasing**: bump `version` in `package.json`, merge to `main`, then tag that commit (`git tag vX.Y.Z && git push origin vX.Y.Z`). `.github/workflows/release.yml` picks up from there: it verifies the tag matches `package.json`'s version, extracts that version's `CHANGELOG.md` section, and publishes the GitHub Release automatically — tagging stays a deliberate, manual act; only the release-notes step is automated. A repo that depends on this one (an editing skill, an agent) should pin an `ffmpeg-skill` version by tag or npm version, not by tracking `main` — `main` can be ahead of the last published npm version.
+
+Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Docs
 
 | | |
 |---|---|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | scope, dev setup, tests, PR expectations |
 | [SKILL.md](SKILL.md) | what the agent reads: workflow, request → tool map, audio-only rules, report format, pitfalls |
 | [references/scripts.md](references/scripts.md) | per-flag reference for every tool |
 | [references/devices.md](references/devices.md) | real-device notes (iPhone HDR, GoPro, DJI, screen recordings) |

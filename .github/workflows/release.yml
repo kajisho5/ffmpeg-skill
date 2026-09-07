@@ -1,0 +1,55 @@
+name: release
+
+# Publishes a GitHub Release automatically whenever a version tag (v*, matching
+# package.json's version) is pushed. This does not push tags itself -- tag
+# creation stays a manual, deliberate act (see CHANGELOG.md / README's
+# "Development" -> "Releasing" section) -- it only automates the release-notes
+# step once a tag exists, so a release isn't a manual multi-click chore in the
+# GitHub UI.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME (version $TAG_VERSION) does not match package.json's version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Extract this version's CHANGELOG section
+        id: notes
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$TAG_VERSION" '
+            BEGIN { found=0 }
+            /^## / {
+              if (found) exit
+              if (index($0, ver) > 0) { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "No matching CHANGELOG.md section found for $TAG_VERSION; using a generic note." > release_notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          generate_release_notes: true
