@@ -1097,14 +1097,23 @@ class DoctorDetectionTests(unittest.TestCase):
         (shim / "fc-match").chmod(0o755)
         return dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
 
-    def test_default_drawtext_font_is_available_on_this_sandbox(self):
-        """This sandbox actually has DejaVu Sans (fonts-dejavu-core); the real fc-match confirms it,
-        not a fixture -- exercising the genuine success path end to end."""
-        self.assertIsNotNone(shutil.which("fc-match"), "sandbox is expected to carry fontconfig for this test")
+    def test_default_drawtext_font_matches_this_sandboxs_real_fc_match(self):
+        """Exercises the genuine, unmocked fc-match path end to end -- but this repo's own CI only
+        installs fonts-dejavu-core on the Linux leg (see issue #66 this detector was built for), so
+        DejaVu Sans is only actually present on Linux; macOS/Windows CI resolve it to a substituted
+        family. Rather than hardcode "available" (which is only true on one of three CI platforms
+        and would make this very test repeat the issue's own bug), ask fc-match directly for the
+        ground truth and assert doctor's classification matches reality on whichever platform this
+        runs on."""
+        if shutil.which("fc-match") is None:
+            self.skipTest("no fontconfig on this machine")
         d, code = self._doctor("ffmpeg_filters_6.1.txt")
         self.assertEqual(d["fonts"]["default_font"], "DejaVu Sans")
-        self.assertEqual(d["fonts"]["status"], "available")
-        self.assertIn("DejaVu Sans", d["fonts"]["detail"])
+        resolved = subprocess.run(["fc-match", "--format=%{family}\n", "DejaVu Sans"],
+                                   stdout=subprocess.PIPE, text=True).stdout.splitlines()[0].strip()
+        expected = "available" if resolved == "DejaVu Sans" else "missing"
+        self.assertEqual(d["fonts"]["status"], expected, d["fonts"])
+        self.assertIn(resolved, d["fonts"]["detail"])
         # informational only: a missing/available font never affects ok or any tool's usable
         self.assertTrue(d["ok"])
 
