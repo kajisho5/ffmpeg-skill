@@ -1,0 +1,8 @@
+# Compiled Python bytecode caches: interpreter-specific, never meant to ship.
+# package.json's "files" array already scopes the tarball to bin/, scripts/, mcp/, references/,
+# SKILL.md, README.md and LICENSE -- this excludes junk *within* those directories that npm's own
+# default ignore list doesn't cover (unlike .gitignore, an .npmignore is honored even when "files"
+# is set, per npm's own docs: https://docs.npmjs.com/cli/v10/configuring-npm/package-json#files).
+__pycache__/
+*.pyc
+*.pyo

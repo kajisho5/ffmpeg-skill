@@ -6,6 +6,16 @@
 
 (nothing yet)
 
+## 0.12.6 — stop shipping `__pycache__` in the npm tarball
+
+`package.json`'s `files` array scopes the tarball to `bin/`, `scripts/`, `mcp/`, `references/`,
+`SKILL.md`, `README.md` and `LICENSE`, but a `files`-scoped pack does not automatically respect
+`.gitignore` the way a plain `git`-tracked-files pack would — the 0.12.5 tarball on npm shipped
+every `scripts/__pycache__/*.pyc` a local interpreter had produced (interpreter-version-specific,
+harmless at runtime since Python regenerates them, but ~45% of the package's unpacked size for
+nothing). Added an explicit `.npmignore` for `__pycache__/`, `*.pyc`, `*.pyo`, which npm honors
+even when `files` is set. Unpacked size drops from 913.7 kB / 64 files to 496.8 kB / 40 files.
+
 ## 0.12.5 — fix Windows `drawtext` crash (#100), and 4 smaller review findings
 
 `look.py`, `scenes.py --sheet`, `overlay.py --text` and `graphics.py` could crash on real Windows
