@@ -29,6 +29,12 @@ npx ffmpeg-skill
 
 If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
 
+> **SPEC** (Self-Producing Execution Contract), coined by this project's author
+> [kajisho5](https://github.com/kajisho5): each tool's `input_schema` — the part of its contract
+> and MCP tool definition that has to track the CLI flag-for-flag — is never hand-authored beside
+> the code. It's derived, at run time, from the same `argparse` parser that already defines the
+> CLI, and CI fails the build if any of it drifts. → [full explanation](#what-is-spec)
+
 ---
 
 ## Standalone, and in an ecosystem
