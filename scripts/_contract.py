@@ -697,9 +697,10 @@ def _capability_fix_hint(cap: str) -> str:
         return f"this ffmpeg build has no {cap[8:]} encoder; {full_hint}"
     if cap == "filter:drawtext":
         return ("drawtext crashed instead of rendering a frame (see errors[] for the exit detail) -- "
-                 "every drawtext tool already defaults to an explicit --font-file when one can be "
-                 "resolved (#100); if it still crashes, pass --font-file explicitly to look/scenes/"
-                 "overlay/graphics rather than relying on font= resolution")
+                 "every drawtext tool already resolves a concrete font file automatically when one can "
+                 "be found (#100); if it still crashes, use --no-timecode with look.py or scenes.py "
+                 "--sheet to skip drawtext entirely, or pass --font-file explicitly to overlay.py/"
+                 "graphics.py (the two that accept it) rather than relying on font= resolution")
     if cap.startswith("filter:"):
         return f"this ffmpeg build has no {cap[7:]} filter; {full_hint}"
     if cap.startswith("bsf:"):

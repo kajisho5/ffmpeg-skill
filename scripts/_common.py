@@ -339,7 +339,7 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
 
 
 def shell_quote(s: str) -> str:
-    if not s or any(ch in s for ch in " \t\"';|&<>()[]{}$*?"):
+    if not s or any(ch in s for ch in " \t\\\"';|&<>()[]{}$*?"):
         return "'" + s.replace("'", "'\\''") + "'"
     return s
 

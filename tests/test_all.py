@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 sys.path.insert(0, str(SCRIPTS))
-from _common import default_font_file, escape_filter_path, probe  # noqa: E402
+from _common import default_font_file, escape_filter_path, probe, shell_quote  # noqa: E402
 
 TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
@@ -1072,6 +1072,17 @@ class FFmpegSkillTests(unittest.TestCase):
         cmp_png = OUT / "cmp.png"
         script("look.py", self.src, "--compare", self.src, "--at", "1", "-o", cmp_png)
         self.assertEqual(png_size(cmp_png)[0], 1280)
+
+    def test_shell_quote_quotes_backslashes(self):
+        """CodeRabbit (#101): fixing the invalid-escape-sequence SyntaxWarning in shell_quote()'s
+        character set (a stray `\\` before an already-unescaped `;`) accidentally dropped a real,
+        load-bearing backslash from the quoting trigger set -- the original `\\;` literal, due to
+        Python keeping an unrecognised escape's backslash, actually matched on `\\` OR `;`, not just
+        `;`. Without a backslash trigger, a Windows path like `C:\\media\\clip.mp4` would render
+        unquoted in --dry-run/--json command output. Assert the fixed version still quotes it."""
+        self.assertEqual(shell_quote("C:\\media\\clip.mp4"), "'C:\\media\\clip.mp4'")
+        self.assertEqual(shell_quote("plain.mp4"), "plain.mp4")
+        self.assertEqual(shell_quote("has;semicolon"), "'has;semicolon'")
 
     def test_look_scenes_overlay_graphics_prefer_fontfile_over_font_when_resolvable(self):
         """#100: drawtext's own fontconfig resolution (font=<name>) crashed with an access violation
