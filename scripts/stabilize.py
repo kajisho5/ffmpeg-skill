@@ -9,12 +9,18 @@ this run only -- it is not a caller-facing artifact.
 --shakiness (1 = barely shaky, fast; 10 = very shaky, slow analysis) and
 --smoothing (how many neighbouring frames to average the camera path over)
 are the two knobs that matter most; --zoom crops in slightly to hide the
-black edges stabilizing can introduce (0 = keep the original framing and let
-edges show; ffmpeg's own --crop-mode is not exposed as a raw flag here).
+edges stabilizing can introduce (0 = keep the original framing and let edges
+show). --crop chooses what happens to any edge vidstab reveals that --zoom
+doesn't crop away: "keep" (default) stretches the border pixels, "black"
+fills it in solid black instead. --tripod locks the frame fully still
+against a single reference frame (e.g. a camera meant to be static but
+nudged, or a shot you want dead-locked rather than merely smoothed) instead
+of following the camera's intended motion.
 
 Examples:
   python3 stabilize.py shaky.mp4
   python3 stabilize.py shaky.mp4 --shakiness 8 --smoothing 20 --zoom 5
+  python3 stabilize.py locked-off.mp4 --tripod --crop black
 """
 import argparse
 import sys
@@ -31,6 +37,8 @@ def main() -> int:
     ap.add_argument("--shakiness", type=int, default=5, help="1 (barely shaky) .. 10 (very shaky), default 5")
     ap.add_argument("--smoothing", type=int, default=15, help="frames of camera-path smoothing on each side, default 15")
     ap.add_argument("--zoom", type=float, default=0.0, help="percent to zoom in to hide stabilization edges, 0..100 (default 0)")
+    ap.add_argument("--crop", choices=["keep", "black"], default="keep", help="edges --zoom doesn't crop away: keep (stretch border pixels, default) or black (fill solid black)")
+    ap.add_argument("--tripod", action="store_true", help="lock the frame fully still against a single reference frame instead of smoothing the camera's motion")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
     ap.add_argument("--preset", default="medium", help="x264 preset")
     add_common(ap)
@@ -56,13 +64,23 @@ def main() -> int:
 
         if not STATE["dry_run"]:
             ffmpeg = require_tool("ffmpeg")
+            detect_vf = f"vidstabdetect=shakiness={args.shakiness}:result={trf_arg}"
+            if args.tripod:
+                # A frame number, not a boolean: frame 1 is the standard reference for "lock to
+                # this fixed frame" (mirrors vidstabtransform's own tripod=1 below).
+                detect_vf += ":tripod=1"
             detect_cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", args.input,
-                          "-vf", f"vidstabdetect=shakiness={args.shakiness}:result={trf_arg}", "-f", "null", "-"]
+                          "-vf", detect_vf, "-f", "null", "-"]
             proc = run(detect_cmd, check=False)
             if proc.returncode != 0:
                 die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}")
 
-        transform_vf = f"vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:zoom={args.zoom:g}:optzoom=1"
+        crop_mode = {"keep": 0, "black": 1}[args.crop]
+        transform_vf = f"vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=1"
+        if args.tripod:
+            # Equivalent to relative=0:smoothing=0 -- overrides --smoothing, since averaging a
+            # camera path makes no sense once every frame is locked to one fixed reference.
+            transform_vf += ":tripod=1"
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", transform_vf]
         cmd += video_args(meta, args.crf, args.preset)
         cmd += cfr_args(meta)

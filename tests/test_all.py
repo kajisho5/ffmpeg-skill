@@ -454,6 +454,31 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_stabilize_bad_shakiness_refused(self):
         script("stabilize.py", self.src, "--shakiness", "11", expect_fail=True)
 
+    def test_stabilize_tripod_and_crop_black_produce_valid_output(self):
+        """--tripod and --crop black (vidstabdetect/vidstabtransform's own tripod and crop=1
+        options, #96) wire two more of the real filters' documented parameters through as typed
+        flags. vidstab's actual correction strength/appearance on synthetic content is build- and
+        content-dependent (see the docstring above on test_stabilize_reduces_frame_to_frame_motion
+        for why this suite doesn't try to assert an exact "how much" here) -- what's verifiable
+        portably is that both flags are accepted, reach the filter graph, and produce a valid,
+        correctly durationed/shaped output rather than being silently ignored or crashing."""
+        shaky = OUT / "shaky.mp4"
+        if not shaky.exists():
+            jitter_x = "60+18*sin(2*PI*t*1.3)+9*sin(2*PI*t*2.1+1)"
+            jitter_y = "60+14*cos(2*PI*t*0.9)+8*sin(2*PI*t*1.7+0.5)"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1400x1000:rate=30",
+               "-t", "4", "-vf", f"crop=1280:720:x='{jitter_x}':y='{jitter_y}'",
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", shaky)
+        out = OUT / "stab_tripod_crop_black.mp4"
+        script("stabilize.py", shaky, "--tripod", "--crop", "black", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 4.0, 0.3)
+        self.assertEqual(m["video"]["width"], 1280)
+        self.assertEqual(m["video"]["height"], 720)
+
+    def test_stabilize_bad_crop_refused(self):
+        script("stabilize.py", self.src, "--crop", "nonsense", expect_fail=True)
+
     # ---------------------------------------------------------------- sequence
     def test_sequence_numbered_pattern_preserves_order(self):
         frames_dir = OUT / "seqframes"

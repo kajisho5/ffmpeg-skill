@@ -6,6 +6,30 @@
 
 (nothing yet)
 
+## 0.12.4 — `stabilize.py` gains `--tripod` and `--crop`
+
+A follow-on audit of the same class of gap 0.12.3 closed in `color.py --correct`: scripts that
+wrap a real FFmpeg filter but only expose a subset of what that filter actually supports.
+`stabilize.py` wrapped `vidstabdetect`/`vidstabtransform` with only `--shakiness`/`--smoothing`/
+`--zoom`, leaving two genuinely useful, real options unreachable:
+
+- `--tripod`: virtual tripod mode (`vidstabdetect`'s `tripod=1`, `vidstabtransform`'s own
+  `tripod=1`, equivalent to `relative=0:smoothing=0`) locks every frame to one fixed reference
+  frame instead of following the camera's intended motion — for a shot meant to be static but
+  nudged, or one you want dead-locked rather than merely smoothed.
+- `--crop {keep,black}`: what happens to whatever edge `--zoom` doesn't crop away.
+  `vidstabtransform`'s `crop=0` (the previously hardcoded default, "keep") stretches border
+  pixels; `crop=1` ("black") was unreachable — the only prior workaround was cropping in further
+  with `--zoom`, at the cost of framing/resolution.
+
+Both are typed flags (`--crop` restricted to the filter's own two real option names via
+`choices`), verified against `ffmpeg -h filter=vidstabdetect`/`vidstabtransform`'s real AVOptions
+before implementation, with new regression tests that actually run both flags end-to-end and
+check the output's duration/resolution. (`silence.py`, `audio.py`, `loudness.py`, and `fit.py`'s
+`minterpolate` usage were also checked against their real filters' full option sets and found
+either not applicable — `silence.py` doesn't wrap `silenceremove` at all, it does its own
+`silencedetect` + range-trim — or already adequately covered.)
+
 ## 0.12.3 — `color.py --correct` gains gamma, lift/gain, levels and curves
 
 Closes a long-standing, documented gap: the downstream `color-grading-skill` has carried
