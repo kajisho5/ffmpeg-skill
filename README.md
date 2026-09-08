@@ -216,6 +216,12 @@ Picture tools (`fit`, `caption`, `overlay`, `graphics`, `color`, `export`, `scen
 
 ## Built for agents
 
+This project's author, [kajisho5](https://github.com/kajisho5), coined **SPEC** (Self-Producing
+Execution Contract) for the pattern below: a tool's contract, docs, and MCP schema are never
+hand-authored — all three are derived, at run time, from the same argparse parser that already
+defines the CLI. Change a flag once and everything downstream follows; nothing to keep in sync by
+hand, and nothing to silently drift.
+
 ### Machine-readable contract
 
 ```bash
