@@ -2,7 +2,8 @@
 """Colour management: convert HDR (HDR10/PQ, HLG, BT.2020) to SDR BT.709 with
 real tone mapping, apply a .cube LUT (Log footage, creative grades), fix wrong
 colour tags without re-encoding, or apply typed primary colour correction
-(exposure, contrast, saturation, white balance).
+(exposure, contrast, saturation, gamma, white balance, three-way
+lift/gain, levels, curves).
 
 Examples:
   python3 color.py iphone_hdr.mov --to-sdr                       # PQ/HLG -> BT.709 SDR, hable tonemap
@@ -13,6 +14,8 @@ Examples:
   python3 color.py iphone_dv.mov --strip-dovi                       # drop Dolby Vision RPU, keep HLG base layer
   python3 color.py iphone_dv.mov --to-sdr                           # DV 8.4 = HLG base layer -> tone-mapped SDR
   python3 color.py flat.mp4 --correct --exposure 0.3 --contrast 1.1 --saturation 1.05 --temperature 5600 --tint -0.05
+  python3 color.py flat.mp4 --correct --gamma 1.2 --lift 0.04 --gain -0.03   # three-way shadows/gamma/highlights
+  python3 color.py flat.mp4 --correct --levels-in-black 16 --levels-in-white 235 --curves medium_contrast
 """
 import argparse
 import os
@@ -26,8 +29,11 @@ TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
 # Typed primary correction: each flag is one option of one real, always-available libavfilter filter
 # (never a caller-supplied filter string). Range is this script's own safe subset of what the filter
 # documents (`ffmpeg -h filter=<name>`), not the filter's full technical range. default is each filter's
-# own documented no-op value, so every stage below is always emitted and the chain never depends on
-# which flags were actually given.
+# own documented no-op value, so every stage in this dict is always emitted and the chain never depends
+# on which flags were actually given (exposure/temperature/tint/gamma/lift/gain). `colorlevels` and
+# `curves` (see LEVELS and CURVES_PRESETS below) are the exception: they only add a term to the chain
+# when the caller actually asks for them, because "levels 0..255 in, 0..255 out" and "no curve" are
+# already the identity operation without emitting a no-op filter term for it.
 CORRECTION = {
     #      flag           default  lo      hi       unit
     "exposure":    (0.0,   -3.0,    3.0,   "stops"),   # exposure filter's own full range (linear-domain stops)
@@ -35,7 +41,26 @@ CORRECTION = {
     "saturation":  (1.0,    0.0,    2.0,   "x"),       # eq filter; 0=grayscale, 1=unchanged, 2=double saturation
     "temperature": (6500.0, 2000.0, 12000.0, "K"),     # colortemperature filter; 6500=unchanged (its own default)
     "tint":        (0.0,   -1.0,    1.0,   "x"),       # mapped to colorbalance midtones, see correction_chain()
+    "gamma":       (1.0,    0.1,   10.0,   "x"),       # eq filter's own gamma option; 1=unchanged (its own default)
+    "lift":        (0.0,   -1.0,    1.0,   "x"),       # colorbalance shadows (rs=gs=bs); 0=unchanged
+    "gain":        (0.0,   -1.0,    1.0,   "x"),       # colorbalance highlights (rh=gh=bh); 0=unchanged
 }
+
+# colorlevels takes fractional 0.0..1.0 input/output black/white points; this tool exposes the
+# familiar 8-bit 0..255 unit instead and divides by 255.0 when building the filter (same convention
+# as the rest of CORRECTION: a human-friendly CLI unit formatted into the filter's own native unit).
+LEVELS = {
+    #             flag             default  lo   hi
+    "levels_in_black":  (0,     0, 255),
+    "levels_in_white":  (255,   0, 255),
+    "levels_out_black": (0,     0, 255),
+    "levels_out_white": (255,   0, 255),
+}
+
+# curves filter's real built-in presets (`ffmpeg -h filter=curves`), excluding its own "none" (0):
+# omitting --curves already gets that identity result without adding a filter term for it.
+CURVES_PRESETS = ["color_negative", "cross_process", "darker", "increase_contrast", "lighter",
+                   "linear_contrast", "medium_contrast", "negative", "strong_contrast", "vintage"]
 
 
 def _checked(args: argparse.Namespace, flag: str) -> float:
@@ -46,26 +71,65 @@ def _checked(args: argparse.Namespace, flag: str) -> float:
     return value
 
 
+def _checked_levels(args: argparse.Namespace, flag: str) -> int:
+    _, lo, hi = LEVELS[flag]
+    value = getattr(args, flag)
+    if not (lo <= value <= hi):
+        die(f"--{flag.replace('_', '-')} {value} is outside {lo}..{hi} (8-bit units, scaled to colorlevels' own 0..1 range)")
+    return value
+
+
 def correction_chain(args: argparse.Namespace) -> str:
-    """Four always-present filter stages, in a fixed order chosen so each stage sees a picture already
-    corrected by the previous one: exposure (linear light level) -> white balance (temperature/tint, so
-    contrast/saturation act on colour-balanced footage) -> contrast -> saturation (the most creative-
-    adjacent stage, applied last). `tint` (-1 green .. +1 magenta) is not a single ffmpeg option: it is
-    expressed as colorbalance's three midtone channels (gm=-tint, rm=bm=tint/2) so a positive tint shifts
-    midtones toward magenta and a negative one toward green without changing overall midtone lightness,
-    the same balanced-axis convention colour tools use for a one-dial tint control."""
+    """Always-present filter stages, in a fixed order chosen so each stage sees a picture already
+    corrected by the previous one: exposure (linear light level) -> white balance (temperature/tint/
+    lift/gain, so contrast/saturation act on colour-balanced footage) -> contrast/saturation/gamma
+    (the most creative-adjacent stage of the always-on chain). `tint` (-1 green .. +1 magenta) is not
+    a single ffmpeg option: it is expressed as colorbalance's three midtone channels (gm=-tint,
+    rm=bm=tint/2) so a positive tint shifts midtones toward magenta and a negative one toward green
+    without changing overall midtone lightness, the same balanced-axis convention colour tools use
+    for a one-dial tint control. `lift` and `gain` extend the same colorbalance call to the shadow
+    (rs=gs=bs=lift) and highlight (rh=gh=bh=gain) channels, giving a classic three-way shadows/
+    midtones/highlights correction in one filter invocation. `gamma` is folded into the same `eq`
+    term contrast/saturation already use, as `eq`'s own `gamma` option. Two further stages are
+    appended only when asked for, since their own identity value would otherwise add a no-op filter
+    term to the chain: `colorlevels` (--levels-*, 8-bit units scaled to the filter's 0..1 range) and
+    `curves` (--curves, one of the filter's own named presets)."""
     exposure = _checked(args, "exposure")
     contrast = _checked(args, "contrast")
     saturation = _checked(args, "saturation")
     temperature = _checked(args, "temperature")
     tint = _checked(args, "tint")
+    gamma = _checked(args, "gamma")
+    lift = _checked(args, "lift")
+    gain = _checked(args, "gain")
+    in_black = _checked_levels(args, "levels_in_black")
+    in_white = _checked_levels(args, "levels_in_white")
+    out_black = _checked_levels(args, "levels_out_black")
+    out_white = _checked_levels(args, "levels_out_white")
+    if in_black >= in_white:
+        die(f"--levels-in-black {in_black} must be less than --levels-in-white {in_white}")
+    if out_black >= out_white:
+        die(f"--levels-out-black {out_black} must be less than --levels-out-white {out_white}")
+
     gm, rm, bm = -tint, tint / 2.0, tint / 2.0
-    return ",".join([
+    terms = [
         f"exposure=exposure={exposure:g}",
         f"colortemperature=temperature={temperature:g}",
-        f"colorbalance=rm={rm:g}:gm={gm:g}:bm={bm:g}",
-        f"eq=contrast={contrast:g}:saturation={saturation:g}",
-    ])
+        f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}",
+        f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}",
+    ]
+    if (in_black, in_white, out_black, out_white) != (0, 255, 0, 255):
+        rimin, rimax = in_black / 255.0, in_white / 255.0
+        romin, romax = out_black / 255.0, out_white / 255.0
+        terms.append(
+            f"colorlevels=rimin={rimin:g}:gimin={rimin:g}:bimin={rimin:g}:"
+            f"rimax={rimax:g}:gimax={rimax:g}:bimax={rimax:g}:"
+            f"romin={romin:g}:gomin={romin:g}:bomin={romin:g}:"
+            f"romax={romax:g}:gomax={romax:g}:bomax={romax:g}"
+        )
+    if args.curves:
+        terms.append(f"curves=preset={args.curves}")
+    return ",".join(terms)
 
 
 def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:
@@ -94,7 +158,7 @@ def main() -> int:
     mode.add_argument("--lut", help=".cube LUT to apply (3D)")
     mode.add_argument("--retag", choices=["bt709", "bt2020-pq", "bt2020-hlg", "bt601"], help="rewrite colour tags only (no re-encode)")
     mode.add_argument("--strip-dovi", action="store_true", help="remove the Dolby Vision RPU (profile 8.4 iPhone clips) so players use the plain HLG/HDR10 base layer; stream copy")
-    mode.add_argument("--correct", action="store_true", help="typed primary colour correction: --exposure/--contrast/--saturation/--temperature/--tint")
+    mode.add_argument("--correct", action="store_true", help="typed primary colour correction: --exposure/--contrast/--saturation/--temperature/--tint/--gamma/--lift/--gain/--levels-*/--curves")
     ap.add_argument("--tonemap", choices=TONEMAPS, default="hable", help="tone-mapping curve (default hable)")
     ap.add_argument("--peak", type=float, default=1000.0, help="source peak brightness in nits used for PQ (default 1000)")
     ap.add_argument("--desat", type=float, default=0.0, help="tonemap desaturation strength (default 0)")
@@ -105,6 +169,14 @@ def main() -> int:
     ap.add_argument("--saturation", type=float, default=CORRECTION["saturation"][0], help="--correct: saturation, 0..2, 1=unchanged (default 1)")
     ap.add_argument("--temperature", type=float, default=CORRECTION["temperature"][0], help="--correct: white-balance temperature in Kelvin, 2000..12000, 6500=unchanged (default 6500)")
     ap.add_argument("--tint", type=float, default=CORRECTION["tint"][0], help="--correct: green(-1)/magenta(+1) tint, 0=unchanged (default 0)")
+    ap.add_argument("--gamma", type=float, default=CORRECTION["gamma"][0], help="--correct: master gamma (eq filter's own gamma), 0.1..10, 1=unchanged (default 1)")
+    ap.add_argument("--lift", type=float, default=CORRECTION["lift"][0], help="--correct: shadows lift (colorbalance rs/gs/bs), -1..1, 0=unchanged (default 0)")
+    ap.add_argument("--gain", type=float, default=CORRECTION["gain"][0], help="--correct: highlights gain (colorbalance rh/gh/bh), -1..1, 0=unchanged (default 0)")
+    ap.add_argument("--levels-in-black", type=int, default=LEVELS["levels_in_black"][0], help="--correct: colorlevels input black point, 0..255 (default 0, unchanged)")
+    ap.add_argument("--levels-in-white", type=int, default=LEVELS["levels_in_white"][0], help="--correct: colorlevels input white point, 0..255 (default 255, unchanged)")
+    ap.add_argument("--levels-out-black", type=int, default=LEVELS["levels_out_black"][0], help="--correct: colorlevels output black point, 0..255 (default 0, unchanged)")
+    ap.add_argument("--levels-out-white", type=int, default=LEVELS["levels_out_white"][0], help="--correct: colorlevels output white point, 0..255 (default 255, unchanged)")
+    ap.add_argument("--curves", choices=CURVES_PRESETS, default=None, help="--correct: curves filter built-in preset (default: none, no curves term added)")
     ap.add_argument("--audio-stream", type=int, default=0,
                      help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
                           "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "

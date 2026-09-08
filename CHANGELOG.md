@@ -6,6 +6,48 @@
 
 (nothing yet)
 
+## 0.12.3 — `color.py --correct` gains gamma, lift/gain, levels and curves
+
+Closes a long-standing, documented gap: the downstream `color-grading-skill` has carried
+`GAMMA`/`LIFT`/`GAIN`/`LEVELS`/`CURVES` in its own `UNSUPPORTED_OPERATIONS` because
+"ffmpeg-skill exposes no typed X filter in its public contract". `--correct` gains five more
+typed flags, all folded into the same fixed filter chain the existing `--exposure`/`--contrast`/
+`--saturation`/`--temperature`/`--tint` already build — no new mode, no filter string ever
+accepted from the caller:
+
+- **`--gamma`** (0.1..10, default 1=unchanged): `eq`'s own `gamma` option, added to the same
+  `eq=contrast=...:saturation=...` term contrast/saturation already use, not a second `eq` call.
+- **`--lift` / `--gain`** (-1..1 each, default 0=unchanged): classic three-way colour correction,
+  extending the same `colorbalance` call `--tint` already used for midtones — `--lift` sets the
+  shadow channels (`rs=gs=bs`), `--gain` the highlight channels (`rh=gh=bh`), the same
+  all-three-channels-together convention `--tint` uses for `rm/gm/bm`. Confirmed against
+  `ffmpeg -h filter=colorbalance`: `rs/gs/bs`, `rm/gm/bm`, `rh/gh/bh`, each documented -1..1.
+- **`--levels-in-black` / `--levels-in-white` / `--levels-out-black` / `--levels-out-white`**
+  (0..255 each, defaults 0/255/0/255=unchanged; rejects `in_black >= in_white` or
+  `out_black >= out_white` before ffmpeg runs): `colorlevels`, whose real parameters
+  (`ffmpeg -h filter=colorlevels`) take fractional 0.0..1.0 input/output black/white points, not
+  0..255 — this tool exposes the familiar 8-bit unit and divides by 255.0 when building the
+  filter, the same "human unit in, filter's native unit out" convention `--temperature` already
+  uses. The `colorlevels=` term is only added to the chain when at least one of the four flags is
+  given; an all-default `--correct` call adds no `colorlevels` term, matching how every stage in
+  this chain is either always present at its own no-op default or (for this new pair) omitted
+  entirely when unused.
+- **`--curves PRESET`** (argparse `choices`, default: none, no `curves=` term added): the `curves`
+  filter's own built-in presets, read from `ffmpeg -h filter=curves` rather than assumed:
+  `color_negative`, `cross_process`, `darker`, `increase_contrast`, `lighter`,
+  `linear_contrast`, `medium_contrast`, `negative`, `strong_contrast`, `vintage` (the filter's own
+  11th choice, `none`, is omitted from `--curves`'s choices since leaving the flag unset already
+  gets that identity result without adding a filter term for it).
+- Contract: `color`'s optional capabilities gain `filter:colorlevels` (`when: "--correct with any
+  --levels-*"`) and `filter:curves` (`when: "--correct --curves"`). No change to any existing flag,
+  contract field, MCP schema or tool semantics.
+- Tests: 5 real-media tests in `tests/test_all.py` mirroring the existing `--correct` style —
+  gamma/lift/gain run and measurably change signalstats luma, levels narrows the measured dynamic
+  range, curves runs and preserves geometry/duration, and out-of-range or inverted values for
+  every new flag (`--gamma`, `--lift`, `--gain`, `--levels-in-black`/`--levels-in-white` inverted,
+  `--levels-out-black`/`--levels-out-white` inverted, an invalid `--curves` choice) are each
+  refused before ffmpeg ever runs, with no partial output.
+
 ## 0.12.2 — `caption.py --mode mux` no longer drops the input's existing subtitle track(s)
 
 Found while discussing a real use case (adding both an English and a Japanese soft subtitle

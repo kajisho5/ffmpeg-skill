@@ -352,7 +352,23 @@ color.py INPUT --to-sdr [--tonemap hable|mobius|reinhard|bt2390] [--peak 1000] [
 color.py INPUT --lut grade.cube [--lut-strength 0..1] [-o OUT]
 color.py INPUT --retag bt709|bt2020-pq|bt2020-hlg|bt601 [-o OUT]      # metadata only, stream copy
 color.py INPUT --strip-dovi [-o OUT]                                 # drop the Dolby Vision RPU, keep the HLG/HDR10 base layer (stream copy)
+color.py INPUT --correct [--exposure -3..3] [--contrast 0..2] [--saturation 0..2] [--gamma 0.1..10]
+         [--temperature 2000..12000] [--tint -1..1] [--lift -1..1] [--gain -1..1]
+         [--levels-in-black 0..255] [--levels-in-white 0..255] [--levels-out-black 0..255] [--levels-out-white 0..255]
+         [--curves color_negative|cross_process|darker|increase_contrast|lighter|linear_contrast|medium_contrast|negative|strong_contrast|vintage] [-o OUT]
 ```
+`--correct` is typed primary colour correction, no filter string ever accepted:
+`--exposure`/`--contrast`/`--saturation`/`--gamma` (`exposure`/`eq` filters),
+`--temperature`/`--tint`/`--lift`/`--gain` (`colortemperature`/`colorbalance`
+filters — `--tint` sets midtones, `--lift` shadows, `--gain` highlights, a
+classic three-way correction), `--levels-*` (`colorlevels`, 8-bit units
+converted to the filter's own 0..1 range, only added to the chain when at
+least one is given) and `--curves` (the `curves` filter's own built-in
+presets, only added when given). Every flag is range-checked against this
+script's own safe subset of what `ffmpeg -h filter=<name>` documents before
+ffmpeg runs. `--json`'s `measurements` reports `analyze_levels()` (signalstats
+luma/saturation) for input and output side by side.
+
 iPhone "HDR" video is Dolby Vision profile 8.4 on an HLG base layer:
 `probe.py` reports `hdr_format: Dolby Vision profile 8` and `--to-sdr`
 tone-maps it from the HLG base layer. When the user wants to keep HDR but

@@ -889,6 +889,81 @@ class FFmpegSkillTests(unittest.TestCase):
             self.assertIn("outside", proc.stderr, f"{flag} {bad} should be refused as out of range")
             self.assertFalse(out.exists(), f"{flag} {bad}: no partial output on refusal")
 
+    def test_color_correct_gamma_changes_measured_luma(self):
+        brighter = OUT / "correct_gamma_up.mp4"
+        data = json.loads(script("color.py", self.src, "--correct", "--gamma", "1.6", "--preset", "veryfast", "-o", brighter, "--json").stdout)
+        m = data["measurements"]
+        self.assertGreater(m["output"]["y_avg"], m["input"]["y_avg"], "gamma > 1 must raise measured luma")
+
+        darker = OUT / "correct_gamma_down.mp4"
+        data2 = json.loads(script("color.py", self.src, "--correct", "--gamma", "0.5", "--preset", "veryfast", "-o", darker, "--json").stdout)
+        m2 = data2["measurements"]
+        self.assertLess(m2["output"]["y_avg"], m2["input"]["y_avg"], "gamma < 1 must lower measured luma")
+
+    def test_color_correct_lift_and_gain_run_and_shift_measured_levels(self):
+        lifted = OUT / "correct_lift.mp4"
+        data = json.loads(script("color.py", self.src, "--correct", "--lift", "0.3", "--preset", "veryfast", "-o", lifted, "--json").stdout)
+        m = data["measurements"]
+        self.assertGreater(m["output"]["y_min"], m["input"]["y_min"], "positive lift must raise the shadow floor")
+
+        gained = OUT / "correct_gain.mp4"
+        data2 = json.loads(script("color.py", self.src, "--correct", "--gain", "-0.3", "--preset", "veryfast", "-o", gained, "--json").stdout)
+        m2 = data2["measurements"]
+        self.assertLess(m2["output"]["y_avg"], m2["input"]["y_avg"], "negative gain must dim the highlights and lower measured luma")
+        v = probe(str(gained))["video"]
+        self.assertEqual((v["width"], v["height"]), (1280, 720))
+
+    def test_color_correct_levels_narrows_measured_dynamic_range(self):
+        out = OUT / "correct_levels_out.mp4"
+        data = json.loads(script("color.py", self.src, "--correct", "--levels-out-black", "64", "--levels-out-white", "192",
+                                  "--preset", "veryfast", "-o", out, "--json").stdout)
+        m = data["measurements"]
+        # colorlevels' output remap is an affine map into [romin, romax]: no output pixel can fall
+        # outside it (mod encoder rounding), so this is a mathematical guarantee, not a content guess.
+        self.assertGreaterEqual(m["output"]["y_min"], 64 - 3, "--levels-out-black 64 must floor the output near 64")
+        self.assertLessEqual(m["output"]["y_max"], 192 + 3, "--levels-out-white 192 must ceiling the output near 192")
+        self.assertLess(m["output"]["y_max"] - m["output"]["y_min"], m["input"]["y_max"] - m["input"]["y_min"],
+                         "narrowing the output levels must narrow the measured dynamic range")
+
+        out2 = OUT / "correct_levels_in.mp4"
+        script("color.py", self.src, "--correct", "--levels-in-black", "16", "--levels-in-white", "235", "--preset", "veryfast", "-o", out2)
+        v = probe(str(out2))["video"]
+        self.assertEqual((v["width"], v["height"]), (1280, 720))
+        self.assertClose(probe(str(out2))["duration"], 12.0, 0.2)
+
+        # an all-default --levels-* call must not add a colorlevels term to the chain
+        neutral_chain = script("color.py", self.src, "--correct", "--dry-run").stderr
+        self.assertNotIn("colorlevels", neutral_chain)
+
+    def test_color_correct_curves_preset_runs_and_preserves_geometry(self):
+        out = OUT / "correct_curves.mp4"
+        script("color.py", self.src, "--correct", "--curves", "medium_contrast", "--preset", "veryfast", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (1280, 720))
+        self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
+        # omitting --curves must not add a curves term to the chain
+        neutral_chain = script("color.py", self.src, "--correct", "--dry-run").stderr
+        self.assertNotIn("curves=", neutral_chain)
+        proc = script("color.py", self.src, "--correct", "--curves", "not-a-real-preset", "-o", OUT / "correct_curves_bad.mp4", expect_fail=True)
+        self.assertIn("invalid choice", proc.stderr)
+
+    def test_color_correct_rejects_new_flags_out_of_range(self):
+        for flag, bad in (("--gamma", "0.05"), ("--gamma", "11"), ("--lift", "-1.5"), ("--gain", "1.5")):
+            out = OUT / "correct_reject_new.mp4"
+            proc = script("color.py", self.src, "--correct", flag, bad, "-o", out, expect_fail=True)
+            self.assertIn("outside", proc.stderr, f"{flag} {bad} should be refused as out of range")
+            self.assertFalse(out.exists(), f"{flag} {bad}: no partial output on refusal")
+
+        out = OUT / "correct_reject_levels_in.mp4"
+        proc = script("color.py", self.src, "--correct", "--levels-in-black", "200", "--levels-in-white", "100", "-o", out, expect_fail=True)
+        self.assertIn("must be less than", proc.stderr)
+        self.assertFalse(out.exists())
+
+        out2 = OUT / "correct_reject_levels_out.mp4"
+        proc2 = script("color.py", self.src, "--correct", "--levels-out-black", "200", "--levels-out-white", "100", "-o", out2, expect_fail=True)
+        self.assertIn("must be less than", proc2.stderr)
+        self.assertFalse(out2.exists())
+
     def test_export_warns_on_hdr(self):
         out = OUT / "hdr_youtube.mp4"
         proc = script("export.py", self.hdr, "--preset", "x", "-o", out)
