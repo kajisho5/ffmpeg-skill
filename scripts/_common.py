@@ -339,7 +339,7 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
 
 
 def shell_quote(s: str) -> str:
-    if not s or any(ch in s for ch in " \t\"'\;|&<>()[]{}$*?"):
+    if not s or any(ch in s for ch in " \t\"';|&<>()[]{}$*?"):
         return "'" + s.replace("'", "'\\''") + "'"
     return s
 
@@ -596,6 +596,43 @@ def escape_filter_path(path: str) -> str:
     for ch in ("'", ",", ";", "[", "]"):
         p = p.replace(ch, "\\" + ch)
     return p
+
+
+def default_font_file(font_name: str) -> Optional[str]:
+    """Resolve `font_name` to a concrete on-disk font file, so a caller can tell drawtext
+    `fontfile=<path>` instead of `font=<name>`, when possible.
+
+    On some real Windows ffmpeg builds (winget's gyan.dev 9.x), drawtext's own fontconfig
+    resolution crashes with an access violation whenever it has to resolve a font by family name
+    -- with or without a valid fonts.conf on FONTCONFIG_FILE. `fontfile=` is the only form
+    confirmed not to crash (#100), since it never touches fontconfig at all. `font_name` itself is
+    ignored on Windows for that reason: a fixed, near-universally-present system font is used
+    instead of trying to resolve the requested family (which would crash the same way).
+
+    On Linux/macOS this is best-effort and uses the real requested family: `fc-match` reports the
+    same file fontconfig would resolve `font_name` to anyway, so a caller gets the identical font,
+    just already resolved to a path -- fontfile= skips a redundant fontconfig lookup and equally
+    sidesteps the same class of crash if it exists on some build there too, but the fallback below
+    (returning None) is exercised routinely there, not just on failure.
+
+    Returns None when nothing could be resolved (fc-match missing/unavailable, or no well-known
+    Windows font file present); the caller falls back to font=<font_name>, the prior behaviour.
+    """
+    if platform.system() == "Windows":
+        windir = os.environ.get("WINDIR", "C:\\Windows")
+        candidate = Path(windir) / "Fonts" / "arial.ttf"
+        return str(candidate) if candidate.exists() else None
+    exe = shutil.which("fc-match")
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "--format=%{file}\n", font_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    path = proc.stdout.splitlines()[0].strip() if proc.stdout.strip() else ""
+    return path if path and os.path.exists(path) else None
 
 
 def escape_drawtext(text: str) -> str:

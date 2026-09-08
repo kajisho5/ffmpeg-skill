@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 sys.path.insert(0, str(SCRIPTS))
-from _common import escape_filter_path, probe  # noqa: E402
+from _common import default_font_file, escape_filter_path, probe  # noqa: E402
 
 TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
@@ -1072,6 +1072,39 @@ class FFmpegSkillTests(unittest.TestCase):
         cmp_png = OUT / "cmp.png"
         script("look.py", self.src, "--compare", self.src, "--at", "1", "-o", cmp_png)
         self.assertEqual(png_size(cmp_png)[0], 1280)
+
+    def test_look_scenes_overlay_graphics_prefer_fontfile_over_font_when_resolvable(self):
+        """#100: drawtext's own fontconfig resolution (font=<name>) crashed with an access violation
+        on some real Windows ffmpeg builds, with or without a valid fonts.conf; fontfile=<path> is
+        the only form confirmed not to crash, since it never touches fontconfig at all. Every
+        drawtext-using tool now resolves a concrete font file (default_font_file() in _common.py)
+        and prefers fontfile= whenever one can be found, falling back to font= only when nothing
+        resolves. This sandbox has fc-match + DejaVu Sans, so a file is always resolvable here --
+        skip rather than false-fail on a machine where it genuinely cannot be (no fc-match, no
+        fonts installed), since font= is still the documented, correct fallback there."""
+        if not default_font_file("DejaVu Sans"):
+            self.skipTest("no resolvable default font on this machine (no fc-match / no fonts) -- font= fallback is correct here")
+
+        out = OUT / "fontfile_look.png"
+        proc = script("look.py", self.src, "--at", "1", "-o", out, "--json")
+        data = json.loads(proc.stdout)
+        self.assertTrue(any("fontfile=" in c for c in data["commands"]), data["commands"])
+
+        scenes_sheet = OUT / "fontfile_scenes.png"
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "scenes.py"), str(self.src), "--sheet", str(scenes_sheet), "--json"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("fontfile=", proc.stderr, "scenes.py --sheet should log a drawtext with fontfile=")
+
+        out2 = OUT / "fontfile_overlay.mp4"
+        proc = script("overlay.py", self.src, "--text", "hi", "-o", out2, "--json")
+        data2 = json.loads(proc.stdout)
+        self.assertTrue(any("fontfile=" in c for c in data2["commands"]), data2["commands"])
+
+        out3 = OUT / "fontfile_gfx.mp4"
+        proc = script("graphics.py", self.src, "--template", "title", "--title", "hi", "-o", out3, "--json")
+        data3 = json.loads(proc.stdout)
+        self.assertTrue(any("fontfile=" in c for c in data3["commands"]), data3["commands"])
 
     def test_silence_removal(self):
         gappy = OUT / "gappy.mp4"

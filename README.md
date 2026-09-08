@@ -100,6 +100,8 @@ python3 $S/fit.py input.mp4 --duration 60 --aspect 9:16 --dry-run    # print the
 python3 $S/export.py input.mp4 --preset reels --json                 # structured result with a probe of the output
 ```
 
+On Windows in Git Bash, `python3` is only on PATH if Python was installed from the Microsoft Store; a python.org install exposes `python` (or the `py` launcher) instead — replace `python3` with `python` above if you see a "command not found". `bin/install.js` and `doctor`/`contract` already handle this for you; only the raw script examples above need it spelled out manually.
+
 More requests and the commands behind them: [examples/README.md](examples/README.md). To see everything run end-to-end on generated footage: `npm run demo`.
 
 ## How it works

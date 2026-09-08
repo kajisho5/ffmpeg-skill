@@ -6,6 +6,37 @@
 
 (nothing yet)
 
+## 0.12.5 — fix Windows `drawtext` crash (#100), and 4 smaller review findings
+
+`look.py`, `scenes.py --sheet`, `overlay.py --text` and `graphics.py` could crash on real Windows
+FFmpeg builds (confirmed on winget's gyan.dev 9.x): `drawtext`'s own fontconfig resolution dies
+with an access violation whenever it has to resolve a font by family name, with or without a
+valid `fonts.conf` — and `doctor` reported `missing required: none`, since `-filters` correctly
+lists `drawtext` as present; the crash only ever surfaced as a runtime failure, the exact thing
+the step-0 capability check exists to prevent.
+
+- All four tools now resolve a concrete font file by default (`default_font_file()` in
+  `_common.py`: a well-known system font path on Windows, `fc-match` on Linux/macOS) and emit
+  `fontfile=` instead of `font=` whenever one can be found — `fontfile=` skips fontconfig
+  entirely, the one form confirmed not to crash. `font=` remains the fallback when nothing can be
+  resolved, unchanged from before.
+- `doctor` now actually renders one frame through `drawtext` instead of trusting the `-filters`
+  listing alone. A confirmed crash (killed by signal on POSIX, an access-violation-style exit on
+  Windows) downgrades `filter:drawtext` from "listed" to `missing`, with the crash detail in
+  `errors[]`; an ordinary nonzero exit proves nothing either way and leaves the listing-based
+  result standing (same "unknown is not missing" principle used everywhere else in capability
+  detection).
+- `scenes.py --sheet` gained `--no-timecode`, matching `look.py`, as a way out if drawtext is
+  ever genuinely unusable on a machine.
+- Fixed a `SyntaxWarning: invalid escape sequence '\;'` in `_common.py`'s `shell_quote()` (a stray
+  backslash before an already-unescaped character; harmless today, an error in a future Python).
+- README's Quick Start script examples now note that Windows/Git Bash needs `python`, not
+  `python3` (`bin/install.js` and `doctor`/`contract` already handled this; the raw examples
+  didn't say so).
+- SKILL.md's Gotchas section documents the crash and the fixes above.
+
+Thanks to [@willy92wins](https://github.com/willy92wins) for the detailed repro in #100.
+
 ## 0.12.4 — `stabilize.py` gains `--tripod` and `--crop` (#96)
 
 A follow-on audit of the same class of gap 0.12.3 closed in `color.py --correct`: scripts that

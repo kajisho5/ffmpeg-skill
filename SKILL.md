@@ -299,6 +299,18 @@ Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | out
   `caption.py --fonts-dir ./fonts --font "Noto Sans CJK JP"`). Without a
   matching font you get boxes, not an error. Install: `apt install fonts-noto-cjk`,
   `brew install --cask font-noto-sans-cjk`.
+- **Windows drawtext crashes on some real builds.** On certain Windows ffmpeg
+  builds (e.g. winget's gyan.dev), `drawtext` crashes with an access violation
+  whenever it resolves a font by family name through fontconfig, even with a
+  valid `fonts.conf` (#100). `look.py`, `scenes.py --sheet`, `overlay.py --text`
+  and `graphics.py` all resolve a concrete `--font-file` by default when one is
+  available (`fontfile=` skips fontconfig entirely and is the form confirmed
+  not to crash), so this should already be handled automatically. If a
+  drawtext tool still crashes, pass `--font-file` explicitly rather than
+  relying on `--font`/`font=` resolution; `doctor` also runs a real one-frame
+  drawtext probe and reports `filter:drawtext` missing (with the crash detail
+  in `errors[]`) rather than a false "available" from the `-filters` listing
+  alone.
 - **Keyframe cuts.** A lossless `cut.py` result may start up to one GOP (often
   1–10 s) earlier than requested; the script re-encodes automatically when the
   deviation exceeds 0.5 s. If the user insists on lossless output, pass

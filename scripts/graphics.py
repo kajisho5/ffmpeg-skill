@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args
+from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug"]
 
@@ -33,6 +33,9 @@ def ff_color(hex_rgb: str, alpha: float = 1.0) -> str:
 def font_opts(brand: dict, font: Optional[str], font_file: Optional[str]) -> str:
     if font_file or brand.get("font_file"):
         return f"fontfile={escape_filter_path(font_file or brand['font_file'])}"
+    resolved = default_font_file(font or brand.get("font", "DejaVu Sans"))
+    if resolved:
+        return f"fontfile={escape_filter_path(resolved)}"
     return f"font='{font or brand.get('font', 'DejaVu Sans')}'"
 
 

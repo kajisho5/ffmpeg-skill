@@ -1226,6 +1226,43 @@ class DoctorDetectionTests(unittest.TestCase):
             self.assertEqual(d["ok"], not expected_missing, name)
             self.assertEqual(code, 1 if expected_missing else 0, name)
 
+    def test_drawtext_crash_downgrades_a_listed_filter_to_missing(self):
+        """#100: `-filters` correctly lists drawtext (this ffmpeg build was compiled with it), but
+        a real one-frame render crashes -- an access-violation-style bug on some real Windows
+        builds. doctor must not repeat "missing required: none" in that case; it has to actually
+        run the probe and report drawtext missing, not just trust the listing."""
+        shim = self.work / "shim"
+        shim.mkdir(exist_ok=True)
+        script = "#!/bin/sh\ncase \"$2\" in\n"
+        for flag, name, code in (("-filters", "ffmpeg_filters_6.1.txt", 0), ("-encoders", "ffmpeg_encoders_6.1.txt", 0), ("-bsfs", "ffmpeg_bsfs_6.1.txt", 0)):
+            script += f"  {flag}) cat '{self.FIX / name}'; exit {code};;\n"
+        script += "esac\ncase \"$1\" in -version) echo 'ffmpeg version 8.0-fixture'; exit 0;; esac\n"
+        # simulate the real Windows crash: killed by a signal, so subprocess.run reports a negative
+        # returncode (the only portable way to reproduce "crashed" from a POSIX shell shim -- the
+        # real bug is a huge positive exit code on Windows, but this class only runs on POSIX)
+        script += "case \"$*\" in *drawtext=text=x*) kill -s SEGV $$;; esac\nexit 1\n"
+        (shim / "ffmpeg").write_text(script)
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+        proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False)
+        d = json.loads(proc.stdout)
+        self.assertIn("filter:drawtext", d["missing"])
+        self.assertNotIn("filter:drawtext", d["available"])
+        self.assertTrue(any("filter:drawtext" in e and "crashed" in e for e in d["errors"]), d["errors"])
+        self.assertFalse(d["ok"])
+        self.assertEqual(proc.returncode, 1)
+
+    def test_drawtext_ordinary_failure_does_not_downgrade_a_listed_filter(self):
+        """An ordinary nonzero exit from the drawtext probe -- not a crash -- proves nothing either
+        way, so it must leave a listed-available drawtext alone rather than reporting it missing.
+        This is also what every _doctor() fixture call above relies on: their shim's drawtext-probe
+        invocation always falls through to the catch-all `exit 1`, not a real render."""
+        d, code = self._doctor("ffmpeg_filters_6.1.txt")
+        self.assertIn("filter:drawtext", d["available"])
+        self.assertNotIn("filter:drawtext", d["missing"])
+        self.assertTrue(d["ok"])
+        self.assertEqual(code, 0)
+
     def test_unparsed_listing_is_unknown_not_missing(self):
         """Output no parser understands: filters become `unknown`, `ok` is false, exit 2, and nothing is claimed available."""
         d, code = self._doctor("ffmpeg_filters_garbage.txt")

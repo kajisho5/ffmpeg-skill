@@ -483,6 +483,50 @@ def _default_font() -> str:
     return str(BRAND_DEFAULTS["font"])
 
 
+def _drawtext_probe() -> Dict[str, Any]:
+    """Actually render one frame through drawtext, rather than trusting `-filters` alone.
+
+    `-filters` only reports whether this ffmpeg build was compiled with the filter; it never
+    proves drawtext can actually execute. On some real Windows ffmpeg builds (winget's gyan.dev
+    9.x), drawtext crashes with an access violation whenever it has to resolve a font through
+    fontconfig -- with or without a valid fonts.conf -- so `-filters` correctly reports drawtext
+    present and doctor used to report the capability `available` anyway; every tool that actually
+    used it (look, scenes --sheet, overlay --text, graphics) then crashed on first real use (#100).
+
+    This runs the cheapest real drawtext render there is: a one-frame synthetic clip, no font=
+    given at all (ffmpeg's own default resolution -- the same path that crashed). A clean exit
+    means drawtext genuinely works here. Anything that could not prove either way (no ffmpeg,
+    timeout, an ordinary nonzero exit with a real ffmpeg error) is `unknown`, same "unknown is not
+    missing" principle as every other capability here. A crash specifically -- killed by signal on
+    POSIX, or an unhandled access violation surfacing as a huge unsigned exit code on Windows -- is
+    the one case this function exists to catch, and folds into `missing`: the filter is present in
+    the build but cannot actually be used as ffmpeg's own default would use it.
+    """
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        return {"status": "unknown", "detail": "ffmpeg not on PATH"}
+    try:
+        proc = subprocess.run(
+            [exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
+             "-vf", "drawtext=text=x", "-frames:v", "1", "-f", "null", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=_DETECT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "unknown", "detail": f"drawtext probe did not exit within {_DETECT_TIMEOUT}s"}
+    except OSError as e:
+        return {"status": "unknown", "detail": f"drawtext probe: {e}"}
+    if proc.returncode == 0:
+        return {"status": "available", "detail": "one-frame drawtext render succeeded"}
+    if proc.returncode < 0 or proc.returncode >= 0x80000000:
+        return {"status": "missing",
+                "detail": f"drawtext render crashed (exit {proc.returncode}) instead of failing cleanly -- "
+                           "the filter is present in this build but cannot be used as-is, likely a fontconfig "
+                           "resolution crash (see https://github.com/kajisho5/ffmpeg-skill/issues/100); "
+                           "pass an explicit --font-file to every drawtext tool as a workaround"}
+    tail = " ".join(proc.stderr.strip().splitlines()[-2:])
+    return {"status": "unknown", "detail": f"drawtext probe exited {proc.returncode}: {tail}"}
+
+
 def _font_available(font_name: str) -> Dict[str, Any]:
     """Whether `font_name` (a fontconfig family name, as passed to drawtext's `font=`) is actually
     installed, distinct from silently resolving to a substitute.
@@ -562,6 +606,7 @@ def doctor() -> Dict[str, Any]:
     sets = {k: set(v["names"]) for k, v in listings.items()}
     state: Dict[str, str] = {}  # capability -> available | missing | unknown
     wanted = required_capabilities()
+    drawtext_probe: Optional[Dict[str, Any]] = None
 
     def _from(kind: str, name: str) -> str:
         lst = listings[kind]
@@ -578,6 +623,23 @@ def doctor() -> Dict[str, Any]:
             state[cap] = "available" if shutil.which("ffprobe") else "missing"
         elif cap.startswith("encoder:"):
             state[cap] = _from("encoders", cap[8:])
+        elif cap == "filter:drawtext":
+            listing_state = _from("filters", "drawtext")
+            if listing_state == "available":
+                # Only escalate an "available" listing to "missing" on an unambiguous crash --
+                # an ordinary nonzero exit (a real ffmpeg's own -h/-filters-only build variance, or
+                # in tests a fake ffmpeg shim that only implements -filters/-encoders/-bsfs/-version)
+                # proves nothing either way, so it leaves the listing-based result standing rather
+                # than downgrading it; see _drawtext_probe()'s own docstring for why a crash alone
+                # is the one case this exists to catch.
+                probe = _drawtext_probe()
+                if probe["status"] == "missing":
+                    drawtext_probe = probe
+                    state[cap] = "missing"
+                else:
+                    state[cap] = "available"
+            else:
+                state[cap] = listing_state
         elif cap.startswith("filter:"):
             state[cap] = _from("filters", cap[7:])
         elif cap.startswith("bsf:"):
@@ -592,6 +654,8 @@ def doctor() -> Dict[str, Any]:
     unknown = sorted(c for c, st in state.items() if st == "unknown")
     unknown_required = [c for c in unknown if c in wanted["required"]]
     errors = [f"{k}: {v['detail']}" for k, v in listings.items() if v["status"] in ("unparsed", "failed")]
+    if drawtext_probe is not None and drawtext_probe["status"] != "available":
+        errors.append(f"filter:drawtext: {drawtext_probe['detail']}")
     return {
         "version": skill_version(),
         "python": ".".join(str(x) for x in sys.version_info[:3]),
@@ -631,6 +695,11 @@ def _capability_fix_hint(cap: str) -> str:
         full_hint = "install/build ffmpeg with it enabled"
     if cap.startswith("encoder:"):
         return f"this ffmpeg build has no {cap[8:]} encoder; {full_hint}"
+    if cap == "filter:drawtext":
+        return ("drawtext crashed instead of rendering a frame (see errors[] for the exit detail) -- "
+                 "every drawtext tool already defaults to an explicit --font-file when one can be "
+                 "resolved (#100); if it still crashes, pass --font-file explicitly to look/scenes/"
+                 "overlay/graphics rather than relying on font= resolution")
     if cap.startswith("filter:"):
         return f"this ffmpeg build has no {cap[7:]} filter; {full_hint}"
     if cap.startswith("bsf:"):

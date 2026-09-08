@@ -24,7 +24,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import STATE, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, x264_args
+from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -144,6 +144,8 @@ def main() -> int:
             args.font = brand.get("font", args.font)
         if not args.font_file and brand.get("font_file"):
             args.font_file = brand["font_file"]
+    if not args.font_file:
+        args.font_file = default_font_file(args.font)
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")

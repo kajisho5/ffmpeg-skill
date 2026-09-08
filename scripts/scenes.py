@@ -26,7 +26,7 @@ import subprocess
 import sys
 from typing import Dict, List, Tuple
 
-from _common import add_common, apply_common, die, emit, ffmpeg_base, info, print_json, probe, require_tool, run
+from _common import add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run
 
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
 
@@ -107,6 +107,7 @@ def main() -> int:
     ap.add_argument("--max-scene", type=float, default=15.0, help="cap a highlight range at this many seconds (default 15)")
     ap.add_argument("--edl", help="write highlight ranges as START-END lines (cut.py --segments format)")
     ap.add_argument("--sheet", help="write a contact sheet PNG with the first frame of every scene")
+    ap.add_argument("--no-timecode", action="store_true", help="--sheet without the burnt-in timecode stamp (a way out if drawtext itself is unusable, see doctor)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -183,7 +184,12 @@ def main() -> int:
         # exactly one frame per scene: the frame index at the scene start
         fps = meta["video"].get("fps") or 30.0
         expr = "+".join(f"eq(n\\,{int(round(sc['start'] * fps))})" for sc in scenes)
-        vf = (f"select='{expr}',scale={tile_w}:-2,drawtext=text='%{{pts\\:hms}}':fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6,"
+        stamp = ""
+        if not args.no_timecode:
+            default_font = default_font_file("DejaVu Sans")
+            font_prefix = f"fontfile={escape_filter_path(default_font)}:" if default_font else ""
+            stamp = f",drawtext=text='%{{pts\\:hms}}':{font_prefix}fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6"
+        vf = (f"select='{expr}',scale={tile_w}:-2{stamp},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
         run(ffmpeg_base() + ["-i", args.input, "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", args.sheet])
         info(f"wrote {args.sheet}")
