@@ -470,7 +470,15 @@ class FFmpegSkillTests(unittest.TestCase):
                "-t", "4", "-vf", f"crop=1280:720:x='{jitter_x}':y='{jitter_y}'",
                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", shaky)
         out = OUT / "stab_tripod_crop_black.mp4"
-        script("stabilize.py", shaky, "--tripod", "--crop", "black", "-o", out)
+        proc = script("stabilize.py", shaky, "--tripod", "--crop", "black", "-o", out, "--json")
+        # CodeRabbit (#97): duration/dimensions alone don't prove the flags actually reached the
+        # filter graph -- an implementation that accepted but silently dropped them would still
+        # pass those checks. Inspect the recorded commands directly.
+        commands = json.loads(proc.stdout)["commands"]
+        self.assertTrue(any("vidstabdetect=" in c and ":tripod=1" in c for c in commands),
+                         f"--tripod should reach vidstabdetect's own tripod option: {commands}")
+        self.assertTrue(any("vidstabtransform=" in c and ":crop=1" in c and ":tripod=1" in c for c in commands),
+                         f"--tripod/--crop black should reach vidstabtransform's tripod/crop options: {commands}")
         m = probe(str(out))
         self.assertClose(m["duration"], 4.0, 0.3)
         self.assertEqual(m["video"]["width"], 1280)
