@@ -219,27 +219,30 @@ Picture tools (`fit`, `caption`, `overlay`, `graphics`, `color`, `export`, `scen
 ### What is SPEC?
 
 This project's author, [kajisho5](https://github.com/kajisho5), coined **SPEC** (Self-Producing
-Execution Contract) for the pattern this skill's tool layer is built on: a tool's contract, its
-docs, and its MCP schema are never hand-authored side by side with the code — all three are
-derived, at run time, from the one thing that actually has to be correct for the CLI to work at
-all: each script's own `argparse` parser.
+Execution Contract) for the pattern this skill's tool layer is built on: each tool's `input_schema`
+— the part of its contract that has to track the CLI exactly, flag for flag — is never
+hand-authored side by side with the code. It is derived, at run time, from the one thing that
+actually has to be correct for the CLI to work at all: the script's own `argparse` parser.
 
 Concretely, `scripts/_contract.py`'s `_capture_parser()` imports every tool script and
 intercepts its `parse_args()` call to get the live, fully-built parser object — flags, types,
-choices, defaults, required/positional, mutually exclusive groups, all of it. Everything else is
-built from that one object:
+choices, defaults, required/positional, mutually exclusive groups, all of it. `input_schema` is
+built straight from that object. (The rest of a `ToolSpec` — `role`, `capabilities`, `inputs`,
+`outputs`, `output_schema` — comes from a hand-authored table, `TOOL_META`, since those facts
+aren't things a parser can express; only `input_schema` is parser-derived.)
 
-- **The contract** (`input_schema` for every tool) is generated from it directly.
+- **The contract**'s `input_schema` for every tool is generated from the live parser directly.
 - **The MCP server** (`mcp/server.py`) carries no schema of its own; `tools/list` is translated
-  straight from the contract, which was built from the parser.
+  straight from the contract, `input_schema` included.
 - **The docs** (`docs/contract.md`'s field reference, this README's tool table) describe the same
-  shape, checked against the real output by `tests/test_contract.py` on every CI run.
+  shape. `tests/test_contract.py` runs on every CI run and fails the build if any of them drift
+  out of sync with what the code actually does — it catches drift, it doesn't fix it for you.
 
-The result: add a flag to a script's `argparse` block, and the contract, the MCP tool definition,
-and (via the CI check) the docs all follow without a second edit anywhere. There is no separate
-schema file to forget to update, and no version of "what this tool accepts" that can quietly fall
-out of sync with what the code actually does — the parser *is* the single source of truth, and
-everything downstream is produced from it, not maintained alongside it.
+The result: add a flag to a script's `argparse` block, and `input_schema` and the MCP tool
+definition follow with no second edit; if a docs page or a `TOOL_META` entry falls behind, CI
+catches it rather than letting it drift silently. There is no separate `input_schema` file to
+forget to update, and no version of "what CLI flags does this tool accept" that can quietly go
+stale.
 
 ### Machine-readable contract
 
