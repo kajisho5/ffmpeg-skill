@@ -6,7 +6,7 @@
 
 (nothing yet)
 
-## 0.12.4 — `stabilize.py` gains `--tripod` and `--crop`
+## 0.12.4 — `stabilize.py` gains `--tripod` and `--crop` (#96)
 
 A follow-on audit of the same class of gap 0.12.3 closed in `color.py --correct`: scripts that
 wrap a real FFmpeg filter but only expose a subset of what that filter actually supports.
