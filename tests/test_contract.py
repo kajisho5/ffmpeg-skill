@@ -484,10 +484,12 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.tools["cut"]["verification"]["tools"], ["ffmpeg-skill/probe"])
 
     def test_visual_verification_metadata(self):
-        picture = {"fit", "crop", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy"}
-        # join is the one picture tool that also accepts audio-only inputs (audio concat); look applies
-        # to its video output only, which SKILL.md states next to "Look: not needed"
-        both = {"join"}
+        picture = {"fit", "crop", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy",
+                   "deinterlace", "denoise", "redact", "waveform"}
+        # join and waveform are the picture tools that also accept audio-only inputs (audio
+        # concat; audio-track visualization); look applies to their video output only, which
+        # SKILL.md states next to "Look: not needed"
+        both = {"join", "waveform"}
         for t in self.contract["tools"]:
             self.assertEqual(t["requires_visual_verification"], t["name"] in picture, t["name"])
             if t["requires_visual_verification"]:

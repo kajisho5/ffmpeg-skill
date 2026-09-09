@@ -86,6 +86,57 @@ lie entirely inside the source frame (after accounting for display rotation);
 `--width`/`--height` must be even (4:2:0 chroma) and are refused, never
 rounded, if they aren't.
 
+### cropdetect.py — measure black bars, report the crop rectangle
+```
+cropdetect.py INPUT [--seconds N] [--samples N] [--limit F] [--round N]
+```
+Measurement only -- writes no file. Samples `--samples` windows spread
+across the file (default 5, totalling `--seconds` 10s of footage) and
+reports the crop rectangle FFmpeg's `cropdetect` filter found most often, as
+`{x, y, width, height}` ready to hand to `crop.py`. Distinct from
+`fit.py --fit crop`, which crops to a target aspect ratio it computes
+itself with no black-bar measurement involved. A rectangle that matches the
+full source frame means no bars were found. Does not decide whether
+removing detected bars is wanted -- genuine letterboxed content (a
+scope-ratio film in a 16:9 frame) "detects" the same way as accidental
+bars; look at the frame before cropping it away.
+
+### deinterlace.py — deinterlace interlaced footage
+```
+deinterlace.py INPUT [--mode frame|field] [--parity auto|tff|bff] [--only-interlaced] [-o OUT]
+```
+Wraps FFmpeg's `yadif` filter. `--mode frame` (default) keeps the source
+frame rate; `--mode field` emits one frame per field, doubling the output
+frame rate. `--parity` overrides field order when the container gets it
+wrong; `--only-interlaced` skips frames the source doesn't itself mark
+interlaced. Does not detect whether the source needs deinterlacing --
+that's a `look.py` judgement call (visible combing on motion).
+
+### denoise.py — reduce video noise/grain
+```
+denoise.py INPUT [--strength low|medium|high] [--luma-spatial F] [--chroma-spatial F]
+                  [--luma-temporal F] [--chroma-temporal F] [-o OUT]
+```
+Wraps FFmpeg's `hqdn3d` filter. `--strength` picks a tested preset scaling
+all four of hqdn3d's spatial/temporal luma/chroma parameters together; the
+four `--luma-*`/`--chroma-*` flags override any of them individually.
+Heavier denoising trades fine detail for a cleaner but softer image -- for
+audio noise reduction use `audio.py --denoise` instead, this tool only
+touches the picture.
+
+### redact.py — blur or pixelate an exact rectangle
+```
+redact.py INPUT --x X --y Y --width W --height H [--mode blur|pixelate]
+                 [--blur-strength N] [--block-size N] [-o OUT]
+```
+Same rectangle convention as `crop.py` -- the rectangle must already be
+known (a saved detection box, a hand-picked region); this tool does not
+locate faces or plates itself. `--mode blur` (default) box-blurs the
+rectangle; `--mode pixelate` mosaics it into `--block-size`-px blocks, the
+more unmistakably-redacted look often wanted for compliance footage. The
+rest of the frame, and the whole clip's timeline, are untouched -- to
+redact only part of the timeline, `cut.py` the clip into segments first.
+
 ### insert.py — still image to a timed silent clip
 ```
 insert.py IMAGE --duration T [--width W] [--height H] [--fps N]
@@ -139,6 +190,18 @@ sequence.py --dir DIR --pattern "frame_%04d.png"|"*.png" --fps N
 Turns a numbered or glob-matched set of still images into a video. The match
 is checked on disk before ffmpeg runs (an empty match or a missing first
 frame is refused here, not discovered from an opaque ffmpeg error).
+
+### waveform.py — audio waveform/spectrum visualization video
+```
+waveform.py INPUT [--style waveform|spectrum] [--width W] [--height H] [--fps N]
+                   [--color C] [--background C] [--waveform-mode M] [--split-channels] [-o OUT]
+```
+Renders the input's audio as a video: `--style waveform` (default, FFmpeg's
+`showwaves`) draws amplitude over time; `--style spectrum` (`showspectrum`)
+draws a frequency-over-time heatmap instead, reading more out of dense
+mixes at the cost of being less immediately readable. The output always
+carries the audio it visualizes. For an audio-only input (no video stream
+needed) or any file with an audio track worth visualizing.
 
 ### silence.py — remove dead air / jump cuts
 ```

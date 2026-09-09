@@ -131,6 +131,10 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "make it vertical / for TikTok / 9:16", "square for Instagram" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`) |
 | "resize to a specific height, width follows" | `fit.py input.mp4 --height 1080` (or `--width`, or both for an exact frame) |
 | "crop to this exact box/rectangle" (known x/y/width/height, not an aspect ratio) | `crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920` |
+| "are there black bars on this?", "what's the crop rectangle to remove the letterboxing" | `cropdetect.py input.mp4` |
+| "this old footage is interlaced / combed on motion" | `deinterlace.py input.mp4` |
+| "this footage is grainy/noisy, clean it up" | `denoise.py input.mp4 --strength medium` |
+| "blur/pixelate this face/plate/region" (known x/y/width/height) | `redact.py input.mp4 --x 820 --y 140 --width 240 --height 240 --mode pixelate` |
 | "turn this image into a N-second clip", "title card / end slate" | `insert.py title.png --duration 3` |
 | "slow zoom on a photo", "Ken Burns effect" | `insert.py photo.jpg --duration 6 --zoom in --pan right --width 1920 --height 1080` |
 | "rotate this 90 degrees", "mirror it horizontally" | `fit.py input.mp4 --rotate 90` / `fit.py input.mp4 --flip h` |
@@ -138,6 +142,7 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "stabilize this shaky footage" | `stabilize.py input.mp4` |
 | "make a blank/colour background clip" | `background.py -o bg.mp4 --duration 3 --width 1920 --height 1080 --color 0x101010` |
 | "turn these numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
+| "make a waveform/spectrum video for this podcast/track" | `waveform.py podcast.wav -o waveform.mp4` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |
 | "add subtitles but keep them toggleable / editable", "mux in an SRT, don't burn it" | `caption.py input.mp4 --srt subs.srt --mode mux` |

@@ -6,6 +6,36 @@
 
 (nothing yet)
 
+## 0.13.0 — 5 new tools: cropdetect, deinterlace, denoise, redact, waveform
+
+Five mechanical, typed-flag FFmpeg capabilities that had no wrapper yet:
+
+- `cropdetect.py` — measures existing black letterbox/pillarbox bars (FFmpeg's
+  `cropdetect` filter) and reports the `crop.py`-ready rectangle. Analysis only,
+  writes no file. Distinct from `fit.py --fit crop`, which crops to a target
+  aspect ratio it computes itself with no black-bar measurement involved.
+- `deinterlace.py` — deinterlaces old interlaced source footage (`yadif`),
+  `--mode frame` (keeps fps) or `--mode field` (doubles fps), `--parity`.
+- `denoise.py` — video noise/grain reduction (`hqdn3d`), `--strength low/
+  medium/high` or individual spatial/temporal luma/chroma overrides. Distinct
+  from `audio.py --denoise`, which only touches audio.
+- `redact.py` — blurs or pixelates an exact caller-given pixel rectangle for
+  the whole clip (privacy/compliance redaction: faces, plates). Same
+  rectangle convention as `crop.py`; does not locate anything itself.
+- `waveform.py` — renders an audio track as a waveform or spectrum
+  visualization video (`showwaves`/`showspectrum`), for audio-only inputs
+  with no picture worth showing.
+
+All five follow this skill's typed-flags-only convention: every numeric flag
+is range-checked against FFmpeg's own real documented AVOptions before
+ffmpeg runs, and none introduces any subject detection or judgement --
+cropdetect measures existing bars, redact blurs the exact rectangle it's
+given, neither decides what belongs in frame.
+
+Registered in `_contract.py`'s `TOOL_META`/`REENCODE_META` (33 tools total,
+up from 28); 22 new regression tests in `tests/test_all.py` cover the
+functional path and validated ranges for each tool.
+
 ## 0.12.6 — stop shipping `__pycache__` in the npm tarball
 
 `package.json`'s `files` array scopes the tarball to `bin/`, `scripts/`, `mcp/`, `references/`,

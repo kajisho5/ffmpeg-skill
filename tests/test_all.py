@@ -301,6 +301,73 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_crop_negative_offset_refused(self):
         script("crop.py", self.src, "--x", "-5", "--y", "0", "--width", "100", "--height", "100", expect_fail=True)
 
+    # ---------------------------------------------------------------- cropdetect
+    def test_cropdetect_reports_a_black_bar_rectangle(self):
+        bars = OUT / "cropdetect_bars.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "color=black:size=640x480:duration=2,drawbox=y=100:h=280:color=white@1:t=fill",
+           "-r", "10", "-pix_fmt", "yuv420p", bars)
+        proc = script("cropdetect.py", bars, "--seconds", "2", "--samples", "2", "--json")
+        result = json.loads(proc.stdout)
+        self.assertIsNotNone(result["crop"])
+        self.assertEqual(result["crop"]["width"], 640)
+        self.assertLess(result["crop"]["height"], 480)
+        self.assertGreater(result["crop"]["y"], 0)
+
+    def test_cropdetect_writes_no_file(self):
+        before = set(OUT.iterdir())
+        script("cropdetect.py", self.src, "--seconds", "1", "--samples", "1")
+        self.assertEqual(before, set(OUT.iterdir()))
+
+    def test_cropdetect_bad_seconds_refused(self):
+        script("cropdetect.py", self.src, "--seconds", "0", expect_fail=True)
+
+    # ---------------------------------------------------------------- deinterlace
+    def test_deinterlace_frame_mode_keeps_fps(self):
+        out = OUT / "deint1.mp4"
+        script("deinterlace.py", self.src, "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["video"]["fps"], 30.0, 0.5)
+        self.assertClose(m["duration"], 12.0, 0.3)
+        self.assertIsNotNone(m["audio"])
+
+    def test_deinterlace_field_mode_doubles_fps(self):
+        out = OUT / "deint2.mp4"
+        script("deinterlace.py", self.src, "--mode", "field", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["video"]["fps"], 60.0, 0.5)
+
+    # ---------------------------------------------------------------- denoise
+    def test_denoise_produces_valid_output(self):
+        out = OUT / "denoise1.mp4"
+        script("denoise.py", self.src, "--strength", "high", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+        self.assertClose(m["duration"], 12.0, 0.3)
+
+    def test_denoise_negative_override_refused(self):
+        script("denoise.py", self.src, "--luma-spatial", "-1", expect_fail=True)
+
+    # ---------------------------------------------------------------- redact
+    def test_redact_blur_keeps_frame_size(self):
+        out = OUT / "redact1.mp4"
+        script("redact.py", self.src, "--x", "100", "--y", "50", "--width", "200", "--height", "100", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+
+    def test_redact_pixelate_mode(self):
+        out = OUT / "redact2.mp4"
+        script("redact.py", self.src, "--x", "100", "--y", "50", "--width", "200", "--height", "100",
+               "--mode", "pixelate", "--block-size", "16", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+
+    def test_redact_out_of_bounds_refused(self):
+        script("redact.py", self.src, "--x", "1200", "--y", "0", "--width", "200", "--height", "200", expect_fail=True)
+
+    def test_redact_odd_dimensions_refused(self):
+        script("redact.py", self.src, "--x", "0", "--y", "0", "--width", "101", "--height", "100", expect_fail=True)
+
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
         out = OUT / "insert1.mp4"
@@ -528,6 +595,36 @@ class FFmpegSkillTests(unittest.TestCase):
 
     def test_sequence_missing_dir_refused(self):
         script("sequence.py", "--dir", str(OUT / "does_not_exist"), "--pattern", "*.png", "--fps", "5", expect_fail=True)
+
+    # ---------------------------------------------------------------- waveform
+    def test_waveform_style_default(self):
+        out = OUT / "waveform1.mp4"
+        script("waveform.py", self.src, "--width", "640", "--height", "360", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+        self.assertIsNotNone(m["audio"])
+        self.assertClose(m["duration"], 12.0, 0.3)
+
+    def test_waveform_spectrum_style(self):
+        out = OUT / "waveform2.mp4"
+        script("waveform.py", self.src, "--style", "spectrum", "--width", "640", "--height", "360", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+
+    def test_waveform_audio_only_input(self):
+        out = OUT / "waveform3.mp4"
+        script("waveform.py", self.mic, "--width", "480", "--height", "270", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (480, 270))
+
+    def test_waveform_no_audio_refused(self):
+        silent = OUT / "waveform_silent_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+           "-t", "1", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", silent)
+        script("waveform.py", silent, expect_fail=True)
+
+    def test_waveform_odd_dimensions_refused(self):
+        script("waveform.py", self.src, "--width", "641", "--height", "360", expect_fail=True)
 
     # ---------------------------------------------------------------- caption
     def test_caption_text_to_srt_and_burn(self):
