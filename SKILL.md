@@ -136,6 +136,7 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "this footage is grainy/noisy, clean it up" | `denoise.py input.mp4 --strength medium` |
 | "blur/pixelate this face/plate/region" (known x/y/width/height) | `redact.py input.mp4 --x 820 --y 140 --width 240 --height 240 --mode pixelate` |
 | "pull a flat clip out of this 360/spherical video, looking this way" (known yaw/pitch/fov, not "find the interesting part") | `sphere.py insta360.mp4 --yaw 90 --pitch 0 --h-fov 100 --v-fov 70` |
+| "the horizon is tilted, straighten this out" (known degrees, not "auto-level") | `straighten.py tilted.mp4 --degrees -2.5` |
 | "turn this image into a N-second clip", "title card / end slate" | `insert.py title.png --duration 3` |
 | "slow zoom on a photo", "Ken Burns effect" | `insert.py photo.jpg --duration 6 --zoom in --pan right --width 1920 --height 1080` |
 | "rotate this 90 degrees", "mirror it horizontally" | `fit.py input.mp4 --rotate 90` / `fit.py input.mp4 --flip h` |
@@ -144,6 +145,10 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "make a blank/colour background clip" | `background.py -o bg.mp4 --duration 3 --width 1920 --height 1080 --color 0x101010` |
 | "turn these numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "make a waveform/spectrum video for this podcast/track" | `waveform.py podcast.wav -o waveform.mp4` |
+| "hold on this frame for a couple seconds", "freeze the last frame" | `freeze.py clip.mp4 --hold 2` |
+| "add some black at the start before the title card" | `pad.py clip.mp4 --start 1.5` |
+| "speed up here, slam into slow-mo there, then speed back up" (known segments) | `speedramp.py action.mp4 --segment 0-3:1.0 --segment 3-4:0.25 --segment 4-8:2.0` |
+| "loop this background clip to fill 30 seconds" | `loop.py bg_loop.mp4 --duration 30` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |
 | "add subtitles but keep them toggleable / editable", "mux in an SRT, don't burn it" | `caption.py input.mp4 --srt subs.srt --mode mux` |

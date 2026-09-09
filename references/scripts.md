@@ -156,6 +156,19 @@ tracking here: only the typed aim you give it. For a shot that follows a
 moving subject, call this once per keyframe viewpoint from outside this
 tool. `--width`/`--height` must be even (4:2:0 chroma); default 1920x1080.
 
+### straighten.py — rotate by an arbitrary angle (horizon correction)
+```
+straighten.py INPUT --degrees D [--fit crop|pad] [--fill-color C] [-o OUT]
+```
+Distinct from `fit.py --rotate`, which only turns the picture in exact
+90-degree steps -- this wraps FFmpeg's `rotate` filter for a small
+corrective tilt (`--degrees`, -45..45). Rotating by a non-90-degree angle
+leaves triangular gaps at the corners: `--fit crop` (default) scales up
+just enough to fill the frame with no visible gap, losing a thin border of
+the original picture; `--fit pad` keeps the full original picture and fills
+the gaps with `--fill-color`. Does not measure the tilt itself -- give the
+degrees once you can see how far off it is (a `look.py` judgement call).
+
 ### insert.py — still image to a timed silent clip
 ```
 insert.py IMAGE --duration T [--width W] [--height H] [--fps N]
@@ -221,6 +234,54 @@ draws a frequency-over-time heatmap instead, reading more out of dense
 mixes at the cost of being less immediately readable. The output always
 carries the audio it visualizes. For an audio-only input (no video stream
 needed) or any file with an audio track worth visualizing.
+
+### freeze.py — hold a frame for N seconds
+```
+freeze.py INPUT --hold T [--at T] [--mode insert|extend] [-o OUT]
+```
+`--at` (default: the last frame) is the timestamp to freeze; `--hold` is
+how long the freeze lasts. `--mode insert` (default) inserts the hold at
+`--at`, pushing everything after it later by `--hold` seconds. `--mode
+extend` only works with `--at` at (or past) the clip's end and just makes
+the last frame last `--hold` seconds longer, with nothing pushed. Audio is
+silent during the held frame in `--mode insert` (there is no source audio
+for a frozen moment that didn't exist before).
+
+### pad.py — add black/silent padding at the start/end
+```
+pad.py INPUT [--start T] [--end T] [--color C] [-o OUT]
+```
+Distinct from `fit.py --fit pad`, which pads the *frame* (letterbox/
+pillarbox bars around each existing frame) -- this pads the *timeline*:
+extra seconds of solid colour and silence before and/or after the clip's
+existing content. At least one of `--start`/`--end` must be > 0.
+
+### speedramp.py — step through different speeds across a clip
+```
+speedramp.py INPUT --segment START-END:FACTOR [--segment ...] [-o OUT]
+```
+Distinct from `fit.py --duration --method speed`, which applies one
+constant factor to the whole clip -- this takes a list of `--segment`
+pieces (repeatable) covering the clip start to end with no gaps or
+overlaps, each played at its own constant speed (pitch-preserving audio,
+matching `fit.py`), then concatenates them: "speed up, then slow way down
+for the punch, then speed back up," built from a few constant segments
+rather than a continuous curve. `FACTOR` is 0.05..20 (2.0 = twice as fast,
+0.5 = half speed). Picking exactly where a ramp should ease in or out is a
+judgement call for the calling agent, made concrete here as the segment
+boundaries it supplies.
+
+### loop.py — repeat a clip
+```
+loop.py INPUT --times N | --duration T [-o OUT]
+```
+`--times` repeats the whole clip that many times back to back (2 =
+original + 1 repeat). `--duration` instead loops (and trims the last
+repeat) to hit an exact target length. For a background loop, an ambient
+bed, or filling a fixed slot length with a short clip. Does not smooth the
+loop point (no crossfade at the seam) -- a clip that doesn't already loop
+cleanly will show a visible cut/pop at each repeat, which is a property of
+the source material this tool cannot fix.
 
 ### silence.py — remove dead air / jump cuts
 ```

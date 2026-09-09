@@ -400,6 +400,102 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_sphere_audio_stream_out_of_range_refused(self):
         script("sphere.py", self.src, "--audio-stream", "5", expect_fail=True)
 
+    # ---------------------------------------------------------------- straighten
+    def test_straighten_crop_fit_has_no_black_corner(self):
+        out = OUT / "straighten1.mp4"
+        script("straighten.py", self.src, "--degrees", "10", "--fit", "crop", "-o", out)
+        m = probe(str(out))
+        self.assertLess(m["video"]["width"], 1280)
+        self.assertLess(m["video"]["height"], 720)
+        self.assertEqual(m["video"]["width"] % 2, 0)
+        self.assertEqual(m["video"]["height"] % 2, 0)
+        frame = OUT / "straighten1_corner.raw"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-vf", "crop=8:8:0:0",
+           "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", frame)
+        data = frame.read_bytes()
+        self.assertFalse(all(b == 0 for b in data), "top-left corner is pure black -- straighten left a visible gap")
+
+    def test_straighten_pad_fit_grows_the_frame(self):
+        out = OUT / "straighten2.mp4"
+        script("straighten.py", self.src, "--degrees", "-8", "--fit", "pad", "-o", out)
+        m = probe(str(out))
+        self.assertGreater(m["video"]["width"], 1280)
+        self.assertGreater(m["video"]["height"], 720)
+
+    def test_straighten_zero_degrees_refused(self):
+        script("straighten.py", self.src, "--degrees", "0", expect_fail=True)
+
+    def test_straighten_out_of_range_refused(self):
+        script("straighten.py", self.src, "--degrees", "60", expect_fail=True)
+
+    # ---------------------------------------------------------------- freeze
+    def test_freeze_insert_extends_duration(self):
+        out = OUT / "freeze1.mp4"
+        script("freeze.py", self.src, "--at", "5", "--hold", "1", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 13.0, 0.3)
+
+    def test_freeze_extend_mode_at_end(self):
+        out = OUT / "freeze2.mp4"
+        script("freeze.py", self.src, "--hold", "1.5", "--mode", "extend", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 13.5, 0.3)
+
+    def test_freeze_extend_mode_before_end_refused(self):
+        script("freeze.py", self.src, "--at", "2", "--hold", "1", "--mode", "extend", expect_fail=True)
+
+    def test_freeze_zero_hold_refused(self):
+        script("freeze.py", self.src, "--hold", "0", expect_fail=True)
+
+    # ---------------------------------------------------------------- pad
+    def test_pad_start_and_end_extend_duration(self):
+        out = OUT / "pad1.mp4"
+        script("pad.py", self.src, "--start", "1", "--end", "2", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 15.0, 0.3)
+
+    def test_pad_nothing_refused(self):
+        script("pad.py", self.src, expect_fail=True)
+
+    def test_pad_negative_refused(self):
+        script("pad.py", self.src, "--start", "-1", expect_fail=True)
+
+    # ---------------------------------------------------------------- speedramp
+    def test_speedramp_segments_change_overall_duration(self):
+        out = OUT / "ramp1.mp4"
+        script("speedramp.py", self.src, "--segment", "0-6:1.0", "--segment", "6-9:0.5", "--segment", "9-12:2.0", "-o", out)
+        m = probe(str(out))
+        # 6/1.0 + 3/0.5 + 3/2.0 = 6 + 6 + 1.5 = 13.5s
+        self.assertClose(m["duration"], 13.5, 0.5)
+
+    def test_speedramp_bad_segment_format_refused(self):
+        script("speedramp.py", self.src, "--segment", "not-a-segment", expect_fail=True)
+
+    def test_speedramp_gap_refused(self):
+        script("speedramp.py", self.src, "--segment", "0-5:1.0", "--segment", "6-12:1.0", expect_fail=True)
+
+    def test_speedramp_must_start_at_zero_refused(self):
+        script("speedramp.py", self.src, "--segment", "1-12:1.0", expect_fail=True)
+
+    # ---------------------------------------------------------------- loop
+    def test_loop_times_multiplies_duration(self):
+        out = OUT / "loop1.mp4"
+        script("loop.py", self.src, "--times", "3", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 36.0, 1.0)
+
+    def test_loop_duration_hits_exact_target(self):
+        out = OUT / "loop2.mp4"
+        script("loop.py", self.src, "--duration", "20", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 20.0, 0.1)
+
+    def test_loop_times_too_small_refused(self):
+        script("loop.py", self.src, "--times", "1", expect_fail=True)
+
+    def test_loop_duration_shorter_than_source_refused(self):
+        script("loop.py", self.src, "--duration", "3", expect_fail=True)
+
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
         out = OUT / "insert1.mp4"
