@@ -14,7 +14,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args
+from _common import add_common, apply_common, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args
 
 
 def main() -> int:
@@ -49,11 +49,14 @@ def main() -> int:
             c0, c1 = args.gradient.split(":")
         except ValueError:
             die(f"--gradient needs two colours as C1:C2, got '{args.gradient}'")
+        validate_color(c0, "--gradient")
+        validate_color(c1, "--gradient")
         rad = math.radians(args.angle)
         x1 = round(args.width * math.cos(rad))
         y1 = round(args.width * math.sin(rad))
         src_filter = f"gradients=size={args.width}x{args.height}:rate={args.fps:g}:c0={c0}:c1={c1}:x0=0:y0=0:x1={x1}:y1={y1}"
     else:
+        validate_color(args.color, "--color")
         src_filter = f"color=c={args.color}:size={args.width}x{args.height}:rate={args.fps:g}"
 
     output = args.output

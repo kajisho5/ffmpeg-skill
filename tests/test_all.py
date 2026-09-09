@@ -1557,6 +1557,43 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertIn("-preset veryfast", proc.stderr, "--fast overrides the preset")
         self.assertClose(probe(str(out))["duration"], 6.0, 0.2)
 
+    # ---------------------------------------------------------------- colour-flag filter-graph injection (adversarial)
+    def test_color_like_flags_refuse_filter_graph_injection(self):
+        """Every flag that string-formats a colour straight into a filter graph (color=c=...,
+        tpad=...:color=..., rotate=...:fillcolor=..., drawtext=...:fontcolor=..., pad=...:color=...)
+        used to accept any string verbatim. Since ffmpeg filter options are comma/colon-delimited,
+        a value like "black,drawtext=text=INJECTED" doesn't just set an odd colour -- the comma ends
+        the colour filter early and starts an entirely new one, so the payload actually gets burnt
+        into the frame (confirmed by rendering it and inspecting the pixels before this fix existed).
+        This is a real filter-graph injection, not just a cosmetic validation gap -- every colour-like
+        flag across the codebase must refuse anything that isn't a plain colour token."""
+        payload = "black,drawtext=text=INJECTED"
+        cases = [
+            ("pad.py", [self.src, "--start", "1", "--color", payload]),
+            ("straighten.py", [self.src, "--degrees", "5", "--fit", "pad", "--fill-color", payload]),
+            ("waveform.py", [self.src, "--background", payload]),
+            ("waveform.py", [self.src, "--color", payload]),
+            ("background.py", ["--duration", "1", "--width", "640", "--height", "360", "--color", payload, "-o", OUT / "bg_inject.mp4"]),
+            ("background.py", ["--duration", "1", "--width", "640", "--height", "360", "--gradient", f"{payload}:0x0057ff", "-o", OUT / "bg_inject2.mp4"]),
+            ("fit.py", [self.src, "--aspect", "1:1", "--fit", "pad", "--pad-color", payload]),
+            ("export.py", [self.src, "--preset", "reels", "--pad-color", payload]),
+            ("join.py", [self.src, self.src, "--pad-color", payload]),
+            ("overlay.py", [self.src, "--text", "hi", "--font-color", payload]),
+            ("overlay.py", [self.src, "--text", "hi", "--border-color", payload]),
+            ("overlay.py", [self.src, "--text", "hi", "--box-color", payload]),
+            ("overlay.py", [self.src, "--video", self.src, "--chromakey", payload]),
+        ]
+        for name, argv in cases:
+            proc = script(name, *argv, expect_fail=True)
+            self.assertIn("colour", proc.stderr, f"{name} {argv}: expected a colour-validation refusal")
+
+    def test_color_like_flags_still_accept_real_colors(self):
+        script("pad.py", self.src, "--start", "0.5", "--color", "0x101010", "-o", OUT / "colorok1.mp4")
+        script("straighten.py", self.src, "--degrees", "5", "--fit", "pad", "--fill-color", "black", "-o", OUT / "colorok2.mp4")
+        script("waveform.py", self.src, "--background", "0x101010", "--color", "cyan|magenta", "-o", OUT / "colorok3.mp4")
+        script("background.py", "--duration", "1", "--width", "640", "--height", "360", "--gradient", "0xff6a00:0x0057ff", "-o", OUT / "colorok4.mp4")
+        script("overlay.py", self.src, "--text", "hi", "--box-color", "black@0.5", "-o", OUT / "colorok5.mp4")
+
     # ---------------------------------------------------------------- real iPhone regressions (Dolby Vision 8.4 / HLG, VFR, extra tracks)
     def test_hdr_source_stays_hdr_through_reencodes(self):
         # HLG 10-bit HEVC with audio AND a timecode data track, like an iPhone .mov

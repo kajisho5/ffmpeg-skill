@@ -22,7 +22,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args
 
 
 def main() -> int:
@@ -46,6 +46,7 @@ def main() -> int:
         die(f"--degrees must be -45..45, got {args.degrees:g}")
     if args.degrees == 0:
         die("--degrees must be nonzero (nothing to straighten)")
+    validate_color(args.fill_color, "--fill-color")
 
     meta = probe(args.input)
     if not meta.get("video"):

@@ -23,7 +23,7 @@ import argparse
 import sys
 from typing import List
 
-from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run
+from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, validate_color
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -104,6 +104,7 @@ def main() -> int:
 
     if len(args.inputs) < 2:
         die("give at least two clips")
+    validate_color(args.pad_color, "--pad-color")
     metas = [probe(p) for p in args.inputs]
     if all(not m.get("video") for m in metas):
         for p, m in zip(args.inputs, metas):

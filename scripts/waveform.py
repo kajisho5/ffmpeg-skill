@@ -22,7 +22,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run
+from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, validate_color
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -51,6 +51,9 @@ def main() -> int:
         die(f"--width/--height must be > 0, got width={args.width} height={args.height}")
     if args.width % 2 or args.height % 2:
         die(f"--width/--height must be even (4:2:0 chroma), got width={args.width} height={args.height}")
+    for token in args.color.split("|"):
+        validate_color(token, "--color")
+    validate_color(args.background, "--background")
     if args.fps <= 0:
         die(f"--fps must be > 0, got {args.fps:g}")
 

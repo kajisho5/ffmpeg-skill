@@ -37,7 +37,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, x264_args
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args
 
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
@@ -114,6 +114,7 @@ def main() -> int:
         die(f"--crop-x must be 0..1, got {args.crop_x}")
     if not 0.0 <= args.crop_y <= 1.0:
         die(f"--crop-y must be 0..1, got {args.crop_y}")
+    validate_color(args.pad_color, "--pad-color")
 
     meta = probe(args.input)
     if not meta.get("video"):

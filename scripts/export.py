@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run
+from _common import STATE, add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color
 
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
@@ -63,6 +63,7 @@ def main() -> int:
         return 0
     if not args.input or not args.preset:
         die("input and --preset are required (or use --list)")
+    validate_color(args.pad_color, "--pad-color")
 
     p = PRESETS[args.preset]
     meta = probe(args.input)

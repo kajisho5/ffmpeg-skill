@@ -6,6 +6,39 @@
 
 (nothing yet)
 
+## 0.15.2 — fix a real filter-graph injection via colour flags
+
+Found by adversarial testing: every flag that string-formats a colour straight
+into an ffmpeg filter graph accepted the value verbatim, with no validation.
+Since ffmpeg filter options are comma/colon-delimited, a value like
+`black,drawtext=text=INJECTED` doesn't just set an odd colour -- the comma
+ends the colour filter early and starts an entirely new one. Confirmed this is
+a real, working injection, not a theoretical one: rendered a frame with
+`pad.py --color 'black,drawtext=text=INJECTED:fontcolor=white'` and the
+injected text was actually burnt into the output picture.
+
+Added `validate_color()` to `_common.py` (refuses anything that isn't a named
+colour, `0xRRGGBB[AA]`, or `#RRGGBB[AA]`, optionally with an `@alpha` suffix)
+and applied it to every colour-like flag that reaches a filter graph
+unescaped:
+
+- `pad.py --color`, `straighten.py --fill-color`, `waveform.py --background`
+  and `--color` (new tools, this release cycle)
+- `background.py --color`/`--gradient`, `fit.py --pad-color`,
+  `export.py --pad-color`, `join.py --pad-color`, `overlay.py --chromakey`/
+  `--font-color`/`--border-color`/`--box-color` (pre-existing tools -- this
+  gap predates the recent tool additions)
+
+`caption.py`'s colour flags were already safe (routed through the existing
+`color_hex()`/`ass_color()` strict RRGGBB validators) and needed no change.
+
+This is the same "no filter graph accepted from the caller" invariant every
+other typed flag in this codebase already holds to -- colour flags were the
+one place a free-form string still reached a filter graph unescaped. New
+regression test proves the exploit across all 9 fixed call sites and that
+real colour values still work; full suite (183 tests) and the contract suite
+(67 tests) both pass.
+
 ## 0.15.1 — bug-check pass on the 39-tool set
 
 Found and fixed while auditing the tools added across 0.13.0-0.15.0:

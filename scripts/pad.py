@@ -16,7 +16,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args
 
 
 def main() -> int:
@@ -36,6 +36,7 @@ def main() -> int:
         die(f"--start/--end must be >= 0, got start={args.start:g} end={args.end:g}")
     if args.start == 0 and args.end == 0:
         die("--start and/or --end must be > 0 (nothing to pad)")
+    validate_color(args.color, "--color")
 
     meta = probe(args.input)
     if not meta.get("video"):

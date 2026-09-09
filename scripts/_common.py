@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -813,6 +814,23 @@ def color_hex(value: str) -> str:
     if len(v) != 6:
         die(f"colour must be RRGGBB, got '{value}'")
     return v.upper()
+
+
+_COLOR_TOKEN_RE = re.compile(r"^(0[xX][0-9A-Fa-f]{6,8}|#[0-9A-Fa-f]{6,8}|[A-Za-z][A-Za-z0-9]*)(@[0-9.]+)?$")
+
+
+def validate_color(value: str, flag: str = "--color") -> str:
+    """Refuse a colour argument that isn't a plain ffmpeg colour token (named colour, 0xRRGGBB[AA],
+    #RRGGBB[AA], optionally with an @alpha suffix). Every caller that string-formats a colour flag
+    straight into a filter graph (color=c=..., tpad=...:color=..., rotate=...:fillcolor=...) must
+    validate it first -- ffmpeg filter options are comma/colon-delimited, so an unvalidated value
+    containing those characters lets a caller splice in an entirely different filter (a real,
+    demonstrated filter-graph injection: --color "black,drawtext=text=..." renders arbitrary burnt-in
+    text), not just an odd colour. This is the same "no filter graph accepted from the caller"
+    invariant every other typed flag in this codebase already holds to."""
+    if not _COLOR_TOKEN_RE.match(value):
+        die(f"{flag} must be a plain colour (a name, 0xRRGGBB[AA], or #RRGGBB[AA], optionally @alpha), got '{value}'")
+    return value
 
 
 def print_json(obj: Any) -> None:
