@@ -247,7 +247,7 @@ def main() -> int:
         if args.font_file:
             opts.append(f"fontfile={escape_filter_path(args.font_file)}")
         else:
-            opts.append(f"font='{args.font}'")
+            opts.append(f"font='{escape_drawtext(args.font)}'")
         alpha = alpha_expr(args.opacity, start if start is not None else (0.0 if args.fade > 0 else None),
                            end if end is not None else ((meta.get("duration") or None) if args.fade > 0 else None), args.fade)
         opts.append(f"fontcolor={args.font_color}")

@@ -36,7 +36,7 @@ def font_opts(brand: dict, font: Optional[str], font_file: Optional[str]) -> str
     resolved = default_font_file(font or brand.get("font", "DejaVu Sans"))
     if resolved:
         return f"fontfile={escape_filter_path(resolved)}"
-    return f"font='{font or brand.get('font', 'DejaVu Sans')}'"
+    return f"font='{escape_drawtext(font or brand.get('font', 'DejaVu Sans'))}'"
 
 
 def main() -> int:

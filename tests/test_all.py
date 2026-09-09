@@ -23,8 +23,8 @@ TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
 
 
-def sh(*cmd, expect_fail=False):
-    proc = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+def sh(*cmd, expect_fail=False, env=None):
+    proc = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
     if expect_fail:
         assert proc.returncode != 0, f"expected failure but succeeded: {cmd}"
         return proc
@@ -1593,6 +1593,41 @@ class FFmpegSkillTests(unittest.TestCase):
         script("waveform.py", self.src, "--background", "0x101010", "--color", "cyan|magenta", "-o", OUT / "colorok3.mp4")
         script("background.py", "--duration", "1", "--width", "640", "--height", "360", "--gradient", "0xff6a00:0x0057ff", "-o", OUT / "colorok4.mp4")
         script("overlay.py", self.src, "--text", "hi", "--box-color", "black@0.5", "-o", OUT / "colorok5.mp4")
+
+    # ---------------------------------------------------------------- font-name filter-graph injection (adversarial)
+    def test_font_flag_escapes_filter_graph_injection_when_unresolved(self):
+        """overlay.py and graphics.py both accept --font as a family NAME, not a file path, and try
+        to resolve it to a concrete file via default_font_file() (fc-match) first -- but that
+        resolution returns None whenever fc-match isn't on PATH (always true on some real systems,
+        e.g. minimal containers and every Windows build), in which case both tools used to fall back
+        to embedding the raw name straight into `font='{args.font}'` with zero escaping. Since
+        drawtext=... options are comma/colon-delimited, a value like "X',drawtext=text=OWNED"
+        doesn't just set an odd font -- the comma ends the font option (and the whole drawtext
+        filter) early and starts an entirely new drawtext filter, which actually rendered (confirmed
+        by rendering the pre-fix code and visually inspecting the burnt-in "OWNED" text). Force the
+        None-fallback path by hiding fc-match from PATH, exactly as it's naturally absent on some
+        real systems, and confirm the built filter graph no longer contains a live breakout."""
+        payload = "X',drawtext=text=OWNED:fontcolor=yellow:fontsize=40:x=10:y=10"
+        stub_dir = OUT / "no_fc_match_path"
+        stub_dir.mkdir(exist_ok=True)
+        for exe in ("ffmpeg", "ffprobe"):
+            real = shutil.which(exe)
+            link = stub_dir / exe
+            if not link.exists():
+                os.symlink(real, link)
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([str(stub_dir), str(Path(sys.executable).parent)])
+
+        out = OUT / "font_inject_overlay.mp4"
+        proc = sh(sys.executable, SCRIPTS / "overlay.py", self.src, "--text", "hello", "--font", payload, "-o", out, env=env)
+        # The escaped payload must show up with a backslash-escaped comma ahead of the injected
+        # "drawtext=text=OWNED" -- proof it stays a literal char inside font='...' instead of
+        # closing the option early and starting a sibling filter.
+        self.assertIn("\\,drawtext=text=OWNED", proc.stderr, "comma must be escaped so it can't break out of font= into a new filter")
+
+        frame = OUT / "font_inject_overlay_frame.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-ss", "1", "-vframes", "1", frame)
+        self.assertTrue(frame.exists())
 
     # ---------------------------------------------------------------- real iPhone regressions (Dolby Vision 8.4 / HLG, VFR, extra tracks)
     def test_hdr_source_stays_hdr_through_reencodes(self):

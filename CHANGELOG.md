@@ -6,6 +6,31 @@
 
 (nothing yet)
 
+## 0.15.3 — fix a real filter-graph injection via --font fallback
+
+Found by the same adversarial pass that produced 0.15.2, this time auditing
+file-path/text escaping instead of colour flags. `overlay.py --font` and
+`graphics.py`'s brand-font fallback both accept a fontconfig family NAME (not
+a file path) and try to resolve it to a concrete file via `default_font_file()`
+(`fc-match`) first -- but that resolution returns `None` whenever `fc-match`
+isn't on `PATH` (true on some real systems, and always true on Windows, per
+`default_font_file()`'s own docstring). When it returns `None`, both tools
+fell back to `font='{args.font}'` with zero escaping, unlike the adjacent
+`text='{escape_drawtext(args.text)}'` one line above it in `overlay.py`.
+Since drawtext options are comma/colon-delimited, a font value like
+`X',drawtext=text=OWNED` doesn't just fail to resolve a font -- the comma
+ends the option (and the whole filter) early and starts an entirely new
+drawtext filter, which actually rendered. Confirmed this is a real, working
+injection (not theoretical): forced the `fc-match`-missing fallback path,
+ran `overlay.py --font "X',drawtext=text=OWNED:fontcolor=yellow..."`, and the
+injected "OWNED" text was actually burnt into the output picture.
+
+Fixed by wrapping both fallback values with the existing `escape_drawtext()`
+helper, matching the already-safe `text=` pattern next to it:
+
+- `overlay.py`'s `font='{args.font}'` fallback (line ~250)
+- `graphics.py`'s `font_opts()` fallback (`font='{font or brand.get(...)}'`)
+
 ## 0.15.2 — fix a real filter-graph injection via colour flags
 
 Found by adversarial testing: every flag that string-formats a colour straight
