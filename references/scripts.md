@@ -86,6 +86,25 @@ lie entirely inside the source frame (after accounting for display rotation);
 `--width`/`--height` must be even (4:2:0 chroma) and are refused, never
 rounded, if they aren't.
 
+### sphere.py — flat viewport extraction from 360/spherical video
+```
+sphere.py INPUT [--input-projection equirect|fisheye|dfisheye|c3x2|c6x1|barrel|cylindrical|hequirect]
+                 [--yaw D] [--pitch D] [--roll D] [--h-fov D] [--v-fov D]
+                 [--width W] [--height H] [--interp METHOD] [--stereo mono|sbs|tb]
+                 [--audio-stream N] [-o OUT]
+```
+Wraps FFmpeg's `v360` filter to bake out an ordinary flat clip pointed at a
+fixed direction — the same "look this way" operation a VR headset or a 360
+player's viewport does. `--yaw`/`--pitch`/`--roll` aim the camera (each
+-180..180, default 0); `--h-fov`/`--v-fov` set how wide the view is (each
+1..170, default 90/60). `--input-projection` must match the source's own
+projection (default `equirect`, the most common capture/export format) —
+this tool cannot detect it from the pixels, so a wrong value produces a
+distorted or garbled output, not an error. There is no subject detection or
+tracking here: only the typed aim you give it. For a shot that follows a
+moving subject, call this once per keyframe viewpoint from outside this
+tool. `--width`/`--height` must be even (4:2:0 chroma); default 1920x1080.
+
 ### insert.py — still image to a timed silent clip
 ```
 insert.py IMAGE --duration T [--width W] [--height H] [--fps N]

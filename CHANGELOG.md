@@ -6,6 +6,15 @@
 
 (nothing yet)
 
+## 0.13.0 — add `sphere.py`: flat-viewport extraction from 360/spherical video
+
+New tool wrapping FFmpeg's `v360` filter for the most common 360-video job: pointing a fixed,
+typed camera (`--yaw`/`--pitch`/`--roll`, `--h-fov`/`--v-fov`) at an equirectangular (or
+fisheye/cubemap/etc., via `--input-projection`) source and baking out an ordinary flat video.
+Consistent with this skill's design boundary: it aims and extracts a viewport, it does not detect
+or track a subject — that decision stays with the calling agent. Registered in `TOOL_META`/
+`REENCODE_META`, 29 tools total.
+
 ## 0.12.6 — stop shipping `__pycache__` in the npm tarball
 
 `package.json`'s `files` array scopes the tarball to `bin/`, `scripts/`, `mcp/`, `references/`,

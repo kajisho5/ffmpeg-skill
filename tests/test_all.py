@@ -301,6 +301,38 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_crop_negative_offset_refused(self):
         script("crop.py", self.src, "--x", "-5", "--y", "0", "--width", "100", "--height", "100", expect_fail=True)
 
+    # ---------------------------------------------------------------- sphere
+    def test_sphere_extracts_a_flat_viewport(self):
+        out = OUT / "sphere1.mp4"
+        script("sphere.py", self.src, "--yaw", "90", "--pitch", "10", "--h-fov", "100", "--v-fov", "70",
+               "--width", "640", "--height", "360", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+        self.assertClose(m["duration"], 12.0, 0.2)
+        self.assertIsNotNone(m["audio"])
+
+    def test_sphere_defaults_and_no_audio_source(self):
+        no_audio = OUT / "sphere_no_audio_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x320:rate=25",
+           "-t", "2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", no_audio)
+        out = OUT / "sphere2.mp4"
+        script("sphere.py", no_audio, "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1920, 1080))
+        self.assertIsNone(m["audio"])
+
+    def test_sphere_yaw_out_of_range_refused(self):
+        script("sphere.py", self.src, "--yaw", "200", expect_fail=True)
+
+    def test_sphere_fov_out_of_range_refused(self):
+        script("sphere.py", self.src, "--h-fov", "0", expect_fail=True)
+
+    def test_sphere_odd_dimensions_refused(self):
+        script("sphere.py", self.src, "--width", "641", "--height", "360", expect_fail=True)
+
+    def test_sphere_audio_stream_out_of_range_refused(self):
+        script("sphere.py", self.src, "--audio-stream", "5", expect_fail=True)
+
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
         out = OUT / "insert1.mp4"
