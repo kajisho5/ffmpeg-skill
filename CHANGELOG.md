@@ -6,6 +6,38 @@
 
 (nothing yet)
 
+## 0.15.1 — bug-check pass on the 39-tool set
+
+Found and fixed while auditing the tools added across 0.13.0-0.15.0:
+
+- `freeze.py`: `--at 0` (freeze on the very first frame -- the default when
+  no `--mode`/`--at` is given at all combines with a source that starts
+  right where you'd freeze it) crashed ffmpeg: the general insert-mode
+  filter graph trims an empty "head" segment when `at == 0`, and filtering
+  an empty stream fails. Added a dedicated `at == 0` branch that pads the
+  front of the clip instead (`tpad` `start_mode=clone`), symmetric to
+  `--mode extend`'s handling of the clip's end.
+- `waveform.py`: `--audio-stream` was validated but never actually wired
+  into the filter graph, which unconditionally read `[0:a]` -- every
+  multi-track input visualized track 0 regardless of which track was
+  requested, while the output's audio correctly followed `--audio-stream`.
+  Now the filter reads `[0:a:{audio_stream}]`.
+- `loop.py`: re-encoded with a hardcoded `libx264`/no `cfr_args`, unlike
+  every other re-encoding tool -- an HDR source silently became SDR mislabelled
+  BT.709, and VFR sources weren't conformed. Switched to `video_args(meta,
+  ...)` and `cfr_args(meta)`, and added the `--crf`/`--preset` flags every
+  other tool exposes (previously `--fast` silently had no effect).
+- `_contract.py`: `cropdetect.py` always runs a real `cropdetect` measurement
+  regardless of `--dry-run` (like `scenes.py`/`sync.py`/`multicam.py`/
+  `report.py`), but wasn't declared in `DRY_RUN_ANALYSIS` -- the
+  machine-readable contract falsely claimed `--dry-run` ran no ffmpeg for
+  it. Registered alongside the other analysis-only tools.
+
+Found via a fresh worktree off `main` post-merge, adversarial testing of
+edge cases (zero/boundary values, multi-track inputs) rather than only the
+happy paths the original PRs' tests covered. New regression tests for all
+four; full suite (181 tests) and the contract suite (67 tests) both pass.
+
 ## 0.15.0 — 5 more tools: straighten, freeze, pad, speedramp, loop
 
 Five more mechanical, typed-flag FFmpeg capabilities:

@@ -5,7 +5,7 @@ description: Edit video and audio with local FFmpeg from natural-language reques
 
 # ffmpeg-skill
 
-Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`. Every script has `--help`, and all of them accept `--dry-run`, `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress`. Writing tools run nothing under `--dry-run`; `probe`/`check`/`sync`/`multicam`/`scenes`/`report` may still run ffmpeg/ffprobe to measure or analyse — they just don't write their final artifact; `verify` accepts the flag but ignores it. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`). Details for every flag: `references/scripts.md`. Device-specific behaviour (iPhone HDR, GoPro, DJI, screen recordings, Zoom): `references/devices.md`.
+Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`. Every script has `--help`, and all of them accept `--dry-run`, `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress`. Writing tools run nothing under `--dry-run`; `probe`/`check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report` may still run ffmpeg/ffprobe to measure or analyse — they just don't write their final artifact; `verify` accepts the flag but ignores it. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`). Details for every flag: `references/scripts.md`. Device-specific behaviour (iPhone HDR, GoPro, DJI, screen recordings, Zoom): `references/devices.md`.
 
 ## Workflow (always follow this order)
 
@@ -33,7 +33,7 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    writing tools this means nothing is written; `probe`/`check` still run
    ffprobe/loudness-measurement passes (they're read-only, so `--dry-run`
    changes nothing for `probe`, and only skips the loudness pass for
-   `check`), `sync`/`multicam`/`scenes`/`report` still run ffmpeg/ffprobe to
+   `check`), `sync`/`multicam`/`scenes`/`cropdetect`/`report` still run ffmpeg/ffprobe to
    measure or analyse, and `verify` accepts the flag but ignores it entirely
    (its steps run regardless) — see `contract --json`'s `dry_run` field per
    tool for exact semantics. Trust `--json`, not a dry-run's human-readable

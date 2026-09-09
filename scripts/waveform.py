@@ -70,7 +70,7 @@ def main() -> int:
     # showwaves/showspectrum paint the visualization on a transparent-black canvas; composite
     # it over an explicit solid background instead of assuming that canvas already matches
     # --background.
-    vf = f"color=c={args.background}:s={args.width}x{args.height}:r={args.fps:g}[bg];[0:a]{vf}[vis];[bg][vis]overlay=format=auto"
+    vf = f"color=c={args.background}:s={args.width}x{args.height}:r={args.fps:g}[bg];[0:a:{args.audio_stream}]{vf}[vis];[bg][vis]overlay=format=auto"
 
     cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", f"0:a:{args.audio_stream}"]
     cmd += ["-c:v", "libx264", "-preset", args.preset, "-crf", str(args.crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]

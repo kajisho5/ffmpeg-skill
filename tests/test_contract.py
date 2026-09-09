@@ -448,7 +448,7 @@ class ContractTests(unittest.TestCase):
         tool gaining/losing an analysis-only dry-run mode is caught here instead of the docs
         silently drifting out of sync with _contract.py again (issue #82)."""
         analysis_tools = set(_contract.DRY_RUN_ANALYSIS.keys())
-        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report"},
+        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect"},
                           "the analysis-only dry-run tool set changed -- update SKILL.md/references/scripts.md's exception list to match")
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         scripts_ref = (ROOT / "references" / "scripts.md").read_text(encoding="utf-8")
@@ -800,6 +800,7 @@ class ContractTests(unittest.TestCase):
             "scenes": [self.src, "--sheet", outdir / "sc.png", "--edl", outdir / "sc.txt"],
             "look": [self.src, "-o", outdir / "look.png"],
             "report": ["--after", self.src, "-o", outdir / "rep.html"],
+            "cropdetect": [self.src, "--seconds", "1", "--samples", "1"],
         }
         for name, args in cases.items():
             spec = self.tools[name]
@@ -815,7 +816,7 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in outdir.iterdir()), [], f"{name} --dry-run wrote files")
             if strict:
                 self.assertFalse(marker.exists(), f"{name} --dry-run invoked ffmpeg")
-        self.assertEqual({n for n, s in self.tools.items() if s["dry_run"]["ffmpeg_execution"] == "analysis_only"}, {"sync", "multicam", "scenes", "report"})
+        self.assertEqual({n for n, s in self.tools.items() if s["dry_run"]["ffmpeg_execution"] == "analysis_only"}, {"sync", "multicam", "scenes", "report", "cropdetect"})
         # the read-only tools keep working under --dry-run (ffprobe still runs)
         self.assertEqual(tool("probe", self.src, "--dry-run", env=env).returncode, 0)
         self.assertEqual(tool("check", self.src, "--platform", "x", "--no-loudness", "--dry-run", env=env).returncode, 0)

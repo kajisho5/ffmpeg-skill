@@ -447,6 +447,15 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_freeze_zero_hold_refused(self):
         script("freeze.py", self.src, "--hold", "0", expect_fail=True)
 
+    def test_freeze_at_zero_holds_the_first_frame(self):
+        """--at 0 has no preceding segment to trim/clone from in the general insert-mode filter
+        graph (an empty trim=end=0 stream broke ffmpeg filtering entirely); this exercises the
+        dedicated at==0 branch that pads the front of the clip instead."""
+        out = OUT / "freeze3.mp4"
+        script("freeze.py", self.src, "--at", "0", "--hold", "1", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 13.0, 0.3)
+
     # ---------------------------------------------------------------- pad
     def test_pad_start_and_end_extend_duration(self):
         out = OUT / "pad1.mp4"
@@ -753,6 +762,28 @@ class FFmpegSkillTests(unittest.TestCase):
 
     def test_waveform_odd_dimensions_refused(self):
         script("waveform.py", self.src, "--width", "641", "--height", "360", expect_fail=True)
+
+    def test_waveform_audio_stream_selects_the_requested_track_not_always_the_first(self):
+        """--audio-stream must steer which track is actually visualized, not just which track
+        ends up in the output's audio -- the filter_complex used to reference [0:a] unconditionally
+        regardless of --audio-stream, so every multi-track input rendered track 0's waveform no
+        matter which track was requested."""
+        multitrack = OUT / "wave_multitrack.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=2",
+           "-f", "lavfi", "-i", "sine=frequency=800:duration=2",
+           "-map", "0:a", "-map", "1:a", "-c:a", "aac", multitrack)
+        track0 = OUT / "wave_track0.mp4"
+        track1 = OUT / "wave_track1.mp4"
+        script("waveform.py", multitrack, "--audio-stream", "0", "--width", "320", "--height", "180", "-o", track0)
+        script("waveform.py", multitrack, "--audio-stream", "1", "--width", "320", "--height", "180", "-o", track1)
+        # track 0 is silent (a flat line); track 1 is a loud sine (a visibly varying waveform) --
+        # their rendered frames must differ.
+        frame0 = OUT / "wave_track0.raw"
+        frame1 = OUT / "wave_track1.raw"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", track0, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", frame0)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", track1, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", frame1)
+        self.assertNotEqual(frame0.read_bytes(), frame1.read_bytes(), "--audio-stream 0 and 1 rendered identical frames")
 
     # ---------------------------------------------------------------- caption
     def test_caption_text_to_srt_and_burn(self):

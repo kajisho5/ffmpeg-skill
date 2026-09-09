@@ -59,6 +59,15 @@ def main() -> int:
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
             cmd += ["-map", "0:a:0?", "-af", f"apad=pad_dur={args.hold:.3f}"]
+    elif at == 0:
+        # A freeze at the very start has no preceding "head" segment to hold on to (the
+        # split/trim/concat approach below needs a non-empty head, which trim=end=0 can't give
+        # it -- ffmpeg fails filtering an empty stream). Symmetric to --mode extend at the other
+        # end: tpad's start_duration clones the *first* frame backwards instead.
+        vf = f"tpad=start_mode=clone:start_duration={args.hold:.3f}"
+        cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
+        if has_audio:
+            cmd += ["-map", "0:a:0?", "-af", f"adelay={int(args.hold * 1000)}:all=1"]
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
         # resuming the rest of the clip: split the timeline at `at`, freeze-frame the first

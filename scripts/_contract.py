@@ -202,6 +202,7 @@ DRY_RUN_ANALYSIS = {
     "multicam": "audio is decoded to align the cameras; the switched output is not written",
     "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written",
     "report": "probe, loudness and contact-sheet measurements run; the HTML is not written",
+    "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
 }
 DRY_RUN_NOTES = {
     "probe": "read-only tool; --dry-run changes nothing (ffprobe still runs)",
