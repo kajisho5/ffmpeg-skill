@@ -484,7 +484,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.tools["cut"]["verification"]["tools"], ["ffmpeg-skill/probe"])
 
     def test_visual_verification_metadata(self):
-        picture = {"fit", "crop", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy",
+        picture = {"fit", "crop", "sphere", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy",
                    "deinterlace", "denoise", "redact", "waveform"}
         # join and waveform are the picture tools that also accept audio-only inputs (audio
         # concat; audio-track visualization); look applies to their video output only, which

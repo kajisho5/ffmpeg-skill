@@ -135,6 +135,7 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "this old footage is interlaced / combed on motion" | `deinterlace.py input.mp4` |
 | "this footage is grainy/noisy, clean it up" | `denoise.py input.mp4 --strength medium` |
 | "blur/pixelate this face/plate/region" (known x/y/width/height) | `redact.py input.mp4 --x 820 --y 140 --width 240 --height 240 --mode pixelate` |
+| "pull a flat clip out of this 360/spherical video, looking this way" (known yaw/pitch/fov, not "find the interesting part") | `sphere.py insta360.mp4 --yaw 90 --pitch 0 --h-fov 100 --v-fov 70` |
 | "turn this image into a N-second clip", "title card / end slate" | `insert.py title.png --duration 3` |
 | "slow zoom on a photo", "Ken Burns effect" | `insert.py photo.jpg --duration 6 --zoom in --pan right --width 1920 --height 1080` |
 | "rotate this 90 degrees", "mirror it horizontally" | `fit.py input.mp4 --rotate 90` / `fit.py input.mp4 --flip h` |
