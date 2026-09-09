@@ -1595,6 +1595,12 @@ class FFmpegSkillTests(unittest.TestCase):
         script("overlay.py", self.src, "--text", "hi", "--box-color", "black@0.5", "-o", OUT / "colorok5.mp4")
 
     # ---------------------------------------------------------------- font-name filter-graph injection (adversarial)
+    @unittest.skipIf(platform.system() == "Windows", "forces the fc-match-missing fallback path by symlinking just "
+                      "ffmpeg/ffprobe into a stub PATH dir -- os.symlink needs an elevated/dev-mode privilege on "
+                      "Windows that CI runners don't grant, and default_font_file() doesn't even consult fc-match "
+                      "there (it resolves a fixed arial.ttf under WINDIR, see its docstring), so this specific "
+                      "repro doesn't generalise to Windows. The fix itself (escape_drawtext() around the fallback "
+                      "value) is plain string handling with no OS branch, so it's equally in effect there.")
     def test_font_flag_escapes_filter_graph_injection_when_unresolved(self):
         """overlay.py and graphics.py both accept --font as a family NAME, not a file path, and try
         to resolve it to a concrete file via default_font_file() (fc-match) first -- but that
