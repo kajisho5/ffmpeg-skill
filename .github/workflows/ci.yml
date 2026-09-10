@@ -39,7 +39,20 @@ jobs:
           echo "$(brew --prefix ffmpeg-full)/bin" >> "$GITHUB_PATH"
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+        # The Chocolatey community feed (community.chocolatey.org) intermittently 503s under load
+        # -- seen repeatedly failing CI with nothing wrong in the PR's own diff. Retry with backoff
+        # instead of failing the whole job on what's usually a transient upstream blip.
+        shell: pwsh
+        run: |
+          $attempts = 5
+          for ($i = 1; $i -le $attempts; $i++) {
+            choco install ffmpeg -y --no-progress
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($i -eq $attempts) { exit $LASTEXITCODE }
+            $delay = 15 * $i
+            Write-Host "choco install ffmpeg failed (attempt $i/$attempts, exit $LASTEXITCODE) -- retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+          }
       - name: ffmpeg version, listings and doctor
         shell: bash
         run: |
