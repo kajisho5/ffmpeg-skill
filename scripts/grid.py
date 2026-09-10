@@ -10,9 +10,11 @@ right corner -- --label none turns that off. The grid has no audio unless
 audio together is rarely what a comparison grid is for, so this tool never
 does it silently.
 
-The grid runs only as long as its shortest clip (--shortest, the default) or
-is padded to the longest with black+silence (--pad); a mismatched frame rate
-across sources is conformed to --fps first so cells stay in sync.
+The grid runs only as long as its shortest clip by default, or is padded to
+the longest clip's duration with --pad (each shorter cell holds its last
+frame, and --audio-from's track is padded with silence, out to that length);
+a mismatched frame rate across sources is conformed to --fps first so cells
+stay in sync.
 
 Examples:
   python3 grid.py take1.mp4 take2.mp4 take3.mp4 take4.mp4 take5.mp4 take6.mp4 take7.mp4 take8.mp4 --cols 4 --rows 2
@@ -43,7 +45,7 @@ def main() -> int:
     ap.add_argument("--font", default="DejaVu Sans", help="label font (fontconfig family name, default DejaVu Sans)")
     ap.add_argument("--font-size", type=int, default=16, help="label font size (default 16)")
     ap.add_argument("--font-color", default="white", help="label text colour (default white)")
-    ap.add_argument("--pad", action="store_true", help="pad every cell to the longest clip's duration with black+silence instead of stopping at the shortest")
+    ap.add_argument("--pad", action="store_true", help="hold each shorter cell's last frame (and pad --audio-from's track with silence) out to the longest clip's duration, instead of stopping at the shortest")
     ap.add_argument("--audio-from", type=int, help="0-based index into inputs to take audio from (default: no audio)")
     ap.add_argument("--gap", type=int, default=0, help="gap between cells in px, must be even (default 0, cells touch)")
     ap.add_argument("--background", default="black", help="colour of the gap/pad borders (default black)")
@@ -112,10 +114,13 @@ def main() -> int:
     cw, ch = args.cell_width + args.gap, args.cell_height + args.gap
     layout = "|".join(f"{c * cw}_{r * ch}" for r in range(args.rows) for c in range(args.cols))
     parts.append("".join(f"[v{i}]" for i in range(n)) + f"xstack=inputs={n}:layout={layout}:fill={args.background}[out]")
+    if args.audio_from is not None and args.pad and durations[args.audio_from] < target_duration:
+        parts.append(f"[{args.audio_from}:a:0]apad,atrim=duration={target_duration:.3f}[aout]")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[out]"]
 
     if args.audio_from is not None:
-        cmd += ["-map", f"{args.audio_from}:a:0"]
+        audio_source = "[aout]" if (args.pad and durations[args.audio_from] < target_duration) else f"{args.audio_from}:a:0"
+        cmd += ["-map", audio_source]
     cmd += video_args(None, args.crf, args.preset)
     cmd += cfr_args(None, args.fps)
     if args.audio_from is not None:

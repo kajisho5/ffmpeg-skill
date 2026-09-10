@@ -534,6 +534,20 @@ class FFmpegSkillTests(unittest.TestCase):
         m = probe(str(out))
         self.assertClose(m["duration"], probe(str(self.src))["duration"], 0.5)
 
+    def test_grid_pad_also_pads_the_selected_audio_track_with_silence(self):
+        """--pad holds a shorter cell's video on its last frame out to the longest clip -- but
+        --audio-from's track was, until fixed, mapped straight through with no padding at all, so
+        a grid with --pad and a short --audio-from track silently lost audio for the padded tail.
+        The audio stream must actually span the full padded duration, not just the video."""
+        short = OUT / "grid_pad_audio_short.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-t", "2", "-c", "copy", short)
+        out = OUT / "grid6.mp4"
+        script("grid.py", short, self.src, "--cols", "2", "--rows", "1", "--audio-from", "0", "--pad", "-o", out)
+        full_duration = probe(str(self.src))["duration"]
+        audio_duration = float(sh("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                                   "stream=duration", "-of", "default=nw=1:nk=1", out).stdout.strip())
+        self.assertClose(audio_duration, full_duration, 0.5, "audio must be padded with silence to match the padded video, not stop at 2s")
+
     def test_grid_filename_derived_label_refuses_filter_graph_injection(self):
         """The per-cell label is the clip's own filename (extension stripped), which the caller
         does not choose through a flag -- but on a filesystem where filenames can contain a comma
@@ -1673,6 +1687,29 @@ class FFmpegSkillTests(unittest.TestCase):
 
         frame = OUT / "font_inject_overlay_frame.png"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-ss", "1", "-vframes", "1", frame)
+        self.assertTrue(frame.exists())
+
+    def test_drawtext_semicolon_and_quote_render_as_inert_literal_text(self):
+        """escape_drawtext() (shared by overlay.py --text, graphics.py/overlay.py's --font
+        fallback, and grid.py's filename-derived labels) had two more gaps beyond the comma/colon/
+        bracket class fixed in 0.15.2/0.15.3: (1) an unescaped ';' -- ffmpeg's graph parser splits
+        a filterchain there exactly like an unescaped ',' does, confirmed with the minimal repro
+        `--text "a'b;c"` crashing real ffmpeg with "No such filter: 'c...'" on the unpatched code;
+        (2) the quote character itself has no backslash escape that survives every call shape --
+        both `\\'` and the POSIX `'\\''` close-insert-reopen trick corrupt a -filter_complex chain
+        that uses explicit [label] pads (confirmed by rendering: trailing option text like
+        "fontfile=...:fontsize=..." leaks into the picture as literal burnt-in text instead of
+        being parsed as options), even though the same escape works fine in a simple -vf chain.
+        Render a text containing both a quote and a semicolon and confirm it appears verbatim
+        (minus the dropped quote) with nothing named after it leaking into the frame."""
+        out = OUT / "semicolon_quote.mp4"
+        proc = script("overlay.py", self.src, "--text", "a'b;c", "-o", out)
+        # The quote is dropped (a'b -> ab) and the semicolon escaped, then the value must close
+        # cleanly right where the template's own quote closes it -- ":fontsize=" must follow
+        # immediately, not somewhere downstream after leaked option text.
+        self.assertIn("ab\\;c'\\'':fontsize", proc.stderr, "value must render as 'ab;c' and close cleanly into :fontsize=, no leakage")
+        frame = OUT / "semicolon_quote_frame.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-vframes", "1", frame)
         self.assertTrue(frame.exists())
 
     # ---------------------------------------------------------------- real iPhone regressions (Dolby Vision 8.4 / HLG, VFR, extra tracks)
