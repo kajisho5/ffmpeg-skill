@@ -6,6 +6,36 @@
 
 (nothing yet)
 
+## 0.16.4 — fix a silent false-PASS in check.py, an infinite loop in multicam.py, and a silent output collision in batch.py
+
+Three unrelated bugs found in a wider audit past `caption.py`:
+
+- `check.py`: `measure_loudness()` returns `{}` when ffmpeg's `loudnorm` JSON
+  doesn't parse out of stderr (unexpected/garbled output). `main()` only
+  appended the `loudness`/`true peak` rows when that measurement succeeded,
+  so a failed measurement made those rows vanish entirely -- not FAIL, not
+  WARN, just absent -- while `check.py` still reported an overall PASS for
+  a platform with a loudness requirement it never actually verified. Fixed
+  by reporting `WARN` (could not measure) instead of dropping the rows: a
+  silent false PASS is worse than visible noise on a compliance tool.
+- `multicam.py`: `--auto` alternates cameras with
+  `while t < ref_dur: ... t += args.auto`, gated by `elif args.auto:` --
+  which is only false for exactly `0`, so a negative value passed the
+  check and entered the loop with `t` decreasing every iteration, hanging
+  forever instead of erroring on invalid input. Fixed by refusing
+  `--auto <= 0` up front.
+- `batch.py`: a recipe's default output extension falls back to each
+  source's own extension, so files that only differ by extension don't
+  collide -- but a recipe with a fixed `"ext"` (e.g. converting a folder
+  of mixed `.mp4`/`.mov` masters to one format) makes two sources with the
+  same stem (`clip.mp4` and `clip.mov`) resolve to the identical final
+  path (`clip_out.mp4`). `process()` had no collision detection, so the
+  file processed later in sorted order silently overwrote the earlier
+  one's finished output, with the cache still recording both entries as
+  `"ok": true`. Fixed with a pre-flight collision check across the whole
+  batch, refusing before any file is processed rather than after data is
+  already lost.
+
 ## 0.16.3 — fix two more caption.py delimiter bugs: ASS override injection, SRT blank-line split
 
 Following on from 0.16.2's `--font` fix, a closer look at `caption.py` found

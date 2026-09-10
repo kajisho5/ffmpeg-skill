@@ -1577,6 +1577,13 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(probe(str(auto))["duration"], 12.0, 0.2)
         script("multicam.py", self.src, camB, "--switch", "0-3:5", expect_fail=True)
 
+    def test_multicam_negative_auto_interval_refused_not_infinite_loop(self):
+        """--auto builds cuts with `while t < ref_dur: ... t += args.auto` -- `elif args.auto:` is
+        only false for exactly 0, so a negative value used to pass that check and enter the loop
+        with t decreasing every iteration, meaning t < ref_dur never becomes false: the process
+        hangs forever instead of erroring on invalid input. Must be refused up front instead."""
+        script("multicam.py", self.src, self.src, "--auto", "-1", "--fast", "-o", OUT / "mc_auto_neg.mp4", expect_fail=True)
+
     def test_multicam_warns_on_a_camera_with_no_shared_audio_event(self):
         """A camera whose audio has nothing in common with the reference must not align silently."""
         unrelated = OUT / "camC_unrelated.mp4"
@@ -1841,6 +1848,30 @@ class FFmpegSkillTests(unittest.TestCase):
         data = json.loads(script("check.py", self.src, "--platform", "custom", "--max-duration", "5", "--no-loudness", "--json", expect_fail=True).stdout)
         self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["duration"], "FAIL")
 
+    def test_check_unmeasurable_loudness_warns_instead_of_silently_passing(self):
+        """measure_loudness() returns {} when ffmpeg's loudnorm JSON doesn't parse out of stderr
+        (malformed/unexpected output). main() used to gate the loudness/true-peak rows entirely on
+        `if lm:`, so a measurement failure meant those rows were never appended at all -- not FAIL,
+        not WARN, just absent -- and check.py would still report an overall PASS for a platform
+        with a loudness requirement it never actually verified. A silent false PASS is worse than a
+        crash for a compliance tool. Verify a forced measurement failure surfaces as WARN rows,
+        not a vanished check."""
+        from unittest.mock import patch
+        sys.path.insert(0, str(SCRIPTS))
+        import check
+        with patch.object(check, "measure_loudness", return_value={}):
+            buf = __import__("io").StringIO()
+            import contextlib
+            with contextlib.redirect_stdout(buf):
+                sys.argv = ["check.py", str(self.src), "--platform", "youtube", "--json"]
+                check.main()
+            data = json.loads(buf.getvalue())
+        statuses = {r["check"]: r["status"] for r in data["checks"]}
+        self.assertIn("loudness", statuses, "an unmeasurable loudness check must still appear in the report")
+        self.assertIn("true peak", statuses)
+        self.assertEqual(statuses["loudness"], "WARN")
+        self.assertEqual(statuses["true peak"], "WARN")
+
     def test_scenes_and_highlights(self):
         src = OUT / "scenes_src.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -2065,6 +2096,27 @@ class FFmpegSkillTests(unittest.TestCase):
         data = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
         self.assertEqual(data["processed"], 1)
         self.assertClose(probe(data["results"][0]["output"])["duration"], 3.0, 0.3)
+
+    def test_batch_refuses_a_fixed_ext_recipe_that_collapses_two_sources_to_one_output(self):
+        """final_path() falls back to each source's OWN extension by default, so files that only
+        differ by extension don't collide -- but a recipe with a fixed "ext" (e.g. converting a
+        folder of mixed .mp4/.mov masters to one format) makes two sources with the same stem
+        (clip.mp4 and clip.mov) resolve to the identical final path (clip_out.mp4). process() had
+        no collision detection: the file processed later in sorted() order used to silently
+        overwrite the earlier one's finished output, with the cache still recording both entries
+        as ok. Verify this is now refused up front, before either file is processed, rather than
+        one silently clobbering the other."""
+        folder = OUT / "batch_collision_in"
+        folder.mkdir(exist_ok=True)
+        for name in ("clip.mp4", "clip.mov"):
+            (folder / name).write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "collide.json"
+        recipe.write_text(json.dumps({"ext": "mp4", "steps": [["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
+        proc = script("batch.py", folder, "--recipe", recipe, "--fast", expect_fail=True)
+        self.assertIn("collision", proc.stderr)
+        self.assertIn("clip.mp4", proc.stderr)
+        self.assertIn("clip.mov", proc.stderr)
+        self.assertFalse((folder / "out" / "clip_out.mp4").exists(), "nothing should be written once a collision is detected")
 
     def test_transcribe_without_engine_explains(self):
         import shutil

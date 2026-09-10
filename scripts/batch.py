@@ -68,10 +68,20 @@ def run_step(argv: List[str]) -> bool:
     return True
 
 
-def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path) -> Dict[str, Any]:
+def final_path(src: Path, recipe: Dict[str, Any], outdir: Path) -> Path:
     suffix = recipe.get("suffix", "_out")
+    # By default final_ext falls back to each source's OWN extension, so files that only differ
+    # by extension don't collide -- but a recipe that fixes "ext" (e.g. converting a folder of
+    # mixed .mp4/.mov masters to one format) makes every source with the same stem land on the
+    # same final path, e.g. clip.mp4 and clip.mov both -> clip_out.mp4. process() has no collision
+    # detection of its own; see one_pass()'s pre-flight check, which uses this same computation
+    # to catch that before any file is actually processed (and the earlier one silently clobbered).
     final_ext = recipe.get("ext") or src.suffix.lstrip(".") or "mp4"
-    final = outdir / f"{src.stem}{suffix}.{final_ext}"
+    return outdir / f"{src.stem}{suffix}.{final_ext}"
+
+
+def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path) -> Dict[str, Any]:
+    final = final_path(src, recipe, outdir)
     t0 = time.time()
     if recipe.get("project"):
         proj = json.loads(Path(recipe["project"]).read_text(encoding="utf-8"))
@@ -140,6 +150,18 @@ def main() -> int:
     def one_pass() -> List[Dict[str, Any]]:
         results = []
         files = sorted(p for p in folder.glob(glob) if p.is_file() and p.suffix.lower() in MEDIA_EXT and outdir not in p.parents)
+        # Two different sources can compute the same final path (most often a fixed recipe "ext"
+        # collapsing e.g. clip.mp4 and clip.mov to the same clip_out.mp4) -- catch that before
+        # processing anything, rather than letting the later one silently overwrite the earlier
+        # one's finished output with the cache still recording both as "ok".
+        by_final: Dict[Path, List[Path]] = {}
+        for src in files:
+            by_final.setdefault(final_path(src, recipe, outdir), []).append(src)
+        collisions = {dst: srcs for dst, srcs in by_final.items() if len(srcs) > 1}
+        if collisions:
+            detail = "; ".join(f"{dst.name} <- {', '.join(s.name for s in srcs)}" for dst, srcs in collisions.items())
+            die(f"{len(collisions)} output filename collision(s) in this batch -- rename the sources, "
+                f"or add a distinguishing \"suffix\"/\"ext\" per run, or split into separate globs: {detail}")
         for src in files:
             key = f"{file_key(src)}:{rkey}"
             hit = cache.get(key)

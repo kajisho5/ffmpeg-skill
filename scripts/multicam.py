@@ -134,6 +134,8 @@ def main() -> int:
     if args.switch:
         cuts = parse_switch(args.switch, n)
     elif args.auto:
+        if args.auto <= 0:
+            die(f"--auto must be a positive number of seconds, got {args.auto:g}")
         cams = [i for i, m in enumerate(metas) if m.get("video")]
         cuts, t, k = [], 0.0, 0
         while t < ref_dur:

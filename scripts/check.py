@@ -162,6 +162,14 @@ def main() -> int:
                 row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g} for speech or music; leave ambience/near-silence (<= -40 LUFS) alone and say so",
                     reason="the platform will auto-normalise it to its own target anyway, which can pump or duck the mix in ways you did not choose")
                 row("true peak", "PASS" if lm["tp"] <= spec["tp"] + 0.05 else "FAIL", f"{lm['tp']:.1f} dBTP", f"<= {spec['tp']:g} dBTP", f"loudness.py --tp {spec['tp']:g}")
+            else:
+                # ffmpeg's loudnorm JSON didn't parse out of stderr (unexpected/garbled output).
+                # Dropping the loudness/true-peak rows silently here would report an overall PASS
+                # for a platform that has a loudness requirement, without ever having checked it --
+                # a false PASS is worse than noise. WARN so the gap is visible in the report.
+                row("loudness", "WARN", "could not measure", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", "re-run check.py, or verify loudness manually",
+                    reason="ffmpeg's loudness measurement didn't produce a readable result -- this was not actually checked")
+                row("true peak", "WARN", "could not measure", f"<= {spec['tp']:g} dBTP", "re-run check.py, or verify true peak manually")
     elif args.platform in ("podcast",):
         row("audio", "FAIL", "none", "audio stream", "audio.py --replace")
     else:
