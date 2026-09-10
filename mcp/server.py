@@ -158,6 +158,14 @@ def main() -> int:
             req = json.loads(line)
         except ValueError:
             continue
+        # json.loads accepts any valid JSON value, not just an object -- a bare `42`, `null`,
+        # `true` or `[1,2]` line parses fine but isn't a JSON-RPC request. Without this guard,
+        # "id" not in req raised TypeError for a non-dict req (ints/bools/None aren't iterable
+        # the way `in` needs), uncaught by the try/except below it, killing the whole stdio
+        # server process -- not just failing that one malformed line, but every other in-flight
+        # and future tool call in the session along with it.
+        if not isinstance(req, dict):
+            continue
         if "id" not in req:  # notification
             continue
         try:

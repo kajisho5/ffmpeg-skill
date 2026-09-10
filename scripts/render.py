@@ -204,12 +204,14 @@ def main() -> int:
         fit.setdefault("aspect", frame["aspect"])
     if frame.get("width") and len(parts) == 1:
         fit.setdefault("width", frame["width"])
+    if frame.get("height") and len(parts) == 1:
+        fit.setdefault("height", frame["height"])
     if frame.get("fps") and len(parts) == 1:
         fit.setdefault("fps", frame["fps"])
     if fit:
         nxt = str(work / "fit.mp4")
         argv = [current, "-o", nxt]
-        for k, flag in (("duration", "--duration"), ("method", "--method"), ("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("fps", "--fps"), ("smooth", "--smooth")):
+        for k, flag in (("duration", "--duration"), ("method", "--method"), ("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("height", "--height"), ("fps", "--fps"), ("smooth", "--smooth")):
             if fit.get(k) is not None:
                 argv += [flag, str(fit[k])]
         sh("fit.py", *argv)

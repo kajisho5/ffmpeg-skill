@@ -1698,6 +1698,31 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(probe(str(auto))["duration"], 12.0, 0.2)
         script("multicam.py", self.src, camB, "--switch", "0-3:5", expect_fail=True)
 
+    def test_multicam_fix_drift_trims_before_resample_not_after(self):
+        """--fix-drift's audio path computes a_start (an atrim start point) in the source's own
+        pre-correction time axis, but the filter chain used to apply asetrate/aresample (the drift
+        correction) *before* atrim -- so the trim landed on the already-rescaled timeline instead
+        of the raw one it was computed for, same bug class as sync.py already avoids by seeking
+        with -ss (an input-level, pre-filter operation) before its own drift_af. Build a camera
+        whose audio started before the reference (offsets[a] < 0, so a_start > 0) and also drifts
+        (ratios[a] != 1), then check the constructed [<audio input>:a] filter chain: atrim=start=
+        must appear before asetrate, mirroring sync.py's ordering."""
+        base = OUT / "mc_drift_base.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000", "-t", "200", "-c:a", "pcm_s16le", base)
+        ref_audio = OUT / "mc_drift_ref.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.2", "-i", base, "-c:a", "pcm_s16le", ref_audio)
+        camB = OUT / "mc_drift_camB.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", base, "-af", "asetrate=48000*0.9995,aresample=48000", "-c:a", "pcm_s16le", camB)
+        cam0 = OUT / "mc_drift_cam0.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=15", "-i", ref_audio, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", cam0)
+
+        data = json.loads(script("multicam.py", cam0, camB, "--audio", "1", "--switch", "0-198:0", "--fix-drift", "--max-offset", "5", "--fast", "-o", OUT / "mc_drift_out.mp4", "--json").stdout)
+        self.assertLess(data["offsets_seconds"][1], 0, "camera 1 must have started before the reference for a_start > 0 to be exercised")
+        self.assertNotEqual(data["drift_ppm"][1], 0.0, "drift must actually be detected for asetrate/aresample to be in the chain")
+        audio_chain = data["commands"][0].split("[1:a]", 1)[1]
+        self.assertLess(audio_chain.index("atrim=start="), audio_chain.index("asetrate="),
+                         "atrim=start= (in the pre-correction time axis) must run before asetrate/aresample rescale that axis")
+
     def test_multicam_negative_auto_interval_refused_not_infinite_loop(self):
         """--auto builds cuts with `while t < ref_dur: ... t += args.auto` -- `elif args.auto:` is
         only false for exactly 0, so a negative value used to pass that check and enter the loop
@@ -2109,6 +2134,24 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(out["stages"], ["clips", "join"])
         self.assertTrue(Path(out["output"]).exists())
 
+    def test_render_single_clip_fit_height_is_not_silently_dropped(self):
+        """The single-clip fit path only ever inherited width/fps from project.frame, and the
+        flag-forwarding list that turns project.fit's own keys into fit.py argv omitted height
+        entirely -- so a project.json specifying "fit": {"height": N} (with no other fit key)
+        used to build fit.py argv with nothing in it at all ("nothing to do" crash), and combined
+        with another fit key (e.g. duration) the height silently never reached fit.py -- the
+        output's height was left unchanged with no error. Verify height alone now actually
+        resizes a single-clip render."""
+        proj = OUT / "project_height.json"
+        proj.write_text(json.dumps({
+            "output": "render_height.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:04"}],
+            "fit": {"height": 480},
+        }), encoding="utf-8")
+        script("render.py", proj, "--fast", "--json")
+        m = probe(str(OUT / "render_height.mp4"))
+        self.assertEqual(m["video"]["height"], 480)
+
     def test_render_exits_nonzero_when_the_check_stage_fails(self):
         """A render whose deliverable fails its own check stage must not report success."""
         proj = OUT / "project_bad_check.json"
@@ -2227,6 +2270,25 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(Path(resp[5]["result"]["structuredContent"]["output"]).exists())
         self.assertTrue(resp[6]["result"].get("isError"))
         self.assertEqual(resp[7]["error"]["code"], -32601)
+
+    def test_mcp_server_survives_a_non_object_json_line(self):
+        """json.loads accepts any valid JSON value, not just an object -- a bare `42`, `null`,
+        `true` or `[1,2]` line parses without raising, but main()'s very next line, `"id" not in
+        req`, raised an uncaught TypeError for a non-dict req (an int/bool/None isn't iterable the
+        way `in` needs). That check sat outside the try/except wrapping handle(), so the exception
+        propagated out of the stdin loop and killed the whole stdio server process -- not just
+        that one malformed line, but every other in-flight and future tool call in the session.
+        Verify a line like this is now skipped, and the server stays alive and answers the next
+        (valid) request instead of exiting non-zero with nothing produced for it."""
+        server = ROOT / "mcp" / "server.py"
+        lines = ["42", "null", "true", "[1,2,3]",
+                 json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})]
+        proc = subprocess.run([sys.executable, str(server)], input="\n".join(lines) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, f"server must not crash on non-object JSON lines; stderr: {proc.stderr}")
+        resp = [json.loads(response_line) for response_line in proc.stdout.splitlines() if response_line.strip()]
+        self.assertEqual(len(resp), 1, "only the one real request should get a response")
+        self.assertEqual(resp[0]["id"], 1)
+        self.assertIn("tools", resp[0]["result"])
 
     def test_batch_recipe_and_cache(self):
         folder = OUT / "batch_in"
