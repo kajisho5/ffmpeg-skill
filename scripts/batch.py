@@ -36,6 +36,13 @@ from _common import STATE, add_common, apply_common, die, emit, info
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac"}
+# recipe steps name the script to run as plain, untrusted JSON -- run_step() joins it onto HERE
+# with the `/` operator, which silently ignores the left side when the right side is itself an
+# absolute path (Path("/scripts") / "/tmp/evil.py" == Path("/tmp/evil.py")), and does nothing to
+# stop a "../" traversal either. Without this allowlist, a batch.json a caller didn't author
+# themselves (from a template, a shared config, anywhere) could name any Python file on disk and
+# have it executed with the caller's own privileges on every matching media file.
+ALLOWED_STEP_SCRIPTS = {p.name for p in HERE.glob("*.py") if not p.name.startswith("_")}
 
 
 def file_key(path: Path) -> str:
@@ -55,7 +62,11 @@ def recipe_key(recipe: Dict[str, Any]) -> str:
 
 
 def run_step(argv: List[str]) -> bool:
-    cmd = [sys.executable, str(HERE / argv[0])] + argv[1:]
+    script = argv[0]
+    if script not in ALLOWED_STEP_SCRIPTS:
+        die(f"recipe step names a script that isn't one of this skill's own tools: {script!r} "
+            f"(must be a bare filename like 'silence.py', found in scripts/)")
+    cmd = [sys.executable, str(HERE / script)] + argv[1:]
     if STATE["fast"]:
         cmd.append("--fast")
     if STATE["dry_run"]:

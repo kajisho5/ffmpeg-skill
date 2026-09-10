@@ -185,6 +185,16 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_cut_bad_range_fails(self):
         script("cut.py", self.src, "--start", "5", "--end", "2", expect_fail=True)
 
+    def test_cut_refuses_negative_start_and_end(self):
+        """Unlike freeze.py/background.py, which explicitly refuse negative durations, cut.py
+        passed --start/--end straight through to parse_time() with no sign check at all, so a
+        negative value (e.g. from an agent computing an offset that went wrong) reached ffmpeg's
+        -ss as -5.000000 instead of being refused with a clear error naming the flag."""
+        proc = script("cut.py", self.src, "--start", "-5", "--end", "2", expect_fail=True)
+        self.assertIn("--start", proc.stderr)
+        proc = script("cut.py", self.src, "--start", "0", "--end", "-2", expect_fail=True)
+        self.assertIn("--end", proc.stderr)
+
     # ---------------------------------------------------------------- fit
     def test_fit_duration_speed_and_aspect_pad(self):
         out = OUT / "fit1.mp4"
@@ -2177,6 +2187,29 @@ class FFmpegSkillTests(unittest.TestCase):
         data = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
         self.assertEqual(data["processed"], 1)
         self.assertClose(probe(data["results"][0]["output"])["duration"], 3.0, 0.3)
+
+    def test_batch_refuses_a_recipe_step_naming_a_script_outside_scripts_dir(self):
+        """run_step() built its command as `HERE / argv[0]`, where argv[0] came straight from an
+        untrusted recipe JSON step. Path's / operator silently ignores the left side when the
+        right side is itself an absolute path, and does nothing to stop a "../" traversal either
+        -- so a recipe (from a template, a shared config, anywhere the caller didn't author it
+        themselves) naming an absolute or ../-relative path got that file executed as a Python
+        script, with the caller's own privileges, once per matching media file. Verify both an
+        absolute path and a traversal path are refused instead of executed."""
+        folder = OUT / "batch_security"
+        folder.mkdir(exist_ok=True)
+        (folder / "a.mp4").write_bytes(Path(self.src).read_bytes())
+        evil = OUT / "batch_security_evil.py"
+        marker = OUT / "batch_security_pwned.txt"
+        marker.unlink(missing_ok=True)
+        evil.write_text(f"open({str(marker)!r}, 'w').write('pwned')\n", encoding="utf-8")
+
+        for step in ([str(evil)], ["../../../../tmp/does_not_matter.py"]):
+            recipe = folder / "batch.json"
+            recipe.write_text(json.dumps({"glob": "*.mp4", "steps": [step]}))
+            proc = script("batch.py", folder, "--recipe", recipe, "--fast", "--force", expect_fail=True)
+            self.assertIn("scripts/", proc.stderr)
+            self.assertFalse(marker.exists(), f"step {step} must not have executed")
 
     def test_batch_refuses_a_fixed_ext_recipe_that_collapses_two_sources_to_one_output(self):
         """final_path() falls back to each source's OWN extension by default, so files that only

@@ -149,10 +149,14 @@ def main() -> int:
         segments = parse_segments(args.segments)
     else:
         start = parse_time(args.start)
+        if start < 0:
+            die(f"--start must not be negative, got {args.start!r}")
         if args.end and args.duration:
             die("use --end or --duration, not both")
         if args.end:
             end = parse_time(args.end)
+            if end < 0:
+                die(f"--end must not be negative, got {args.end!r}")
         elif args.duration:
             end = start + parse_time(args.duration)
         else:

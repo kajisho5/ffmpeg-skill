@@ -6,6 +6,26 @@
 
 (nothing yet)
 
+## 0.16.8 — fix batch.py recipe steps executing arbitrary scripts, and cut.py accepting negative times
+
+- **Security:** `batch.py`'s recipe `steps` named the script to run for each
+  step as a plain, untrusted string from `batch.json` (`run_step()` built
+  `HERE / argv[0]`). `pathlib`'s `/` operator silently ignores the left side
+  when the right side is itself an absolute path, and does nothing to stop a
+  `../` traversal either -- so a `batch.json` the caller didn't author
+  themselves (a template, a shared config, anything from outside) could name
+  any Python file on disk (absolute path or `../` traversal) and have it
+  executed with the caller's own privileges, once per matching media file.
+  Confirmed with a live repro: a recipe step of `["/tmp/evil.py"]` executed
+  and wrote a file outside the project. Fixed by validating each step's
+  script name against the real, non-underscore-prefixed scripts in
+  `scripts/` before running it.
+- `cut.py` passed `--start`/`--end` straight to `parse_time()` with no sign
+  check, unlike `freeze.py`/`background.py`, which already refuse negative
+  durations -- a negative value reached ffmpeg's `-ss` as `-5.000000`
+  instead of being refused with a clear error naming the flag. Fixed by
+  refusing negative `--start`/`--end` up front.
+
 ## 0.16.5 — fix silence.py breaking on audio-only WAV, unvalidated --fps, and a LUT-strength inversion in color.py
 
 A deep line-by-line pass over the most-used editing tools:
