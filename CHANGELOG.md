@@ -6,6 +6,28 @@
 
 (nothing yet)
 
+## 0.16.7 — fix a silently-dropped render.py fit height and a multicam.py drift-trim ordering bug
+
+- `render.py`'s single-clip fit path only ever inherited `width`/`fps` from
+  `project.frame` (never `height`), and the flag-forwarding list that turns
+  `project.fit`'s own keys into `fit.py` argv had no entry for `height` at
+  all. A `project.json` specifying `"fit": {"height": N}` alone built an
+  empty `fit.py` argv and crashed with "nothing to do"; combined with
+  another `fit` key (e.g. `duration`), `height` silently never reached
+  `fit.py` and the output's height was left unchanged with no error. Fixed
+  by adding the missing `frame.get("height")` inheritance and the
+  `("height", "--height")` forwarding entry, matching the multi-clip `join`
+  path, which already handled `height` correctly.
+- `multicam.py --fix-drift` computed its audio trim start (`a_start`) in
+  the source's own pre-correction time axis, but applied it via `atrim=
+  start=` *after* the `asetrate`/`aresample` drift-correction filters had
+  already rescaled that axis in the same filter chain -- so the trim
+  landed on the wrong point once the timeline had been stretched or
+  compressed by the drift ratio. `sync.py` already avoids this by seeking
+  with `-ss` (an input-level operation) before its own drift filters;
+  `multicam.py` now applies `atrim=start=`/`asetpts` before `asetrate`/
+  `aresample` in the filter chain to match.
+
 ## 0.16.5 — fix silence.py breaking on audio-only WAV, unvalidated --fps, and a LUT-strength inversion in color.py
 
 A deep line-by-line pass over the most-used editing tools:
