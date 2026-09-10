@@ -6,6 +6,28 @@
 
 (nothing yet)
 
+## 0.16.3 — fix two more caption.py delimiter bugs: ASS override injection, SRT blank-line split
+
+Following on from 0.16.2's `--font` fix, a closer look at `caption.py` found
+two more places where user-controlled cue text (from `--text`, an SRT
+file, or ASR transcription) flows raw into a delimited text format:
+
+- ASS `Dialogue:` text treats a literal `{...}` as an override block --
+  real style/animation commands (`\pos`, `\fscx`, `\t`, ...), not literal
+  characters. Cue text containing braces was interpreted as those
+  commands instead of read out, letting a caption reposition, rescale,
+  or recolor itself or later text. Fixed by dropping `{`/`}` from cue
+  text before writing the ASS `Dialogue:` line (also closes the same gap
+  in the karaoke word-by-word path, which built its `{\kf..}` tags from
+  the same unsanitised text).
+- `write_srt()` wrote cue text raw. `parse_text_cues()` turns a bare `|`
+  into a newline (the documented two-line-caption syntax), so two
+  adjacent pipes (`a||b`) produced cue text containing a blank line --
+  and a blank line is SRT's own block separator. Writing it raw split
+  one cue into two malformed half-blocks, silently dropping the text
+  after the fake boundary when re-parsed. Fixed by collapsing any run of
+  blank lines within a cue's text to a single newline before writing.
+
 ## 0.16.2 — fix caption.py's --font not sanitised for ASS Style/force_style
 
 An attack-surface audit of every call site that embeds user-controlled text

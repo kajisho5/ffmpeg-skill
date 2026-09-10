@@ -1711,6 +1711,40 @@ class FFmpegSkillTests(unittest.TestCase):
         proc = sh(sys.executable, SCRIPTS / "caption.py", self.src, "--text", self.cues, "--font", hostile_font, "-o", out, "--dry-run")
         self.assertNotIn("Arial,Bold:evil", proc.stderr, "hostile font must not reach force_style unsanitised")
 
+    def test_caption_ass_dialogue_text_cannot_forge_override_blocks(self):
+        """ASS Dialogue text treats a literal `{...}` as an override block -- real style/animation
+        commands (\\pos, \\fscx, \\t, ...), not literal characters. Cue text is effectively user-
+        controlled (--text cues, an SRT file, or ASR transcription), so cue content containing
+        braces used to be interpreted as those commands instead of being read out literally,
+        letting a caption reposition/rescale/recolor itself or later text. Verify a hostile cue
+        survives as inert text with the override syntax neutralised."""
+        hostile_cues = OUT / "brace_inject_cues.txt"
+        hostile_cues.write_text("00:00:00 --> 00:00:03 hi {\\pos(0,0)\\fscx500}INJECTED\n", encoding="utf-8")
+        ass_out = OUT / "brace_inject.ass"
+        script("caption.py", self.src, "--text", hostile_cues, "--animate", "fade", "--write-ass", ass_out, "--dry-run")
+        dialogue = next(l for l in ass_out.read_text(encoding="utf-8").splitlines() if l.startswith("Dialogue: "))
+        # --animate fade legitimately prepends its own "{\fad(200,200)}" override block; only the
+        # cue-text-derived braces from the hostile payload must be gone.
+        self.assertNotIn("{\\pos(0,0)\\fscx500}", dialogue, "cue text must not be able to open a real ASS override block")
+        self.assertIn("\\pos(0,0)\\fscx500INJECTED", dialogue, "the rest of the cue text still renders, just as literal (now brace-free) text")
+
+    def test_caption_srt_blank_line_in_cue_text_does_not_split_the_block(self):
+        """parse_text_cues() turns a bare '|' into a newline (a documented way to write a two-line
+        caption), so a source line with two adjacent pipes ("a||b") produces cue text containing a
+        blank line ("a\\n\\nb"). A blank line is SRT's own block separator (index / timecode / text
+        / blank / next block) -- writing it raw used to split one cue into two malformed half-
+        blocks, the second missing its own index and timecode. Verify the generated SRT still
+        parses back as exactly the cues that were written, not more."""
+        hostile_cues = OUT / "blank_line_cues.txt"
+        hostile_cues.write_text("00:00:00 --> 00:00:03 a||b\n00:00:03 --> 00:00:06 second cue\n", encoding="utf-8")
+        srt_out = OUT / "blank_line.srt"
+        script("caption.py", "--text", hostile_cues, "--write-srt", srt_out)
+        from caption import parse_srt
+        cues = parse_srt(str(srt_out))
+        self.assertEqual(len(cues), 2, "the blank line inside cue text must not fake a third block boundary")
+        self.assertEqual(cues[0][2], "a\nb", "text after the fake blank-line boundary must not be silently dropped")
+        self.assertEqual(cues[1][2], "second cue", "the second cue must still have its own timecode/index, not be swallowed as stray text")
+
     def test_drawtext_semicolon_and_quote_render_as_inert_literal_text(self):
         """escape_drawtext() (shared by overlay.py --text, graphics.py/overlay.py's --font
         fallback, and grid.py's filename-derived labels) had two more gaps beyond the comma/colon/

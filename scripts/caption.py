@@ -165,6 +165,13 @@ def parse_srt(path: str) -> List[Tuple[float, float, str]]:
 def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         for i, (s, e, t) in enumerate(cues, 1):
+            # A blank line is SRT's own block separator (index/timecode/text, blank, next block).
+            # Cue text can contain one -- parse_text_cues() turns a bare "|" into "\n", so a source
+            # line with two adjacent pipes ("a||b") becomes "a\n\nb" -- and writing that blank line
+            # raw would split one cue into two malformed half-blocks (the second missing its own
+            # index/timecode). Collapse any run of blank lines within the cue text to a single
+            # newline so the cue's own text can never fake the format's block boundary.
+            t = re.sub(r"\n{2,}", "\n", t).strip("\n")
             fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
 
 
@@ -253,6 +260,14 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
     lines = []
     for start, end, text in cues:
         text = text.replace("\n", "\\N")
+        # ASS Dialogue text treats a literal `{...}` as an override block -- real style/animation
+        # commands, not literal characters. Cue text (from --text, an SRT, or ASR transcription --
+        # all effectively user-controlled) that happens to contain braces would otherwise be
+        # interpreted as those commands (\pos, \t, \fscx, ...), letting caption content reposition,
+        # rescale, or recolor itself or later text instead of just being read out. No caption needs
+        # a literal curly brace, so they're dropped outright, matching the "unneeded delimiter
+        # character -> drop it" call already made for font names (see ass_font_name()).
+        text = text.replace("{", "").replace("}", "")
         fx = ""
         if args.animate == "fade":
             fx = "{\\fad(200,200)}"
