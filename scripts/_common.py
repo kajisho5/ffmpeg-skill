@@ -637,14 +637,30 @@ def default_font_file(font_name: str) -> Optional[str]:
 
 
 def escape_drawtext(text: str) -> str:
+    """Escape `text` for use as a single-quoted drawtext option value (`text='<this>'`).
+
+    Every ffmpeg filter-graph special character (`\\ : % , [ ] ;`) needs a backslash
+    escape regardless of the surrounding quotes -- the graph parser still splits on an
+    unescaped `,`/`;` or ends an option list on an unescaped `:`/`[`/`]` even while
+    "inside" a quoted value. The quote character itself has no reliable backslash
+    escape at all: `\\'` and the POSIX shell `'\\''` close-insert-reopen trick both
+    parse fine in a simple `-vf` chain, but silently corrupt a `-filter_complex` chain
+    that uses explicit `[label]` pads -- confirmed by rendering the result: the text
+    value doesn't end where the quote closes it, and trailing option names/values
+    (fontfile=..., fontsize=...) leak into the rendered picture as literal text
+    instead of being parsed as options. A quote is therefore dropped outright rather
+    than escaped -- losing one apostrophe from a label is a fine trade for "the
+    filter graph parses the way the code intends, on every call shape this codebase
+    uses it in"."""
     return (
-        text.replace("\\", "\\\\")
+        text.replace("'", "")
+        .replace("\\", "\\\\")
         .replace(":", "\\:")
-        .replace("'", "\\\\\\'")
         .replace("%", "\\%")
         .replace(",", "\\,")
         .replace("[", "\\[")
         .replace("]", "\\]")
+        .replace(";", "\\;")
     )
 
 
