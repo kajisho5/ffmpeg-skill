@@ -30,6 +30,28 @@ HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac", ".aac"}
 
 
+def unique_stems(files: List[Path]) -> Dict[Path, str]:
+    """Every file's outputs share one flat --out directory (stem = outdir / f.stem), so two files
+    with the same basename from different folders -- entirely normal for real footage collected
+    from multiple cameras/SD cards, e.g. two "clip.mp4"s in separate campaign folders -- used to
+    resolve to the identical output prefix. Each file's own steps still ran correctly in isolation,
+    but with --keep the second file's outputs silently overwrote the first file's on disk, and the
+    report showed PASS for both without ever flagging the collision (same bug class already fixed
+    in batch.py). Disambiguate every colliding stem with a stable per-collision index instead."""
+    counts: Dict[str, int] = {}
+    for f in files:
+        counts[f.stem] = counts.get(f.stem, 0) + 1
+    seen: Dict[str, int] = {}
+    stems: Dict[Path, str] = {}
+    for f in files:
+        if counts[f.stem] > 1:
+            seen[f.stem] = seen.get(f.stem, 0) + 1
+            stems[f] = f"{f.stem}_{seen[f.stem]}"
+        else:
+            stems[f] = f.stem
+    return stems
+
+
 def collect(paths: List[str]) -> List[Path]:
     files: List[Path] = []
     for p in paths:
@@ -86,6 +108,7 @@ def main() -> int:
         tmp = tempfile.TemporaryDirectory(prefix="ffskill_verify_")
         outdir = Path(tmp.name)
 
+    stem_for = unique_stems(files)
     results = []
     for f in files:
         info(f"=== {f}")
@@ -102,7 +125,7 @@ def main() -> int:
         entry["steps"].append({"step": "probe", "ok": True, "seconds": 0, "error": ""})
         dur = meta.get("duration") or 0.0
         has_v, has_a = bool(meta.get("video")), bool(meta.get("audio"))
-        stem = outdir / f.stem
+        stem = outdir / stem_for[f]
         cut = f"{stem}_cut.mp4"
         seg_end = min(dur, args.seconds) if dur else args.seconds
         fast = ["--fast"]
@@ -111,7 +134,7 @@ def main() -> int:
         if has_v:
             plan.append(("cut accurate", ["cut.py", str(f), "--start", "0", "--end", f"{seg_end:.2f}", "--accurate", "-o", f"{stem}_acc.mp4"] + fast))
             plan.append(("fit 9:16", ["fit.py", cut, "--aspect", "9:16", "--width", "720", "-o", f"{stem}_fit.mp4"] + fast))
-            cues = outdir / f"{f.stem}_cues.txt"
+            cues = outdir / f"{stem_for[f]}_cues.txt"
             cues.write_text("0:00-0:02 Verification caption\n0:02-0:04 Second | line\n", encoding="utf-8")
             plan.append(("caption", ["caption.py", cut, "--text", str(cues), "--animate", "pop", "--karaoke", "-o", f"{stem}_cap.mp4"] + fast))
             if not args.quick:

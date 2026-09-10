@@ -1,0 +1,29 @@
+# Keeps a draft GitHub Release up to date with merged-PR summaries as main moves forward. This is
+# purely a convenience cross-check against CHANGELOG.md's hand-written notes -- it never publishes
+# anything itself; publishing a real release stays the deliberate, manual `git tag` act described
+# in release.yml / README's "Development" -> "Releasing" section.
+#
+# push-to-main only, deliberately: release-drafter reads its config from the DEFAULT branch, so a
+# pull_request trigger fails with "Configuration file .github/release-drafter.yml is not found"
+# for any PR that hasn't merged yet (a chicken-and-egg problem for the very PR that first adds
+# this file, and for any PR opened before this config lands on main). The per-PR "next version"
+# preview a pull_request trigger would add isn't essential to what this workflow is actually for.
+name: release-drafter
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

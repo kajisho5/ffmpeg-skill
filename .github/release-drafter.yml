@@ -1,0 +1,48 @@
+# Config for release-drafter/release-drafter. Maintains a running DRAFT release (updated on
+# every push to main) summarizing merged PRs since the last tag -- a cross-check against
+# CHANGELOG.md's hand-written notes, not a replacement for them. Actual publishing still stays a
+# deliberate, manual act: tag a commit (`git tag vX.Y.Z && git push origin vX.Y.Z`), which
+# .github/workflows/release.yml picks up and publishes using CHANGELOG.md's own section for that
+# version. This draft is never auto-published.
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "Fixes"
+    labels:
+      - fix
+      - bug
+  - title: "Features"
+    labels:
+      - feature
+      - enhancement
+  - title: "Other changes"
+    labels:
+      - chore
+      - docs
+      - ci
+change-template: "- $TITLE (#$NUMBER)"
+change-title-escapes: '\<*_&'
+version-resolver:
+  major:
+    labels:
+      - major
+  minor:
+    labels:
+      - minor
+      - feature
+      - enhancement
+  patch:
+    labels:
+      - patch
+      - fix
+      - bug
+      - chore
+      - docs
+      - ci
+  default: patch
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  Cross-check this against CHANGELOG.md's own entry for this version before tagging a release.

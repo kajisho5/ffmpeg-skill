@@ -101,6 +101,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.fps is not None and args.fps <= 0:
+        die(f"--fps must be positive, got {args.fps:g}")
 
     if len(args.inputs) < 2:
         die("give at least two clips")

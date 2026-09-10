@@ -70,6 +70,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.fps is not None and args.fps <= 0:
+        die(f"--fps must be positive, got {args.fps:g}")
 
     if not -180 <= args.yaw <= 180:
         die(f"--yaw must be -180..180, got {args.yaw}")

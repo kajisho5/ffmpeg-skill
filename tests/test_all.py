@@ -301,6 +301,27 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_crop_negative_offset_refused(self):
         script("crop.py", self.src, "--x", "-5", "--y", "0", "--width", "100", "--height", "100", expect_fail=True)
 
+    def test_zero_or_negative_fps_refused_across_every_cfr_script(self):
+        """--fps flows straight into cfr_args(meta, args.fps) / a `fps or source_fps or 30.0`
+        fallback in several scripts without ever being validated first. `0` is falsy in Python, so
+        `--fps 0` used to be silently discarded and fall back to the source's own fps (or 30) --
+        the tool claims to force a specific constant frame rate and quietly does something else
+        instead. A negative value is truthy, so `--fps -5` passed straight through to ffmpeg's
+        `-r`/`fps=` filter option, which rejects it -- an unhelpful ffmpeg-level crash instead of a
+        clear error naming --fps. Verify every affected script now refuses both up front."""
+        for name, extra in (
+            ("crop.py", ["--x", "0", "--y", "0", "--width", "32", "--height", "32"]),
+            ("denoise.py", []),
+            ("redact.py", ["--x", "0", "--y", "0", "--width", "32", "--height", "32"]),
+            ("straighten.py", ["--degrees", "3"]),
+            ("sphere.py", []),
+            ("join.py", []),  # fps is validated before the "give >= 2 clips" check, one input is enough
+            ("multicam.py", []),  # fps is validated before the "give >= 2 inputs" check too
+        ):
+            for bad in ("0", "-5"):
+                proc = script(name, self.src, *extra, "--fps", bad, expect_fail=True)
+                self.assertIn("--fps", proc.stderr, f"{name} --fps {bad} should name --fps in its error")
+
     # ---------------------------------------------------------------- cropdetect
     def test_cropdetect_reports_a_black_bar_rectangle(self):
         bars = OUT / "cropdetect_bars.mp4"
@@ -1196,6 +1217,26 @@ class FFmpegSkillTests(unittest.TestCase):
         script("color.py", self.src, "--lut", lut, "--lut-strength", "0.5", "--preset", "veryfast", "-o", out)
         self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
 
+    def test_color_lut_strength_zero_means_no_lut_and_out_of_range_is_refused(self):
+        """--lut-strength's blend branch only fired for the OPEN interval (0, 1); anything outside
+        it -- including exactly 0, and any value > 1 or < 0 -- fell into the "apply at full
+        strength" fallback with the number silently discarded. --lut-strength 0 is documented as
+        "blend graded and original, 0..1" -- 0 should mean the original, unmodified picture, not a
+        100%-strength grade (the opposite of what was asked). Verify 0 now leaves the picture
+        untouched, and an out-of-range value is refused instead of silently applying full strength."""
+        lut = OUT / "invert_strength.cube"
+        lines = ["LUT_3D_SIZE 2"]
+        for b in (0, 1):
+            for g in (0, 1):
+                for r in (0, 1):
+                    lines.append(f"{1 - r} {1 - g} {1 - b}")
+        lut.write_text("\n".join(lines) + "\n")
+        zero = OUT / "lut_zero.mp4"
+        script("color.py", self.src, "--lut", lut, "--lut-strength", "0", "--preset", "veryfast", "-o", zero)
+        self.assertGreater(self._psnr(self.src, zero), 40, "--lut-strength 0 must leave the picture unchanged, not fully inverted")
+        script("color.py", self.src, "--lut", lut, "--lut-strength", "2.5", "-o", OUT / "lut_oob.mp4", expect_fail=True)
+        script("color.py", self.src, "--lut", lut, "--lut-strength", "-1", "-o", OUT / "lut_oob2.mp4", expect_fail=True)
+
     def test_color_correct_defaults_are_near_identity(self):
         out = OUT / "correct_neutral.mp4"
         data = json.loads(script("color.py", self.src, "--correct", "--preset", "veryfast", "-o", out, "--json").stdout)
@@ -1446,6 +1487,23 @@ class FFmpegSkillTests(unittest.TestCase):
         script("cut.py", gappy, "--segments", segs, "--accurate", "--preset", "veryfast", "-o", out2)
         self.assertClose(probe(str(out2))["duration"], 6.75, 0.4)
 
+    def test_silence_on_wav_input_keeps_pcm_not_forced_aac(self):
+        """silence.py's final ffmpeg command used to unconditionally append aac_args() (-c:a aac)
+        regardless of the output container. That's fine for .mp4/.m4a, but AAC cannot be muxed
+        into a .wav file -- so silence removal on any audio-only WAV input (a very ordinary case:
+        podcasts, voice memos, any --list workflow feeding straight into a WAV pipeline) crashed
+        ffmpeg outright, whether or not -o was given explicitly. Verify a WAV input still produces
+        a valid, playable WAV output (PCM), not a codec/container mismatch crash."""
+        wav_in = OUT / "silence_wav_in.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
+           "-t", "6", wav_in)
+        proc = script("silence.py", wav_in)
+        out = Path(proc.stdout.strip())
+        self.assertEqual(out.suffix, ".wav")
+        m = probe(str(out))
+        self.assertTrue(m["audio"]["codec"].startswith("pcm"), f"WAV output must stay PCM, got {m['audio']['codec']}")
+
     def test_join_with_transition_normalises_mismatched_clips(self):
         out = OUT / "joined.mp4"
         # 720p 30fps stereo + rotated portrait + 640x360 mono clip without audio
@@ -1610,6 +1668,29 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertNotIn("| FAIL |", text)
         self.assertIn("HDR10/PQ", text)
         script("verify.py", OUT / "does_not_exist", expect_fail=True)
+
+    def test_verify_disambiguates_same_named_files_from_different_folders(self):
+        """Every file's outputs share one flat --out directory keyed only on stem = outdir /
+        f.stem -- two files with the same basename from different subfolders (entirely normal for
+        real footage pulled from multiple cameras/SD cards, e.g. two "clip.mp4"s in separate
+        campaign folders) used to resolve to the identical output prefix. Each file's own steps
+        ran correctly in isolation, but with --keep the second file's outputs silently overwrote
+        the first file's on disk, with the report still showing PASS for both and no collision
+        ever flagged (same bug class fixed in batch.py). Verify same-named files from different
+        folders now get distinct, non-colliding output prefixes."""
+        folder = OUT / "verify_collision"
+        (folder / "campaignA").mkdir(parents=True, exist_ok=True)
+        (folder / "campaignB").mkdir(parents=True, exist_ok=True)
+        (folder / "campaignA" / "clip.mp4").write_bytes(Path(self.src).read_bytes())
+        (folder / "campaignB" / "clip.mp4").write_bytes(Path(self.src).read_bytes())
+        out = OUT / "verify_collision_out"
+        data = json.loads(script("verify.py", folder, "--quick", "--keep", "--out", out, "--json").stdout)
+        self.assertEqual(len(data["files"]), 2)
+        self.assertTrue(all(s["ok"] for f in data["files"] for s in f["steps"]))
+        cut_files = sorted(p.name for p in out.glob("clip*_cut.mp4"))
+        self.assertEqual(len(cut_files), 2, f"expected two distinct 'cut' outputs, one per same-named source file, got {cut_files}")
+        cap_files = sorted(p.name for p in out.glob("clip*_cap.mp4"))
+        self.assertEqual(len(cap_files), 2, f"expected two distinct 'caption' outputs, got {cap_files}")
 
     def test_progress_and_fast_flags(self):
         out = OUT / "prog.mp4"
