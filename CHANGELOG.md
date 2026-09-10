@@ -6,6 +6,47 @@
 
 (nothing yet)
 
+## 0.16.5 — fix silence.py breaking on audio-only WAV, unvalidated --fps, and a LUT-strength inversion in color.py
+
+A deep line-by-line pass over the most-used editing tools:
+
+- `silence.py` unconditionally appended `aac_args()` (`-c:a aac`) to its
+  final ffmpeg command regardless of the output container. AAC cannot be
+  muxed into a `.wav` file, so silence removal crashed outright on any
+  audio-only WAV input or `-o out.wav` target -- a very ordinary case
+  (podcasts, voice memos) the existing test suite happened to only cover
+  with `.m4a` (where AAC is always valid, masking the bug). Fixed by
+  picking the codec from the output extension via `audio_codec_for()`,
+  the same helper every sibling script already uses, and by adding `-vn`
+  when the output is audio-only but the input has video.
+- `--fps` flowed straight into `cfr_args()` / a
+  `fps or source_fps or 30.0` fallback in `crop.py`, `denoise.py`,
+  `redact.py`, `sphere.py`, `straighten.py`, `join.py` and `multicam.py`
+  without ever being validated. `0` is falsy in Python, so `--fps 0` was
+  silently discarded and fell back to the source's own fps instead of
+  erroring; a negative value passed straight through to ffmpeg's `-r`/
+  `fps=` filter option, which rejects it with an unhelpful crash instead
+  of a clear message naming `--fps`. Fixed by refusing `--fps <= 0` up
+  front in all seven scripts, matching the guard `fit.py`/`proxy.py`/
+  `background.py`/`grid.py`/`insert.py`/`sequence.py` already had.
+- `color.py --lut-strength` (documented "blend LUT result with the
+  original, 0..1") only branched into its blend logic for the *open*
+  interval `(0, 1)` -- so `--lut-strength 0`, meant to mean "no LUT at
+  all", instead fell into the "apply at full strength" fallback and
+  silently graded the picture at 100%, the opposite of what was asked.
+  Any out-of-range value (`2.5`, `-1`) did the same instead of being
+  refused. Fixed by validating the range up front and handling `0`
+  explicitly as "leave the picture untouched."
+- `verify.py` built every file's output prefix from only its basename
+  (`stem = outdir / f.stem`), so two files with the same name from
+  different folders -- ordinary for real footage pulled from multiple
+  cameras/SD cards -- resolved to the identical output prefix; with
+  `--keep`, the file processed second silently overwrote the first one's
+  finished output, with the report still showing PASS for both and no
+  collision ever flagged. Same bug class as 0.16.4's `batch.py` fix.
+  Fixed by disambiguating every colliding stem with a stable per-
+  collision index before any file is processed.
+
 ## 0.16.4 — fix a silent false-PASS in check.py, an infinite loop in multicam.py, and a silent output collision in batch.py
 
 Three unrelated bugs found in a wider audit past `caption.py`:

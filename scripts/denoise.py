@@ -48,6 +48,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.fps is not None and args.fps <= 0:
+        die(f"--fps must be positive, got {args.fps:g}")
 
     ls, cs, lt, ct = STRENGTH_PRESETS[args.strength]
     ls = args.luma_spatial if args.luma_spatial is not None else ls

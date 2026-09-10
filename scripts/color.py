@@ -274,8 +274,16 @@ def main() -> int:
     else:
         if not os.path.exists(args.lut):
             die(f"LUT not found: {args.lut}")
+        if not (0.0 <= args.lut_strength <= 1.0):
+            die(f"--lut-strength {args.lut_strength:g} is outside 0..1")
         lut = f"lut3d=file={escape_filter_path(args.lut)}:interp=tetrahedral"
-        if 0 < args.lut_strength < 1:
+        if args.lut_strength == 0.0:
+            # 0 means "no LUT at all" -- without this branch, 0 (falling outside the open interval
+            # below) landed in the same "apply the LUT at full strength" fallback as an out-of-range
+            # value did before the guard above existed: the one strength value documented to mean
+            # "don't grade it" instead silently graded it at 100%, the opposite of what was asked.
+            vf = "format=yuv420p"
+        elif args.lut_strength < 1.0:
             # blend graded and original
             vf = f"split[o][g];[g]{lut}[g2];[o][g2]blend=all_mode=normal:all_opacity={args.lut_strength:g},format=yuv420p"
         else:
