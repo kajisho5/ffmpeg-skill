@@ -2069,6 +2069,25 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(resp[6]["result"].get("isError"))
         self.assertEqual(resp[7]["error"]["code"], -32601)
 
+    def test_mcp_server_survives_a_non_object_json_line(self):
+        """json.loads accepts any valid JSON value, not just an object -- a bare `42`, `null`,
+        `true` or `[1,2]` line parses without raising, but main()'s very next line, `"id" not in
+        req`, raised an uncaught TypeError for a non-dict req (an int/bool/None isn't iterable the
+        way `in` needs). That check sat outside the try/except wrapping handle(), so the exception
+        propagated out of the stdin loop and killed the whole stdio server process -- not just
+        that one malformed line, but every other in-flight and future tool call in the session.
+        Verify a line like this is now skipped, and the server stays alive and answers the next
+        (valid) request instead of exiting non-zero with nothing produced for it."""
+        server = ROOT / "mcp" / "server.py"
+        lines = ["42", "null", "true", "[1,2,3]",
+                 json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})]
+        proc = subprocess.run([sys.executable, str(server)], input="\n".join(lines) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, f"server must not crash on non-object JSON lines; stderr: {proc.stderr}")
+        resp = [json.loads(l) for l in proc.stdout.splitlines() if l.strip()]
+        self.assertEqual(len(resp), 1, "only the one real request should get a response")
+        self.assertEqual(resp[0]["id"], 1)
+        self.assertIn("tools", resp[0]["result"])
+
     def test_batch_recipe_and_cache(self):
         folder = OUT / "batch_in"
         folder.mkdir(exist_ok=True)
