@@ -1,19 +1,28 @@
 name: release
 
-# Publishes a GitHub Release automatically whenever a version tag (v*, matching
-# package.json's version) is pushed. This does not push tags itself -- tag
-# creation stays a manual, deliberate act (see CHANGELOG.md / README's
-# "Development" -> "Releasing" section) -- it only automates the release-notes
-# step once a tag exists, so a release isn't a manual multi-click chore in the
-# GitHub UI.
+# Fully automated release: on every push to main, if package.json's current
+# version has no matching vX.Y.Z tag yet, this creates that tag, publishes a
+# GitHub Release (notes taken from CHANGELOG.md's matching section) and
+# publishes to npm -- all in one job. Bumping package.json's version (and
+# writing the matching CHANGELOG.md section) stays a deliberate, manual part
+# of each PR: this workflow only reacts to that bump already having landed on
+# main, it never chooses a version number itself. A push to main whose
+# version is already tagged (most pushes, since not every PR bumps the
+# version) is a no-op: every step below is skipped.
+#
+# This runs as one job triggered directly by the push to main, not chained
+# through a separate tag-push trigger, because a tag pushed by the built-in
+# GITHUB_TOKEN does not itself trigger another workflow run (a deliberate
+# GitHub Actions anti-recursion rule) -- splitting this into "push a tag" /
+# "react to that tag" workflows would silently never fire the second one.
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches: [main]
 
 permissions:
   contents: write
+  id-token: write   # required for `npm publish --provenance`
 
 jobs:
   release:
@@ -23,20 +32,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify tag matches package.json version
+      - name: Check whether this version is already released
+        id: check
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::tag $GITHUB_REF_NAME (version $TAG_VERSION) does not match package.json's version $PKG_VERSION"
-            exit 1
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Extract this version's CHANGELOG section
-        id: notes
+        if: steps.check.outputs.already_released == 'false'
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          awk -v ver="$TAG_VERSION" '
+          awk -v ver="${{ steps.check.outputs.version }}" '
             BEGIN { found=0 }
             /^## / {
               if (found) exit
@@ -45,11 +57,31 @@ jobs:
             found { print }
           ' CHANGELOG.md > release_notes.md
           if [ ! -s release_notes.md ]; then
-            echo "No matching CHANGELOG.md section found for $TAG_VERSION; using a generic note." > release_notes.md
+            echo "No matching CHANGELOG.md section found for ${{ steps.check.outputs.version }}; using a generic note." > release_notes.md
           fi
 
-      - name: Create GitHub Release
+      - name: Create tag and GitHub Release
+        if: steps.check.outputs.already_released == 'false'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.check.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           body_path: release_notes.md
           generate_release_notes: true
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.already_released == 'false'
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # Requires an npm access token in this repo's Settings -> Secrets and variables ->
+      # Actions, named NPM_TOKEN (npmjs.com -> your avatar -> Access Tokens -> Generate New
+      # Token -> Granular Access Token or Automation, with publish permission on this
+      # package). Without it, this step fails but the tag/GitHub Release above still stand --
+      # only the npm publish is skipped, so a missing token never blocks the rest of a release.
+      - name: Publish to npm
+        if: steps.check.outputs.already_released == 'false'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
