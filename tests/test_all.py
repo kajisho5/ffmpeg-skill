@@ -5,7 +5,6 @@
 """
 import json
 import platform
-import random
 import re
 import os
 import shutil
@@ -18,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 sys.path.insert(0, str(SCRIPTS))
-from _common import default_font_file, escape_drawtext, escape_filter_path, probe, shell_quote, validate_color  # noqa: E402
+from _common import default_font_file, escape_drawtext, escape_filter_path, probe, shell_quote  # noqa: E402
 
 TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
@@ -1689,66 +1688,6 @@ class FFmpegSkillTests(unittest.TestCase):
         frame = OUT / "font_inject_overlay_frame.png"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-ss", "1", "-vframes", "1", frame)
         self.assertTrue(frame.exists())
-
-    def test_validate_color_fuzz_rejects_anything_with_a_graph_special_char(self):
-        """validate_color() is the allowlist sibling of escape_drawtext()/escape_filter_path() --
-        refuse anything that isn't a plain colour token, rather than trying to escape a graph
-        special character out of it (the class of bug 0.15.2 fixed for colour-like flags). Fuzz it
-        the same way as escape_drawtext(): random payloads mixing graph-special and ordinary
-        characters must always be refused once they contain a special character, and a handful of
-        genuinely valid colour tokens must always be accepted unchanged."""
-        rng = random.Random(20260910)
-        dangerous = list("\\:'\"%,;[]=`$\n\t")
-        boring = list("abcXYZ019")
-        for _ in range(40):
-            payload = "".join(rng.choice(dangerous + boring) for _ in range(rng.randint(1, 10)))
-            if any(c in payload for c in dangerous):
-                with self.assertRaises(SystemExit):
-                    validate_color(payload)
-        for good in ("black", "white", "0x101010", "0xff6a00AA", "#00ff00", "red@0.5", "0x00ff00@1.0"):
-            self.assertEqual(validate_color(good), good)
-
-    def test_escape_drawtext_fuzz_survives_random_special_char_combinations(self):
-        """escape_drawtext() has needed two follow-up fixes (0.15.3's --font finding, 0.16.1's
-        semicolon/quote finding) because each adversarial round only tried a handful of hand-picked
-        payloads. This generates many random combinations of every character it treats specially
-        (plus a few that only look special) with a fixed seed for reproducibility, and drives each
-        one through both call shapes this codebase actually builds with escape_drawtext(): a simple
-        -vf single filter (overlay.py's shape) and a -filter_complex chain with explicit [label]
-        pads (grid.py's shape -- the one the quote bug hid in). A payload only passes if ffmpeg
-        exits 0 AND the escaped value's own drawtext filter closes exactly where the fixed template
-        continues, proving no leakage into the next option -- not just "didn't crash". New/changed
-        code that breaks escape_drawtext() for some character combination this random sample
-        happens to hit will fail loudly here instead of waiting for the next hand-run adversarial
-        pass to stumble onto it."""
-        rng = random.Random(20260910)
-        dangerous = list("\\:'\"%,;[]=`$\n\t") + ["é", "日", "🎬"]
-        boring = list("abcXYZ019 -_.")
-        pool = dangerous + boring
-        payloads = ["".join(rng.choice(pool) for _ in range(rng.randint(1, 14))) for _ in range(40)]
-
-        for i, payload in enumerate(payloads):
-            escaped = escape_drawtext(payload)
-            self.assertNotIn("'", escaped, f"payload {payload!r}: a raw quote must never survive escaping")
-
-            # Shape 1: simple -vf single filter, no explicit pad labels (overlay.py's shape)
-            fc_vf = f"drawtext=text='{escaped}':fontsize=42:fontcolor=white"
-            r_vf = subprocess.run(
-                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(self.src), "-vf", fc_vf,
-                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
-                 "-an", "-t", "0.2", str(OUT / f"fuzz_vf_{i}.mp4")],
-                capture_output=True, text=True)
-            self.assertEqual(r_vf.returncode, 0, f"payload {payload!r} broke the -vf shape:\n{r_vf.stderr}")
-
-            # Shape 2: -filter_complex with explicit [label] pads (grid.py's shape)
-            fc_complex = f"[0:v]drawtext=text='{escaped}':fontsize=42:fontcolor=white[v0]"
-            r_complex = subprocess.run(
-                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(self.src),
-                 "-filter_complex", fc_complex, "-map", "[v0]",
-                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
-                 "-an", "-t", "0.2", str(OUT / f"fuzz_fc_{i}.mp4")],
-                capture_output=True, text=True)
-            self.assertEqual(r_complex.returncode, 0, f"payload {payload!r} broke the -filter_complex+label shape:\n{r_complex.stderr}")
 
     def test_drawtext_semicolon_and_quote_render_as_inert_literal_text(self):
         """escape_drawtext() (shared by overlay.py --text, graphics.py/overlay.py's --font

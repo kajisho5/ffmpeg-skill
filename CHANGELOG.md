@@ -28,6 +28,15 @@ every `drawtext=text=...` call site uses (`overlay.py --text`, the
   literal burnt-in text. Fixed by dropping the quote character outright
   instead of escaping it -- losing one apostrophe from a label is a fair
   trade for the filter graph parsing correctly everywhere.
+- `%` had the same problem the quote character did: the existing `\%`
+  escape is not a real escape as far as drawtext's own text-expansion
+  scanner (on by default, for `%{pts}`/`%{localtime}`/etc., a separate
+  pass from the graph-level backslash escaping) is concerned -- a bare
+  backslash-escaped `%` always logs "Stray % near ...", which is merely
+  noisy on one ffmpeg build but a hard filtering failure that writes no
+  output at all on another. No caller ever wants `%{...}` expansion, so
+  `%` (and control characters, same underlying cause) are dropped outright
+  instead of chasing a per-build-safe escape.
 
 Also fixed a real bug CodeRabbit's review of 0.16.0 caught before it was
 acted on: `grid.py --pad` held each shorter cell's video on its last frame

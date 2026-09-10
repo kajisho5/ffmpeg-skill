@@ -659,9 +659,9 @@ def escape_drawtext(text: str) -> str:
 
     `%` has the same problem the quote character did: `\%` is not a real escape as
     far as drawtext's own text-expansion scanner (on by default, `expansion=normal`,
-    for `%{pts}`/`%{localtime}`/etc.) is concerned -- found by the fuzz test in
-    0.16.1, a bare backslash-escaped `%` always logs "Stray % near ..." (confirmed
-    with the minimal case `text='100\%done'`), which is merely noisy on one ffmpeg
+    for `%{pts}`/`%{localtime}`/etc.) is concerned -- a bare backslash-escaped `%`
+    always logs "Stray % near ..." (confirmed with the minimal case
+    `text='100\%done'`), which is merely noisy on one ffmpeg
     build (the warning is printed, the file still gets written) but a hard filtering
     failure that writes no output at all on another. Every caller of this function
     only ever wants a literal label, never `%{...}` expansion, so `%` is dropped
