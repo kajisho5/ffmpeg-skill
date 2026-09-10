@@ -789,6 +789,36 @@ class ContractTests(unittest.TestCase):
             for t in doc["tools"]:
                 self.assertTrue((installed / t["executable"]).is_file())
 
+    def test_installer_upgrade_survives_an_interruption_mid_copy(self):
+        """install.js used to `rmSync(t.dir)` then `mkdirSync` + copy straight into the now-empty
+        target -- a process killed partway through that copy (Ctrl-C, disk full, a permission
+        error) left the target either empty or half-populated, destroying a working previous
+        install for nothing worse than an interrupted upgrade. Verify a copy that dies partway
+        through (simulated: a marker item throws right after it's copied) leaves an existing
+        install's own file untouched, instead of gone."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, HOME=tmp, USERPROFILE=tmp)
+            installed = Path(tmp) / ".claude" / "skills" / "ffmpeg-skill"
+            installed.mkdir(parents=True)
+            marker = installed / "PREVIOUS_INSTALL_MARKER.txt"
+            marker.write_text("preserve me", encoding="utf-8")
+
+            js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
+            crashing_js = js.replace(
+                "copyRecursive(src, path.join(tmpDir, item));",
+                "copyRecursive(src, path.join(tmpDir, item)); "
+                "if (item === 'SKILL.md') throw new Error('SIMULATED_CRASH_MID_COPY');",
+                1,
+            )
+            self.assertNotEqual(crashing_js, js, "expected to find and patch the per-item copy call")
+            crashing_installer = Path(tmp) / "install_crash_test.js"
+            crashing_installer.write_text(crashing_js, encoding="utf-8")
+
+            proc = sh("node", crashing_installer, "--claude", env=env, check=False)
+            self.assertNotEqual(proc.returncode, 0, "the simulated crash should make the installer report failure")
+            self.assertTrue(marker.exists(), "an install interrupted mid-copy must not destroy the previous install")
+            self.assertEqual(marker.read_text(encoding="utf-8"), "preserve me")
+
     # ------------------------------------------------------------------ integration: claims hold at run time
     @unittest.skipIf(platform.system() == "Windows", "fake ffmpeg is a #!/bin/sh script on a POSIX-only PATH shim; not portable to Windows. The claim itself (run() never invokes ffmpeg under --dry-run) is still exercised on Windows by every --dry-run case in tests/test_all.py, just without a shim proving no *other* ffmpeg-shaped binary would have run.")
     def test_dry_run_never_runs_ffmpeg_and_writes_nothing(self):
@@ -1307,6 +1337,21 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertEqual([c for c in d["missing"] if c.startswith("filter:")], [])
         self.assertFalse(d["ok"])
         self.assertEqual(code, 2)
+
+    def test_audio_loudness_join_stay_usable_without_aac(self):
+        """audio.py/loudness.py/join.py all pick their audio codec from the output extension via
+        audio_codec_for() (falling back to AAC only when the extension isn't otherwise covered),
+        yet the contract declared AAC unconditionally `required` for all three -- so an ffmpeg
+        build without an AAC encoder made `doctor` report these tools entirely unusable, even
+        though they can still produce e.g. a .flac or .wav output with no AAC involved at all."""
+        d, _ = self._doctor("ffmpeg_filters_8.1.2_macos.txt", encoders="ffmpeg_encoders_6.1_no_aac.txt")
+        for name in ("audio", "loudness", "join"):
+            self.assertEqual(d["tools"][name]["usable"], "yes", f"{name} must stay usable without AAC")
+            self.assertNotIn("missing", d["tools"][name])
+        # encoder:aac is still globally `missing` (other tools, e.g. multicam, still require it
+        # unconditionally) -- the point of this test is that audio/loudness/join specifically
+        # don't let that sink their own usability.
+        self.assertIn("encoder:aac", d["missing"])
 
     def test_tool_usability_answers_can_i_run_this_today(self):
         """`doctor`'s tools map answers "usable on this machine now", not just "what capabilities exist" --

@@ -108,13 +108,22 @@ for (const t of targets) {
       console.log(`removed ${t.label}: ${t.dir}`);
       continue;
     }
-    fs.rmSync(t.dir, { recursive: true, force: true });
-    fs.mkdirSync(t.dir, { recursive: true });
+    // Copy into a scratch directory next to the real target first, then swap it into place
+    // with a single rename -- not delete-then-copy-into-the-gap. A process killed mid-copy
+    // (Ctrl-C, disk full, a permission error partway through) used to leave the target either
+    // empty or half-populated; now it leaves the previous install untouched (first run: no
+    // previous install to preserve, so an interruption here still leaves nothing, same as
+    // before -- the guarantee is specifically for an upgrade of an existing install).
+    const tmpDir = `${t.dir}.tmp-${process.pid}`;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.mkdirSync(tmpDir, { recursive: true });
     for (const item of PAYLOAD) {
       const src = path.join(ROOT, item);
       if (!fs.existsSync(src)) { if (item !== 'SKILL.md' && item !== 'scripts') continue; throw new Error(`missing ${item} in package`); }
-      copyRecursive(src, path.join(t.dir, item));
+      copyRecursive(src, path.join(tmpDir, item));
     }
+    fs.rmSync(t.dir, { recursive: true, force: true });
+    fs.renameSync(tmpDir, t.dir);
     console.log(`installed ${t.label}: ${t.dir}`);
   } catch (err) {
     failed = true;

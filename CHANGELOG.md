@@ -6,6 +6,48 @@
 
 (nothing yet)
 
+## 0.16.11 — fix a contract/reality mismatch on AAC, three batch.py/render.py reliability bugs, and a non-atomic installer
+
+Continuing the same external audit report's architecture/data-integrity/reliability findings:
+
+- `_contract.py` declared `encoder:aac` unconditionally `required` for `audio.py`,
+  `loudness.py` and `join.py`, but all three pick their audio codec from the output
+  extension via `audio_codec_for()` (falling back to AAC only when the extension
+  isn't otherwise covered) -- so `doctor` reported these tools entirely unusable
+  on an ffmpeg build without an AAC encoder, even though they can still produce
+  e.g. a `.flac` output with no AAC involved at all. Moved to `optional` with a
+  `when`, matching the pattern `cut.py`/`silence.py` already used; `join.py`'s
+  `libx264` requirement was similarly conditioned on joining video inputs.
+  `export.py`'s AAC `when` also named "any preset except gif", though `prores`
+  (`pcm_s16le`) and `copy` (stream copy) don't use AAC either -- corrected.
+- `batch.py`'s `--recipe` project mode (`{"project": "p.json", "clip_key": N}`)
+  computed its cache key by hashing only that small outer dict, never the
+  referenced project file's own content -- so editing `p.json` (an export preset
+  swapped from `copy` to a real re-encode, captions text, anything) without
+  touching the recipe file itself left the cache key unchanged, and the stale
+  cached output was silently served for the new settings. Fixed by folding the
+  referenced file's content into the key.
+- `batch.py`'s cache file was written with a plain `write_text()`, not atomic --
+  a process killed mid-write left a truncated file that the next run's
+  `json.loads()` treats as corrupt and silently discards, losing every prior
+  cache entry, not just the interrupted one. Fixed via a sibling temp file +
+  `os.replace()`.
+- `render.py`'s default work directory name came only from the output path (e.g.
+  `final_work`), with no PID or timestamp -- two concurrent `render.py` runs
+  targeting the same output (a `batch.py` "project" recipe processing several
+  files in parallel, or simply two runs by mistake) shared the same work
+  directory and clobbered each other's same-named intermediates mid-run. Fixed
+  by suffixing the auto-derived default with this process's PID (an explicit
+  `--work` is left as given, since the caller asked for that exact path).
+- `bin/install.js` deleted an existing install (`rmSync`) before copying the new
+  one in -- normal install, not just `--uninstall`. A process killed partway
+  through the copy (Ctrl-C, disk full, a permission error) left the target
+  either empty or half-populated, destroying a working previous install for
+  nothing worse than an interrupted upgrade. Confirmed live: a simulated crash
+  mid-copy left the target directory completely empty, an existing marker file
+  gone. Fixed by copying into a scratch directory next to the real target first,
+  then swapping it into place with a single rename.
+
 ## 0.16.10 — fix batch.py arbitrary script execution, and four fit/background/caption/freeze correctness bugs
 
 - **Security:** `batch.py`'s recipe `steps` named the script to run for each

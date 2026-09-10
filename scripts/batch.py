@@ -58,7 +58,19 @@ def file_key(path: Path) -> str:
 
 
 def recipe_key(recipe: Dict[str, Any]) -> str:
-    return hashlib.sha1(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:12]
+    # A "project" recipe is just {"project": "<path>", "clip_key": N} -- the actual settings
+    # (export preset, captions, everything) live in the file at that path, not in this dict.
+    # Hashing only `recipe` meant editing project.json's content (without touching batch.json
+    # itself) left the key, and so every cache hit, unchanged: a preset swapped from "copy" to
+    # "x" (a real re-encode) still served the old cached output. Fold the referenced file's own
+    # content into the key so a content change invalidates the cache like any other edit would.
+    project_content = ""
+    if recipe.get("project"):
+        try:
+            project_content = Path(recipe["project"]).read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return hashlib.sha1((json.dumps(recipe, sort_keys=True) + "\0" + project_content).encode()).hexdigest()[:12]
 
 
 def run_step(argv: List[str]) -> bool:
@@ -185,7 +197,15 @@ def main() -> int:
             results.append(r)
             if r["ok"] and not STATE["dry_run"]:
                 cache[key] = r
-                cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+                # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
+                # a concurrent manual run) could leave a truncated file that json.loads() above
+                # then silently treats as "no cache" (a ValueError -> {}), discarding every prior
+                # entry. Write to a sibling temp file and rename into place: same-directory
+                # renames are atomic on POSIX and os.replace() is atomic on Windows too, so a
+                # reader only ever sees the old complete file or the new complete file.
+                tmp = cache_path.parent / f"{cache_path.name}.tmp{os.getpid()}"
+                tmp.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+                os.replace(tmp, cache_path)
         return results
 
     results = one_pass()

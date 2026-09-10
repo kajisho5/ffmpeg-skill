@@ -2124,7 +2124,7 @@ class FFmpegSkillTests(unittest.TestCase):
         m = probe(str(OUT / "render_final.mp4"))
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 1920))
         self.assertClose(m["duration"], 4 + 3.2 - 0.5, 0.4)
-        self.assertFalse((OUT / "render_final_work").exists(), "work dir removed when not kept")
+        self.assertEqual(list(OUT.glob("render_final_work*")), [], "work dir removed when not kept")
         init = OUT / "init.json"
         script("render.py", "--init", init)
         self.assertIn("clips", json.loads(init.read_text()))
@@ -2132,6 +2132,21 @@ class FFmpegSkillTests(unittest.TestCase):
         out = json.loads(script("render.py", proj, "--fast", "--stop-after", "join", "--work", OUT / "rw", "--json").stdout)
         self.assertEqual(out["stages"], ["clips", "join"])
         self.assertTrue(Path(out["output"]).exists())
+
+    def test_render_default_work_dir_is_unique_per_process(self):
+        """The default work dir name came only from the output path (e.g. "out_work"), no PID or
+        timestamp -- two concurrent render.py runs targeting the same output (a batch.py "project"
+        recipe processing files in parallel, or simply two runs by mistake) shared the same work
+        directory and clobbered each other's same-named intermediates (clip00.mp4, fit.mp4, ...)
+        mid-run. Verify the auto-derived work dir name includes this process's own PID."""
+        proj = OUT / "project_workdir.json"
+        proj.write_text(json.dumps({"output": "render_workdir_check.mp4", "clips": [{"src": "source.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        out = json.loads(script("render.py", proj, "--fast", "--stop-after", "clips", "--keep", "--json").stdout)
+        self.assertEqual(out["stages"], ["clips"])
+        work_dirs = [p for p in OUT.glob("render_workdir_check_work*") if p.is_dir()]
+        self.assertEqual(len(work_dirs), 1)
+        self.assertRegex(work_dirs[0].name, r"^render_workdir_check_work_\d+$",
+                          "the default work dir name must carry a PID suffix, not just the bare output stem")
 
     def test_render_single_clip_fit_height_is_not_silently_dropped(self):
         """The single-clip fit path only ever inherited width/fps from project.frame, and the
@@ -2316,6 +2331,45 @@ class FFmpegSkillTests(unittest.TestCase):
         data = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
         self.assertEqual(data["processed"], 1)
         self.assertClose(probe(data["results"][0]["output"])["duration"], 3.0, 0.3)
+
+    def test_batch_project_recipe_cache_invalidates_on_project_json_content_change(self):
+        """A "project" recipe is just {"project": "<path>", "clip_key": N} -- the real settings
+        (export preset, captions, everything) live in the file at that path. The cache key used
+        to hash only this outer recipe dict, so editing project.json's content (export preset
+        swapped from "copy" to "x", a real re-encode) without touching batch.json itself left the
+        key unchanged, and the stale cached output was served for the new settings with no error
+        or warning. Verify a content-only change to project.json invalidates the cache."""
+        folder = OUT / "batch_project_cache"
+        folder.mkdir(exist_ok=True)
+        (folder / "clip.mp4").write_bytes(Path(self.src).read_bytes())
+        proj = folder / "p.json"
+        proj.write_text(json.dumps({"clips": [{}], "export": {"preset": "copy"}}))
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "clip.mp4", "output_dir": "out", "project": "p.json"}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertFalse(data["results"][0].get("cached"))
+        proj.write_text(json.dumps({"clips": [{}], "export": {"preset": "x"}}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertFalse(data["results"][0].get("cached"), "a content-only project.json change must not be served from a stale cache")
+
+    def test_batch_cache_write_is_atomic_no_leftover_temp_file(self):
+        """The cache file used to be written with a plain write_text(), which is not atomic -- a
+        process killed mid-write leaves a truncated file that the next run's json.loads() treats
+        as corrupt and silently discards (every prior cache entry lost, not just the interrupted
+        one). Now written via a sibling temp file + os.replace(). Verify a normal run leaves the
+        cache file valid and no stray .tmp<pid> file behind."""
+        folder = OUT / "batch_cache_atomic"
+        folder.mkdir(exist_ok=True)
+        (folder / "clip.mp4").write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "clip.mp4", "output_dir": "out", "steps": [["export.py", "{in}", "--preset", "copy", "-o", "{out}"]]}))
+        script("batch.py", folder, "--recipe", recipe, "--fast")
+        outdir = folder / "out"
+        cache_path = outdir / ".ffskill_cache.json"
+        self.assertTrue(cache_path.exists())
+        json.loads(cache_path.read_text(encoding="utf-8"))  # must not be truncated/corrupt
+        leftover = list(outdir.glob(".ffskill_cache.json.tmp*"))
+        self.assertEqual(leftover, [], f"temp cache file(s) left behind: {leftover}")
 
     def test_batch_refuses_a_recipe_step_naming_a_script_outside_scripts_dir(self):
         """run_step() built its command as `HERE / argv[0]`, where argv[0] came straight from an

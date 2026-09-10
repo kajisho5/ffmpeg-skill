@@ -130,7 +130,14 @@ def main() -> int:
     if not clips:
         die("project.clips is empty")
     output = rel(proj.get("output") or "final.mp4")
-    work = Path(args.work) if args.work else Path(str(Path(output).with_suffix("")) + "_work")
+    # The default work dir name comes only from the output path, with no PID or timestamp --
+    # two concurrent render.py runs targeting the same output (a batch.py "project" recipe
+    # processing several files in parallel, or simply running render.py twice by mistake) shared
+    # the same work directory and clobbered each other's same-named intermediates (clip00.mp4,
+    # fit.mp4, ...) mid-run. An explicit --work is left as given (the caller asked for that exact,
+    # shared path, e.g. to inspect intermediates across runs); only the auto-derived default is
+    # made unique per process, since it's the one that's also auto-deleted at the end.
+    work = Path(args.work) if args.work else Path(f"{Path(output).with_suffix('')}_work_{os.getpid()}")
     work.mkdir(parents=True, exist_ok=True)
     frame = proj.get("frame") or {}
     trans = proj.get("transition") or {}
@@ -363,7 +370,12 @@ def main() -> int:
             info(f"check: OK for {ck['platform']}")
         stages_done.append("check")
 
-    if not args.keep and not args.work and not STATE["dry_run"]:
+    if not args.keep and not args.work:
+        # Also clean up on --dry-run: a dry run still creates this directory (and some steps,
+        # e.g. caption.py's .ass sidecar, write into it even under --dry-run), and now that the
+        # default name carries this process's PID, nothing else will ever reuse -- and so
+        # implicitly clean up -- a leftover dry-run directory the way a same-named real run used
+        # to before the PID suffix was added.
         import shutil
         shutil.rmtree(work, ignore_errors=True)
     info(f"rendered {output} via {' → '.join(stages_done)}")
