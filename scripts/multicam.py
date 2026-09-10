@@ -188,13 +188,17 @@ def main() -> int:
     parts.append("".join(labels) + f"concat=n={len(filled)}:v=1:a=0[vout]")
     a = args.audio
     a_start = -offsets[a] if offsets[a] < 0 else 0.0
-    afx = []
+    # a_start is a trim point in the source's own, pre-drift-correction time axis, so it must be
+    # applied before asetrate/aresample rescale that axis -- otherwise the trim lands at the wrong
+    # point once the stream's timebase has already been stretched/compressed by the drift ratio
+    # (mirrors sync.py, which seeks with -ss, an input-level operation, before its drift_af filters).
+    afx = [f"atrim=start={a_start:.4f}", "asetpts=PTS-STARTPTS"]
     if abs(ratios[a] - 1.0) > 1e-7:
         sr = metas[a]["audio"].get("sample_rate") or 48000
         afx += [f"asetrate={sr * ratios[a]:.6f}", f"aresample={sr}"]
     if offsets[a] > 0:
         afx.append(f"adelay={int(round(offsets[a] * 1000))}:all=1")
-    afx += [f"atrim=start={a_start:.4f}", "asetpts=PTS-STARTPTS", f"atrim=0:{ref_dur:.3f}", "aformat=sample_rates=48000:channel_layouts=stereo"]
+    afx += [f"atrim=0:{ref_dur:.3f}", "aformat=sample_rates=48000:channel_layouts=stereo"]
     parts.append(f"[{a}:a]{','.join(afx)}[aout]")
 
     output = args.output or default_output(args.inputs[0], "multicam", "mp4")

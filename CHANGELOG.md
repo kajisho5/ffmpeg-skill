@@ -6,7 +6,7 @@
 
 (nothing yet)
 
-## 0.16.6 — fix the MCP server crashing on a non-object JSON-RPC line
+## 0.16.9 — fix the MCP server crashing on a non-object JSON-RPC line
 
 `mcp/server.py`'s stdio loop parsed each line with `json.loads()`, which
 accepts any valid JSON value, not just an object -- a bare `42`, `null`,
@@ -18,6 +18,28 @@ propagated out of the stdin loop and killed the entire stdio server
 process -- not just that one malformed line, but every other in-flight
 and future tool call in the session along with it. Fixed by skipping any
 parsed JSON value that isn't a dict before the `"id" not in req` check.
+
+## 0.16.7 — fix a silently-dropped render.py fit height and a multicam.py drift-trim ordering bug
+
+- `render.py`'s single-clip fit path only ever inherited `width`/`fps` from
+  `project.frame` (never `height`), and the flag-forwarding list that turns
+  `project.fit`'s own keys into `fit.py` argv had no entry for `height` at
+  all. A `project.json` specifying `"fit": {"height": N}` alone built an
+  empty `fit.py` argv and crashed with "nothing to do"; combined with
+  another `fit` key (e.g. `duration`), `height` silently never reached
+  `fit.py` and the output's height was left unchanged with no error. Fixed
+  by adding the missing `frame.get("height")` inheritance and the
+  `("height", "--height")` forwarding entry, matching the multi-clip `join`
+  path, which already handled `height` correctly.
+- `multicam.py --fix-drift` computed its audio trim start (`a_start`) in
+  the source's own pre-correction time axis, but applied it via `atrim=
+  start=` *after* the `asetrate`/`aresample` drift-correction filters had
+  already rescaled that axis in the same filter chain -- so the trim
+  landed on the wrong point once the timeline had been stretched or
+  compressed by the drift ratio. `sync.py` already avoids this by seeking
+  with `-ss` (an input-level operation) before its own drift filters;
+  `multicam.py` now applies `atrim=start=`/`asetpts` before `asetrate`/
+  `aresample` in the filter chain to match.
 
 ## 0.16.5 — fix silence.py breaking on audio-only WAV, unvalidated --fps, and a LUT-strength inversion in color.py
 
