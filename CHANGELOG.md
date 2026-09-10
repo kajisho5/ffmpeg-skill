@@ -6,6 +6,27 @@
 
 (nothing yet)
 
+## 0.16.2 — fix caption.py's --font not sanitised for ASS Style/force_style
+
+An attack-surface audit of every call site that embeds user-controlled text
+into a filter/subtitle construct found that `caption.py` was the one script
+that never routed `--font` through a sanitiser before using it, unlike
+`overlay.py`/`graphics.py`/`grid.py`/`look.py`, which all call
+`escape_drawtext()` first. `caption.py` doesn't build a `drawtext=` filter,
+though -- it embeds `--font` into two different ASS constructs
+`escape_drawtext()` was never designed for: the comma-delimited
+`[V4+ Styles]` `Style:` line, and the comma-separated `Key=Value` list
+inside a `-vf subtitles=...:force_style='...'` option. A font name
+containing a comma shifted every field after it in the `Style:` line
+(size, colours, bold flag, alignment, margins); a comma or colon inside
+`force_style`'s `FontName=` broke the option-list/`-vf` parsing the same
+way.
+
+Fixed with a new `ass_font_name()` helper in `caption.py` that drops
+`, : \ '` and control characters from the font name outright -- the same
+"no real font name needs this character, so don't chase a per-context
+escape" call this codebase already made for `escape_drawtext()`'s `'`/`%`.
+
 ## 0.16.1 — fix two more escape_drawtext() gaps, and grid.py --pad's audio
 
 Adversarial testing (deliberately hostile filenames -- very long, Unicode,

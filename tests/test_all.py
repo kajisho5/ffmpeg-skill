@@ -1689,6 +1689,28 @@ class FFmpegSkillTests(unittest.TestCase):
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-ss", "1", "-vframes", "1", frame)
         self.assertTrue(frame.exists())
 
+    def test_caption_font_with_comma_and_colon_does_not_corrupt_ass_style(self):
+        """caption.py's --font flows into two ASS constructs escape_drawtext() was never meant to
+        cover: the comma-delimited [V4+ Styles] Style: line (write_ass()), and the comma-separated
+        Key=Value list inside a -vf subtitles=...:force_style='...' option. Neither is a drawtext
+        filter, so unlike overlay.py/graphics.py this call site used to embed args.font completely
+        raw. A font name containing a comma shifts every field after it (size, colours, bold flag,
+        alignment, margins) in the Style: line, and a comma or colon inside force_style's FontName=
+        breaks the option-list/-vf parsing the same way. Verify a hostile font name survives as an
+        inert, field-count-preserving value in both the --write-ass path and the plain SRT-burn
+        (force_style) path."""
+        hostile_font = "Arial,Bold:evil"
+        ass_out = OUT / "font_inject.ass"
+        script("caption.py", self.src, "--text", self.cues, "--font", hostile_font, "--animate", "fade", "--write-ass", ass_out, "--dry-run")
+        style_line = next(l for l in ass_out.read_text(encoding="utf-8").splitlines() if l.startswith("Style: Default,"))
+        self.assertNotIn(",Arial,Bold:evil,", style_line, "raw hostile font must not appear -- it would shift every later field")
+        fields = style_line.split(",")
+        self.assertEqual(len(fields), 23, "Style: line must keep its full field count (Format: line lists 23 columns)")
+
+        out = OUT / "font_inject_caption.mp4"
+        proc = sh(sys.executable, SCRIPTS / "caption.py", self.src, "--text", self.cues, "--font", hostile_font, "-o", out, "--dry-run")
+        self.assertNotIn("Arial,Bold:evil", proc.stderr, "hostile font must not reach force_style unsanitised")
+
     def test_drawtext_semicolon_and_quote_render_as_inert_literal_text(self):
         """escape_drawtext() (shared by overlay.py --text, graphics.py/overlay.py's --font
         fallback, and grid.py's filename-derived labels) had two more gaps beyond the comma/colon/

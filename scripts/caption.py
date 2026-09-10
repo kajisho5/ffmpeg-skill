@@ -247,7 +247,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {play_w}", f"PlayResY: {play_h}", "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Default,{args.font},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin},{margin},{margin},1",
+        f"Style: Default,{ass_font_name(args.font)},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin},{margin},{margin},1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     lines = []
@@ -300,6 +300,20 @@ def ass_color(hex_rgb: str, alpha: int = 0) -> str:
         die(f"colour must be RRGGBB hex, got '{hex_rgb}'")
     r, g, b = h[0:2], h[2:4], h[4:6]
     return f"&H{alpha:02X}{b}{g}{r}".upper()
+
+
+def ass_font_name(name: str) -> str:
+    """Sanitise a font name for embedding in an ASS [V4+ Styles] Style line (comma-delimited
+    fields, no quoting mechanism) and in a `force_style='...'` option list (comma-separated
+    Key=Value pairs, colon-separated from the rest of the -vf filter). No real font name uses
+    `, : \\ '`, so rather than chase a per-context escape (a Style line and a force_style list
+    have different delimiter rules), those characters -- and control characters, which are never
+    meaningful in a font name either -- are dropped outright, the same "no escape proven safe
+    everywhere it's used" call this codebase already makes for escape_drawtext()'s `'`/`%`."""
+    name = re.sub(r"[\x00-\x1f\x7f]", "", name)
+    for ch in ",:\\'":
+        name = name.replace(ch, "")
+    return name
 
 
 def main() -> int:
@@ -471,7 +485,7 @@ def main() -> int:
         if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and args.text)):
             die(f"SRT file not found: {srt_path}")
         style = [
-            f"FontName={args.font}",
+            f"FontName={ass_font_name(args.font)}",
             f"FontSize={args.size}",
             f"PrimaryColour={ass_color(args.color)}",
             f"OutlineColour={ass_color(args.outline_color)}",
