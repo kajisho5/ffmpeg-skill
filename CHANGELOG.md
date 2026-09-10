@@ -6,6 +6,18 @@
 
 (nothing yet)
 
+## 0.16.12 — verify the fully-automated release pipeline end to end
+
+No functional code changes. `.github/workflows/release.yml` was rewritten to
+auto-create the git tag, GitHub Release, and npm publish on every push to
+`main` that bumps `package.json`'s version, but the first real run of it
+(for 0.16.11) never got an npm publish to succeed: the `NPM_TOKEN` secret
+wasn't valid yet, and once the tag existed the workflow's own guard
+prevented a clean re-attempt under the same version. This bump exists
+solely to give the pipeline a fresh, untagged version to run against so
+the whole chain — tag, GitHub Release, and npm publish — can be verified
+working in one pass.
+
 ## 0.16.11 — fix a contract/reality mismatch on AAC, three batch.py/render.py reliability bugs, and a non-atomic installer
 
 Continuing the same external audit report's architecture/data-integrity/reliability findings:
