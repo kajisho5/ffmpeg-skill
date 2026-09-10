@@ -149,6 +149,7 @@ If a request needs an FFmpeg feature none of the 28 scripts expose, say so and n
 | "add some black at the start before the title card" | `pad.py clip.mp4 --start 1.5` |
 | "speed up here, slam into slow-mo there, then speed back up" (known segments) | `speedramp.py action.mp4 --segment 0-3:1.0 --segment 3-4:0.25 --segment 4-8:2.0` |
 | "loop this background clip to fill 30 seconds" | `loop.py bg_loop.mp4 --duration 30` |
+| "put these videos in a 4x2 grid with the filename on each" | `grid.py t1.mp4 t2.mp4 t3.mp4 t4.mp4 t5.mp4 t6.mp4 t7.mp4 t8.mp4 --cols 4 --rows 2` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |
 | "add subtitles but keep them toggleable / editable", "mux in an SRT, don't burn it" | `caption.py input.mp4 --srt subs.srt --mode mux` |

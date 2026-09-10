@@ -6,6 +6,25 @@
 
 (nothing yet)
 
+## 0.16.0 — add grid.py
+
+New tool: composite `--cols`x`--rows` clips into one grid (e.g. a 4x2 wall
+of takes or angles), each cell letterboxed (not stretched) to a common
+`--cell-width`/`--cell-height` so mismatched aspect ratios and resolutions
+line up cleanly. `--label auto` (default) burns each clip's own filename,
+extension stripped, into its cell's bottom-right corner; `--label none`
+turns that off. No audio unless `--audio-from` picks one input's track --
+mixing every clip's audio together is rarely what a comparison grid needs,
+so this tool never does it silently. Runs only as long as the shortest
+clip by default; `--pad` instead holds each shorter clip's last frame (with
+silence) out to the longest.
+
+The per-cell label is filename-derived text reaching a `drawtext=text=...`
+option, the same injection class fixed in 0.15.3 -- wrapped with the
+existing `escape_drawtext()` helper from the start, with a regression test
+that builds a clip literally named to look like a filter-graph breakout
+payload and confirms it renders as inert literal text (not a new filter).
+
 ## 0.15.3 — fix a real filter-graph injection via --font fallback
 
 Found by the same adversarial pass that produced 0.15.2, this time auditing

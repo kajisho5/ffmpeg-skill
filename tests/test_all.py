@@ -505,6 +505,46 @@ class FFmpegSkillTests(unittest.TestCase):
     def test_loop_duration_shorter_than_source_refused(self):
         script("loop.py", self.src, "--duration", "3", expect_fail=True)
 
+    # ---------------------------------------------------------------- grid
+    def test_grid_composites_cols_rows_with_labels(self):
+        out = OUT / "grid1.mp4"
+        script("grid.py", self.src, self.rot, self.vfr, self.hdr, "--cols", "2", "--rows", "2",
+               "--cell-width", "320", "--cell-height", "180", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+
+    def test_grid_wrong_input_count_refused(self):
+        script("grid.py", self.src, self.rot, "--cols", "2", "--rows", "2", expect_fail=True)
+
+    def test_grid_label_none_skips_drawtext(self):
+        proc = script("grid.py", self.src, self.rot, "--cols", "2", "--rows", "1", "--label", "none", "-o", OUT / "grid2.mp4")
+        self.assertNotIn("drawtext", proc.stderr)
+
+    def test_grid_audio_from_selects_track(self):
+        out = OUT / "grid3.mp4"
+        script("grid.py", self.src, self.rot, "--cols", "2", "--rows", "1", "--audio-from", "1", "-o", out)
+        m = probe(str(out))
+        self.assertTrue(m.get("audio"))
+
+    def test_grid_pad_extends_shorter_clip_to_the_longest(self):
+        short = OUT / "grid_short.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-t", "2", "-c", "copy", short)
+        out = OUT / "grid4.mp4"
+        script("grid.py", short, self.src, "--cols", "2", "--rows", "1", "--pad", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], probe(str(self.src))["duration"], 0.5)
+
+    def test_grid_filename_derived_label_refuses_filter_graph_injection(self):
+        """The per-cell label is the clip's own filename (extension stripped), which the caller
+        does not choose through a flag -- but on a filesystem where filenames can contain a comma
+        or colon, it still reaches a drawtext=text=... option the same way --font's fallback did
+        in the #108 finding. Confirm the escaping catches it: a filename shaped like a filter-graph
+        breakout payload must render literally, not start a sibling filter."""
+        evil = OUT / "evil,drawtext=text=OWNED.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-t", "2", "-c", "copy", evil)
+        proc = script("grid.py", evil, self.rot, "--cols", "2", "--rows", "1", "-o", OUT / "grid5.mp4")
+        self.assertIn("\\,drawtext=text=OWNED", proc.stderr, "comma in the filename-derived label must be escaped")
+
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
         out = OUT / "insert1.mp4"

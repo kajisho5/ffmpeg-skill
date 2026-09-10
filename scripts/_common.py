@@ -206,6 +206,10 @@ def _cleanup_partial_output(cmd: Sequence[str]) -> None:
     success path, so a failed run() call never routed through it. Remove whatever ffmpeg managed
     to write so a caller scanning the output directory after a failure never mistakes a partial
     artifact for a real (if unverified) one."""
+    # run() also executes ffprobe, whose last argument is an INPUT. Never
+    # interpret a read-only tool's failure as permission to remove that file.
+    if not _is_ffmpeg(cmd):
+        return
     output = cmd[-1]
     if output in ("-", "pipe:0", "pipe:1") or output.startswith("pipe:") or output.startswith("-"):
         return

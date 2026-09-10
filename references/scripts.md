@@ -283,6 +283,22 @@ loop point (no crossfade at the seam) -- a clip that doesn't already loop
 cleanly will show a visible cut/pop at each repeat, which is a property of
 the source material this tool cannot fix.
 
+### grid.py — composite clips into a grid
+```
+grid.py CLIP1 CLIP2 [...] --cols N --rows N [--cell-width W] [--cell-height H]
+                          [--label auto|none] [--font NAME] [--audio-from I]
+                          [--pad] [-o OUT]
+```
+Letterboxes every clip into a common `--cell-width`x`--cell-height` cell (no
+stretching) and tiles them `--cols`x`--rows`, filled left-to-right,
+top-to-bottom -- the input count must equal cols*rows exactly. `--label auto`
+(default) burns each clip's filename (extension stripped) into its cell's
+bottom-right corner; `--label none` skips it. No audio unless `--audio-from`
+picks one input's track by index -- mixing every clip's audio together is
+rarely useful for a comparison grid, so this tool never does that silently.
+Runs only as long as the shortest clip by default; `--pad` instead holds
+each shorter clip's last frame (with silence) out to the longest.
+
 ### silence.py — remove dead air / jump cuts
 ```
 silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.15] [--min-keep 0.2] [--list] [--edl keep.txt] [-o OUT]

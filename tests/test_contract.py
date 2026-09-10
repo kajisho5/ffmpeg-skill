@@ -44,6 +44,24 @@ def tool(name, *args, **kw):
 TONE = "0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.2)+0.3*sin(2*PI*660*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"
 
 
+@unittest.skipUnless(shutil.which("ffprobe"), "ffprobe not on PATH")
+class ProbeInputPreservationTests(unittest.TestCase):
+    def test_failed_probe_preserves_input(self):
+        # Use real ffprobe and independent fixtures: every failure mode must leave
+        # even an unreadable original byte-for-byte intact.
+        for flags in ([], ["--dry-run"], ["--progress"], ["--dry-run", "--progress"]):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "corrupt.mp4"
+                original = b"not a valid MP4; preserve this original\n"
+                source.write_bytes(original)
+                proc = tool("probe", source, "--json", *flags, check=False)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("ffprobe failed", proc.stderr)
+                self.assertEqual(json.loads(proc.stdout)["status"], "failed")
+                self.assertTrue(source.exists(), "failed inspection deleted the input")
+                self.assertEqual(source.read_bytes(), original)
+
+
 class ContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -485,7 +503,7 @@ class ContractTests(unittest.TestCase):
 
     def test_visual_verification_metadata(self):
         picture = {"fit", "crop", "sphere", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy",
-                   "deinterlace", "denoise", "redact", "waveform", "straighten", "freeze", "pad", "speedramp", "loop"}
+                   "deinterlace", "denoise", "redact", "waveform", "straighten", "freeze", "pad", "speedramp", "loop", "grid"}
         # join and waveform are the picture tools that also accept audio-only inputs (audio
         # concat; audio-track visualization); look applies to their video output only, which
         # SKILL.md states next to "Look: not needed"
