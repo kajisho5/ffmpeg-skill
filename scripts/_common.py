@@ -655,12 +655,28 @@ def escape_drawtext(text: str) -> str:
     instead of being parsed as options. A quote is therefore dropped outright rather
     than escaped -- losing one apostrophe from a label is a fine trade for "the
     filter graph parses the way the code intends, on every call shape this codebase
-    uses it in"."""
+    uses it in".
+
+    `%` has the same problem the quote character did: `\%` is not a real escape as
+    far as drawtext's own text-expansion scanner (on by default, `expansion=normal`,
+    for `%{pts}`/`%{localtime}`/etc.) is concerned -- found by the fuzz test in
+    0.16.1, a bare backslash-escaped `%` always logs "Stray % near ..." (confirmed
+    with the minimal case `text='100\%done'`), which is merely noisy on one ffmpeg
+    build (the warning is printed, the file still gets written) but a hard filtering
+    failure that writes no output at all on another. Every caller of this function
+    only ever wants a literal label, never `%{...}` expansion, so `%` is dropped
+    outright rather than chasing a per-build-safe escape (`expansion=none` on the
+    filter would also fix it, but needs touching every drawtext= call site instead
+    of the one shared helper). Control characters (newline, tab, ...) are dropped
+    for the same reason: none are meaningful in a one-line burnt-in label, and
+    unlike the graph-special characters above, ffmpeg's own text-expansion scanner
+    -- not just the graph parser -- is involved in whether they're actually safe."""
+    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
     return (
         text.replace("'", "")
+        .replace("%", "")
         .replace("\\", "\\\\")
         .replace(":", "\\:")
-        .replace("%", "\\%")
         .replace(",", "\\,")
         .replace("[", "\\[")
         .replace("]", "\\]")
