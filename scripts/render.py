@@ -36,6 +36,12 @@ graphics → overlays → audio → loudness → export → check. Missing stage
 skipped. "brand" points caption/graphics/overlay at a brand.json (fonts,
 colours, logo, safe margin); {"logo": true} in overlays places the brand logo.
 
+"check" mirrors check.py's own exit code: a delivery-spec FAIL (or check.py
+itself failing to run) exits 1, same as running check.py directly would --
+the render is not silently reported as successful just because every stage
+up to it completed. The output file is still written and `--json`'s
+`check` field still carries the full row-by-row result either way.
+
 Examples:
   python3 render.py --init project.json          # write a commented starter project
   python3 render.py project.json                 # render
@@ -338,14 +344,19 @@ def main() -> int:
     # ---- check
     ck = proj.get("check")
     check_result = None
+    exit_code = 0
     if ck and ck.get("platform") and not STATE["dry_run"]:
         proc = subprocess.run([sys.executable, str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             check_result = json.loads(proc.stdout)
         except ValueError:
             check_result = {"error": proc.stderr.strip()[-300:]}
-        if check_result.get("failed"):
+        if check_result.get("error"):
+            info(f"check: could not run check.py — {check_result['error']}")
+            exit_code = 1
+        elif check_result.get("failed"):
             info(f"check: {check_result['failed']} FAIL — " + "; ".join(f"{r['check']}={r['value']} ({r['fix']})" for r in check_result["checks"] if r["status"] == "FAIL"))
+            exit_code = 1
         else:
             info(f"check: OK for {ck['platform']}")
         stages_done.append("check")
@@ -355,7 +366,7 @@ def main() -> int:
         shutil.rmtree(work, ignore_errors=True)
     info(f"rendered {output} via {' → '.join(stages_done)}")
     emit(output, stages=stages_done, check=check_result)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

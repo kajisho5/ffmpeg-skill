@@ -21,18 +21,25 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`0.9.0`) | any release |
+| `skill.version` | the npm / package.json version (`0.16.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
-for provenance.
+for provenance. Consumers should also pin `ffmpeg-skill` itself by npm version or git
+tag, not by tracking `main` — see README, "Development", "Releasing".
+
+The prose tool count in this file, README and `package.json`'s description is not
+generated (it reads naturally in a sentence), so `tests/test_contract.py`'s
+`test_docs_tool_count_matches_the_real_tool_list` checks all three against the real
+count from `scripts/` on every CI run instead — a stale count fails a test rather than
+drifting silently.
 
 ## Skill
 
 ```json
 {
   "contract_version": "1.0",
-  "skill": {"id": "ffmpeg-skill", "version": "0.9.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "0.16.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0"},
@@ -64,8 +71,10 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `produces_artifact` | writes a file (media, PNG, HTML, EDL) |
 | `verification` | `{required, tools}`: which tools to run on the output afterwards |
 | `requires_visual_verification` | the picture changed; run `ffmpeg-skill/look` and inspect the PNG |
+| `reencodes_video`, `reencodes_audio` | `"always"` / `"never"` / `"conditional"`, meaning *when that stream is present in the input* — not whether the tool touches the file at all. `"conditional"` tools (`cut`, `export`, `render`, `batch`, `verify`, `caption`, `color`) carry a `reencode_note` explaining what it depends on — for `caption`, `--mode burn` (default) always re-encodes both streams, `--mode mux` copies both untouched; for `color`, `--strip-dovi` and `--retag` are a stream copy of both (retag only re-encodes if the copy attempt fails), while `--to-sdr` / `--lut` / `--correct` always re-encode both. Several visual tools (`fit`, `overlay`, `graphics`, `join`, `multicam`, `silence`) are `"always"` on audio too: this codebase never mixes `-c:v` re-encode with `-c:a copy` in one call, so a caller cannot assume the original audio codec survives just because only the picture changed |
 | `audio_only` | accepts an audio-only input (WAV, MP3, M4A, FLAC, OGG, Opus) |
 | `video_required` | refuses an input without a video stream ("input has no video stream") |
+| | `join` has `audio_only: true` and `video_required: false` since 0.9.1: audio-only inputs are joined as audio (no `look` needed then); mixing audio and video inputs is refused |
 | `deterministic_inputs`, `idempotency_hint` | see Repeatability |
 | `mcp` | the MCP tool name and its positional arguments |
 
@@ -118,6 +127,55 @@ gives you:
 | `cached` | batch (content-hash cache, re-runs skip unchanged inputs) |
 | `environment_dependent` | verify |
 
+## `provides`
+
+`provides` lists these 40 tools by a cross-repository Capability id, for
+`kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
+(`docs/SPEC.md` there), matching the ids already assigned to this Skill in
+that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's
+21 raw tools ... are Capabilities in their own right, independent of the
+higher-level Skills that delegate to them"): `[{"id": "ffmpeg-skill.<tool>",
+"lifecycle": "EXPERIMENTAL", "tool_id": "ffmpeg-skill/<tool>"}, ...]`, one
+entry per tool, sorted by id. The Capability id uses a dot
+(`ffmpeg-skill.cut`) - the `<domain>.<verb>` shape every other Skill's
+Capability ids use elsewhere in that project (`video.trim`, `audio.gain`,
+...), with `ffmpeg-skill` as the domain - while `tool_id` carries this
+contract's own slash-shaped `id` (`ffmpeg-skill/cut`) unchanged. It is
+purely additive: derived from `public_tools()`, saying nothing `tools[]`
+doesn't already say, only indexed by Capability id instead of tool name.
+
+## `capability_map`
+
+`provides` re-indexes each tool by an id shaped like the tool name
+(`ffmpeg-skill.cut`); it doesn't tell a caller that "I need to trim a
+video" resolves to `cut`. `capability_map` is the small, hand-authored
+table that closes that gap: `[{"capability": "<domain>.<verb>", "tool_id":
+"ffmpeg-skill/<tool>", "params": {...}}, ...]`. A planner that only knows
+an abstract goal (`video.trim`, `audio.loudness`, `subtitle.burn`,
+`media.stream.inspect`, `media.frames.extract`, `media.proxy`) looks it up here to find
+the tool, then builds and runs that tool's own call from its
+`input_schema` exactly as it would have if it already knew the tool name -
+`capability_map` never executes anything itself, and this skill never
+picks a capability on the caller's behalf.
+
+Some entries also fix one or more `params` where the capability names a
+*specific* behaviour narrower than the whole tool: `video.reframe` maps
+to `fit` with `params: {"fit": "crop"}`, because `fit.py` also does
+duration-fit and letterbox padding, and only the crop mode is a
+"reframe". A caller resolving `video.reframe` should treat those params
+as fixed inputs to that tool's own schema, not as optional defaults.
+
+This list is deliberately short and will stay short: a capability is only
+added when resolving it is a mechanical, no-judgment lookup. There is no
+`video.highlight` entry, for instance, because `scenes.py --highlights`
+ranks candidates by a measured proxy (audio energy or duration), never by
+understood content - offering it as a blindly-delegable capability would
+misrepresent what it does (see SKILL.md, "What this skill does and does
+not decide"). `media.proxy` (a low-bitrate, fast-decode proxy for
+downstream analysis/preview, distinct from `export.py`'s delivery
+presets) resolves to `proxy` - itself a mechanical resize + re-encode
+with no opinion on which asset should be proxied or what for.
+
 ## Capabilities
 
 Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
@@ -128,7 +186,50 @@ Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
 to omit detection. Nothing from the environment other than those lists and the
 ffmpeg/ffprobe/python versions is printed; no environment variables, no paths.
 
-`ffmpeg-skill doctor` exits non-zero when a required capability is missing.
+`doctor` has three states per capability. `available` and `missing` come from a listing
+that was read; `unknown` means the listing that would prove the capability could not be
+read (`ffmpeg -filters` in a layout the parser does not recognise, or ffmpeg exiting
+non-zero), and it is never folded into `missing`, so an installed filter is not reported
+absent, nor into `available`, so a failed detection is not a pass. `detection` gives the
+status (`parsed`, `unparsed`, `failed`, `missing`), row count and detail of each listing;
+`errors` lists the unreadable ones. The filter parser recognises the FFmpeg 6/7 layout
+(three flag characters, `..C acompressor A->A`) and the FFmpeg 8 layout (two, `T.
+acompressor A->A`) by the io-spec token, so the flag width does not matter; fixtures for
+both live in `tests/fixtures/`.
+
+`ffmpeg-skill doctor` exits 0 when every required capability is available, 1 when one is
+missing, 2 when none is missing but a required one is unknown. `ok` is true only for 0.
+The keys of 0.9.0 (`available`, `missing`, `missing_optional`, `ok`) are unchanged.
+
+`doctor`'s `tools` field folds that same per-capability `state` into a per-tool answer:
+`{"<tool>": {"usable": "yes"|"no"|"unknown", "missing": [...], "fix": "...", "unknown": [...]}}`.
+`missing`/`unknown` list only that tool's own required capabilities that are in that state
+(`missing` is absent when there is none, same for `unknown`); `fix` is a one-line, plain-language
+remedy for each missing capability, joined with "; " when there is more than one. This exists so
+a caller does not have to cross-reference `available`/`missing` against each tool's own required
+capabilities by hand to answer "can I run `caption.py` on this machine right now" -- `doctor`
+passing overall does not mean every tool is usable (a plain Homebrew `ffmpeg` on macOS is `ok`
+for tools that don't need `subtitles`/`drawtext`/`zscale`, but `caption.usable` is `"no"`).
+
+`doctor`'s `gpu_encoders` field reports GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`,
+`vaapi`, `amf`) present in this ffmpeg *build*, read from `-encoders` alone — `{"status":
+"parsed"|"unparsed"|"failed"|"missing", "present": [...]}`. It proves the build shipped the
+capability, not that the GPU/driver on this machine will accept a job (that needs a real
+encode, which this introspection never runs). No tool declares or requires a GPU encoder, so
+`gpu_encoders` never affects `ok` or any tool's `usable` — it exists purely so a caller can ask
+the same honest yes/no/unknown question about GPU support that filter/encoder detection already
+answers for everything else, without a tool here needing to use one.
+
+`doctor`'s `fonts` field reports whether the default drawtext font (`caption.py`'s
+`--animate`/`--karaoke`, `graphics.py`'s templates — `BRAND_DEFAULTS["font"]`, `"DejaVu Sans"`)
+is actually installed — `{"default_font": "...", "status": "available"|"missing"|"unknown",
+"detail": "..."}`. drawtext's `font=` is a fontconfig name lookup, and fontconfig silently
+substitutes the closest match for *any* name, known or not — a missing font never fails the
+encode, so drawtext's own exit code cannot detect it. `fc-match` is queried instead: `available`
+when it resolves the name to itself, `missing` when it substitutes a different family, `unknown`
+when `fc-match` itself is not on PATH or fails. Like `gpu_encoders`, this is purely informational
+and never affects `ok` or any tool's `usable` — a substituted font is not a broken tool, just a
+typeface the caller didn't ask for.
 
 ## Invocation
 
@@ -150,12 +251,30 @@ Success (`exit 0`): one document matching `output_schema`, always with
 `status: "completed"`, `output`, `dry_run`, `commands`, and `probe` of the output when a
 file was written. `probe` prints its measurement document directly.
 
+Success is decided by `verify_output` in `_common.py`, not by the ffmpeg exit code alone:
+the file must exist, be non-empty and give ffprobe at least one stream. A tool that ran
+ffmpeg successfully but has no usable artifact fails with `kind: output` (a 0-byte file is
+removed so a later step cannot mistake it for a result).
+
 Failure (non-zero exit; 127 when ffmpeg/ffprobe is missing): the message on stderr as
 before, and, when `--json` was given, on stdout:
 
 ```json
-{"status": "failed", "error": {"kind": "input | ffmpeg | missing_tool", "message": "..."}}
+{"status": "failed", "exit_code": 1,
+ "error": {"kind": "input | ffmpeg | output | missing_tool", "message": "...",
+           "code": "INPUT_INVALID | DEPENDENCY_MISSING | FFMPEG_EXECUTION_FAILED | OUTPUT_INVALID | INTERNAL_ERROR",
+           "retryable": false},
+ "commands": ["ffmpeg ..."]}
 ```
+
+`message` carries the script's own reason (missing input, ffprobe failure, the last
+stderr lines of ffmpeg, the verification that failed); `commands` lists what was planned
+or run so the caller can retry or report without re-deriving the command. `code` is a
+purely additive, statically-mapped relabelling of `kind` (never a new distinction `kind`
+doesn't already make) for a caller that wants a stable enum instead of matching `kind`
+strings. `retryable` is currently always `false`: none of the four kinds are distinguishable
+today from a deterministic failure that would fail identically on a blind retry, so nothing
+here claims otherwise until real exit-code/stderr sniffing exists to back that up.
 
 ## MCP relationship
 

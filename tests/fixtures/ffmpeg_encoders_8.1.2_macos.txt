@@ -1,0 +1,202 @@
+Encoders:
+ V..... = Video
+ A..... = Audio
+ S..... = Subtitle
+ .F.... = Frame-level multithreading
+ ..S... = Slice-level multithreading
+ ...X.. = Codec is experimental
+ ....B. = Supports draw_horiz_band
+ .....D = Supports direct rendering method 1
+ ------
+ V....D a64multi             Multicolor charset for Commodore 64 (codec a64_multi)
+ V....D a64multi5            Multicolor charset for Commodore 64, extended with 5th color (colram) (codec a64_multi5)
+ V....D alias_pix            Alias/Wavefront PIX image
+ V....D amv                  AMV Video
+ V....D apng                 APNG (Animated Portable Network Graphics) image
+ V....D asv1                 ASUS V1
+ V....D asv2                 ASUS V2
+ V..... libsvtav1            SVT-AV1(Scalable Video Technology for AV1) encoder (codec av1)
+ V....D avrp                 Avid 1:1 10-bit RGB Packer
+ V..X.D avui                 Avid Meridien Uncompressed
+ VF...D bitpacked            Bitpacked
+ V....D bmp                  BMP (Windows and OS/2 bitmap)
+ VF...D cfhd                 GoPro CineForm HD
+ V....D cinepak              Cinepak
+ V....D cljr                 Cirrus Logic AccuPak
+ V.S..D vc2                  SMPTE VC-2 (codec dirac)
+ VFS..D dnxhd                VC3/DNxHD
+ V....D dpx                  DPX (Digital Picture Exchange) image
+ VFS..D dvvideo              DV (Digital Video)
+ VFS..D dxv                  Resolume DXV
+ VF...D exr                  OpenEXR image
+ V.S..D ffv1                 FFmpeg video codec #1
+ VF...D ffvhuff              Huffyuv FFmpeg variant
+ V....D fits                 Flexible Image Transport System
+ V....D flashsv              Flash Screen Video
+ V....D flashsv2             Flash Screen Video Version 2
+ V....D flv                  FLV / Sorenson Spark / Sorenson H.263 (Flash Video) (codec flv1)
+ V....D gif                  GIF (Graphics Interchange Format)
+ V....D h261                 H.261
+ V....D h263                 H.263 / H.263-1996
+ V.S..D h263p                H.263+ / H.263-1998 / H.263 version 2
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ V....D libx264rgb           libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 RGB (codec h264)
+ V....D h264_videotoolbox    VideoToolbox H.264 Encoder (codec h264)
+ VF...D hdr                  HDR (Radiance RGBE format) image
+ V....D libx265              libx265 H.265 / HEVC (codec hevc)
+ V....D hevc_videotoolbox    VideoToolbox H.265 Encoder (codec hevc)
+ VF...D huffyuv              Huffyuv / HuffYUV
+ VF...D jpeg2000             JPEG 2000
+ VF...D jpegls               JPEG-LS
+ VF...D ljpeg                Lossless JPEG
+ VFS..D magicyuv             MagicYUV video
+ VFS..D mjpeg                MJPEG (Motion JPEG)
+ V.S..D mpeg1video           MPEG-1 video
+ V.S..D mpeg2video           MPEG-2 video
+ V.S..D mpeg4                MPEG-4 part 2
+ V....D msmpeg4v2            MPEG-4 part 2 Microsoft variant version 2
+ V....D msmpeg4              MPEG-4 part 2 Microsoft variant version 3 (codec msmpeg4v3)
+ V....D msrle                Microsoft RLE
+ V..... msvideo1             Microsoft Video-1
+ V....D pam                  PAM (Portable AnyMap) image
+ V....D pbm                  PBM (Portable BitMap) image
+ V....D pcx                  PC Paintbrush PCX image
+ V....D pfm                  PFM (Portable FloatMap) image
+ V....D pgm                  PGM (Portable GrayMap) image
+ V....D pgmyuv               PGMYUV (Portable GrayMap YUV) image
+ V....D phm                  PHM (Portable HalfFloatMap) image
+ VF...D png                  PNG (Portable Network Graphics) image
+ V....D ppm                  PPM (Portable PixelMap) image
+ VF...D prores               Apple ProRes
+ VF...D prores_aw            Apple ProRes (codec prores)
+ VFS... prores_ks            Apple ProRes (iCodec Pro) (codec prores)
+ V....D prores_videotoolbox  VideoToolbox ProRes Encoder (codec prores)
+ VF...D qoi                  QOI (Quite OK Image format) image
+ V....D qtrle                QuickTime Animation (RLE) video
+ V....D r10k                 AJA Kona 10-bit RGB Codec
+ V....D r210                 Uncompressed RGB 10-bit
+ VF...D rawvideo             raw video
+ V....D roqvideo             id RoQ video (codec roq)
+ V....D rpza                 QuickTime video (RPZA)
+ V....D rv10                 RealVideo 1.0
+ V....D rv20                 RealVideo 2.0
+ V....D sgi                  SGI image
+ V....D smc                  QuickTime Graphics (SMC)
+ V....D snow                 Snow
+ V....D speedhq              NewTek SpeedHQ
+ V....D sunrast              Sun Rasterfile image
+ V....D svq1                 Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1
+ V....D targa                Truevision Targa image
+ VF...D tiff                 TIFF image
+ VF...D utvideo              Ut Video
+ VF...D v210                 Uncompressed 4:2:2 10-bit
+ V....D v308                 Uncompressed packed 4:4:4
+ V....D v408                 Uncompressed packed QT 4:4:4:4
+ V....D v410                 Uncompressed 4:4:4 10-bit
+ V.S..D vbn                  Vizrt Binary Image
+ V..... vnull                null video
+ V....D libvpx               libvpx VP8 (codec vp8)
+ V....D libvpx-vp9           libvpx VP9 (codec vp9)
+ VF...D wbmp                 WBMP (Wireless Application Protocol Bitmap) image
+ V....D wmv1                 Windows Media Video 7
+ V....D wmv2                 Windows Media Video 8
+ V..... wrapped_avframe      AVFrame to AVPacket passthrough
+ V....D xbm                  XBM (X BitMap) image
+ V....D xface                X-face image
+ V....D xwd                  XWD (X Window Dump) image
+ V....D y41p                 Uncompressed YUV 4:1:1 12-bit
+ V....D yuv4                 Uncompressed packed 4:2:0
+ VF...D zlib                 LCL (LossLess Codec Library) ZLIB
+ V....D zmbv                 Zip Motion Blocks Video
+ A....D aac                  AAC (Advanced Audio Coding)
+ A..... aac_at               aac (AudioToolbox) (codec aac)
+ A....D ac3                  ATSC A/52A (AC-3)
+ A....D ac3_fixed            ATSC A/52A (AC-3) (codec ac3)
+ A....D adpcm_adx            SEGA CRI ADX ADPCM
+ A....D adpcm_argo           ADPCM Argonaut Games
+ A....D g722                 G.722 ADPCM (codec adpcm_g722)
+ A....D g726                 G.726 ADPCM (codec adpcm_g726)
+ A....D g726le               G.726 little endian ADPCM ("right-justified") (codec adpcm_g726le)
+ A....D adpcm_ima_alp        ADPCM IMA High Voltage Software ALP
+ A....D adpcm_ima_amv        ADPCM IMA AMV
+ A....D adpcm_ima_apm        ADPCM IMA Ubisoft APM
+ A....D adpcm_ima_qt         ADPCM IMA QuickTime
+ A....D adpcm_ima_ssi        ADPCM IMA Simon & Schuster Interactive
+ A....D adpcm_ima_wav        ADPCM IMA WAV
+ A....D adpcm_ima_ws         ADPCM IMA Westwood
+ A....D adpcm_ms             ADPCM Microsoft
+ A....D adpcm_swf            ADPCM Shockwave Flash
+ A....D adpcm_yamaha         ADPCM Yamaha
+ A....D alac                 ALAC (Apple Lossless Audio Codec)
+ A..... alac_at              alac (AudioToolbox) (codec alac)
+ A..... anull                null audio
+ A....D aptx                 aptX (Audio Processing Technology for Bluetooth)
+ A....D aptx_hd              aptX HD (Audio Processing Technology for Bluetooth)
+ A....D comfortnoise         RFC 3389 comfort noise generator
+ A....D dfpwm                DFPWM1a audio
+ A..X.D dca                  DCA (DTS Coherent Acoustics) (codec dts)
+ A....D eac3                 ATSC A/52 E-AC-3
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D g723_1               G.723.1
+ A..... ilbc_at              ilbc (AudioToolbox) (codec ilbc)
+ A..X.D mlp                  MLP (Meridian Lossless Packing)
+ A....D mp2                  MP2 (MPEG audio layer 2)
+ A....D mp2fixed             MP2 fixed point (MPEG audio layer 2) (codec mp2)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3) (codec mp3)
+ A....D nellymoser           Nellymoser Asao
+ A..X.D opus                 Opus
+ A....D libopus              libopus Opus (codec opus)
+ A....D pcm_alaw             PCM A-law / G.711 A-law
+ A..... pcm_alaw_at          pcm_alaw (AudioToolbox) (codec pcm_alaw)
+ A....D pcm_bluray           PCM signed 16|20|24-bit big-endian for Blu-ray media
+ A....D pcm_dvd              PCM signed 16|20|24-bit big-endian for DVD media
+ A....D pcm_f32be            PCM 32-bit floating point big-endian
+ A....D pcm_f32le            PCM 32-bit floating point little-endian
+ A....D pcm_f64be            PCM 64-bit floating point big-endian
+ A....D pcm_f64le            PCM 64-bit floating point little-endian
+ A....D pcm_mulaw            PCM mu-law / G.711 mu-law
+ A..... pcm_mulaw_at         pcm_mulaw (AudioToolbox) (codec pcm_mulaw)
+ A....D pcm_s16be            PCM signed 16-bit big-endian
+ A....D pcm_s16be_planar     PCM signed 16-bit big-endian planar
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D pcm_s16le_planar     PCM signed 16-bit little-endian planar
+ A....D pcm_s24be            PCM signed 24-bit big-endian
+ A....D pcm_s24daud          PCM D-Cinema audio signed 24-bit
+ A....D pcm_s24le            PCM signed 24-bit little-endian
+ A....D pcm_s24le_planar     PCM signed 24-bit little-endian planar
+ A....D pcm_s32be            PCM signed 32-bit big-endian
+ A....D pcm_s32le            PCM signed 32-bit little-endian
+ A....D pcm_s32le_planar     PCM signed 32-bit little-endian planar
+ A....D pcm_s64be            PCM signed 64-bit big-endian
+ A....D pcm_s64le            PCM signed 64-bit little-endian
+ A....D pcm_s8               PCM signed 8-bit
+ A....D pcm_s8_planar        PCM signed 8-bit planar
+ A....D pcm_u16be            PCM unsigned 16-bit big-endian
+ A....D pcm_u16le            PCM unsigned 16-bit little-endian
+ A....D pcm_u24be            PCM unsigned 24-bit big-endian
+ A....D pcm_u24le            PCM unsigned 24-bit little-endian
+ A....D pcm_u32be            PCM unsigned 32-bit big-endian
+ A....D pcm_u32le            PCM unsigned 32-bit little-endian
+ A....D pcm_u8               PCM unsigned 8-bit
+ A....D pcm_vidc             PCM Archimedes VIDC
+ A....D real_144             RealAudio 1.0 (14.4K) (codec ra_144)
+ A....D roq_dpcm             id RoQ DPCM
+ A..X.D s302m                SMPTE 302M
+ A....D sbc                  SBC (low-complexity subband codec)
+ A..X.D truehd               TrueHD
+ A....D tta                  TTA (True Audio)
+ A..X.D vorbis               Vorbis
+ A....D wavpack              WavPack
+ A....D wmav1                Windows Media Audio 1
+ A....D wmav2                Windows Media Audio 2
+ S..... ssa                  ASS (Advanced SubStation Alpha) subtitle (codec ass)
+ S..... ass                  ASS (Advanced SubStation Alpha) subtitle
+ S..... dvbsub               DVB subtitles (codec dvb_subtitle)
+ S..... dvdsub               DVD subtitles (codec dvd_subtitle)
+ S..... mov_text             3GPP Timed Text subtitle
+ S..... srt                  SubRip subtitle (codec subrip)
+ S..... subrip               SubRip subtitle
+ S..... text                 Raw text subtitle
+ S..... ttml                 TTML subtitle
+ S..... webvtt               WebVTT subtitle
+ S..... xsub                 DivX subtitles (XSUB)

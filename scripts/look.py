@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-from _common import add_common, apply_common, die, emit, escape_drawtext, ffmpeg_base, info, parse_time, probe, run
+from _common import add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -26,8 +26,8 @@ def fmt_hms(sec: float) -> str:
     return f"{int(h):02d}:{int(m):02d}:{s_:06.3f}"
 
 
-def timecode_filter() -> str:
-    return f"drawtext=text='%{{pts\\:hms}}':{FONT}"
+def timecode_filter(font_prefix: str) -> str:
+    return f"drawtext=text='%{{pts\\:hms}}':{font_prefix}{FONT}"
 
 
 def main() -> int:
@@ -49,7 +49,12 @@ def main() -> int:
     dur = meta.get("duration") or 0.0
     stem = Path(args.input).stem
     outdir = str(Path(args.output).parent) if args.output else str(Path(args.input).parent)
-    tc = "" if args.no_timecode else "," + timecode_filter()
+    # a resolvable font file, given as fontfile=, is the only form confirmed not to crash drawtext's
+    # own fontconfig resolution on some real Windows ffmpeg builds (#100); font= is the fallback when
+    # nothing can be resolved, unchanged from before this existed.
+    default_font = default_font_file("DejaVu Sans")
+    font_prefix = f"fontfile={escape_filter_path(default_font)}:" if default_font else ""
+    tc = "" if args.no_timecode else "," + timecode_filter(font_prefix)
     # HDR sources: tone-map for the PNG so the agent judges representative colours, not raw HLG/PQ
     if meta["video"].get("hdr"):
         v = meta["video"]
@@ -67,8 +72,8 @@ def main() -> int:
             sec = parse_time(t)
             out = args.output or os.path.join(outdir, f"{stem}_vs_{Path(args.compare).stem}_{sec:.3f}s.png")
             half = args.width // 2
-            stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{FONT}"
-            tcs = tc.replace("," + timecode_filter(), "") + stamp
+            stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
+            tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp
             fc = (f"[0:v]scale={half}:-2{tcs}[a];[1:v]scale={half}:-2{tcs}[b];"
                   f"[a][b]scale2ref=w=iw:h=ih[a2][b2];[a2][b2]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-ss", f"{sec:.3f}", "-i", args.compare,
@@ -81,8 +86,8 @@ def main() -> int:
             if dur and sec > dur:
                 die(f"--at {t} is beyond the duration ({dur:.2f}s)")
             out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
-            stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{FONT}"
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(), '')}{stamp}", "-frames:v", "1", out]
+            stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
+            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", out]
             run(cmd)
             outputs.append(out)
     else:

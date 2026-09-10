@@ -5,17 +5,26 @@ opacity and fade in/out.
 Positions: top-left, top, top-right, left, center, right, bottom-left, bottom,
 bottom-right, or explicit "X,Y" pixels (negative counts from the far edge).
 
+--video composites a second VIDEO as a picture-in-picture layer (position,
+scale, opacity, time-range -- same knobs as --image), instead of a still
+image or text. Only the main input's audio is kept; the PiP layer's own
+audio track, if any, is dropped -- mixing two audio tracks is a job for
+audio.py, not this tool. --chromakey COLOR (with --video) turns that colour
+transparent first (green-screen removal) before compositing.
+
 Examples:
   python3 overlay.py input.mp4 --image logo.png --position top-right --scale 200 --opacity 0.8
   python3 overlay.py input.mp4 --image lower_third.png --position bottom-left --start 2 --end 8 --fade 0.5
   python3 overlay.py input.mp4 --text "Episode 12" --position bottom --font-size 48 --start 1 --end 5 --fade 0.3
   python3 overlay.py input.mp4 --text "こんにちは" --font-file /path/NotoSansCJK-Bold.ttc --box
+  python3 overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480 --opacity 0.9
+  python3 overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00 --chromakey-similarity 0.15
 """
 import argparse
 import sys
 from typing import List, Optional
 
-from _common import STATE, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -76,10 +85,19 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_overlay.<ext>)")
+    ap.add_argument("--audio-stream", type=int, default=0,
+                     help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
+                          "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
+                          "the first track, same as leaving it unset always did")
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--image", help="PNG/JPG (alpha respected) to composite")
     src.add_argument("--text", help="text to draw (drawtext)")
     src.add_argument("--logo", action="store_true", help="composite the brand logo from --brand (position/scale/opacity from brand.json)")
+    src.add_argument("--video", help="a second video to composite as a picture-in-picture layer")
+    ck = ap.add_argument_group("chroma key (with --video)")
+    ck.add_argument("--chromakey", help="colour to key out (green-screen removal), e.g. 0x00ff00 or green")
+    ck.add_argument("--chromakey-similarity", type=float, default=0.15, help="how close a pixel must be to --chromakey to become transparent, 0..1 (default 0.15)")
+    ck.add_argument("--chromakey-blend", type=float, default=0.05, help="soften the key edge, 0..1 (default 0.05)")
     ap.add_argument("--brand", help="brand.json (logo, font, colours, safe margin)")
     ap.add_argument("--position", default="top-right", help="named position or X,Y (default top-right)")
     ap.add_argument("--margin", type=int, default=24, help="margin from the edges in px (default 24)")
@@ -117,8 +135,8 @@ def main() -> int:
             args.scale = int(brand.get("logo_scale", 160))
         if args.opacity == 1.0:
             args.opacity = float(brand.get("logo_opacity", 1.0))
-    if not (args.image or args.text):
-        die("give --image, --text or --logo")
+    if not (args.image or args.text or args.video):
+        die("give --image, --text, --logo or --video")
     if args.brand:
         if args.margin == ap.get_default("margin"):
             args.margin = int(brand.get("safe_margin", args.margin))
@@ -126,9 +144,16 @@ def main() -> int:
             args.font = brand.get("font", args.font)
         if not args.font_file and brand.get("font_file"):
             args.font_file = brand["font_file"]
+    if not args.font_file:
+        args.font_file = default_font_file(args.font)
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    audio_streams = meta.get("audio_streams") or []
+    if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
+        die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
+    if args.audio_stream and not audio_streams:
+        die("--audio-stream needs an input with audio streams")
     vw = meta["video"]["width"]
     start = parse_time(args.start) if args.start else None
     end = parse_time(args.end) if args.end else None
@@ -136,6 +161,17 @@ def main() -> int:
         die("--end must be after --start")
     if not 0 <= args.opacity <= 1:
         die("--opacity must be within 0..1")
+    if args.chromakey and not args.video:
+        die("--chromakey needs --video")
+    if args.chromakey:
+        validate_color(args.chromakey, "--chromakey")
+    validate_color(args.font_color, "--font-color")
+    validate_color(args.border_color, "--border-color")
+    validate_color(args.box_color, "--box-color")
+    if not 0 < args.chromakey_similarity <= 1:
+        die("--chromakey-similarity must be within (0, 1]")
+    if not 0 <= args.chromakey_blend <= 1:
+        die("--chromakey-blend must be within 0..1")
 
     output = args.output or default_output(args.input, "overlay")
     enable = enable_expr(start, end)
@@ -164,7 +200,46 @@ def main() -> int:
         # -loop 1 turns the still into a timed stream so fade/enable expressions see real timestamps
         cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", "-i", args.image]
         fc = f"[1:v]{','.join(chain)},setpts=PTS-STARTPTS[ov];[0:v][ov]{ov}[out]"
-        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", "0:a:0?", "-shortest"]
+        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", f"0:a:{args.audio_stream}?"]
+        if meta.get("duration"):
+            # An explicit -t is exact and, unlike -shortest, only bounds the *main* input's
+            # streams -- a preserved subtitle/data stream that ends earlier (run_keeping_subtitles)
+            # must not be allowed to cut the whole output short via -shortest's "stop at whichever
+            # mapped stream finishes first" semantics.
+            cmd += ["-t", f"{meta['duration']:.3f}"]
+        else:
+            # No known duration to bound by -t (e.g. probe found no video duration): -shortest is
+            # the only thing stopping the looped still from running forever. FFmpeg 7+'s
+            # shortest_buf_duration slack (up to 10s) is an accepted imprecision here since there is
+            # no better bound available.
+            cmd += ["-shortest"]
+    elif args.video:
+        pip_meta = probe(args.video)
+        if not pip_meta.get("video"):
+            die(f"--video {args.video} has no video stream")
+        chain = []
+        if args.scale_percent:
+            chain.append(f"scale={int(vw * args.scale_percent / 100)}:-2")
+        elif args.scale:
+            chain.append(f"scale={args.scale}:-2")
+        chain.append("format=yuva420p")
+        if args.chromakey:
+            chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
+        if args.opacity < 1:
+            chain.append(f"colorchannelmixer=aa={args.opacity:g}")
+        x, y = position_exprs(args.position, args.margin, text_mode=False)
+        ov = f"overlay={x}:{y}:format=auto"
+        if enable:
+            ov += f":enable='{enable}'"
+        cmd = ffmpeg_base() + ["-i", args.input, "-i", args.video]
+        fc = f"[1:v]{','.join(chain)}[ov];[0:v][ov]{ov}[out]"
+        cmd += ["-filter_complex", fc, "-map", "[out]", "-map", f"0:a:{args.audio_stream}?"]
+        if meta.get("duration"):
+            # See the --image branch above: -t (exact, bounds only the main input) instead of
+            # -shortest (would also stop at a preserved subtitle/data stream that ends earlier).
+            cmd += ["-t", f"{meta['duration']:.3f}"]
+        else:
+            cmd += ["-shortest"]
     else:
         x, y = position_exprs(args.position, args.margin, text_mode=True)
         opts = [f"text='{escape_drawtext(args.text)}'", f"fontsize={args.font_size}", f"x={x}", f"y={y}",
@@ -172,7 +247,7 @@ def main() -> int:
         if args.font_file:
             opts.append(f"fontfile={escape_filter_path(args.font_file)}")
         else:
-            opts.append(f"font='{args.font}'")
+            opts.append(f"font='{escape_drawtext(args.font)}'")
         alpha = alpha_expr(args.opacity, start if start is not None else (0.0 if args.fade > 0 else None),
                            end if end is not None else ((meta.get("duration") or None) if args.fade > 0 else None), args.fade)
         opts.append(f"fontcolor={args.font_color}")
@@ -182,16 +257,17 @@ def main() -> int:
             opts += ["box=1", f"boxcolor={args.box_color}", "boxborderw=12"]
         if enable:
             opts.append(f"enable='{enable}'")
-        cmd += ["-vf", "drawtext=" + ":".join(opts)]
+        cmd += ["-vf", "drawtext=" + ":".join(opts), "-map", "0:v:0"]
+        if meta.get("audio"):
+            cmd += ["-map", f"0:a:{args.audio_stream}"]
 
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
-    cmd.append(output)
-    run(cmd)
+    dropped_streams = run_keeping_subtitles(cmd, output)
     if not STATE.dry_run:
-        result = probe(output)
+        result = probe(output, role="output")
         info(f"wrote {output} ({result['duration']:.3f}s)")
-    emit(output)
+    emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 
 

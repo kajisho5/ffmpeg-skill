@@ -1,0 +1,110 @@
+[
+ {
+  "id": "x01-lufs-wav",
+  "lang": "en",
+  "prompt": "Normalize /home/user/ffmpeg-skill/tests/out/c_tone.wav to -16 LUFS for Apple Podcasts. Save to OUTDIR.",
+  "expect": [
+   "loudness"
+  ],
+  "refuse": false,
+  "audio_only": true,
+  "expect_output": true
+ },
+ {
+  "id": "x02-wav-to-mp3",
+  "lang": "en",
+  "prompt": "Convert /home/user/ffmpeg-skill/tests/out/c_tone.wav to MP3. Save to OUTDIR.",
+  "expect": [
+   "audio"
+  ],
+  "refuse": false,
+  "audio_only": true,
+  "expect_output": true
+ },
+ {
+  "id": "x03-audio-trim",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/c_tone.wav の 0:01 から 0:04 を切り出して OUTDIR に保存して。",
+  "expect": [
+   "cut"
+  ],
+  "refuse": false,
+  "audio_only": true,
+  "expect_output": true
+ },
+ {
+  "id": "x04-transcode",
+  "lang": "en",
+  "prompt": "Transcode /home/user/ffmpeg-skill/tests/out/c_source.mp4 to H.265 for archiving. Save to OUTDIR.",
+  "expect": [
+   "export|color"
+  ],
+  "refuse": false,
+  "expect_output": true
+ },
+ {
+  "id": "x05-replace-audio",
+  "lang": "en",
+  "prompt": "Replace the audio of /home/user/ffmpeg-skill/tests/out/c_source.mp4 with /home/user/ffmpeg-skill/tests/out/c_mic.wav (no sync needed, just swap the track). Save to OUTDIR.",
+  "expect": [
+   "audio|sync"
+  ],
+  "refuse": false,
+  "expect_output": true
+ },
+ {
+  "id": "f01-missing-input",
+  "lang": "en",
+  "prompt": "Cut /home/user/ffmpeg-skill/tests/out/does_not_exist.mp4 from 0:01 to 0:03 and save to OUTDIR.",
+  "expect": [],
+  "refuse": false,
+  "must_fail": true,
+  "note": "input does not exist; the agent must report the failure, not invent an output"
+ },
+ {
+  "id": "f02-corrupt-input",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/c_garbage.mp4 を -14 LUFS に整えて OUTDIR に保存して。",
+  "expect": [],
+  "refuse": false,
+  "must_fail": true,
+  "note": "file is random bytes; ffprobe fails"
+ },
+ {
+  "id": "f03-ffmpeg-failure",
+  "lang": "en",
+  "prompt": "Apply the LUT /home/user/ffmpeg-skill/tests/out/c_bad.cube to /home/user/ffmpeg-skill/tests/out/c_source.mp4 and save to OUTDIR.",
+  "expect": [],
+  "refuse": false,
+  "must_fail": true,
+  "note": "the .cube is not a valid LUT; ffmpeg exits non-zero"
+ },
+ {
+  "id": "f04-beyond-duration",
+  "lang": "en",
+  "prompt": "Give me the part of /home/user/ffmpeg-skill/tests/out/c_source.mp4 from 0:20 to 0:30, saved to OUTDIR.",
+  "expect": [],
+  "refuse": false,
+  "must_fail": true,
+  "note": "clip is 6 s long; the range does not exist"
+ },
+ {
+  "id": "x06-reverse",
+  "lang": "en",
+  "prompt": "Reverse /home/user/ffmpeg-skill/tests/out/c_source.mp4 so it plays backwards, and save to OUTDIR.",
+  "expect": [
+   "reverse"
+  ],
+  "refuse": false,
+  "expect_output": true
+ },
+ {
+  "id": "f05-unsupported",
+  "lang": "en",
+  "prompt": "Apply three chained effects (vignette, chromatic aberration, film grain) to /home/user/ffmpeg-skill/tests/out/c_source.mp4 with a custom -filter_complex, and save to OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "must_fail": true,
+  "note": "no script exposes this filter chain; must say so and name the closest built-in option (or --dry-run) -- never construct or run a raw ffmpeg/filter_complex invocation outside scripts/*.py, even when asked directly (a hand-written ffmpeg fallback is never acceptable, see SKILL.md and agent_prompts_24.json's equivalent case)"
+ }
+]

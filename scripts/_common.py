@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -16,8 +17,18 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+# Every script prints paths, help text and reports that may contain non-ASCII (Japanese examples,
+# arrows). On Windows the console streams default to a legacy code page and raise
+# UnicodeEncodeError; make them UTF-8 with replacement so a --help never crashes on encoding.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if getattr(_stream, "encoding", "").lower().replace("-", "") != "utf8":
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 INSTALL_HINTS = {
-    "Darwin": "  brew install ffmpeg",
+    "Darwin": "  brew install ffmpeg-full   (the plain ffmpeg formula lacks subtitles/drawtext/zscale)",
     "Linux": (
         "  Debian/Ubuntu: sudo apt install ffmpeg\n"
         "  Fedora:        sudo dnf install ffmpeg\n"
@@ -31,12 +42,52 @@ INSTALL_HINTS = {
 }
 
 
+# `kind` (below) has been the only machine-readable failure axis since 0.1: a flat, 4-value
+# vocabulary (input / missing_tool / ffmpeg / output) set at the ~7 call sites that ever pass one
+# explicitly, defaulting to "input" everywhere else. `ERROR_CODE` is an additive, purely
+# informational refinement layered on top for agents that want a stable enum to switch on instead
+# of pattern-matching `kind` strings -- it is a static 1:1 relabelling of the exact same 4 buckets,
+# not a new taxonomy. It intentionally does NOT introduce categories this codebase cannot actually
+# distinguish today (e.g. a separate ffprobe-vs-ffmpeg code, or an environment-vs-content-cause
+# split of ffmpeg failures): every ffmpeg subprocess failure is currently one undifferentiated
+# bucket regardless of whether ffmpeg rejected a bad filter argument or died from a full disk,
+# and every "kind": "input" failure covers both a missing file and a bad flag value alike. Adding
+# codes for distinctions the code can't actually make would be guessing, not reporting -- if a
+# future call site can genuinely tell capability-missing apart from bad-argument (see doctor()'s
+# available/missing/unknown states, which already model this for detection but aren't wired into
+# any die() call), split ERROR_CODE then, with evidence, not speculatively now.
+ERROR_CODE = {
+    "input": "INPUT_INVALID",
+    "missing_tool": "DEPENDENCY_MISSING",
+    "ffmpeg": "FFMPEG_EXECUTION_FAILED",
+    "output": "OUTPUT_INVALID",
+}
+
+# None of the four kinds above are retryable in practice: an "input"/"missing_tool" failure is
+# always deterministic (the same bad path or absent binary fails identically every time), and a
+# "ffmpeg"/"output" failure -- while it COULD in principle be caused by a transient environment
+# condition (full disk, OOM) rather than a bad command -- is never distinguishable from a
+# deterministic content-cause failure without exit-code/stderr sniffing this codebase does not do.
+# Reporting retryable=True for a code we can't actually back up would invite an agent into a blind
+# retry loop against a command that will fail the same way every time; false-for-everything is the
+# honest answer until real sniffing exists to justify anything else.
+ERROR_RETRYABLE = False
+
+
 def die(msg: str, code: int = 1, kind: str = "input") -> "None":
     """Exit with a message. Under --json also print a machine-readable failure document
     (status: failed) on stdout so callers get the same shape as a success; exit codes are unchanged."""
     sys.stderr.write(f"error: {msg}\n")
     if STATE.json:
-        print_json({"status": "failed", "error": {"kind": kind, "message": msg}})
+        print_json({
+            "status": "failed", "exit_code": code,
+            "error": {
+                "kind": kind, "message": msg,
+                "code": ERROR_CODE.get(kind, "INTERNAL_ERROR"),
+                "retryable": ERROR_RETRYABLE,
+            },
+            "commands": list(STATE.commands),
+        })
     sys.exit(code)
 
 
@@ -125,10 +176,13 @@ def apply_common(args: "argparse.Namespace") -> None:
 
 def emit(output: Optional[str], **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json."""
+    meta: Dict[str, Any] = {}
+    if output and not STATE.dry_run:
+        meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
     if STATE.json:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": STATE.dry_run, "commands": list(STATE.commands)}
-        if output and not STATE.dry_run and os.path.exists(output):
-            doc["probe"] = probe(output)
+        if meta:
+            doc["probe"] = meta
         doc.update(extra)
         print_json(doc)
     elif output:
@@ -143,9 +197,61 @@ def _is_ffmpeg(cmd: Sequence[str]) -> bool:
     return os.path.basename(cmd[0]).startswith("ffmpeg")
 
 
+def _cleanup_partial_output(cmd: Sequence[str]) -> None:
+    """A failed ffmpeg command can still have opened its output container (muxer header
+    written) before erroring out mid-stream -- unlike a failure that happens before ffmpeg ever
+    touches the output path (a bad filter argument, a missing input), which never creates the
+    file at all. Both are reported the same way (status: failed), but only the first case used
+    to leave a stray, usually-0-byte file behind: verify_output()'s cleanup only runs on the
+    success path, so a failed run() call never routed through it. Remove whatever ffmpeg managed
+    to write so a caller scanning the output directory after a failure never mistakes a partial
+    artifact for a real (if unverified) one."""
+    # run() also executes ffprobe, whose last argument is an INPUT. Never
+    # interpret a read-only tool's failure as permission to remove that file.
+    if not _is_ffmpeg(cmd):
+        return
+    output = cmd[-1]
+    if output in ("-", "pipe:0", "pipe:1") or output.startswith("pipe:") or output.startswith("-"):
+        return
+    try:
+        if os.path.exists(output):
+            os.remove(output)
+    except OSError:
+        pass
+
+
 def _fail(cmd: Sequence[str], returncode: int, stderr: str) -> None:
+    # Partial-output cleanup already ran in the caller (_run_captured/_run_with_progress) for
+    # every failed ffmpeg invocation, not just this check=True path -- see _cleanup_partial_output.
     tail = "\n".join(stderr.strip().splitlines()[-15:])
     die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=returncode or 1, kind="ffmpeg")
+
+
+def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
+    """Refuse an ffmpeg command whose output path resolves to the same file as one of its
+    inputs. ffmpeg's own "Output same as Input" guard only catches byte-identical path
+    strings; a relative/absolute pair, a leading "./", a redundant ".." segment, or a symlink
+    all resolve to the same file but pass that check, so "-o ./same.mp4" on an input opened as
+    "same.mp4" would otherwise silently let ffmpeg's -y clobber the source mid-encode. Every
+    write-side script routes through this one run() choke point rather than each computing its
+    own output path defensively, so the guard lives here once instead of at 25+ call sites."""
+    output = cmd[-1]
+    if output in ("-", "pipe:0", "pipe:1") or output.startswith("pipe:") or output.startswith("-"):
+        return
+    try:
+        out_real = os.path.realpath(output)
+    except OSError:
+        return
+    for i, a in enumerate(cmd):
+        if a == "-i" and i + 1 < len(cmd):
+            inp = cmd[i + 1]
+            try:
+                if os.path.realpath(inp) == out_real:
+                    die(f"refusing to run: output {output!r} is the same file as input {inp!r} "
+                        f"(would overwrite it while ffmpeg is still reading it) -- choose a different --output/-o path",
+                        kind="input")
+            except OSError:
+                continue
 
 
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:
@@ -157,6 +263,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     """
     is_ffmpeg = _is_ffmpeg(cmd)
     if is_ffmpeg:
+        _check_no_overwrite_input(cmd)
         STATE.commands.append(_cmdline(cmd))
     if not quiet:
         info(("[dry-run] $ " if STATE.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd))
@@ -167,11 +274,34 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     return _run_captured(list(cmd), check)
 
 
+def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
+    """Run an ffmpeg command that already maps its video/audio, trying first to also
+    stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
+    there are none). A source whose subtitle codec cannot be copied into the target container
+    (e.g. a container change) makes that first attempt fail; retry the same command without the
+    extra maps rather than let a tool that never touched subtitles start hard-failing because of
+    them. `cmd` is the full argv *without* the output path. Returns True only when the
+    retry-without-subtitles path was actually needed (i.e. subtitle/data streams were dropped)."""
+    if run(cmd + ["-map", "0:s?", "-map", "0:d?", "-c:s", "copy", "-c:d", "copy", output], check=False).returncode == 0:
+        return False
+    run(cmd + [output])
+    return True
+
+
 def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if check and proc.returncode != 0:
-        _fail(cmd, proc.returncode, proc.stderr)
+    if proc.returncode != 0:
+        # Cleanup happens for every failed ffmpeg invocation, not just the check=True/_fail()
+        # path: a handful of scripts (cut.py, loudness.py, silence.py, sync.py) call run() with
+        # check=False so they can compose their own die() message from proc.stderr, but the
+        # partial-output risk is identical either way -- and for a script that retries into the
+        # same output path after a check=False failure (e.g. color.py's --retag copy-then-
+        # reencode fallback), removing the stale partial first is strictly safer than leaving it
+        # for -y to overwrite.
+        _cleanup_partial_output(cmd)
+        if check:
+            _fail(cmd, proc.returncode, proc.stderr)
     return proc
 
 
@@ -206,13 +336,15 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     _, err = proc.communicate()
     if last:
         sys.stderr.write("\r" + " " * len(last) + "\r")
-    if check and proc.returncode != 0:
-        _fail(cmd, proc.returncode, err)
+    if proc.returncode != 0:
+        _cleanup_partial_output(cmd)
+        if check:
+            _fail(cmd, proc.returncode, err)
     return subprocess.CompletedProcess(full, proc.returncode, "", err)
 
 
 def shell_quote(s: str) -> str:
-    if not s or any(ch in s for ch in " \t\"'\;|&<>()[]{}$*?"):
+    if not s or any(ch in s for ch in " \t\\\"';|&<>()[]{}$*?"):
         return "'" + s.replace("'", "'\\''") + "'"
     return s
 
@@ -223,14 +355,58 @@ def ffmpeg_base(overwrite: bool = True) -> List[str]:
     return cmd
 
 
-def probe(path: str) -> Dict[str, Any]:
-    """Return a compact, script-friendly description of a media file."""
+MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".gif", ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".png", ".jpg", ".jpeg"}
+
+
+def _output_failed(path: str, why: str) -> "None":
+    """An ffmpeg run reported success but the artifact is not usable: say so, and do not leave a
+    0-byte file behind that a later step could mistake for a result."""
+    try:
+        if os.path.exists(path) and os.path.getsize(path) == 0:
+            os.remove(path)
+            why += " (empty file removed)"
+    except OSError:
+        pass
+    die(f"output verification failed: {path}: {why}", kind="output")
+
+
+def verify_output(path: str) -> Dict[str, Any]:
+    """The success criterion for every writing tool: the file exists, is not empty and ffprobe
+    can read at least one stream from it. Non-media artifacts (srt, edl, html, md) only need to
+    exist and be non-empty. Returns the probe (empty dict for non-media)."""
     if not os.path.exists(path):
+        _output_failed(path, "not written")
+    if os.path.getsize(path) == 0:
+        _output_failed(path, "0 bytes")
+    if os.path.splitext(path)[1].lower() not in MEDIA_EXT:
+        return {}
+    meta = probe(path, role="output")
+    if not meta.get("video") and not meta.get("audio"):
+        _output_failed(path, "no video or audio stream")
+    return meta
+
+
+def probe(path: str, role: str = "input") -> Dict[str, Any]:
+    """Return a compact, script-friendly description of a media file.
+
+    role="output" marks a file this tool just wrote: a read failure is then reported as an
+    output-verification failure (kind "output") instead of an input problem."""
+    if not os.path.exists(path):
+        if role == "output" and not STATE["dry_run"]:
+            _output_failed(path, "not written")
         if STATE["dry_run"]:
+            # width/height/fps are honestly 0/0/0.0 -- "not measured", matching duration/size_bytes
+            # below -- because this is a dry run: the file doesn't exist yet, so there is nothing to
+            # probe. Earlier this stub used plausible-looking placeholders (1920x1080x30.0) instead,
+            # which some tools' dry-run summary line echoed verbatim as if it were a real computed
+            # preview (#77). That was reverted once, because a couple of call sites divided by these
+            # values for aspect-ratio math and crashed on a real 0 (join.py, fit.py); those call
+            # sites are now guarded to treat 0 as "unknown" and fall back sanely instead of dividing
+            # by it, so the stub can finally report the honest, unknown value.
             return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
-                    "video": {"codec": None, "width": 1920, "height": 1080, "fps": 30.0, "pix_fmt": None, "hdr": False,
+                    "video": {"codec": None, "width": 0, "height": 0, "fps": 0.0, "pix_fmt": None, "hdr": False,
                               "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
-                    "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0}
+                    "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0, "data_streams": 0}
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(
@@ -239,6 +415,8 @@ def probe(path: str) -> Dict[str, Any]:
         check=False,
     )
     if proc.returncode != 0:
+        if role == "output":
+            _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
         die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
     raw = json.loads(proc.stdout or "{}")
     fmt = raw.get("format", {})
@@ -246,6 +424,7 @@ def probe(path: str) -> Dict[str, Any]:
     video = next((s for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0) == 0), None)
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
     subs = [s for s in streams if s.get("codec_type") == "subtitle"]
+    data_stream_count = sum(1 for s in streams if s.get("codec_type") in ("data", "attachment"))
 
     duration = _to_float(fmt.get("duration"))
     if duration is None and video:
@@ -264,6 +443,14 @@ def probe(path: str) -> Dict[str, Any]:
         "video": None,
         "audio": None,
         "subtitle_streams": len(subs),
+        "data_streams": data_stream_count,
+        # every subtitle stream in file order: index n here is `-map 0:s:n`
+        "subtitle_stream_details": [{
+            "index": n,
+            "codec": s.get("codec_name"),
+            "language": (s.get("tags") or {}).get("language"),
+            "title": (s.get("tags") or {}).get("title"),
+        } for n, s in enumerate(subs)],
     }
     if video:
         r_rate = _fraction(video.get("r_frame_rate"))
@@ -322,6 +509,16 @@ def probe(path: str) -> Dict[str, Any]:
             "sample_rate": _to_int(audio.get("sample_rate")),
             "bitrate": _to_int(audio.get("bit_rate")),
         }
+        # every audio stream in file order: index n here is `-map 0:a:n` (audio.py --audio-stream n)
+        out["audio_streams"] = [{
+            "index": n,
+            "codec": a.get("codec_name"),
+            "channels": _to_int(a.get("channels")),
+            "channel_layout": a.get("channel_layout"),
+            "sample_rate": _to_int(a.get("sample_rate")),
+            "language": (a.get("tags") or {}).get("language"),
+            "title": (a.get("tags") or {}).get("title"),
+        } for n, a in enumerate(s for s in streams if s.get("codec_type") == "audio")]
     return out
 
 
@@ -331,12 +528,30 @@ def default_output(input_path: str, suffix: str, ext: Optional[str] = None) -> s
     return str(p.with_name(f"{p.stem}_{suffix}.{new_ext}"))
 
 
-def parse_time(value: str) -> float:
-    """Accept seconds ('12.5'), mm:ss ('1:30'), hh:mm:ss(.ms) ('00:01:30.250') or SRT '00:01:30,250'."""
+class MissingFpsError(ValueError):
+    """parse_time() saw an hh:mm:ss:ff SMPTE timecode but no fps was given to convert it -- distinct
+    from a plain ValueError so a caller that falls back to treating unparseable text as a literal
+    line (e.g. caption.py's free-text cue format) can still fail loudly on this one, instead of
+    silently swallowing a mistyped/missing --fps as an auto-timed line of digits."""
+
+
+def parse_time(value: str, fps: Optional[float] = None) -> float:
+    """Accept seconds ('12.5'), mm:ss ('1:30'), hh:mm:ss(.ms) ('00:01:30.250'), SRT '00:01:30,250',
+    or -- when `fps` is given -- SMPTE non-drop-frame timecode 'hh:mm:ss:ff' ('00:01:30:15')."""
     v = value.strip().replace(",", ".")
     if not v:
         raise ValueError("empty time")
     parts = v.split(":")
+    if len(parts) == 4:
+        if fps is None or fps <= 0:
+            raise MissingFpsError(f"'{value}' looks like an hh:mm:ss:ff SMPTE timecode, but no fps was given to convert its frame count to seconds")
+        h, m, s, f = parts
+        if "." in f:
+            raise ValueError(f"bad SMPTE timecode: {value}")
+        frame, whole_fps = int(f), int(round(fps))
+        if not (0 <= frame < whole_fps):
+            raise ValueError(f"bad SMPTE timecode '{value}': frame {frame} is out of range for {fps:g} fps (0-{whole_fps - 1})")
+        return int(h) * 3600 + int(m) * 60 + int(s) + frame / fps
     if len(parts) > 3:
         raise ValueError(f"bad time: {value}")
     total = 0.0
@@ -355,12 +570,74 @@ def fmt_srt_time(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+def fmt_smpte_time(seconds: float, fps: float) -> str:
+    """SMPTE non-drop-frame timecode 'hh:mm:ss:ff' for a real fps (not the fractional NTSC rates
+    -- 29.97/59.94 need drop-frame counting to stay wall-clock accurate, which this does not do)."""
+    if seconds < 0:
+        seconds = 0.0
+    whole_fps = int(round(fps))
+    total_frames = int(round(seconds * fps))
+    frame = total_frames % whole_fps
+    secs_total = total_frames // whole_fps
+    h, rem = divmod(secs_total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}:{frame:02d}"
+
+
 def escape_filter_path(path: str) -> str:
-    """Escape a path for use inside an ffmpeg filter graph option value."""
+    """Escape a file path for use as a filter option value (subtitles=, ass=, lut3d=file=, fontfile=, fontsdir=).
+
+    A filter option value is parsed twice: the graph parser splits filters on `,` / `;` and options
+    on `:`, then the filter's own option parser splits key=value pairs on `:` again. A character that
+    must survive both passes needs two levels of escaping, so a Windows drive letter `D:/x.srt` is
+    written `D\\\\:/x.srt`; with a single backslash the second pass still splits at the colon and
+    ffmpeg reads `/x.srt` as the next option (`Unable to parse "original_size" option value`).
+    Backslashes are turned into forward slashes first (ffmpeg accepts them on Windows), so a backslash
+    never has to be escaped itself; `'`, `,`, `;`, `[` and `]` are graph-level characters.
+    """
     p = str(Path(path))
     p = p.replace("\\", "/")
-    p = p.replace(":", "\\:").replace("'", "\\'").replace(",", "\\,").replace("[", "\\[").replace("]", "\\]")
+    p = p.replace(":", "\\\\:")
+    for ch in ("'", ",", ";", "[", "]"):
+        p = p.replace(ch, "\\" + ch)
     return p
+
+
+def default_font_file(font_name: str) -> Optional[str]:
+    """Resolve `font_name` to a concrete on-disk font file, so a caller can tell drawtext
+    `fontfile=<path>` instead of `font=<name>`, when possible.
+
+    On some real Windows ffmpeg builds (winget's gyan.dev 9.x), drawtext's own fontconfig
+    resolution crashes with an access violation whenever it has to resolve a font by family name
+    -- with or without a valid fonts.conf on FONTCONFIG_FILE. `fontfile=` is the only form
+    confirmed not to crash (#100), since it never touches fontconfig at all. `font_name` itself is
+    ignored on Windows for that reason: a fixed, near-universally-present system font is used
+    instead of trying to resolve the requested family (which would crash the same way).
+
+    On Linux/macOS this is best-effort and uses the real requested family: `fc-match` reports the
+    same file fontconfig would resolve `font_name` to anyway, so a caller gets the identical font,
+    just already resolved to a path -- fontfile= skips a redundant fontconfig lookup and equally
+    sidesteps the same class of crash if it exists on some build there too, but the fallback below
+    (returning None) is exercised routinely there, not just on failure.
+
+    Returns None when nothing could be resolved (fc-match missing/unavailable, or no well-known
+    Windows font file present); the caller falls back to font=<font_name>, the prior behaviour.
+    """
+    if platform.system() == "Windows":
+        windir = os.environ.get("WINDIR", "C:\\Windows")
+        candidate = Path(windir) / "Fonts" / "arial.ttf"
+        return str(candidate) if candidate.exists() else None
+    exe = shutil.which("fc-match")
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "--format=%{file}\n", font_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    path = proc.stdout.splitlines()[0].strip() if proc.stdout.strip() else ""
+    return path if path and os.path.exists(path) else None
 
 
 def escape_drawtext(text: str) -> str:
@@ -434,6 +711,19 @@ def audio_codec_for(output_path: str, default_bitrate: str = "192k") -> List[str
     """Pick an audio codec that the output container can actually hold."""
     ext = os.path.splitext(output_path)[1].lower()
     return list(AUDIO_CODECS.get(ext, ["-c:a", "aac", "-b:a", default_bitrate]))
+
+
+def is_audio_output(output_path: str) -> bool:
+    """True when the output extension is an audio-only container (.wav, .flac, .mp3, .m4a, .aac, .ogg, .opus).
+
+    Such a file cannot hold a video stream and, for .wav, cannot hold compressed audio: scripts use
+    this to drop the picture (-vn) and to pick the codec from the extension instead of AAC.
+    """
+    return os.path.splitext(output_path)[1].lower() in AUDIO_CODECS
+
+
+def db_to_linear(db: float) -> float:
+    return 10 ** (db / 20.0)
 
 
 def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
@@ -528,6 +818,23 @@ def color_hex(value: str) -> str:
     if len(v) != 6:
         die(f"colour must be RRGGBB, got '{value}'")
     return v.upper()
+
+
+_COLOR_TOKEN_RE = re.compile(r"^(0[xX][0-9A-Fa-f]{6,8}|#[0-9A-Fa-f]{6,8}|[A-Za-z][A-Za-z0-9]*)(@[0-9.]+)?$")
+
+
+def validate_color(value: str, flag: str = "--color") -> str:
+    """Refuse a colour argument that isn't a plain ffmpeg colour token (named colour, 0xRRGGBB[AA],
+    #RRGGBB[AA], optionally with an @alpha suffix). Every caller that string-formats a colour flag
+    straight into a filter graph (color=c=..., tpad=...:color=..., rotate=...:fillcolor=...) must
+    validate it first -- ffmpeg filter options are comma/colon-delimited, so an unvalidated value
+    containing those characters lets a caller splice in an entirely different filter (a real,
+    demonstrated filter-graph injection: --color "black,drawtext=text=..." renders arbitrary burnt-in
+    text), not just an odd colour. This is the same "no filter graph accepted from the caller"
+    invariant every other typed flag in this codebase already holds to."""
+    if not _COLOR_TOKEN_RE.match(value):
+        die(f"{flag} must be a plain colour (a name, 0xRRGGBB[AA], or #RRGGBB[AA], optionally @alpha), got '{value}'")
+    return value
 
 
 def print_json(obj: Any) -> None:

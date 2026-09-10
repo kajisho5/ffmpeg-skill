@@ -24,13 +24,13 @@ from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_c
 
 def measure(path: str, I: float, tp: float, lra: float) -> dict:
     if STATE["dry_run"]:
-        return {"input_i": "-20.0", "input_tp": "-3.0", "input_lra": "8.0", "input_thresh": "-30.0", "target_offset": "0.0"}
+        return {"input_i": "-20.0", "input_tp": "-3.0", "input_lra": "8.0", "input_thresh": "-30.0", "target_offset": "0.0", "silent": False}
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
     proc = run(cmd, check=False)
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", proc.stderr, re.S)
     if proc.returncode != 0 or not m:
-        die(f"loudness measurement failed:\n{proc.stderr.strip()[-1500:]}")
+        die(f"loudness measurement failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg")
     data = json.loads(m.group(0))
     for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
         if data.get(k) in (None, "-inf", "inf", "nan"):
@@ -89,7 +89,7 @@ def main() -> int:
     after = measure(output, args.lufs, args.tp, args.lra)
     if not after.get("silent"):
         info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {args.lufs} LUFS)")
-    emit(output)
+    emit(output, result={k: after[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")})
     return 0
 
 

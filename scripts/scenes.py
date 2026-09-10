@@ -3,14 +3,19 @@
 agent can plan an edit or a digest without watching the whole file.
 
 Scene cuts come from ffmpeg's scdet; energy peaks from a 0.5 s RMS envelope
-of the audio. Highlight candidates are the scenes ranked by audio energy
-(and, optionally, by motion).
+of the audio. Highlight candidates are scenes ranked by --rank-by: "audio"
+(default, loudest first) or "duration" (longest first). Both are proxies,
+not a judgement of what matters: "audio" misses a quiet but important
+moment (a confession, a punchline landing in silence) and can surface pure
+crowd noise; "duration" just finds long unbroken takes. Neither replaces
+watching the contact sheet (--sheet) before committing to a cut.
 
 Examples:
   python3 scenes.py talk.mp4                                # scenes + peaks, JSON
   python3 scenes.py event.mp4 --highlights 5 --target 60   # 5 candidate ranges summing to ~60 s
   python3 scenes.py event.mp4 --highlights 4 --edl picks.txt   # cut.py --segments compatible list
   python3 scenes.py event.mp4 --sheet scenes.png             # one thumbnail per scene
+  python3 scenes.py talk.mp4 --highlights 5 --rank-by duration  # longest unbroken scenes, not loudest
 """
 import argparse
 import math
@@ -21,7 +26,7 @@ import subprocess
 import sys
 from typing import Dict, List, Tuple
 
-from _common import add_common, apply_common, die, emit, ffmpeg_base, info, print_json, probe, require_tool, run
+from _common import add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run
 
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
 
@@ -96,10 +101,13 @@ def main() -> int:
     ap.add_argument("--ratio", type=float, default=3.0, help="a cut must exceed this multiple of the neighbouring frames' median score (default 3; lower = more cuts)")
     ap.add_argument("--min-scene", type=float, default=1.0, help="ignore cuts closer than this in seconds (default 1)")
     ap.add_argument("--highlights", type=int, default=0, help="number of highlight ranges to propose")
+    ap.add_argument("--rank-by", choices=["audio", "duration"], default="audio",
+                    help="how to rank scenes for --highlights: audio energy (default) or scene duration")
     ap.add_argument("--target", type=float, help="with --highlights: total seconds the picks should add up to (trims long scenes)")
     ap.add_argument("--max-scene", type=float, default=15.0, help="cap a highlight range at this many seconds (default 15)")
     ap.add_argument("--edl", help="write highlight ranges as START-END lines (cut.py --segments format)")
     ap.add_argument("--sheet", help="write a contact sheet PNG with the first frame of every scene")
+    ap.add_argument("--no-timecode", action="store_true", help="--sheet without the burnt-in timecode stamp (a way out if drawtext itself is unusable, see doctor)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -136,7 +144,11 @@ def main() -> int:
     info(f"{len(scenes)} scenes, {len(peaks)} audio peaks over {dur:.1f}s")
 
     if args.highlights:
-        ranked = sorted(scenes, key=lambda sc: (-sc["audio_rms"], sc["start"]))[: args.highlights]
+        if args.rank_by == "duration":
+            rank_key = lambda sc: (-sc["duration"], sc["start"])
+        else:
+            rank_key = lambda sc: (-sc["audio_rms"], sc["start"])
+        ranked = sorted(scenes, key=rank_key)[: args.highlights]
         picks: List[Tuple[float, float]] = []
         budget = args.target if args.target else None
         per = (budget / max(1, len(ranked))) if budget else args.max_scene
@@ -156,6 +168,7 @@ def main() -> int:
         picks.sort()
         result["highlights"] = [{"start": s, "end": e, "duration": round(e - s, 2)} for s, e in picks]
         result["highlights_total"] = round(sum(e - s for s, e in picks), 2)
+        result["highlights_rank_by"] = args.rank_by
         info(f"proposed {len(picks)} highlight ranges totalling {result['highlights_total']:.1f}s")
         if args.edl:
             with open(args.edl, "w", encoding="utf-8") as fh:
@@ -171,7 +184,12 @@ def main() -> int:
         # exactly one frame per scene: the frame index at the scene start
         fps = meta["video"].get("fps") or 30.0
         expr = "+".join(f"eq(n\\,{int(round(sc['start'] * fps))})" for sc in scenes)
-        vf = (f"select='{expr}',scale={tile_w}:-2,drawtext=text='%{{pts\\:hms}}':fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6,"
+        stamp = ""
+        if not args.no_timecode:
+            default_font = default_font_file("DejaVu Sans")
+            font_prefix = f"fontfile={escape_filter_path(default_font)}:" if default_font else ""
+            stamp = f",drawtext=text='%{{pts\\:hms}}':{font_prefix}fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6"
+        vf = (f"select='{expr}',scale={tile_w}:-2{stamp},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
         run(ffmpeg_base() + ["-i", args.input, "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", args.sheet])
         info(f"wrote {args.sheet}")

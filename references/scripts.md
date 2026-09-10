@@ -1,11 +1,17 @@
 # Script reference
 
-Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `-o OUT`.
+Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `-o OUT` -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) and `check` (skips only the loudness-measurement pass) still run ffprobe/ffmpeg, `sync`/`multicam`/`scenes`/`cropdetect`/`report` still run ffmpeg/ffprobe to measure or analyse (they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
 
 ## Contents
 - probe.py — inspect
 - cut.py — cut / join segments
-- fit.py — target duration and/or aspect
+- fit.py — target duration and/or aspect, rotate/flip
+- crop.py — crop to an exact pixel rectangle
+- insert.py — still image to a timed silent clip, with Ken Burns zoom/pan
+- background.py — generate a solid-colour or gradient clip
+- reverse.py — reverse playback
+- stabilize.py — motion stabilisation (vidstab)
+- sequence.py — numbered/globbed image sequence to video
 - silence.py — remove dead air / jump cuts
 - join.py — concatenate with transitions
 - render.py — the whole edit in one project.json
@@ -21,12 +27,13 @@ Every script prints the same information with `--help`; this file exists so the 
 - verify.py — real-footage verification kit
 - look.py — see the result
 - caption.py — subtitles (static, animated, karaoke)
-- overlay.py — logo, image, title
+- overlay.py — logo, image, title, video picture-in-picture, chroma key
 - sync.py — offset detection, alignment, drift correction
 - color.py — HDR to SDR, LUTs, colour tags, Dolby Vision
 - audio.py — clean-up, music, ducking, layout
 - loudness.py — EBU R128 normalisation
 - export.py — delivery presets
+- proxy.py — low-bitrate proxy for analysis/preview
 
 ## Scripts
 
@@ -48,18 +55,249 @@ keyframes, instant, lossless); if the snapped result deviates more than
 Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded".
 
-### fit.py — target duration and/or aspect
+### fit.py — target duration and/or aspect, rotate/flip
 ```
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
-             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--pad-color black]]
-             [--fps N] [-o OUT]
+             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black]]
+             [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`); it
 refuses factors beyond `--max-speed`. For slow motion add `--smooth blend`
 (frame blending, fast) or `--smooth interpolate` (motion-compensated
 `minterpolate`, fluid but roughly 10-20x slower than realtime). `trim` keeps
-the head (or the middle with `--from-center`). `--fps` forces a constant frame
-rate; VFR sources are conformed automatically even without it.
+the head (or the middle with `--from-center`). `--width`/`--height` set the
+output size: give one and the other follows the aspect (source aspect if
+`--aspect` isn't also given); give both for an exact frame. `--rotate` applies
+a new clockwise rotation (90/180/270 swap width/height for 90 and 270 — this
+is separate from the rotation *metadata* fit.py already reads to size a
+source correctly); `--flip h|v` mirrors the picture; both can combine, rotate
+first. `--fps` forces a constant frame rate; VFR sources are conformed
+automatically even without it.
+
+### crop.py — crop to an exact pixel rectangle
+```
+crop.py INPUT --x X --y Y --width W --height H [-o OUT]
+```
+Crops to a literal `{x, y, width, height}` rectangle in source pixels —
+distinct from `fit.py --fit crop`, which crops to an *aspect ratio* and picks
+the rectangle for you. Use this when the rectangle is already known (a
+face-detection box, a saved crop, a hand-picked region). The rectangle must
+lie entirely inside the source frame (after accounting for display rotation);
+`--width`/`--height` must be even (4:2:0 chroma) and are refused, never
+rounded, if they aren't.
+
+### cropdetect.py — measure black bars, report the crop rectangle
+```
+cropdetect.py INPUT [--seconds N] [--samples N] [--limit F] [--round N]
+```
+Measurement only -- writes no file. Samples `--samples` windows spread
+across the file (default 5, totalling `--seconds` 10s of footage) and
+reports the crop rectangle FFmpeg's `cropdetect` filter found most often, as
+`{x, y, width, height}` ready to hand to `crop.py`. Distinct from
+`fit.py --fit crop`, which crops to a target aspect ratio it computes
+itself with no black-bar measurement involved. A rectangle that matches the
+full source frame means no bars were found. Does not decide whether
+removing detected bars is wanted -- genuine letterboxed content (a
+scope-ratio film in a 16:9 frame) "detects" the same way as accidental
+bars; look at the frame before cropping it away.
+
+### deinterlace.py — deinterlace interlaced footage
+```
+deinterlace.py INPUT [--mode frame|field] [--parity auto|tff|bff] [--only-interlaced] [-o OUT]
+```
+Wraps FFmpeg's `yadif` filter. `--mode frame` (default) keeps the source
+frame rate; `--mode field` emits one frame per field, doubling the output
+frame rate. `--parity` overrides field order when the container gets it
+wrong; `--only-interlaced` skips frames the source doesn't itself mark
+interlaced. Does not detect whether the source needs deinterlacing --
+that's a `look.py` judgement call (visible combing on motion).
+
+### denoise.py — reduce video noise/grain
+```
+denoise.py INPUT [--strength low|medium|high] [--luma-spatial F] [--chroma-spatial F]
+                  [--luma-temporal F] [--chroma-temporal F] [-o OUT]
+```
+Wraps FFmpeg's `hqdn3d` filter. `--strength` picks a tested preset scaling
+all four of hqdn3d's spatial/temporal luma/chroma parameters together; the
+four `--luma-*`/`--chroma-*` flags override any of them individually.
+Heavier denoising trades fine detail for a cleaner but softer image -- for
+audio noise reduction use `audio.py --denoise` instead, this tool only
+touches the picture.
+
+### redact.py — blur or pixelate an exact rectangle
+```
+redact.py INPUT --x X --y Y --width W --height H [--mode blur|pixelate]
+                 [--blur-strength N] [--block-size N] [-o OUT]
+```
+Same rectangle convention as `crop.py` -- the rectangle must already be
+known (a saved detection box, a hand-picked region); this tool does not
+locate faces or plates itself. `--mode blur` (default) box-blurs the
+rectangle; `--mode pixelate` mosaics it into `--block-size`-px blocks, the
+more unmistakably-redacted look often wanted for compliance footage. The
+rest of the frame, and the whole clip's timeline, are untouched -- to
+redact only part of the timeline, `cut.py` the clip into segments first.
+
+### sphere.py — flat viewport extraction from 360/spherical video
+```
+sphere.py INPUT [--input-projection equirect|fisheye|dfisheye|c3x2|c6x1|barrel|cylindrical|hequirect]
+                 [--yaw D] [--pitch D] [--roll D] [--h-fov D] [--v-fov D]
+                 [--width W] [--height H] [--interp METHOD] [--stereo mono|sbs|tb]
+                 [--audio-stream N] [-o OUT]
+```
+Wraps FFmpeg's `v360` filter to bake out an ordinary flat clip pointed at a
+fixed direction — the same "look this way" operation a VR headset or a 360
+player's viewport does. `--yaw`/`--pitch`/`--roll` aim the camera (each
+-180..180, default 0); `--h-fov`/`--v-fov` set how wide the view is (each
+1..170, default 90/60). `--input-projection` must match the source's own
+projection (default `equirect`, the most common capture/export format) —
+this tool cannot detect it from the pixels, so a wrong value produces a
+distorted or garbled output, not an error. There is no subject detection or
+tracking here: only the typed aim you give it. For a shot that follows a
+moving subject, call this once per keyframe viewpoint from outside this
+tool. `--width`/`--height` must be even (4:2:0 chroma); default 1920x1080.
+
+### straighten.py — rotate by an arbitrary angle (horizon correction)
+```
+straighten.py INPUT --degrees D [--fit crop|pad] [--fill-color C] [-o OUT]
+```
+Distinct from `fit.py --rotate`, which only turns the picture in exact
+90-degree steps -- this wraps FFmpeg's `rotate` filter for a small
+corrective tilt (`--degrees`, -45..45). Rotating by a non-90-degree angle
+leaves triangular gaps at the corners: `--fit crop` (default) scales up
+just enough to fill the frame with no visible gap, losing a thin border of
+the original picture; `--fit pad` keeps the full original picture and fills
+the gaps with `--fill-color`. Does not measure the tilt itself -- give the
+degrees once you can see how far off it is (a `look.py` judgement call).
+
+### insert.py — still image to a timed silent clip
+```
+insert.py IMAGE --duration T [--width W] [--height H] [--fps N]
+                 [--zoom in|out [--zoom-amount 1.3]] [--pan left|right|up|down] [-o OUT]
+```
+Produces a silent, exact-duration clip from one image. `--width`/`--height`
+resolve like `fit.py`'s (one given -> the other follows the image's aspect;
+both given -> exact frame, scaled to fill and centre-cropped, never
+distorted). `--zoom in|out` is a Ken Burns effect: a slow linear zoom across
+the whole clip, ending (zoom in) or starting (zoom out) at `--zoom-amount`
+(default 1.3). `--pan` drifts the visible window across the image while
+zoomed — it needs `--zoom` (panning uses the extra image area a zoom exposes).
+
+### background.py — generate a solid-colour or gradient clip
+```
+background.py -o OUT --duration T --width W --height H
+              [--color C | --gradient C1:C2 [--angle DEG]]
+```
+No input file: ffmpeg's own `color`/`gradients` source filters generate the
+clip directly. For a title-card background, a placeholder layer, or a base
+for `overlay.py` to composite onto. `--width`/`--height` must be even.
+
+### reverse.py — reverse playback
+```
+reverse.py INPUT [--no-audio] [-o OUT]
+```
+Reverses video (and audio, unless `--no-audio`) with ffmpeg's `reverse`/
+`areverse` filters, which buffer the whole clip in memory — keep this to
+clips it makes sense to reverse (seconds to a couple of minutes), not
+something this tool limits for you.
+
+### stabilize.py — motion stabilisation
+```
+stabilize.py INPUT [--shakiness 1-10] [--smoothing N] [--zoom 0-100] [-o OUT]
+```
+Two-pass `vidstabdetect`/`vidstabtransform`: pass 1 analyses camera motion to
+a temporary transforms file (deleted after the run), pass 2 smooths and
+re-renders. `--shakiness` (default 5) trades analysis time for how much
+motion it looks for; `--smoothing` (default 15) is how many neighbouring
+frames the camera path is averaged over; `--zoom` crops in slightly to hide
+the black edges stabilizing can introduce. Needs an ffmpeg built with
+`--enable-libvidstab`; `doctor` reports this tool `usable: no` when that's
+missing (a plain Homebrew ffmpeg build, for example) rather than failing at
+run time.
+
+### sequence.py — numbered/globbed image sequence to video
+```
+sequence.py --dir DIR --pattern "frame_%04d.png"|"*.png" --fps N
+            [--start-number N] [--width W] [--height H] [-o OUT]
+```
+Turns a numbered or glob-matched set of still images into a video. The match
+is checked on disk before ffmpeg runs (an empty match or a missing first
+frame is refused here, not discovered from an opaque ffmpeg error).
+
+### waveform.py — audio waveform/spectrum visualization video
+```
+waveform.py INPUT [--style waveform|spectrum] [--width W] [--height H] [--fps N]
+                   [--color C] [--background C] [--waveform-mode M] [--split-channels] [-o OUT]
+```
+Renders the input's audio as a video: `--style waveform` (default, FFmpeg's
+`showwaves`) draws amplitude over time; `--style spectrum` (`showspectrum`)
+draws a frequency-over-time heatmap instead, reading more out of dense
+mixes at the cost of being less immediately readable. The output always
+carries the audio it visualizes. For an audio-only input (no video stream
+needed) or any file with an audio track worth visualizing.
+
+### freeze.py — hold a frame for N seconds
+```
+freeze.py INPUT --hold T [--at T] [--mode insert|extend] [-o OUT]
+```
+`--at` (default: the last frame) is the timestamp to freeze; `--hold` is
+how long the freeze lasts. `--mode insert` (default) inserts the hold at
+`--at`, pushing everything after it later by `--hold` seconds. `--mode
+extend` only works with `--at` at (or past) the clip's end and just makes
+the last frame last `--hold` seconds longer, with nothing pushed. Audio is
+silent during the held frame in `--mode insert` (there is no source audio
+for a frozen moment that didn't exist before).
+
+### pad.py — add black/silent padding at the start/end
+```
+pad.py INPUT [--start T] [--end T] [--color C] [-o OUT]
+```
+Distinct from `fit.py --fit pad`, which pads the *frame* (letterbox/
+pillarbox bars around each existing frame) -- this pads the *timeline*:
+extra seconds of solid colour and silence before and/or after the clip's
+existing content. At least one of `--start`/`--end` must be > 0.
+
+### speedramp.py — step through different speeds across a clip
+```
+speedramp.py INPUT --segment START-END:FACTOR [--segment ...] [-o OUT]
+```
+Distinct from `fit.py --duration --method speed`, which applies one
+constant factor to the whole clip -- this takes a list of `--segment`
+pieces (repeatable) covering the clip start to end with no gaps or
+overlaps, each played at its own constant speed (pitch-preserving audio,
+matching `fit.py`), then concatenates them: "speed up, then slow way down
+for the punch, then speed back up," built from a few constant segments
+rather than a continuous curve. `FACTOR` is 0.05..20 (2.0 = twice as fast,
+0.5 = half speed). Picking exactly where a ramp should ease in or out is a
+judgement call for the calling agent, made concrete here as the segment
+boundaries it supplies.
+
+### loop.py — repeat a clip
+```
+loop.py INPUT --times N | --duration T [-o OUT]
+```
+`--times` repeats the whole clip that many times back to back (2 =
+original + 1 repeat). `--duration` instead loops (and trims the last
+repeat) to hit an exact target length. For a background loop, an ambient
+bed, or filling a fixed slot length with a short clip. Does not smooth the
+loop point (no crossfade at the seam) -- a clip that doesn't already loop
+cleanly will show a visible cut/pop at each repeat, which is a property of
+the source material this tool cannot fix.
+
+### grid.py — composite clips into a grid
+```
+grid.py CLIP1 CLIP2 [...] --cols N --rows N [--cell-width W] [--cell-height H]
+                          [--label auto|none] [--font NAME] [--audio-from I]
+                          [--pad] [-o OUT]
+```
+Letterboxes every clip into a common `--cell-width`x`--cell-height` cell (no
+stretching) and tiles them `--cols`x`--rows`, filled left-to-right,
+top-to-bottom -- the input count must equal cols*rows exactly. `--label auto`
+(default) burns each clip's filename (extension stripped) into its cell's
+bottom-right corner; `--label none` skips it. No audio unless `--audio-from`
+picks one input's track by index -- mixing every clip's audio together is
+rarely useful for a comparison grid, so this tool never does that silently.
+Runs only as long as the shortest clip by default; `--pad` instead holds
+each shorter clip's last frame (with silence) out to the longest.
 
 ### silence.py — remove dead air / jump cuts
 ```
@@ -204,25 +442,47 @@ frame like an editor would. Use `--compare` to show before/after to the user.
 ### caption.py — subtitles (static, animated, karaoke)
 ```
 caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
+           [--mode burn|mux] [--audio-stream N] [--fps N]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
            [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
            [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass] [-o OUT]
 caption.py --text CUES.txt --write-srt OUT.srt        # generate the SRT only
 ```
-Text cue format, one per line: `0:00-0:03 Hello`, `00:00:03.500 --> 00:00:06 Two | lines`.
+Text cue format, one per line: `0:00-0:03 Hello`, `00:00:03.500 --> 00:00:06 Two | lines`,
+or `00:00:03:15 --> 00:00:06:00 SMPTE non-drop-frame timecode` (`hh:mm:ss:ff`, frame count
+converted with `--fps`, or the input video's own fps when `--input` is given and `--fps` is
+not — a timecode-shaped cue with no fps available is refused rather than misread as plain text).
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
 `--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
 word from `--color` to `--highlight-color` evenly across the cue (word timing
 is distributed, not transcribed). The ASS is kept next to the output so the
 user can hand-tune timings and re-run with `--ass`.
+`--mode burn` (default) renders subtitles into the picture and always
+re-encodes both streams. `--mode mux` copies video and audio untouched and
+adds the SRT as a separate, player-toggleable subtitle stream instead —
+takes only a plain SRT (`--srt`/`--text`/`--transcribe`, not `--ass`, since
+styling has no soft-subtitle equivalent) and no `--animate`/`--karaoke`. The
+subtitle codec follows the output container: `mov_text` for `.mp4`/`.m4v`/`.mov`,
+`srt` for `.mkv`, `webvtt` for `.webm`.
+`--audio-stream N` (default 0, the first track) picks which audio stream of a
+multi-track input (dubbed languages, M&E stems) is kept — applies to burn's
+re-encoded audio, mux's stream-copied audio, `--transcribe`'s speech-to-text
+source, and karaoke's energy-timing analysis alike, so all four agree on the
+same track instead of each silently defaulting to whichever one ffmpeg's own
+stream selection would have picked.
 
-### overlay.py — logo, image, title
+### overlay.py — logo, image, title, video picture-in-picture, chroma key
 ```
 overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--font-file F.ttf] [--font-size N] [--box]
+                  | --video CLIP [--chromakey COLOR [--chromakey-similarity 0-1] [--chromakey-blend 0-1]]
            [--position top-right|bottom-left|center|X,Y] [--margin N] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
 ```
-Alpha in PNGs is respected. Fades apply to the overlay only; the video keeps playing.
+Alpha in PNGs is respected. Fades apply to the overlay only; the video keeps
+playing. `--video` composites a second video as a picture-in-picture layer
+(same position/scale/opacity/time-range knobs as `--image`); only the main
+input's audio is kept, the PiP layer's own audio is dropped. `--chromakey`
+(with `--video`) keys out that colour first for green-screen compositing.
 
 ### sync.py — offset detection, alignment, drift correction
 ```
@@ -251,7 +511,23 @@ color.py INPUT --to-sdr [--tonemap hable|mobius|reinhard|bt2390] [--peak 1000] [
 color.py INPUT --lut grade.cube [--lut-strength 0..1] [-o OUT]
 color.py INPUT --retag bt709|bt2020-pq|bt2020-hlg|bt601 [-o OUT]      # metadata only, stream copy
 color.py INPUT --strip-dovi [-o OUT]                                 # drop the Dolby Vision RPU, keep the HLG/HDR10 base layer (stream copy)
+color.py INPUT --correct [--exposure -3..3] [--contrast 0..2] [--saturation 0..2] [--gamma 0.1..10]
+         [--temperature 2000..12000] [--tint -1..1] [--lift -1..1] [--gain -1..1]
+         [--levels-in-black 0..255] [--levels-in-white 0..255] [--levels-out-black 0..255] [--levels-out-white 0..255]
+         [--curves color_negative|cross_process|darker|increase_contrast|lighter|linear_contrast|medium_contrast|negative|strong_contrast|vintage] [-o OUT]
 ```
+`--correct` is typed primary colour correction, no filter string ever accepted:
+`--exposure`/`--contrast`/`--saturation`/`--gamma` (`exposure`/`eq` filters),
+`--temperature`/`--tint`/`--lift`/`--gain` (`colortemperature`/`colorbalance`
+filters — `--tint` sets midtones, `--lift` shadows, `--gain` highlights, a
+classic three-way correction), `--levels-*` (`colorlevels`, 8-bit units
+converted to the filter's own 0..1 range, only added to the chain when at
+least one is given) and `--curves` (the `curves` filter's own built-in
+presets, only added when given). Every flag is range-checked against this
+script's own safe subset of what `ffmpeg -h filter=<name>` documents before
+ffmpeg runs. `--json`'s `measurements` reports `analyze_levels()` (signalstats
+luma/saturation) for input and output side by side.
+
 iPhone "HDR" video is Dolby Vision profile 8.4 on an HLG base layer:
 `probe.py` reports `hdr_format: Dolby Vision profile 8` and `--to-sdr`
 tone-maps it from the HLG base layer. When the user wants to keep HDR but
@@ -291,4 +567,14 @@ export.py --list
 ```
 Scales into the preset frame (pad by default), tags BT.709, sets `+faststart`,
 trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`.
+
+### proxy.py — low-bitrate proxy for analysis/preview
+```
+proxy.py INPUT [--width W | --scale F] [--crf N] [--fps N] [--no-audio] [-o OUT]
+```
+Not a delivery preset: resizes to `--width` (default 640) or by `--scale`
+factor, re-encodes at a proxy-grade `--crf` (default 30) with the fastest
+x264/x265 preset, keeps the source's own dynamic range (HDR stays HDR;
+run `color.py --to-sdr` first if SDR is wanted). Only executes the spec
+given — does not decide which asset to proxy or what for.
 

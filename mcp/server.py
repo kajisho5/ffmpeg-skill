@@ -10,6 +10,8 @@ Run:
   python3 mcp/server.py                         # stdio transport
 Claude Desktop / Claude Code config example:
   {"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["/path/to/ffmpeg-skill/mcp/server.py"]}}}
+  On Windows, use "python" instead of "python3" unless Python was installed from the Microsoft
+  Store (a python.org install exposes python/py, not python3) -- see README.md's MCP section.
 """
 import json
 import os
