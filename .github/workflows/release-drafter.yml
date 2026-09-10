@@ -1,0 +1,25 @@
+# Keeps a draft GitHub Release up to date with merged-PR summaries as main moves forward. This is
+# purely a convenience cross-check against CHANGELOG.md's hand-written notes -- it never publishes
+# anything itself; publishing a real release stays the deliberate, manual `git tag` act described
+# in release.yml / README's "Development" -> "Releasing" section.
+name: release-drafter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
