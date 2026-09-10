@@ -2164,7 +2164,7 @@ class FFmpegSkillTests(unittest.TestCase):
                  json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})]
         proc = subprocess.run([sys.executable, str(server)], input="\n".join(lines) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, f"server must not crash on non-object JSON lines; stderr: {proc.stderr}")
-        resp = [json.loads(l) for l in proc.stdout.splitlines() if l.strip()]
+        resp = [json.loads(response_line) for response_line in proc.stdout.splitlines() if response_line.strip()]
         self.assertEqual(len(resp), 1, "only the one real request should get a response")
         self.assertEqual(resp[0]["id"], 1)
         self.assertIn("tools", resp[0]["result"])
