@@ -54,7 +54,13 @@ def main() -> int:
         rad = math.radians(args.angle)
         x1 = round(args.width * math.cos(rad))
         y1 = round(args.width * math.sin(rad))
-        src_filter = f"gradients=size={args.width}x{args.height}:rate={args.fps:g}:c0={c0}:c1={c1}:x0=0:y0=0:x1={x1}:y1={y1}"
+        # gradients defaults to seed=-1 (a random seed picked fresh each run) and speed=0.01 (a
+        # slow rotation applied every frame), so without pinning both, this "static" background
+        # was neither reproducible between runs nor actually static across its own duration --
+        # violating the bit_exact/deterministic contract _contract.py declares for this tool.
+        # speed's own valid range bottoms out at 1e-05 (0 is refused), so that's the closest to
+        # motionless the filter allows.
+        src_filter = f"gradients=size={args.width}x{args.height}:rate={args.fps:g}:c0={c0}:c1={c1}:x0=0:y0=0:x1={x1}:y1={y1}:seed=0:speed=1e-05"
     else:
         validate_color(args.color, "--color")
         src_filter = f"color=c={args.color}:size={args.width}x{args.height}:rate={args.fps:g}"

@@ -73,6 +73,11 @@ def main() -> int:
         # resuming the rest of the clip: split the timeline at `at`, freeze-frame the first
         # part's last frame for --hold seconds via tpad, concat with the remainder.
         n = max(1, round(args.hold * fps))
+        # The video hold length is rounded to a whole number of frames (n / fps), but the audio
+        # side used to pad by the raw --hold value -- up to half a frame duration off from what
+        # the video actually holds for, a permanent A/V drift from this point on. Pad audio by
+        # the same, frame-rounded duration the video actually gets.
+        actual_hold = n / fps
         vf = (f"[0:v]split[a][b];[a]trim=end={at:.3f},setpts=PTS-STARTPTS[head];"
               f"[b]trim=start={at:.3f},setpts=PTS-STARTPTS[tail];"
               f"[head]tpad=stop_mode=clone:stop={n}[frozen];"
@@ -81,7 +86,7 @@ def main() -> int:
         if has_audio:
             af = (f"[0:a]asplit[aa][ab];[aa]atrim=end={at:.3f},asetpts=PTS-STARTPTS[ahead];"
                   f"[ab]atrim=start={at:.3f},asetpts=PTS-STARTPTS[atail];"
-                  f"[ahead]apad=pad_dur={args.hold:.3f}[afrozen];"
+                  f"[ahead]apad=pad_dur={actual_hold:.6f}[afrozen];"
                   f"[afrozen][atail]concat=n=2:v=0:a=1[outa]")
             cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", f"{vf};{af}", "-map", "[outv]", "-map", "[outa]"]
     cmd += video_args(meta, args.crf, args.preset)

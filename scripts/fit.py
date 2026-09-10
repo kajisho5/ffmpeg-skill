@@ -194,8 +194,18 @@ def main() -> int:
             out_h = even(args.height)
             out_w = even(out_h * ratio) if ratio else args.height
         elif ratio and src_ratio:
-            out_w = even(sw if ratio <= src_ratio else sh * ratio)
-            out_h = even(out_w / ratio)
+            # No explicit --width/--height: size the canvas to the new aspect without exceeding
+            # the source's own resolution in either dimension. A narrower/taller target than the
+            # source (e.g. 9:16 from a 16:9 source) must be bounded by the source's HEIGHT, not
+            # its width -- bounding by width there multiplies the height by src_ratio/ratio (a
+            # 1920x1080 source asked for 9:16 used to come out 1920x3414, a ~3.16x upscale in
+            # both fit=pad and fit=crop, entirely unrequested).
+            if ratio <= src_ratio:
+                out_h = even(sh)
+                out_w = even(out_h * ratio)
+            else:
+                out_w = even(sw)
+                out_h = even(out_w / ratio)
         else:
             out_w, out_h = even(sw), even(sh)
         if args.fit == "crop":

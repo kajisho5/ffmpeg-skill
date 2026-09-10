@@ -60,7 +60,12 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[fl
                 except MissingFpsError as e:
                     die(f"cue '{line}': {e} -- pass --fps, or --input's own fps is used automatically when given")
                 except ValueError:
-                    start, end, text = cursor, cursor + auto_seconds, line.strip()
+                    # TIME_RE matched (so m.group("text") is the real cue text, not the broken
+                    # timestamp), but one of the two timestamps itself failed to parse (e.g. a
+                    # malformed "00:00:03.15.999") -- falling back to `line.strip()` here used to
+                    # burn the whole raw line, broken timestamp included, into the caption instead
+                    # of just the text after it.
+                    start, end, text = cursor, cursor + auto_seconds, m.group("text").strip()
                 else:
                     text = m.group("text").strip()
             else:
