@@ -33,7 +33,7 @@ jobs:
           # latest tag to check CHANGELOG.md against "Closes #N" in commit bodies -- a shallow
           # clone would make that check silently a no-op (no tag reachable to diff against).
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.9"
       - name: Install ffmpeg (Linux)
