@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- `audio.py --music` (with or without `--duck`/`--music-loop`) no longer shortens the video: the mixed track is padded/trimmed to the source duration and a video-keeping output never uses `-shortest` (#164).
 
 ## 1.4.0
 

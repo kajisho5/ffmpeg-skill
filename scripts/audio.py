@@ -196,18 +196,29 @@ def main() -> int:
         post.append(f"afade=t=in:st=0:d={args.fade_in:g}")
     if args.fade_out and dur:
         post.append(f"afade=t=out:st={max(0.0, dur - args.fade_out):.3f}:d={args.fade_out:g}")
-    if args.replace and dur:
+    # The audio track is conformed to the source duration whenever it is known: padded with
+    # silence if the graph came out short, trimmed if long. A mixed track can come out a few
+    # hundredths short (amix's dropout_transition, a looped bed's atrim boundary), and with
+    # -shortest below that used to shorten the *video* to match: 12.00 s in, 11.925 s out, four
+    # frames of a stream-copied picture gone (#164). Padding the audio, not cutting the picture,
+    # is the only correct answer for a tool whose contract says the video is never touched.
+    keep_video = has_video and not audio_out
+    if dur and (args.replace or args.music or keep_video):
         post.append(f"apad,atrim=0:{dur:.3f}")
     if post:
         graph.append(f"[{last}]{','.join(post)}[out]")
         last = "out"
 
     cmd = ffmpeg_base() + inputs + ["-filter_complex", ";".join(graph), "-map", f"[{last}]"]
-    if has_video and not audio_out:
+    if keep_video:
         cmd += ["-map", "0:v:0", "-c:v", "copy"]
     elif has_video:
         cmd += ["-vn"]  # audio extension: the picture is dropped, not copied into a container that cannot hold it
-    cmd += audio_codec_for(output, args.bitrate) + ["-shortest", output]
+    cmd += audio_codec_for(output, args.bitrate)
+    if not keep_video:
+        # audio-only outputs: a looped music bed is infinite, -shortest ends the run with the main track
+        cmd.append("-shortest")
+    cmd.append(output)
     run(cmd)
     r = probe(output, role="output")
     a = r["audio"]
