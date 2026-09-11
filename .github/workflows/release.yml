@@ -166,9 +166,18 @@ jobs:
 
           changelog_path = root / "CHANGELOG.md"
           changelog = changelog_path.read_text(encoding="utf-8")
-          anchor = "## Unreleased\n\n(nothing yet)\n\n"
-          assert anchor in changelog, "CHANGELOG.md's Unreleased anchor not found"
-          changelog_path.write_text(changelog.replace(anchor, anchor + section, 1), encoding="utf-8")
+          # Whatever sits under "## Unreleased" (hand-written bullets from the merged PRs, or the
+          # placeholder "(nothing yet)") moves into the new version's section, ahead of the
+          # generated commit-subject bullets, and the placeholder is put back. The anchor used to
+          # be the literal "(nothing yet)" line, so a PR that wrote real notes there broke the
+          # bump step (1.4.1's first run).
+          m = re.search(r"## Unreleased\n(.*?)(?=^## )", changelog, re.S | re.M)
+          assert m, "CHANGELOG.md has no '## Unreleased' section followed by a version heading"
+          unreleased = m.group(1).strip()
+          if unreleased and unreleased != "(nothing yet)":
+              section = section.replace(f"since {old}._\n\n", f"since {old}._\n\n{unreleased}\n", 1)
+          changelog = changelog[:m.start()] + "## Unreleased\n\n(nothing yet)\n\n" + section + changelog[m.end():]
+          changelog_path.write_text(changelog, encoding="utf-8")
           PY
 
           git config user.name "github-actions[bot]"
