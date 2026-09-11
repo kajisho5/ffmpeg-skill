@@ -2834,13 +2834,14 @@ class FFmpegSkillTests(unittest.TestCase):
     @staticmethod
     def _psnr(a, b):
         """Average PSNR of b against a (dB); lower means the picture changed more. inf when identical."""
-        # Both inputs are re-based to pts 0 first: the psnr filter pairs frames by timestamp, and
-        # an encoder that starts its output one frame later than the source (Debian's FFmpeg 7.1.5
-        # did, on a picture the tool had not touched) otherwise compares every frame with its
-        # neighbour and reports ~24 dB for an unchanged moving picture. Frame *count* equality is
-        # asserted separately by the callers that care, so a genuinely dropped frame still fails.
+        # Both inputs are re-stamped by frame *number* first: the psnr filter pairs frames by
+        # timestamp, and an encoder whose output timestamps sit one frame off the source's
+        # (Debian's FFmpeg 7.1.5 did, on a picture the tool had not touched) otherwise compares
+        # every frame with its neighbour and reports ~24 dB for an unchanged moving picture.
+        # Re-basing only the start pts was not enough there. Frame *count* equality is asserted
+        # separately by the callers that care, so a genuinely dropped frame still fails.
         proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi",
-                               "[0:v]setpts=PTS-STARTPTS[a];[1:v]setpts=PTS-STARTPTS[b];[a][b]psnr", "-f", "null", "-"],
+                               "[0:v]setpts=N/FRAME_RATE/TB[a];[1:v]setpts=N/FRAME_RATE/TB[b];[a][b]psnr", "-f", "null", "-"],
                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         m = re.search(r"average:(inf|[\d.]+)", proc.stderr)
         assert m, proc.stderr[-400:]
