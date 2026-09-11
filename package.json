@@ -1,7 +1,7 @@
 {
   "name": "ffmpeg-skill",
   "version": "1.3.0",
-  "description": "Agent Skill that gives coding agents (Claude Code, Cursor, Codex) a local video editor: 41 FFmpeg tools with a machine-readable contract, contract-derived MCP server, FFmpeg capability detection, probe-first / verify-last workflow. Cut, join, silence removal, fit, captions and karaoke, overlays, motion graphics, HDR to SDR, LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, project rendering, batch. No API keys, no cloud, no dependencies.",
+  "description": "Agent Skill that gives coding agents (Claude Code, Cursor, Codex) a local video editor: 42 FFmpeg tools with a machine-readable contract, contract-derived MCP server, FFmpeg capability detection, probe-first / verify-last workflow. Cut, join, silence removal, fit, captions and karaoke, overlays, motion graphics, HDR to SDR, LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, project rendering, batch. No API keys, no cloud, no dependencies.",
   "keywords": [
     "ffmpeg",
     "video",

@@ -86,6 +86,28 @@
   "required": []
  },
  {
+  "name": "broll",
+  "properties": [
+   "argv",
+   "at",
+   "audio",
+   "crf",
+   "dry_run",
+   "duration",
+   "end",
+   "fast",
+   "from_",
+   "input",
+   "insert",
+   "json",
+   "output",
+   "pad_color",
+   "preset",
+   "progress"
+  ],
+  "required": []
+ },
+ {
   "name": "caption",
   "properties": [
    "animate",

@@ -8,6 +8,8 @@ Every script prints the same information with `--help`; this file exists so the 
 - fit.py — target duration and/or aspect, rotate/flip
 - crop.py — crop to an exact pixel rectangle
 - insert.py — still image to a timed silent clip, with Ken Burns zoom/pan
+- broll.py — cut away to a B-roll clip for a window and come back
+- metadata.py — chapter markers and title/artist/comment tags, streams copied
 - background.py — generate a solid-colour or gradient clip
 - reverse.py — reverse playback
 - stabilize.py — motion stabilisation (vidstab)
@@ -286,6 +288,21 @@ bed, or filling a fixed slot length with a short clip. Does not smooth the
 loop point (no crossfade at the seam) -- a clip that doesn't already loop
 cleanly will show a visible cut/pop at each repeat, which is a property of
 the source material this tool cannot fix.
+
+### broll.py — cut away to a B-roll clip and come back
+```
+broll.py A.mp4 --insert B.mp4 --at T [--duration D | --end T2] [--from T3]
+               [--insert ... --at ...] [--audio a|b|mix] [--pad-color black] [-o OUT]
+```
+A plays as it is; during each window B's picture is shown instead (scaled and
+padded to A's frame, A's fps), and A resumes at its own time when the window
+ends -- a cutaway, not a splice, so the output is exactly as long as A. One
+`--insert`/`--at` pair per cutaway (`--duration`, `--end`, `--from` are per
+cutaway too, or given once for all; defaults 4 s and 0); windows may not
+overlap or run past A's end, and B must have enough material from `--from`.
+`--audio a` (default) keeps A's audio untouched and stream-copied; `b` replaces
+it inside each window with B's; `mix` plays both. The output's length is
+verified against A's.
 
 ### metadata.py — chapter markers and container tags, streams copied
 ```

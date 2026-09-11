@@ -215,6 +215,46 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
 
+    def test_broll_cutaway_shows_b_in_the_window_and_keeps_a_elsewhere(self):
+        """#141: broll.py shows B's picture over A for a window and returns to A at A's own time;
+        the output is exactly A's length. Checked frame by frame: inside the window a frame
+        matches B (at --from + offset) and not A; outside it matches A. --audio a stream-copies
+        A's audio; two cutaways in one call; overlapping or past-the-end windows are refused."""
+        def frame_luma(path, t):
+            proc = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path, "-frames:v", "1",
+                      "-vf", "signalstats,metadata=print:file=-", "-f", "null", "-")
+            return float(re.search(r"lavfi\.signalstats\.YAVG=([0-9.]+)", proc.stdout).group(1))
+        b = OUT / "broll_b.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "smptebars=size=960x540:rate=25:d=8",
+           "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", b)
+        out = OUT / "broll_out.mp4"
+        data = json.loads(script("broll.py", self.src, "--insert", b, "--at", "4", "--end", "7", "--from", "1", "--fast", "--json", "-o", out).stdout)
+        self.assertEqual(data["cutaways"], [{"insert": str(b), "at": 4.0, "end": 7.0, "from": 1.0}])
+        m = probe(str(out))
+        self.assertClose(m["duration"], probe(str(self.src))["duration"], 0.1)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+        self.assertEqual(m["audio"]["codec"], probe(str(self.src))["audio"]["codec"], "--audio a stream-copies A's audio")
+        inside_out, inside_b, inside_a = frame_luma(str(out), 5.5), frame_luma(str(b), 2.5), frame_luma(str(self.src), 5.5)
+        self.assertLess(abs(inside_out - inside_b), 6, f"inside the window the frame must be B's: out {inside_out} b {inside_b} a {inside_a}")
+        self.assertGreater(abs(inside_out - inside_a), 6, "inside the window the frame must not be A's")
+        for t in (2.0, 9.0):
+            self.assertLess(abs(frame_luma(str(out), t) - frame_luma(str(self.src), t)), 3, f"outside the window ({t}s) A must show unchanged")
+        # two cutaways, B's audio mixed in, per-cutaway durations
+        out2 = OUT / "broll_out2.mp4"
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "2", "--insert", b, "--at", "8", "--duration", "3", "--audio", "mix", "--fast", "-o", out2)
+        m2 = probe(str(out2))
+        self.assertClose(m2["duration"], 12.0, 0.1)
+        self.assertEqual(m2["audio"]["codec"], "aac")
+        self.assertLess(abs(frame_luma(str(out2), 9.5) - frame_luma(str(b), 1.5)), 6)
+        # refusals: overlap, past the end, B too short, missing --at
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "3", "--insert", b, "--at", "2", "-o", OUT / "broll_bad1.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--at", "10", "--duration", "5", "-o", OUT / "broll_bad2.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "5", "--from", "5", "-o", OUT / "broll_bad3.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--insert", b, "--at", "1", "-o", OUT / "broll_bad4.mp4", expect_fail=True)
+        dry = OUT / "broll_dry.mp4"
+        script("broll.py", self.src, "--insert", b, "--at", "4", "--dry-run", "-o", dry)
+        self.assertFalse(dry.exists())
+
     def test_metadata_writes_chapters_and_tags_with_streams_copied(self):
         """#140: metadata.py writes container chapter markers from a `TIME TITLE` file and the
         common tags, with every stream copied bit for bit; probe reports both back. Chapters on a
