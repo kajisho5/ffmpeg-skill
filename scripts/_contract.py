@@ -74,7 +74,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                 required=FF, optional=[{"capability": X264, "when": "re-encode: --accurate, VFR source, or a keyframe farther than --tolerance"}, HDR_X265, {"capability": AAC, "when": "re-encode of a video container"}] + AUDIO_OUT,
                 video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "fit": dict(role="execution", inputs=["video asset"], outputs=["video artifact at the requested duration / aspect / fps"],
-                required=FF + [X264, AAC], optional=[HDR_X265, {"capability": "filter:minterpolate", "when": "--smooth interpolate"}],
+                required=FF + [X264, AAC], optional=[HDR_X265, {"capability": "filter:minterpolate", "when": "--smooth interpolate"},
+                                                     {"capability": "filter:boxblur", "when": "--pad-fill blur"}],
                 video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "crop": dict(role="execution", inputs=["video asset"], outputs=["video artifact cropped to the given pixel rectangle"],
                  required=FF + [X264, AAC], optional=[HDR_X265],
@@ -112,6 +113,12 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "speedramp": dict(role="execution", inputs=["video asset"], outputs=["video artifact with a stepped speed ramp applied across segments"],
                       required=FF + [X264, AAC], optional=[HDR_X265],
                       video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "broll": dict(role="execution", inputs=["A-roll video asset", "one or more B-roll video assets (--insert)"], outputs=["video artifact of exactly the A-roll's length with the B-roll shown during each cutaway window"],
+                  required=FF + [X264, AAC, "filter:overlay", "filter:amix"], optional=[HDR_X265],
+                  video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
+    "metadata": dict(role="execution", inputs=["video or audio asset", "chapters text file (--chapters)"], outputs=["the same streams, stream-copied, with chapter markers and/or title/artist/comment tags written"],
+                     required=FF, optional=[],
+                     video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="bit_exact", deterministic=True),
     "loop": dict(role="execution", inputs=["video asset"], outputs=["video artifact repeated to the requested count or duration"],
                  required=FF + [X264, AAC], optional=[],
                  video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
@@ -174,7 +181,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "export": dict(role="execution", inputs=["video asset"], outputs=["delivery artifact in the preset's format"],
                    required=FF, optional=[{"capability": X264, "when": "preset youtube / youtube4k / reels / x"}, {"capability": AAC, "when": "preset youtube / youtube4k / reels / x / h265 (prores uses pcm_s16le, copy stream-copies, gif has no audio)"},
                                           {"capability": X265, "when": "preset h265"}, {"capability": "encoder:prores_ks", "when": "preset prores"},
-                                          {"capability": "filter:palettegen", "when": "preset gif"}, {"capability": "encoder:gif", "when": "preset gif"}],
+                                          {"capability": "filter:palettegen", "when": "preset gif"}, {"capability": "encoder:gif", "when": "preset gif"}, {"capability": "filter:boxblur", "when": "--pad-fill blur"}],
                    video_required=True, audio_only=False, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "check": dict(role="verification", inputs=["media artifact"], outputs=["compliance rows JSON on stdout (no file)"],
                   required=["ffprobe"], optional=[{"capability": "ffmpeg", "when": "loudness rows (default)"}, {"capability": "filter:loudnorm", "when": "loudness rows (default)"}],
@@ -239,6 +246,8 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "freeze":   dict(video="always", audio="always", note="the tpad/concat filter graph always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
     "pad":      dict(video="always", audio="always", note="the tpad filter always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
     "speedramp": dict(video="always", audio="always", note="setpts/atempo per segment always forces a re-encode of both streams"),
+    "broll":    dict(video="always", audio="conditional", note="the overlay graph always re-encodes the video stream; A's audio is stream-copied under --audio a and re-encoded to AAC under --audio b/mix"),
+    "metadata": dict(video="never", audio="never", note="-c copy on every stream; only the container's chapters and tags change"),
     "loop":     dict(video="always", audio="always", note="-stream_loop always re-encodes both streams; the audio codec is always AAC when present"),
     "insert":    dict(video="always", audio="never", note="always encodes a fresh silent clip from the still image; there is no audio stream to touch"),
     "background": dict(video="always", audio="never", note="always encodes a fresh generated clip; there is no input to copy from"),
@@ -416,7 +425,14 @@ def skill_description() -> str:
     try:
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         m = re.search(r"^description:\s*(.+)$", text, re.M)
-        return m.group(1).strip() if m else ""
+        value = m.group(1).strip() if m else ""
+        # The scalar is single-quoted in SKILL.md: unquoted, the ": " inside the text ("...
+        # requests: cut, trim ...") is a new mapping key to a strict YAML parser and the whole
+        # frontmatter fails to load (GitHub's renderer reported it; npx skills add and Claude
+        # Code's loader parse it strictly). '' is the only escape inside a YAML single-quoted scalar.
+        if len(value) >= 2 and value[0] == value[-1] == "'":
+            value = value[1:-1].replace("''", "'")
+        return value
     except OSError:
         return ""
 

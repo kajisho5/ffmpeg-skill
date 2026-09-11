@@ -39,25 +39,35 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
     equal recall compared with the raw scdet threshold."""
     ffmpeg = require_tool("ffmpeg")
     proc = subprocess.run([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-an", "-vf",
-                           "scale=320:-2,scdet=threshold=0:sc_pass=1,metadata=print:file=-", "-f", "null", "-"],
+                           "scale=320:-2,scdet=threshold=0,metadata=print:file=-", "-f", "null", "-"],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    times: List[float] = []
-    scores: List[float] = []
-    cur_t = None
+    # No `sc_pass=1` on scdet: on FFmpeg 5.x that option means "pass only the frames whose
+    # score exceeds the threshold", so every truly static frame (score exactly 0 -- a title
+    # card, colour bars) is dropped before metadata=print and the frame numbers are re-counted
+    # without them. The +-12-frame neighbourhood around a real cut then fills with the moving
+    # segment's scores instead of the still one's zeros, the cut fails the ratio test, and a
+    # 4 s smptebars scene made the cuts on both sides of it disappear (found by the 5.1.1 CI
+    # job, #146). 6.1+ passes every frame either way. Scores are still indexed by frame number
+    # and any frame the filter did not report counts as 0, so a build that drops frames again
+    # cannot shift the neighbourhood.
+    by_frame: Dict[int, Tuple[float, float]] = {}
+    cur = None
     for line in proc.stdout.splitlines():
         m = SCORE_RE.match(line)
         if m:
-            cur_t = float(m.group(2))
+            cur = (int(m.group(1)), float(m.group(2)))
             continue
-        if line.startswith("lavfi.scd.score=") and cur_t is not None:
+        if line.startswith("lavfi.scd.score=") and cur is not None:
             try:
-                times.append(cur_t)
-                scores.append(float(line.split("=", 1)[1]))
+                by_frame[cur[0]] = (cur[1], float(line.split("=", 1)[1]))
             except ValueError:
                 pass
     cuts = [0.0]
-    if not scores:
+    if not by_frame:
         return cuts
+    n_frames = max(by_frame) + 1
+    times: List[float] = [by_frame[i][0] if i in by_frame else -1.0 for i in range(n_frames)]
+    scores: List[float] = [by_frame[i][1] if i in by_frame else 0.0 for i in range(n_frames)]
     w = 12
     for i, sc in enumerate(scores):
         if sc < threshold:

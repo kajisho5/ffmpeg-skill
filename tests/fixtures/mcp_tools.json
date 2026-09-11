@@ -86,6 +86,28 @@
   "required": []
  },
  {
+  "name": "broll",
+  "properties": [
+   "argv",
+   "at",
+   "audio",
+   "crf",
+   "dry_run",
+   "duration",
+   "end",
+   "fast",
+   "from_",
+   "input",
+   "insert",
+   "json",
+   "output",
+   "pad_color",
+   "preset",
+   "progress"
+  ],
+  "required": []
+ },
+ {
   "name": "caption",
   "properties": [
    "animate",
@@ -299,7 +321,9 @@
    "list",
    "no_scale",
    "output",
+   "pad_blur",
    "pad_color",
+   "pad_fill",
    "preset",
    "progress"
   ],
@@ -327,7 +351,9 @@
    "max_speed",
    "method",
    "output",
+   "pad_blur",
    "pad_color",
+   "pad_fill",
    "preset",
    "progress",
    "rotate",
@@ -509,6 +535,27 @@
    "progress",
    "sample_rate",
    "tp"
+  ],
+  "required": []
+ },
+ {
+  "name": "metadata",
+  "properties": [
+   "album",
+   "argv",
+   "artist",
+   "chapters",
+   "clear_chapters",
+   "comment",
+   "date",
+   "dry_run",
+   "fast",
+   "genre",
+   "input",
+   "json",
+   "output",
+   "progress",
+   "title"
   ],
   "required": []
  },

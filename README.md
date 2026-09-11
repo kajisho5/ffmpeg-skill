@@ -30,7 +30,7 @@ npx ffmpeg-skill
 
 ![before / after demo](assets/demo.gif)
 
-`ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **40 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also an MCP tool, and the whole set is described by a machine-readable contract.
+`ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **42 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also an MCP tool, and the whole set is described by a machine-readable contract.
 
 If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
 
@@ -144,7 +144,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 1. **Probe first.** No tool decides from the file name. `probe.py` measures duration, fps (with variable-frame-rate detection), resolution, rotation, bit depth, HDR format including Dolby Vision, colour tags and every audio stream before anything is cut.
 2. **Lossless when possible.** `cut.py`, `join.py` and `loudness.py` stream-copy what they do not need to touch. Re-encoding happens only when it must: frame-accurate cuts, filters, format changes, or a keyframe farther than the tolerance.
 3. **Plan before render.** Every tool takes `--dry-run` (print the ffmpeg command lines, write nothing), `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress` (percent and ETA). A test runs every tool under `--dry-run` behind a fake ffmpeg and asserts that no ffmpeg call happened and no file appeared.
-4. **Machine-readable contract.** `contract --json` describes all 40 tools: input schema generated from the parser, output schema, role, required and conditional FFmpeg capabilities, dry-run support, the verification tools to run afterwards, whether a visual check is required, `mutates_input: false`. `provides` lists all 40 by a cross-repository Capability id (`ffmpeg-skill.cut`, `ffmpeg-skill.loudness`, ...) for [`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS)'s `CapabilityContract.provides` — see `docs/contract.md`.
+4. **Machine-readable contract.** `contract --json` describes all 42 tools: input schema generated from the parser, output schema, role, required and conditional FFmpeg capabilities, dry-run support, the verification tools to run afterwards, whether a visual check is required, `mutates_input: false`. `provides` lists all 40 by a cross-repository Capability id (`ffmpeg-skill.cut`, `ffmpeg-skill.loudness`, ...) for [`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS)'s `CapabilityContract.provides` — see `docs/contract.md`.
 5. **Contract-derived MCP.** `mcp/server.py` builds its `tools/list` from the contract. Tool names, order and `inputSchema` cannot drift from the scripts; a test keeps the two byte-identical.
 6. **Capability detection.** `doctor` reads `ffmpeg -encoders / -filters / -bsfs` and reports which of the components the tools need are present on this build (libx264, libass, zscale, loudnorm, xfade, …), before a job fails inside ffmpeg.
 7. **Unknown is not missing.** When a listing cannot be read (a layout the parser does not know, ffmpeg exiting non-zero) the affected capabilities are `unknown`: never `missing`, never silently `available`. An installed filter is not reported absent; a failed detection is not a pass.
@@ -153,7 +153,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 ## Tools
 
-40 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, non-zero exit and a reason on stderr on failure.
+42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, non-zero exit and a reason on stderr on failure.
 
 **Analysis and inspection**
 
@@ -188,6 +188,8 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 | `pad.py` | Add black/silent padding at the start and/or end of the timeline (`--start`, `--end`) — distinct from `fit.py --fit pad`'s per-frame letterbox bars |
 | `speedramp.py` | Step through different constant speeds across a clip via `--segment START-END:FACTOR` (repeatable) — distinct from `fit.py`'s single whole-clip speed factor |
 | `loop.py` | Repeat a clip `--times` N or to a target `--duration` — for background loops and filling a fixed slot length |
+| `broll.py` | Cut away to a B-roll clip over the A-roll for a window (`--insert B --at T --duration D`, repeatable) and come back; A's length and audio untouched by default |
+| `metadata.py` | Write container chapter markers from a `TIME TITLE` text file and title/artist/comment tags, every stream copied bit for bit |
 | `grid.py` | Composite `--cols`x`--rows` clips into one grid, each cell letterboxed and labelled with its filename by default (`--label none` to skip) |
 
 **Audio**
@@ -276,7 +278,7 @@ npx ffmpeg-skill contract --json            # or: python3 scripts/_contract.py -
 npx ffmpeg-skill contract --json --static   # without environment detection
 ```
 
-The contract is generated from the code that runs, not maintained beside it. For each of the 40 tools (`ffmpeg-skill/<name>`) it states:
+The contract is generated from the code that runs, not maintained beside it. For each of the 42 tools (`ffmpeg-skill/<name>`) it states:
 
 | Field | Meaning |
 |---|---|
@@ -316,12 +318,13 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 ## FFmpeg compatibility
 
-The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu), 8.x (macOS) and 9.x (Windows), all on Python 3.9, plus Ubuntu on Python 3.13 (the two ends of the supported range); 5.x and 7.x are expected to work from the filter/encoder names used but are not run ([#146](https://github.com/kajisho5/ffmpeg-skill/issues/146) tracks widening the matrix). The capability parser has been run against the listings of these builds:
+The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 5.1.1 (static build), 6.1 (Ubuntu apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew) and 9.x (Windows gyan.dev), on Python 3.9 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
 
 | FFmpeg | `-filters` row layout | Source |
 |---|---|---|
+| 5.1.1 | three flag characters, same as 6.x | johnvansickle.com static build on the Linux CI runner |
 | 6.1.1 | three flag characters: `..C acompressor A->A` | Ubuntu 24.04 apt, captured |
-| 7.x | same as 6.x | constructed fixture (no capture at hand) |
+| 7.1.x | same as 6.x | Debian trixie apt in a CI container (plus a constructed fixture in tests/) |
 | 8.1.2 | two flag characters: `TS aap AA->A`, three-character legend, `------` separator | Homebrew on the macOS CI runner, captured |
 | 9.0.1 | same as 8.x, CRLF | gyan.dev build on the Windows CI runner, captured |
 
@@ -407,7 +410,7 @@ python3 evals/run.py --list   # agent eval prompts (see evals/)
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, on Ubuntu (FFmpeg 6.1), macOS (Homebrew FFmpeg 8.x) and Windows (gyan.dev FFmpeg 9.x), and uploads each runner's FFmpeg listings as an artifact.
+CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, on Ubuntu (FFmpeg 6.1, Python 3.9 and 3.13), macOS (Homebrew FFmpeg 8.x) and Windows (gyan.dev FFmpeg 9.x), plus two Linux jobs on FFmpeg 5.1.1 (static build) and 7.1 (Debian trixie container), and uploads each runner's FFmpeg listings as an artifact.
 
 `tests/test_contract.py` runs on all three OSes, but a handful of its tests build a fake `ffmpeg` as a `#!/bin/sh` script on a PATH shim to force specific FFmpeg 6/7/8/9 fixture layouts through `doctor`'s parser — that technique isn't portable to Windows, so `test_dry_run_never_runs_ffmpeg_and_writes_nothing` and the whole `DoctorDetectionTests` class (fixture-driven layout parsing) are individually `skipIf`'d there and show as `skipped`, not silently absent, in the Windows job's log. Everything else — contract schema, `reencodes_*`, `doctor.tools`, MCP derivation, and every tool exercised through the contract, including `cut.py`'s provenance fields — runs against the real Windows `ffmpeg` on every PR. See [references/ci-platform-pitfalls.md](references/ci-platform-pitfalls.md) for this and other per-OS behaviour differences already diagnosed, before spending a CI cycle re-diagnosing a platform-only failure.
 

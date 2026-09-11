@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-skill
-description: Edit video and audio with local FFmpeg from natural-language requests: cut, trim, join, resize/reframe (9:16, 1:1), speed change, captions and subtitles (SRT/ASS, animated, karaoke), logos and text overlays, lower-thirds and titles, silence removal, multicam and external-mic sync, loudness normalisation, HDR/Dolby Vision to SDR, LUTs, background music with ducking, platform exports (YouTube, Reels, TikTok, X), compliance checks, scene detection and highlight reels, contact sheets to inspect results, and whole-edit project files. Use this skill whenever the user mentions a video or audio file (mp4, mov, mkv, wav, m4a), footage, a clip, captions, subtitles, a reel or short, YouTube/Instagram/TikTok delivery, LUFS, sync, transcoding, ffmpeg, or asks to make something "60 seconds", "vertical", "louder", "captioned" — even when they do not say "edit". Python 3.9 standard library only, no cloud, no API keys.
+description: 'Edit video and audio with local FFmpeg from natural-language requests: cut, trim, join, resize/reframe (9:16, 1:1), speed change, captions and subtitles (SRT/ASS, animated, karaoke), logos and text overlays, lower-thirds and titles, silence removal, multicam and external-mic sync, loudness normalisation, HDR/Dolby Vision to SDR, LUTs, background music with ducking, platform exports (YouTube, Reels, TikTok, X), compliance checks, scene detection and highlight reels, contact sheets to inspect results, and whole-edit project files. Use this skill whenever the user mentions a video or audio file (mp4, mov, mkv, wav, m4a), footage, a clip, captions, subtitles, a reel or short, YouTube/Instagram/TikTok delivery, LUFS, sync, transcoding, ffmpeg, or asks to make something "60 seconds", "vertical", "louder", "captioned" — even when they do not say "edit". Python 3.9 standard library only, no cloud, no API keys.'
 ---
 
 # ffmpeg-skill
@@ -118,7 +118,7 @@ This skill cuts, joins, measures, syncs, exports and checks files — it execute
 
 The line in general: if the same input and the same explicit parameters always produce the same, verifiable output, it belongs here. If the "right" answer depends on taste, content understanding, or what looks or sounds good, it belongs to whichever skill or agent makes that judgement — this skill only ever executes parameters it's given, never infers them from what something looks or sounds like.
 
-If a request needs an FFmpeg feature none of the 40 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
+If a request needs an FFmpeg feature none of the 42 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
 
 ## Request → script
 
@@ -128,7 +128,7 @@ If a request needs an FFmpeg feature none of the 40 scripts expose, say so and n
 | "cut from 1:20 to 2:05", "trim the first 10 seconds" | `cut.py input.mp4 --start 1:20 --end 2:05` |
 | "keep only these parts", "remove the middle" | `cut.py input.mp4 --segments 0-1:00,1:30-2:00` |
 | "make it exactly 60 seconds", "fit it in 30s" | `fit.py input.mp4 --duration 60` (speed) or `--method trim` |
-| "make it vertical / for TikTok / 9:16", "square for Instagram" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`) |
+| "make it vertical / for TikTok / 9:16", "square for Instagram" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`); add `--pad-fill blur` for the blurred-background bars phone editors produce |
 | "resize to a specific height, width follows" | `fit.py input.mp4 --height 1080` (or `--width`, or both for an exact frame) |
 | "crop to this exact box/rectangle" (known x/y/width/height, not an aspect ratio) | `crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920` |
 | "are there black bars on this?", "what's the crop rectangle to remove the letterboxing" | `cropdetect.py input.mp4` |
@@ -149,6 +149,9 @@ If a request needs an FFmpeg feature none of the 40 scripts expose, say so and n
 | "add some black at the start before the title card" | `pad.py clip.mp4 --start 1.5` |
 | "speed up here, slam into slow-mo there, then speed back up" (known segments) | `speedramp.py action.mp4 --segment 0-3:1.0 --segment 3-4:0.25 --segment 4-8:2.0` |
 | "loop this background clip to fill 30 seconds" | `loop.py bg_loop.mp4 --duration 30` |
+| "cut to the product shot from 0:12 to 0:16, keep my voice underneath", "B-roll over this bit" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16` (repeat `--insert/--at` per cutaway; `--audio b|mix` to hear B) |
+| "add chapters at 0:00 Intro, 2:15 Setup, …", "chapter markers for YouTube" | `metadata.py episode.mp4 --chapters chapters.txt` (one `TIME TITLE` per line; streams are copied, nothing re-encodes) |
+| "set the title / artist / comment on the file" | `metadata.py episode.mp4 --title "Episode 12" --artist "Studio"` |
 | "put these videos in a 4x2 grid with the filename on each" | `grid.py t1.mp4 t2.mp4 t3.mp4 t4.mp4 t5.mp4 t6.mp4 t7.mp4 t8.mp4 --cols 4 --rows 2` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |

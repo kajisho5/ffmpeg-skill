@@ -8,6 +8,8 @@ Every script prints the same information with `--help`; this file exists so the 
 - fit.py — target duration and/or aspect, rotate/flip
 - crop.py — crop to an exact pixel rectangle
 - insert.py — still image to a timed silent clip, with Ken Burns zoom/pan
+- broll.py — cut away to a B-roll clip for a window and come back
+- metadata.py — chapter markers and title/artist/comment tags, streams copied
 - background.py — generate a solid-colour or gradient clip
 - reverse.py — reverse playback
 - stabilize.py — motion stabilisation (vidstab)
@@ -58,7 +60,7 @@ the result was "lossless stream copy" or "re-encoded".
 ### fit.py — target duration and/or aspect, rotate/flip
 ```
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
-             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black]]
+             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`); it
@@ -73,6 +75,10 @@ is separate from the rotation *metadata* fit.py already reads to size a
 source correctly); `--flip h|v` mirrors the picture; both can combine, rotate
 first. `--fps` forces a constant frame rate; VFR sources are conformed
 automatically even without it.
+`--pad-fill blur` fills the letterbox/pillarbox bars with a blurred, scaled-to-cover copy
+of the frame (the look every phone editor gives landscape footage posted as a Short/Reel)
+instead of the solid `--pad-color`; `--pad-blur` is the blur radius. `export.py --fit pad`
+takes the same two flags.
 
 ### crop.py — crop to an exact pixel rectangle
 ```
@@ -282,6 +288,37 @@ bed, or filling a fixed slot length with a short clip. Does not smooth the
 loop point (no crossfade at the seam) -- a clip that doesn't already loop
 cleanly will show a visible cut/pop at each repeat, which is a property of
 the source material this tool cannot fix.
+
+### broll.py — cut away to a B-roll clip and come back
+```
+broll.py A.mp4 --insert B.mp4 --at T [--duration D | --end T2] [--from T3]
+               [--insert ... --at ...] [--audio a|b|mix] [--pad-color black] [-o OUT]
+```
+A plays as it is; during each window B's picture is shown instead (scaled and
+padded to A's frame, A's fps), and A resumes at its own time when the window
+ends -- a cutaway, not a splice, so the output is exactly as long as A. One
+`--insert`/`--at` pair per cutaway (`--duration`, `--end`, `--from` are per
+cutaway too, or given once for all; defaults 4 s and 0); windows may not
+overlap or run past A's end, and B must have enough material from `--from`.
+`--audio a` (default) keeps A's audio untouched and stream-copied; `b` replaces
+it inside each window with B's; `mix` plays both. The output's length is
+verified against A's.
+
+### metadata.py — chapter markers and container tags, streams copied
+```
+metadata.py INPUT [--chapters chapters.txt | --clear-chapters]
+                  [--title T] [--artist A] [--album A] [--comment C] [--date D] [--genre G] [-o OUT]
+```
+`chapters.txt` holds one chapter per line, `TIME TITLE` (cut.py's time syntax:
+seconds, mm:ss, hh:mm:ss.ms); each chapter ends where the next starts and the
+last runs to the end of the file. Starts must ascend and lie inside the file.
+Every stream is `-c copy` (bit for bit; `probe` reports the result under
+`chapters` and `tags`), so this is instant and lossless. Chapter markers need a
+container that can hold them (.mp4/.m4v/.m4a/.mov, .mkv/.mka/.webm); `.wav`,
+`.gif`, `.mp3` and `.flac` outputs are refused for `--chapters` rather than
+silently dropping them. Tags alone are written to any container that has them.
+`--clear-chapters` removes existing markers; an empty tag value (`--comment ""`)
+clears that tag.
 
 ### grid.py — composite clips into a grid
 ```

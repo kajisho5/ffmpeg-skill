@@ -9,13 +9,14 @@ from __future__ import annotations
 import json
 import os
 import platform
+import argparse
 import re
 import shutil
 import subprocess
 import sys
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Every script prints paths, help text and reports that may contain non-ASCII (Japanese examples,
 # arrows). On Windows the console streams default to a legacy code page and raise
@@ -72,6 +73,63 @@ ERROR_CODE = {
 # retry loop against a command that will fail the same way every time; false-for-everything is the
 # honest answer until real sniffing exists to justify anything else.
 ERROR_RETRYABLE = False
+
+
+_FFMPEG_VERSION: "Optional[Tuple[int, int]]" = None
+
+
+def ffmpeg_version() -> "Tuple[int, int]":
+    """(major, minor) of the FFmpeg build on PATH, parsed once from `ffprobe -version`; (0, 0)
+    when it cannot be read. ffprobe rather than ffmpeg because --dry-run promises never to run
+    ffmpeg (docs/contract.md: ffmpeg_execution "none") while ffprobe always may, and the two
+    ship from the same build. Used only to pick between two spellings of an option where FFmpeg
+    changed behaviour between releases (the tools otherwise never branch on the version: doctor's
+    capability listing is the source of truth for what a build can do)."""
+    global _FFMPEG_VERSION
+    if _FFMPEG_VERSION is None:
+        _FFMPEG_VERSION = (0, 0)
+        try:
+            out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+            m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
+            if m:
+                _FFMPEG_VERSION = (int(m.group(1)), int(m.group(2)))
+        except OSError:
+            pass
+    return _FFMPEG_VERSION
+
+
+def drawtext_boxborderw(vertical: int, horizontal: int) -> str:
+    """drawtext's per-side `boxborderw=top|right|bottom|left` (and the two-value `v|h` form)
+    arrived in FFmpeg 6.1; 5.x and 6.0 reject the `|` with "Error setting option boxborderw"
+    (found by the FFmpeg 5.1.1 CI job, #146). Older builds get the larger single value."""
+    if ffmpeg_version() >= (6, 1):
+        return f"{vertical}|{horizontal}"
+    return str(max(vertical, horizontal))
+
+
+def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int) -> str:
+    """The letterbox/pillarbox step shared by fit.py and export.py, as one -vf segment.
+
+    fill="color": scale to fit, then pad with a solid colour (the historical behaviour).
+    fill="blur": the bars are a blurred, scaled-to-cover copy of the same frame -- what every
+    phone editor's "make it vertical" does with landscape footage (#139). Built as a small
+    graph inside the -vf chain: split, one branch scaled to cover and cropped to the frame
+    then boxblur'ed, the other scaled to fit, overlaid centred. Only `filter:boxblur` is
+    needed beyond the usual scale/pad set, and that is already required by redact.py."""
+    if fill == "blur":
+        radius = max(1, int(blur))
+        return (f"split[__fitfg][__fitbg];"
+                f"[__fitbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},"
+                f"boxblur={radius}:2[__fitbgb];"
+                f"[__fitfg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[__fitfgs];"
+                f"[__fitbgb][__fitfgs]overlay=(W-w)/2:(H-h)/2:format=auto")
+    return f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color={color}"
+
+
+def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
+    parser.add_argument("--pad-fill", choices=["color", "blur"], default="color",
+                        help="what fills the letterbox/pillarbox bars under --fit pad: a solid --pad-color (default) or a blurred, scaled-up copy of the frame")
+    parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur (default 20)")
 
 
 def die(msg: str, code: int = 1, kind: str = "input") -> "None":
@@ -410,7 +468,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(
-        [ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
+        [ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
         quiet=True,
         check=False,
     )
@@ -444,6 +502,15 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         "audio": None,
         "subtitle_streams": len(subs),
         "data_streams": data_stream_count,
+        # container-level chapter markers and the common tags, so metadata.py's result is
+        # verifiable the same way every other tool's is (additive keys, 1.x-safe)
+        "chapters": [{
+            "index": n,
+            "start": _to_float(ch.get("start_time")),
+            "end": _to_float(ch.get("end_time")),
+            "title": (ch.get("tags") or {}).get("title"),
+        } for n, ch in enumerate(raw.get("chapters") or [])],
+        "tags": {k.lower(): v for k, v in (fmt.get("tags") or {}).items() if k.lower() in ("title", "artist", "album", "comment", "date", "genre")},
         # every subtitle stream in file order: index n here is `-map 0:s:n`
         "subtitle_stream_details": [{
             "index": n,
@@ -698,10 +765,30 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
     return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
+def bt709_tag_args(encoder: str = "libx264") -> List[str]:
+    """Tag an SDR output as BT.709 without touching its pixels.
+
+    Up to FFmpeg 7.0 the output options -colorspace/-color_primaries/-color_trc were tags only.
+    7.1 added colourspace negotiation to libavfilter and feeds those options into the graph's
+    output constraints, so on a source whose bitstream carries no colour tags (test sources,
+    screen recordings, many cameras) the CLI now auto-inserts a *real* matrix conversion (its
+    guess for "unknown" is bt601) into every SDR re-encode: a --lut-strength 0 no-op grade
+    came back ~24 dB PSNR from its source on 7.1. From 7.1 on, the tags therefore go through
+    the encoder's own VUI parameters instead, which libavfilter never sees; a source that is
+    genuinely tagged bt601/bt2020 is left alone either way (it keeps its own tags on the old
+    path, and the encoder VUI is a label, not a conversion, on the new one).
+    """
+    if ffmpeg_version() < (7, 1):
+        return ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+    if encoder == "libx265":
+        return ["-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
+    return ["-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
+
+
 def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True) -> List[str]:
     args = ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
     if keep_bt709:
-        args += ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+        args += bt709_tag_args("libx264")
     return args
 
 

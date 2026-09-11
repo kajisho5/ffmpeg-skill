@@ -6,6 +6,38 @@
 
 (nothing yet)
 
+## 1.4.0
+
+_Automated release: version and notes generated from pull requests merged since 1.3.1._
+
+- Add broll.py: cut away to a B-roll clip for a window and come back, A's timeline untouched (#158)
+
+## 1.3.1
+
+_Automated release: version and notes generated from pull requests merged since 1.3.0._
+
+- fix: quote SKILL.md's description so the frontmatter is valid strict YAML (#161)
+
+## 1.3.0
+
+_Automated release: version and notes generated from pull requests merged since 1.2.0._
+
+- Add metadata.py: container chapter markers and title/artist/comment tags, streams copied (#157)
+
+## 1.2.0
+
+_Automated release: version and notes generated from pull requests merged since 1.1.1._
+
+- Add --pad-fill blur to fit.py and export.py: blurred frame behind the letterbox bars (#155)
+
+## 1.1.1
+
+_Automated release: version and notes generated from pull requests merged since 1.1.0._
+
+- Fix three FFmpeg 5.x incompatibilities and run CI on FFmpeg 5.1.1 and 7.1 (#156)
+- ci(release): tag the bump commit, not the commit that triggered the run (#154)
+- chore(release): bump version to 1.1.0
+
 ## 1.1.0
 
 _Automated release: version and notes generated from pull requests merged since 1.0.4._

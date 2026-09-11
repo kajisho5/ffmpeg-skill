@@ -78,6 +78,11 @@ def main() -> int:
     cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", f"0:a:{args.audio_stream}"]
     cmd += ["-c:v", "libx264", "-preset", args.preset, "-crf", str(args.crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
     cmd += aac_args()
+    # -shortest alone is not enough on FFmpeg 5.x: showwaves keeps emitting frames after the
+    # audio ends (a 12 s source came out 14.08 s on 5.1.1, #146), so the output is also capped
+    # at the source's own duration when probe knows it.
+    if meta.get("duration"):
+        cmd += ["-t", f"{float(meta['duration']):.3f}"]
     cmd += ["-shortest", output]
     run(cmd)
 

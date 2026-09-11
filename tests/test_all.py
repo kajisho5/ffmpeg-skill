@@ -73,7 +73,14 @@ class FFmpegSkillTests(unittest.TestCase):
            "-t", "12", "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr",
            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", cls.vfr)
         cls.rot = OUT / "rot.mp4"
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
+        # -display_rotation arrived in FFmpeg 6.0; on 5.x the rotation is written the old way,
+        # as the stream's rotate tag, which every probe here reads the same. Only the fixture
+        # builder cares -- the tools under test never emit either.
+        if subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.1", "-f", "null", "-"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
+        else:
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", cls.src, "-t", "6", "-c", "copy", "-metadata:s:v:0", "rotate=90", cls.rot)
         cls.surround = OUT / "surround.mov"
         six = "|".join([TONES, TONES, "0.5*" + TONES, "0.2*sin(2*PI*60*t)", "0.3*" + TONES, "0.3*" + TONES])
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -207,6 +214,120 @@ class FFmpegSkillTests(unittest.TestCase):
         m = probe(str(out))
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
+
+    def test_broll_cutaway_shows_b_in_the_window_and_keeps_a_elsewhere(self):
+        """#141: broll.py shows B's picture over A for a window and returns to A at A's own time;
+        the output is exactly A's length. Checked frame by frame: inside the window a frame
+        matches B (at --from + offset) and not A; outside it matches A. --audio a stream-copies
+        A's audio; two cutaways in one call; overlapping or past-the-end windows are refused."""
+        def frame_luma(path, t):
+            proc = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path, "-frames:v", "1",
+                      "-vf", "signalstats,metadata=print:file=-", "-f", "null", "-")
+            return float(re.search(r"lavfi\.signalstats\.YAVG=([0-9.]+)", proc.stdout).group(1))
+        b = OUT / "broll_b.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "smptebars=size=960x540:rate=25:d=8",
+           "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", b)
+        out = OUT / "broll_out.mp4"
+        data = json.loads(script("broll.py", self.src, "--insert", b, "--at", "4", "--end", "7", "--from", "1", "--fast", "--json", "-o", out).stdout)
+        self.assertEqual(data["cutaways"], [{"insert": str(b), "at": 4.0, "end": 7.0, "from": 1.0}])
+        m = probe(str(out))
+        self.assertClose(m["duration"], probe(str(self.src))["duration"], 0.1)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+        self.assertEqual(m["audio"]["codec"], probe(str(self.src))["audio"]["codec"], "--audio a stream-copies A's audio")
+        inside_out, inside_b, inside_a = frame_luma(str(out), 5.5), frame_luma(str(b), 2.5), frame_luma(str(self.src), 5.5)
+        self.assertLess(abs(inside_out - inside_b), 6, f"inside the window the frame must be B's: out {inside_out} b {inside_b} a {inside_a}")
+        self.assertGreater(abs(inside_out - inside_a), 6, "inside the window the frame must not be A's")
+        for t in (2.0, 9.0):
+            self.assertLess(abs(frame_luma(str(out), t) - frame_luma(str(self.src), t)), 3, f"outside the window ({t}s) A must show unchanged")
+        # two cutaways, B's audio mixed in, per-cutaway durations
+        out2 = OUT / "broll_out2.mp4"
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "2", "--insert", b, "--at", "8", "--duration", "3", "--audio", "mix", "--fast", "-o", out2)
+        m2 = probe(str(out2))
+        self.assertClose(m2["duration"], 12.0, 0.1)
+        self.assertEqual(m2["audio"]["codec"], "aac")
+        self.assertLess(abs(frame_luma(str(out2), 9.5) - frame_luma(str(b), 1.5)), 6)
+        # refusals: overlap, past the end, B too short, missing --at
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "3", "--insert", b, "--at", "2", "-o", OUT / "broll_bad1.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--at", "10", "--duration", "5", "-o", OUT / "broll_bad2.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "5", "--from", "5", "-o", OUT / "broll_bad3.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--insert", b, "--at", "1", "-o", OUT / "broll_bad4.mp4", expect_fail=True)
+        dry = OUT / "broll_dry.mp4"
+        script("broll.py", self.src, "--insert", b, "--at", "4", "--dry-run", "-o", dry)
+        self.assertFalse(dry.exists())
+
+    def test_metadata_writes_chapters_and_tags_with_streams_copied(self):
+        """#140: metadata.py writes container chapter markers from a `TIME TITLE` file and the
+        common tags, with every stream copied bit for bit; probe reports both back. Chapters on a
+        container that cannot hold them are refused, --clear-chapters removes them, a chapter
+        past the end or out of order is refused, and the input is never rewritten in place."""
+        chapters = OUT / "chapters.txt"
+        chapters.write_text("# episode\n0:00 Intro\n4 Setup, with a comma; and =signs\n0:08 Outro\n", encoding="utf-8")
+        out = OUT / "meta_chapters.mp4"
+        data = json.loads(script("metadata.py", self.src, "--chapters", chapters, "--title", "Episode 12", "--artist", "Studio", "--comment", "final", "--json", "-o", out).stdout)
+        self.assertTrue(data["streams_copied"])
+        m = probe(str(out))
+        self.assertEqual([(round(c["start"]), round(c["end"]), c["title"]) for c in m["chapters"]],
+                         [(0, 4, "Intro"), (4, 8, "Setup, with a comma; and =signs"), (8, 12, "Outro")])
+        self.assertEqual(m["tags"].get("title"), "Episode 12")
+        self.assertEqual(m["tags"].get("artist"), "Studio")
+        self.assertEqual(m["tags"].get("comment"), "final")
+        src = probe(str(self.src))
+        self.assertEqual((m["video"]["codec"], m["audio"]["codec"]), (src["video"]["codec"], src["audio"]["codec"]))
+        self.assertEqual(self._frame_count(out), self._frame_count(self.src))
+        self.assertEqual(self._psnr(self.src, out), float("inf"), "streams must be copied, not re-encoded")
+        # tags alone keep the chapters; --clear-chapters removes them and keeps the tags
+        tagged = OUT / "meta_tagged.mp4"
+        script("metadata.py", out, "--comment", "v2", "-o", tagged)
+        self.assertEqual(len(probe(str(tagged))["chapters"]), 3)
+        self.assertEqual(probe(str(tagged))["tags"].get("comment"), "v2")
+        cleared = OUT / "meta_cleared.mp4"
+        script("metadata.py", out, "--clear-chapters", "-o", cleared)
+        self.assertEqual(probe(str(cleared))["chapters"], [])
+        self.assertEqual(probe(str(cleared))["tags"].get("title"), "Episode 12")
+        # refusals
+        script("metadata.py", OUT / "long_ref.wav", "--chapters", chapters, "-o", OUT / "meta_bad.wav", expect_fail=True)
+        script("metadata.py", self.src, "-o", OUT / "meta_nothing.mp4", expect_fail=True)
+        script("metadata.py", self.src, "--title", "x", "-o", self.src, expect_fail=True)
+        bad = OUT / "chapters_bad.txt"
+        bad.write_text("0:00 A\n0:30 B\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", bad, "-o", OUT / "meta_bad2.mp4", expect_fail=True)
+        bad.write_text("0:05 A\n0:02 B\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", bad, "-o", OUT / "meta_bad3.mp4", expect_fail=True)
+        # dry run writes nothing
+        dry = OUT / "meta_dry.mp4"
+        script("metadata.py", self.src, "--chapters", chapters, "--dry-run", "-o", dry)
+        self.assertFalse(dry.exists())
+
+    def test_fit_pad_fill_blur_puts_picture_in_the_bars_and_color_stays_solid(self):
+        """#139: --fit pad --pad-fill blur fills the letterbox/pillarbox bars with a blurred,
+        scaled-to-cover copy of the frame (the phone-editor "make it vertical" look) instead of a
+        solid --pad-color. The source is landscape, so 9:16 gives bars above and below: with
+        blur they must carry picture (not black, not one flat value), with color (the default)
+        they must stay the solid pad colour exactly as before. export.py shares the same path."""
+        def bar_stats(path, top_px=60):
+            # mean and spread of the top bar's luma over a frame at t=1s
+            proc = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", path, "-frames:v", "1",
+                      "-vf", f"crop=iw:{top_px}:0:0,signalstats,metadata=print:file=-", "-f", "null", "-")
+            vals = {k: float(v) for k, v in re.findall(r"lavfi\.signalstats\.(YAVG|YMIN|YMAX)=([0-9.]+)", proc.stdout)}
+            return vals["YAVG"], vals["YMAX"] - vals["YMIN"]
+        blur = OUT / "fit_pad_blur.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
+        m = probe(str(blur))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
+        avg, spread = bar_stats(str(blur))
+        self.assertGreater(avg, 20, f"blurred bar is (nearly) black: YAVG {avg}")
+        self.assertGreater(spread, 10, f"blurred bar is flat: spread {spread}")
+        solid = OUT / "fit_pad_color.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
+        avg, spread = bar_stats(str(solid))
+        self.assertLess(avg, 20, f"solid black bar is not black: YAVG {avg}")
+        self.assertLess(spread, 4, f"solid bar is not flat: spread {spread}")
+        # the same option on export.py's preset frame
+        exp = OUT / "export_pad_blur.mp4"
+        script("export.py", self.src, "--preset", "reels", "--pad-fill", "blur", "--fast", "-o", exp)
+        avg, spread = bar_stats(str(exp), 120)
+        self.assertGreater(avg, 20); self.assertGreater(spread, 10)
+        script("fit.py", self.src, "--aspect", "9:16", "--pad-fill", "blur", "--pad-blur", "0", "--dry-run", expect_fail=True)
 
     def test_fit_trim_and_crop_square(self):
         out = OUT / "fit2.mp4"
@@ -1301,6 +1422,7 @@ class FFmpegSkillTests(unittest.TestCase):
         zero = OUT / "lut_zero.mp4"
         script("color.py", self.src, "--lut", lut, "--lut-strength", "0", "--preset", "veryfast", "-o", zero)
         self.assertGreater(self._psnr(self.src, zero), 40, "--lut-strength 0 must leave the picture unchanged, not fully inverted")
+        self.assertEqual(self._frame_count(zero), self._frame_count(self.src), "no frame may be dropped or duplicated by a no-op grade")
         script("color.py", self.src, "--lut", lut, "--lut-strength", "2.5", "-o", OUT / "lut_oob.mp4", expect_fail=True)
         script("color.py", self.src, "--lut", lut, "--lut-strength", "-1", "-o", OUT / "lut_oob2.mp4", expect_fail=True)
 
@@ -1886,6 +2008,15 @@ class FFmpegSkillTests(unittest.TestCase):
             link = stub_dir / exe
             if not link.exists():
                 os.symlink(real, link)
+        # Python's own bin dir has to stay on PATH, and on a system-python machine (the Debian
+        # container job) that dir is /usr/bin, which also holds the real fc-match -- so "hidden
+        # by PATH" was not hidden at all there and the tool resolved a real fontfile= instead of
+        # taking the font= fallback this test exists to exercise. A stub fc-match that always
+        # fails sits first on PATH so the resolver returns None on every layout.
+        if platform.system() != "Windows":
+            stub = stub_dir / "fc-match"
+            stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            stub.chmod(0o755)
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([str(stub_dir), str(Path(sys.executable).parent)])
 
@@ -2809,9 +2940,28 @@ class FFmpegSkillTests(unittest.TestCase):
 
     # ------------------------------------------------------------------ FFmpeg 8+ / Windows compatibility
     @staticmethod
+    def _frame_count(path):
+        proc = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
+                              stdout=subprocess.PIPE, text=True)
+        return int(proc.stdout.strip())
+
+    @staticmethod
     def _psnr(a, b):
         """Average PSNR of b against a (dB); lower means the picture changed more. inf when identical."""
-        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"],
+        # Two things make this compare pixels and nothing else. (1) Both inputs are re-stamped by
+        # frame *number*, so the psnr filter (which pairs frames by timestamp) never compares a
+        # frame with its neighbour; frame *count* equality is asserted separately by the callers
+        # that care, so a genuinely dropped frame still fails. (2) Both inputs get the *same*
+        # colour tags before psnr. From FFmpeg 7.1 libavfilter negotiates colourspace, and psnr
+        # on an untagged source vs a bt709-tagged output auto-inserts a real bt709->bt601
+        # conversion on one side (8.x: 26 dB for a byte-identical picture) -- and, worse, hides
+        # an encode-time conversion by undoing it (8.x reported 40 dB for an output whose pixels
+        # had been re-matrixed, which is how the 7.1+ -colorspace bug in #156 went unnoticed on
+        # macOS). With the tags pinned identical, every build from 5.1 to 8.1 reports the same
+        # number for the same two files.
+        same = "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi",
+                               f"[0:v]setpts=N/FRAME_RATE/TB,{same}[a];[1:v]setpts=N/FRAME_RATE/TB,{same}[b];[a][b]psnr", "-f", "null", "-"],
                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         m = re.search(r"average:(inf|[\d.]+)", proc.stderr)
         assert m, proc.stderr[-400:]
