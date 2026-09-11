@@ -1426,6 +1426,31 @@ class FFmpegSkillTests(unittest.TestCase):
         script("color.py", self.src, "--lut", lut, "--lut-strength", "2.5", "-o", OUT / "lut_oob.mp4", expect_fail=True)
         script("color.py", self.src, "--lut", lut, "--lut-strength", "-1", "-o", OUT / "lut_oob2.mp4", expect_fail=True)
 
+    def test_color_correct_identity_holds_on_a_bt709_tagged_source(self):
+        """#159: the identity test below only ever ran on the untagged synthetic source. On a
+        source *tagged* bt709 (any camera file, anything export.py wrote) an all-defaults
+        --correct came back 26 dB PSNR and ~8 % less saturated, because libavfilter's auto-
+        inserted swscale legs around the RGB filters disagreed: yuv->rgb honoured the frame's
+        bt709 tag, rgb->yuv used the default bt601. Both legs are now pinned to one matrix, so
+        the result is the same on a tagged and an untagged copy of the same pixels, on FFmpeg
+        5.1 through 8.1 (measured 39.5 dB on all four)."""
+        tagged = OUT / "correct_src709.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(self.src), "-t", "3",
+           "-vf", "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-an", str(tagged))
+        self.assertEqual(probe(str(tagged))["video"]["color_space"], "bt709")
+        untagged = OUT / "correct_srcU.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(self.src), "-t", "3", "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-an", str(untagged))
+        results = {}
+        for name, src in (("tagged", tagged), ("untagged", untagged)):
+            out = OUT / f"correct_identity_{name}.mp4"
+            data = json.loads(script("color.py", src, "--correct", "--preset", "veryfast", "-o", out, "--json").stdout)
+            m = data["measurements"]
+            self.assertAlmostEqual(m["input"]["saturation_avg"], m["output"]["saturation_avg"], delta=2.5, msg=name)
+            results[name] = self._psnr(src, out)
+            self.assertGreater(results[name], 36, f"{name}: an all-defaults --correct must be near-identity, got {results[name]:.1f} dB")
+        self.assertAlmostEqual(results["tagged"], results["untagged"], delta=1.0, msg="the colour tag must not change what --correct does to the pixels")
+
     def test_color_correct_defaults_are_near_identity(self):
         out = OUT / "correct_neutral.mp4"
         data = json.loads(script("color.py", self.src, "--correct", "--preset", "veryfast", "-o", out, "--json").stdout)

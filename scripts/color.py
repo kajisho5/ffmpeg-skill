@@ -112,24 +112,44 @@ def correction_chain(args: argparse.Namespace) -> str:
         die(f"--levels-out-black {out_black} must be less than --levels-out-white {out_white}")
 
     gm, rm, bm = -tint, tint / 2.0, tint / 2.0
-    terms = [
+    rgb = [
         f"exposure=exposure={exposure:g}",
         f"colortemperature=temperature={temperature:g}",
         f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}",
-        f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}",
     ]
+    terms = [_rgb_stage(rgb), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
+    rgb2 = []
     if (in_black, in_white, out_black, out_white) != (0, 255, 0, 255):
         rimin, rimax = in_black / 255.0, in_white / 255.0
         romin, romax = out_black / 255.0, out_white / 255.0
-        terms.append(
+        rgb2.append(
             f"colorlevels=rimin={rimin:g}:gimin={rimin:g}:bimin={rimin:g}:"
             f"rimax={rimax:g}:gimax={rimax:g}:bimax={rimax:g}:"
             f"romin={romin:g}:gomin={romin:g}:bomin={romin:g}:"
             f"romax={romax:g}:gomax={romax:g}:bomax={romax:g}"
         )
     if args.curves:
-        terms.append(f"curves=preset={args.curves}")
+        rgb2.append(f"curves=preset={args.curves}")
+    if rgb2:
+        terms.append(_rgb_stage(rgb2))
     return ",".join(terms)
+
+
+def _rgb_stage(filters: list) -> str:
+    """Wrap a run of RGB-only filters in explicit, matching YUV<->RGB conversions.
+
+    exposure/colortemperature/colorbalance/colorlevels/curves take RGB, so libavfilter inserts a
+    swscale conversion on each side. Left to itself, the way in honours the frame's colour tag
+    (bt709 on any camera or export.py file) while the way back uses swscale's default matrix
+    (bt601): on a bt709-tagged source an all-defaults --correct came out 26 dB PSNR from its
+    input and ~8 % less saturated (#159). Untagged sources never showed it because both legs
+    then fall back to bt601 and cancel. Pinning both legs to the same matrix restores the
+    identity on every source (39 dB, the same as an untagged one always got); bt601 on both
+    sides measured better than bt709 on both (34 dB) because swscale's 601 path round-trips
+    8-bit 4:2:0 more exactly. The matrix here is only the working space of the conversion pair,
+    never a tag: the output carries the encoder's BT.709 tags as before."""
+    return ("scale=in_color_matrix=bt601,format=gbrpf32le," + ",".join(filters)
+            + ",scale=out_color_matrix=bt601,format=yuv420p")
 
 
 def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:

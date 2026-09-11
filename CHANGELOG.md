@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- `color.py --correct` no longer desaturates bt709-tagged sources: the RGB stages are wrapped in explicit, matching YUV<->RGB conversions instead of libavfilter's auto-inserted pair, which used bt709 one way and bt601 the other (#159).
 - Every tool takes `--timeout SECONDS` (default 1800, `FFMPEG_SKILL_TIMEOUT`): a single ffmpeg run past the limit is killed, its partial output removed, and the failure reported as `kind: timeout` (exit 124) instead of hanging the caller.
 - Every tool takes `--overwrite`. An output path that already exists (and was not written by this run) now prints a warning; `FFMPEG_SKILL_NO_OVERWRITE=1` makes it a refusal today, and 2.0 will refuse by default.
 
