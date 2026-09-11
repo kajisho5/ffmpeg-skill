@@ -133,3 +133,31 @@ these had ever shown up before.
 - **John Van Sickle's 7.0.2 static build has no `drawtext`** (built with freetype, yet the
   filter is absent), and BtbN no longer publishes 7.x; the 7.1 job therefore runs in a Debian
   trixie container (apt ffmpeg 7.1.5 with libass, freetype and zimg).
+
+## FFmpeg 7.1+ (the debian-trixie container CI job)
+
+- **Output `-colorspace bt709` is no longer just a tag: on an untagged source it converts.**
+  7.1 added colourspace negotiation to libavfilter, and the CLI feeds the encoder's
+  `-colorspace/-color_primaries/-color_trc` into the graph's output constraints. A source
+  whose bitstream carries no colour tags (`color_space=unknown` -- test sources, screen
+  recordings, many cameras) then *differs* from the requested BT.709, so ffmpeg auto-inserts
+  a real matrix conversion (swscale guesses bt601 for "unknown"): every SDR re-encode through
+  `x264_args()` shifted the picture, and a `--lut-strength 0` no-op grade came back ~24 dB
+  PSNR from its source. 5.x/6.x wrote the same options as tags only (47 dB, no conversion).
+  The 7.0.2 static build does *not* show it; 7.1.1 (conda-forge) reproduces it locally, so
+  that is the build to use when the trixie job goes red on a colour test.
+  Fix: `_common.bt709_tag_args()` writes the tags through the encoder's own VUI parameters
+  (`-x264-params colorprim=...:transfer=...:colormatrix=...`, x265 likewise) from 7.1 on,
+  which libavfilter never sees; older builds keep the output options, since those were the
+  only way to get an mp4 `colr` atom there. A decoder-side `-colorspace bt709 ... -i` override
+  was tried first and rejected: it also tags a `-c copy` output of an untagged source (export
+  copy must stay a real copy), and it exposed a separate, pre-existing `--correct` bug (below).
+  Verified on 5.1.1, 6.1.1 and 7.1.1.
+- **The conda-forge 7.1.1 build deadlocks on `tpad` + `adelay`/`apad` (pad.py) and ignores
+  SIGTERM.** Debian's 7.1.5 in CI does not. Run pad tests against CI, not that build, and note
+  that the tools have no subprocess timeout to get an agent out of such a hang.
+- **Not a 7.1 issue, found while chasing it: `color --correct` desaturates a bt709-*tagged*
+  source by ~8 % at identity settings on 6.1 and 7.1 alike** (113.6 → 103.9 saturation_avg):
+  the RGB stages (exposure/colortemperature/colorbalance) make swscale go yuv→rgb with the
+  frame's bt709 matrix and back with its bt601 default. The identity test only ever used an
+  untagged source, where both legs pick bt601 and cancel out. Tracked separately.

@@ -78,16 +78,18 @@ _FFMPEG_VERSION: "Optional[Tuple[int, int]]" = None
 
 
 def ffmpeg_version() -> "Tuple[int, int]":
-    """(major, minor) of the ffmpeg on PATH, parsed once from `ffmpeg -version`; (0, 0) when it
-    cannot be read. Used only to pick between two spellings of a filter option where FFmpeg
-    changed the syntax between majors (the tools otherwise never branch on the version: doctor's
+    """(major, minor) of the FFmpeg build on PATH, parsed once from `ffprobe -version`; (0, 0)
+    when it cannot be read. ffprobe rather than ffmpeg because --dry-run promises never to run
+    ffmpeg (docs/contract.md: ffmpeg_execution "none") while ffprobe always may, and the two
+    ship from the same build. Used only to pick between two spellings of an option where FFmpeg
+    changed behaviour between releases (the tools otherwise never branch on the version: doctor's
     capability listing is the source of truth for what a build can do)."""
     global _FFMPEG_VERSION
     if _FFMPEG_VERSION is None:
         _FFMPEG_VERSION = (0, 0)
         try:
-            out = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
-            m = re.search(r"ffmpeg version\s+n?(\d+)\.(\d+)", out)
+            out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+            m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
             if m:
                 _FFMPEG_VERSION = (int(m.group(1)), int(m.group(2)))
         except OSError:
@@ -728,10 +730,30 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
     return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
+def bt709_tag_args(encoder: str = "libx264") -> List[str]:
+    """Tag an SDR output as BT.709 without touching its pixels.
+
+    Up to FFmpeg 7.0 the output options -colorspace/-color_primaries/-color_trc were tags only.
+    7.1 added colourspace negotiation to libavfilter and feeds those options into the graph's
+    output constraints, so on a source whose bitstream carries no colour tags (test sources,
+    screen recordings, many cameras) the CLI now auto-inserts a *real* matrix conversion (its
+    guess for "unknown" is bt601) into every SDR re-encode: a --lut-strength 0 no-op grade
+    came back ~24 dB PSNR from its source on 7.1. From 7.1 on, the tags therefore go through
+    the encoder's own VUI parameters instead, which libavfilter never sees; a source that is
+    genuinely tagged bt601/bt2020 is left alone either way (it keeps its own tags on the old
+    path, and the encoder VUI is a label, not a conversion, on the new one).
+    """
+    if ffmpeg_version() < (7, 1):
+        return ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+    if encoder == "libx265":
+        return ["-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
+    return ["-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
+
+
 def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True) -> List[str]:
     args = ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
     if keep_bt709:
-        args += ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+        args += bt709_tag_args("libx264")
     return args
 
 

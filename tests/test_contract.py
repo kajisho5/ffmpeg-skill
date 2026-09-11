@@ -721,6 +721,29 @@ class ContractTests(unittest.TestCase):
         self.assertGreaterEqual(major, 5, "the real ffmpeg on PATH must parse to a sane version")
         self.assertIn(_common.drawtext_boxborderw(9, 16), ("16", "9|16"))
 
+    def test_bt709_tags_go_through_encoder_vui_from_ffmpeg_7_1(self):
+        """FFmpeg 7.1 added colourspace negotiation to libavfilter and feeds the output options
+        -colorspace/-color_primaries/-color_trc into the graph's constraints: on a source with
+        no colour tags at all, the CLI then auto-inserts a *real* matrix conversion (guessing
+        bt601) into every SDR re-encode -- `color --lut-strength 0` came back 23.9 dB PSNR from
+        its source on the debian-trixie job (#156), and every x264_args() user was affected.
+        5.x/6.x only ever wrote tags. From 7.1 the tags are written through the encoder's own
+        VUI parameters, which libavfilter never sees; before it the old spelling stays, so the
+        mp4 keeps its colr atom on the builds where that was the only way to get one."""
+        saved = _common._FFMPEG_VERSION
+        try:
+            old = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+            for version, expected in (((5, 1), old), ((6, 1), old), ((7, 0), old), ((0, 0), old),
+                                      ((7, 1), ["-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]),
+                                      ((8, 0), ["-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"])):
+                _common._FFMPEG_VERSION = version
+                self.assertEqual(_common.bt709_tag_args("libx264"), expected, version)
+                self.assertEqual(_common.x264_args()[-len(expected):], expected, version)
+            _common._FFMPEG_VERSION = (7, 1)
+            self.assertEqual(_common.bt709_tag_args("libx265"), ["-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"])
+        finally:
+            _common._FFMPEG_VERSION = saved
+
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
         mcp_names = [t["name"] for t in mcp_server.tool_list()]

@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color
+from _common import STATE, add_common, apply_common, bt709_tag_args, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color
 
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
@@ -39,7 +39,6 @@ PRESETS: Dict[str, Dict] = {
     "copy": {"w": None, "h": None, "ext": None, "video": ["-c:v", "copy"], "audio": ["-c:a", "copy"], "max": None, "desc": "stream copy, no re-encode (source codecs/container/colour tags unchanged)"},
 }
 
-BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
 
 
 def main() -> int:
@@ -110,7 +109,7 @@ def main() -> int:
         if "-r" not in video:
             cmd += cfr_args(meta)
         if args.preset not in ("prores",):
-            cmd += BT709
+            cmd += bt709_tag_args(video[video.index("-c:v") + 1])
     if out_ext == "mp4":
         cmd += ["-movflags", "+faststart"]
     cmd += (p["audio"] if has_audio else ["-an"])
