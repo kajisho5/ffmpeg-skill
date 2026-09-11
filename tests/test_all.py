@@ -1308,6 +1308,7 @@ class FFmpegSkillTests(unittest.TestCase):
         zero = OUT / "lut_zero.mp4"
         script("color.py", self.src, "--lut", lut, "--lut-strength", "0", "--preset", "veryfast", "-o", zero)
         self.assertGreater(self._psnr(self.src, zero), 40, "--lut-strength 0 must leave the picture unchanged, not fully inverted")
+        self.assertEqual(self._frame_count(zero), self._frame_count(self.src), "no frame may be dropped or duplicated by a no-op grade")
         script("color.py", self.src, "--lut", lut, "--lut-strength", "2.5", "-o", OUT / "lut_oob.mp4", expect_fail=True)
         script("color.py", self.src, "--lut", lut, "--lut-strength", "-1", "-o", OUT / "lut_oob2.mp4", expect_fail=True)
 
@@ -1893,6 +1894,15 @@ class FFmpegSkillTests(unittest.TestCase):
             link = stub_dir / exe
             if not link.exists():
                 os.symlink(real, link)
+        # Python's own bin dir has to stay on PATH, and on a system-python machine (the Debian
+        # container job) that dir is /usr/bin, which also holds the real fc-match -- so "hidden
+        # by PATH" was not hidden at all there and the tool resolved a real fontfile= instead of
+        # taking the font= fallback this test exists to exercise. A stub fc-match that always
+        # fails sits first on PATH so the resolver returns None on every layout.
+        if platform.system() != "Windows":
+            stub = stub_dir / "fc-match"
+            stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            stub.chmod(0o755)
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([str(stub_dir), str(Path(sys.executable).parent)])
 
@@ -2816,9 +2826,21 @@ class FFmpegSkillTests(unittest.TestCase):
 
     # ------------------------------------------------------------------ FFmpeg 8+ / Windows compatibility
     @staticmethod
+    def _frame_count(path):
+        proc = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
+                              stdout=subprocess.PIPE, text=True)
+        return int(proc.stdout.strip())
+
+    @staticmethod
     def _psnr(a, b):
         """Average PSNR of b against a (dB); lower means the picture changed more. inf when identical."""
-        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"],
+        # Both inputs are re-based to pts 0 first: the psnr filter pairs frames by timestamp, and
+        # an encoder that starts its output one frame later than the source (Debian's FFmpeg 7.1.5
+        # did, on a picture the tool had not touched) otherwise compares every frame with its
+        # neighbour and reports ~24 dB for an unchanged moving picture. Frame *count* equality is
+        # asserted separately by the callers that care, so a genuinely dropped frame still fails.
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi",
+                               "[0:v]setpts=PTS-STARTPTS[a];[1:v]setpts=PTS-STARTPTS[b];[a][b]psnr", "-f", "null", "-"],
                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         m = re.search(r"average:(inf|[\d.]+)", proc.stderr)
         assert m, proc.stderr[-400:]
