@@ -208,6 +208,37 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
 
+    def test_fit_pad_fill_blur_puts_picture_in_the_bars_and_color_stays_solid(self):
+        """#139: --fit pad --pad-fill blur fills the letterbox/pillarbox bars with a blurred,
+        scaled-to-cover copy of the frame (the phone-editor "make it vertical" look) instead of a
+        solid --pad-color. The source is landscape, so 9:16 gives bars above and below: with
+        blur they must carry picture (not black, not one flat value), with color (the default)
+        they must stay the solid pad colour exactly as before. export.py shares the same path."""
+        def bar_stats(path, top_px=60):
+            # mean and spread of the top bar's luma over a frame at t=1s
+            proc = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", path, "-frames:v", "1",
+                      "-vf", f"crop=iw:{top_px}:0:0,signalstats,metadata=print:file=-", "-f", "null", "-")
+            vals = {k: float(v) for k, v in re.findall(r"lavfi\.signalstats\.(YAVG|YMIN|YMAX)=([0-9.]+)", proc.stdout)}
+            return vals["YAVG"], vals["YMAX"] - vals["YMIN"]
+        blur = OUT / "fit_pad_blur.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
+        m = probe(str(blur))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
+        avg, spread = bar_stats(str(blur))
+        self.assertGreater(avg, 20, f"blurred bar is (nearly) black: YAVG {avg}")
+        self.assertGreater(spread, 10, f"blurred bar is flat: spread {spread}")
+        solid = OUT / "fit_pad_color.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
+        avg, spread = bar_stats(str(solid))
+        self.assertLess(avg, 20, f"solid black bar is not black: YAVG {avg}")
+        self.assertLess(spread, 4, f"solid bar is not flat: spread {spread}")
+        # the same option on export.py's preset frame
+        exp = OUT / "export_pad_blur.mp4"
+        script("export.py", self.src, "--preset", "reels", "--pad-fill", "blur", "--fast", "-o", exp)
+        avg, spread = bar_stats(str(exp), 120)
+        self.assertGreater(avg, 20); self.assertGreater(spread, 10)
+        script("fit.py", self.src, "--aspect", "9:16", "--pad-fill", "blur", "--pad-blur", "0", "--dry-run", expect_fail=True)
+
     def test_fit_trim_and_crop_square(self):
         out = OUT / "fit2.mp4"
         script("fit.py", self.src, "--duration", "4", "--method", "trim", "--from-center", "--aspect", "1:1", "--fit", "crop", "-o", out)

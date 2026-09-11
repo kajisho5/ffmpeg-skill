@@ -26,8 +26,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color
-
+from _common import STATE, add_common, apply_common, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color, pad_filters, add_pad_fill_args
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
     "youtube4k": {"w": 3840, "h": 2160, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "2160p H.264, AAC 192k"},
@@ -49,6 +48,7 @@ def main() -> int:
     ap.add_argument("--preset", choices=sorted(PRESETS), help="delivery preset")
     ap.add_argument("--fit", choices=["pad", "crop"], default="pad", help="how to reach the preset frame when aspect differs (default pad)")
     ap.add_argument("--pad-color", default="black")
+    add_pad_fill_args(ap)
     ap.add_argument("--no-scale", action="store_true", help="keep source resolution even for platform presets")
     ap.add_argument("--allow-long", action="store_true", help="do not trim to the platform's max duration")
     ap.add_argument("--crf", type=int, help="override CRF")
@@ -81,7 +81,7 @@ def main() -> int:
             if args.fit == "crop":
                 vf += [f"scale={p['w']}:{p['h']}:force_original_aspect_ratio=increase", f"crop={p['w']}:{p['h']}"]
             else:
-                vf += [f"scale={p['w']}:{p['h']}:force_original_aspect_ratio=decrease", f"pad={p['w']}:{p['h']}:(ow-iw)/2:(oh-ih)/2:color={args.pad_color}"]
+                vf.append(pad_filters(p["w"], p["h"], args.pad_fill, args.pad_color, args.pad_blur))
             vf.append("setsar=1")
         else:
             vf.append(f"scale={p['w']}:-2")

@@ -58,7 +58,7 @@ the result was "lossless stream copy" or "re-encoded".
 ### fit.py — target duration and/or aspect, rotate/flip
 ```
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
-             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black]]
+             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`); it
@@ -73,6 +73,10 @@ is separate from the rotation *metadata* fit.py already reads to size a
 source correctly); `--flip h|v` mirrors the picture; both can combine, rotate
 first. `--fps` forces a constant frame rate; VFR sources are conformed
 automatically even without it.
+`--pad-fill blur` fills the letterbox/pillarbox bars with a blurred, scaled-to-cover copy
+of the frame (the look every phone editor gives landscape footage posted as a Short/Reel)
+instead of the solid `--pad-color`; `--pad-blur` is the blur radius. `export.py --fit pad`
+takes the same two flags.
 
 ### crop.py — crop to an exact pixel rectangle
 ```

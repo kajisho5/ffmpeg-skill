@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import argparse
 import re
 import shutil
 import subprocess
@@ -72,6 +73,31 @@ ERROR_CODE = {
 # retry loop against a command that will fail the same way every time; false-for-everything is the
 # honest answer until real sniffing exists to justify anything else.
 ERROR_RETRYABLE = False
+
+
+def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int) -> str:
+    """The letterbox/pillarbox step shared by fit.py and export.py, as one -vf segment.
+
+    fill="color": scale to fit, then pad with a solid colour (the historical behaviour).
+    fill="blur": the bars are a blurred, scaled-to-cover copy of the same frame -- what every
+    phone editor's "make it vertical" does with landscape footage (#139). Built as a small
+    graph inside the -vf chain: split, one branch scaled to cover and cropped to the frame
+    then boxblur'ed, the other scaled to fit, overlaid centred. Only `filter:boxblur` is
+    needed beyond the usual scale/pad set, and that is already required by redact.py."""
+    if fill == "blur":
+        radius = max(1, int(blur))
+        return (f"split[__fitfg][__fitbg];"
+                f"[__fitbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},"
+                f"boxblur={radius}:2[__fitbgb];"
+                f"[__fitfg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[__fitfgs];"
+                f"[__fitbgb][__fitfgs]overlay=(W-w)/2:(H-h)/2:format=auto")
+    return f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color={color}"
+
+
+def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
+    parser.add_argument("--pad-fill", choices=["color", "blur"], default="color",
+                        help="what fills the letterbox/pillarbox bars under --fit pad: a solid --pad-color (default) or a blurred, scaled-up copy of the frame")
+    parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur (default 20)")
 
 
 def die(msg: str, code: int = 1, kind: str = "input") -> "None":
