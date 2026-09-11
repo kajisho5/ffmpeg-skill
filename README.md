@@ -13,9 +13,13 @@
 
 <p align="center">
   <a href="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml"><img src="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
+  <a href="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/codeql.yml"><img src="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="https://www.npmjs.com/package/ffmpeg-skill"><img src="https://img.shields.io/npm/v/ffmpeg-skill" alt="npm"></a>
-  <img src="https://img.shields.io/badge/python-3.9%2B-blue" alt="Python 3.9+">
-  <img src="https://img.shields.io/badge/ffmpeg-5.0%2B-orange" alt="FFmpeg 5.0+">
+  <a href="https://www.npmjs.com/package/ffmpeg-skill"><img src="https://img.shields.io/npm/dm/ffmpeg-skill" alt="npm downloads"></a>
+  <a href="https://github.com/kajisho5/ffmpeg-skill/stargazers"><img src="https://img.shields.io/github/stars/kajisho5/ffmpeg-skill" alt="GitHub stars"></a>
+  <a href="https://github.com/kajisho5/ffmpeg-skill/commits/main"><img src="https://img.shields.io/github/last-commit/kajisho5/ffmpeg-skill" alt="last commit"></a>
+  <img src="https://img.shields.io/badge/python-3.9%20%7C%203.13-blue" alt="Python 3.9 and 3.13 tested">
+  <a href="#ffmpeg-compatibility"><img src="https://img.shields.io/badge/ffmpeg-5.1%20%7C%206.1%20%7C%207.1%20%7C%208%20%7C%209%20tested-orange" alt="FFmpeg 5.1, 6.1, 7.1, 8 and 9 tested in CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
   <a href="https://github.com/sponsors/kajisho5"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors" alt="Sponsor"></a>
 </p>
