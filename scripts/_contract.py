@@ -425,7 +425,14 @@ def skill_description() -> str:
     try:
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         m = re.search(r"^description:\s*(.+)$", text, re.M)
-        return m.group(1).strip() if m else ""
+        value = m.group(1).strip() if m else ""
+        # The scalar is single-quoted in SKILL.md: unquoted, the ": " inside the text ("...
+        # requests: cut, trim ...") is a new mapping key to a strict YAML parser and the whole
+        # frontmatter fails to load (GitHub's renderer reported it; npx skills add and Claude
+        # Code's loader parse it strictly). '' is the only escape inside a YAML single-quoted scalar.
+        if len(value) >= 2 and value[0] == value[-1] == "'":
+            value = value[1:-1].replace("''", "'")
+        return value
     except OSError:
         return ""
 

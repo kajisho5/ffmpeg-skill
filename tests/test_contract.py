@@ -721,6 +721,29 @@ class ContractTests(unittest.TestCase):
         self.assertGreaterEqual(major, 5, "the real ffmpeg on PATH must parse to a sane version")
         self.assertIn(_common.drawtext_boxborderw(9, 16), ("16", "9|16"))
 
+    def test_skill_frontmatter_is_strict_yaml(self):
+        """The description used to be an unquoted scalar containing ": " ("...natural-language
+        requests: cut, trim, ..."), which a strict YAML parser reads as a second mapping key and
+        rejects ("mapping values are not allowed here", line 3 column 83) -- GitHub's own renderer
+        flagged it, and any installer that parses the frontmatter strictly would lose the one
+        field agents discover the skill by. Pinned without PyYAML: every frontmatter line must be
+        `key: value` where a value containing ": " or starting with a YAML indicator is quoted,
+        and the quoted description must round-trip through the contract's reader."""
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        fm = text.split("---\n", 2)[1].rstrip("\n").split("\n")
+        for line in fm:
+            key, sep, value = line.partition(": ")
+            self.assertTrue(sep and re.fullmatch(r"[a-z_-]+", key), line)
+            quoted = len(value) >= 2 and value[0] == value[-1] and value[0] in "'\""
+            if ": " in value or value[:1] in "[{&*!|>%@`#":
+                self.assertTrue(quoted, f"{key}: needs quoting for a strict YAML parser: {value[:60]}")
+            if quoted and value[0] == "'":
+                self.assertNotRegex(value[1:-1], r"(?<!')'(?!')", f"{key}: a lone ' inside a single-quoted scalar")
+        desc = _contract.skill_description()
+        self.assertTrue(desc.startswith("Edit video and audio"), desc[:40])
+        self.assertNotIn("'", desc[:1] + desc[-1:], "the contract must expose the unquoted text")
+        self.assertEqual(desc, self.contract["skill"]["description"])
+
     def test_bt709_tags_go_through_encoder_vui_from_ffmpeg_7_1(self):
         """FFmpeg 7.1 added colourspace negotiation to libavfilter and feeds the output options
         -colorspace/-color_primaries/-color_trc into the graph's constraints: on a source with

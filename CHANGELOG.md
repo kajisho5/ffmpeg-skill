@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 1.3.1
+
+_Automated release: version and notes generated from pull requests merged since 1.3.0._
+
+- fix: quote SKILL.md's description so the frontmatter is valid strict YAML (#161)
+
 ## 1.3.0
 
 _Automated release: version and notes generated from pull requests merged since 1.2.0._
