@@ -4,7 +4,7 @@
 Duration: --duration N with --method speed (retime video+audio, pitch-preserving
 via atempo chaining) or --method trim (keep the first N seconds, or a centred
 window with --from-center). Aspect: --aspect 16:9|9:16|1:1|4:5|W:H with
---fit pad (letterbox/pillarbox with --pad-color, default black) or --fit crop.
+--fit pad (letterbox/pillarbox with --pad-color, default black, or --pad-fill blur\nfor a blurred copy of the frame behind the picture) or --fit crop.
 --width and/or --height set the output size: give one and the other follows
 the aspect (source aspect if --aspect is not also given); give both for an
 exact frame. --rotate 90|180|270 (clockwise) and --flip h|v apply a new
@@ -24,6 +24,7 @@ Examples:
   python3 fit.py input.mp4 --duration 60                    # speed up/down to exactly 60s
   python3 fit.py input.mp4 --duration 30 --method trim
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --width 1080
+  python3 fit.py input.mp4 --aspect 9:16 --fit pad --pad-fill blur   # the phone-editor look: blurred frame behind the bars
   python3 fit.py input.mp4 --aspect 1:1 --fit crop --duration 15
   python3 fit.py input.mp4 --aspect 9:16 --fit crop --crop-x 1   # keep the right edge (e.g. product held stage-right)
   python3 fit.py input.mp4 --height 1080                         # width follows the source aspect
@@ -37,8 +38,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args
-
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
 
@@ -93,6 +93,7 @@ def main() -> int:
     a.add_argument("--width", type=int, help="output width in px (default: keep source width or the width implied by the aspect); with --height also given, both are used directly")
     a.add_argument("--height", type=int, help="output height in px (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
+    add_pad_fill_args(a)
     a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop, horizontal anchor 0=left, 0.5=centre (default), 1=right")
     a.add_argument("--crop-y", type=float, default=0.5, help="with --fit crop, vertical anchor 0=top, 0.5=centre (default), 1=bottom")
     r = ap.add_argument_group("rotate / flip")
@@ -115,6 +116,8 @@ def main() -> int:
     if not 0.0 <= args.crop_y <= 1.0:
         die(f"--crop-y must be 0..1, got {args.crop_y}")
     validate_color(args.pad_color, "--pad-color")
+    if args.pad_blur <= 0:
+        die(f"--pad-blur must be > 0, got {args.pad_blur}")
 
     meta = probe(args.input)
     if not meta.get("video"):
@@ -212,8 +215,7 @@ def main() -> int:
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")
         else:
-            vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease")
-            vf.append(f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color={args.pad_color}")
+            vf.append(pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur))
         vf.append("setsar=1")
 
     if args.fps:

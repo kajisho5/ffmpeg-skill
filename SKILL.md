@@ -128,7 +128,7 @@ If a request needs an FFmpeg feature none of the 41 scripts expose, say so and n
 | "cut from 1:20 to 2:05", "trim the first 10 seconds" | `cut.py input.mp4 --start 1:20 --end 2:05` |
 | "keep only these parts", "remove the middle" | `cut.py input.mp4 --segments 0-1:00,1:30-2:00` |
 | "make it exactly 60 seconds", "fit it in 30s" | `fit.py input.mp4 --duration 60` (speed) or `--method trim` |
-| "make it vertical / for TikTok / 9:16", "square for Instagram" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`) |
+| "make it vertical / for TikTok / 9:16", "square for Instagram" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`); add `--pad-fill blur` for the blurred-background bars phone editors produce |
 | "resize to a specific height, width follows" | `fit.py input.mp4 --height 1080` (or `--width`, or both for an exact frame) |
 | "crop to this exact box/rectangle" (known x/y/width/height, not an aspect ratio) | `crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920` |
 | "are there black bars on this?", "what's the crop rectangle to remove the letterboxing" | `cropdetect.py input.mp4` |

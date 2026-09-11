@@ -184,6 +184,11 @@ jobs:
           TAG="v$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # The commit to tag is whatever HEAD is *now*: after an auto-bump that is the bump
+          # commit this job just pushed, not the merge commit that triggered the run. Tagging
+          # github.sha (as this did through v1.1.0) put every auto-released tag one commit
+          # before its own version bump, so `git checkout v1.1.0` showed package.json at 1.0.4.
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "already_released=true" >> "$GITHUB_OUTPUT"
           else
@@ -210,7 +215,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.check.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.check.outputs.sha }}
           body_path: release_notes.md
           generate_release_notes: true
 
@@ -234,8 +239,10 @@ jobs:
       # A green job is not a correct release (2026-09-11: three "successful" runs published
       # 1.0.0-1.0.2 by mistake). So check the *result*, not the exit code: the registry's `latest`
       # must be exactly the version this run meant to publish, and unless a PR bumped package.json
-      # by hand, the major must not have moved since the previous tag. The registry can lag a
-      # publish by some seconds, hence the retry.
+      # by hand, the major must not have moved since the previous tag. npm's own publish notice
+      # says the package "may take a few minutes to become available": 1.1.0 was not visible after
+      # 60 s and this step went red on a release that was in fact fine, so the window is now five
+      # minutes. A failure here never re-publishes anything (the next run sees the tag and skips).
       - name: Verify the publish landed as intended
         if: steps.check.outputs.already_released == 'false'
         env:
@@ -244,10 +251,10 @@ jobs:
           AUTO_BUMPED: ${{ steps.setup.outputs.needs_auto_bump }}
         run: |
           PKG=$(node -p "require('./package.json').name")
-          for i in 1 2 3 4 5 6; do
-            LATEST=$(npm view "$PKG" version 2>/dev/null || true)
+          for i in $(seq 1 30); do
+            LATEST=$(npm view "$PKG" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
             [ "$LATEST" = "$EXPECTED" ] && break
-            echo "registry latest=$LATEST, expected $EXPECTED (attempt $i/6)"; sleep 10
+            echo "registry latest=$LATEST, expected $EXPECTED (attempt $i/30)"; sleep 10
           done
           if [ "$LATEST" != "$EXPECTED" ]; then
             echo "::error::npm reports latest=$LATEST after publishing $EXPECTED"; exit 1

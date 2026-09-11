@@ -6,6 +6,14 @@
 
 (nothing yet)
 
+## 1.1.1
+
+_Automated release: version and notes generated from pull requests merged since 1.1.0._
+
+- Fix three FFmpeg 5.x incompatibilities and run CI on FFmpeg 5.1.1 and 7.1 (#156)
+- ci(release): tag the bump commit, not the commit that triggered the run (#154)
+- chore(release): bump version to 1.1.0
+
 ## 1.1.0
 
 _Automated release: version and notes generated from pull requests merged since 1.0.4._

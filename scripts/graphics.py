@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args
+from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug"]
 
@@ -139,7 +139,7 @@ def main() -> int:
         ye = f"{margin}" if "top" in pos else f"h-text_h-{margin}"
         box_color = ff_color(primary if args.template == "chapter" else bg, 0.9 if args.template == "chapter" else 0.7)
         txt_color = ff_color(bg if args.template == "chapter" else text_c)
-        filters.append(f"drawtext=text='{escape_drawtext(args.title)}':{fo}:fontsize={fs}:fontcolor={txt_color}:x={xe}:y={ye}:box=1:boxcolor={box_color}:boxborderw={pady}|{padx}:alpha='{fade_a}':{en}")
+        filters.append(f"drawtext=text='{escape_drawtext(args.title)}':{fo}:fontsize={fs}:fontcolor={txt_color}:x={xe}:y={ye}:box=1:boxcolor={box_color}:boxborderw={drawtext_boxborderw(pady, padx)}:alpha='{fade_a}':{en}")
 
     elif args.template == "progress":
         h = max(3, int(base * 0.008))

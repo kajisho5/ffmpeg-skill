@@ -73,7 +73,14 @@ class FFmpegSkillTests(unittest.TestCase):
            "-t", "12", "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr",
            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", cls.vfr)
         cls.rot = OUT / "rot.mp4"
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
+        # -display_rotation arrived in FFmpeg 6.0; on 5.x the rotation is written the old way,
+        # as the stream's rotate tag, which every probe here reads the same. Only the fixture
+        # builder cares -- the tools under test never emit either.
+        if subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.1", "-f", "null", "-"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
+        else:
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", cls.src, "-t", "6", "-c", "copy", "-metadata:s:v:0", "rotate=90", cls.rot)
         cls.surround = OUT / "surround.mov"
         six = "|".join([TONES, TONES, "0.5*" + TONES, "0.2*sin(2*PI*60*t)", "0.3*" + TONES, "0.3*" + TONES])
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -250,6 +257,37 @@ class FFmpegSkillTests(unittest.TestCase):
         dry = OUT / "meta_dry.mp4"
         script("metadata.py", self.src, "--chapters", chapters, "--dry-run", "-o", dry)
         self.assertFalse(dry.exists())
+
+    def test_fit_pad_fill_blur_puts_picture_in_the_bars_and_color_stays_solid(self):
+        """#139: --fit pad --pad-fill blur fills the letterbox/pillarbox bars with a blurred,
+        scaled-to-cover copy of the frame (the phone-editor "make it vertical" look) instead of a
+        solid --pad-color. The source is landscape, so 9:16 gives bars above and below: with
+        blur they must carry picture (not black, not one flat value), with color (the default)
+        they must stay the solid pad colour exactly as before. export.py shares the same path."""
+        def bar_stats(path, top_px=60):
+            # mean and spread of the top bar's luma over a frame at t=1s
+            proc = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", path, "-frames:v", "1",
+                      "-vf", f"crop=iw:{top_px}:0:0,signalstats,metadata=print:file=-", "-f", "null", "-")
+            vals = {k: float(v) for k, v in re.findall(r"lavfi\.signalstats\.(YAVG|YMIN|YMAX)=([0-9.]+)", proc.stdout)}
+            return vals["YAVG"], vals["YMAX"] - vals["YMIN"]
+        blur = OUT / "fit_pad_blur.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
+        m = probe(str(blur))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
+        avg, spread = bar_stats(str(blur))
+        self.assertGreater(avg, 20, f"blurred bar is (nearly) black: YAVG {avg}")
+        self.assertGreater(spread, 10, f"blurred bar is flat: spread {spread}")
+        solid = OUT / "fit_pad_color.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
+        avg, spread = bar_stats(str(solid))
+        self.assertLess(avg, 20, f"solid black bar is not black: YAVG {avg}")
+        self.assertLess(spread, 4, f"solid bar is not flat: spread {spread}")
+        # the same option on export.py's preset frame
+        exp = OUT / "export_pad_blur.mp4"
+        script("export.py", self.src, "--preset", "reels", "--pad-fill", "blur", "--fast", "-o", exp)
+        avg, spread = bar_stats(str(exp), 120)
+        self.assertGreater(avg, 20); self.assertGreater(spread, 10)
+        script("fit.py", self.src, "--aspect", "9:16", "--pad-fill", "blur", "--pad-blur", "0", "--dry-run", expect_fail=True)
 
     def test_fit_trim_and_crop_square(self):
         out = OUT / "fit2.mp4"
@@ -1344,6 +1382,7 @@ class FFmpegSkillTests(unittest.TestCase):
         zero = OUT / "lut_zero.mp4"
         script("color.py", self.src, "--lut", lut, "--lut-strength", "0", "--preset", "veryfast", "-o", zero)
         self.assertGreater(self._psnr(self.src, zero), 40, "--lut-strength 0 must leave the picture unchanged, not fully inverted")
+        self.assertEqual(self._frame_count(zero), self._frame_count(self.src), "no frame may be dropped or duplicated by a no-op grade")
         script("color.py", self.src, "--lut", lut, "--lut-strength", "2.5", "-o", OUT / "lut_oob.mp4", expect_fail=True)
         script("color.py", self.src, "--lut", lut, "--lut-strength", "-1", "-o", OUT / "lut_oob2.mp4", expect_fail=True)
 
@@ -1929,6 +1968,15 @@ class FFmpegSkillTests(unittest.TestCase):
             link = stub_dir / exe
             if not link.exists():
                 os.symlink(real, link)
+        # Python's own bin dir has to stay on PATH, and on a system-python machine (the Debian
+        # container job) that dir is /usr/bin, which also holds the real fc-match -- so "hidden
+        # by PATH" was not hidden at all there and the tool resolved a real fontfile= instead of
+        # taking the font= fallback this test exists to exercise. A stub fc-match that always
+        # fails sits first on PATH so the resolver returns None on every layout.
+        if platform.system() != "Windows":
+            stub = stub_dir / "fc-match"
+            stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            stub.chmod(0o755)
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([str(stub_dir), str(Path(sys.executable).parent)])
 
@@ -2860,7 +2908,20 @@ class FFmpegSkillTests(unittest.TestCase):
     @staticmethod
     def _psnr(a, b):
         """Average PSNR of b against a (dB); lower means the picture changed more. inf when identical."""
-        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"],
+        # Two things make this compare pixels and nothing else. (1) Both inputs are re-stamped by
+        # frame *number*, so the psnr filter (which pairs frames by timestamp) never compares a
+        # frame with its neighbour; frame *count* equality is asserted separately by the callers
+        # that care, so a genuinely dropped frame still fails. (2) Both inputs get the *same*
+        # colour tags before psnr. From FFmpeg 7.1 libavfilter negotiates colourspace, and psnr
+        # on an untagged source vs a bt709-tagged output auto-inserts a real bt709->bt601
+        # conversion on one side (8.x: 26 dB for a byte-identical picture) -- and, worse, hides
+        # an encode-time conversion by undoing it (8.x reported 40 dB for an output whose pixels
+        # had been re-matrixed, which is how the 7.1+ -colorspace bug in #156 went unnoticed on
+        # macOS). With the tags pinned identical, every build from 5.1 to 8.1 reports the same
+        # number for the same two files.
+        same = "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi",
+                               f"[0:v]setpts=N/FRAME_RATE/TB,{same}[a];[1:v]setpts=N/FRAME_RATE/TB,{same}[b];[a][b]psnr", "-f", "null", "-"],
                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         m = re.search(r"average:(inf|[\d.]+)", proc.stderr)
         assert m, proc.stderr[-400:]
