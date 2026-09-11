@@ -1,0 +1,37 @@
+# Auto-approves and enables auto-merge (squash) for Dependabot PRs once CI is green, so a routine
+# actions/checkout@v4 -> v5 bump doesn't sit waiting on a human to click merge. Scoped to PRs
+# Dependabot itself opened (github-actions/npm ecosystem in dependabot.yml) -- this workflow never
+# runs for anyone else's PR. GitHub still requires any branch-protection-required checks to pass
+# before the auto-merge it enables here actually merges, so a red CI still blocks it as normal;
+# this only removes the "someone has to notice it's green and click merge" step.
+name: dependabot-auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only patch/minor updates auto-merge; a major bump (a breaking-change signal by semver
+      # convention) is left for a human to actually look at before it lands.
+      - name: Approve and enable auto-merge
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

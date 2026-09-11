@@ -9,6 +9,15 @@ on:
   pull_request:
   push:
     branches: [main]
+
+# A push while this is still running on the same PR/branch makes the old run pointless -- its
+# result is about to be superseded anyway. Cancelling it saves real money here: this matrix
+# includes macOS (10x the Ubuntu minute cost) and Windows (2x), so a few stacked pushes without
+# this can burn many times the minutes of the one push that actually mattered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:

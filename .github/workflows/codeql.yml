@@ -13,6 +13,12 @@ on:
   schedule:
     - cron: "0 7 * * 1"   # Mondays
 
+# See ci.yml's identical block for why: a superseded run's result is thrown away anyway, so
+# cancelling it saves real Actions minutes rather than just finishing a run nobody will read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   security-events: write
