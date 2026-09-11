@@ -312,7 +312,7 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 ## FFmpeg compatibility
 
-The tools need FFmpeg 5.0 or later. The capability parser has been run against the listings of these builds:
+The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu), 8.x (macOS) and 9.x (Windows), all on Python 3.9; 5.x and 7.x are expected to work from the filter/encoder names used but are not run ([#146](https://github.com/kajisho5/ffmpeg-skill/issues/146) tracks widening the matrix). The capability parser has been run against the listings of these builds:
 
 | FFmpeg | `-filters` row layout | Source |
 |---|---|---|
@@ -380,6 +380,10 @@ FFmpeg itself:
 - Node 16+ only for the `npx` installer
 
 `doctor`'s own introspection calls (`ffmpeg -filters`/`-encoders`/`-bsfs`/`-version`) time out after 10s and report `failed` rather than hanging forever — those are meant to be fast. Every tool's actual media-processing `ffmpeg` invocation (cut, fit, caption, ...) has no timeout: a legitimate `--accurate` re-encode of a long file can genuinely take a long time, so bounding it would risk killing real work. `-nostdin` is always passed, so a hung ffmpeg process waiting on stdin cannot happen; a caller that needs a hard ceiling on a specific job should apply its own external timeout/kill around that one invocation.
+
+## Stability
+
+1.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 2.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-1x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch.
 
 ## Development
 

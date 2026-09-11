@@ -660,6 +660,39 @@ class ContractTests(unittest.TestCase):
         resp = json.loads(proc.stdout.strip().splitlines()[0])
         self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(self.tools))
 
+    def test_mcp_tool_surface_matches_the_frozen_1x_snapshot(self):
+        """docs/contract.md, "Stability guarantee (1.x)": within 1.x no tool is removed or renamed
+        and no argument is removed, renamed or made newly required. The MCP surface is *derived*
+        from the argparse parsers, so a careless parser edit changes it with no edit under mcp/ --
+        which is exactly why the surface is pinned here as data rather than trusted to a review.
+        tests/fixtures/mcp_tools.json holds, per tool, the argument names and which are required.
+        Adding a tool or an optional argument is allowed and must be reflected by regenerating the
+        snapshot (UPDATE_MCP_SNAPSHOT=1 python3 tests/test_contract.py); removing or renaming
+        anything, or making an argument required, is a breaking change and belongs behind the
+        deprecation policy and a major bump, not behind a regenerated fixture."""
+        snapshot_path = ROOT / "tests" / "fixtures" / "mcp_tools.json"
+        live = [{"name": t["name"],
+                 "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
+                 "required": sorted(t["inputSchema"].get("required", []))}
+                for t in mcp_server.tool_list()]
+        if os.environ.get("UPDATE_MCP_SNAPSHOT"):
+            snapshot_path.write_text(json.dumps(live, indent=1) + "\n", encoding="utf-8")
+        frozen = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        frozen_by_name = {t["name"]: t for t in frozen}
+        live_by_name = {t["name"]: t for t in live}
+        removed = sorted(set(frozen_by_name) - set(live_by_name))
+        self.assertEqual(removed, [], f"tools removed/renamed since the 1.x snapshot: {removed}")
+        for name, was in frozen_by_name.items():
+            now = live_by_name[name]
+            gone = sorted(set(was["properties"]) - set(now["properties"]))
+            self.assertEqual(gone, [], f"{name}: arguments removed/renamed since the 1.x snapshot: {gone}")
+            newly_required = sorted(set(now["required"]) - set(was["required"]))
+            self.assertEqual(newly_required, [], f"{name}: arguments made required since the 1.x snapshot: {newly_required}")
+        # Additions are fine but must be snapshotted so the next reader sees the current surface.
+        self.assertEqual(live, frozen,
+                         "MCP surface grew (new tool or optional argument) -- regenerate the snapshot: "
+                         "UPDATE_MCP_SNAPSHOT=1 python3 tests/test_contract.py")
+
     # ------------------------------------------------------------------ MCP inputSchema derived from the contract
     def _rpc(self, requests, root=ROOT):
         text = "".join(json.dumps(r) + "\n" for r in requests)

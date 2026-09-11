@@ -22,3 +22,7 @@ and a ` ------` separator line follows the legend. The parser keys on the io-spe
 The 7.1 file is the one remaining construction: it reproduces the 6.x row format with the 6.1
 filter set and is not a capture of an FFmpeg 7 binary. Replace it with a capture when one is at
 hand and keep the name so the tests keep working.
+
+## mcp_tools.json
+
+Not an ffmpeg listing: the frozen 1.x MCP/CLI surface (per tool, the argument names and which are required), read by `tests/test_contract.py`'s `test_mcp_tool_surface_matches_the_frozen_1x_snapshot`. Regenerate with `UPDATE_MCP_SNAPSHOT=1 python3 tests/test_contract.py` only for additions; see docs/contract.md, "Stability guarantee (1.x)".

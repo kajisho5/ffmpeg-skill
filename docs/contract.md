@@ -35,6 +35,49 @@ from `scripts/` on every CI run instead — a stale count fails a test rather th
 silently. (`SKILL.md` was added to that check after its "the 28 scripts" sat stale through
 twelve tool additions while the other three files were correct.)
 
+## Stability guarantee (1.x)
+
+1.0.0 was published on 2026-09-11 (by accident: see CHANGELOG.md's 1.0.0 entry; the number
+is kept rather than burned). From 1.0.3 on, the number is treated as the promise it implies.
+For the whole of 1.x:
+
+| Surface | Promise |
+|---|---|
+| Tool ids (`ffmpeg-skill/<name>`) and script names | never removed or renamed |
+| CLI arguments (`argparse` dests, flags, positionals) | never removed, renamed, or made newly required; new optional arguments may be added |
+| `--json` output keys, and the keys of `contract --json` / `doctor --json` | never removed or given a different type; new keys may be added |
+| Exit codes (0 success, 1 failure, 2 unknown/undecidable in `doctor`) | unchanged |
+| `contract_version` (`1.0`) | unchanged; a ToolSpec shape change is a major |
+| MCP `tools/list` names and `inputSchema` property names | derived from the above, so covered by the same promise |
+| Behaviour of a tool for the same input and arguments | may change only to fix a defect or to track an FFmpeg change, and every such change gets a CHANGELOG line |
+
+Not covered: the exact wording of `--help` text, descriptions, stderr messages, and the
+`details`/`notes` free-text fields of JSON output; the internals under `scripts/_*.py`;
+the evals harness; the development skills under `.claude/`.
+
+The promise is enforced, not remembered: `tests/test_contract.py`'s
+`test_mcp_tool_surface_matches_the_frozen_1x_snapshot` pins every tool's argument names and
+which are required against `tests/fixtures/mcp_tools.json`. A removal, rename or newly
+required argument fails CI; an addition fails until the snapshot is regenerated
+(`UPDATE_MCP_SNAPSHOT=1 python3 tests/test_contract.py`), so the diff of the fixture shows a
+reviewer exactly what grew.
+
+## Deprecation policy
+
+Something that has to go (an argument superseded by a better one, an output key that turned
+out to be misleading) is retired in three steps, never in one:
+
+1. **Deprecate** in a minor release: the old form keeps working unchanged, a one-line warning
+   naming the replacement is printed to stderr when it is used, the CHANGELOG entry says
+   "deprecated", and `--help` marks it `(deprecated: use ...)`.
+2. **Keep** it for at least two further minor releases or 90 days, whichever is longer.
+3. **Remove** it only in the next major (2.0.0), listed in that release's CHANGELOG under
+   "Removed", together with the version that first deprecated it.
+
+A defect fix that changes behaviour is not a deprecation: it ships in a patch with a
+CHANGELOG line, and if the old behaviour was something a caller could reasonably have relied
+on, the line says so.
+
 ## Skill
 
 ```json
