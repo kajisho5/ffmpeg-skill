@@ -540,7 +540,7 @@ class ContractTests(unittest.TestCase):
 
     def test_visual_verification_metadata(self):
         picture = {"fit", "crop", "sphere", "insert", "background", "reverse", "stabilize", "sequence", "caption", "overlay", "graphics", "color", "join", "multicam", "render", "proxy",
-                   "deinterlace", "denoise", "redact", "waveform", "straighten", "freeze", "pad", "speedramp", "loop", "grid"}
+                   "deinterlace", "denoise", "redact", "waveform", "straighten", "freeze", "pad", "speedramp", "loop", "grid", "broll"}
         # join and waveform are the picture tools that also accept audio-only inputs (audio
         # concat; audio-track visualization); look applies to their video output only, which
         # SKILL.md states next to "Look: not needed"
