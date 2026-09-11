@@ -1,32 +1,53 @@
-# Keeps a draft GitHub Release up to date with merged-PR summaries as main moves forward. This is
-# purely a human-readable cross-check against CHANGELOG.md -- both the hand-written sections a PR
-# may still add itself and the ones release.yml now generates automatically -- and it never
-# publishes anything itself. release.yml is the one that actually decides and cuts a release; it
-# uses this same repo's release-drafter.yml config (via its own dry-run call) to resolve the next
-# version, it doesn't read this draft. See release.yml / README's "Development" -> "Releasing"
-# section for the real, fully-automated release flow.
+# Two jobs sharing one release-drafter config (.github/release-drafter.yml):
+#  - update_release_draft (push to main): keeps a running DRAFT GitHub Release up to date with
+#    merged-PR summaries -- a human-readable cross-check against CHANGELOG.md, never published
+#    itself. release.yml is the one that actually decides and cuts a release (it uses this same
+#    config via its own dry-run call); it doesn't read this draft.
+#  - autolabel (PR opened/reopened/synchronized): applies release-drafter's `autolabeler` rules
+#    (fix/feature/major/chore, from the PR's title and changed files) to the PR itself, so most
+#    PRs carry a real label before they merge instead of silently defaulting to patch every time
+#    in release.yml's version-resolver. pull_request_target (not pull_request) so a label can
+#    still be applied on a PR from a fork, which only ever gets a GITHUB_TOKEN under this trigger.
 #
-# push-to-main only, deliberately: release-drafter reads its config from the DEFAULT branch, so a
-# pull_request trigger fails with "Configuration file .github/release-drafter.yml is not found"
-# for any PR that hasn't merged yet (a chicken-and-egg problem for the very PR that first adds
-# this file, and for any PR opened before this config lands on main). The per-PR "next version"
-# preview a pull_request trigger would add isn't essential to what this workflow is actually for.
+# push-to-main only for the draft-release job, deliberately: release-drafter reads its config from
+# the DEFAULT branch, so running it on a PR that hasn't merged yet used to fail with "Configuration
+# file .github/release-drafter.yml is not found" (a chicken-and-egg problem for the very PR that
+# first added this file). That's resolved now that the config lives on main -- the autolabel job
+# below reads it the same way release-drafter always does, from main, regardless of what the PR
+# branch itself contains.
 name: release-drafter
 
 on:
   push:
     branches: [main]
+  pull_request_target:
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: read
 
 jobs:
   update_release_draft:
+    if: github.event_name == 'push'
     permissions:
       contents: write
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  autolabel:
+    if: github.event_name == 'pull_request_target'
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      # The dedicated autolabeler sub-action (not the main release-drafter action used above) --
+      # applies just the `autolabeler` rules from release-drafter.yml to this PR, with nothing
+      # else running (no draft-release read/write against a PR ref that isn't main).
+      - uses: release-drafter/release-drafter/autolabeler@v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

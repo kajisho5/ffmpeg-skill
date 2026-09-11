@@ -1,0 +1,15 @@
+# Keeps GitHub Actions pins (actions/checkout@v4, release-drafter@v6, etc.) and package.json's
+# npm metadata current, opening a PR for each update instead of letting either go stale silently.
+# There's no requirements.txt/pyproject.toml to watch here -- scripts/ is deliberately Python
+# 3.9 standard library only, no third-party runtime dependencies (see README).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"

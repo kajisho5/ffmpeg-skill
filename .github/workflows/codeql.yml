@@ -1,0 +1,36 @@
+# Static analysis for the two languages actually shipped: Python (scripts/, mcp/, tests/) and
+# JavaScript (bin/install.js). Runs on every PR/push to main plus a weekly schedule so a query-pack
+# update can surface something new in code nobody touched recently. This repo has had a real,
+# manually-found vulnerability of exactly the kind CodeQL targets -- batch.py recipe steps
+# resolving outside scripts/ via an absolute path or `../` traversal (fixed in #124) -- so this is
+# a genuine second line of defense, not a checkbox.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 1"   # Mondays
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

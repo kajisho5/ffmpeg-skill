@@ -1,11 +1,15 @@
-# Config for release-drafter/release-drafter, used two ways:
+# Config for release-drafter/release-drafter, used three ways:
 #  - release-drafter.yml (the workflow) runs it live on every push to main, keeping a running
 #    DRAFT release as a human-readable cross-check -- this draft is never auto-published.
+#  - release-drafter.yml *also* runs it on every PR open/reopen/sync, purely for `autolabeler`
+#    below -- it applies fix/feature/major/chore labels to the PR itself from its title/files,
+#    so a PR that merges without anyone manually labeling it still carries a real signal instead
+#    of silently defaulting to patch every time.
 #  - release.yml runs it with dry-run: true to resolve the *actual* next version (via
 #    version-resolver below) whenever nobody bumped package.json by hand, then bumps the
-#    version and writes CHANGELOG.md itself and releases for real. So the labels below (and
-#    "default: patch" for an unlabeled PR) now drive real releases, not just this draft --
-#    label a PR "minor"/"feature"/"major" when it needs more than a patch bump.
+#    version and writes CHANGELOG.md itself and releases for real. So the labels below (whether
+#    autolabeler applied them or a human did, and "default: patch" for anything still unlabeled)
+#    now drive real releases, not just this draft.
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
 categories:
@@ -24,6 +28,29 @@ categories:
       - ci
 change-template: "- $TITLE (#$NUMBER)"
 change-title-escapes: '\<*_&'
+autolabeler:
+  - label: "fix"
+    title:
+      - "/^fix/i"
+      - "/^Fix /"
+  - label: "feature"
+    title:
+      - "/^add/i"
+      - "/^feat/i"
+  - label: "major"
+    title:
+      - "/breaking/i"
+    body:
+      - "/BREAKING CHANGE/"
+  - label: "chore"
+    title:
+      - "/^chore/i"
+      - "/^ci:/i"
+      - "/^docs/i"
+    files:
+      - "*.md"
+      - "docs/**"
+      - ".github/**"
 version-resolver:
   major:
     labels:
