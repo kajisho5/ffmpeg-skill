@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 1.2.0
+
+_Automated release: version and notes generated from pull requests merged since 1.1.1._
+
+- Add --pad-fill blur to fit.py and export.py: blurred frame behind the letterbox bars (#155)
+
 ## 1.1.1
 
 _Automated release: version and notes generated from pull requests merged since 1.1.0._
