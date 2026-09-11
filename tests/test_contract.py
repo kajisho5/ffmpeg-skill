@@ -167,6 +167,7 @@ class ContractTests(unittest.TestCase):
             # "the N scripts" -- it sat at a stale 28 for weeks while the three above were
             # correct, precisely because this check didn't look at it or at that wording.
             (ROOT / "SKILL.md", re.compile(r"\b(\d+)\s+(?:public )?(?:tools|scripts)\b")),
+            (ROOT / ".claude-plugin" / "plugin.json", re.compile(r"\b(\d+)\s+tools\b")),
         ]
         for path, pattern in checks:
             text = path.read_text(encoding="utf-8")
@@ -185,6 +186,21 @@ class ContractTests(unittest.TestCase):
         self.assertIn("Edit video and audio", self.contract["skill"]["description"])
         for t in self.contract["tools"]:
             self.assertEqual(t["version"], pkg["version"])
+
+    def test_claude_plugin_manifest_matches_package_and_skill(self):
+        """.claude-plugin/plugin.json makes the repo installable with `claude plugin install
+        kajisho5/ffmpeg-skill` (#142); a single-skill plugin may keep SKILL.md at its root. Its
+        version must track package.json (release.yml's auto-bump rewrites both), its name must
+        equal SKILL.md's frontmatter name (the plugin namespaces the skill as name:name), and it
+        must be valid JSON with only the documented top-level fields."""
+        manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], pkg["version"])
+        self.assertEqual(manifest["name"], pkg["name"])
+        skill_name = re.search(r"(?m)^name:\s*(\S+)", (ROOT / "SKILL.md").read_text(encoding="utf-8")).group(1)
+        self.assertEqual(manifest["name"], skill_name)
+        self.assertTrue(set(manifest) <= {"name", "version", "description", "author", "homepage", "repository", "license", "keywords"}, sorted(manifest))
+        self.assertTrue(re.fullmatch(r"[a-z0-9-]+", manifest["name"]))
 
     def test_docs_contract_example_version_matches_package_json(self):
         """docs/contract.md's illustrative JSON example of the Skill object hand-copies a

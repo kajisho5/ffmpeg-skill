@@ -30,7 +30,7 @@ tag, not by tracking `main` — see README, "Development", "Releasing".
 
 The prose tool count in this file, README, `SKILL.md` and `package.json`'s description is
 not generated (it reads naturally in a sentence), so `tests/test_contract.py`'s
-`test_docs_tool_count_matches_the_real_tool_list` checks all four against the real count
+`test_docs_tool_count_matches_the_real_tool_list` checks all five against the real count
 from `scripts/` on every CI run instead — a stale count fails a test rather than drifting
 silently. (`SKILL.md` was added to that check after its "the 28 scripts" sat stale through
 twelve tool additions while the other three files were correct.)

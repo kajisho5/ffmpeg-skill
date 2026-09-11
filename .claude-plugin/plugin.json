@@ -1,0 +1,19 @@
+{
+  "name": "ffmpeg-skill",
+  "description": "Local FFmpeg video/audio editing for coding agents: 40 tools with a machine-readable contract, capability detection, probe-first / verify-last workflow. No cloud, no API keys.",
+  "version": "1.0.4",
+  "author": {
+    "name": "kajisho5",
+    "url": "https://github.com/kajisho5"
+  },
+  "homepage": "https://github.com/kajisho5/ffmpeg-skill",
+  "repository": "https://github.com/kajisho5/ffmpeg-skill",
+  "license": "MIT",
+  "keywords": [
+    "ffmpeg",
+    "video",
+    "audio",
+    "skill",
+    "mcp"
+  ]
+}

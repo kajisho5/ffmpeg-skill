@@ -356,6 +356,14 @@ npx ffmpeg-skill --dir ./my-skills
 npx ffmpeg-skill --uninstall  # remove from the selected targets (--codex also clears the older ~/.codex/skills location)
 ```
 
+As a Claude Code plugin (no Node needed, updates with `claude plugin update`):
+
+```bash
+claude plugin install kajisho5/ffmpeg-skill
+```
+
+The plugin namespaces the skill as `ffmpeg-skill:ffmpeg-skill`; the manifest is [.claude-plugin/plugin.json](.claude-plugin/plugin.json) and its version follows every release automatically.
+
 Without Node: clone this repository and copy `SKILL.md`, `scripts/`, `references/` and `mcp/` into your agent's skills directory.
 
 After installing:

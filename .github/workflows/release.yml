@@ -11,7 +11,7 @@ name: release
 #     (.github/scripts/resolve_version.py: minor/feature/enhancement -> minor,
 #     patch/fix/bug -> patch, unlabeled -> patch, chore/ci/docs/dependencies
 #     only -> nothing to release, major -> refused), bumps
-#     package.json and docs/contract.md to that version, writes a CHANGELOG.md
+#     package.json, .claude-plugin/plugin.json and docs/contract.md to that version, writes a CHANGELOG.md
 #     section listing those merged PRs, and pushes that bump commit to main
 #     itself before continuing -- see "Auto-bump" below.
 #   - If a PR *did* bump package.json's version by hand (and, by this repo's
@@ -130,6 +130,12 @@ jobs:
           assert pkg != pkg_new, "package.json version field not found/replaced"
           pkg_path.write_text(pkg_new, encoding="utf-8")
 
+          plugin_path = root / ".claude-plugin" / "plugin.json"
+          plugin = plugin_path.read_text(encoding="utf-8")
+          plugin_new = re.sub(r'("version":\s*")[^"]+(")', rf'\g<1>{new}\g<2>', plugin, count=1)
+          assert plugin != plugin_new, ".claude-plugin/plugin.json version field not found/replaced"
+          plugin_path.write_text(plugin_new, encoding="utf-8")
+
           contract_path = root / "docs" / "contract.md"
           contract = contract_path.read_text(encoding="utf-8")
           contract_path.write_text(contract.replace(old, new), encoding="utf-8")
@@ -167,7 +173,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json docs/contract.md CHANGELOG.md
+          git add package.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md
           git commit -m "chore(release): bump version to ${NEW_VERSION}"
           git push origin HEAD:main
 
