@@ -1,9 +1,11 @@
-# Config for release-drafter/release-drafter. Maintains a running DRAFT release (updated on
-# every push to main) summarizing merged PRs since the last tag -- a cross-check against
-# CHANGELOG.md's hand-written notes, not a replacement for them. Actual publishing still stays a
-# deliberate, manual act: tag a commit (`git tag vX.Y.Z && git push origin vX.Y.Z`), which
-# .github/workflows/release.yml picks up and publishes using CHANGELOG.md's own section for that
-# version. This draft is never auto-published.
+# Config for release-drafter/release-drafter, used two ways:
+#  - release-drafter.yml (the workflow) runs it live on every push to main, keeping a running
+#    DRAFT release as a human-readable cross-check -- this draft is never auto-published.
+#  - release.yml runs it with dry-run: true to resolve the *actual* next version (via
+#    version-resolver below) whenever nobody bumped package.json by hand, then bumps the
+#    version and writes CHANGELOG.md itself and releases for real. So the labels below (and
+#    "default: patch" for an unlabeled PR) now drive real releases, not just this draft --
+#    label a PR "minor"/"feature"/"major" when it needs more than a patch bump.
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
 categories:
@@ -45,4 +47,5 @@ template: |
 
   $CHANGES
 
-  Cross-check this against CHANGELOG.md's own entry for this version before tagging a release.
+  Cross-check this against CHANGELOG.md's entry for this version (release.yml writes it
+  automatically unless a PR already bumped package.json and wrote its own).

@@ -1,20 +1,39 @@
 name: release
 
-# Fully automated release: on every push to main, if package.json's current
-# version has no matching vX.Y.Z tag yet, this creates that tag, publishes a
-# GitHub Release (notes taken from CHANGELOG.md's matching section) and
-# publishes to npm -- all in one job. Bumping package.json's version (and
-# writing the matching CHANGELOG.md section) stays a deliberate, manual part
-# of each PR: this workflow only reacts to that bump already having landed on
-# main, it never chooses a version number itself. A push to main whose
-# version is already tagged (most pushes, since not every PR bumps the
-# version) is a no-op: every step below is skipped.
+# Fully automated release: on every push to main, this decides the next version
+# itself, then creates the vX.Y.Z tag, publishes a GitHub Release, and publishes
+# to npm -- all in one job. Nothing about a release needs to be done by hand
+# anymore, PR merges are the only input:
+#
+#   - If package.json's version still matches the latest release tag (the
+#     normal case -- nobody touched it in the merged PR), this job asks
+#     release-drafter to resolve the next version from the labels on every PR
+#     merged since that tag (same major/minor/patch rules as
+#     .github/release-drafter.yml; an unlabeled PR defaults to patch), bumps
+#     package.json and docs/contract.md to that version, writes a CHANGELOG.md
+#     section listing those merged PRs, and pushes that bump commit to main
+#     itself before continuing -- see "Auto-bump" below.
+#   - If a PR *did* bump package.json's version by hand (and, by this repo's
+#     convention, wrote its own CHANGELOG.md section and docs/contract.md
+#     edits), that manual choice is left alone and used as-is -- auto-bump
+#     only fills in when nobody made the call already.
+#
+# Either way, once package.json's version has no matching tag, this creates
+# that tag, publishes a GitHub Release with notes extracted from
+# CHANGELOG.md's matching section, and publishes to npm. A push to main that
+# ends up not changing the version at all (nothing mergeable since the last
+# release, e.g. this very bump commit -- see below) is a no-op: every
+# remaining step is skipped.
 #
 # This runs as one job triggered directly by the push to main, not chained
-# through a separate tag-push trigger, because a tag pushed by the built-in
-# GITHUB_TOKEN does not itself trigger another workflow run (a deliberate
-# GitHub Actions anti-recursion rule) -- splitting this into "push a tag" /
-# "react to that tag" workflows would silently never fire the second one.
+# through a separate tag-push trigger, because a tag (or, now, a bump commit)
+# pushed by the built-in GITHUB_TOKEN does not itself trigger another workflow
+# run (a deliberate GitHub Actions anti-recursion rule) -- splitting any of
+# this into "push a commit/tag" / "react to that push" workflows would
+# silently never fire the second one. That anti-recursion rule is also why
+# the auto-bump commit below is safe to push straight from this job without
+# looping: it never starts a second run of this workflow, this same run just
+# continues on past it with the new version.
 
 on:
   push:
@@ -22,7 +41,8 @@ on:
 
 permissions:
   contents: write
-  id-token: write   # required for `npm publish --provenance`
+  pull-requests: read   # release-drafter reads merged PRs' labels to resolve the next version
+  id-token: write        # required for `npm publish --provenance`
 
 jobs:
   release:
@@ -31,6 +51,105 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Decide whether an automatic version bump is needed
+        id: setup
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          LAST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          LAST_VERSION="${LAST_TAG#v}"
+          LAST_VERSION="${LAST_VERSION:-0.0.0}"
+          echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "last_version=$LAST_VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$PKG_VERSION" = "$LAST_VERSION" ]; then
+            echo "needs_auto_bump=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_auto_bump=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Computes (but does not publish or tag) the next version from the labels on every
+      # PR merged since the last vX.Y.Z tag, using the same rules as release-drafter.yml /
+      # release-drafter.yml's own always-on draft release. dry-run: true makes this call
+      # read-only.
+      - name: Resolve the next version from merged PR labels
+        id: drafter
+        if: steps.setup.outputs.needs_auto_bump == 'true'
+        uses: release-drafter/release-drafter@v6
+        with:
+          dry-run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Nobody bumped package.json by hand, and release-drafter found something new to
+      # release: bump package.json/docs/contract.md ourselves and write a CHANGELOG.md
+      # section listing the merged PRs (and any issues they closed) since the last tag,
+      # then push that commit to main before the rest of this job continues. Reads PR
+      # titles via `git log` at runtime rather than interpolating them into this script,
+      # since PR titles are attacker-controlled text and GitHub Actions expression
+      # interpolation into a run: block is a known script-injection vector -- only our own
+      # already-resolved, numeric version strings pass through ${{ }} here.
+      - name: Auto-bump package.json / docs/contract.md / CHANGELOG.md
+        if: |
+          steps.setup.outputs.needs_auto_bump == 'true' &&
+          steps.drafter.outputs.resolved_version != '' &&
+          steps.drafter.outputs.resolved_version != steps.setup.outputs.last_version
+        env:
+          OLD_VERSION: ${{ steps.setup.outputs.last_version }}
+          NEW_VERSION: ${{ steps.drafter.outputs.resolved_version }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, pathlib
+
+          old = os.environ["OLD_VERSION"]
+          new = os.environ["NEW_VERSION"]
+          root = pathlib.Path(".")
+
+          pkg_path = root / "package.json"
+          pkg = pkg_path.read_text(encoding="utf-8")
+          pkg_new = re.sub(r'("version":\s*")[^"]+(")', rf'\g<1>{new}\g<2>', pkg, count=1)
+          assert pkg != pkg_new, "package.json version field not found/replaced"
+          pkg_path.write_text(pkg_new, encoding="utf-8")
+
+          contract_path = root / "docs" / "contract.md"
+          contract = contract_path.read_text(encoding="utf-8")
+          contract_path.write_text(contract.replace(old, new), encoding="utf-8")
+
+          last_tag = f"v{old}" if old != "0.0.0" else None
+          rev_range = f"{last_tag}..HEAD" if last_tag else "HEAD"
+          log = subprocess.run(
+              ["git", "log", rev_range, "--format=%s----BODY----%b----COMMIT----"],
+              capture_output=True, text=True, check=True,
+          ).stdout
+          commits = [c for c in log.split("----COMMIT----") if c.strip()]
+          subjects, issues = [], set()
+          for c in commits:
+              subject, _, body = c.partition("----BODY----")
+              subject = subject.strip()
+              if subject:
+                  subjects.append(subject)
+              issues.update(int(n) for n in re.findall(r"(?im)^closes\s+#(\d+)\.?\s*$", body))
+
+          bullets = "\n".join(f"- {s}" for s in subjects) or "- (no commit subjects found)"
+          closes_line = f"\n\nCloses: {', '.join(f'#{n}' for n in sorted(issues))}" if issues else ""
+          section = (
+              f"## {new}\n\n"
+              f"_Automated release: version and notes generated from pull requests merged "
+              f"since {old}._\n\n"
+              f"{bullets}{closes_line}\n\n"
+          )
+
+          changelog_path = root / "CHANGELOG.md"
+          changelog = changelog_path.read_text(encoding="utf-8")
+          anchor = "## Unreleased\n\n(nothing yet)\n\n"
+          assert anchor in changelog, "CHANGELOG.md's Unreleased anchor not found"
+          changelog_path.write_text(changelog.replace(anchor, anchor + section, 1), encoding="utf-8")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json docs/contract.md CHANGELOG.md
+          git commit -m "chore(release): bump version to ${NEW_VERSION}"
+          git push origin HEAD:main
 
       - name: Check whether this version is already released
         id: check

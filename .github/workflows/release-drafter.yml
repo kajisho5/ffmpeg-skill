@@ -1,7 +1,10 @@
 # Keeps a draft GitHub Release up to date with merged-PR summaries as main moves forward. This is
-# purely a convenience cross-check against CHANGELOG.md's hand-written notes -- it never publishes
-# anything itself; publishing a real release stays the deliberate, manual `git tag` act described
-# in release.yml / README's "Development" -> "Releasing" section.
+# purely a human-readable cross-check against CHANGELOG.md -- both the hand-written sections a PR
+# may still add itself and the ones release.yml now generates automatically -- and it never
+# publishes anything itself. release.yml is the one that actually decides and cuts a release; it
+# uses this same repo's release-drafter.yml config (via its own dry-run call) to resolve the next
+# version, it doesn't read this draft. See release.yml / README's "Development" -> "Releasing"
+# section for the real, fully-automated release flow.
 #
 # push-to-main only, deliberately: release-drafter reads its config from the DEFAULT branch, so a
 # pull_request trigger fails with "Configuration file .github/release-drafter.yml is not found"
