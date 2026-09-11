@@ -184,6 +184,11 @@ jobs:
           TAG="v$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # The commit to tag is whatever HEAD is *now*: after an auto-bump that is the bump
+          # commit this job just pushed, not the merge commit that triggered the run. Tagging
+          # github.sha (as this did through v1.1.0) put every auto-released tag one commit
+          # before its own version bump, so `git checkout v1.1.0` showed package.json at 1.0.4.
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "already_released=true" >> "$GITHUB_OUTPUT"
           else
@@ -210,7 +215,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.check.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.check.outputs.sha }}
           body_path: release_notes.md
           generate_release_notes: true
 
