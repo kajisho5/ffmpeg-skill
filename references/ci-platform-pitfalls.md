@@ -152,7 +152,11 @@ these had ever shown up before.
   only way to get an mp4 `colr` atom there. A decoder-side `-colorspace bt709 ... -i` override
   was tried first and rejected: it also tags a `-c copy` output of an untagged source (export
   copy must stay a real copy), and it exposed a separate, pre-existing `--correct` bug (below).
-  Verified on 5.1.1, 6.1.1 and 7.1.1.
+  Verified on 5.1.1, 6.1.1, 7.1.1 and 8.1.2. 8.x has the same encode-time conversion; it
+  went unnoticed there because 8.x's `psnr` filter *also* negotiates colourspace and undid it
+  before measuring (40 dB for re-matrixed pixels), and it then flagged the fixed, byte-clean
+  output as 26 dB instead. The tests' `_psnr` helper now pins identical colour tags on both
+  inputs so every build reports the same number for the same two files.
 - **The conda-forge 7.1.1 build deadlocks on `tpad` + `adelay`/`apad` (pad.py) and ignores
   SIGTERM.** Debian's 7.1.5 in CI does not. Run pad tests against CI, not that build, and note
   that the tools have no subprocess timeout to get an agent out of such a hang.

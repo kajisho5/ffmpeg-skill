@@ -2834,14 +2834,20 @@ class FFmpegSkillTests(unittest.TestCase):
     @staticmethod
     def _psnr(a, b):
         """Average PSNR of b against a (dB); lower means the picture changed more. inf when identical."""
-        # Both inputs are re-stamped by frame *number* first: the psnr filter pairs frames by
-        # timestamp, and an encoder whose output timestamps sit one frame off the source's
-        # (Debian's FFmpeg 7.1.5 did, on a picture the tool had not touched) otherwise compares
-        # every frame with its neighbour and reports ~24 dB for an unchanged moving picture.
-        # Re-basing only the start pts was not enough there. Frame *count* equality is asserted
-        # separately by the callers that care, so a genuinely dropped frame still fails.
+        # Two things make this compare pixels and nothing else. (1) Both inputs are re-stamped by
+        # frame *number*, so the psnr filter (which pairs frames by timestamp) never compares a
+        # frame with its neighbour; frame *count* equality is asserted separately by the callers
+        # that care, so a genuinely dropped frame still fails. (2) Both inputs get the *same*
+        # colour tags before psnr. From FFmpeg 7.1 libavfilter negotiates colourspace, and psnr
+        # on an untagged source vs a bt709-tagged output auto-inserts a real bt709->bt601
+        # conversion on one side (8.x: 26 dB for a byte-identical picture) -- and, worse, hides
+        # an encode-time conversion by undoing it (8.x reported 40 dB for an output whose pixels
+        # had been re-matrixed, which is how the 7.1+ -colorspace bug in #156 went unnoticed on
+        # macOS). With the tags pinned identical, every build from 5.1 to 8.1 reports the same
+        # number for the same two files.
+        same = "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
         proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(a), "-i", str(b), "-lavfi",
-                               "[0:v]setpts=N/FRAME_RATE/TB[a];[1:v]setpts=N/FRAME_RATE/TB[b];[a][b]psnr", "-f", "null", "-"],
+                               f"[0:v]setpts=N/FRAME_RATE/TB,{same}[a];[1:v]setpts=N/FRAME_RATE/TB,{same}[b];[a][b]psnr", "-f", "null", "-"],
                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         m = re.search(r"average:(inf|[\d.]+)", proc.stderr)
         assert m, proc.stderr[-400:]
