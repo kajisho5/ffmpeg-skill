@@ -103,3 +103,58 @@ shallow clone leaves no tag reachable to diff against, which would make the test
 skip itself in CI, not fail). If this test ever needs to skip a genuinely changelog-less
 closed issue (a pure process note, a duplicate, a revert of an unreleased change), name the
 exemption in the test itself with a reason — don't just widen the regex or drop the check.
+
+## Automation that can publish must not take its "major" cue from text it did not write
+
+On 2026-09-11, three routine Dependabot merges (`actions/upload-artifact` 4→7,
+`actions/setup-node` 4→7, `dependabot/fetch-metadata` 2→3) were published to npm as
+**1.0.0, 1.0.1 and 1.0.2**. The release pipeline (`release.yml`, since #129) resolves the next
+version from PR labels; an autolabeler rule added the same day applied `major` to any PR whose
+*body* contained the literal breaking-change marker. Dependabot PR bodies quote the upstream
+project's release notes verbatim, and upload-artifact's v5.0.0 notes contain exactly that
+phrase — about *their* Node runtime, nothing to do with this package. One label, three
+accidental majors, in nine minutes, with every job green.
+
+Two things made it worse than one bad rule: every chore merge released at all (so the first
+accident was followed by two more before anyone looked), and nothing in the pipeline treated
+"the major number changed" as different from any other bump.
+
+Fixes (this commit): no autolabeler rule produces `major` any more; `chore`/`ci`/`docs`/
+`dependencies` PRs are excluded from version resolution so they release nothing; `release.yml`
+refuses to auto-bump across a major boundary regardless of labels; and the release job is
+serialised (`concurrency`) so back-to-back merges cannot race on the bump push.
+
+The general rule: a pipeline that publishes must never derive an irreversible decision (a
+major bump, a publish, a tag) from text it did not author — PR bodies, commit messages and
+release notes are quotations as often as they are statements. Match on labels a person
+applied, or on files changed, and make the irreversible step refuse anything surprising rather
+than assume the surprise was intended. And after wiring any such automation, watch the first
+few real runs' *results* (npm, tags) rather than their exit codes: the three runs here were
+"success" by every check the job had.
+
+## An action input that does not exist is a warning, not an error -- and "excluded from the notes" is not "no release"
+
+The fix for the accidental majors above (#145) still released **1.0.4** for its own,
+workflow-only merge. Two assumptions in `release.yml` were wrong and nothing checked either:
+
+- `release-drafter/release-drafter@v6` was called with `dry-run: true` to "compute the next
+  version read-only". That action has no `dry-run` input. GitHub Actions logs
+  `Unexpected input(s) 'dry-run'` as a *warning* and runs the step anyway -- so every release
+  run had been rewriting the draft release live, and the "read-only" in the comment was fiction.
+- `exclude-labels` in `release-drafter.yml` was expected to make a chore-only merge resolve to
+  the same version as the last tag. It only removes those PRs from the draft *notes*; the
+  version resolver still applies `default: patch` and reports last+patch. The workflow's "same
+  version → no-op" guard therefore never fired.
+
+Both were visible in the first run's log and in the action's documented inputs, and both were
+missed because the PR's test plan verified the YAML *parsed* and the config *contained* the
+intended keys -- not that the action *did* what the comment claimed. Fixed by taking the
+decision away from the action: `.github/scripts/resolve_version.py` reads the merged PRs'
+labels through `gh api`, returns nothing when nothing is releasable, refuses `major`, and has
+a unit test in `tests/test_contract.py` with fake label data for each rule.
+
+The general rule, twice over now: when wiring a third-party action, read its `action.yml`
+inputs (or `Unexpected input(s)` in the first log) before trusting a parameter, and treat
+any step whose output decides an irreversible action as something to unit-test with fixed
+inputs, not something to confirm by reading its YAML. And watch the first real run's
+*effect* (tags, npm), which is how both incidents were actually noticed.

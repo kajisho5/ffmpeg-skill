@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 1.0.4
+
+_Automated release: version and notes generated from pull requests merged since 1.0.3._
+
+- chore(release): never auto-bump the major, and stop releasing chore-only merges (#145)
+
 ## 1.0.3
 
 _Automated release: version and notes generated from pull requests merged since 1.0.2._
@@ -25,6 +31,8 @@ _Automated release: version and notes generated from pull requests merged since 
 - build(deps): bump actions/setup-node from 4 to 7 (#134)
 
 ## 1.0.0
+
+**Accidental major.** 1.0.0, 1.0.1 and 1.0.2 contain no user-facing or compatibility change over 0.16.15 -- they are three routine CI dependency bumps that a release-automation bug labelled `major` (see `references/process-pitfalls.md`, fixed in #145). They are left published because npm never lets a version number be reused; treat 1.0.x as 0.16.x under a different name.
 
 _Automated release: version and notes generated from pull requests merged since 0.16.15._
 
