@@ -1784,6 +1784,37 @@ class FFmpegSkillTests(unittest.TestCase):
         cap_files = sorted(p.name for p in out.glob("clip*_cap.mp4"))
         self.assertEqual(len(cap_files), 2, f"expected two distinct 'caption' outputs, got {cap_files}")
 
+    def test_verify_full_plan_hdr_surround_broken_file_and_timeout(self):
+        """verify.py's non---quick plan (overlay, look sheet, probe --analyze, loudness, silence,
+        color --to-sdr + the HDR-preserved check on an HDR file, --downmix on >2ch audio), the
+        "ffprobe failed" row for a file that is not media, the plain-text report path (no --json)
+        and the per-step timeout were all unexercised: the two existing verify tests only ran
+        --quick --json on good files (#147). A collection with one HDR10 file, one 5.1 file and
+        one file of garbage bytes exits 1 (the garbage), while every step on the two real files
+        still passes."""
+        folder = OUT / "verify_full"
+        folder.mkdir(exist_ok=True)
+        (folder / Path(self.hdr).name).write_bytes(Path(self.hdr).read_bytes())
+        (folder / Path(self.surround).name).write_bytes(Path(self.surround).read_bytes())
+        (folder / "broken.mp4").write_bytes(b"this is not a media file\n" * 64)
+        out = OUT / "verify_full_out"
+        report = OUT / "verify_full.md"
+        proc = script("verify.py", folder, "--seconds", "2", "--keep", "--out", out, "--report", report, expect_fail=True)
+        text = report.read_text(encoding="utf-8")
+        self.assertIn(text.strip(), proc.stdout.strip(), "without --json the report is printed to stdout")
+        self.assertIn("| probe | FAIL | 0s | ffprobe failed |", text)
+        for step in ("overlay text", "look sheet", "probe analyze", "loudness measure", "silence list",
+                     "color to-sdr", "hdr preserved", "audio downmix", "export x"):
+            self.assertIn(f"| {step} | PASS |", text, f"{step} missing or failed:\n{text}")
+        self.assertNotIn("| FAIL |", text.replace("| probe | FAIL | 0s | ffprobe failed |", ""))
+        self.assertTrue((out / f"{Path(self.hdr).stem}_sdr.mp4").exists())
+        self.assertTrue((out / f"{Path(self.surround).stem}_st.mp4").exists())
+        # a per-step timeout is reported per step, never raised
+        data = json.loads(script("verify.py", self.src, "--quick", "--timeout", "0.01", "--json", expect_fail=True).stdout)
+        timed_out = [s for f in data["files"] for s in f["steps"] if s["error"].startswith("timeout after")]
+        self.assertTrue(timed_out, data)
+        self.assertEqual(data["failed"], len(timed_out))
+
     def test_progress_and_fast_flags(self):
         out = OUT / "prog.mp4"
         proc = script("fit.py", self.src, "--duration", "6", "--fast", "--progress", "-o", out)
