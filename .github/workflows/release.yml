@@ -35,6 +35,17 @@ name: release
 # the auto-bump commit below is safe to push straight from this job without
 # looping: it never starts a second run of this workflow, this same run just
 # continues on past it with the new version.
+#
+# main is protected by a ruleset (PR required, 8 status checks) that the
+# built-in GITHUB_TOKEN cannot bypass (GitHub Actions is not an accepted
+# bypass actor; #137). The bump commit is therefore pushed with the
+# RELEASE_PUSH_TOKEN secret when it exists: a fine-grained PAT of a repository
+# admin (Contents: read/write on this repo only), whose "Repository admin"
+# bypass lets the push through. A PAT push DOES trigger workflows, unlike
+# GITHUB_TOKEN, so the bump commit message carries [skip ci]: the tag, the
+# GitHub Release and the npm publish all happen in this same run, and a second
+# run on the bump commit would only find the tag already present. Without the
+# secret the push falls back to GITHUB_TOKEN (works on an unprotected main).
 
 on:
   push:
@@ -59,6 +70,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Decide whether an automatic version bump is needed
         id: setup
@@ -174,7 +186,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md
-          git commit -m "chore(release): bump version to ${NEW_VERSION}"
+          git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
           git push origin HEAD:main
 
       - name: Check whether this version is already released
