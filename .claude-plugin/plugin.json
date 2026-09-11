@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg-skill",
-  "description": "Local FFmpeg video/audio editing for coding agents: 40 tools with a machine-readable contract, capability detection, probe-first / verify-last workflow. No cloud, no API keys.",
+  "description": "Local FFmpeg video/audio editing for coding agents: 41 tools with a machine-readable contract, capability detection, probe-first / verify-last workflow. No cloud, no API keys.",
   "version": "1.1.0",
   "author": {
     "name": "kajisho5",

@@ -283,6 +283,22 @@ loop point (no crossfade at the seam) -- a clip that doesn't already loop
 cleanly will show a visible cut/pop at each repeat, which is a property of
 the source material this tool cannot fix.
 
+### metadata.py — chapter markers and container tags, streams copied
+```
+metadata.py INPUT [--chapters chapters.txt | --clear-chapters]
+                  [--title T] [--artist A] [--album A] [--comment C] [--date D] [--genre G] [-o OUT]
+```
+`chapters.txt` holds one chapter per line, `TIME TITLE` (cut.py's time syntax:
+seconds, mm:ss, hh:mm:ss.ms); each chapter ends where the next starts and the
+last runs to the end of the file. Starts must ascend and lie inside the file.
+Every stream is `-c copy` (bit for bit; `probe` reports the result under
+`chapters` and `tags`), so this is instant and lossless. Chapter markers need a
+container that can hold them (.mp4/.m4v/.m4a/.mov, .mkv/.mka/.webm); `.wav`,
+`.gif`, `.mp3` and `.flac` outputs are refused for `--chapters` rather than
+silently dropping them. Tags alone are written to any container that has them.
+`--clear-chapters` removes existing markers; an empty tag value (`--comment ""`)
+clears that tag.
+
 ### grid.py — composite clips into a grid
 ```
 grid.py CLIP1 CLIP2 [...] --cols N --rows N [--cell-width W] [--cell-height H]

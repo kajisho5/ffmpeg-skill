@@ -173,7 +173,7 @@ gives you:
 
 ## `provides`
 
-`provides` lists these 40 tools by a cross-repository Capability id, for
+`provides` lists these 41 tools by a cross-repository Capability id, for
 `kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
 (`docs/SPEC.md` there), matching the ids already assigned to this Skill in
 that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's

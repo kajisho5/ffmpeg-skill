@@ -118,7 +118,7 @@ This skill cuts, joins, measures, syncs, exports and checks files — it execute
 
 The line in general: if the same input and the same explicit parameters always produce the same, verifiable output, it belongs here. If the "right" answer depends on taste, content understanding, or what looks or sounds good, it belongs to whichever skill or agent makes that judgement — this skill only ever executes parameters it's given, never infers them from what something looks or sounds like.
 
-If a request needs an FFmpeg feature none of the 40 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
+If a request needs an FFmpeg feature none of the 41 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
 
 ## Request → script
 
@@ -149,6 +149,8 @@ If a request needs an FFmpeg feature none of the 40 scripts expose, say so and n
 | "add some black at the start before the title card" | `pad.py clip.mp4 --start 1.5` |
 | "speed up here, slam into slow-mo there, then speed back up" (known segments) | `speedramp.py action.mp4 --segment 0-3:1.0 --segment 3-4:0.25 --segment 4-8:2.0` |
 | "loop this background clip to fill 30 seconds" | `loop.py bg_loop.mp4 --duration 30` |
+| "add chapters at 0:00 Intro, 2:15 Setup, …", "chapter markers for YouTube" | `metadata.py episode.mp4 --chapters chapters.txt` (one `TIME TITLE` per line; streams are copied, nothing re-encodes) |
+| "set the title / artist / comment on the file" | `metadata.py episode.mp4 --title "Episode 12" --artist "Studio"` |
 | "put these videos in a 4x2 grid with the filename on each" | `grid.py t1.mp4 t2.mp4 t3.mp4 t4.mp4 t5.mp4 t6.mp4 t7.mp4 t8.mp4 --cols 4 --rows 2` |
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (plain text with times) | `caption.py input.mp4 --text cues.txt` |

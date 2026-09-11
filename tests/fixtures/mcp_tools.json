@@ -513,6 +513,27 @@
   "required": []
  },
  {
+  "name": "metadata",
+  "properties": [
+   "album",
+   "argv",
+   "artist",
+   "chapters",
+   "clear_chapters",
+   "comment",
+   "date",
+   "dry_run",
+   "fast",
+   "genre",
+   "input",
+   "json",
+   "output",
+   "progress",
+   "title"
+  ],
+  "required": []
+ },
+ {
   "name": "multicam",
   "properties": [
    "analyze_seconds",
