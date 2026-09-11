@@ -305,8 +305,8 @@ before, and, when `--json` was given, on stdout:
 
 ```json
 {"status": "failed", "exit_code": 1,
- "error": {"kind": "input | ffmpeg | output | missing_tool", "message": "...",
-           "code": "INPUT_INVALID | DEPENDENCY_MISSING | FFMPEG_EXECUTION_FAILED | OUTPUT_INVALID | INTERNAL_ERROR",
+ "error": {"kind": "input | ffmpeg | output | missing_tool | timeout", "message": "...",
+           "code": "INPUT_INVALID | DEPENDENCY_MISSING | FFMPEG_EXECUTION_FAILED | OUTPUT_INVALID | TIMEOUT | INTERNAL_ERROR",
            "retryable": false},
  "commands": ["ffmpeg ..."]}
 ```

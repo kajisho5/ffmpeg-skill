@@ -62,7 +62,24 @@ ERROR_CODE = {
     "missing_tool": "DEPENDENCY_MISSING",
     "ffmpeg": "FFMPEG_EXECUTION_FAILED",
     "output": "OUTPUT_INVALID",
+    "timeout": "TIMEOUT",
 }
+
+# Wall-clock ceiling for one ffmpeg/ffprobe invocation, in seconds. A hung ffmpeg (a build
+# that deadlocks on a filter combination, a stalled network mount, an input that never ends)
+# used to hang the calling agent with it, with no error document and no way out short of
+# killing the process by hand. The ceiling is generous on purpose: it exists to turn a hang
+# into a reported failure, not to police slow encodes. --timeout and FFMPEG_SKILL_TIMEOUT
+# override it; 0 disables it.
+DEFAULT_TIMEOUT = 1800.0
+PROBE_TIMEOUT = 120.0
+
+
+def _env_timeout() -> float:
+    try:
+        return max(0.0, float(os.environ.get("FFMPEG_SKILL_TIMEOUT", DEFAULT_TIMEOUT)))
+    except ValueError:
+        return DEFAULT_TIMEOUT
 
 # None of the four kinds above are retryable in practice: an "input"/"missing_tool" failure is
 # always deterministic (the same bad path or absent binary fails identically every time), and a
@@ -182,8 +199,8 @@ class Context:
     it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands")
-    _KEYS = ("dry_run", "json", "progress", "fast", "duration_hint", "commands")
+    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written")
+    _KEYS = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written")
 
     def __init__(self) -> None:
         self.reset()
@@ -195,6 +212,9 @@ class Context:
         self.fast = False         # x264 preset forced to veryfast
         self.duration_hint: Optional[float] = None  # expected output length, for the progress percent
         self.commands: List[str] = []               # every ffmpeg command line, for --json and --dry-run
+        self.timeout: float = _env_timeout()         # seconds per ffmpeg invocation, 0 = none
+        self.overwrite = False                       # --overwrite: an existing output may be replaced
+        self.written: set = set()                    # output paths this process has written itself
 
     # mapping-style access kept for backwards compatibility
     def __getitem__(self, key: str) -> Any:
@@ -221,6 +241,11 @@ def add_common(ap: "argparse.ArgumentParser") -> None:
     g.add_argument("--json", action="store_true", help="print a JSON result (output, probe, commands) on stdout instead of the path")
     g.add_argument("--progress", action="store_true", help="show percent / ETA on stderr while ffmpeg encodes")
     g.add_argument("--fast", action="store_true", help="preview quality: x264 preset veryfast (overrides --preset) for quick iterations")
+    if "--timeout" not in ap._option_string_actions:  # verify.py defines its own per-step --timeout; apply_common reads either
+        g.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
+                       help=f"kill any single ffmpeg run that exceeds this many seconds and report kind=timeout (default {DEFAULT_TIMEOUT:.0f}, or FFMPEG_SKILL_TIMEOUT; 0 = no limit)")
+    g.add_argument("--overwrite", action="store_true",
+                   help="allow replacing an output file that already exists (without it a warning is printed today; from 2.0 an existing output is refused, and FFMPEG_SKILL_NO_OVERWRITE=1 opts into that now)")
 
 
 def apply_common(args: "argparse.Namespace") -> None:
@@ -228,6 +253,9 @@ def apply_common(args: "argparse.Namespace") -> None:
     STATE.json = bool(getattr(args, "json", False))
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
+    STATE.overwrite = bool(getattr(args, "overwrite", False))
+    if getattr(args, "timeout", None) is not None:
+        STATE.timeout = max(0.0, float(args.timeout))
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
 
@@ -312,6 +340,46 @@ def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
                 continue
 
 
+def _check_existing_output(cmd: Sequence[str]) -> None:
+    """An output path that already exists is someone's file: a previous result, a source the
+    agent mis-named, a deliverable from another run. ffmpeg's -y (which every command carries so
+    a run never blocks on a y/N prompt) would replace it without a word. Until 2.0 this only
+    warns, per docs/contract.md's deprecation policy; FFMPEG_SKILL_NO_OVERWRITE=1 opts into the
+    2.0 behaviour (refuse) today, and --overwrite is the explicit consent either way. Paths this
+    process wrote itself (a two-pass tool, a copy-then-re-encode fallback) are never in question."""
+    output = cmd[-1]
+    if STATE.overwrite or output in ("-",) or output.startswith("pipe:") or output.startswith("-"):
+        return
+    try:
+        exists = os.path.isfile(output)
+        real = os.path.realpath(output)
+    except OSError:
+        return
+    if not exists or real in STATE.written:
+        return
+    if os.environ.get("FFMPEG_SKILL_NO_OVERWRITE", "") not in ("", "0"):
+        die(f"refusing to overwrite existing output {output!r}: pass --overwrite to replace it, or choose another -o path", kind="input")
+    info(f"warning: {output} already exists and will be overwritten (pass --overwrite to confirm; "
+         f"from 2.0 an existing output is refused without it, FFMPEG_SKILL_NO_OVERWRITE=1 enables that now)")
+
+
+def _remember_output(cmd: Sequence[str]) -> None:
+    output = cmd[-1]
+    if output == "-" or output.startswith("pipe:") or output.startswith("-"):
+        return
+    try:
+        STATE.written.add(os.path.realpath(output))
+    except OSError:
+        pass
+
+
+def _timed_out(cmd: Sequence[str], seconds: float) -> "None":
+    _cleanup_partial_output(cmd)
+    die(f"{os.path.basename(cmd[0])} exceeded the {seconds:.0f} s time limit and was killed; nothing was written. "
+        f"Raise --timeout (or FFMPEG_SKILL_TIMEOUT) if the job is genuinely that long, or check the input for a stall",
+        code=124, kind="timeout")
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
@@ -322,6 +390,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     is_ffmpeg = _is_ffmpeg(cmd)
     if is_ffmpeg:
         _check_no_overwrite_input(cmd)
+        _check_existing_output(cmd)
         STATE.commands.append(_cmdline(cmd))
     if not quiet:
         info(("[dry-run] $ " if STATE.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd))
@@ -346,9 +415,23 @@ def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
     return True
 
 
+def _limit_for(cmd: Sequence[str]) -> Optional[float]:
+    """The wall-clock ceiling for this command: ffprobe (and other read-only probes) get a fixed
+    short one, ffmpeg the configured one; None means unlimited."""
+    if not _is_ffmpeg(cmd):
+        return PROBE_TIMEOUT if STATE.timeout else None
+    return STATE.timeout or None
+
+
 def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    limit = _limit_for(cmd)
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        _timed_out(cmd, limit or 0)
+    if proc.returncode == 0 and _is_ffmpeg(cmd):
+        _remember_output(cmd)
     if proc.returncode != 0:
         # Cleanup happens for every failed ffmpeg invocation, not just the check=True/_fail()
         # path: a handful of scripts (cut.py, loudness.py, silence.py, sync.py) call run() with
@@ -377,10 +460,17 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     total = STATE.duration_hint or 0.0
     full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
     t0 = time.time()
+    limit = _limit_for(cmd)
     proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     last = ""
     assert proc.stdout is not None
     for line in proc.stdout:
+        if limit and time.time() - t0 > limit:
+            proc.kill()
+            proc.communicate()
+            if last:
+                sys.stderr.write("\r" + " " * len(last) + "\r")
+            _timed_out(cmd, limit)
         if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
             try:
                 done = int(line.split("=")[1]) / 1_000_000
@@ -391,9 +481,16 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
                 sys.stderr.write(msg)
                 sys.stderr.flush()
                 last = msg
-    _, err = proc.communicate()
+    try:
+        _, err = proc.communicate(timeout=(max(5.0, limit - (time.time() - t0)) if limit else None))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        _timed_out(cmd, limit or 0)
     if last:
         sys.stderr.write("\r" + " " * len(last) + "\r")
+    if proc.returncode == 0:
+        _remember_output(cmd)
     if proc.returncode != 0:
         _cleanup_partial_output(cmd)
         if check:

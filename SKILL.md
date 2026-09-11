@@ -5,7 +5,7 @@ description: 'Edit video and audio with local FFmpeg from natural-language reque
 
 # ffmpeg-skill
 
-Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`. Every script has `--help`, and all of them accept `--dry-run`, `--json` (structured result with a probe of the output), `--fast` (preview quality) and `--progress`. Writing tools run nothing under `--dry-run`; `probe`/`check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report` may still run ffmpeg/ffprobe to measure or analyse — they just don't write their final artifact; `verify` accepts the flag but ignores it. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`). Details for every flag: `references/scripts.md`. Device-specific behaviour (iPhone HDR, GoPro, DJI, screen recordings, Zoom): `references/devices.md`.
+Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`. Every script has `--help`, and all of them accept `--dry-run`, `--json` (structured result with a probe of the output), `--fast` (preview quality), `--progress`, `--timeout SECONDS` (a single ffmpeg run is killed past this and reported as `kind: timeout`; default 1800) and `--overwrite` (consent to replace an output that already exists; without it the tool warns today and refuses from 2.0). Writing tools run nothing under `--dry-run`; `probe`/`check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report` may still run ffmpeg/ffprobe to measure or analyse — they just don't write their final artifact; `verify` accepts the flag but ignores it. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`). Details for every flag: `references/scripts.md`. Device-specific behaviour (iPhone HDR, GoPro, DJI, screen recordings, Zoom): `references/devices.md`.
 
 ## Workflow (always follow this order)
 
@@ -41,7 +41,9 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    be a placeholder, not a computed preview — see `docs/contract.md`). Use
    them to confirm a plan before long encodes and to report exact facts.
    `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
-   prints percent and ETA on stderr for long encodes.
+   prints percent and ETA on stderr for long encodes. Never point `-o` at a file
+   you did not create in this job unless the user asked for it to be replaced;
+   pass `--overwrite` only then.
 4. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
    join → silence → fit → caption/overlay → sync → audio → loudness → export.
    Do frame changes (fit/crop) before captions and overlays so text is sized
