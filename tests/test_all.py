@@ -215,6 +215,49 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
 
+    def test_metadata_writes_chapters_and_tags_with_streams_copied(self):
+        """#140: metadata.py writes container chapter markers from a `TIME TITLE` file and the
+        common tags, with every stream copied bit for bit; probe reports both back. Chapters on a
+        container that cannot hold them are refused, --clear-chapters removes them, a chapter
+        past the end or out of order is refused, and the input is never rewritten in place."""
+        chapters = OUT / "chapters.txt"
+        chapters.write_text("# episode\n0:00 Intro\n4 Setup, with a comma; and =signs\n0:08 Outro\n", encoding="utf-8")
+        out = OUT / "meta_chapters.mp4"
+        data = json.loads(script("metadata.py", self.src, "--chapters", chapters, "--title", "Episode 12", "--artist", "Studio", "--comment", "final", "--json", "-o", out).stdout)
+        self.assertTrue(data["streams_copied"])
+        m = probe(str(out))
+        self.assertEqual([(round(c["start"]), round(c["end"]), c["title"]) for c in m["chapters"]],
+                         [(0, 4, "Intro"), (4, 8, "Setup, with a comma; and =signs"), (8, 12, "Outro")])
+        self.assertEqual(m["tags"].get("title"), "Episode 12")
+        self.assertEqual(m["tags"].get("artist"), "Studio")
+        self.assertEqual(m["tags"].get("comment"), "final")
+        src = probe(str(self.src))
+        self.assertEqual((m["video"]["codec"], m["audio"]["codec"]), (src["video"]["codec"], src["audio"]["codec"]))
+        self.assertEqual(self._frame_count(out), self._frame_count(self.src))
+        self.assertEqual(self._psnr(self.src, out), float("inf"), "streams must be copied, not re-encoded")
+        # tags alone keep the chapters; --clear-chapters removes them and keeps the tags
+        tagged = OUT / "meta_tagged.mp4"
+        script("metadata.py", out, "--comment", "v2", "-o", tagged)
+        self.assertEqual(len(probe(str(tagged))["chapters"]), 3)
+        self.assertEqual(probe(str(tagged))["tags"].get("comment"), "v2")
+        cleared = OUT / "meta_cleared.mp4"
+        script("metadata.py", out, "--clear-chapters", "-o", cleared)
+        self.assertEqual(probe(str(cleared))["chapters"], [])
+        self.assertEqual(probe(str(cleared))["tags"].get("title"), "Episode 12")
+        # refusals
+        script("metadata.py", OUT / "long_ref.wav", "--chapters", chapters, "-o", OUT / "meta_bad.wav", expect_fail=True)
+        script("metadata.py", self.src, "-o", OUT / "meta_nothing.mp4", expect_fail=True)
+        script("metadata.py", self.src, "--title", "x", "-o", self.src, expect_fail=True)
+        bad = OUT / "chapters_bad.txt"
+        bad.write_text("0:00 A\n0:30 B\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", bad, "-o", OUT / "meta_bad2.mp4", expect_fail=True)
+        bad.write_text("0:05 A\n0:02 B\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", bad, "-o", OUT / "meta_bad3.mp4", expect_fail=True)
+        # dry run writes nothing
+        dry = OUT / "meta_dry.mp4"
+        script("metadata.py", self.src, "--chapters", chapters, "--dry-run", "-o", dry)
+        self.assertFalse(dry.exists())
+
     def test_fit_pad_fill_blur_puts_picture_in_the_bars_and_color_stays_solid(self):
         """#139: --fit pad --pad-fill blur fills the letterbox/pillarbox bars with a blurred,
         scaled-to-cover copy of the frame (the phone-editor "make it vertical" look) instead of a

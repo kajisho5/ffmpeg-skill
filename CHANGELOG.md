@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 1.3.0
+
+_Automated release: version and notes generated from pull requests merged since 1.2.0._
+
+- Add metadata.py: container chapter markers and title/artist/comment tags, streams copied (#157)
+
 ## 1.2.0
 
 _Automated release: version and notes generated from pull requests merged since 1.1.1._

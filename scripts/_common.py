@@ -468,7 +468,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(
-        [ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
+        [ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
         quiet=True,
         check=False,
     )
@@ -502,6 +502,15 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         "audio": None,
         "subtitle_streams": len(subs),
         "data_streams": data_stream_count,
+        # container-level chapter markers and the common tags, so metadata.py's result is
+        # verifiable the same way every other tool's is (additive keys, 1.x-safe)
+        "chapters": [{
+            "index": n,
+            "start": _to_float(ch.get("start_time")),
+            "end": _to_float(ch.get("end_time")),
+            "title": (ch.get("tags") or {}).get("title"),
+        } for n, ch in enumerate(raw.get("chapters") or [])],
+        "tags": {k.lower(): v for k, v in (fmt.get("tags") or {}).items() if k.lower() in ("title", "artist", "album", "comment", "date", "genre")},
         # every subtitle stream in file order: index n here is `-map 0:s:n`
         "subtitle_stream_details": [{
             "index": n,
