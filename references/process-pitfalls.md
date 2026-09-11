@@ -180,3 +180,13 @@ admin with Contents: read/write on this repo -- whose "Repository admin" bypass 
 push triggers workflows (GITHUB_TOKEN's do not), so the bump commit carries `[skip ci]`; the
 tag, Release and npm publish all happen in the originating run. Rotate the PAT before it
 expires or the next release fails at the same step, cleanly, before anything is published.
+
+### A literal `[skip ci]` anywhere in a PR body skips every workflow on the squash merge
+
+Found on the merge of #170 (2026-09-11). The PR body quoted the new bump-commit message
+verbatim, including `[skip ci]`; a squash merge copies the PR body into the merge commit, and
+GitHub honours the marker wherever it appears in the commit message. Nothing ran on `main` for
+that merge -- no tests, no CodeQL, no release -- and the release only happened when the next PR
+merged. Describe the marker in words in PR bodies and commit messages ("the skip-CI marker"),
+or wrap it so it does not match, and after any merge that touches CI check that the push
+actually triggered the expected runs.
