@@ -2169,6 +2169,85 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(out["stages"], ["clips", "join"])
         self.assertTrue(Path(out["output"]).exists())
 
+    def test_render_every_stage_flag_and_every_refusal(self):
+        """render.py's stage branches that test_render_project does not take (silence, captions
+        from srt/ass, graphics, image and logo overlays, audio replace/loop/stereo/mono/downmix,
+        export fit/crf, brand forwarding, the no-export copy path) and its refusals (no project,
+        unreadable project, empty clips, captions/graphics/overlays without their required key,
+        a child script failing) were untested (#147). --dry-run drives every argv-building branch
+        without encoding; the copy path and the child failure run for real on a 2 s clip."""
+        srt = OUT / "render_full.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello\n\n", encoding="utf-8")
+        ass = OUT / "render_full.ass"
+        logo = OUT / "render_full_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1", "-frames:v", "1", logo)
+        brand = OUT / "render_full_brand.json"
+        brand.write_text(json.dumps({"logo": logo.name, "logo_position": "top-right", "colors": {"primary": "FF6A00", "text": "FFFFFF"}}), encoding="utf-8")
+        full = {
+            "output": "render_full.mp4",
+            "brand": brand.name,
+            "clips": [{"src": "source.mp4", "in": 0, "out": 2}, {"src": "source.mp4", "in": 2, "out": 4}],
+            "frame": {"width": 640, "height": 360, "fps": 25},
+            "fit": {"duration": 3.5, "method": "trim"},
+            "captions": {"srt": srt.name, "font": "DejaVu Sans", "position": "top", "bold": True, "box": True},
+            "graphics": [{"template": "lower-third", "name": "Ada", "title": "Analyst", "start": 0, "end": 2},
+                         {"template": "title", "title": "T", "subtitle": "S", "start": 0, "end": 1, "position": "top-left"}],
+            "overlays": [{"image": logo.name, "position": "bottom-right", "opacity": 0.5, "scale": 80},
+                         {"logo": True, "start": 0, "end": 1},
+                         {"text": "txt", "font_size": 24, "margin": 12, "box": True}],
+            "audio": {"replace": "long_ref.wav", "music_volume": -12, "gain": 1, "music_loop": True, "stereo": True, "denoise": True},
+            "loudness": {"lufs": -16},
+            "export": {"preset": "youtube", "fit": "pad", "crf": 20},
+        }
+        proj = OUT / "render_full.json"
+        proj.write_text(json.dumps(full), encoding="utf-8")
+        proc = script("render.py", proj, "--dry-run", "--json")
+        plan = json.loads(proc.stdout)
+        self.assertEqual(plan["stages"], ["clips", "join", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export"])
+        forwarded = "\n".join(l for l in proc.stderr.splitlines() if l.startswith("→ "))  # render's own child invocations
+        for needle in ("--srt", "--template lower-third", "--image", "--logo", "--replace", "--music-loop", "--fit pad --crf 20", "--brand"):
+            self.assertIn(needle, forwarded, f"{needle} not forwarded:\n{forwarded}")
+        for stage in ("fit", "captions", "graphics", "overlays", "audio", "loudness"):
+            out = json.loads(script("render.py", proj, "--dry-run", "--stop-after", stage, "--json").stdout)
+            self.assertEqual(out["stages"][-1], stage)
+        # single uncut clip (so silence.py can analyse a real file under --dry-run), silence stage,
+        # captions from .ass, mono/downmix/duck audio, voice flag: the other branches of the same tables
+        alt = dict(full, clips=[{"src": "source.mp4"}], silence={"threshold": -40, "min_silence": 0.4, "margin": 0.1},
+                   captions={"ass": ass.name}, audio={"music": "long_ref.wav", "mono": True, "downmix": True, "duck": True, "voice": True, "duck_amount": 8}, graphics=[], overlays=[])
+        ass.write_text("[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,hi\n", encoding="utf-8")
+        (OUT / "render_full_alt.json").write_text(json.dumps(alt), encoding="utf-8")
+        proc = script("render.py", OUT / "render_full_alt.json", "--dry-run", "--json")
+        self.assertEqual(json.loads(proc.stdout)["stages"], ["clips", "silence", "fit", "captions", "audio", "loudness", "export"])
+        forwarded = "\n".join(l for l in proc.stderr.splitlines() if l.startswith("→ "))
+        for needle in ("--ass", "--min-silence 0.4", "--mono", "--downmix", "--duck-amount 8", "--voice"):
+            self.assertIn(needle, forwarded, f"{needle} not forwarded:\n{forwarded}")
+        out = json.loads(script("render.py", OUT / "render_full_alt.json", "--dry-run", "--stop-after", "silence", "--json").stdout)
+        self.assertEqual(out["stages"], ["clips", "silence"])
+        # no export block: the last stage is copied to the output, for real
+        copy_proj = OUT / "render_copy.json"
+        copy_proj.write_text(json.dumps({"output": "render_copy.mp4", "clips": [{"src": "source.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        data = json.loads(script("render.py", copy_proj, "--fast", "--json").stdout)
+        self.assertEqual(data["stages"], ["clips"])
+        self.assertClose(probe(str(OUT / "render_copy.mp4"))["duration"], 2.0, 0.3)
+        # refusals: each names its cause and exits non-zero
+        cases = {
+            "no_project": ([], "give a project.json"),
+            "unreadable": ([OUT / "render_missing.json"], "cannot read project"),
+            "empty_clips": ([self._proj("render_e1.json", {"clips": []})], "clips is empty"),
+            "captions_key": ([self._proj("render_e2.json", {"clips": full["clips"], "captions": {"size": 20}}), "--dry-run"], "captions needs text, srt or ass"),
+            "graphics_key": ([self._proj("render_e3.json", {"clips": full["clips"], "graphics": [{"name": "x"}]}), "--dry-run"], "needs a template"),
+            "overlay_key": ([self._proj("render_e4.json", {"clips": full["clips"], "overlays": [{"opacity": 1}]}), "--dry-run"], "needs image or text"),
+            "child_failed": ([self._proj("render_e5.json", {"clips": [{"src": "source.mp4", "in": "not-a-time", "out": 2}]}), "--dry-run"], "cut.py failed"),
+        }
+        for name, (argv, message) in cases.items():
+            proc = script("render.py", *argv, expect_fail=True)
+            self.assertIn(message, proc.stderr, f"{name}: {proc.stderr[-400:]}")
+
+    def _proj(self, name, body):
+        p = OUT / name
+        p.write_text(json.dumps(dict({"output": name.replace(".json", ".mp4")}, **body)), encoding="utf-8")
+        return p
+
     def test_render_default_work_dir_is_unique_per_process(self):
         """The default work dir name came only from the output path (e.g. "out_work"), no PID or
         timestamp -- two concurrent render.py runs targeting the same output (a batch.py "project"
