@@ -1567,6 +1567,27 @@ class FFmpegSkillTests(unittest.TestCase):
         proc = script("export.py", self.hdr, "--preset", "x", "-o", out)
         self.assertIn("HDR", proc.stderr)
 
+    def test_audio_music_bed_never_shortens_the_video(self):
+        """#164: a looped music bed under --duck came out 11.925 s from a 12.00 s source, and
+        -shortest then cut the stream-copied *video* to match: four frames gone from a tool whose
+        contract says the picture is never touched. The audio is now padded/trimmed to the source
+        duration and a video-keeping output never uses -shortest. Every music mode, plus --replace
+        with a shorter track, must keep the source's duration and frame count exactly."""
+        src_dur = probe(str(self.src))["duration"]
+        src_frames = self._frame_count(self.src)
+        for tag, flags in (("loop_duck", ["--music", str(self.mic), "--duck", "--music-loop"]),
+                           ("loop", ["--music", str(self.mic), "--music-loop"]),
+                           ("plain", ["--music", str(self.mic)]),
+                           ("replace_short", ["--replace", str(OUT / "c_mic_short.wav")])):
+            if tag == "replace_short":
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(self.mic), "-t", "3", str(OUT / "c_mic_short.wav"))
+            out = OUT / f"music_len_{tag}.mp4"
+            script("audio.py", self.src, *flags, "-o", out)
+            m = probe(str(out))
+            self.assertAlmostEqual(m["duration"], src_dur, msg=tag, delta=0.02)
+            self.assertEqual(self._frame_count(out), src_frames, f"{tag}: the picture lost or gained frames")
+            self.assertAlmostEqual(m["audio"].get("duration") or m["duration"], src_dur, msg=tag, delta=0.05)
+
     def test_audio_downmix_voice_and_ducking(self):
         out = OUT / "downmix.mp4"
         script("audio.py", self.surround, "--downmix", "--voice", "-o", out)

@@ -158,3 +158,25 @@ inputs (or `Unexpected input(s)` in the first log) before trusting a parameter, 
 any step whose output decides an irreversible action as something to unit-test with fixed
 inputs, not something to confirm by reading its YAML. And watch the first real run's
 *effect* (tags, npm), which is how both incidents were actually noticed.
+
+### The release bump step required the literal `(nothing yet)` line under `## Unreleased`
+
+Found on the first run after #163 (2026-09-11). `release.yml`'s auto-bump located the CHANGELOG
+insertion point with `assert "## Unreleased\n\n(nothing yet)\n\n" in changelog`. #163 did the
+natural thing and wrote its notes under Unreleased, so the bump step failed on the assert
+before the push, the tag or the publish -- a clean no-op, but a red run and no release. The
+script now takes whatever sits under Unreleased into the new version's section and puts the
+placeholder back, so hand-written notes are welcome there. Lesson: an anchor that is also
+prose will be edited; anchor on the heading, not on the placeholder text.
+
+### The built-in GITHUB_TOKEN cannot push the release bump through a ruleset
+
+Found on the first release after the main ruleset went active (2026-09-11, run for #166):
+`git push origin HEAD:main` from release.yml was declined with GH013 ("Changes must be made
+through a pull request", "8 of 8 required status checks are expected"). GitHub Actions cannot
+be added as a ruleset bypass actor (the import rejects the actor, the UI does not list it), so
+the bump push now uses the `RELEASE_PUSH_TOKEN` secret -- a fine-grained PAT of a repository
+admin with Contents: read/write on this repo -- whose "Repository admin" bypass applies. A PAT
+push triggers workflows (GITHUB_TOKEN's do not), so the bump commit carries `[skip ci]`; the
+tag, Release and npm publish all happen in the originating run. Rotate the PAT before it
+expires or the next release fails at the same step, cleanly, before anything is published.

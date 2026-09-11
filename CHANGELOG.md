@@ -5,8 +5,20 @@
 ## Unreleased
 
 - `color.py --correct` no longer desaturates bt709-tagged sources: the RGB stages are wrapped in explicit, matching YUV<->RGB conversions instead of libavfilter's auto-inserted pair, which used bt709 one way and bt601 the other (#159).
+
+## 1.4.1
+
+_Automated release: version and notes generated from pull requests merged since 1.4.0._
+
 - Every tool takes `--timeout SECONDS` (default 1800, `FFMPEG_SKILL_TIMEOUT`): a single ffmpeg run past the limit is killed, its partial output removed, and the failure reported as `kind: timeout` (exit 124) instead of hanging the caller.
 - Every tool takes `--overwrite`. An output path that already exists (and was not written by this run) now prints a warning; `FFMPEG_SKILL_NO_OVERWRITE=1` makes it a refusal today, and 2.0 will refuse by default.
+- `audio.py --music` (with or without `--duck`/`--music-loop`) no longer shortens the video: the mixed track is padded/trimmed to the source duration and a video-keeping output never uses `-shortest` (#164).
+- fix(audio): a music bed never shortens the video; pad the mix to the source duration (#165)
+- ci(release): push the bump commit with RELEASE_PUSH_TOKEN so the main ruleset lets it through (#170)
+- fix(release): fold hand-written Unreleased notes into the bump instead of asserting the placeholder (#166)
+- fix: --timeout kills a hung ffmpeg and reports it; --overwrite guards existing outputs (#163)
+- evals: iteration 5 against 1.4.0 (24-set, exec set, trigger set) and README row (#162)
+- docs: badges for CodeQL, downloads, stars, last commit and the tested FFmpeg/Python versions (#160)
 
 ## 1.4.0
 
