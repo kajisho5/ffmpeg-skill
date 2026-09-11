@@ -6,10 +6,11 @@ name: release
 # anymore, PR merges are the only input:
 #
 #   - If package.json's version still matches the latest release tag (the
-#     normal case -- nobody touched it in the merged PR), this job asks
-#     release-drafter to resolve the next version from the labels on every PR
-#     merged since that tag (same major/minor/patch rules as
-#     .github/release-drafter.yml; an unlabeled PR defaults to patch), bumps
+#     normal case -- nobody touched it in the merged PR), this job resolves the
+#     next version from the labels on every PR merged since that tag
+#     (.github/scripts/resolve_version.py: minor/feature/enhancement -> minor,
+#     patch/fix/bug -> patch, unlabeled -> patch, chore/ci/docs/dependencies
+#     only -> nothing to release, major -> refused), bumps
 #     package.json and docs/contract.md to that version, writes a CHANGELOG.md
 #     section listing those merged PRs, and pushes that bump commit to main
 #     itself before continuing -- see "Auto-bump" below.
@@ -48,7 +49,7 @@ concurrency:
 
 permissions:
   contents: write
-  pull-requests: read   # release-drafter reads merged PRs' labels to resolve the next version
+  pull-requests: read   # resolve_version.py reads merged PRs' labels through gh api
   id-token: write        # required for `npm publish --provenance`
 
 jobs:
@@ -74,20 +75,23 @@ jobs:
             echo "needs_auto_bump=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Computes (but does not publish or tag) the next version from the labels on every
-      # PR merged since the last vX.Y.Z tag, using the same rules as release-drafter.yml /
-      # release-drafter.yml's own always-on draft release. dry-run: true makes this call
-      # read-only.
+      # Decides the next version from the labels of every PR merged since the last vX.Y.Z tag
+      # (.github/scripts/resolve_version.py: the same label vocabulary as release-drafter.yml's
+      # autolabeler; chore/ci/docs/dependencies-only PRs are not releasable; an empty result
+      # means "nothing to release" and every remaining step is skipped). This used to be a
+      # release-drafter call with `dry-run: true` -- an input that action does not have, so it
+      # silently ran live, and it could never answer "nothing" (its `exclude-labels` hides PRs
+      # from the notes but `default: patch` still bumps), which published 1.0.4 for a
+      # workflow-only merge. Reads labels through `gh api`, never PR text.
       - name: Resolve the next version from merged PR labels
         id: drafter
         if: steps.setup.outputs.needs_auto_bump == 'true'
-        uses: release-drafter/release-drafter@v6
-        with:
-          dry-run: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LAST_VERSION: ${{ steps.setup.outputs.last_version }}
+        run: python3 .github/scripts/resolve_version.py
 
-      # Nobody bumped package.json by hand, and release-drafter found something new to
+      # Nobody bumped package.json by hand, and resolve_version.py found something new to
       # release: bump package.json/docs/contract.md ourselves and write a CHANGELOG.md
       # section listing the merged PRs (and any issues they closed) since the last tag,
       # then push that commit to main before the rest of this job continues. Reads PR

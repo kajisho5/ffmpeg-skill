@@ -1,12 +1,12 @@
 # Two jobs sharing one release-drafter config (.github/release-drafter.yml):
 #  - update_release_draft (push to main): keeps a running DRAFT GitHub Release up to date with
 #    merged-PR summaries -- a human-readable cross-check against CHANGELOG.md, never published
-#    itself. release.yml is the one that actually decides and cuts a release (it uses this same
-#    config via its own dry-run call); it doesn't read this draft.
+#    itself. release.yml is the one that actually decides and cuts a release (with
+#    .github/scripts/resolve_version.py, reading the same labels); it doesn't read this draft.
 #  - autolabel (PR opened/reopened/synchronized): applies release-drafter's `autolabeler` rules
-#    (fix/feature/major/chore, from the PR's title and changed files) to the PR itself, so most
+#    (fix/feature/chore, from the PR's title and changed files) to the PR itself, so most
 #    PRs carry a real label before they merge instead of silently defaulting to patch every time
-#    in release.yml's version-resolver. pull_request_target (not pull_request) so a label can
+#    in release.yml's version resolution. pull_request_target (not pull_request) so a label can
 #    still be applied on a PR from a fork, which only ever gets a GITHUB_TOKEN under this trigger.
 #
 # push-to-main only for the draft-release job, deliberately: release-drafter reads its config from

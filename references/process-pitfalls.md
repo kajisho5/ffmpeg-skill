@@ -131,3 +131,30 @@ applied, or on files changed, and make the irreversible step refuse anything sur
 than assume the surprise was intended. And after wiring any such automation, watch the first
 few real runs' *results* (npm, tags) rather than their exit codes: the three runs here were
 "success" by every check the job had.
+
+## An action input that does not exist is a warning, not an error -- and "excluded from the notes" is not "no release"
+
+The fix for the accidental majors above (#145) still released **1.0.4** for its own,
+workflow-only merge. Two assumptions in `release.yml` were wrong and nothing checked either:
+
+- `release-drafter/release-drafter@v6` was called with `dry-run: true` to "compute the next
+  version read-only". That action has no `dry-run` input. GitHub Actions logs
+  `Unexpected input(s) 'dry-run'` as a *warning* and runs the step anyway -- so every release
+  run had been rewriting the draft release live, and the "read-only" in the comment was fiction.
+- `exclude-labels` in `release-drafter.yml` was expected to make a chore-only merge resolve to
+  the same version as the last tag. It only removes those PRs from the draft *notes*; the
+  version resolver still applies `default: patch` and reports last+patch. The workflow's "same
+  version → no-op" guard therefore never fired.
+
+Both were visible in the first run's log and in the action's documented inputs, and both were
+missed because the PR's test plan verified the YAML *parsed* and the config *contained* the
+intended keys -- not that the action *did* what the comment claimed. Fixed by taking the
+decision away from the action: `.github/scripts/resolve_version.py` reads the merged PRs'
+labels through `gh api`, returns nothing when nothing is releasable, refuses `major`, and has
+a unit test in `tests/test_contract.py` with fake label data for each rule.
+
+The general rule, twice over now: when wiring a third-party action, read its `action.yml`
+inputs (or `Unexpected input(s)` in the first log) before trusting a parameter, and treat
+any step whose output decides an irreversible action as something to unit-test with fixed
+inputs, not something to confirm by reading its YAML. And watch the first real run's
+*effect* (tags, npm), which is how both incidents were actually noticed.

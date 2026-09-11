@@ -645,6 +645,46 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(json.dumps(doc, sort_keys=True), json.dumps(doc, sort_keys=True))
         self.assertEqual(list(json.loads(a).keys()), sorted(json.loads(a).keys()), "top-level keys sorted")
 
+    # ------------------------------------------------------------------ release version resolution
+    def test_release_version_resolver_rules(self):
+        """.github/scripts/resolve_version.py decides whether a push to main releases and what
+        version. Pinned with fake label data because the two incidents of 2026-09-11 (1.0.0-1.0.2,
+        then 1.0.4) were both a resolver doing something other than what its config was assumed
+        to mean, and nothing exercised the rules with fixed inputs."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "resolve_version", ROOT / ".github" / "scripts" / "resolve_version.py")
+        rv = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rv)
+
+        def labels(table):
+            return lambda n: table.get(n, [])
+
+        # chore-only / dependencies-only PRs release nothing (the 1.0.4 case)
+        v, _ = rv.resolve("1.0.3", ["chore(release): x (#145)"], labels({145: ["chore"]}))
+        self.assertIsNone(v)
+        v, _ = rv.resolve("1.0.3", ["build(deps): bump x (#132)"], labels({132: ["dependencies", "github_actions", "chore"]}))
+        self.assertIsNone(v)
+        # fix wins over chore on the same PR (#136 -> 1.0.3)
+        v, _ = rv.resolve("1.0.2", ["Fix the Codex install path (#136)"], labels({136: ["chore", "fix"]}))
+        self.assertEqual(v, "1.0.3")
+        # unlabeled PR still ships as a patch
+        v, _ = rv.resolve("1.0.3", ["Something (#150)"], labels({})) 
+        self.assertEqual(v, "1.0.4")
+        # any minor among several -> minor, and patch digit resets
+        v, d = rv.resolve("1.0.3", ["Add x (#151)", "Fix y (#152)", "chore: z (#153)"],
+                          labels({151: ["feature"], 152: ["fix"], 153: ["chore"]}))
+        self.assertEqual(v, "1.1.0")
+        self.assertEqual([x["bump"] for x in d], ["minor", "patch", None])
+        # a commit that came from no PR: patch unless its subject is chore/ci/docs/build
+        v, _ = rv.resolve("1.0.3", ["Fix by direct push"], labels({}))
+        self.assertEqual(v, "1.0.4")
+        v, _ = rv.resolve("1.0.3", ["docs: typo", "ci: retry", "chore(release): bump version to 1.0.3"], labels({}))
+        self.assertIsNone(v)
+        # major is never resolved automatically (the 1.0.0 case), whatever else is there
+        with self.assertRaises(SystemExit):
+            rv.resolve("1.0.3", ["Fix y (#152)", "Big (#154)"], labels({152: ["fix"], 154: ["major"]}))
+
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
         mcp_names = [t["name"] for t in mcp_server.tool_list()]
