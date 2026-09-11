@@ -190,3 +190,14 @@ that merge -- no tests, no CodeQL, no release -- and the release only happened w
 merged. Describe the marker in words in PR bodies and commit messages ("the skip-CI marker"),
 or wrap it so it does not match, and after any merge that touches CI check that the push
 actually triggered the expected runs.
+
+### Two merges minutes apart: the first release run bumps on a stale main and its push is rejected
+
+Found on 1.4.2 (2026-09-11). #167 (fix) merged, then #171 (docs) a minute later while the
+release run for #167 was still bumping. The concurrency group serialises the runs, but a run
+checks out the SHA that triggered it, so the first run's bump commit sat behind #171's merge
+and `git push origin HEAD:main` was rejected as non-fast-forward. The second run (for #171)
+then found both PRs unreleased and published 1.4.2 correctly, so nothing was lost -- one red
+run and a confusing timeline. release.yml now checks out `ref: main` and rebases the bump on
+main right before pushing. Lesson: a workflow that pushes to the branch that triggered it must
+start from the branch tip, not from the triggering commit.
