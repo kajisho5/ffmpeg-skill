@@ -312,12 +312,13 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 ## FFmpeg compatibility
 
-The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu), 8.x (macOS) and 9.x (Windows), all on Python 3.9, plus Ubuntu on Python 3.13 (the two ends of the supported range); 5.x and 7.x are expected to work from the filter/encoder names used but are not run ([#146](https://github.com/kajisho5/ffmpeg-skill/issues/146) tracks widening the matrix). The capability parser has been run against the listings of these builds:
+The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 5.1.1 (static build), 6.1 (Ubuntu apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew) and 9.x (Windows gyan.dev), on Python 3.9 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
 
 | FFmpeg | `-filters` row layout | Source |
 |---|---|---|
+| 5.1.1 | three flag characters, same as 6.x | johnvansickle.com static build on the Linux CI runner |
 | 6.1.1 | three flag characters: `..C acompressor A->A` | Ubuntu 24.04 apt, captured |
-| 7.x | same as 6.x | constructed fixture (no capture at hand) |
+| 7.1.x | same as 6.x | Debian trixie apt in a CI container (plus a constructed fixture in tests/) |
 | 8.1.2 | two flag characters: `TS aap AA->A`, three-character legend, `------` separator | Homebrew on the macOS CI runner, captured |
 | 9.0.1 | same as 8.x, CRLF | gyan.dev build on the Windows CI runner, captured |
 
@@ -403,7 +404,7 @@ python3 evals/run.py --list   # agent eval prompts (see evals/)
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, on Ubuntu (FFmpeg 6.1), macOS (Homebrew FFmpeg 8.x) and Windows (gyan.dev FFmpeg 9.x), and uploads each runner's FFmpeg listings as an artifact.
+CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, on Ubuntu (FFmpeg 6.1, Python 3.9 and 3.13), macOS (Homebrew FFmpeg 8.x) and Windows (gyan.dev FFmpeg 9.x), plus two Linux jobs on FFmpeg 5.1.1 (static build) and 7.1 (Debian trixie container), and uploads each runner's FFmpeg listings as an artifact.
 
 `tests/test_contract.py` runs on all three OSes, but a handful of its tests build a fake `ffmpeg` as a `#!/bin/sh` script on a PATH shim to force specific FFmpeg 6/7/8/9 fixture layouts through `doctor`'s parser — that technique isn't portable to Windows, so `test_dry_run_never_runs_ffmpeg_and_writes_nothing` and the whole `DoctorDetectionTests` class (fixture-driven layout parsing) are individually `skipIf`'d there and show as `skipped`, not silently absent, in the Windows job's log. Everything else — contract schema, `reencodes_*`, `doctor.tools`, MCP derivation, and every tool exercised through the contract, including `cut.py`'s provenance fields — runs against the real Windows `ffmpeg` on every PR. See [references/ci-platform-pitfalls.md](references/ci-platform-pitfalls.md) for this and other per-OS behaviour differences already diagnosed, before spending a CI cycle re-diagnosing a platform-only failure.
 
