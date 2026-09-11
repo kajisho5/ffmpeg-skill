@@ -241,7 +241,7 @@ jobs:
 
       - name: Create tag and GitHub Release
         if: steps.check.outputs.already_released == 'false'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.check.outputs.tag }}
           target_commitish: ${{ steps.check.outputs.sha }}
