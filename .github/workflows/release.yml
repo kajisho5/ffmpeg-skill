@@ -67,7 +67,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The tip of main, not the SHA that triggered this run: with two merges in quick
           # succession the concurrency group queues the second run, and the first must bump on

@@ -35,7 +35,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: test (${{ matrix.os }}, py${{ matrix.python }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history (not the default shallow depth-1 clone): test_contract.py's
           # test_changelog_mentions_every_closed_issue_since_last_tag walks git log back to the
@@ -122,7 +122,7 @@ jobs:
     name: test (ubuntu-latest, py3.9, ffmpeg 5.1.1 static)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v7
@@ -165,7 +165,7 @@ jobs:
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg python3 fonts-dejavu-core git nodejs ca-certificates
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: ffmpeg version, listings and doctor
