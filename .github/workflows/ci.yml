@@ -75,7 +75,7 @@ jobs:
           # that is reported, not hidden, but the listings must still be uploaded
           python scripts/_contract.py doctor --json > listings/doctor.json || echo "doctor exit $?"
           cat listings/doctor.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ffmpeg-listings-${{ matrix.os }}
