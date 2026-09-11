@@ -53,13 +53,23 @@ jobs:
         # instead of failing the whole job on what's usually a transient upstream blip.
         shell: pwsh
         run: |
+          # A zero exit from choco is not proof ffmpeg is usable: seen once returning 0 after
+          # ~6 s with nothing on PATH (the next step's `ffmpeg -version` then failed). So the
+          # success condition is "ffmpeg actually runs", and a phantom install is retried with
+          # --force rather than trusted.
           $attempts = 5
           for ($i = 1; $i -le $attempts; $i++) {
-            choco install ffmpeg -y --no-progress
-            if ($LASTEXITCODE -eq 0) { break }
-            if ($i -eq $attempts) { exit $LASTEXITCODE }
+            $force = if ($i -gt 1) { '--force' } else { '' }
+            choco install ffmpeg -y --no-progress $force
+            $code = $LASTEXITCODE
+            if ($code -eq 0 -and (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+              ffmpeg -version | Select-Object -First 1
+              break
+            }
+            if ($code -eq 0) { Write-Host "choco reported success but ffmpeg/ffprobe are not on PATH (attempt $i/$attempts)"; $code = 1 }
+            if ($i -eq $attempts) { exit $code }
             $delay = 15 * $i
-            Write-Host "choco install ffmpeg failed (attempt $i/$attempts, exit $LASTEXITCODE) -- retrying in ${delay}s"
+            Write-Host "choco install ffmpeg failed (attempt $i/$attempts, exit $code) -- retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
       - name: ffmpeg version, listings and doctor

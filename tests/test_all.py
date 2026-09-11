@@ -46,6 +46,11 @@ class FFmpegSkillTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not shutil.which("ffmpeg"):
+            # Locally a skip; in CI (GitHub sets CI=true) a missing ffmpeg is a broken install
+            # step and must fail, or a job with zero real tests reports green -- see
+            # test_contract.py's require_ffmpeg_or_skip for the incident this guards against.
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step, not a reason to skip")
             raise unittest.SkipTest("ffmpeg not on PATH")
         OUT.mkdir(parents=True, exist_ok=True)
         cls.src = OUT / "source.mp4"
@@ -2141,6 +2146,11 @@ class FFmpegSkillTests(unittest.TestCase):
         mid-run. Verify the auto-derived work dir name includes this process's own PID."""
         proj = OUT / "project_workdir.json"
         proj.write_text(json.dumps({"output": "render_workdir_check.mp4", "clips": [{"src": "source.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        # --keep leaves the PID-suffixed dir behind, so a second run of this suite in the same
+        # OUT (a local re-run, or a coverage pass) would count the previous run's dir too.
+        for stale in OUT.glob("render_workdir_check_work*"):
+            if stale.is_dir():
+                shutil.rmtree(stale)
         out = json.loads(script("render.py", proj, "--fast", "--stop-after", "clips", "--keep", "--json").stdout)
         self.assertEqual(out["stages"], ["clips"])
         work_dirs = [p for p in OUT.glob("render_workdir_check_work*") if p.is_dir()]
