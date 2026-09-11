@@ -834,6 +834,48 @@ class ContractTests(unittest.TestCase):
             unknown = self._rpc([{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "_contract", "arguments": {}}}], root=root)[0]
             self.assertTrue(unknown["result"]["isError"], "internal scripts are not callable")
 
+    def test_mcp_server_error_paths_raw_argv_and_call_helper(self):
+        """The stdio loop and tools/call were only tested on the happy path (#147). Pinned here:
+        a non-JSON line, a JSON scalar, an id-less notification and a params-that-is-not-an-object
+        request never kill the server; an unknown method is -32601 and any other handler error is
+        -32000; a tool that exits non-zero comes back as isError with the stderr tail, never as a
+        transport error; the raw `argv` form appends --json only for tools that need it (probe and
+        look are exempt) and never after --help; and the `--call` debugging helper prints the same
+        result object."""
+        proc = subprocess.run([sys.executable, str(ROOT / "mcp" / "server.py")],
+                              input="not json at all\n42\n[1, 2]\n"
+                                    + json.dumps({"jsonrpc": "2.0", "method": "ping"}) + "\n"
+                                    + json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}) + "\n"
+                                    + json.dumps({"jsonrpc": "2.0", "id": 2, "method": "nope"}) + "\n"
+                                    + json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": "x"}) + "\n"
+                                    + json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                                                  "params": {"name": "cut", "arguments": {"input": str(self.out("missing.mp4")), "start": "0", "end": "1", "output": str(self.out("never.mp4"))}}}) + "\n"
+                                    + json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                                                  "params": {"name": "probe", "arguments": {"argv": [str(self.wav)]}}}) + "\n"
+                                    + json.dumps({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                                                  "params": {"name": "silence", "arguments": {"argv": [str(self.src), "--list"]}}}) + "\n",
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        resps = {r["id"]: r for r in (json.loads(l) for l in proc.stdout.strip().splitlines())}
+        self.assertEqual(sorted(resps), [1, 2, 3, 4, 5, 6], "garbage and notifications produce no response; nothing else is lost")
+        self.assertEqual(resps[1]["result"], {})
+        self.assertEqual(resps[2]["error"]["code"], -32601)
+        self.assertEqual(resps[3]["error"]["code"], -32000)
+        self.assertTrue(resps[4]["result"]["isError"])
+        self.assertIn("cut failed (exit", resps[4]["result"]["content"][0]["text"])
+        self.assertEqual(resps[5]["result"]["structuredContent"]["audio"]["codec"], "pcm_s16le")
+        self.assertIn("structuredContent", resps[6]["result"], "--json appended for a JSON tool in raw argv form")
+        # the raw form appends --json exactly for the tools that need it to speak JSON
+        self.assertEqual(mcp_server.build_argv("probe", {"argv": [str(self.wav)]}), [str(self.wav)])
+        self.assertEqual(mcp_server.build_argv("silence", {"argv": [str(self.src), "--list"]}), [str(self.src), "--list", "--json"])
+        self.assertEqual(mcp_server.build_argv("silence", {"argv": [str(self.src), "--help"]}), [str(self.src), "--help"])
+        # --call NAME JSON prints the same object the RPC returns
+        proc = sh(sys.executable, ROOT / "mcp" / "server.py", "--call", "probe", json.dumps({"inputs": [str(self.wav)]}))
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["structuredContent"]["audio"]["codec"], "pcm_s16le")
+        proc = sh(sys.executable, ROOT / "mcp" / "server.py", "--call", "not_a_tool")
+        self.assertTrue(json.loads(proc.stdout)["isError"])
+
     def test_mcp_round_trips_built_from_the_derived_schema(self):
         listed = {t["name"]: t["inputSchema"] for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]["result"]["tools"]}
         project = self.out("mcp_project.json")

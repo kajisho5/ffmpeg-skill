@@ -312,7 +312,7 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 ## FFmpeg compatibility
 
-The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu), 8.x (macOS) and 9.x (Windows), all on Python 3.9; 5.x and 7.x are expected to work from the filter/encoder names used but are not run ([#146](https://github.com/kajisho5/ffmpeg-skill/issues/146) tracks widening the matrix). The capability parser has been run against the listings of these builds:
+The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu), 8.x (macOS) and 9.x (Windows), all on Python 3.9, plus Ubuntu on Python 3.13 (the two ends of the supported range); 5.x and 7.x are expected to work from the filter/encoder names used but are not run ([#146](https://github.com/kajisho5/ffmpeg-skill/issues/146) tracks widening the matrix). The capability parser has been run against the listings of these builds:
 
 | FFmpeg | `-filters` row layout | Source |
 |---|---|---|
