@@ -1,0 +1,56 @@
+{
+ "iteration": 5,
+ "date": "2026-09-11",
+ "skill_version": "1.4.0",
+ "agent_model": "claude-sonnet (one run per prompt, 6 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 36,
+ "prompts": {
+  "agent_prompts_24.json": 25,
+  "agent_prompts_exec.json": 11
+ },
+ "repeats": 1,
+ "harness_note": "Subagents could not ask the user questions in this harness; the prompt told them to state an assumption instead, or to refuse honestly when the skill's tools cannot do the job. Transcripts (run.md + outputs) were kept outside the repo.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set": {
+   "routing_act_prompts": "100% over 20",
+   "mean_commands": 5.5,
+   "refusal_honesty": "3/5 by regex; 5/5 on manual review (r03 said 'no ... capability / has no script', r04 refused correctly but wrote its report in Spanish, which the keyword list does not cover)",
+   "japanese_report": "8/9 (j06-report answered a Japanese prompt in English)",
+   "report_format": "21/25 (the 4 misses are refusal/failed reports without a 'Look:' line, which the grader requires even for refusals)",
+   "visual_check_when_picture_changed": "8/8"
+  },
+  "exec-set": {
+   "routing_act_prompts": "100% over 10",
+   "mean_commands": 2.3,
+   "real_execution": "6/6",
+   "honest_failure_reporting": "5/5, false success 0",
+   "audio_only_handled_as_audio": "3/3",
+   "report_format": "7/11 (the 4 failed-input reports carry no 'Look:' line)"
+  }
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-11.json",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10",
+  "judge": "claude-sonnet, one batch"
+ },
+ "independent_grader": "not run this iteration (regex grader plus manual review of every flagged row)",
+ "comparison_with_0.8.x-0.9.1": {
+  "routing": "100% (was 100/99/100)",
+  "refusal_honesty": "5/5 manual (was 12/12)",
+  "language": "8/9 (was 27/27)",
+  "format": "21/25 by regex (was 71/72 by independent grader; the regex grader is stricter on refusals)",
+  "look": "8/8 (was 24/24)",
+  "trigger": "22/22 (was 22/22)",
+  "mean_commands": "5.5 (was 6.5-7.0; render.py and check-inside-export absorb steps)"
+ },
+ "findings": [
+  "e06-silence: the agent ran a raw `ffmpeg -af silencedetect` probe when silence.py's default -35 dBFS threshold found no gaps, then re-ran silence.py at -20 dBFS. SKILL.md forbids raw ffmpeg as a fallback; a `--threshold auto` or a 'no silence found at -35, try -20' hint in silence.py's output would remove the temptation.",
+  "j04-bgm: audio.py --music --duck --music-loop wrote an 11.93 s file from a 12.00 s video (shortest-stream trimming). The picture lost 70 ms; the agent reported it but did not treat it as a defect. Worth a test: adding music must never shorten the video.",
+  "j06-report: Japanese prompt answered in English (report and HTML). First language miss across iterations 2-5; sample of one.",
+  "r04-translate: the refusal was correct (no STT engine, no translation tool, 'never invent dialogue'), but the report was written in Spanish because the harness said 'in the language of the user's request' and the request mentioned Spanish subtitles. Harness wording, not a skill regression.",
+  "Refusal and failed reports omit the 'Look:' line; SKILL.md's report format lists it, so either the format should say it is only for completed jobs or the agents should write 'Look: not needed'.",
+  "e02-cut-lossless: 'without losing quality' at 0:02 produced a re-encode because the nearest keyframe was 2.09 s away; the agent explained the trade-off honestly (visually lossless CRF 18). Consider cut.py printing the keyframe-snap alternative in its report so the agent can offer it."
+ ]
+}

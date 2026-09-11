@@ -1,0 +1,231 @@
+{
+ "date": "2026-09-11",
+ "skill_version": "1.4.0",
+ "method": "Skill catalog (ffmpeg-skill description + 4 decoy skills: image-tools, web-research, copywriter, meeting-notes) shown to an independent model (claude-sonnet) with the raw user request in one batch of 22; it names the one skill it would load or 'none'. Each prompt once.",
+ "results": [
+  {
+   "id": "t01",
+   "lang": "en",
+   "prompt": "Can you make this clip 60 seconds? /Users/me/Desktop/IMG_4412.MOV",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Trimming a video clip to a duration."
+  },
+  {
+   "id": "t02",
+   "lang": "ja",
+   "prompt": "この動画、縦にしてインスタのリールに上げたい。字幕もつけて。",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Reframe vertical for Reels plus captions."
+  },
+  {
+   "id": "t03",
+   "lang": "en",
+   "prompt": "the audio on the interview is way too quiet compared to the intro, can you fix the levels in interview.mp4",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Fixing audio levels in a video file."
+  },
+  {
+   "id": "t04",
+   "lang": "ja",
+   "prompt": "Zoom の録画（zoom_0.mp4）から無音の部分を全部カットしてほしい",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Removing silence from a recording."
+  },
+  {
+   "id": "t05",
+   "lang": "en",
+   "prompt": "I recorded with a Rode mic separately, sync mic.wav to camera.mov please",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Syncing external mic audio to camera video."
+  },
+  {
+   "id": "t06",
+   "lang": "ja",
+   "prompt": "iPhone で撮った HDR の動画が YouTube で白っぽく見える。直せる？",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "HDR to SDR conversion for YouTube."
+  },
+  {
+   "id": "t07",
+   "lang": "en",
+   "prompt": "put our logo top right on all the videos in ./exports and add a fade at the end",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Logo overlay and fade on videos."
+  },
+  {
+   "id": "t08",
+   "lang": "ja",
+   "prompt": "podcast_ep12.wav を -16 LUFS にして m4a で書き出して",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Loudness normalization to LUFS and format export."
+  },
+  {
+   "id": "t09",
+   "lang": "en",
+   "prompt": "Does this file meet TikTok's specs? final_v3.mp4",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Compliance check against TikTok specs."
+  },
+  {
+   "id": "t10",
+   "lang": "ja",
+   "prompt": "2 台のカメラで撮った結婚式の動画、いいところだけ 3 分にまとめられる？",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Multicam highlight reel editing."
+  },
+  {
+   "id": "n01",
+   "lang": "en",
+   "prompt": "Resize this PNG logo to 512x512 and make the background transparent: logo.png",
+   "should_trigger": false,
+   "chosen": "image-tools",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Resizing a PNG and making background transparent."
+  },
+  {
+   "id": "n02",
+   "lang": "ja",
+   "prompt": "Windows に ffmpeg をインストールする方法を教えて",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Asking how to install ffmpeg, not an editing task."
+  },
+  {
+   "id": "n03",
+   "lang": "en",
+   "prompt": "Download this YouTube video for me: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+   "should_trigger": false,
+   "chosen": "web-research",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Downloading a YouTube video from a URL."
+  },
+  {
+   "id": "n04",
+   "lang": "ja",
+   "prompt": "新商品紹介動画の台本（60 秒）を書いて",
+   "should_trigger": false,
+   "chosen": "copywriter",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Writing a 60-second script, deliverable is words."
+  },
+  {
+   "id": "n05",
+   "lang": "en",
+   "prompt": "What's the keyboard shortcut for ripple delete in Premiere Pro?",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Question about Premiere Pro shortcuts, unrelated to catalog."
+  },
+  {
+   "id": "n06",
+   "lang": "en",
+   "prompt": "Design a YouTube thumbnail in Figma for my cooking channel",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Figma thumbnail design request, not covered by catalog skills."
+  },
+  {
+   "id": "n07",
+   "lang": "ja",
+   "prompt": "このCSVをJSONに変換して: sales.csv",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "CSV to JSON conversion, no matching skill."
+  },
+  {
+   "id": "n08",
+   "lang": "en",
+   "prompt": "Explain the difference between H.264 and H.265 in simple terms",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Conceptual explanation question, not a task."
+  },
+  {
+   "id": "n09",
+   "lang": "en",
+   "prompt": "Generate a 10-second video of a cat surfing with AI",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "AI video generation, not local ffmpeg editing or download."
+  },
+  {
+   "id": "n10",
+   "lang": "ja",
+   "prompt": "会議の音声を文字起こしして議事録にまとめて（meeting.m4a）",
+   "should_trigger": false,
+   "chosen": "meeting-notes",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Transcribing meeting audio into minutes."
+  },
+  {
+   "id": "t11",
+   "lang": "en",
+   "prompt": "Convert this WAV to MP3: interview_raw.wav",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Audio format conversion WAV to MP3."
+  },
+  {
+   "id": "t12",
+   "lang": "en",
+   "prompt": "Remove the silence from this recording, it's a 40 minute M4A",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "Removing silence from an audio recording."
+  }
+ ],
+ "summary": {
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10"
+ }
+}
