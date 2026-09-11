@@ -349,11 +349,11 @@ Benchmarks live in `tests/bench_*.py`, agent evals in [evals/](evals/), results 
 ```bash
 npx ffmpeg-skill              # Claude Code   → ~/.claude/skills/ffmpeg-skill
 npx ffmpeg-skill --cursor     # Cursor        → ~/.cursor/skills/ffmpeg-skill
-npx ffmpeg-skill --codex      # Codex         → ~/.codex/skills/ffmpeg-skill
+npx ffmpeg-skill --codex      # Codex         → ~/.agents/skills/ffmpeg-skill (Cursor reads this location too)
 npx ffmpeg-skill --all        # all three
 npx ffmpeg-skill --project    # this project  → ./.claude/skills/ffmpeg-skill
 npx ffmpeg-skill --dir ./my-skills
-npx ffmpeg-skill --uninstall  # remove from the selected targets
+npx ffmpeg-skill --uninstall  # remove from the selected targets (--codex also clears the older ~/.codex/skills location)
 ```
 
 Without Node: clone this repository and copy `SKILL.md`, `scripts/`, `references/` and `mcp/` into your agent's skills directory.

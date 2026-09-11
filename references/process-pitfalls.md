@@ -30,23 +30,43 @@ Caught twice while adding capability metadata for new flags (`caption.py --mode 
 after a test failure revealed it. Do that grep first, every time `required`/`optional`
 changes.
 
-## Git tag push and GitHub Release creation are not reachable from this environment
+## Git tag push and GitHub Release creation are not reachable from this environment — so they are not done from it
 
 The git credentials available here can push to `refs/heads/*` (branches) but not
 `refs/tags/*` — confirmed by a 403 straight from the git-receive-pack endpoint, not an
 auth failure, meaning it's a deliberate scope restriction, not a bug to route around.
-The GitHub MCP tool surface has no `create_release`/`create_tag` equivalent either
-(`create_branch`, `create_pull_request`, `create_or_update_file` exist; nothing for
-releases). A direct call to the GitHub REST API's `/releases` endpoint with a raw token
-is also blocked by the outbound proxy itself (its own 403, pointing at Anthropic's docs,
-not GitHub's).
+The GitHub MCP tool surface has no `create_release`/`create_tag` equivalent either, and a
+direct call to the GitHub REST API's `/releases` endpoint with a raw token is blocked by
+the outbound proxy itself.
 
 Confirmed once (retried the tag push a second time "just in case" before accepting it).
-Don't retry either path a second time — if `git push origin <tag>` 403s, or no
-release-creation tool is found in one `ToolSearch` pass, say so once and hand the user
-the two-minute browser-only path instead (open the repo's `/releases/new`, type the new
-tag name in the tag field — GitHub creates it from the target branch on publish, no git
-command needed).
+Don't retry either path a second time. Since 0.16.11 this is moot for releases:
+`.github/workflows/release.yml` creates the tag, the GitHub Release and the npm publish
+from GitHub Actions on every push to `main` (README, "Development" → "Releasing"), so a
+session never needs to push a tag at all — merging the PR is the release. The one thing
+still worth knowing: that workflow's own `git push origin HEAD:main` (the automatic
+version-bump commit) and its tag run under the built-in `GITHUB_TOKEN`, which by design
+triggers no further workflow runs, so a red `tests` run for that bump commit is not
+"missing" — it is never scheduled; the PR run before the merge is the one that counted.
+
+## A throwaway probe must be pointed at a copy in a directory you have just verified with `pwd`, never at "the repo, probably"
+
+While validating the auto-bump script for `release.yml`, a scratch run was meant to
+execute against a temporary copy of the repo. It ran with the real checkout as its
+working directory instead — a `cd` into the scratch path happened in a shell whose
+working directory was reset between commands — and its `git add -A && git commit`,
+`git tag v0.16.12` and two empty commits landed on the real branch and moved the real
+local `v0.16.12` tag. Nothing was pushed, and `git reflog` plus a `git fetch --force` of
+the tag from `origin` restored everything, but it was only noticed because `git status`
+showed files the session had not edited.
+
+Rule: a probe that runs `git commit`, `git tag`, `rm -rf`, or writes into the tree goes
+in a directory created *and* verified in the same command (`cd "$DIR" && pwd && ...`),
+not one assumed from an earlier `cd`; prefer a fixture built from a few `printf` lines
+over a copy of the whole checkout (the copy carries the real `.git`, so a mistake there
+is a mistake in the real history); and run `git status` on the real repo before
+committing anything afterwards. `.claude/skills/destructive-operations/SKILL.md` says the
+same thing for the tools themselves — it applies to the person testing them too.
 
 ## A quantitative test failing three different ways across fixture redesigns means the platform, not the fixture, is the problem
 

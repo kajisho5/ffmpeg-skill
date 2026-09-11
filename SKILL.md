@@ -118,7 +118,7 @@ This skill cuts, joins, measures, syncs, exports and checks files — it execute
 
 The line in general: if the same input and the same explicit parameters always produce the same, verifiable output, it belongs here. If the "right" answer depends on taste, content understanding, or what looks or sounds good, it belongs to whichever skill or agent makes that judgement — this skill only ever executes parameters it's given, never infers them from what something looks or sounds like.
 
-If a request needs an FFmpeg feature none of the 28 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
+If a request needs an FFmpeg feature none of the 40 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
 
 ## Request → script
 

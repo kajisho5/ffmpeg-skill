@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 1.0.3
+
+_Automated release: version and notes generated from pull requests merged since 1.0.2._
+
+- Fix the Codex install path, a stale SKILL.md tool count, and two silent CI holes (#136)
+
 ## 1.0.2
 
 _Automated release: version and notes generated from pull requests merged since 1.0.1._

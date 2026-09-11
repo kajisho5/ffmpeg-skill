@@ -7,7 +7,7 @@
  *
  *   npx ffmpeg-skill                 # Claude Code
  *   npx ffmpeg-skill --cursor        # Cursor  (~/.cursor/skills/ffmpeg-skill)
- *   npx ffmpeg-skill --codex         # Codex   (~/.codex/skills/ffmpeg-skill)
+ *   npx ffmpeg-skill --codex         # Codex   (~/.agents/skills/ffmpeg-skill)
  *   npx ffmpeg-skill --all           # all of the above
  *   npx ffmpeg-skill --dir ./skills  # custom parent directory
  *   npx ffmpeg-skill --project       # ./.claude/skills/ffmpeg-skill in the current project
@@ -69,7 +69,10 @@ if (!want.claude && !want.cursor && !want.codex && !customDir && !project) want.
 
 if (want.claude) targets.push({ label: 'Claude Code', dir: path.join(home, '.claude', 'skills', SKILL_NAME) });
 if (want.cursor) targets.push({ label: 'Cursor', dir: path.join(home, '.cursor', 'skills', SKILL_NAME) });
-if (want.codex) targets.push({ label: 'Codex', dir: path.join(home, '.codex', 'skills', SKILL_NAME) });
+// Codex reads user-level skills from ~/.agents/skills (its docs list $HOME/.agents/skills,
+// .agents/skills up the repo tree, and /etc/codex/skills), not ~/.codex/skills -- the
+// latter was this installer's original guess and is not a location current Codex scans.
+if (want.codex) targets.push({ label: 'Codex', dir: path.join(home, '.agents', 'skills', SKILL_NAME), legacy: path.join(home, '.codex', 'skills', SKILL_NAME) });
 if (project) targets.push({ label: 'project (.claude/skills)', dir: path.join(process.cwd(), '.claude', 'skills', SKILL_NAME) });
 if (customDir) targets.push({ label: 'custom', dir: path.join(path.resolve(customDir), SKILL_NAME) });
 
@@ -106,6 +109,12 @@ for (const t of targets) {
     if (has('--uninstall')) {
       fs.rmSync(t.dir, { recursive: true, force: true });
       console.log(`removed ${t.label}: ${t.dir}`);
+      // A copy left by the installer's earlier, wrong guess at this agent's directory (see the
+      // Codex target above) would otherwise survive every uninstall from here on.
+      if (t.legacy && fs.existsSync(t.legacy)) {
+        fs.rmSync(t.legacy, { recursive: true, force: true });
+        console.log(`removed ${t.label} (older install location): ${t.legacy}`);
+      }
       continue;
     }
     // Copy into a scratch directory next to the real target first, then swap it into place

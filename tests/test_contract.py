@@ -44,8 +44,25 @@ def tool(name, *args, **kw):
 TONE = "0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.2)+0.3*sin(2*PI*660*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"
 
 
-@unittest.skipUnless(shutil.which("ffprobe"), "ffprobe not on PATH")
+def require_ffmpeg_or_skip(*binaries):
+    """Locally, a machine without ffmpeg just skips these suites. In CI that same skip would
+    make a job whose ffmpeg install silently failed report green with zero tests run (seen for
+    real: a Chocolatey install that returned 0 in 6 s and left nothing on PATH -- 14 tests
+    ran, 15 skipped, job "OK"). GitHub sets CI=true on every runner, so there it's a failure."""
+    missing = [b for b in binaries if not shutil.which(b)]
+    if not missing:
+        return
+    msg = f"{'/'.join(missing)} not on PATH"
+    if os.environ.get("CI"):
+        raise AssertionError(f"{msg} -- in CI this is a broken install step, not a reason to skip")
+    raise unittest.SkipTest(msg)
+
+
 class ProbeInputPreservationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffprobe")
+
     def test_failed_probe_preserves_input(self):
         # Use real ffprobe and independent fixtures: every failure mode must leave
         # even an unreadable original byte-for-byte intact.
@@ -65,8 +82,7 @@ class ProbeInputPreservationTests(unittest.TestCase):
 class ContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-            raise unittest.SkipTest("ffmpeg/ffprobe not on PATH")
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
         OUT.mkdir(parents=True, exist_ok=True)
         cls.contract = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json").stdout)
         cls.static = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)
@@ -147,6 +163,10 @@ class ContractTests(unittest.TestCase):
             (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?tools\b")),
             (ROOT / "docs" / "contract.md", re.compile(r"\b(\d+)\s+tools\b")),
             (ROOT / "package.json", re.compile(r"(\d+)\s+FFmpeg tools\b")),
+            # SKILL.md is the one file the agent actually reads, and it phrases the count as
+            # "the N scripts" -- it sat at a stale 28 for weeks while the three above were
+            # correct, precisely because this check didn't look at it or at that wording.
+            (ROOT / "SKILL.md", re.compile(r"\b(\d+)\s+(?:public )?(?:tools|scripts)\b")),
         ]
         for path, pattern in checks:
             text = path.read_text(encoding="utf-8")
@@ -773,6 +793,46 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(sh("node", ROOT / "bin" / "install.js", "contract", "--json", "--static").stdout)
         self.assertEqual([t["id"] for t in doc["tools"]], [t["id"] for t in self.contract["tools"]])
         self.assertEqual(sh("node", ROOT / "bin" / "install.js", "doctor", "--json").returncode, 0)
+
+    def test_installer_agent_targets_are_the_directories_those_agents_actually_read(self):
+        """`--codex` installed into ~/.codex/skills for weeks -- a location Codex's own docs never
+        list (they name $HOME/.agents/skills, .agents/skills up the repo tree, /etc/codex/skills).
+        Nothing pinned the target dirs, so the wrong guess shipped in 23 releases. Pin each
+        agent flag to the directory that agent documents, and make `--uninstall --codex` also
+        clear the old, wrong location so an upgrade doesn't leave a stale orphan copy behind."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, HOME=tmp, USERPROFILE=tmp)
+            home = Path(tmp)
+            legacy_codex = home / ".codex" / "skills" / "ffmpeg-skill"
+            legacy_codex.mkdir(parents=True)
+            (legacy_codex / "SKILL.md").write_text("stale copy from an older installer", encoding="utf-8")
+            sh("node", ROOT / "bin" / "install.js", "--codex", "--cursor", env=env)
+            self.assertTrue((home / ".agents" / "skills" / "ffmpeg-skill" / "SKILL.md").is_file(),
+                            "--codex must install where Codex reads user-level skills: ~/.agents/skills")
+            self.assertTrue((home / ".cursor" / "skills" / "ffmpeg-skill" / "SKILL.md").is_file())
+            self.assertFalse((home / ".claude").exists(), "an explicit agent flag must not also install the default target")
+            sh("node", ROOT / "bin" / "install.js", "--codex", "--uninstall", env=env)
+            self.assertFalse((home / ".agents" / "skills" / "ffmpeg-skill").exists())
+            self.assertFalse(legacy_codex.exists(), "--uninstall --codex must also remove the pre-fix ~/.codex/skills copy")
+            self.assertTrue((home / ".cursor" / "skills" / "ffmpeg-skill").exists(), "uninstall is scoped to the selected targets")
+
+    def test_missing_ffmpeg_skips_locally_but_fails_in_ci(self):
+        """A job whose ffmpeg install silently failed once reported green: 14 tests ran, 15 were
+        skipped with 'ffmpeg not on PATH', job OK. GitHub sets CI=true on every runner, so the
+        same condition there must be a failure -- while a contributor's laptop without ffmpeg
+        still gets a plain skip, not a red suite."""
+        from unittest import mock
+        with mock.patch("shutil.which", return_value=None):
+            with mock.patch.dict(os.environ, {"CI": "true"}):
+                with self.assertRaises(AssertionError):
+                    require_ffmpeg_or_skip("ffmpeg")
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("CI", None)
+                with self.assertRaises(unittest.SkipTest):
+                    require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        with mock.patch("shutil.which", return_value="/usr/bin/ffmpeg"):
+            with mock.patch.dict(os.environ, {"CI": "true"}):
+                require_ffmpeg_or_skip("ffmpeg")  # present: no skip, no failure
 
     def test_contract_from_installed_copy(self):
         with tempfile.TemporaryDirectory() as tmp:

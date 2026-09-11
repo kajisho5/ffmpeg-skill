@@ -21,25 +21,26 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`1.0.2`) | any release |
+| `skill.version` | the npm / package.json version (`1.0.3`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
 for provenance. Consumers should also pin `ffmpeg-skill` itself by npm version or git
 tag, not by tracking `main` — see README, "Development", "Releasing".
 
-The prose tool count in this file, README and `package.json`'s description is not
-generated (it reads naturally in a sentence), so `tests/test_contract.py`'s
-`test_docs_tool_count_matches_the_real_tool_list` checks all three against the real
-count from `scripts/` on every CI run instead — a stale count fails a test rather than
-drifting silently.
+The prose tool count in this file, README, `SKILL.md` and `package.json`'s description is
+not generated (it reads naturally in a sentence), so `tests/test_contract.py`'s
+`test_docs_tool_count_matches_the_real_tool_list` checks all four against the real count
+from `scripts/` on every CI run instead — a stale count fails a test rather than drifting
+silently. (`SKILL.md` was added to that check after its "the 28 scripts" sat stale through
+twelve tool additions while the other three files were correct.)
 
 ## Skill
 
 ```json
 {
   "contract_version": "1.0",
-  "skill": {"id": "ffmpeg-skill", "version": "1.0.2", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "1.0.3", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0"},
