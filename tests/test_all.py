@@ -73,7 +73,14 @@ class FFmpegSkillTests(unittest.TestCase):
            "-t", "12", "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr",
            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", cls.vfr)
         cls.rot = OUT / "rot.mp4"
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
+        # -display_rotation arrived in FFmpeg 6.0; on 5.x the rotation is written the old way,
+        # as the stream's rotate tag, which every probe here reads the same. Only the fixture
+        # builder cares -- the tools under test never emit either.
+        if subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.1", "-f", "null", "-"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
+        else:
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", cls.src, "-t", "6", "-c", "copy", "-metadata:s:v:0", "rotate=90", cls.rot)
         cls.surround = OUT / "surround.mov"
         six = "|".join([TONES, TONES, "0.5*" + TONES, "0.2*sin(2*PI*60*t)", "0.3*" + TONES, "0.3*" + TONES])
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
