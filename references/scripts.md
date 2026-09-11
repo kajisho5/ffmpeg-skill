@@ -1,6 +1,6 @@
 # Script reference
 
-Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `-o OUT` -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) and `check` (skips only the loudness-measurement pass) still run ffprobe/ffmpeg, `sync`/`multicam`/`scenes`/`cropdetect`/`report` still run ffmpeg/ffprobe to measure or analyse (they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
+Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `-o OUT` -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) and `check` (skips only the loudness-measurement pass) still run ffprobe/ffmpeg, `sync`/`multicam`/`scenes`/`cropdetect`/`report` still run ffmpeg/ffprobe to measure or analyse (they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
 
 ## Contents
 - probe.py — inspect

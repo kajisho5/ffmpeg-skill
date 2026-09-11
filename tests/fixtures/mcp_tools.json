@@ -41,9 +41,11 @@
    "music_loop",
    "music_volume",
    "output",
+   "overwrite",
    "progress",
    "replace",
    "stereo",
+   "timeout",
    "voice"
   ],
   "required": []
@@ -63,8 +65,10 @@
    "height",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
+   "timeout",
    "width"
   ],
   "required": []
@@ -78,8 +82,10 @@
    "folder",
    "force",
    "json",
+   "overwrite",
    "progress",
    "recipe",
+   "timeout",
    "watch",
    "work"
   ],
@@ -101,9 +107,11 @@
    "insert",
    "json",
    "output",
+   "overwrite",
    "pad_color",
    "preset",
-   "progress"
+   "progress",
+   "timeout"
   ],
   "required": []
  },
@@ -138,6 +146,7 @@
    "outline",
    "outline_color",
    "output",
+   "overwrite",
    "position",
    "preset",
    "progress",
@@ -145,6 +154,7 @@
    "size",
    "srt",
    "text",
+   "timeout",
    "transcribe",
    "write_ass",
    "write_srt"
@@ -164,8 +174,10 @@
    "max_duration",
    "max_mb",
    "no_loudness",
+   "overwrite",
    "platform",
    "progress",
+   "timeout",
    "tp"
   ],
   "required": []
@@ -196,6 +208,7 @@
    "lut",
    "lut_strength",
    "output",
+   "overwrite",
    "peak",
    "preset",
    "progress",
@@ -203,6 +216,7 @@
    "saturation",
    "strip_dovi",
    "temperature",
+   "timeout",
    "tint",
    "to_sdr",
    "tonemap"
@@ -221,8 +235,10 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
+   "timeout",
    "width",
    "x",
    "y"
@@ -238,10 +254,12 @@
    "input",
    "json",
    "limit",
+   "overwrite",
    "progress",
    "round_to",
    "samples",
-   "seconds"
+   "seconds",
+   "timeout"
   ],
   "required": []
  },
@@ -258,10 +276,12 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
    "segments",
    "start",
+   "timeout",
    "tolerance"
   ],
   "required": []
@@ -279,9 +299,11 @@
    "mode",
    "only_interlaced",
    "output",
+   "overwrite",
    "parity",
    "preset",
-   "progress"
+   "progress",
+   "timeout"
   ],
   "required": []
  },
@@ -301,9 +323,11 @@
    "luma_spatial",
    "luma_temporal",
    "output",
+   "overwrite",
    "preset",
    "progress",
-   "strength"
+   "strength",
+   "timeout"
   ],
   "required": []
  },
@@ -321,11 +345,13 @@
    "list",
    "no_scale",
    "output",
+   "overwrite",
    "pad_blur",
    "pad_color",
    "pad_fill",
    "preset",
-   "progress"
+   "progress",
+   "timeout"
   ],
   "required": []
  },
@@ -351,6 +377,7 @@
    "max_speed",
    "method",
    "output",
+   "overwrite",
    "pad_blur",
    "pad_color",
    "pad_fill",
@@ -358,6 +385,7 @@
    "progress",
    "rotate",
    "smooth",
+   "timeout",
    "width"
   ],
   "required": []
@@ -375,8 +403,10 @@
    "json",
    "mode",
    "output",
+   "overwrite",
    "preset",
-   "progress"
+   "progress",
+   "timeout"
   ],
   "required": []
  },
@@ -397,6 +427,7 @@
    "json",
    "name",
    "output",
+   "overwrite",
    "position",
    "preset",
    "primary",
@@ -406,6 +437,7 @@
    "subtitle",
    "template",
    "text_color",
+   "timeout",
    "title"
   ],
   "required": []
@@ -431,10 +463,12 @@
    "json",
    "label",
    "output",
+   "overwrite",
    "pad",
    "preset",
    "progress",
-   "rows"
+   "rows",
+   "timeout"
   ],
   "required": []
  },
@@ -451,9 +485,11 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "pan",
    "preset",
    "progress",
+   "timeout",
    "width",
    "zoom",
    "zoom_amount"
@@ -475,10 +511,12 @@
    "inputs",
    "json",
    "output",
+   "overwrite",
    "pad_color",
    "preset",
    "progress",
    "sample_rate",
+   "timeout",
    "transition",
    "width"
   ],
@@ -496,8 +534,10 @@
    "json",
    "no_timecode",
    "output",
+   "overwrite",
    "progress",
    "tiles",
+   "timeout",
    "width"
   ],
   "required": []
@@ -513,8 +553,10 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
+   "timeout",
    "times"
   ],
   "required": []
@@ -532,8 +574,10 @@
    "lufs",
    "measure_only",
    "output",
+   "overwrite",
    "progress",
    "sample_rate",
+   "timeout",
    "tp"
   ],
   "required": []
@@ -554,7 +598,9 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "progress",
+   "timeout",
    "title"
   ],
   "required": []
@@ -577,9 +623,11 @@
    "max_offset",
    "offsets_only",
    "output",
+   "overwrite",
    "preset",
    "progress",
    "switch",
+   "timeout",
    "width"
   ],
   "required": []
@@ -613,6 +661,7 @@
    "margin",
    "opacity",
    "output",
+   "overwrite",
    "position",
    "preset",
    "progress",
@@ -620,6 +669,7 @@
    "scale_percent",
    "start",
    "text",
+   "timeout",
    "video"
   ],
   "required": []
@@ -636,9 +686,11 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
-   "start"
+   "start",
+   "timeout"
   ],
   "required": []
  },
@@ -653,7 +705,9 @@
    "field",
    "inputs",
    "json",
-   "progress"
+   "overwrite",
+   "progress",
+   "timeout"
   ],
   "required": []
  },
@@ -669,8 +723,10 @@
    "json",
    "no_audio",
    "output",
+   "overwrite",
    "progress",
    "scale",
+   "timeout",
    "width"
   ],
   "required": []
@@ -691,8 +747,10 @@
    "json",
    "mode",
    "output",
+   "overwrite",
    "preset",
    "progress",
+   "timeout",
    "width",
    "x",
    "y"
@@ -708,9 +766,11 @@
    "init",
    "json",
    "keep",
+   "overwrite",
    "progress",
    "project",
    "stop_after",
+   "timeout",
    "work"
   ],
   "required": []
@@ -728,8 +788,10 @@
    "no_sheets",
    "notes",
    "output",
+   "overwrite",
    "platform",
    "progress",
+   "timeout",
    "title"
   ],
   "required": []
@@ -745,8 +807,10 @@
    "json",
    "no_audio",
    "output",
+   "overwrite",
    "preset",
-   "progress"
+   "progress",
+   "timeout"
   ],
   "required": []
  },
@@ -763,12 +827,14 @@
    "max_scene",
    "min_scene",
    "no_timecode",
+   "overwrite",
    "progress",
    "rank_by",
    "ratio",
    "sheet",
    "target",
-   "threshold"
+   "threshold",
+   "timeout"
   ],
   "required": []
  },
@@ -784,10 +850,12 @@
    "height",
    "json",
    "output",
+   "overwrite",
    "pattern",
    "preset",
    "progress",
    "start_number",
+   "timeout",
    "width"
   ],
   "required": []
@@ -807,9 +875,11 @@
    "min_keep",
    "min_silence",
    "output",
+   "overwrite",
    "preset",
    "progress",
-   "threshold"
+   "threshold",
+   "timeout"
   ],
   "required": []
  },
@@ -823,9 +893,11 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
-   "segments"
+   "segments",
+   "timeout"
   ],
   "required": []
  },
@@ -845,11 +917,13 @@
    "interp",
    "json",
    "output",
+   "overwrite",
    "pitch",
    "preset",
    "progress",
    "roll",
    "stereo",
+   "timeout",
    "v_fov",
    "width",
    "yaw"
@@ -867,10 +941,12 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
    "shakiness",
    "smoothing",
+   "timeout",
    "tripod",
    "zoom"
   ],
@@ -891,8 +967,10 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
-   "progress"
+   "progress",
+   "timeout"
   ],
   "required": []
  },
@@ -910,11 +988,13 @@
    "json",
    "max_offset",
    "output",
+   "overwrite",
    "progress",
    "reference",
    "replace_audio",
    "second",
    "step_ms",
+   "timeout",
    "trim_second"
   ],
   "required": []
@@ -928,6 +1008,7 @@
    "json",
    "keep",
    "out",
+   "overwrite",
    "paths",
    "progress",
    "quick",
@@ -952,10 +1033,12 @@
    "input",
    "json",
    "output",
+   "overwrite",
    "preset",
    "progress",
    "split_channels",
    "style",
+   "timeout",
    "waveform_mode",
    "width"
   ],

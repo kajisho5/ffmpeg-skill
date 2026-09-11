@@ -1183,6 +1183,66 @@ class ContractTests(unittest.TestCase):
         self.assertAlmostEqual(reprobed2["duration"], 2.0, delta=0.6)
 
     # ------------------------------------------------------------------ fail loudly
+    def test_timeout_kills_a_hung_ffmpeg_and_reports_kind_timeout(self):
+        """A build that deadlocks on a filter combination (conda-forge's 7.1.1 on tpad+adelay,
+        seen while chasing #156) used to hang the calling agent with it: no error document, no
+        partial-output cleanup, nothing short of a manual kill. --timeout (default 1800 s,
+        FFMPEG_SKILL_TIMEOUT) turns that into a failure the agent can read: kind timeout, code
+        TIMEOUT, exit 124, the partial output removed, the command still recorded. A limit far
+        below what any encode of the 6 s fixture can meet is the cheapest reliable reproduction;
+        verify.py keeps its own per-step --timeout, which applies the same way."""
+        out = self.out("timeout.mp4")
+        proc = tool("fit", self.src, "--aspect", "9:16", "--timeout", "0.05", "--json", "-o", out, check=False)
+        self.assertEqual(proc.returncode, 124, proc.stderr[-300:])
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["code"], doc["exit_code"]), ("failed", "timeout", "TIMEOUT", 124))
+        self.assertIn("--timeout", doc["error"]["message"])
+        self.assertTrue(doc["commands"] and "ffmpeg" in doc["commands"][0])
+        self.assertFalse(out.exists(), "a killed encode must not leave a partial file behind")
+        # 0 disables the limit; a generous limit does not interfere with a normal short run
+        self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "1", "--timeout", "0", "-o", self.out("timeout_off.mp4")).returncode, 0)
+        env = dict(os.environ, FFMPEG_SKILL_TIMEOUT="0.05")
+        proc = tool("fit", self.src, "--aspect", "9:16", "--json", "-o", self.out("timeout_env.mp4"), env=env, check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "timeout", "the env default applies without the flag")
+        self.assertIn("timeout", self.contract["json_output"]["error_kinds"])
+
+    def test_existing_output_warns_today_refuses_on_request_and_never_for_its_own_files(self):
+        """Every ffmpeg command carries -y (so a run never blocks on a y/N prompt), which meant an
+        output path that already existed -- a previous deliverable, a mis-named source -- was
+        replaced without a word. Per the 1.x deprecation policy the default stays but warns;
+        FFMPEG_SKILL_NO_OVERWRITE=1 opts into the 2.0 refusal now; --overwrite is the explicit
+        consent in both modes; a path this same run wrote (two-pass tools, copy-then-re-encode
+        fallbacks) is never treated as someone else's file."""
+        out = self.out("exists.mp4")
+        first = tool("cut", self.src, "--start", "0", "--end", "1", "-o", out)
+        self.assertNotIn("already exists", first.stderr, "a fresh path must not warn")
+        again = tool("cut", self.src, "--start", "0", "--end", "1", "-o", out)
+        self.assertEqual(again.returncode, 0)
+        self.assertIn("already exists and will be overwritten", again.stderr)
+        self.assertIn("--overwrite", again.stderr)
+        quiet = tool("cut", self.src, "--start", "0", "--end", "1", "--overwrite", "-o", out)
+        self.assertNotIn("already exists", quiet.stderr, "--overwrite is the consent; no warning")
+        env = dict(os.environ, FFMPEG_SKILL_NO_OVERWRITE="1")
+        proc = tool("cut", self.src, "--start", "0", "--end", "1", "--json", "-o", out, env=env, check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
+        self.assertIn("refusing to overwrite", doc["error"]["message"])
+        self.assertEqual(doc["commands"], [], "refused before any ffmpeg ran")
+        size_before = out.stat().st_size
+        self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "2", "--overwrite", "-o", out, env=env).returncode, 0)
+        self.assertNotEqual(out.stat().st_size, size_before, "--overwrite replaced the file under the strict mode")
+        # a tool that writes its own output twice in one run (color --retag's copy-then-re-encode
+        # fallback path is exercised elsewhere); the guard keys on paths written by this process
+        fresh = self.out("own.mp4")
+        proc = tool("cut", self.src, "--start", "0", "--end", "1", "-o", fresh, env=env)
+        self.assertEqual(proc.returncode, 0)
+        self.assertNotIn("refusing", proc.stderr)
+        # dry-run never touches the file but still says what it would do
+        dry = tool("cut", self.src, "--start", "0", "--end", "1", "--dry-run", "-o", out)
+        self.assertIn("already exists", dry.stderr)
+        self.assertEqual(out.stat().st_size, os.path.getsize(out))
+
     def _fails(self, name, *args, kind=None, code=None):
         proc = tool(name, *args, "--json", check=False)
         self.assertNotEqual(proc.returncode, 0, f"{name} {args}: exit 0 on a failure")
