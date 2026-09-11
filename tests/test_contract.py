@@ -23,6 +23,7 @@ CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
 import _contract  # noqa: E402
+import _common  # noqa: E402
 import server as mcp_server  # noqa: E402
 
 
@@ -700,6 +701,25 @@ class ContractTests(unittest.TestCase):
         # major is never resolved automatically (the 1.0.0 case), whatever else is there
         with self.assertRaises(SystemExit):
             rv.resolve("1.0.3", ["Fix y (#152)", "Big (#154)"], labels({152: ["fix"], 154: ["major"]}))
+
+    # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
+    def test_drawtext_boxborderw_spelling_follows_the_ffmpeg_version(self):
+        """drawtext's per-side `boxborderw=v|h` arrived in FFmpeg 6.1; 5.x and 6.0 reject the
+        `|` outright ("Error setting option boxborderw"), which is how graphics.py's chapter and
+        bug templates failed on the 5.1.1 CI job (#146). The helper picks the spelling from the
+        parsed `ffmpeg -version`; pinned here with the version forced, so the rule survives
+        without a 5.x binary on the machine running the tests."""
+        saved = _common._FFMPEG_VERSION
+        try:
+            for version, expected in (((5, 1), "16"), ((6, 0), "16"), ((6, 1), "9|16"), ((7, 1), "9|16"), ((0, 0), "16")):
+                _common._FFMPEG_VERSION = version
+                self.assertEqual(_common.drawtext_boxborderw(9, 16), expected, version)
+        finally:
+            _common._FFMPEG_VERSION = saved
+        _common._FFMPEG_VERSION = None
+        major, minor = _common.ffmpeg_version()
+        self.assertGreaterEqual(major, 5, "the real ffmpeg on PATH must parse to a sane version")
+        self.assertIn(_common.drawtext_boxborderw(9, 16), ("16", "9|16"))
 
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):

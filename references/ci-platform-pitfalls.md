@@ -109,3 +109,27 @@ When a test needs to special-case a platform, prefer gating with
 mechanism, and write the skip/relaxation reason as a full sentence
 explaining the underlying platform behaviour — not just "flaky on
 Windows" — so a future reader doesn't have to re-derive it from the CI log.
+
+## FFmpeg 5.x (the 5.1.1 static-build CI job)
+
+Found the day the job was added (#146); 6.1+ behaves the same on all three OSes, so none of
+these had ever shown up before.
+
+- **`scdet=...:sc_pass=1` passes only frames whose score exceeds the threshold.** On 5.x every
+  truly static frame (score exactly 0: a title card, colour bars) is dropped before the next
+  filter and the frame numbers are re-counted without them. `scenes.py` used it with
+  `threshold=0` expecting every frame through, so a 4 s smptebars scene made the cuts on both
+  sides of it disappear from its neighbourhood test. 6.1+ passes every frame regardless.
+  Dropped the option; scores are also indexed by frame number now, missing frames counting as 0.
+- **`drawtext` `boxborderw=v|h` (and the four-value form) is 6.1+.** 5.x and 6.0 fail the whole
+  filter with "Error setting option boxborderw to value 9|16". `_common.drawtext_boxborderw()`
+  emits the larger single value on older builds (`_common.ffmpeg_version()` parses
+  `ffmpeg -version` once; it is the only place the tools branch on a version string).
+- **`showwaves` keeps emitting frames after the audio ends, `-shortest` notwithstanding.** A
+  12 s source came out 14.08 s on 5.1.1. `waveform.py` now also passes `-t <source duration>`.
+- **`-display_rotation` is 6.0+.** Only the test fixture builder used it (to make a rotated
+  phone-style clip); on 5.x it writes the stream's `rotate` tag instead, which every probe here
+  reads identically.
+- **John Van Sickle's 7.0.2 static build has no `drawtext`** (built with freetype, yet the
+  filter is absent), and BtbN no longer publishes 7.x; the 7.1 job therefore runs in a Debian
+  trixie container (apt ffmpeg 7.1.5 with libass, freetype and zimg).

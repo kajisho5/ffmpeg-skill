@@ -15,7 +15,7 @@ import subprocess
 import sys
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Every script prints paths, help text and reports that may contain non-ASCII (Japanese examples,
 # arrows). On Windows the console streams default to a legacy code page and raise
@@ -72,6 +72,36 @@ ERROR_CODE = {
 # retry loop against a command that will fail the same way every time; false-for-everything is the
 # honest answer until real sniffing exists to justify anything else.
 ERROR_RETRYABLE = False
+
+
+_FFMPEG_VERSION: "Optional[Tuple[int, int]]" = None
+
+
+def ffmpeg_version() -> "Tuple[int, int]":
+    """(major, minor) of the ffmpeg on PATH, parsed once from `ffmpeg -version`; (0, 0) when it
+    cannot be read. Used only to pick between two spellings of a filter option where FFmpeg
+    changed the syntax between majors (the tools otherwise never branch on the version: doctor's
+    capability listing is the source of truth for what a build can do)."""
+    global _FFMPEG_VERSION
+    if _FFMPEG_VERSION is None:
+        _FFMPEG_VERSION = (0, 0)
+        try:
+            out = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+            m = re.search(r"ffmpeg version\s+n?(\d+)\.(\d+)", out)
+            if m:
+                _FFMPEG_VERSION = (int(m.group(1)), int(m.group(2)))
+        except OSError:
+            pass
+    return _FFMPEG_VERSION
+
+
+def drawtext_boxborderw(vertical: int, horizontal: int) -> str:
+    """drawtext's per-side `boxborderw=top|right|bottom|left` (and the two-value `v|h` form)
+    arrived in FFmpeg 6.1; 5.x and 6.0 reject the `|` with "Error setting option boxborderw"
+    (found by the FFmpeg 5.1.1 CI job, #146). Older builds get the larger single value."""
+    if ffmpeg_version() >= (6, 1):
+        return f"{vertical}|{horizontal}"
+    return str(max(vertical, horizontal))
 
 
 def die(msg: str, code: int = 1, kind: str = "input") -> "None":
