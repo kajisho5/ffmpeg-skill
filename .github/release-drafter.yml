@@ -2,16 +2,31 @@
 #  - release-drafter.yml (the workflow) runs it live on every push to main, keeping a running
 #    DRAFT release as a human-readable cross-check -- this draft is never auto-published.
 #  - release-drafter.yml *also* runs it on every PR open/reopen/sync, purely for `autolabeler`
-#    below -- it applies fix/feature/major/chore labels to the PR itself from its title/files,
-#    so a PR that merges without anyone manually labeling it still carries a real signal instead
-#    of silently defaulting to patch every time.
+#    below -- it applies fix/feature/chore labels to the PR itself from its title/files, so a
+#    PR that merges without anyone manually labeling it still carries a real signal instead of
+#    silently defaulting to patch every time.
 #  - release.yml runs it with dry-run: true to resolve the *actual* next version (via
 #    version-resolver below) whenever nobody bumped package.json by hand, then bumps the
 #    version and writes CHANGELOG.md itself and releases for real. So the labels below (whether
 #    autolabeler applied them or a human did, and "default: patch" for anything still unlabeled)
 #    now drive real releases, not just this draft.
+#
+# Two rules learned the hard way (2026-09-11, versions 1.0.0-1.0.2 published by accident):
+#  - `major` is NEVER applied automatically. An earlier autolabeler rule matched the literal
+#    breaking-change marker anywhere in a PR body; Dependabot PR bodies quote the upstream
+#    project's release notes, one of which contained it, and three routine dependency bumps
+#    became 1.0.0, 1.0.1 and 1.0.2 on npm. A major bump is a deliberate, hand-applied label on a
+#    PR someone has read -- and release.yml refuses to auto-bump across a major boundary anyway.
+#  - `exclude-labels` keeps chore/ci/docs/dependency PRs out of version resolution entirely, so
+#    a merge that changes no shipped file resolves to the *same* version as the last tag and
+#    release.yml's guard makes it a no-op. Add `fix`/`feature`/`patch` by hand to override.
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
+exclude-labels:
+  - chore
+  - ci
+  - docs
+  - dependencies
 categories:
   - title: "Fixes"
     labels:
@@ -21,11 +36,6 @@ categories:
     labels:
       - feature
       - enhancement
-  - title: "Other changes"
-    labels:
-      - chore
-      - docs
-      - ci
 change-template: "- $TITLE (#$NUMBER)"
 change-title-escapes: '\<*_&'
 autolabeler:
@@ -37,16 +47,12 @@ autolabeler:
     title:
       - "/^add/i"
       - "/^feat/i"
-  - label: "major"
-    title:
-      - "/breaking/i"
-    body:
-      - "/BREAKING CHANGE/"
   - label: "chore"
     title:
       - "/^chore/i"
       - "/^ci:/i"
       - "/^docs/i"
+      - "/^build\\(deps\\)/"
     files:
       - "*.md"
       - "docs/**"
@@ -65,9 +71,6 @@ version-resolver:
       - patch
       - fix
       - bug
-      - chore
-      - docs
-      - ci
   default: patch
 template: |
   ## What's Changed

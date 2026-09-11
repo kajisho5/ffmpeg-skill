@@ -39,6 +39,13 @@ on:
   push:
     branches: [main]
 
+# Two merges in quick succession must release one after the other, never side by side: each
+# run resolves "the next version" from the same last tag, so two concurrent runs would both
+# pick the same number and the second one's bump push / tag creation would collide.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: read   # release-drafter reads merged PRs' labels to resolve the next version
@@ -98,11 +105,20 @@ jobs:
           NEW_VERSION: ${{ steps.drafter.outputs.resolved_version }}
         run: |
           python3 - <<'PY'
-          import os, re, subprocess, pathlib
+          import os, re, subprocess, pathlib, sys
 
           old = os.environ["OLD_VERSION"]
           new = os.environ["NEW_VERSION"]
           root = pathlib.Path(".")
+
+          # An automatic bump never crosses a major boundary. 1.0.0-1.0.2 were published by
+          # accident (2026-09-11) when a `major` label reached three dependency bumps through an
+          # autolabeler rule; that rule is gone, but a hand-applied `major` label on the wrong PR
+          # would do the same. A real major is a deliberate, manual package.json bump in a PR
+          # (the existing manual path), never something this job infers from labels.
+          if old.split(".")[0] != new.split(".")[0]:
+              sys.exit(f"refusing to auto-bump across a major boundary ({old} -> {new}); "
+                       f"bump package.json by hand in a PR if a major release is intended")
 
           pkg_path = root / "package.json"
           pkg = pkg_path.read_text(encoding="utf-8")

@@ -83,3 +83,31 @@ shallow clone leaves no tag reachable to diff against, which would make the test
 skip itself in CI, not fail). If this test ever needs to skip a genuinely changelog-less
 closed issue (a pure process note, a duplicate, a revert of an unreleased change), name the
 exemption in the test itself with a reason — don't just widen the regex or drop the check.
+
+## Automation that can publish must not take its "major" cue from text it did not write
+
+On 2026-09-11, three routine Dependabot merges (`actions/upload-artifact` 4→7,
+`actions/setup-node` 4→7, `dependabot/fetch-metadata` 2→3) were published to npm as
+**1.0.0, 1.0.1 and 1.0.2**. The release pipeline (`release.yml`, since #129) resolves the next
+version from PR labels; an autolabeler rule added the same day applied `major` to any PR whose
+*body* contained the literal breaking-change marker. Dependabot PR bodies quote the upstream
+project's release notes verbatim, and upload-artifact's v5.0.0 notes contain exactly that
+phrase — about *their* Node runtime, nothing to do with this package. One label, three
+accidental majors, in nine minutes, with every job green.
+
+Two things made it worse than one bad rule: every chore merge released at all (so the first
+accident was followed by two more before anyone looked), and nothing in the pipeline treated
+"the major number changed" as different from any other bump.
+
+Fixes (this commit): no autolabeler rule produces `major` any more; `chore`/`ci`/`docs`/
+`dependencies` PRs are excluded from version resolution so they release nothing; `release.yml`
+refuses to auto-bump across a major boundary regardless of labels; and the release job is
+serialised (`concurrency`) so back-to-back merges cannot race on the bump push.
+
+The general rule: a pipeline that publishes must never derive an irreversible decision (a
+major bump, a publish, a tag) from text it did not author — PR bodies, commit messages and
+release notes are quotations as often as they are statements. Match on labels a person
+applied, or on files changed, and make the irreversible step refuse anything surprising rather
+than assume the surprise was intended. And after wiring any such automation, watch the first
+few real runs' *results* (npm, tags) rather than their exit codes: the three runs here were
+"success" by every check the job had.
