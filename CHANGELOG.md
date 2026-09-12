@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- `FFMPEG_SKILL_RESULT_V2=1` adds a `result_v2` key to every writing tool's `--json` success document: the uniform shape planned for 2.0 (`output`, `probe`, `commands`, `metrics`, `notes`, `dropped`, `details`), built in `emit()` from the keys tools already report (#189). Nothing moves without it.
 (nothing yet)
 
 ## 1.4.15

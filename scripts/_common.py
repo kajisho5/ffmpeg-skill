@@ -348,9 +348,42 @@ def emit(output: Optional[str], **extra: Any) -> None:
         if meta:
             doc["probe"] = meta
         doc.update(extra)
+        if os.environ.get("FFMPEG_SKILL_RESULT_V2", "") not in ("", "0"):
+            doc["result_v2"] = _result_v2(output, meta, extra)
         print_json(doc)
     elif output:
         print(output)
+
+
+_V2_HANDLED = ("result", "measured", "notes", "dropped_non_av_streams")
+
+
+def _result_v2(output: Optional[str], meta: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    """The 2.0 success-document shape, previewed in 1.x as a parallel `result_v2` key when
+    FFMPEG_SKILL_RESULT_V2=1 (issue #189 B). Every tool gets the same six slots: `output`,
+    `probe`, `commands`, `metrics` (numbers a caller keys on: loudness's `result`/`measured`
+    dicts flattened, plus every top-level numeric extra such as `expected_duration` or
+    `offset_seconds`), `notes` (free text), `dropped` (what did not make it into the output),
+    and `details` (the tool's remaining extras, unchanged). The 1.x keys stay where they are;
+    this key is additive and its shape is what 2.0 promotes to the top level."""
+    metrics: Dict[str, Any] = {}
+    for key in ("measured", "result"):
+        if isinstance(extra.get(key), dict):
+            metrics.update(extra[key])
+    for key, value in extra.items():
+        if key not in _V2_HANDLED and isinstance(value, (int, float)) and not isinstance(value, bool):
+            metrics[key] = value
+    notes = extra.get("notes")
+    return {
+        "schema": 2,
+        "output": output,
+        "probe": meta or None,
+        "commands": list(STATE.commands),
+        "metrics": metrics,
+        "notes": list(notes) if isinstance(notes, (list, tuple)) else ([notes] if notes else []),
+        "dropped": {"non_av_streams": bool(extra.get("dropped_non_av_streams", False))},
+        "details": {k: v for k, v in extra.items() if k not in _V2_HANDLED and k not in metrics},
+    }
 
 
 def _cmdline(cmd: Sequence[str]) -> str:

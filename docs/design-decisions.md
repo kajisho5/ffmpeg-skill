@@ -103,6 +103,11 @@ exists. When a decision changes, edit the entry in the same PR.
   130/143 are reserved for timeout, missing tool and interrupts; passing the raw code through
   made the process exit code depend on the ffmpeg build. The raw code is in the JSON failure
   document as `ffmpeg_returncode`. Code: `_common._fail()`.
+- **The 2.0 success-document shape ships in 1.x as an opt-in parallel key.** `result_v2`
+  (`FFMPEG_SKILL_RESULT_V2=1`) is built once in `emit()` from what every tool already passes,
+  so no tool changes its own keys and 2.0 becomes "promote `result_v2` to the top level". Per
+  issue #189's plan: parallel keys first, deprecation notices second, 2.0 removes the old.
+  Code: `_common._result_v2()`.
 - **`retryable` is always `false` in failure documents.** No failure kind is distinguishable
   today from a deterministic one that would fail identically on a blind retry, so the field never
   invites a retry loop. Code: `_common.ERROR_RETRYABLE`.

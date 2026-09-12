@@ -299,6 +299,15 @@ Success (`exit 0`): one document matching `output_schema`, always with
 `status: "completed"`, `output`, `dry_run`, `commands`, and `probe` of the output when a
 file was written. `probe` prints its measurement document directly.
 
+With `FFMPEG_SKILL_RESULT_V2=1` in the environment, every writing tool's success document
+also carries `result_v2`: a preview of the one shape 2.0 will use for every tool
+(issue #189). `{"schema": 2, "output", "probe", "commands", "metrics", "notes", "dropped":
+{"non_av_streams"}, "details"}` -- `metrics` holds the numbers a caller keys on (loudness's
+measurement dicts flattened, plus any numeric top-level key such as `expected_duration` or
+`offset_seconds`), `notes` the free text, `details` the tool's remaining keys unchanged. The
+1.x keys are not moved; the environment variable only adds the key, and its absence is the
+default until 2.0.
+
 Success is decided by `verify_output` in `_common.py`, not by the ffmpeg exit code alone:
 the file must exist, be non-empty and give ffprobe at least one stream. A tool that ran
 ffmpeg successfully but has no usable artifact fails with `kind: output` (a 0-byte file is

@@ -1692,6 +1692,30 @@ class ContractTests(unittest.TestCase):
             proc = tool("fit", self.src, "--aspect", "1:1", "--dry-run", "--json", "-o", ro / "x.mp4", check=False)
             self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
 
+    def test_result_v2_is_opt_in_and_uniform(self):
+        """#189: FFMPEG_SKILL_RESULT_V2=1 adds one uniform `result_v2` block to every success
+        document; without it nothing changes. loudness's `result` dict lands in metrics, cut's
+        numeric extras too, and the tool's other keys survive under details."""
+        doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("v2_off.mp4"), "--json").stdout)
+        self.assertNotIn("result_v2", doc)
+        env = dict(os.environ, FFMPEG_SKILL_RESULT_V2="1")
+        doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("v2_cut.mp4"), "--json", env=env).stdout)
+        v2 = doc["result_v2"]
+        self.assertEqual(sorted(v2), sorted(["schema", "output", "probe", "commands", "metrics", "notes", "dropped", "details"]))
+        self.assertEqual((v2["schema"], v2["output"], v2["commands"]), (2, doc["output"], doc["commands"]))
+        self.assertEqual(v2["probe"]["duration"], doc["probe"]["duration"])
+        self.assertEqual(v2["metrics"]["expected_duration"], doc["expected_duration"])
+        self.assertEqual(v2["details"]["precision"], doc["precision"])
+        self.assertEqual(v2["dropped"], {"non_av_streams": False})
+        doc = json.loads(tool("loudness", self.src, "-o", self.out("v2_loud.mp4"), "--json", env=env).stdout)
+        v2 = doc["result_v2"]
+        self.assertEqual(v2["metrics"]["input_i"], doc["result"]["input_i"])
+        self.assertNotIn("result", v2["details"])
+        doc = json.loads(tool("export", self.hdr, "--preset", "youtube", "--fast", "-o", self.out("v2_hdr.mp4"), "--json", env=env).stdout)
+        self.assertEqual(doc["result_v2"]["notes"], doc["notes"])
+        doc = json.loads(tool("fit", self.src, "--aspect", "1:1", "--dry-run", "-o", self.out("v2_dry.mp4"), "--json", env=env).stdout)
+        self.assertEqual((doc["result_v2"]["probe"], doc["result_v2"]["output"]), (None, doc["output"]))
+
     def test_settled_policies_exit_code_and_subtitle_tracks(self):
         """docs/design-decisions.md: an ffmpeg failure exits 1 whatever ffmpeg returned (the raw code
         travels as ffmpeg_returncode); tools that leave the timeline alone keep a subtitle track
