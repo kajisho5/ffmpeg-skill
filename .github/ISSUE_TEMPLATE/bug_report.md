@@ -5,6 +5,8 @@ title: ""
 labels: fix
 ---
 
+- [ ] I checked [docs/design-decisions.md](../blob/main/docs/design-decisions.md) and this is not one of the listed deliberate behaviours (or I say below which rationale no longer holds)
+
 **Tool/script and version**
 <!-- e.g. cut.py, ffmpeg-skill 1.4.2 (`node -p "require('ffmpeg-skill/package.json').version"` or `doctor --json`'s "version") -->
 

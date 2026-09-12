@@ -424,6 +424,7 @@ Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 | | |
 |---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | scope, dev setup, tests, PR expectations |
+| [docs/design-decisions.md](docs/design-decisions.md) | behaviours that look like bugs but are decisions, with rationale and the pinning test; read before filing a bug |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1; reports go through the SECURITY.md channel |
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately |
 | [SKILL.md](SKILL.md) | what the agent reads: workflow, request → tool map, audio-only rules, report format, pitfalls |

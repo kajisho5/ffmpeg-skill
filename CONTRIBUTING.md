@@ -71,6 +71,10 @@ would have caught the original bug isn't done yet.
 
 ## Reporting issues
 
+Read [docs/design-decisions.md](docs/design-decisions.md) first: it lists behaviours that look like
+bugs but are decisions, with the reason and the test that pins each one. If your report is about
+one of them, say which sentence there no longer holds.
+
 Bug reports should include: the exact command run, the actual vs. expected
 output/behavior, and `python3 scripts/_contract.py doctor --json` if the issue
 might be capability-related. See existing issues for the level of detail that's
