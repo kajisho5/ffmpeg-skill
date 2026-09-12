@@ -111,3 +111,29 @@ exists. When a decision changes, edit the entry in the same PR.
 - **`retryable` is always `false` in failure documents.** No failure kind is distinguishable
   today from a deterministic one that would fail identically on a blind retry, so the field never
   invites a retry loop. Code: `_common.ERROR_RETRYABLE`.
+
+## Decided for 2.0 (issue #189 B), recorded in 1.x so the code moves toward them
+
+- **Time grammar: seconds, `mm:ss(.fff)`, `hh:mm:ss(.fff)` everywhere; four-part `hh:mm:ss:ff`
+  is SMPTE at the source's frame rate, and a `@fps` suffix (e.g. `00:01:02:15@29.97`) names the
+  rate explicitly.** The ambiguity today is only the four-part form (it needs an fps, and each
+  tool found it its own way). 1.x: `time_arg()` is the single parser, every tool uses it, an
+  unknown fps for a four-part value is `kind: input` naming `--fps`. 2.0: the `@fps` suffix is
+  accepted by `time_arg()` and documented once in `references/scripts.md`; nothing else changes,
+  so no CLI is removed. Rejected: "seconds only in single tools, composite input only in
+  `render.py`" -- editors quote timecode, and refusing it moves the conversion onto the agent.
+  Code: `_common.time_arg()`.
+- **Encoder abstraction: `--codec h264|hevc|av1|prores` and `--quality N` on every
+  re-encoding tool, resolved in one place.** `video_args()` already centralises x264 + the
+  HDR/10-bit branch; 2.0 adds the two flags to `add_common()` for tools that re-encode, keeps
+  `--crf`/`--preset` as aliases for one major, and maps `--quality` to CRF / `-b:v` / ProRes
+  profile per codec. Until then every tool keeps its `x264 medium / crf 18` default; the
+  `export.py` presets are the only place a non-x264 codec is chosen. Rejected: a per-tool
+  `--codec` added piecemeal in 1.x (the audits found HDR fragility wherever encoder choice was
+  duplicated; one more duplication is the wrong direction). Code: `_common.video_args()`.
+- **Per-request Context: `STATE` stays process-global through 1.x; 2.0 passes a `Context`
+  explicitly to `run()`/`emit()`/`die()`.** Today the MCP server spawns one subprocess per
+  call, so the global is never shared between requests; the risk only appears if a future
+  server runs tools in-process. 2.0 threads `ctx` through the three choke points (a signature
+  change, hence major); tools that only call those keep working with a one-line change. Rejected:
+  thread-locals (hides the dependency the reviews keep asking about). Code: `_common.Context`.
