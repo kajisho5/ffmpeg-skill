@@ -1675,7 +1675,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(doc["status"], "completed")
         # F10
         hdr = self.out("sw_hdr.mp4")
-        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "1", "-pix_fmt", "yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-tag:v", "hvc1", hdr)
+        # the VUI colour tags must go through x265-params: newer builds (7.1 apt, 8.x brew/choco)
+        # do not carry -color_trc & co. into the libx265 encoder, and the fixture came out SDR
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "1", "-pix_fmt", "yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc", "-tag:v", "hvc1", hdr)
         proc = tool("color", hdr, "--correct", "--exposure", "0.2", "--fast", "--json", "-o", self.out("sw_col.mp4"), check=False)
         doc = json.loads(proc.stdout)
         self.assertEqual(doc["error"]["kind"], "input")
@@ -1707,7 +1709,9 @@ class ContractTests(unittest.TestCase):
         proc = tool("insert", self.src, "--duration", "1", "--width", "64", "--height", "64", "--fast", "--json", "-o", self.out("ins_vid.mp4"), check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
         hdr = self.out("p3_hdr.mp4")
-        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "1", "-pix_fmt", "yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-tag:v", "hvc1", hdr)
+        # the VUI colour tags must go through x265-params: newer builds (7.1 apt, 8.x brew/choco)
+        # do not carry -color_trc & co. into the libx265 encoder, and the fixture came out SDR
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "1", "-pix_fmt", "yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc", "-tag:v", "hvc1", hdr)
         doc = json.loads(tool("export", hdr, "--preset", "youtube", "--fast", "--json", "-o", self.out("p3_ex.mp4")).stdout)
         self.assertTrue(any("HDR" in n for n in doc.get("notes", [])), doc.keys())
         bdir = self.out("p3_batch"); bdir.mkdir(exist_ok=True); shutil.copyfile(self.src, bdir / "clip.mp4")

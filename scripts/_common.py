@@ -468,6 +468,30 @@ def _check_output_path(cmd: Sequence[str]) -> None:
 EVEN_SCALE = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
 
 
+def _pid_dead(pid: int) -> bool:
+    """True only when the process is known not to exist. POSIX: signal 0. Windows: OpenProcess
+    fails with ERROR_INVALID_PARAMETER (87) for a pid that is not in use; any other outcome
+    (a handle, or access denied) means it is live. Unknown is treated as live."""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            pass
+        return False
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if handle:
+            k32.CloseHandle(handle)
+            return False
+        return k32.GetLastError() == 87
+    except Exception:
+        return False
+
+
 class _OutputLock:
     """Two runs writing the same output at once used to both report `completed` while one of
     them described the other's file (sweep F1). A lock file next to the output, created with
@@ -505,13 +529,8 @@ class _OutputLock:
     def _stale(self) -> bool:
         try:
             pid = int(open(self.path).read().strip() or "0")
-            if os.name != "nt" and pid > 0:
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
-                    return True
-                except OSError:
-                    pass
+            if pid > 0 and _pid_dead(pid):
+                return True
             import time
             return time.time() - os.path.getmtime(self.path) > 3600
         except (OSError, ValueError):
