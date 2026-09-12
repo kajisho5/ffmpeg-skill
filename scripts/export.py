@@ -73,6 +73,9 @@ def main() -> int:
     if not args.input or not args.preset:
         die("input and --preset are required (or use --list)")
     validate_color(args.pad_color, "--pad-color")
+    if args.codec:
+        die(f"export.py's presets decide the codec (--preset h265 for HEVC, prores for ProRes); --codec {args.codec} is for the editing tools",
+            hint="drop --codec here, or run the edit with --codec and export with --preset copy")
 
     p = PRESETS[args.preset]
     meta = probe(args.input)

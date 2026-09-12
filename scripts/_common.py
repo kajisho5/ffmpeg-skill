@@ -218,6 +218,10 @@ def require_tool(name: str) -> str:
 
 
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo")
+CODECS = ("h264", "hevc", "av1", "prores")
+# x264 preset names mapped onto SVT-AV1's 0-13 speed scale (lower = slower / better)
+SVT_PRESET = {"ultrafast": 12, "superfast": 11, "veryfast": 10, "faster": 9, "fast": 8, "medium": 6, "slow": 4, "slower": 3, "veryslow": 2, "placebo": 1}
+_ENCODERS: Optional[set] = None
 
 
 class Context:
@@ -228,7 +232,7 @@ class Context:
     makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs")
+    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec")
 
     def __init__(self) -> None:
         self.reset()
@@ -247,6 +251,7 @@ class Context:
         self.plan: Optional[str] = None              # --plan FILE: write the dry-run as a plan document (implies --dry-run)
         self.plan_written = False                    # write_plan() ran (emit or the exit hook), so the hook does not write twice
         self.plan_inputs: List[str] = []             # side inputs (srt/ass/lut/font files) a tool named through escape_filter_path
+        self.codec: Optional[str] = None             # --codec: encoder for the re-encode (None = x264 for SDR, x265 for HDR)
 
 
 
@@ -267,6 +272,13 @@ def add_common(ap: "argparse.ArgumentParser") -> None:
                    help="allow replacing an existing output (warned today, refused from 2.0)")
     g.add_argument("--plan", metavar="FILE",
                    help="write the dry run as a plan (inputs fingerprinted, commands, expected output, verify steps) that render.py FILE executes later; implies --dry-run")
+    if "--crf" in ap._option_string_actions:
+        # only the tools that re-encode (they declare --crf before add_common): one encoder choice
+        # resolved in video_args(), the 2.0 encoder abstraction pre-shipped in 1.8 (docs/roadmap.md)
+        g.add_argument("--codec", choices=CODECS, default=None,
+                       help="video encoder for the re-encode: h264 (x264, the default for SDR), hevc (x265, the default for HDR), av1 (SVT-AV1 or libaom), prores (422 HQ, needs a .mov/.mkv output); HDR sources keep their colour on hevc/av1/prores")
+        g.add_argument("--quality", type=int, default=None, metavar="N",
+                       help="encoder quality on the CRF scale (lower = better; 18 visually lossless for x264/x265, up to 63 for av1); overrides --crf, ignored by prores")
 
 
 def apply_common(args: "argparse.Namespace") -> None:
@@ -285,8 +297,20 @@ def apply_common(args: "argparse.Namespace") -> None:
         STATE.timeout = max(0.0, float(args.timeout))
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
+    STATE.codec = getattr(args, "codec", None) or None
+    quality = getattr(args, "quality", None)
+    if quality is not None:
+        top = 63 if STATE.codec == "av1" else 51
+        if not 0 <= int(quality) <= top:
+            die(f"--quality must be between 0 and {top} for {STATE.codec or 'h264'} (CRF scale; 18 is visually lossless), got {quality}")
+        args.crf = int(quality)  # every tool reads args.crf; --quality is the codec-neutral spelling of it
+    if STATE.codec == "prores":
+        out = getattr(args, "output", None)
+        if out and os.path.splitext(str(out))[1].lower() not in (".mov", ".mkv"):
+            die(f"--codec prores needs a .mov (or .mkv) output; {os.path.basename(str(out))} cannot hold ProRes",
+                hint="give -o NAME.mov")
     crf = getattr(args, "crf", None)
-    if crf is not None and not 0 <= int(crf) <= 51:
+    if crf is not None and not 0 <= int(crf) <= (63 if STATE.codec == "av1" else 51):
         die(f"--crf must be between 0 and 51 (x264/x265 scale; 18 is visually lossless, 23 the encoder default), got {crf}")
     install_signal_handlers()
 
@@ -1619,11 +1643,98 @@ def bt709_tag_args(encoder: str = "libx264") -> List[str]:
     return ["-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
 
 
-def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True) -> List[str]:
+def ffmpeg_encoders() -> set:
+    """Names from `ffmpeg -encoders`, read once; empty when ffmpeg is missing. Used only to pick
+    an AV1 encoder and to refuse --codec av1 / prores before ffmpeg would."""
+    global _ENCODERS
+    if _ENCODERS is None:
+        _ENCODERS = set()
+        try:
+            out = subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, text=True, timeout=PROBE_TIMEOUT).stdout
+            _ENCODERS = set(re.findall(r"^\s*[VAS][.\w]{5}\s+(\S+)", out, re.M))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return _ENCODERS
+
+
+def _sdr_bt709(encoder: str) -> "Tuple[str, List[str]]":
+    """BT.709 SDR tags for `encoder` as (encoder-params string, extra output options): the two
+    spellings bt709_tag_args() picks between, split so a caller that already builds an encoder
+    params string can merge them (the option given twice keeps only the last)."""
+    if ffmpeg_version() < (7, 1):
+        return "", ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+    if encoder == "libsvtav1":
+        return "color-primaries=1:transfer-characteristics=1:matrix-coefficients=1", []
+    if encoder == "libaom-av1":
+        return "", []  # no VUI params option; an untagged 8-bit stream reads as BT.709 everywhere
+    return "colorprim=bt709:transfer=bt709:colormatrix=bt709", []
+
+
+def encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str, Any]] = None) -> List[str]:
+    """The one place that turns (--codec, --quality, --preset, source) into encoder options.
+
+    h264 -> x264 8-bit BT.709 (refuses HDR: 8-bit H.264 cannot carry it); hevc -> x265, Main10
+    with the source's tags for HDR, 8-bit BT.709 otherwise; av1 -> SVT-AV1 (libaom fallback),
+    10-bit for HDR; prores -> ProRes 422 HQ, source tags kept. 1.8: chosen by --codec; without
+    it video_args() does what it always did (x264 for SDR, x265 Main10 for HDR).
+    """
+    v = (meta or {}).get("video") or {}
+    hdr = bool(v.get("hdr"))
+    cs = v.get("color_space") or "bt2020nc"
+    prim = v.get("color_primaries") or "bt2020"
+    trc = v.get("color_transfer") or "arib-std-b67"
+    hdr_tags = ["-colorspace", cs, "-color_primaries", prim, "-color_trc", trc]
+    if codec == "h264":
+        if hdr:
+            die(f"--codec h264 cannot carry HDR ({v.get('hdr_format') or 'BT.2020'}): 8-bit H.264 is SDR only",
+                hint="run color.py --to-sdr first, or use --codec hevc / av1 / prores, which keep the source's HDR")
+        return _x264_raw(crf, preset)
+    if codec == "hevc":
+        if hdr:
+            x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
+            return ["-c:v", "libx265", "-preset", preset, "-crf", str(crf + 2), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+                    "-x265-params", x265] + hdr_tags + ["-movflags", "+faststart"]
+        params, extra = _sdr_bt709("libx265")
+        return ["-c:v", "libx265", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+                "-x265-params", "log-level=error" + (":" + params if params else "")] + extra + ["-movflags", "+faststart"]
+    if codec == "av1":
+        pix = "yuv420p10le" if hdr else "yuv420p"
+        if "libsvtav1" in ffmpeg_encoders():
+            args = ["-c:v", "libsvtav1", "-preset", str(SVT_PRESET.get(preset, 6)), "-crf", str(min(63, crf)), "-pix_fmt", pix]
+            if hdr:
+                args += hdr_tags
+            else:
+                params, extra = _sdr_bt709("libsvtav1")
+                args += (["-svtav1-params", params] if params else []) + extra
+        elif "libaom-av1" in ffmpeg_encoders():
+            args = ["-c:v", "libaom-av1", "-crf", str(min(63, crf)), "-b:v", "0", "-cpu-used", "6", "-row-mt", "1", "-pix_fmt", pix]
+            args += hdr_tags if hdr else _sdr_bt709("libaom-av1")[1]
+        else:
+            die("--codec av1 needs an AV1 encoder (libsvtav1 or libaom-av1) and this ffmpeg build has neither", kind="missing_tool",
+                hint="install an ffmpeg built with SVT-AV1 (most distribution builds are), or use --codec hevc")
+        return args + ["-movflags", "+faststart"]
+    if codec == "prores":
+        if "prores_ks" not in ffmpeg_encoders():
+            die("--codec prores needs the prores_ks encoder and this ffmpeg build lacks it", kind="missing_tool")
+        return ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"] + (hdr_tags if hdr else [])
+    die(f"unknown --codec {codec!r} (one of {', '.join(CODECS)})")
+    return []
+
+
+def _x264_raw(crf: int, preset: str, keep_bt709: bool = True) -> List[str]:
     args = ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
     if keep_bt709:
         args += bt709_tag_args("libx264")
     return args
+
+
+def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True) -> List[str]:
+    """SDR H.264 encoder args -- or, when --codec named another encoder, that encoder's SDR args
+    (color.py's --to-sdr path builds its own H.264 line; the flag still has to reach it)."""
+    if STATE.codec and STATE.codec != "h264":
+        return encoder_args(STATE.codec, crf, preset, None)
+    return _x264_raw(crf, preset, keep_bt709)
 
 
 def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium") -> List[str]:
@@ -1634,6 +1745,8 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     so cutting/captioning/fitting an iPhone HDR clip stays HDR instead of becoming a
     washed-out file mislabelled as BT.709. Use color.py --to-sdr when SDR is wanted.
     """
+    if STATE.codec:
+        return encoder_args(STATE.codec, crf, preset, meta)
     v = (meta or {}).get("video") or {}
     if not v.get("hdr"):
         return x264_args(crf, preset)

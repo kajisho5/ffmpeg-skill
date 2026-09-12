@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- `--codec h264|hevc|av1|prores` and `--quality N` on every tool that re-encodes (issue #189 B, pre-shipped from the 2.0 decision in docs/design-decisions.md). One resolver, `_common.encoder_args()`: hevc keeps HDR sources Main10 with their tags and writes 8-bit BT.709 for SDR; av1 uses SVT-AV1 (libaom fallback), 10-bit for HDR; prores is 422 HQ and needs a `.mov`/`.mkv` output; h264 refuses HDR (`kind: input`, the hint names `color.py --to-sdr`). `--quality` is the CRF scale and overrides `--crf`; without `--codec` nothing changes (x264 for SDR, x265 for HDR). `export.py` keeps its presets and refuses `--codec`. The contract lists the encoder each `--codec` value needs under the tool's optional capabilities.
 
 ## 1.7.2
 

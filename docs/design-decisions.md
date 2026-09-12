@@ -144,6 +144,8 @@ exists. When a decision changes, edit the entry in the same PR.
   `export.py` presets are the only place a non-x264 codec is chosen. Rejected: a per-tool
   `--codec` added piecemeal in 1.x (the audits found HDR fragility wherever encoder choice was
   duplicated; one more duplication is the wrong direction). Code: `_common.video_args()`.
+  1.8.0 shipped the two flags (`add_common()` adds them to every tool that declares `--crf`;
+  `encoder_args()` resolves them; `--crf`/`--preset` unchanged), so 2.0 only has to deprecate the aliases.
 - **Per-request Context: `STATE` stays process-global through 1.x; 2.0 passes a `Context`
   explicitly to `run()`/`emit()`/`die()`.** Today the MCP server spawns one subprocess per
   call, so the global is never shared between requests; the risk only appears if a future

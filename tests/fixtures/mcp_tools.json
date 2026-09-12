@@ -56,6 +56,7 @@
   "properties": [
    "angle",
    "argv",
+   "codec",
    "color",
    "crf",
    "dry_run",
@@ -70,6 +71,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout",
    "width"
   ],
@@ -100,6 +102,7 @@
    "argv",
    "at",
    "audio",
+   "codec",
    "crf",
    "dry_run",
    "duration",
@@ -115,6 +118,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout"
   ],
   "required": []
@@ -130,6 +134,7 @@
    "bold",
    "box",
    "brand",
+   "codec",
    "color",
    "crf",
    "dry_run",
@@ -155,6 +160,7 @@
    "position",
    "preset",
    "progress",
+   "quality",
    "shadow",
    "size",
    "srt",
@@ -193,6 +199,7 @@
   "properties": [
    "argv",
    "audio_stream",
+   "codec",
    "contrast",
    "correct",
    "crf",
@@ -219,6 +226,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "retag",
    "saturation",
    "strip_dovi",
@@ -234,6 +242,7 @@
   "name": "crop",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -246,6 +255,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout",
    "width",
    "x",
@@ -277,6 +287,7 @@
   "properties": [
    "accurate",
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "duration",
@@ -289,6 +300,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "segments",
    "start",
    "timeout",
@@ -301,6 +313,7 @@
   "properties": [
    "argv",
    "audio_stream",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -314,6 +327,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout"
   ],
   "required": []
@@ -325,6 +339,7 @@
    "audio_stream",
    "chroma_spatial",
    "chroma_temporal",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -338,6 +353,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "strength",
    "timeout"
   ],
@@ -348,6 +364,7 @@
   "properties": [
    "allow_long",
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -365,6 +382,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout"
   ],
   "required": []
@@ -375,6 +393,7 @@
    "argv",
    "aspect",
    "audio_stream",
+   "codec",
    "crf",
    "crop_x",
    "crop_y",
@@ -398,6 +417,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "rotate",
    "smooth",
    "timeout",
@@ -410,6 +430,7 @@
   "properties": [
    "argv",
    "at",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -422,6 +443,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout"
   ],
   "required": []
@@ -432,6 +454,7 @@
    "argv",
    "audio_stream",
    "brand",
+   "codec",
    "count_from",
    "crf",
    "dry_run",
@@ -449,6 +472,7 @@
    "preset",
    "primary",
    "progress",
+   "quality",
    "scale",
    "start",
    "subtitle",
@@ -467,6 +491,7 @@
    "background",
    "cell_height",
    "cell_width",
+   "codec",
    "cols",
    "crf",
    "dry_run",
@@ -485,6 +510,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "rows",
    "timeout"
   ],
@@ -494,6 +520,7 @@
   "name": "insert",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "duration",
@@ -508,6 +535,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout",
    "width",
    "zoom",
@@ -520,6 +548,7 @@
   "properties": [
    "argv",
    "channels",
+   "codec",
    "crf",
    "dry_run",
    "duration",
@@ -535,6 +564,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "sample_rate",
    "timeout",
    "transition",
@@ -567,6 +597,7 @@
   "name": "loop",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "duration",
@@ -578,6 +609,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout",
    "times"
   ],
@@ -636,6 +668,7 @@
    "argv",
    "audio",
    "auto",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -651,6 +684,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "switch",
    "timeout",
    "width"
@@ -670,6 +704,7 @@
    "chromakey",
    "chromakey_blend",
    "chromakey_similarity",
+   "codec",
    "crf",
    "dry_run",
    "end",
@@ -691,6 +726,7 @@
    "position",
    "preset",
    "progress",
+   "quality",
    "scale",
    "scale_percent",
    "start",
@@ -704,6 +740,7 @@
   "name": "pad",
   "properties": [
    "argv",
+   "codec",
    "color",
    "crf",
    "dry_run",
@@ -716,6 +753,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "start",
    "timeout"
   ],
@@ -743,6 +781,7 @@
   "name": "proxy",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -754,6 +793,7 @@
    "overwrite",
    "plan",
    "progress",
+   "quality",
    "scale",
    "timeout",
    "width"
@@ -767,6 +807,7 @@
    "audio_stream",
    "block_size",
    "blur_strength",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -780,6 +821,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout",
    "width",
    "x",
@@ -832,6 +874,7 @@
   "name": "reverse",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -843,6 +886,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout"
   ],
   "required": []
@@ -876,6 +920,7 @@
   "name": "sequence",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dir",
    "dry_run",
@@ -889,6 +934,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "start_number",
    "timeout",
    "width"
@@ -899,6 +945,7 @@
   "name": "silence",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "edl",
@@ -914,6 +961,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "threshold",
    "timeout"
   ],
@@ -923,6 +971,7 @@
   "name": "speedramp",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -933,6 +982,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "segments",
    "timeout"
   ],
@@ -943,6 +993,7 @@
   "properties": [
    "argv",
    "audio_stream",
+   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -959,6 +1010,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "roll",
    "stereo",
    "timeout",
@@ -972,6 +1024,7 @@
   "name": "stabilize",
   "properties": [
    "argv",
+   "codec",
    "crf",
    "crop",
    "dry_run",
@@ -983,6 +1036,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "shakiness",
    "smoothing",
    "timeout",
@@ -996,6 +1050,7 @@
   "properties": [
    "argv",
    "audio_stream",
+   "codec",
    "crf",
    "degrees",
    "dry_run",
@@ -1010,6 +1065,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "timeout"
   ],
   "required": []
@@ -1019,6 +1075,7 @@
   "properties": [
    "analyze_seconds",
    "argv",
+   "codec",
    "crf",
    "drift_window",
    "dry_run",
@@ -1031,6 +1088,7 @@
    "overwrite",
    "plan",
    "progress",
+   "quality",
    "reference",
    "replace_audio",
    "second",
@@ -1066,6 +1124,7 @@
    "argv",
    "audio_stream",
    "background",
+   "codec",
    "color",
    "crf",
    "dry_run",
@@ -1079,6 +1138,7 @@
    "plan",
    "preset",
    "progress",
+   "quality",
    "split_channels",
    "style",
    "timeout",
