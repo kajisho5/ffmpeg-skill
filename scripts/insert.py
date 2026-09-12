@@ -27,7 +27,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg, fmt_secs
 
 
 def even(n: float) -> int:
@@ -119,7 +119,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {v['fps']:g}fps)")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['fps']:g}fps)")
     emit(output)
     return 0
 

@@ -19,7 +19,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, parse_time
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, parse_time, fmt_secs, run
 
 
 def main() -> int:
@@ -101,11 +101,18 @@ def main() -> int:
         cmd += aac_args()
     else:
         cmd += ["-an"]
-    dropped_streams = run_keeping_subtitles(cmd, output)
+    if args.mode == "insert":
+        # the picture gains `hold` seconds at `at`; a stream-copied subtitle track would keep its
+        # old timestamps and every cue after the freeze would fire early (same reasoning as
+        # fit.py --method speed). Drop it rather than ship captions that lie.
+        run(cmd + [output])
+        dropped_streams = bool(meta.get("subtitle_streams") or meta.get("data_streams"))
+    else:
+        dropped_streams = run_keeping_subtitles(cmd, output)
 
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, froze {args.hold:g}s at {at:g}s, mode={args.mode})")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, froze {args.hold:g}s at {at:g}s, mode={args.mode})")
     emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 

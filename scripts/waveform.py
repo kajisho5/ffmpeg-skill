@@ -22,7 +22,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, validate_color, X264_PRESETS
+from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, validate_color, X264_PRESETS, fmt_secs
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -88,7 +88,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {args.style})")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {args.style})")
     emit(output)
     return 0
 

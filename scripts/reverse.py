@@ -14,7 +14,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
 
 
 def main() -> int:
@@ -47,7 +47,7 @@ def main() -> int:
     run(cmd)
 
     result = probe(output, role="output")
-    info(f"wrote {output} ({result['duration']:.3f}s, {result['video']['width']}x{result['video']['height']})")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {result['video']['width']}x{result['video']['height']})")
     emit(output)
     return 0
 

@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die
+from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -231,15 +231,14 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
     Falls back to an even split when the window is silent or too short.
     """
     import struct
-    import subprocess as sp
-    from _common import require_tool
+    from _common import require_tool, run_analysis
     total_cs = max(1, int(round((end - start) * 100)))
     if n_words <= 1:
         return [total_cs]
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", video,
            "-map", f"0:a:{audio_stream}", "-t", f"{end - start:.3f}", "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
-    proc = sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
+    proc = run_analysis(cmd, check=False, text=False)  # under --timeout like every other measurement
     n = len(proc.stdout) // 2
     if proc.returncode != 0 or n < 800:
         per = total_cs // n_words
@@ -274,10 +273,23 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
         out.append(cs)
         prev = b
     out.append(max(5, total_cs - sum(out)))
-    # normalise to the exact cue length
+    # normalise to the exact cue length. A cue too short for 5 cs per word (0.5 s, 20 words)
+    # used to push the remainder into the last word as a negative \kf; split evenly instead,
+    # and never let the last word go below 1 cs.
+    if total_cs < 5 * n_words:
+        per = max(1, total_cs // n_words)
+        out = [per] * (n_words - 1) + [max(1, total_cs - per * (n_words - 1))]
+        return out
     scale = total_cs / max(1, sum(out))
     out = [max(5, int(round(x * scale))) for x in out]
     out[-1] += total_cs - sum(out)
+    while out[-1] < 1:
+        i = max(range(len(out) - 1), key=lambda j: out[j])
+        take = min(out[i] - 5, 1 - out[-1]) if out[i] > 5 else 0
+        if take <= 0:
+            break
+        out[i] -= take
+        out[-1] += take
     return out
 
 
@@ -524,7 +536,7 @@ def main() -> int:
         cmd += [output]
         run(cmd)
         result = probe(output, role="output")
-        info(f"wrote {output} ({result.get('duration'):.3f}s, mux, subtitle codec {codec})")
+        info(f"wrote {output} ({fmt_secs(result.get('duration'))}, mux, subtitle codec {codec})")
         emit(output)
         return 0
 
@@ -576,7 +588,7 @@ def main() -> int:
     cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
     run(cmd)
     result = probe(output, role="output")
-    info(f"wrote {output} ({result.get('duration'):.3f}s)")
+    info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
     emit(output)
     return 0
 

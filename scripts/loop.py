@@ -18,7 +18,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg
+from _common import add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg, fmt_secs
 
 
 def main() -> int:
@@ -71,7 +71,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, source {src_dur:.3f}s looped)")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, source {src_dur:.3f}s looped)")
     emit(output)
     return 0
 

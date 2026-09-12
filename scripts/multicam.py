@@ -29,7 +29,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, x264_args, X264_PRESETS
+from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, x264_args, X264_PRESETS, fmt_secs
 from sync import measure_offset
 
 
@@ -203,10 +203,10 @@ def main() -> int:
 
     output = args.output or default_output(args.inputs[0], "multicam", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
-    cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + ["-shortest", output]
+    cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + ["-t", f"{ref_dur:.3f}", output]
     run(cmd)
     r = probe(output, role="output")
-    info(f"wrote {output} ({r['duration']:.3f}s, {len(filled)} cuts, audio from input {a})")
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, {len(filled)} cuts, audio from input {a})")
     emit(output, cuts=[[round(s, 3), round(e, 3), c] for s, e, c in filled], **report)
     return 0
 

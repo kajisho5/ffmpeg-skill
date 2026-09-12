@@ -1,3 +1,4 @@
+import re
 #!/usr/bin/env python3
 """Turn a numbered image sequence into a video.
 
@@ -19,7 +20,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, concat_list_line
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, concat_list_line, fmt_secs
 
 
 def even(n: float) -> int:
@@ -29,6 +30,11 @@ def even(n: float) -> int:
 
 def _concat_list_line(path: Path) -> str:
     return concat_list_line(str(path))
+
+
+def natural_key(name: str) -> list:
+    """img2 < img10: digit runs compare as numbers, the rest case-insensitively."""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
 def main() -> int:
@@ -54,7 +60,9 @@ def main() -> int:
 
     is_glob = "%" not in args.pattern
     if is_glob:
-        frames = sorted(directory.glob(args.pattern))
+        # natural order: img2 before img10 (a lexical sort put every img1x before img2 and the
+        # frames came out shuffled); a printf pattern never had this problem
+        frames = sorted(directory.glob(args.pattern), key=lambda p: natural_key(p.name))
         if not frames:
             die(f"no files in {args.dir} match glob '{args.pattern}'")
         info(f"found {len(frames)} frames matching '{args.pattern}'")
@@ -113,7 +121,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {v['fps']:g}fps)")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['fps']:g}fps)")
     emit(output)
     return 0
 

@@ -31,7 +31,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
 
 # v360's own AVOption names for the input projections real 360 cameras/exports actually
 # produce (ffmpeg -h filter=v360 documents 24 total; this is the subset a caller is likely
@@ -117,7 +117,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, yaw={args.yaw:g} pitch={args.pitch:g})")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, yaw={args.yaw:g} pitch={args.pitch:g})")
     emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 

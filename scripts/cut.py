@@ -30,7 +30,7 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input
+from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
 
 # keyframe timestamps found next to a requested cut that the tolerance turned into a re-encode
 # (reported so the caller can choose a lossless cut at one of them next time)
@@ -56,6 +56,8 @@ def parse_segments(spec: str, fps=None) -> List[Tuple[float, float]]:
             die(f"segment '{raw}' must look like START-END (e.g. 0:05-0:12)")
         a, b = raw.rsplit("-", 1)
         start, end = _t(a, fps), _t(b, fps)
+        if start < 0:
+            die(f"segment '{raw}': start must be >= 0")
         if end <= start:
             die(f"segment '{raw}': end must be after start")
         segs.append((start, end))
@@ -225,7 +227,7 @@ def main() -> int:
     # lossless but the keyframe snap exceeded --tolerance so this segment silently re-encoded instead)
     mode = "copy" if not reencoded else ("accurate" if args.accurate else "hybrid")
     keyframe_snapped = precision == "packet"
-    info(f"wrote {output} ({got:.3f}s, expected ~{expected:.3f}s, "
+    info(f"wrote {output} ({fmt_secs(got)}, expected ~{expected:.3f}s, "
          + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
     emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
          requested_start=round(segments[0][0], 6) if len(segments) == 1 else None,

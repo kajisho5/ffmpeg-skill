@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS, time_arg
+from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug"]
 
@@ -169,7 +169,7 @@ def main() -> int:
     cmd += aac_args() if meta.get("audio") else ["-an"]
     dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
-    info(f"wrote {output} ({r['duration']:.3f}s, {args.template})")
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, {args.template})")
     emit(output, template=args.template, dropped_non_av_streams=dropped_streams)
     return 0
 

@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, add_common, apply_common, bt709_tag_args, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color, pad_filters, add_pad_fill_args
+from _common import STATE, add_common, apply_common, bt709_tag_args, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
     "youtube4k": {"w": 3840, "h": 2160, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "2160p H.264, AAC 192k"},
@@ -120,7 +120,7 @@ def main() -> int:
     run(cmd)
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {v['codec']})")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
     emit(output)
     return 0
 

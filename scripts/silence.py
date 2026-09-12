@@ -17,7 +17,7 @@ import re
 import sys
 from typing import List, Tuple
 
-from _common import STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, require_tool, run, x264_args, X264_PRESETS, measured_level_dbfs, run_analysis, dry_run_input_pending
+from _common import STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, require_tool, run, x264_args, X264_PRESETS, measured_level_dbfs, run_analysis, dry_run_input_pending, fmt_secs
 
 SIL_RE = re.compile(r"silence_(start|end): ([0-9.]+)")
 
@@ -134,7 +134,7 @@ def main() -> int:
     cmd += ["-af", af] + audio_codec_for(output) + [output]
     run(cmd)
     r = probe(output, role="output")
-    info(f"wrote {output} ({r['duration']:.3f}s, expected ~{kept:.3f}s)")
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{kept:.3f}s)")
     emit(output, **summary)
     return 0
 

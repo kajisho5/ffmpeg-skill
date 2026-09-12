@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+- Fifth audit (100 items; 33 confirmed, 5 recorded decisions, 62 not reproduced). Fixed: `bit_depth` read `yuv410p` as 10-bit (the depth is the number that ends the pixel-format name); `audio.py --mono` halved an already-mono track (-6 dB) and now leaves 1-channel input alone and downmixes >2 channels through swresample; `sync.py --replace-audio` cut the reference to the length of a shorter or head-trimmed second file (`-t <reference>` + `apad` instead of `-shortest`); 25+ tools raised TypeError formatting a missing duration after a successful encode (`fmt_secs()`); energy karaoke gave the last word a negative `\kf` on a cue shorter than 5 cs per word; the karaoke energy decode ran outside `--timeout`; `render.py`'s final copy bypassed the output-path, overwrite and temp-staging guards (`place_output()`); the video `join.py` forced stereo and dropped the centre/LFE of 5.1 clips (the audio-only join already kept the widest layout); `multicam.py -shortest` could end before the cut list; ffprobe output that is not JSON is a `kind: ffmpeg` document, not a traceback; a git/vendor `ffprobe version N-...` string is mapped from the libavutil major (59 -> 7) instead of reading as 0.0, which on 7.1 skipped the BT.709 tagging workaround.
+- `freeze.py --mode insert` drops a stream-copied subtitle track (its cues after the freeze fired early) and reports `dropped_non_av_streams`, as `fit.py --method speed` does; `sequence.py` sorts globbed frames naturally (`img2` before `img10`); `cut.py --segments` refuses a negative start; `speedramp.py --segment` accepts `mm:ss`; one `MEDIA_EXT` list (adds `.mxf`, `.m2ts`, `.3gp`, `.wmv`, `.aif`, `.caf`, `.wma`, `.webp`, so `verify` probes them); a colour alpha above 1 (`red@2`) is refused before ffmpeg; `--pad-fill blur` clamps the radius to what boxblur accepts on a tiny frame.
+- Not changed, recorded decisions: BT.2020-primaries SDR takes the HDR path until 2.0 (docs/design-decisions.md); `join.py`/`broll.py` keep the HDR path for mixed inputs; `escape_drawtext` drops `'` and `%`; `--overwrite` warns until 2.0.
 
 ## 1.4.11
 

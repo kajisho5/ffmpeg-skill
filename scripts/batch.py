@@ -31,11 +31,10 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, read_text_or_die
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, read_text_or_die, MEDIA_EXT as _MEDIA_EXT
 
 HERE = Path(__file__).resolve().parent
-MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".ts", ".gif",
-             ".wav", ".m4a", ".mp3", ".flac", ".aac", ".ogg", ".opus", ".aif", ".aiff"}
+MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
 # recipe steps name the script to run as plain, untrusted JSON -- run_step() joins it onto HERE
 # with the `/` operator, which silently ignores the left side when the right side is itself an
 # absolute path (Path("/scripts") / "/tmp/evil.py" == Path("/tmp/evil.py")), and does nothing to

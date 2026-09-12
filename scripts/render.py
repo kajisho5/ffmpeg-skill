@@ -55,7 +55,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output
 
 HERE = Path(__file__).resolve().parent
 
@@ -350,8 +350,7 @@ def main() -> int:
         stages_done.append("export")
     else:
         if not STATE.dry_run:
-            import shutil
-            shutil.copyfile(current, output)
+            place_output(current, output)
         info(f"copied final stage to {output}")
     current = output
 

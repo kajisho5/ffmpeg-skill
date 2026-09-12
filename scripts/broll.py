@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args, X264_PRESETS
+from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 
 
 def main() -> int:
@@ -143,7 +143,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     if not STATE.dry_run and dur_a and abs((result.get("duration") or 0.0) - dur_a) > max(0.1, 1.5 / fps):
-        die(f"output is {result.get('duration'):.3f}s but the A-roll is {dur_a:.3f}s -- a cutaway must not change the length", kind="output")
+        die(f"output is {fmt_secs(result.get('duration'))} but the A-roll is {dur_a:.3f}s -- a cutaway must not change the length", kind="output")
     info(f"wrote {output} ({result.get('duration', 0):.3f}s, {len(cutaways)} cutaway(s), audio={args.audio})")
     emit(output, cutaways=[{"insert": c["path"], "at": c["at"], "end": c["at"] + c["length"], "from": c["from"]} for c in cutaways], audio=args.audio)
     return 0

@@ -27,7 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending
+from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs
 
 
 def main() -> int:
@@ -94,7 +94,7 @@ def main() -> int:
         run(cmd)
 
     result = probe(output, role="output")
-    info(f"wrote {output} ({result['duration']:.3f}s, {result['video']['width']}x{result['video']['height']})")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {result['video']['width']}x{result['video']['height']})")
     emit(output)
     return 0
 

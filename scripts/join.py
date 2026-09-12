@@ -23,7 +23,7 @@ import argparse
 import sys
 from typing import List
 
-from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, validate_color, X264_PRESETS
+from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, validate_color, X264_PRESETS, fmt_secs
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -75,7 +75,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
             die(f"{output} unexpectedly contains a video stream")
         if a.get("sample_rate") != rate or a.get("channels") != channels:
             die(f"{output} is {a.get('sample_rate')} Hz {a.get('channels')} ch, expected {rate} Hz {channels} ch")
-    info(f"wrote {output} ({r['duration']:.3f}s, expected ~{expected:.3f}s, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
          + ("crossfade" if d else "butt join") + ")")
     emit(output, mode="audio", clips=n, transition=args.transition if d else "none", expected_duration=round(expected, 3),
          sample_rate=rate, channels=channels, video=False)
@@ -172,9 +172,18 @@ def main() -> int:
     # first clip used to drag an HDR second clip down to 8-bit without a tone map.
     hdr_meta = next((m for m in metas if (m.get("video") or {}).get("hdr")), None)
     pixfmt = "yuv420p10le" if hdr_meta else "yuv420p"
+    # the audio-only join keeps the widest layout; the video join used to force stereo and
+    # silently dropped the centre/LFE of 5.1 material
+    chans = [(m.get("audio") or {}).get("channels") or 2 for m in metas]
+    channels = args.channels or max(chans)
+    layout = LAYOUTS.get(channels)
+    if layout is None:
+        die(f"{channels}-channel output has no standard layout here (1, 2, 6 or 8); pass --channels")
+    if len(set(chans)) > 1:
+        info(f"channel counts differ ({', '.join(str(c) for c in chans)}); every clip becomes {layout}")
     for i in range(n):
         parts.append(f"[{i}:v]{geo},setsar=1,fps={fps:g},format={pixfmt},settb=AVTB[v{i}]")
-        parts.append(f"[{audio_src[i]}]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]")
+        parts.append(f"[{audio_src[i]}]aformat=sample_rates=48000:channel_layouts={layout},asetpts=PTS-STARTPTS[a{i}]")
 
     if args.transition == "none":
         chain = "".join(f"[v{i}][a{i}]" for i in range(n))
@@ -196,7 +205,7 @@ def main() -> int:
     run(cmd)
     expected = sum(durs) - d * (n - 1)
     r = probe(output, role="output")
-    info(f"wrote {output} ({r['duration']:.3f}s, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
     emit(output, mode="video", clips=n, transition=args.transition, expected_duration=round(expected, 3))
     return 0
 

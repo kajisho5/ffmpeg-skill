@@ -22,7 +22,7 @@ import os
 import sys
 from typing import List
 
-from _common import add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, run_keeping_subtitles, x264_args, X264_PRESETS
+from _common import add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 
 TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
 
@@ -315,7 +315,7 @@ def main() -> int:
     cmd += x264_args(args.crf, args.preset) + cfr_args(meta) + (aac_args() if has_audio else [])
     dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
-    info(f"wrote {output} ({r['duration']:.3f}s, {r['video']['width']}x{r['video']['height']}, "
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, {r['video']['width']}x{r['video']['height']}, "
          f"{r['video']['color_transfer']}/{r['video']['color_primaries']}, {tag})")
     extra = {"dropped_non_av_streams": dropped_streams}
     if measurements is not None:

@@ -25,7 +25,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args
+from _common import add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, fmt_secs
 
 
 def even(n: float) -> int:
@@ -73,7 +73,7 @@ def main() -> int:
 
     result = probe(output)
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {v['codec']}, crf {args.crf})")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']}, crf {args.crf})")
     emit(output)
     return 0
 

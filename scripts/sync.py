@@ -291,10 +291,13 @@ def main() -> int:
             if head_trim > 0:
                 cmd += ["-ss", f"{head_trim:.4f}"]
             cmd += ["-i", args.second, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]
-            af_parts = drift_af + ([f"adelay={delay_ms}:all=1"] if delay_ms > 0 else [])
-            if af_parts:
-                cmd += ["-af", ",".join(af_parts)]
-            cmd += aac_args() + ["-shortest", output]
+            # the reference picture is the deliverable: pad the (possibly trimmed) second audio to
+            # its length instead of -shortest, which cut the reference's tail whenever the second
+            # file started earlier (head_trim > 0) or was simply shorter
+            ref_dur = probe(args.reference).get("duration")
+            af_parts = drift_af + ([f"adelay={delay_ms}:all=1"] if delay_ms > 0 else []) + ["apad"]
+            cmd += ["-af", ",".join(af_parts)]
+            cmd += aac_args() + (["-t", f"{ref_dur:.3f}"] if ref_dur else ["-shortest"]) + [output]
             proc = run(cmd, check=False)
             if proc.returncode != 0:
                 cmd = [c for c in cmd if c != "copy"]

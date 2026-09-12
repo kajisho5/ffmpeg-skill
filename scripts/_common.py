@@ -43,12 +43,11 @@ INSTALL_HINTS = {
 }
 
 
-# `kind` (below) has been the only machine-readable failure axis since 0.1: a flat, 4-value
-# vocabulary (input / missing_tool / ffmpeg / output) set at the ~7 call sites that ever pass one
-# explicitly, defaulting to "input" everywhere else. `ERROR_CODE` is an additive, purely
-# informational refinement layered on top for agents that want a stable enum to switch on instead
-# of pattern-matching `kind` strings -- it is a static 1:1 relabelling of the exact same 4 buckets,
-# not a new taxonomy. It intentionally does NOT introduce categories this codebase cannot actually
+# `kind` (below) is the machine-readable failure axis: input / missing_tool / ffmpeg / output
+# since 0.1, plus timeout (1.3), verification (1.4.3) and interrupted (1.4.10). `ERROR_CODE` is an
+# additive, purely informational refinement layered on top for agents that want a stable enum to
+# switch on instead of pattern-matching `kind` strings -- a static 1:1 relabelling of the same
+# buckets, not a new taxonomy. It intentionally does NOT introduce categories this codebase cannot actually
 # distinguish today (e.g. a separate ffprobe-vs-ffmpeg code, or an environment-vs-content-cause
 # split of ffmpeg failures): every ffmpeg subprocess failure is currently one undifferentiated
 # bucket regardless of whether ffmpeg rejected a bad filter argument or died from a full disk,
@@ -113,6 +112,17 @@ def ffmpeg_version() -> "Tuple[int, int]":
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
             if m:
                 _FFMPEG_VERSION = (int(m.group(1)), int(m.group(2)))
+            else:
+                # git / vendor builds print "N-115000-g..." or a date, never major.minor; the
+                # libavutil major is still there and maps one-to-one onto the FFmpeg major
+                # (56=4, 57=5, 58=6, 59=7, 60=8). Without this every version branch took the
+                # oldest spelling on such builds: on 7.1 that skipped bt709_tag_args()'s
+                # workaround and an untagged source got a real matrix conversion.
+                m = re.search(r"^libavutil\s+(\d+)\.", out, re.M)
+                if m:
+                    major = int(m.group(1)) - 52
+                    if major >= 4:
+                        _FFMPEG_VERSION = (major, 0)
         except (OSError, subprocess.TimeoutExpired):
             # (0, 0) = unknown: every version branch then takes the older, universally accepted
             # spelling, the same "unknown is not missing" stance doctor takes.
@@ -139,7 +149,9 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int) -> str
     then boxblur'ed, the other scaled to fit, overlaid centred. Only `filter:boxblur` is
     needed beyond the usual scale/pad set, and that is already required by redact.py."""
     if fill == "blur":
-        radius = max(1, int(blur))
+        # boxblur rejects a radius larger than half the smaller dimension ("radius 20, must be
+        # <= 8" on a 16 px target); clamp instead of failing an otherwise valid request
+        radius = max(1, min(int(blur), max(1, min(out_w, out_h) // 2 - 1)))
         return (f"split[__fitfg][__fitbg];"
                 f"[__fitbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},"
                 f"boxblur={radius}:2[__fitbgb];"
@@ -839,7 +851,8 @@ def ffmpeg_base(overwrite: bool = True) -> List[str]:
     return cmd
 
 
-MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".gif", ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".png", ".jpg", ".jpeg"}
+MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".m2ts", ".mxf", ".3gp", ".wmv", ".gif",
+             ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".aif", ".aiff", ".caf", ".wma", ".png", ".jpg", ".jpeg", ".webp"}
 
 
 def _output_failed(path: str, why: str) -> "None":
@@ -902,7 +915,12 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         if role == "output":
             _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
         die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
-    raw = json.loads(proc.stdout or "{}")
+    try:
+        raw = json.loads(proc.stdout or "{}")
+    except ValueError as e:
+        if role == "output":
+            _output_failed(path, f"ffprobe printed unreadable JSON: {e}")
+        die(f"ffprobe printed unreadable JSON for {path}: {e}", kind="ffmpeg")
     fmt = raw.get("format", {})
     streams = raw.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0) == 0), None)
@@ -981,7 +999,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "avg_frame_rate": video.get("avg_frame_rate"),
             "variable_frame_rate_suspected": vfr,
             "pix_fmt": video.get("pix_fmt"),
-            "bit_depth": 10 if "10" in pix else (12 if "12" in pix else 8),
+            "bit_depth": _bit_depth(pix),
             "hdr": hdr,
             "hdr_format": (("Dolby Vision %s" % (("profile %s" % dovi["profile"]) if dovi and dovi.get("profile") is not None else "")).strip() if dovi else
                            "HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
@@ -1035,6 +1053,53 @@ def concat_list_line(path: str) -> str:
     name is closed, escaped and reopened. Shared by cut.py (multi-segment) and sequence.py."""
     escaped = str(path).replace("\\", "/").replace("'", "'\\''")
     return f"file '{escaped}'"
+
+
+def _bit_depth(pix_fmt: Optional[str]) -> int:
+    """Bits per component from a pixel format name. `"10" in pix` used to read yuv410p (4:1:0
+    chroma) as 10-bit; the depth is the number that ends the name (before an le/be suffix):
+    yuv420p10le -> 10, gbrp12be -> 12, gray16le -> 16, yuv410p / yuv420p / rgb24 -> 8."""
+    m = re.search(r"(\d{1,2})(?:le|be)?$", pix_fmt or "")
+    if not m:
+        return 8
+    n = int(m.group(1))
+    if n in (24, 32):      # packed 8-bit rgb24/bgr32/rgb0 etc.
+        return 8
+    if n in (48, 64):      # packed 16-bit rgb48/rgba64
+        return 16
+    return n if 8 <= n <= 16 else 8
+
+
+def fmt_secs(value: Optional[float]) -> str:
+    """`12.345s`, or `?s` when the probe had no duration (MPEG-TS without a duration tag, a
+    stream whose container and streams all omit it). Every writing tool prints the duration
+    of what it wrote; formatting None with :.3f used to raise TypeError after a successful
+    encode, in 25+ scripts."""
+    return "?s" if value is None else f"{value:.3f}s"
+
+
+def place_output(src: str, dst: str) -> None:
+    """Deliver an already-rendered file to `dst` under the same rules as an ffmpeg output:
+    the path is checked, an existing file is only replaced through a sibling temp so a
+    failed copy never costs the caller what was there, and the result is remembered as ours.
+    render.py's final `copyfile()` used to bypass all three."""
+    import shutil
+    cmd = ["ffmpeg", dst]
+    _check_output_path(cmd)
+    _check_existing_output(cmd)
+    d, base = os.path.split(dst)
+    stem, ext = os.path.splitext(base)
+    tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
+    try:
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, dst)
+    except OSError as e:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        die(f"could not place {dst}: {e}", kind="output")
+    _remember_output(cmd)
 
 
 def parse_time(value: str, fps: Optional[float] = None) -> float:
@@ -1468,7 +1533,7 @@ def color_hex(value: str) -> str:
     return v.upper()
 
 
-_COLOR_TOKEN_RE = re.compile(r"^(0[xX][0-9A-Fa-f]{6,8}|#[0-9A-Fa-f]{6,8}|[A-Za-z][A-Za-z0-9]*)(@[0-9.]+)?$")
+_COLOR_TOKEN_RE = re.compile(r"^(0[xX][0-9A-Fa-f]{6,8}|#[0-9A-Fa-f]{6,8}|[A-Za-z][A-Za-z0-9]*)(@(?:0(?:\.\d+)?|1(?:\.0+)?|\.\d+))?$")  # alpha is 0..1; "red@2" used to reach ffmpeg
 
 
 def validate_color(value: str, flag: str = "--color") -> str:

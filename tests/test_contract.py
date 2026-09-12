@@ -1521,6 +1521,91 @@ class ContractTests(unittest.TestCase):
         self.assertFalse((bdir / "bdir").exists(), "outdir was doubled")
         self.assertTrue((bdir / "out").is_dir(), "default outdir is <folder>/out")
 
+    def test_fifth_audit_regressions(self):
+        """Pins from the fifth audit (100 items, 2026-09-12). Confirmed and fixed here: yuv410p
+        read as 10-bit (#2); audio --mono halved an already-mono track (#3); sync --replace-audio
+        cut the reference to the shorter second (#4); 25+ tools raised TypeError formatting a
+        None duration after a successful encode (#5); energy karaoke gave the last word a
+        negative \kf on a short cue (#6); the energy decode ran outside --timeout (#7); render's
+        final copy bypassed the output guards (#8); the video join forced stereo (#10); multicam
+        -shortest (#12); ffprobe JSON parse without a guard (#14); git-build version strings read
+        as 0.0 (#15); freeze --mode insert desynced copied subtitles (#31); sequence globbed
+        frames lexically (#98); negative --segments start (#18); speedramp refused mm:ss (#29);
+        two MEDIA_EXT lists (#55); colour alpha > 1 reached ffmpeg (#69); blur radius > frame (#57)."""
+        # 2, 5, 55, 69, 57 -- helpers
+        for pix, depth in (("yuv410p", 8), ("yuv420p", 8), ("yuv420p10le", 10), ("gbrp12be", 12), ("gray16le", 16), ("rgb24", 8), ("rgb48le", 16)):
+            self.assertEqual(_common._bit_depth(pix), depth, pix)
+        self.assertEqual(_common.fmt_secs(None), "?s")
+        self.assertEqual(_common.fmt_secs(1.5), "1.500s")
+        leftovers = [p.name for p in SCRIPTS.glob("*.py") if re.search(r"duration['\"]\]:\.3f\}s|duration['\"]\):\.3f\}s", p.read_text(encoding="utf-8"))]
+        self.assertEqual(leftovers, [], "a script still formats a possibly-None duration with :.3f")
+        self.assertIn(".mxf", _common.MEDIA_EXT)
+        import batch as batch_mod  # noqa: E402
+        self.assertTrue(batch_mod.MEDIA_EXT <= _common.MEDIA_EXT)
+        self.assertEqual(_common.validate_color("red@0.5"), "red@0.5")
+        with self.assertRaises(SystemExit):
+            _common.validate_color("red@2")
+        self.assertIn("boxblur=7:2", _common.pad_filters(16, 16, "blur", "black", 20))
+        import sequence as seq_mod  # noqa: E402
+        self.assertEqual(sorted(["img10.png", "img2.png", "img1.png"], key=seq_mod.natural_key), ["img1.png", "img2.png", "img10.png"])
+        # 6 -- karaoke never emits a non-positive word length
+        import caption as cap_mod  # noqa: E402
+        words = cap_mod.word_durations_from_audio(str(self.src), 0.0, 0.5, 20)
+        self.assertEqual((len(words), sum(words), min(words) >= 1), (20, 50, True), words)
+        # 3 -- mono input, --mono: no stereo pan
+        mono = self.out("mono_in.mp4")
+        ffmpeg("-f", "lavfi", "-i", "sine=f=440:r=48000:d=2", "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "2", "-ac", "1", "-c:a", "aac", "-c:v", "libx264", "-preset", "veryfast", mono)
+        doc = json.loads(tool("audio", mono, "--mono", "--dry-run", "--json", "-o", self.out("mono_out.mp4")).stdout)
+        self.assertNotIn("pan=mono", " ".join(map(str, doc["commands"])))
+        # 10 -- 5.1 + stereo video join keeps 5.1
+        six = self.out("six.mp4")
+        ffmpeg("-f", "lavfi", "-i", "sine=f=440:r=48000:d=2", "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "2", "-af", "aformat=channel_layouts=5.1", "-c:a", "aac", "-c:v", "libx264", "-preset", "veryfast", six)
+        doc = json.loads(tool("join", six, mono, "--transition", "none", "--dry-run", "--json", "-o", self.out("join51.mp4")).stdout)
+        self.assertIn("channel_layouts=5.1", " ".join(map(str, doc["commands"])))
+        self.assertNotIn("channel_layouts=stereo", " ".join(map(str, doc["commands"])))
+        # 12 -- multicam trims to the cut list, not the shortest stream
+        doc = json.loads(tool("multicam", self.src, self.src, "--auto", "2", "--dry-run", "--json", "-o", self.out("mc.mp4")).stdout)
+        cmd = " ".join(map(str, doc["commands"]))
+        self.assertNotIn("-shortest", cmd)
+        self.assertIn("-t 6.000", cmd)
+        # 4 -- replace-audio keeps the reference's length when the second is shorter
+        short = self.out("second_short.mp4")
+        ffmpeg("-ss", "1", "-t", "3", "-i", self.src, "-c", "copy", short)
+        doc = json.loads(tool("sync", self.src, short, "--replace-audio", "--json", "-o", self.out("synced_short.mp4")).stdout)
+        self.assertAlmostEqual(doc["probe"]["duration"], 6.0, delta=0.15, msg=doc.get("meaning"))
+        # 18, 29 -- time grammar
+        proc = tool("cut", self.src, "--segments=-1-2", "--json", "-o", self.out("neg.mp4"), check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        doc = json.loads(tool("speedramp", self.src, "--segment", "0-0:03:2", "--segment", "0:03-0:06:1", "--dry-run", "--json", "-o", self.out("ramp.mp4")).stdout)
+        self.assertEqual(doc["status"], "completed")
+        # 31 -- freeze --mode insert drops a copied subtitle track instead of desyncing it
+        srt = self.out("fz.srt"); srt.write_text("1\n00:00:00,500 --> 00:00:01,000\na\n\n2\n00:00:02,000 --> 00:00:02,500\nb\n\n", encoding="utf-8")
+        mkv = self.out("fz_in.mkv")
+        ffmpeg("-i", self.src, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt", mkv)
+        doc = json.loads(tool("freeze", mkv, "--at", "1", "--hold", "1", "--mode", "insert", "--fast", "--json", "-o", self.out("fz_out.mkv")).stdout)
+        self.assertTrue(doc["dropped_non_av_streams"])
+        self.assertEqual(doc["probe"].get("subtitle_streams") or 0, 0)
+        # 8 -- render's final copy goes through the output guards (existing file replaced via a temp, nothing left behind)
+        out = self.out("rend_out.mp4"); shutil.copyfile(self.src, out)
+        proj = self.out("rend.json"); proj.write_text(json.dumps({"output": str(out), "clips": [{"src": str(self.src), "in": 0, "out": 1}]}))
+        doc = json.loads(tool("render", proj, "--fast", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertAlmostEqual(doc["probe"]["duration"], 1.0, delta=0.15)
+        self.assertEqual([p.name for p in out.parent.glob(".rend_out.ffskill-*")], [])
+
+    @unittest.skipIf(platform.system() == "Windows", "the fake ffprobe is a #!/bin/sh shim on a POSIX-only PATH")
+    def test_ffmpeg_version_falls_back_to_libavutil_on_git_builds(self):
+        """Fifth audit #15: `ffprobe version N-115000-g...` has no major.minor, so the version was
+        (0, 0) and every version branch took the oldest spelling -- on a 7.1 git build that skipped
+        bt709_tag_args()'s workaround. The libavutil major maps onto the FFmpeg major."""
+        shim = self.out("verprobe_shim"); shim.mkdir(exist_ok=True)
+        (shim / "ffprobe").write_text("#!/bin/sh\nprintf 'ffprobe version N-115000-g1234abcd Copyright (c) 2007-2025\\nlibavutil      59. 39.100 / 59. 39.100\\n'\n")
+        (shim / "ffprobe").chmod(0o755)
+        code = ("import sys; sys.path.insert(0, %r); import _common; print(_common.ffmpeg_version())" % str(SCRIPTS))
+        env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}")
+        out = subprocess.run([sys.executable, "-c", code], env=env, stdout=subprocess.PIPE, text=True, check=True).stdout
+        self.assertEqual(out.strip(), "(7, 0)")
+
     def test_cut_segments_refuses_output_equal_to_input(self):
         """Fourth review, P0: `cut.py in.mp4 --segments 0-1,2-3 -o in.mp4` replaced the source
         with the 2 s join. The run() guard compares the ffmpeg command's -i paths with its output,

@@ -19,7 +19,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS
+from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, parse_time
 
 MAX_SPEED = 20.0
 MIN_SPEED = 0.05
@@ -41,11 +41,11 @@ def atempo_chain(factor: float) -> str:
 
 def parse_segment(raw: str) -> Tuple[float, float, float]:
     try:
-        span, factor_s = raw.split(":")
-        start_s, end_s = span.split("-")
-        start, end, factor = float(start_s), float(end_s), float(factor_s)
+        span, factor_s = raw.rsplit(":", 1)
+        start_s, end_s = span.rsplit("-", 1)
+        start, end, factor = parse_time(start_s), parse_time(end_s), float(factor_s)
     except ValueError:
-        die(f"--segment must look like START-END:FACTOR, got '{raw}'")
+        die(f"--segment must look like START-END:FACTOR (times in seconds or mm:ss), got '{raw}'")
     if end <= start:
         die(f"--segment {raw}: END must be after START")
     if not MIN_SPEED <= factor <= MAX_SPEED:
@@ -114,7 +114,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     v = result["video"]
-    info(f"wrote {output} ({result['duration']:.3f}s, {v['width']}x{v['height']}, {len(segments)} speed segments)")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {len(segments)} speed segments)")
     emit(output)
     return 0
 

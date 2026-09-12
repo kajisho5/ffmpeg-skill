@@ -24,7 +24,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg
+from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -267,7 +267,7 @@ def main() -> int:
     dropped_streams = run_keeping_subtitles(cmd, output)
     if not STATE.dry_run:
         result = probe(output, role="output")
-        info(f"wrote {output} ({result['duration']:.3f}s)")
+        info(f"wrote {output} ({fmt_secs(result['duration'])})")
     emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 
