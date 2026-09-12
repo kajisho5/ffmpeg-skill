@@ -124,9 +124,13 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     if changed:
         die("plan inputs differ from what was planned; re-run the tool with --plan to make a new plan:\n  " + "\n  ".join(changed),
             hint="plans are bound to the exact input files they were made from")
-    if plan.get("cwd") and os.path.isdir(plan["cwd"]):
+    if plan.get("cwd"):
+        if not os.path.isdir(plan["cwd"]):
+            die(f"plan cwd {plan['cwd']} no longer exists; relative paths in the plan would resolve elsewhere -- re-plan")
         os.chdir(plan["cwd"])
-    argv = [str(a) for a in plan.get("argv") or []]
+    if not isinstance(plan.get("argv"), list):
+        die(f"{path}: argv must be a list")
+    argv = [str(a) for a in plan["argv"]]
     if STATE.dry_run:
         for c in plan.get("commands") or []:
             STATE.commands.append(c)
@@ -160,12 +164,16 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
                 check_result = {"error": cp.stderr.strip()[-300:]}
             if check_result.get("failed") or check_result.get("status") == "failed" or check_result.get("error"):
                 exit_code = 1
+    # a failed platform check is reported the way the direct path reports it: the tool completed,
+    # verified is false, the rows say what to fix (review 6: a plan must not fail harder than the
+    # same command run by hand)
     if exit_code:
-        die(f"plan executed but {output} does not meet the {[s.get('platform') for s in plan.get('verify') or [] if s.get('tool') == 'check'][0]} spec",
-            kind="verification", output=output, plan=path, tool=tool, stages=[tool, "check"], check=check_result)
-    info(f"plan done: {output}")
+        failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
+        info(f"plan done: {output}, but the {check_result.get('platform')} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""))
+    else:
+        info(f"plan done: {output}")
     emit(output, plan=path, tool=tool, stages=[tool] + (["check"] if check_result else []), check=check_result, tool_result=doc,
-         verification=([{"step": "check", "ok": True, "platform": check_result.get("platform")}] if check_result else [])
+         verification=([{"step": "check", "ok": not exit_code, "platform": check_result.get("platform")}] if check_result else [])
          + [s for s in (doc.get("verification") or []) if s.get("step") != "probe"])
     return 0
 
@@ -188,12 +196,16 @@ def main() -> int:
         return 0
     if not args.project:
         die("give a project.json (or --init FILE)")
+    if STATE.plan:
+        die("render.py has no --plan: the project file is the plan (use --dry-run to preview it)")
     try:
         proj: Dict[str, Any] = json.loads(Path(args.project).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         die(f"cannot read project: {exc}")
-    if isinstance(proj, dict) and "plan_version" in proj:
-        return execute_plan(proj, args.project)
+    if not isinstance(proj, dict):
+        die(f"{args.project}: not a project or plan object (top level is {type(proj).__name__})")
+    if "plan_version" in proj:
+        return execute_plan(proj, os.path.abspath(args.project))
     base = Path(args.project).resolve().parent
 
     def rel(p: Any) -> str:

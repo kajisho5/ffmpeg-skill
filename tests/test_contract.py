@@ -1765,6 +1765,40 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_v2.mp4"), "--json", env=env).stdout)
         self.assertTrue(doc["result_v2"]["verified"]); self.assertNotIn("verified", doc["result_v2"]["details"])
 
+    def test_sixth_review_regressions(self):
+        """Review 6: loudness's verified reflects its target; --plan is written by tools that never
+        call emit(); verify refuses --plan; a plan binds argv/side files; a plan's failed platform
+        check is completed + verified false like the direct path; render refuses --plan; a
+        non-object plan JSON is kind input."""
+        import shutil
+        doc = json.loads(tool("loudness", self.wav, "-I", "-5", "--tp", "-3", "-o", self.out("r6_loud.wav"), "--json").stdout)
+        self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
+        self.assertFalse(doc["verification"][1]["ok"])
+        plan = self.out("r6_probe.json")
+        self.assertEqual(tool("probe", self.src, "--plan", plan).returncode, 0)
+        self.assertEqual([i["path"] for i in json.loads(plan.read_text())["inputs"]], [str(self.src)])
+        proc = tool("verify", self.src, "--quick", "--out", self.out("r6_v"), "--plan", self.out("r6_verify.json"), "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertFalse(self.out("r6_verify.json").exists())
+        srt = self.out("r6.srt"); srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+        plan = self.out("r6_cap.json")
+        tool("caption", self.src, "--srt", srt, "-o", self.out("r6_cap.mp4"), "--plan", plan)
+        self.assertIn(str(srt), [i["path"] for i in json.loads(plan.read_text())["inputs"]])
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nchanged\n", encoding="utf-8")
+        proc = tool("render", plan, "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        xplan = self.out("r6_x.json")
+        tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("r6_x.mp4"), "--plan", xplan)
+        doc = json.loads(tool("render", xplan, "--json").stdout)
+        self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
+        self.assertIn({"step": "check", "ok": False, "platform": "x"}, doc["verification"])
+        proj = self.out("r6_proj.json"); proj.write_text(json.dumps({"output": str(self.out("r6_r.mp4")), "clips": [{"src": str(self.src)}]}))
+        proc = tool("render", proj, "--plan", self.out("r6_rplan.json"), "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        bad = self.out("r6_bad.json"); bad.write_text("[1, 2]")
+        proc = tool("render", bad, "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
     def test_plan_roundtrip(self):
         """--plan writes a plan and runs nothing; render.py executes it, verifies, and refuses when
         an input changed since the plan (issue #189 C)."""

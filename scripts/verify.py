@@ -101,6 +101,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if STATE.plan:
+        die("verify.py does not support --plan: its steps run for real (it ignores --dry-run too)")
 
     files = collect(args.paths)
     tmp = None

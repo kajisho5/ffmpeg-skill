@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- Sixth review (plan and verified edges). `loudness.py` said `verified: true` after missing its target by several LU (the step's `ok` now reflects the target); `--plan` on `probe`/`scenes`/`sync`/`silence`/`cropdetect`/`loudness --measure-only` wrote nothing (a plan is now written at exit when the tool never reached `emit()`); `verify.py --plan` ran the whole chain for real (refused); a plan bound only the `-i` files, so an SRT, LUT, recipe or still could change underneath it (argv files and filter-read files are fingerprinted too); `render.py plan.json` failed hard on a platform check the direct command reports as `verified: false` (aligned); `render.py --plan` produced an unrunnable plan (refused, the project is the plan); a vanished plan `cwd`, a non-object JSON and a string `argv` are `kind: input` instead of a silent relocation or a traceback; the `plan` key is in every tool's output schema.
 - Every writing tool's `--json` document now says what it verified itself: `verification` (probe; `loudness` for `loudness.py` and `export.py`'s platform presets; `check` for `render.py`) and `verified`, true only when the artifact was written, probed and every self-check met its target (issue #189 C, "verify as part of the contract"). `export.py` whose file misses the platform's loudness spec stays `completed` with `verified: false`.
 
 ## 1.6.0

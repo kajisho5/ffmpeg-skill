@@ -165,7 +165,11 @@ generated `.ass`), and `verify` does not support dry-run (its steps run). `SKILL
 `--plan FILE` (1.6) is a dry run that also writes a plan document: `{"plan_version": 1,
 "tool", "argv", "cwd", "inputs": [{"path", "size", "sha256_head_tail"}], "commands",
 "output", "verify": [{"tool": "probe"}, {"tool": "check", "platform"}], "notes"}`. It
-implies `--dry-run`, so the same execution rules apply. `render.py FILE` executes a plan:
+implies `--dry-run`, so the same execution rules apply; `inputs` covers the `-i` files of the
+planned commands, every existing file named in argv (a recipe, a still, an SRT) and the
+subtitle/LUT/font files a filter reads. Tools that print their document without `--json`
+(`probe`, the analysis tools) still write the plan at exit; `verify.py` and `render.py`
+refuse `--plan` (their steps run for real; a project file is already a plan). `render.py FILE` executes a plan:
 it refuses (`kind: input`) when an input's size or head/tail hash differs from the plan,
 runs the tool with the planned `argv`, then the verify steps, and reports `plan`, `tool`,
 `tool_result` and `check`. `plan_version` is bumped when the document's shape changes.
@@ -318,7 +322,7 @@ file is valid) with `verified: false` and the fix in `notes`, so a caller keys o
 With `FFMPEG_SKILL_RESULT_V2=1` in the environment, every writing tool's success document
 also carries `result_v2`: a preview of the one shape 2.0 will use for every tool
 (issue #189). `{"schema": 2, "output", "probe", "commands", "metrics", "notes", "dropped":
-{"non_av_streams"}, "details"}` -- `metrics` holds the numbers a caller keys on (loudness's
+{"non_av_streams"}, "verified", "verification", "details"}` -- `metrics` holds the numbers a caller keys on (loudness's
 measurement dicts flattened, plus any numeric top-level key such as `expected_duration` or
 `offset_seconds`), `notes` the free text, `details` the tool's remaining keys unchanged. The
 1.x keys are not moved; the environment variable only adds the key, and its absence is the

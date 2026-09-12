@@ -155,8 +155,9 @@ def main() -> int:
             kind="verification", output=output, result=result,
             hint="raise --audio-bitrate (e.g. 256k) or deliver a lossless format (wav/flac) and let the platform encode")
     emit(output, result=result, dropped_non_av_streams=dropped_streams,
-         verification=[{"step": "loudness", "ok": True, "lufs": float(after["input_i"]), "tp": float(after["input_tp"]),
-                        "target_lufs": args.lufs, "target_tp": args.tp}])
+         verification=[{"step": "loudness",
+                        "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + 0.1),
+                        "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp}])
     return 0
 
 
