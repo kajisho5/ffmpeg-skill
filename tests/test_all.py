@@ -168,6 +168,11 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(data3["reencoded"])
         self.assertEqual(data3["mode"], "hybrid")
         self.assertFalse(data3["keyframe_snapped"])
+        # ...and name the keyframes a lossless cut could have used instead (x264's default GOP on the
+        # fixture puts the only one within 5 s of 1.13 at 0.0)
+        self.assertTrue(data3["nearest_keyframes"], data3)
+        self.assertIn(0.0, data3["nearest_keyframes"])
+        self.assertIsNone(data["nearest_keyframes"], "a clean copy has no alternative to offer")
 
         # multi-segment: requested_start/end are None, requested_segments lists each range
         out4 = OUT / "cut_honest_segments.mp4"
@@ -229,6 +234,11 @@ class FFmpegSkillTests(unittest.TestCase):
            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", b)
         out = OUT / "broll_out.mp4"
         data = json.loads(script("broll.py", self.src, "--insert", b, "--at", "4", "--end", "7", "--from", "1", "--fast", "--json", "-o", out).stdout)
+        # --pad-color is spliced into the filter graph like every other colour flag, so it is validated like them
+        inj = script("broll.py", self.src, "--insert", b, "--at", "4", "--end", "7", "--pad-color", "black,drawtext=text=INJECTED",
+                     "--json", "-o", OUT / "broll_inj.mp4", expect_fail=True)
+        self.assertIn("plain colour", json.loads(inj.stdout)["error"]["message"])
+        self.assertEqual(json.loads(inj.stdout)["commands"], [], "refused before ffmpeg ran")
         self.assertEqual(data["cutaways"], [{"insert": str(b), "at": 4.0, "end": 7.0, "from": 1.0}])
         m = probe(str(out))
         self.assertClose(m["duration"], probe(str(self.src))["duration"], 0.1)
@@ -1710,6 +1720,16 @@ class FFmpegSkillTests(unittest.TestCase):
            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", gappy)
         data = json.loads(script("silence.py", gappy, "--list", "--json").stdout)
         self.assertEqual(len(data["silences"]), 3)
+        self.assertNotIn("hint", data, "a hit needs no hint")
+        # a track with nothing under the threshold says what the floor is and which flag to change,
+        # instead of a bare "0 silences" that sends an agent off to raw ffmpeg (evals iteration 5, finding 1)
+        tone = OUT / "tone.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-t", "4", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", tone)
+        none = json.loads(script("silence.py", tone, "--list", "--json").stdout)
+        self.assertEqual(none["silences"], [])
+        self.assertIn("--threshold", none["hint"])
+        self.assertIn("mean level", none["hint"])
         self.assertClose(data["removed_seconds"], 5.25, 0.3)
         out = OUT / "tight.mp4"
         edl = OUT / "keep.txt"
@@ -2486,6 +2506,9 @@ class FFmpegSkillTests(unittest.TestCase):
         proc = script("render.py", proj, "--fast", "--timeout", "0.05", "--json", expect_fail=True)
         self.assertIn("time limit", proc.stderr)
         self.assertIn("--timeout 0.05", proc.stderr, "the flag must be forwarded to the child command line")
+        # ...and the stage's own failure is what render reports: kind timeout, exit 124, the stage named
+        tdoc = json.loads(proc.stdout)
+        self.assertEqual((tdoc["status"], tdoc["error"]["kind"], tdoc["exit_code"], tdoc["stage"]), ("failed", "timeout", 124, "cut.py"))
 
     def test_join_width_keeps_aspect(self):
         out = OUT / "join_w.mp4"

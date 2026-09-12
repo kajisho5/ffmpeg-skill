@@ -25,7 +25,7 @@ import argparse
 import os
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_font_file, default_output, die, emit, \
+from _common import add_common, apply_common, aac_args, cfr_args, default_font_file, default_output, die, emit, X264_PRESETS, \
     escape_drawtext, escape_filter_path, ffmpeg_base, info, probe, run, validate_color, video_args
 
 LABEL_MARGIN = 10
@@ -50,7 +50,7 @@ def main() -> int:
     ap.add_argument("--gap", type=int, default=0, help="gap between cells in px, must be even (default 0, cells touch)")
     ap.add_argument("--background", default="black", help="colour of the gap/pad borders (default black)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

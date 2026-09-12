@@ -930,6 +930,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(resps[3]["error"]["code"], -32000)
         self.assertTrue(resps[4]["result"]["isError"])
         self.assertIn("cut failed (exit", resps[4]["result"]["content"][0]["text"])
+        # the child's failure document rides along: kind/code are what an MCP caller keys on
+        failed_doc = resps[4]["result"]["structuredContent"]
+        self.assertEqual((failed_doc["status"], failed_doc["error"]["kind"]), ("failed", "input"))
+        self.assertIn("code", failed_doc["error"])
         self.assertEqual(resps[5]["result"]["structuredContent"]["audio"]["codec"], "pcm_s16le")
         self.assertIn("structuredContent", resps[6]["result"], "--json appended for a JSON tool in raw argv form")
         # the raw form appends --json exactly for the tools that need it to speak JSON
@@ -1206,6 +1210,25 @@ class ContractTests(unittest.TestCase):
         proc = tool("fit", self.src, "--aspect", "9:16", "--json", "-o", self.out("timeout_env.mp4"), env=env, check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "timeout", "the env default applies without the flag")
         self.assertIn("timeout", self.contract["json_output"]["error_kinds"])
+
+    def test_encoder_flags_are_validated_before_ffmpeg_sees_them(self):
+        """--preset took any string and --crf any integer; an agent's typo ("--preset fastest",
+        "--crf 99") reached ffmpeg and came back as kind ffmpeg with x264's stderr, which reads as
+        an encoder failure rather than a bad argument. Every x264 --preset is now an argparse
+        choice (so the contract and MCP schema carry the enum) and --crf is range-checked once
+        in apply_common for all 31 tools that take it."""
+        proc = tool("cut", self.src, "--start", "0", "--end", "1", "--preset", "fastest", "--json", "-o", self.out("p.mp4"), check=False)
+        self.assertEqual(proc.returncode, 2, "argparse rejects an unknown preset")
+        self.assertIn("invalid choice", proc.stderr)
+        proc = tool("cut", self.src, "--start", "0", "--end", "1", "--crf", "99", "--json", "-o", self.out("c.mp4"), check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
+        self.assertIn("--crf must be between 0 and 51", doc["error"]["message"])
+        self.assertEqual(doc["commands"], [], "refused before any ffmpeg ran")
+        for name, spec in self.tools.items():
+            preset = spec["input_schema"]["properties"].get("preset")
+            if preset and name != "export":
+                self.assertEqual(set(preset["enum"]), set(_common.X264_PRESETS), name)
 
     def test_failed_run_never_deletes_an_output_that_predates_it(self):
         """The partial-output cleanup (#78) removed the output path after every failed ffmpeg run

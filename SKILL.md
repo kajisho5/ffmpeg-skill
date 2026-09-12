@@ -95,7 +95,7 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
 
 ## Before you run anything: what to ask, what to assume
 
-Ask one short question only when the answer changes the output materially and the request does not imply it:
+Ask one short question only when the answer changes the output materially and the request does not imply it. When several things are open at once (a vague "make it for social media" leaves destination, aspect method, length and captions unresolved), do not ask them one per turn: propose one bundle with your defaults and let the user change any part ("Reels: 9:16 with padding, trimmed to 60 s, -14 LUFS, no captions — OK, or change something?"). One question, one answer, then the run.
 
 - **Destination** decides aspect, length limit, loudness and codec. "For Reels" answers all four. If no destination is named and the edit is a plain cut/caption, keep the source format and say so; if the user asks to "export", "post" or "deliver", ask where.
 - **Duration** ("make it 60 s") without a method: speed up for ≤1.5× changes, trim otherwise, and state which you chose. Ask if the content is a talk (trimming loses words) and the change is large.
@@ -262,8 +262,12 @@ When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
 ```
 Failed: color.py --lut grade.cube exited 1 — ffmpeg: "Unable to parse LUT file" (the .cube is not a valid LUT)
 Steps: probe -> color (failed); nothing written
+Check: nothing to verify
+Look: not needed (nothing written)
 Notes: send a valid .cube, or say if you want the clip left as is
 ```
+
+A refusal (the request asks for a judgement this skill does not make, or for something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run (usually only probe), `Look: not needed`. Both keep the five labels so a reader can scan a failed report the way they scan a successful one. When a tool's failure JSON carries `error.hint`, quote it in `Notes:` — it is the flag change that would make the retry meaningful.
 
 Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool | timeout | verification, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
 

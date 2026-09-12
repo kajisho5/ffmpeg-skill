@@ -19,7 +19,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args
+from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS
 
 MAX_SPEED = 20.0
 MIN_SPEED = 0.05
@@ -60,7 +60,7 @@ def main() -> int:
     ap.add_argument("--segment", action="append", required=True, dest="segments",
                      help=f"START-END:FACTOR, repeatable; segments must cover 0..duration with no gaps or overlaps, in order. FACTOR is {MIN_SPEED}..{MAX_SPEED} (2.0 = twice as fast, 0.5 = half speed)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

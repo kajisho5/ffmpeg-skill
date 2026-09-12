@@ -38,7 +38,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
 
@@ -101,7 +101,7 @@ def main() -> int:
     r.add_argument("--flip", choices=["h", "v"], help="mirror the picture horizontally (h) or vertically (v)")
     e = ap.add_argument_group("encoding")
     e.add_argument("--crf", type=int, default=18)
-    e.add_argument("--preset", default="medium")
+    e.add_argument("--preset", default="medium", choices=X264_PRESETS)
     e.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
     add_common(ap)
     args = ap.parse_args()

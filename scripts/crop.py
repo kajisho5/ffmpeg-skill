@@ -21,7 +21,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS
 
 
 def main() -> int:
@@ -33,7 +33,7 @@ def main() -> int:
     ap.add_argument("--width", type=int, required=True, help="crop width in px (must be even)")
     ap.add_argument("--height", type=int, required=True, help="crop height in px (must be even)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     ap.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
     add_common(ap)
     args = ap.parse_args()

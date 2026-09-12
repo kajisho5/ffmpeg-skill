@@ -29,7 +29,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, x264_args
+from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, x264_args, X264_PRESETS
 from sync import measure_offset
 
 
@@ -69,7 +69,7 @@ def main() -> int:
     ap.add_argument("--height", type=int, help="output height (default: reference)")
     ap.add_argument("--fps", type=float, help="output fps (default: reference)")
     ap.add_argument("--crf", type=int, default=18)
-    ap.add_argument("--preset", default="medium")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

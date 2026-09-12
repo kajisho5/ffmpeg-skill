@@ -31,7 +31,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS
 
 # v360's own AVOption names for the input projections real 360 cameras/exports actually
 # produce (ffmpeg -h filter=v360 documents 24 total; this is the subset a caller is likely
@@ -65,7 +65,7 @@ def main() -> int:
     out.add_argument("--height", type=int, default=1080, help="output height in px, must be even (default 1080)")
     out.add_argument("--interp", choices=INTERP_METHODS, default="lanczos", help="resampling method (default lanczos)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     ap.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
     add_common(ap)
     args = ap.parse_args()

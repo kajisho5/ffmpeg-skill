@@ -27,7 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args
+from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS
 
 
 def main() -> int:
@@ -40,7 +40,7 @@ def main() -> int:
     ap.add_argument("--crop", choices=["keep", "black"], default="keep", help="edges --zoom doesn't crop away: keep (stretch border pixels, default) or black (fill solid black)")
     ap.add_argument("--tripod", action="store_true", help="lock the frame fully still against a single reference frame instead of smoothing the camera's motion")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

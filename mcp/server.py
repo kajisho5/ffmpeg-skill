@@ -102,7 +102,13 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     if proc.returncode != 0:
         err = proc.stderr.strip().splitlines()
         tail = "\n".join(err[-12:])
-        return {"isError": True, "content": [{"type": "text", "text": f"{name} failed (exit {proc.returncode})\n{tail}"}]}
+        failed: Dict[str, Any] = {"isError": True, "content": [{"type": "text", "text": f"{name} failed (exit {proc.returncode})\n{tail}"}]}
+        # The child's own failure document (status, error.kind/code/hint, commands) is the
+        # machine-readable half of the contract; dropping it here left an MCP caller regex-
+        # parsing prose to tell a timeout from a missing binary.
+        if isinstance(structured, dict):
+            failed["structuredContent"] = structured
+        return failed
     if structured is None:
         text = stdout or "\n".join(proc.stderr.strip().splitlines()[-5:])
     result: Dict[str, Any] = {"content": [{"type": "text", "text": text}]}

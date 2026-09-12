@@ -19,7 +19,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS
 
 
 def even(n: float) -> int:
@@ -43,7 +43,7 @@ def main() -> int:
     ap.add_argument("--width", type=int, help="output width in px; with --height also given, both are used directly")
     ap.add_argument("--height", type=int, help="output height in px; with --width also given, both are used directly")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

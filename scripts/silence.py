@@ -16,7 +16,7 @@ import re
 import sys
 from typing import List, Tuple
 
-from _common import video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, require_tool, run, x264_args
+from _common import STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, require_tool, run, x264_args, X264_PRESETS, measured_level_dbfs
 
 SIL_RE = re.compile(r"silence_(start|end): ([0-9.]+)")
 
@@ -65,7 +65,7 @@ def main() -> int:
     ap.add_argument("--list", action="store_true", help="only print silences and the kept ranges")
     ap.add_argument("--edl", help="write the kept ranges to this file, one START-END per line")
     ap.add_argument("--crf", type=int, default=18)
-    ap.add_argument("--preset", default="medium")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -86,6 +86,19 @@ def main() -> int:
         "removed_seconds": round(removed, 3),
     }
     info(f"{len(silences)} silences, keeping {len(keeps)} ranges: {kept:.2f}s of {duration:.2f}s (removing {removed:.2f}s)")
+    if not silences and not STATE.dry_run:
+        # Nothing under the threshold is a valid result, not a failure -- but an agent that only
+        # sees "0 silences" tends to reach for raw ffmpeg next. Say what the floor actually is and
+        # what threshold would bite, so the retry is a flag change, not a workaround.
+        level = measured_level_dbfs(args.input)
+        if level:
+            suggested = min(-5.0, round(level["mean_dbfs"] + 6.0))
+            summary["hint"] = (f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; the track's mean level is "
+                               f"{level['mean_dbfs']:.1f} dBFS (peak {level['peak_dbfs']:.1f}). For a quiet-room recording try "
+                               f"--threshold {suggested:g}, or a shorter --min-silence")
+        else:
+            summary["hint"] = f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; try a higher --threshold (e.g. -25) or a shorter --min-silence"
+        info("hint: " + summary["hint"])
 
     if args.edl:
         with open(args.edl, "w", encoding="utf-8") as fh:

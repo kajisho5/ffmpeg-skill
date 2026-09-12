@@ -80,18 +80,26 @@ TEMPLATE = {
 
 def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
     """Run a sibling script, forwarding --fast / --dry-run, returning its printed output path."""
-    cmd = [sys.executable, str(HERE / script)] + [str(a) for a in argv] + (extra or []) + child_args()
-    info("→ " + " ".join(os.path.basename(c) if i < 2 else c for i, c in enumerate(cmd)))
+    cmd = [sys.executable, str(HERE / script)] + [str(a) for a in argv] + (extra or []) + child_args() + ["--json"]
+    info("→ " + " ".join(os.path.basename(c) if i < 2 else c for i, c in enumerate(cmd[:-1])))
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     for line in proc.stderr.splitlines():
         if line.startswith("$ ") or line.startswith("[dry-run]"):
             STATE["commands"].append(line[2:] if line.startswith("$ ") else line)
         elif line.strip():
             info("    " + line)
+    try:
+        doc = json.loads(proc.stdout.strip() or "{}")
+    except ValueError:
+        doc = {}
     if proc.returncode != 0:
-        die(f"{script} failed")
-    out = proc.stdout.strip().splitlines()
-    return out[-1] if out else ""
+        # Re-raise the stage's own failure: its kind, exit code and hint are what the caller
+        # needs (a timeout inside audio.py is a timeout, not an "input" error of render.py).
+        err = doc.get("error") or {}
+        extra_fields = {"hint": err["hint"]} if err.get("hint") else {}
+        die(f"{script} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
+            code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, **extra_fields)
+    return str(doc.get("output") or "")
 
 
 def main() -> int:

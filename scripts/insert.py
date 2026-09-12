@@ -27,7 +27,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS
 
 
 def even(n: float) -> int:
@@ -47,7 +47,7 @@ def main() -> int:
     ap.add_argument("--zoom-amount", type=float, default=1.3, help="end (zoom in) or start (zoom out) zoom factor, > 1.0 (default 1.3)")
     ap.add_argument("--pan", choices=["left", "right", "up", "down"], help="drift the visible window this direction while zoomed (needs --zoom)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

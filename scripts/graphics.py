@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw
+from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug"]
 
@@ -62,7 +62,7 @@ def main() -> int:
     ap.add_argument("--font-file")
     ap.add_argument("--scale", type=float, default=1.0, help="size multiplier (default 1)")
     ap.add_argument("--crf", type=int, default=18)
-    ap.add_argument("--preset", default="medium")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

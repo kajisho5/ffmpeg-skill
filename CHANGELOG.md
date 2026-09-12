@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-(nothing yet)
+- `--preset` is an argparse choice of the x264 presets in every encoding tool (the contract and MCP schema carry the enum) and `--crf` is range-checked (0-51) before ffmpeg runs; a typo is a `kind: input` refusal, not an encoder error.
+- `silence.py` says why nothing was found: with zero silences the result carries a `hint` with the track's measured mean/peak level and a threshold to try. `cut.py` names the nearest keyframes (`nearest_keyframes`) when a lossless cut had to re-encode, so the caller can move the cut instead. Failure JSON may carry `error.hint`.
+- `broll.py --pad-color` is validated like every other colour flag (it was spliced into the filter graph unchecked; a value containing `,` could append a filter).
+- The MCP server attaches the tool's own failure document as `structuredContent` on a failed call, so a caller reads `error.kind`/`code` instead of parsing prose.
+- `render.py` re-raises a stage's own failure (kind, exit code, hint, `stage`) instead of reporting every child failure as `kind: input`; `report.py` shows "check could not run" instead of crashing when `check.py` fails to run; `--commands`/`--notes`/`--chapters` files that are missing or not UTF-8 are a `kind: input` refusal, not a traceback.
+- SKILL.md: a failed or refused report keeps the five labels (`Look: not needed (nothing written)`), quotes `error.hint` in `Notes:`, and several open questions are asked as one bundled proposal instead of one per turn.
 
 ## 1.4.4
 

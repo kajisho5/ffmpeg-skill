@@ -30,7 +30,11 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run
+from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near
+
+# keyframe timestamps found next to a requested cut that the tolerance turned into a re-encode
+# (reported so the caller can choose a lossless cut at one of them next time)
+NEAREST_KEYFRAMES: list = []
 
 
 def parse_segments(spec: str) -> List[Tuple[float, float]]:
@@ -116,8 +120,15 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     if not reencode and tolerance >= 0 and not STATE["dry_run"]:
         got = probe(dst).get("duration") or 0.0
         if abs(got - dur) > tolerance:
+            near = keyframes_near(src, start)
+            alt = ""
+            if near:
+                closest = min(near, key=lambda k: abs(k - start))
+                alt = (f"; for a lossless cut move --start to a keyframe (nearest: {closest:.3f}s"
+                       + (f", others within 5 s: {', '.join(f'{k:.3f}' for k in near if k != closest)}" if len(near) > 1 else "") + ")")
+                NEAREST_KEYFRAMES.extend(k for k in near if k not in NEAREST_KEYFRAMES)
             info(f"stream copy landed on a keyframe {abs(got - dur):.2f}s away from the requested cut "
-                 f"(> {tolerance:.2f}s tolerance); re-encoding this segment for accuracy")
+                 f"(> {tolerance:.2f}s tolerance); re-encoding this segment for accuracy{alt}")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
     return reencode
 
@@ -134,7 +145,7 @@ def main() -> int:
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF when re-encoding (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset when re-encoding")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset when re-encoding")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -211,7 +222,8 @@ def main() -> int:
          requested_segments=[[round(s, 6), round(e, 6)] for s, e in segments] if len(segments) > 1 else None,
          requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
-         mode=mode, keyframe_snapped=keyframe_snapped)
+         mode=mode, keyframe_snapped=keyframe_snapped,
+         nearest_keyframes=sorted(NEAREST_KEYFRAMES) if NEAREST_KEYFRAMES else None)
     return 0
 
 

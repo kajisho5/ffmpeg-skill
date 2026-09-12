@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args
+from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args, X264_PRESETS
 
 
 def main() -> int:
@@ -36,10 +36,11 @@ def main() -> int:
     ap.add_argument("--audio", choices=["a", "b", "mix"], default="a", help="under a cutaway: A's audio (default), B's audio, or both mixed")
     ap.add_argument("--pad-color", default="black", help="pad colour when B's aspect differs from A's (default black)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    validate_color(args.pad_color, "--pad-color")
 
     n = len(args.insert)
     if len(args.at) != n:

@@ -14,7 +14,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args
+from _common import add_common, apply_common, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args, X264_PRESETS
 
 
 def main() -> int:
@@ -29,7 +29,7 @@ def main() -> int:
     src.add_argument("--gradient", help="two colours as C1:C2 for a linear gradient, e.g. 0xff6a00:0x0057ff")
     ap.add_argument("--angle", type=float, default=0.0, help="gradient angle in degrees (with --gradient, default 0 = left to right)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

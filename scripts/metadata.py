@@ -30,7 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, STATE
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, STATE, read_text_or_die
 
 CHAPTER_CONTAINERS = {".mp4", ".m4v", ".m4a", ".mov", ".mkv", ".mka", ".webm"}
 TAG_KEYS = ("title", "artist", "album", "comment", "date", "genre")
@@ -39,7 +39,7 @@ TAG_KEYS = ("title", "artist", "album", "comment", "date", "genre")
 def parse_chapters(path: str, duration: float) -> List[Dict[str, Any]]:
     """`TIME TITLE` per line -> [{"start", "end", "title"}], validated: ascending starts, every
     start inside the file, the last chapter running to the file's end."""
-    text = Path(path).read_text(encoding="utf-8")
+    text = read_text_or_die(path, "--chapters")
     entries: List[Dict[str, Any]] = []
     for n, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()

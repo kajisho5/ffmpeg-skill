@@ -14,7 +14,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS
 
 
 def main() -> int:
@@ -23,7 +23,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output file (default: <name>_reverse.<ext>)")
     ap.add_argument("--no-audio", action="store_true", help="drop audio instead of reversing it")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

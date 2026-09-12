@@ -312,7 +312,8 @@ before, and, when `--json` was given, on stdout:
 ```
 
 `message` carries the script's own reason (missing input, ffprobe failure, the last
-stderr lines of ffmpeg, the verification that failed); `commands` lists what was planned
+stderr lines of ffmpeg, the verification that failed); an optional `error.hint` names the
+flag change that would make a retry meaningful (never a diagnosis of the media); `commands` lists what was planned
 or run so the caller can retry or report without re-deriving the command. `code` is a
 purely additive, statically-mapped relabelling of `kind` (never a new distinction `kind`
 doesn't already make) for a caller that wants a stable enum instead of matching `kind`

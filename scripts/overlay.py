@@ -24,7 +24,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args
+from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -119,7 +119,7 @@ def main() -> int:
     txt.add_argument("--box-color", default="black@0.5")
     enc = ap.add_argument_group("encoding")
     enc.add_argument("--crf", type=int, default=18)
-    enc.add_argument("--preset", default="medium")
+    enc.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

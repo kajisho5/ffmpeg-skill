@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from _common import STATE, add_common, apply_common, die, emit, info, probe
+from _common import STATE, add_common, apply_common, die, emit, info, probe, read_text_or_die
 
 HERE = Path(__file__).resolve().parent
 
@@ -46,9 +46,16 @@ def loudness(path: str) -> Dict[str, Any]:
 def check(path: str, platform: str) -> Optional[Dict[str, Any]]:
     proc = subprocess.run([sys.executable, str(HERE / "check.py"), path, "--platform", platform, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        return json.loads(proc.stdout)
+        doc = json.loads(proc.stdout)
     except ValueError:
+        doc = None
+    if not isinstance(doc, dict) or "checks" not in doc:
+        # check.py could not run at all (missing ffmpeg, unreadable file): its failure document
+        # has no rows to render. A failed *verification* still carries its rows and is shown.
+        reason = ((doc or {}).get("error") or {}).get("message") or (proc.stderr.strip().splitlines() or ["?"])[-1]
+        info(f"check.py could not run: {reason[:200]}")
         return None
+    return doc
 
 
 def fmt_dur(sec: Optional[float]) -> str:
@@ -99,8 +106,8 @@ def main() -> int:
             sheets["before"] = sheet_b64(args.before)
         if after.get("video"):
             sheets["after"] = sheet_b64(args.after)
-    commands = Path(args.commands).read_text(encoding="utf-8").splitlines() if args.commands else []
-    notes = Path(args.notes).read_text(encoding="utf-8") if args.notes else ""
+    commands = read_text_or_die(args.commands, "--commands").splitlines() if args.commands else []
+    notes = read_text_or_die(args.notes, "--notes") if args.notes else ""
     title = args.title or f"Delivery report — {Path(args.after).name}"
     output = args.output or str(Path(args.after).with_name(Path(args.after).stem + "_report.html"))
 

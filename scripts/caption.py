@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args
+from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -406,7 +406,7 @@ def main() -> int:
     anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
     enc = ap.add_argument_group("encoding")
     enc.add_argument("--crf", type=int, default=18)
-    enc.add_argument("--preset", default="medium")
+    enc.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

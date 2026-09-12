@@ -22,7 +22,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS
 
 MODES = {"frame": 0, "field": 1}
 PARITIES = {"auto": -1, "tff": 0, "bff": 1}
@@ -41,7 +41,7 @@ def main() -> int:
     ap.add_argument("--audio-stream", type=int, default=0,
                      help="which audio stream of the input to keep, 0-based in file order (default 0)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

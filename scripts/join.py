@@ -23,7 +23,7 @@ import argparse
 import sys
 from typing import List
 
-from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, validate_color
+from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, validate_color, X264_PRESETS
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -94,7 +94,7 @@ def main() -> int:
     ap.add_argument("--fit", choices=["pad", "crop"], default="pad", help="how clips of another aspect reach the frame (default pad)")
     ap.add_argument("--pad-color", default="black")
     ap.add_argument("--crf", type=int, default=18)
-    ap.add_argument("--preset", default="medium")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     aud = ap.add_argument_group("audio-only inputs")
     aud.add_argument("--sample-rate", type=int, help="output sample rate in Hz (default: first clip's)")
     aud.add_argument("--channels", type=int, choices=[1, 2, 6, 8], help="output channel count (default: the widest clip)")

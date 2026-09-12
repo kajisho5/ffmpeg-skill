@@ -159,7 +159,8 @@ def die(msg: str, code: int = 1, kind: str = "input", **extra: Any) -> "None":
     reporting that detail while the top-level status says failed. Before 1.4.3 those four printed
     `status: "completed"` next to a non-zero exit code, so a caller keying on the status alone
     read a failed delivery as a success."""
-    sys.stderr.write(f"error: {msg}\n")
+    hint = extra.pop("hint", None)
+    sys.stderr.write(f"error: {msg}\n" + (f"hint: {hint}\n" if hint else ""))
     if STATE.json:
         doc: Dict[str, Any] = {
             "status": "failed", "exit_code": code,
@@ -170,6 +171,8 @@ def die(msg: str, code: int = 1, kind: str = "input", **extra: Any) -> "None":
             },
             "commands": list(STATE.commands),
         }
+        if hint:
+            doc["error"]["hint"] = hint
         doc.update(extra)
         print_json(doc)
     sys.exit(code)
@@ -268,6 +271,9 @@ def apply_common(args: "argparse.Namespace") -> None:
         STATE.timeout = max(0.0, float(args.timeout))
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
+    crf = getattr(args, "crf", None)
+    if crf is not None and not 0 <= int(crf) <= 51:
+        die(f"--crf must be between 0 and 51 (x264/x265 scale; 18 is visually lossless, 23 the encoder default), got {crf}")
 
 
 def emit(output: Optional[str], **extra: Any) -> None:
@@ -1076,6 +1082,55 @@ def is_audio_output(output_path: str) -> bool:
 
 def db_to_linear(db: float) -> float:
     return 10 ** (db / 20.0)
+
+
+def read_text_or_die(path: str, flag: str) -> str:
+    """Read a caller-supplied UTF-8 text file (a cue list, chapters, notes) or fail as kind input
+    with the flag named, instead of a FileNotFoundError / UnicodeDecodeError traceback."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        die(f"{flag}: {path} does not exist")
+    except IsADirectoryError:
+        die(f"{flag}: {path} is a directory, not a text file")
+    except UnicodeDecodeError as e:
+        die(f"{flag}: {path} is not UTF-8 text ({e.reason} at byte {e.start}); save it as UTF-8")
+    except OSError as e:
+        die(f"{flag}: cannot read {path}: {e.strerror}")
+    return ""  # unreachable
+
+
+def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
+    """Video keyframe timestamps within +-window seconds of t, ascending. Read with
+    -read_intervals so a long file is not scanned end to end; empty when ffprobe cannot say."""
+    ffprobe = require_tool("ffprobe")
+    lo = max(0.0, t - window)
+    proc = run([ffprobe, "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
+                "-read_intervals", f"{lo:.3f}%{t + window:.3f}", "-show_entries", "frame=pts_time",
+                "-of", "csv=p=0", path], quiet=True, check=False)
+    if proc.returncode != 0:
+        return []
+    out: List[float] = []
+    for line in proc.stdout.splitlines():
+        try:
+            out.append(round(float(line.strip().rstrip(",")), 3))
+        except ValueError:
+            continue
+    return sorted(set(out))
+
+
+def measured_level_dbfs(path: str, seconds: float = 120.0) -> Optional[Dict[str, float]]:
+    """Mean and peak level of the first `seconds` of audio (volumedetect), in dBFS; None if unmeasurable.
+    Cheap enough to run once as a hint when a threshold-based tool found nothing."""
+    ffmpeg = require_tool("ffmpeg")
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-t", f"{seconds:.0f}", "-i", path, "-vn",
+                         "-af", "volumedetect", "-f", "null", "-"], check=False)
+    m_mean = re.search(r"mean_volume:\s*(-?[0-9.]+) dB", proc.stderr)
+    m_max = re.search(r"max_volume:\s*(-?[0-9.]+) dB", proc.stderr)
+    if not (m_mean and m_max):
+        return None
+    return {"mean_dbfs": float(m_mean.group(1)), "peak_dbfs": float(m_max.group(1))}
 
 
 def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:

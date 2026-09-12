@@ -22,7 +22,7 @@ import os
 import sys
 from typing import List
 
-from _common import add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, run_keeping_subtitles, x264_args
+from _common import add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, run_keeping_subtitles, x264_args, X264_PRESETS
 
 TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
 
@@ -204,7 +204,7 @@ def main() -> int:
                           "audio (--to-sdr, --lut, --correct, and --retag's re-encode fallback) -- --strip-dovi and "
                           "a successful --retag stream-copy all streams untouched, so the flag has nothing to select there.")
     ap.add_argument("--crf", type=int, default=18)
-    ap.add_argument("--preset", default="medium")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

@@ -22,7 +22,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, validate_color
+from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, validate_color, X264_PRESETS
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -42,7 +42,7 @@ def main() -> int:
     ap.add_argument("--audio-stream", type=int, default=0,
                      help="which audio stream of the input to render, 0-based in file order (default 0)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
-    ap.add_argument("--preset", default="medium", help="x264 preset")
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
