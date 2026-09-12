@@ -57,6 +57,10 @@ ROLES = {
 FF = ["ffmpeg", "ffprobe"]
 X264 = "encoder:libx264"
 X265 = "encoder:libx265"
+# --codec (1.8, every tool that re-encodes): the encoder the flag names, on top of the tool's own list
+CODEC_CAPS = [{"capability": X265, "when": "--codec hevc"},
+              {"capability": "encoder:libsvtav1", "when": "--codec av1 (libaom-av1 is the fallback)"},
+              {"capability": "encoder:prores_ks", "when": "--codec prores"}]
 AAC = "encoder:aac"
 HDR_X265 = {"capability": X265, "when": "the source is HDR (kept as HEVC Main10)"}
 AUDIO_OUT = [
@@ -333,7 +337,7 @@ def input_schema(parser: argparse.ArgumentParser) -> Dict[str, Any]:
     props: Dict[str, Any] = {}
     required: List[str] = []
     positional: List[str] = []
-    common = {"dry_run", "json", "progress", "fast", "timeout", "overwrite", "plan"}
+    common = {"dry_run", "json", "progress", "fast", "timeout", "overwrite", "plan", "codec", "quality"}
     for action in parser._actions:
         if isinstance(action, argparse._HelpAction):
             continue
@@ -648,6 +652,7 @@ def required_capabilities() -> Dict[str, List[str]]:
     for meta in TOOL_META.values():
         req.update(meta["required"])
         opt.update(o["capability"] for o in meta["optional"] if o["capability"] != "delegated")
+    opt.update(o["capability"] for o in CODEC_CAPS)
     opt -= req
     return {"required": sorted(req), "optional": sorted(opt)}
 
@@ -898,7 +903,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "description": (parser.description or "").strip().splitlines()[0] if parser.description else "",
         "executable": f"scripts/{name}.py",
         "role": meta["role"],
-        "capabilities": {"required": list(meta["required"]), "optional": list(meta["optional"])},
+        "capabilities": {"required": list(meta["required"]), "optional": list(meta["optional"]) + (CODEC_CAPS if "codec" in schema["properties"] else [])},
         "inputs": list(meta["inputs"]),
         "outputs": list(meta["outputs"]),
         "input_schema": schema,

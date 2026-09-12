@@ -162,6 +162,16 @@ tool's job; only the artifact is skipped, including side files such as `--edl`, 
 generated `.ass`), and `verify` does not support dry-run (its steps run). `SKILL.md` and
 `references/scripts.md` repeat the same list; the contract is the authority.
 
+`--codec h264|hevc|av1|prores` and `--quality N` (1.8) are on every tool whose schema has
+`crf` (the ones that re-encode), marked `common`. They are resolved in one place
+(`_common.encoder_args()`): hevc keeps an HDR source Main10 with its tags and writes 8-bit
+BT.709 for SDR; av1 is SVT-AV1 with libaom as the fallback; prores is 422 HQ and needs a
+`.mov`/`.mkv` output; h264 refuses an HDR source (`kind: input`). `--quality` is the CRF scale
+and overrides `--crf`. Without `--codec` the encoder is what it always was (x264 for SDR, x265
+Main10 for HDR), so the flags add no behaviour to a caller that does not pass them. The
+encoder each value needs is listed under the tool's optional capabilities (`--codec hevc` and
+so on). `export.py` refuses `--codec`: its presets decide the codec.
+
 `--plan FILE` (1.6) is a dry run that also writes a plan document: `{"plan_version": 1,
 "tool", "argv", "cwd", "inputs": [{"path", "size", "sha256_head_tail"}], "commands",
 "output", "verify": [{"tool": "probe"}, {"tool": "check", "platform"}], "notes"}`. It

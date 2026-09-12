@@ -2230,6 +2230,58 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertFalse(data["levels"]["looks_like_log"])
 
     # ---------------------------------------------------------------- v0.5: check / scenes / render
+    def test_codec_and_quality_resolve_in_one_place(self):
+        """1.8 (issue #189 B pre-shipped): --codec / --quality on every re-encoding tool, resolved by
+        encoder_args(). hevc on SDR is 8-bit BT.709 HEVC; prores needs a .mov; h264 refuses HDR;
+        --quality is the CRF; export keeps its presets; without --codec nothing changes."""
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import _common
+        finally:
+            sys.path.pop(0)
+        out = OUT / "codec_hevc.mp4"
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "hevc", "--quality", "30", "-o", out, "--fast", "--json", "--overwrite").stdout)
+        self.assertEqual(d["status"], "completed")
+        m = probe(str(out))
+        self.assertEqual(m["video"]["codec"], "hevc")
+        self.assertIn("yuv420p", m["video"].get("pix_fmt", "yuv420p"))
+        self.assertTrue(any("-crf 30" in c for c in d["commands"]), d["commands"])
+        # prores wants a .mov: .mp4 is refused before ffmpeg runs, .mov works
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "prores", "-o", OUT / "codec_prores.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn(".mov", d["error"]["hint"])
+        mov = OUT / "codec_prores.mov"
+        script("fit.py", self.src, "--width", "320", "--codec", "prores", "-o", mov, "--fast", "--json", "--overwrite")
+        self.assertEqual(probe(str(mov))["video"]["codec"], "prores")
+        # h264 cannot carry HDR; hevc keeps it
+        d = json.loads(script("fit.py", self.hdr, "--width", "320", "--codec", "h264", "-o", OUT / "codec_hdr_h264.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("to-sdr", d["error"]["hint"])
+        hdr_out = OUT / "codec_hdr_hevc.mp4"
+        script("fit.py", self.hdr, "--width", "320", "--codec", "hevc", "-o", hdr_out, "--fast", "--json", "--overwrite")
+        self.assertTrue(probe(str(hdr_out))["video"]["hdr"])
+        # av1 when the build has an encoder, a missing_tool refusal otherwise
+        av1 = OUT / "codec_av1.mp4"
+        proc = script("fit.py", self.src, "--width", "320", "--codec", "av1", "-o", av1, "--fast", "--json", "--overwrite", expect_fail=not (_common.ffmpeg_encoders() & {"libsvtav1", "libaom-av1"}))
+        d = json.loads(proc.stdout)
+        if d["status"] == "completed":
+            self.assertEqual(probe(str(av1))["video"]["codec"], "av1")
+        else:
+            self.assertEqual(d["error"]["kind"], "missing_tool")
+        # --quality bounds follow the codec; export refuses --codec
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--quality", "60", "-o", out, "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        d = json.loads(script("export.py", self.src, "--preset", "x", "--codec", "hevc", "-o", OUT / "codec_export.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        # no --codec: the old default line, byte for byte
+        d = json.loads(script("fit.py", self.src, "--width", "320", "-o", out, "--fast", "--json", "--overwrite").stdout)
+        self.assertTrue(any("libx264" in c for c in d["commands"]))
+        # every tool that declares --crf now advertises the two flags
+        for name in ("cut", "caption", "overlay", "color", "join", "proxy"):
+            h = script(f"{name}.py", "--help").stdout
+            self.assertIn("--codec", h, name)
+            self.assertIn("--quality", h, name)
+
     def test_check_compliance(self):
         reels = OUT / "export_reels.mp4"
         if not reels.exists():
