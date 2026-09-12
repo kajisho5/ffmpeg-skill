@@ -128,15 +128,36 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.9"
+      # The tarball is pinned by version and never changes, so one download per runner image
+      # is enough: cache it, and only fetch when the cache is cold.
+      - name: Cache the ffmpeg 5.1.1 static tarball
+        id: ffcache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg.tar.xz
+          key: ffmpeg-5.1.1-amd64-static-tar-xz
       - name: Install ffmpeg 5.1.1 (static) and fonts
         run: |
           sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
-          # johnvansickle.com is a single small host; a connect timeout there took the whole
-          # job with it once (2026-09-12, "Failed to connect ... after 132939 ms"). Retry the
-          # download for a few minutes before giving up, and fail loudly if it still cannot.
-          curl -sSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
-            -o ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-5.1.1-amd64-static.tar.xz
-          test -s ffmpeg.tar.xz || { echo "::error::ffmpeg 5.1.1 static download failed"; exit 1; }
+          # johnvansickle.com is a single small host. Seen on 2026-09-12: a connect timeout
+          # ("Failed to connect ... after 132939 ms") and, an hour later, an HTTP 200 whose body
+          # was not an xz archive ("xz: (stdin): File format not recognized"). curl's --retry
+          # covers only the first, so verify the archive and retry the whole download until it
+          # is one, then fail loudly.
+          if [ "${{ steps.ffcache.outputs.cache-hit }}" != "true" ] || ! xz -t ffmpeg.tar.xz 2>/dev/null; then
+            ok=0
+            for attempt in 1 2 3 4 5 6; do
+              rm -f ffmpeg.tar.xz
+              curl -sSL --connect-timeout 30 --max-time 600 \
+                -o ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-5.1.1-amd64-static.tar.xz || true
+              if [ -s ffmpeg.tar.xz ] && xz -t ffmpeg.tar.xz 2>/dev/null; then ok=1; break; fi
+              echo "attempt $attempt: not a valid xz archive ($(stat -c %s ffmpeg.tar.xz 2>/dev/null || echo 0) bytes; $(head -c 120 ffmpeg.tar.xz 2>/dev/null | tr -d '\0' | tr '\n' ' ' | cut -c1-120)); retrying in 20 s"
+              sleep 20
+            done
+            [ "$ok" = 1 ] || { echo "::error::ffmpeg 5.1.1 static download failed after 6 attempts"; exit 1; }
+          else
+            echo "ffmpeg.tar.xz restored from cache"
+          fi
           mkdir -p "$HOME/ffmpeg5" && tar -xJf ffmpeg.tar.xz -C "$HOME/ffmpeg5" --strip-components=1
           echo "$HOME/ffmpeg5" >> "$GITHUB_PATH"
       - name: ffmpeg version, listings and doctor
