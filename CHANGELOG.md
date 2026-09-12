@@ -4,7 +4,13 @@
 
 ## Unreleased
 
-(nothing yet)
+- Multi-segment `cut.py` writes its concat list with forward slashes, so a Windows temp path (`C:\Users\...`) is not read as escape sequences by the concat demuxer; `sequence.py` shares the helper.
+- SMPTE `hh:mm:ss:ff` parsing counts frames per timecode-second like `fmt_smpte_time()` does, so the two agree at 29.97/59.94 over long files. `cut.py` passes the input's fps (so SMPTE works there) and refuses a bad time as `kind: input`; `freeze.py --at` accepts the shared time grammar.
+- `caption.py --transcribe`: faster-whisper runs under `--timeout` like the CLI engines; an old whisper.cpp binary named `main` is used when it lives in a whisper directory.
+- `bin/install.js` moves the old install aside and back on a failed swap, so an upgrade never leaves the target empty; the npm package and installer ship `docs/contract.md`.
+- `join.py` goes 10-bit HEVC when any input is HDR (not only the first); `broll.py` keeps a 10-bit cutaway over an HDR main clip; `grid.py` notes that an HDR input is composited into an 8-bit SDR grid.
+- `look.py -o` names the file for a single `--at` when it carries an image extension; `audio.py` refuses `--mono` with `--stereo` and an out-of-range `--denoise-strength`; `render.py` refuses a negative clip speed; `batch.py` also picks up `.ogg`/`.opus`/`.ts`/`.gif`/`.aac`/`.aiff`; `report.py` shows a 0 s duration as 0 s; `ffmpeg_version()` has a probe timeout.
+- Windows: `default_font_file()` looks for the requested family in `C:\Windows\Fonts` (and common CJK system fonts for a CJK request) before falling back to Arial.
 
 ## 1.4.7
 

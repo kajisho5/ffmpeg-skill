@@ -121,6 +121,11 @@ def main() -> int:
     if args.audio_from is not None:
         audio_source = "[aout]" if (args.pad and durations[args.audio_from] < target_duration) else f"{args.audio_from}:a:0"
         cmd += ["-map", audio_source]
+    # A grid is an 8-bit SDR composite by design (a comparison/contact artefact, not a
+    # deliverable); an HDR input is flattened like look.py's contact sheet flattens it. Say so
+    # once so the caller is not surprised by the 8-bit output.
+    if any((m.get("video") or {}).get("hdr") for m in metas):
+        info("note: an HDR input is composited into an 8-bit SDR grid (grid.py is a comparison artefact); use color.py --to-sdr first for a graded conversion")
     cmd += video_args(None, args.crf, args.preset)
     cmd += cfr_args(None, args.fps)
     if args.audio_from is not None:

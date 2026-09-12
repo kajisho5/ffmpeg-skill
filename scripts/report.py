@@ -57,7 +57,7 @@ def check(path: str, platform: str) -> Optional[Dict[str, Any]]:
 
 
 def fmt_dur(sec: Optional[float]) -> str:
-    if not sec:
+    if sec is None:
         return "?"
     m, s = divmod(sec, 60)
     h, m = divmod(int(m), 60)

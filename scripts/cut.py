@@ -30,14 +30,23 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near
+from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line
 
 # keyframe timestamps found next to a requested cut that the tolerance turned into a re-encode
 # (reported so the caller can choose a lossless cut at one of them next time)
 NEAREST_KEYFRAMES: list = []
 
 
-def parse_segments(spec: str) -> List[Tuple[float, float]]:
+def _t(value: str, fps) -> float:
+    """parse_time() with the input's fps (SMPTE hh:mm:ss:ff) and every failure as kind input."""
+    try:
+        return parse_time(value, fps)
+    except (ValueError, MissingFpsError) as e:
+        die(f"bad time {value!r}: {e}")
+    return 0.0  # unreachable
+
+
+def parse_segments(spec: str, fps=None) -> List[Tuple[float, float]]:
     segs = []
     for raw in spec.split(","):
         raw = raw.strip()
@@ -46,7 +55,7 @@ def parse_segments(spec: str) -> List[Tuple[float, float]]:
         if "-" not in raw:
             die(f"segment '{raw}' must look like START-END (e.g. 0:05-0:12)")
         a, b = raw.rsplit("-", 1)
-        start, end = parse_time(a), parse_time(b)
+        start, end = _t(a, fps), _t(b, fps)
         if end <= start:
             die(f"segment '{raw}': end must be after start")
         segs.append((start, end))
@@ -156,20 +165,21 @@ def main() -> int:
         info("source looks variable-frame-rate; lossless cuts on VFR are unreliable, switching to --accurate")
         args.accurate = True
 
+    fps = (meta.get("video") or {}).get("fps")
     if args.segments:
-        segments = parse_segments(args.segments)
+        segments = parse_segments(args.segments, fps)
     else:
-        start = parse_time(args.start)
+        start = _t(args.start, fps)
         if start < 0:
             die(f"--start must not be negative, got {args.start!r}")
         if args.end and args.duration:
             die("use --end or --duration, not both")
         if args.end:
-            end = parse_time(args.end)
+            end = _t(args.end, fps)
             if end < 0:
                 die(f"--end must not be negative, got {args.end!r}")
         elif args.duration:
-            end = start + parse_time(args.duration)
+            end = start + _t(args.duration, fps)
         else:
             end = total
         if end <= start:
@@ -197,7 +207,7 @@ def main() -> int:
             listfile = os.path.join(tmp, "list.txt")
             with open(listfile, "w", encoding="utf-8") as fh:
                 for p in parts:
-                    fh.write("file '" + p.replace("'", "'\\''") + "'\n")
+                    fh.write(concat_list_line(p) + "\n")
             cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", output]
             proc = run(cmd, check=False)
             if proc.returncode != 0:

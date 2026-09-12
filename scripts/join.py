@@ -168,7 +168,10 @@ def main() -> int:
         geo = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
     else:
         geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={args.pad_color}"
-    pixfmt = "yuv420p10le" if (metas[0].get("video") or {}).get("hdr") else "yuv420p"
+    # Any HDR input makes the join HDR (10-bit, HEVC via video_args on that clip's tags): an SDR
+    # first clip used to drag an HDR second clip down to 8-bit without a tone map.
+    hdr_meta = next((m for m in metas if (m.get("video") or {}).get("hdr")), None)
+    pixfmt = "yuv420p10le" if hdr_meta else "yuv420p"
     for i in range(n):
         parts.append(f"[{i}:v]{geo},setsar=1,fps={fps:g},format={pixfmt},settb=AVTB[v{i}]")
         parts.append(f"[{audio_src[i]}]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]")
@@ -189,7 +192,7 @@ def main() -> int:
 
     output = args.output or default_output(args.inputs[0], "joined", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
-    cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + [output]
+    cmd += video_args(hdr_meta or metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
     expected = sum(durs) - d * (n - 1)
     r = probe(output, role="output")

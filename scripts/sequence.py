@@ -19,7 +19,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, concat_list_line
 
 
 def even(n: float) -> int:
@@ -28,9 +28,7 @@ def even(n: float) -> int:
 
 
 def _concat_list_line(path: Path) -> str:
-    # concat demuxer file paths: backslash and single-quote need escaping inside the quoted form.
-    escaped = str(path).replace("\\", "/").replace("'", "'\\''")
-    return f"file '{escaped}'"
+    return concat_list_line(str(path))
 
 
 def main() -> int:

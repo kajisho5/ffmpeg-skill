@@ -33,6 +33,7 @@
     "references/scripts.md",
     "references/devices.md",
     "references/ci-platform-pitfalls.md",
+    "docs/contract.md",
     "SKILL.md",
     "README.md",
     "LICENSE"

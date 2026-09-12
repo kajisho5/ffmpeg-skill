@@ -166,6 +166,8 @@ def main() -> int:
             part = src
         if c.get("speed"):
             spd = float(c["speed"])
+            if not (spd > 0) or spd != spd or spd == float("inf"):
+                die(f"clip {i}: speed must be a positive number, got {c['speed']!r}")
             dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else 10.0
             fitted = str(work / f"clip{i:02d}_speed.mp4")
             sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted)

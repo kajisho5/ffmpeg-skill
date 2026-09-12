@@ -107,11 +107,14 @@ def ffmpeg_version() -> "Tuple[int, int]":
     if _FFMPEG_VERSION is None:
         _FFMPEG_VERSION = (0, 0)
         try:
-            out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+            out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                 timeout=PROBE_TIMEOUT).stdout
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
             if m:
                 _FFMPEG_VERSION = (int(m.group(1)), int(m.group(2)))
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
+            # (0, 0) = unknown: every version branch then takes the older, universally accepted
+            # spelling, the same "unknown is not missing" stance doctor takes.
             pass
     return _FFMPEG_VERSION
 
@@ -206,9 +209,9 @@ X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium"
 class Context:
     """Per-process settings that the shared flags (--dry-run, --json, --progress, --fast) set once.
 
-    Scripts read it as attributes (``STATE.dry_run``) or, for older call sites, like a dict
-    (``STATE.dry_run``). Keeping it a single explicit object rather than module globals makes
-    it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
+    Scripts read it as attributes (``STATE.dry_run``); the dict-style shims that once served
+    older call sites are gone. Keeping it a single explicit object rather than module globals
+    makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
     __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting")
@@ -912,6 +915,15 @@ class MissingFpsError(ValueError):
     silently swallowing a mistyped/missing --fps as an auto-timed line of digits."""
 
 
+def concat_list_line(path: str) -> str:
+    """One `file '...'` line for the concat demuxer. The demuxer reads backslash as an escape
+    inside the quoted form, so a Windows path (C:\\Users\\...\\part000.mp4) must be written
+    with forward slashes -- ffmpeg opens either spelling on Windows -- and a single quote in the
+    name is closed, escaped and reopened. Shared by cut.py (multi-segment) and sequence.py."""
+    escaped = str(path).replace("\\", "/").replace("'", "'\\''")
+    return f"file '{escaped}'"
+
+
 def parse_time(value: str, fps: Optional[float] = None) -> float:
     """Accept seconds ('12.5'), mm:ss ('1:30'), hh:mm:ss(.ms) ('00:01:30.250'), SRT '00:01:30,250',
     or -- when `fps` is given -- SMPTE non-drop-frame timecode 'hh:mm:ss:ff' ('00:01:30:15')."""
@@ -928,7 +940,12 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
         frame, whole_fps = int(f), int(round(fps))
         if not (0 <= frame < whole_fps):
             raise ValueError(f"bad SMPTE timecode '{value}': frame {frame} is out of range for {fps:g} fps (0-{whole_fps - 1})")
-        return int(h) * 3600 + int(m) * 60 + int(s) + frame / fps
+        # Non-drop-frame: the timecode counts whole_fps frames per timecode-second, so the real
+        # time is the total frame count over the true rate (at 29.97 an hour of timecode is
+        # 3596.4 s of video). This is exactly what fmt_smpte_time() inverts; before, the two
+        # disagreed by ~0.1 % on the fractional NTSC rates and drifted apart over long files.
+        total_frames = (int(h) * 3600 + int(m) * 60 + int(s)) * whole_fps + frame
+        return total_frames / fps
     if len(parts) > 3:
         raise ValueError(f"bad time: {value}")
     total = 0.0
@@ -1002,7 +1019,26 @@ def default_font_file(font_name: str) -> Optional[str]:
     """
     if platform.system() == "Windows":
         windir = os.environ.get("WINDIR", "C:\\Windows")
-        candidate = Path(windir) / "Fonts" / "arial.ttf"
+        fonts = Path(windir) / "Fonts"
+        # The requested family first: a file whose name starts with the family name with spaces
+        # removed (Noto Sans CJK JP -> NotoSansCJKjp-Regular.otf, Meiryo -> meiryo.ttc), then the
+        # common CJK system fonts when the request looks CJK (so Japanese text does not render as
+        # boxes in Arial), and Arial only as the last resort.
+        wanted = re.sub(r"[^a-z0-9]", "", (font_name or "").lower())
+        try:
+            files = sorted(fonts.iterdir()) if fonts.is_dir() else []
+        except OSError:
+            files = []
+        if wanted:
+            for f in files:
+                stem = re.sub(r"[^a-z0-9]", "", f.stem.lower())
+                if f.suffix.lower() in (".ttf", ".otf", ".ttc") and stem.startswith(wanted):
+                    return str(f)
+        if any(k in wanted for k in ("cjk", "gothic", "mincho", "meiryo", "yugoth", "msgothic", "malgun", "simhei", "simsun", "jp", "kr", "sc", "tc")):
+            for name in ("NotoSansCJKjp-Regular.otf", "NotoSansCJK-Regular.ttc", "meiryo.ttc", "YuGothM.ttc", "msgothic.ttc", "malgun.ttf", "msyh.ttc"):
+                if (fonts / name).exists():
+                    return str(fonts / name)
+        candidate = fonts / "arial.ttf"
         return str(candidate) if candidate.exists() else None
     exe = shutil.which("fc-match")
     if not exe:

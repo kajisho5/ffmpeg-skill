@@ -19,14 +19,14 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, parse_time
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_freeze.<ext>)")
-    ap.add_argument("--at", type=float, help="timestamp to freeze, in seconds (default: the last frame)")
+    ap.add_argument("--at", help="timestamp to freeze: seconds, mm:ss, hh:mm:ss.ms or SMPTE hh:mm:ss:ff (default: the last frame)")
     ap.add_argument("--hold", type=float, required=True, help="how long the freeze lasts, in seconds")
     ap.add_argument("--mode", choices=["insert", "extend"], default="insert",
                      help="insert (default): hold pushes the rest of the clip later; extend: only valid at/after the clip's end, makes the last frame last longer with nothing pushed")
@@ -44,7 +44,13 @@ def main() -> int:
         die("input has no video stream")
     dur = meta.get("duration") or 0.0
     fps = meta["video"].get("fps") or 30.0
-    at = args.at if args.at is not None else dur
+    if args.at is not None:
+        try:
+            at = parse_time(args.at, (meta.get("video") or {}).get("fps"))
+        except (ValueError, MissingFpsError) as e:
+            die(f"--at {args.at!r}: {e}")
+    else:
+        at = dur
     if at < 0 or at > dur:
         die(f"--at {at:g} is outside the clip (0..{dur:.3f})")
     if args.mode == "extend" and at < dur - 0.01:

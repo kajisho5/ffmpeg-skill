@@ -27,7 +27,7 @@ const { spawnSync } = require('child_process');
 
 const SKILL_NAME = 'ffmpeg-skill';
 const ROOT = path.resolve(__dirname, '..');
-const PAYLOAD = ['SKILL.md', 'scripts', 'references', 'mcp', 'package.json'];
+const PAYLOAD = ['SKILL.md', 'scripts', 'references', 'docs', 'mcp', 'package.json'];
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(flag);
@@ -131,8 +131,20 @@ for (const t of targets) {
       if (!fs.existsSync(src)) { if (item !== 'SKILL.md' && item !== 'scripts') continue; throw new Error(`missing ${item} in package`); }
       copyRecursive(src, path.join(tmpDir, item));
     }
-    fs.rmSync(t.dir, { recursive: true, force: true });
-    fs.renameSync(tmpDir, t.dir);
+    // Swap: move the old install aside, move the new one in, then drop the old copy. If the
+    // second rename fails (a locked file on Windows, a permission error) the old install is put
+    // back, so an upgrade can fail but never leaves the target empty.
+    const bakDir = `${t.dir}.bak-${process.pid}`;
+    fs.rmSync(bakDir, { recursive: true, force: true });
+    const hadOld = fs.existsSync(t.dir);
+    if (hadOld) fs.renameSync(t.dir, bakDir);
+    try {
+      fs.renameSync(tmpDir, t.dir);
+    } catch (err) {
+      if (hadOld) { try { fs.renameSync(bakDir, t.dir); } catch (_) { /* the old copy stays at bakDir */ } }
+      throw err;
+    }
+    if (hadOld) fs.rmSync(bakDir, { recursive: true, force: true });
     console.log(`installed ${t.label}: ${t.dir}`);
   } catch (err) {
     failed = true;

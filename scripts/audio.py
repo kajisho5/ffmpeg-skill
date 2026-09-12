@@ -91,8 +91,9 @@ def main() -> int:
     fades.add_argument("--fade-in", type=float, default=0.0, help="seconds")
     fades.add_argument("--fade-out", type=float, default=0.0, help="seconds; fades the whole final mix (voice included)")
     music.add_argument("--music-fade-out", type=float, default=0.0, help="seconds; fades only the music bed at the end, voice untouched")
-    fades.add_argument("--stereo", action="store_true", help="force 2-channel output (mono is duplicated to both sides)")
-    fades.add_argument("--mono", action="store_true", help="force 1-channel output")
+    channels = fades.add_mutually_exclusive_group()
+    channels.add_argument("--stereo", action="store_true", help="force 2-channel output (mono is duplicated to both sides)")
+    channels.add_argument("--mono", action="store_true", help="force 1-channel output")
     fades.add_argument("--downmix", action="store_true", help="downmix 5.1/7.1 to stereo using standard weights")
     fades.add_argument("--replace", help="replace the audio with this file (trimmed/padded to the video)")
     dyn = ap.add_argument_group("dynamics (typed; each flag is one option of ffmpeg's acompressor / alimiter / agate)")
@@ -151,6 +152,8 @@ def main() -> int:
     if args.voice:
         fx.append(VOICE_CHAIN)
     elif args.denoise:
+        if not 10 <= args.denoise_strength <= 60:
+            die(f"--denoise-strength must be 10..60 (dB of noise floor to remove), got {args.denoise_strength:g}")
         fx.append(f"afftdn=nf=-{args.denoise_strength:g}:tn=1")
     if args.gain:
         fx.append(f"volume={args.gain:g}dB")

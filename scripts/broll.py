@@ -104,7 +104,7 @@ def main() -> int:
     for i, c in enumerate(cutaways):
         geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={args.pad_color}"
         parts.append(f"[{i + 1}:v]trim=start={c['from']:.3f}:duration={c['length']:.3f},setpts=PTS-STARTPTS+{c['at']:.3f}/TB,"
-                     f"{geo},setsar=1,fps={fps:g},format=yuv420p[b{i}]")
+                     f"{geo},setsar=1,fps={fps:g},format={'yuv420p10le' if (meta_a.get('video') or {}).get('hdr') else 'yuv420p'}[b{i}]")
         parts.append(f"{cur}[b{i}]overlay=0:0:eof_action=pass:enable='between(t,{c['at']:.3f},{c['at'] + c['length']:.3f})'[v{i}]")
         cur = f"[v{i}]"
     vout = cur

@@ -1324,6 +1324,47 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((doc["status"], doc["error"]["kind"], doc["processed"], doc["total"]), ("failed", "verification", 0, 1))
         self.assertFalse(doc["results"][0]["ok"])
 
+    def test_bug_report_2026_09_12_regressions(self):
+        """Pins from the third audit: concat list lines are Windows-safe; SMPTE parse and format
+        agree at 29.97; cut/freeze accept SMPTE with the input's fps and refuse bad times as kind
+        input; look.py honours -o for a single --at; audio refuses --mono with --stereo and an
+        out-of-range --denoise-strength; render refuses speed 0; batch lists .ogg/.opus/.ts;
+        report's 0 s is 0 s; ffmpeg_version has a probe timeout. (speed 0 was already "unset", not a
+        division by zero as reported; a negative speed did reach fit.py.)"""
+        self.assertEqual(_common.concat_list_line("C:\\Users\\t\\part000.mp4"), "file 'C:/Users/t/part000.mp4'")
+        self.assertEqual(_common.concat_list_line("/a/it's.mp4"), "file '/a/it'\\''s.mp4'")
+        for tc in ("00:00:00:29", "00:00:01:00", "01:00:00:00", "00:59:56:12"):
+            secs = _common.parse_time(tc, 29.97)
+            self.assertEqual(_common.fmt_smpte_time(secs, 29.97), tc, tc)
+        self.assertAlmostEqual(_common.parse_time("01:00:00:00", 29.97), 3600 * 30 / 29.97, places=3)
+        proc = tool("cut", self.src, "--start", "00:00:01:00", "--end", "00:00:02:15", "--json", "-o", self.out("smpte_cut.mp4"))
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        proc = tool("cut", self.src, "--start", "00:00:01:99", "--end", "2", "--json", "-o", self.out("smpte_bad.mp4"), check=False)
+        self.assertEqual((proc.returncode != 0, json.loads(proc.stdout)["error"]["kind"]), (True, "input"))
+        self.assertIn("out of range", json.loads(proc.stdout)["error"]["message"])
+        proc = tool("freeze", self.src, "--at", "0:01", "--hold", "0.5", "--json", "-o", self.out("freeze_mmss.mp4"))
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        one = self.out("one_frame.png")
+        doc = json.loads(tool("look", self.src, "--at", "1", "--json", "-o", one).stdout)
+        self.assertEqual(doc["output"], str(one))
+        self.assertTrue(one.exists())
+        proc = tool("audio", self.src, "--mono", "--stereo", "-o", self.out("ms.mp4"), check=False)
+        self.assertEqual(proc.returncode, 2, "argparse refuses --mono with --stereo")
+        proc = tool("audio", self.src, "--denoise", "--denoise-strength", "-25", "--json", "-o", self.out("dn.mp4"), check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        proj = self.out("speed0.json")
+        proj.write_text(json.dumps({"output": str(self.out("speed0.mp4")), "clips": [{"src": str(self.src), "speed": -1}]}))
+        proc = tool("render", proj, "--dry-run", "--json", check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("speed must be a positive number", json.loads(proc.stdout)["error"]["message"])
+        import batch as batch_mod  # noqa: E402
+        self.assertTrue({".ogg", ".opus", ".ts", ".aac"} <= batch_mod.MEDIA_EXT)
+        import report as report_mod  # noqa: E402
+        self.assertNotEqual(report_mod.fmt_dur(0.0), "?")
+        self.assertEqual(report_mod.fmt_dur(None), "?")
+        self.assertEqual(json.loads((ROOT / "package.json").read_text())["files"].count("docs/contract.md"), 1)
+        self.assertIn("'docs'", (ROOT / "bin" / "install.js").read_text())
+
     def test_failed_run_never_deletes_an_output_that_predates_it(self):
         """The partial-output cleanup (#78) removed the output path after every failed ffmpeg run
         without asking whether the file had been there before: a bad filter argument aimed at an

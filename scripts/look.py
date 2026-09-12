@@ -85,7 +85,11 @@ def main() -> int:
             sec = parse_time(t)
             if dur and sec > dur:
                 die(f"--at {t} is beyond the duration ({dur:.2f}s)")
-            out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
+            if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                out = args.output  # one frame, one named image file: the caller's -o is the contract
+            else:
+                # several frames, or -o given as a stem/prefix without an image extension
+                out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", out]
             run(cmd)

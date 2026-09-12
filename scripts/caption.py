@@ -117,8 +117,14 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
     run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
                   "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
     # 1. whisper.cpp
-    cli = shutil.which("whisper-cli") or shutil.which("whisper-cpp") or shutil.which("main")
-    if cli and (shutil.which("whisper-cli") or shutil.which("whisper-cpp")):
+    cli = shutil.which("whisper-cli") or shutil.which("whisper-cpp")
+    if not cli:
+        # older whisper.cpp builds ship the binary as plain `main`; accept it only when it lives
+        # in a directory that names whisper, so an unrelated /usr/bin/main is never run
+        main_bin = shutil.which("main")
+        if main_bin and "whisper" in os.path.dirname(os.path.realpath(main_bin)).lower():
+            cli = main_bin
+    if cli:
         model_path = model
         if not os.path.exists(model_path):
             for cand in (os.path.expanduser(f"~/.cache/whisper.cpp/ggml-{model}.bin"), f"models/ggml-{model}.bin", f"/usr/local/share/whisper/ggml-{model}.bin"):
@@ -139,9 +145,22 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
     # 2. faster-whisper (python package)
     try:
         from faster_whisper import WhisperModel  # type: ignore
-        m = WhisperModel(model, device="cpu", compute_type="int8")
-        segments, _ = m.transcribe(wav, language=language, word_timestamps=False)
-        cues = [(seg.start, seg.end, seg.text.strip()) for seg in segments if seg.text.strip()]
+        import threading
+        from _common import STATE, die
+        result: list = []
+
+        def work() -> None:
+            m = WhisperModel(model, device="cpu", compute_type="int8")
+            segments, _ = m.transcribe(wav, language=language, word_timestamps=False)
+            result.extend((seg.start, seg.end, seg.text.strip()) for seg in segments if seg.text.strip())
+
+        # An in-process engine gets the same wall-clock limit as the CLI engines and ffmpeg.
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+        t.join(STATE.timeout or None)
+        if t.is_alive():
+            die(f"faster-whisper exceeded the {STATE.timeout:.0f} s time limit; raise --timeout for a long recording", code=124, kind="timeout")
+        cues = list(result)
         if cues:
             info("transcribed with faster-whisper")
             write_srt(cues, out_srt)
