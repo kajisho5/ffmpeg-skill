@@ -164,7 +164,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         die(f"plan executed but {output} does not meet the {[s.get('platform') for s in plan.get('verify') or [] if s.get('tool') == 'check'][0]} spec",
             kind="verification", output=output, plan=path, tool=tool, stages=[tool, "check"], check=check_result)
     info(f"plan done: {output}")
-    emit(output, plan=path, tool=tool, stages=[tool] + (["check"] if check_result else []), check=check_result, tool_result=doc)
+    emit(output, plan=path, tool=tool, stages=[tool] + (["check"] if check_result else []), check=check_result, tool_result=doc,
+         verification=([{"step": "check", "ok": True, "platform": check_result.get("platform")}] if check_result else [])
+         + [s for s in (doc.get("verification") or []) if s.get("step") != "probe"])
     return 0
 
 
@@ -473,7 +475,8 @@ def main() -> int:
             kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result,
             probe=probe(output, role="output"))
     info(f"rendered {output} via {' → '.join(stages_done)}")
-    emit(output, stages=stages_done, check=check_result)
+    emit(output, stages=stages_done, check=check_result,
+         verification=[{"step": "check", "ok": True, "platform": ck["platform"]}] if check_result else [])
     return 0
 
 

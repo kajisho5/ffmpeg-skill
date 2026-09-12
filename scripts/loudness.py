@@ -154,7 +154,9 @@ def main() -> int:
             f"the encoder overshoots more than the loudnorm ceiling can absorb at this bitrate",
             kind="verification", output=output, result=result,
             hint="raise --audio-bitrate (e.g. 256k) or deliver a lossless format (wav/flac) and let the platform encode")
-    emit(output, result=result, dropped_non_av_streams=dropped_streams)
+    emit(output, result=result, dropped_non_av_streams=dropped_streams,
+         verification=[{"step": "loudness", "ok": True, "lufs": float(after["input_i"]), "tp": float(after["input_tp"]),
+                        "target_lufs": args.lufs, "target_tp": args.tp}])
     return 0
 
 

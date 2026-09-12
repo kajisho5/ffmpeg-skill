@@ -351,9 +351,20 @@ def emit(output: Optional[str], **extra: Any) -> None:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": STATE.dry_run, "commands": list(STATE.commands)}
         if meta:
             doc["probe"] = meta
+        # What this tool itself verified about its artifact (issue #189 C, "verify as part of the
+        # contract"): the probe every writing tool runs, plus the measurements a tool adds
+        # (`verification` extra: loudness after the write, a platform check). `verified` is true
+        # only when the file was written, probed, and every self-check met its target; a dry run
+        # verified nothing. Spec failures the tool cannot fix on its own (export's loudness gap)
+        # keep status completed and say verified: false, so a caller keys on one field.
+        steps: List[Dict[str, Any]] = ([{"step": "probe", "ok": True}] if meta else []) + list(extra.pop("verification", None) or [])
+        if output and not STATE.dry_run and os.path.splitext(output)[1].lower() not in MEDIA_EXT:
+            steps.insert(0, {"step": "exists", "ok": True})
+        doc["verified"] = not STATE.dry_run and bool(steps) and all(s.get("ok") for s in steps)
+        doc["verification"] = steps
         doc.update(extra)
         if os.environ.get("FFMPEG_SKILL_RESULT_V2", "") not in ("", "0"):
-            doc["result_v2"] = _result_v2(output, meta, extra)
+            doc["result_v2"] = _result_v2(output, meta, dict(extra, verified=doc["verified"], verification=steps))
         if STATE.plan:
             doc["plan"] = write_plan(STATE.plan, output, extra)
         print_json(doc)
@@ -450,7 +461,7 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any]) -> str:
     return path
 
 
-_V2_HANDLED = ("result", "measured", "notes", "dropped_non_av_streams")
+_V2_HANDLED = ("result", "measured", "notes", "dropped_non_av_streams", "verified", "verification")
 
 
 def _result_v2(output: Optional[str], meta: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
@@ -477,6 +488,8 @@ def _result_v2(output: Optional[str], meta: Dict[str, Any], extra: Dict[str, Any
         "metrics": metrics,
         "notes": list(notes) if isinstance(notes, (list, tuple)) else ([notes] if notes else []),
         "dropped": {"non_av_streams": bool(extra.get("dropped_non_av_streams", False))},
+        "verified": bool(extra.get("verified", False)),
+        "verification": list(extra.get("verification") or []),
         "details": {k: v for k, v in extra.items() if k not in _V2_HANDLED and k not in metrics},
     }
 

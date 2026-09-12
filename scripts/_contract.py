@@ -372,7 +372,9 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                                "video": {"type": ["object", "null"]}, "audio": {"type": ["object", "null"]}}, "additionalProperties": True}
     base = {"status": {"enum": ["completed"]}, "output": {"type": ["string", "null"], "description": "path written, or null"},
             "dry_run": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}, "description": "every ffmpeg command line planned or run"},
-            "probe": {"type": "object", "description": "probe of the output when a file was written"}}
+            "probe": {"type": "object", "description": "probe of the output when a file was written"},
+            "verified": {"type": "boolean", "description": "true only when the artifact was written, probed, and every self-check the tool ran (verification) met its target; false under --dry-run"},
+            "verification": {"type": "array", "items": {"type": "object", "properties": {"step": {"type": "string"}, "ok": {"type": "boolean"}}}, "description": "what the tool itself verified: probe, plus loudness (loudness.py, export platform presets) or check (render)"}}
     extra: Dict[str, Any] = {}
     if name == "check":
         extra = {"platform": {"type": "string"}, "ok": {"type": "boolean"}, "failed": {"type": "integer"}, "warnings": {"type": "integer"},

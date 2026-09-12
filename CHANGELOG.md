@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Every writing tool's `--json` document now says what it verified itself: `verification` (probe; `loudness` for `loudness.py` and `export.py`'s platform presets; `check` for `render.py`) and `verified`, true only when the artifact was written, probed and every self-check met its target (issue #189 C, "verify as part of the contract"). `export.py` whose file misses the platform's loudness spec stays `completed` with `verified: false`.
 
 ## 1.6.0
 

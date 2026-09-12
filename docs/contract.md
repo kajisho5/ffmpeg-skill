@@ -307,6 +307,14 @@ Success (`exit 0`): one document matching `output_schema`, always with
 `status: "completed"`, `output`, `dry_run`, `commands`, and `probe` of the output when a
 file was written. `probe` prints its measurement document directly.
 
+Every writing tool also reports what it verified itself (1.7): `verification` lists the
+steps (`{"step": "probe", "ok": true}`; `loudness` with the measured and target values for
+`loudness.py` and the platform presets of `export.py`; `check` with the platform for
+`render.py`), and `verified` is `true` only when the artifact was written, probed and every
+listed step met its target. A `--dry-run` document has `verified: false` and an empty list.
+`export.py` whose written file misses the platform's loudness spec stays `completed` (the
+file is valid) with `verified: false` and the fix in `notes`, so a caller keys on one field.
+
 With `FFMPEG_SKILL_RESULT_V2=1` in the environment, every writing tool's success document
 also carries `result_v2`: a preview of the one shape 2.0 will use for every tool
 (issue #189). `{"schema": 2, "output", "probe", "commands", "metrics", "notes", "dropped":

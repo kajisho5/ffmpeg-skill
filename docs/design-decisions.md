@@ -103,6 +103,12 @@ exists. When a decision changes, edit the entry in the same PR.
   130/143 are reserved for timeout, missing tool and interrupts; passing the raw code through
   made the process exit code depend on the ffmpeg build. The raw code is in the JSON failure
   document as `ffmpeg_returncode`. Code: `_common._fail()`.
+- **`verified` is what the tool measured itself, not a promise about the user's intent.**
+  Every writing tool probes its artifact (that is `verify_output`); tools that measure more
+  (`loudness.py` re-measures the file, `export.py` measures against the platform, `render.py`
+  runs `check`) add those steps to `verification`, and `verified` is the conjunction. A spec
+  miss the tool cannot fix (export's loudness) is `completed` + `verified: false`, not a
+  failure: the file is usable, the next step is named in `notes`. Code: `_common.emit()`.
 - **A plan is a dry run plus fingerprints, executed only by `render.py`.** `--plan FILE` is
   implemented once in `emit()` (every tool gets it, nothing per tool), inputs are found from the
   `-i` arguments of the planned commands, and the fingerprint is size + sha256 of the first and

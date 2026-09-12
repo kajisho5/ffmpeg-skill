@@ -246,7 +246,7 @@ Finish every job with this shape (numbers from `probe.py`/`check.py`, not memory
 ```
 Done: final.mp4 — 59.98 s, 1080x1920, 30 fps, H.264, AAC stereo, -14.1 LUFS
 Steps: cut 0:12-1:12 (lossless) -> fit 9:16 crop -> captions (pop, karaoke) -> loudness -14 -> export reels
-Check: reels — all 12 checks pass
+Check: reels — all 12 checks pass (verified: true)
 Look: final_sheet.png (captions inside the safe area, logo top-right)
 Notes: source was VFR, conformed to 30 fps; audio was mono, made stereo
 ```

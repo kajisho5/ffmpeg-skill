@@ -163,7 +163,7 @@ def main() -> int:
         except OSError as e:
             die(f"cannot write {output}: {e}", kind="output")
         info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
-    emit(None, report=output, check=chk)
+    emit(None, report=output, check=chk, verification=([{"step": "exists", "ok": True}] if not STATE.dry_run else []))
     if not args.json:
         print(output)
     return 0

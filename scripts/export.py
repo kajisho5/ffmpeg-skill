@@ -139,6 +139,7 @@ def main() -> int:
         if m:
             ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"]
             extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok}
+            extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform}]
             if not ok:
                 notes.append(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP; "
                              f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file (or before export)")
