@@ -1743,6 +1743,38 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "--json", "-o", self.out("e6_cut0.mp4")).stdout)
         self.assertIsNone(doc["lossless_alternative"])
 
+    def test_plan_roundtrip(self):
+        """--plan writes a plan and runs nothing; render.py executes it, verifies, and refuses when
+        an input changed since the plan (issue #189 C)."""
+        import shutil
+        src = self.out("plan_src.mp4"); shutil.copy(self.src, src)
+        plan = self.out("plan_cut.json"); out = self.out("plan_cut.mp4")
+        doc = json.loads(tool("cut", src, "--start", "0", "--end", "1", "-o", out, "--plan", plan, "--json").stdout)
+        self.assertTrue(doc["dry_run"]); self.assertEqual(doc["plan"], str(plan)); self.assertFalse(out.exists())
+        p = json.loads(plan.read_text())
+        self.assertEqual((p["plan_version"], p["tool"], p["output"]), (1, "cut", str(out)))
+        self.assertEqual([i["path"] for i in p["inputs"]], [str(src)])
+        self.assertNotIn("--plan", p["argv"]); self.assertNotIn("--json", p["argv"]); self.assertNotIn("--dry-run", p["argv"])
+        self.assertEqual(p["verify"], [{"tool": "probe"}])
+        doc = json.loads(tool("render", plan, "--dry-run", "--json").stdout)
+        self.assertTrue(doc["dry_run"]); self.assertFalse(out.exists())
+        doc = json.loads(tool("render", plan, "--json").stdout)
+        self.assertEqual((doc["status"], doc["tool"], doc["output"]), ("completed", "cut", str(out)))
+        self.assertAlmostEqual(doc["probe"]["duration"], 1.0, delta=0.15)
+        self.assertEqual(doc["tool_result"]["status"], "completed")
+        # an export plan carries the platform check and runs it
+        xplan = self.out("plan_x.json"); xout = self.out("plan_x.mp4")
+        tool("export", src, "--preset", "x", "--fast", "-o", xout, "--plan", xplan)
+        self.assertEqual(json.loads(xplan.read_text())["verify"], [{"tool": "probe"}, {"tool": "check", "platform": "x"}])
+        doc = json.loads(tool("render", xplan, "--json", check=False).stdout)
+        self.assertIn(doc["status"], ("completed", "failed"))
+        self.assertEqual(doc["check"]["platform"], "x")
+        # a changed input is refused
+        ffmpeg("-i", self.src, "-t", "0.5", "-c", "copy", "-y", src)
+        proc = tool("render", plan, "--json", "--overwrite", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertIn("changed", json.loads(proc.stdout)["error"]["message"])
+
     def test_fifth_review_regressions(self):
         """Review 5 (2026-09-12): render refuses an output that is one of its clip sources (it
         overwrote the source and said completed); fit --method trim drops a subtitle track whose

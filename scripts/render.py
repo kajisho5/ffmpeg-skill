@@ -49,13 +49,14 @@ Examples:
   python3 render.py project.json --fast          # preview quality
 """
 import argparse
+import re
 import json
 import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION
 
 HERE = Path(__file__).resolve().parent
 
@@ -101,9 +102,75 @@ def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
     return str(doc.get("output") or "")
 
 
+def execute_plan(plan: Dict[str, Any], path: str) -> int:
+    """Run a plan written by `<tool> --plan FILE`: refuse if any fingerprinted input changed since
+    the plan was made (the plan's commands would then describe a different edit), run the tool
+    with the planned argv, then the plan's verify steps. --dry-run prints the planned commands."""
+    if plan.get("plan_version") != PLAN_VERSION:
+        die(f"{path}: plan_version {plan.get('plan_version')!r} is not {PLAN_VERSION}")
+    tool = str(plan.get("tool") or "")
+    script = HERE / f"{tool}.py"
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", tool) or not script.exists() or tool == "render":
+        die(f"{path}: unknown tool {tool!r}")
+    changed = []
+    for inp in plan.get("inputs") or []:
+        p = inp.get("path")
+        if not p or not os.path.isfile(p):
+            changed.append(f"{p}: missing")
+            continue
+        now = fingerprint(p)
+        if now["size"] != inp.get("size") or now["sha256_head_tail"] != inp.get("sha256_head_tail"):
+            changed.append(f"{p}: content changed since the plan was made")
+    if changed:
+        die("plan inputs differ from what was planned; re-run the tool with --plan to make a new plan:\n  " + "\n  ".join(changed),
+            hint="plans are bound to the exact input files they were made from")
+    if plan.get("cwd") and os.path.isdir(plan["cwd"]):
+        os.chdir(plan["cwd"])
+    argv = [str(a) for a in plan.get("argv") or []]
+    if STATE.dry_run:
+        for c in plan.get("commands") or []:
+            STATE.commands.append(c)
+            info("[dry-run] " + c)
+        emit(plan.get("output"), plan=path, tool=tool, stages=[tool], check=None)
+        return 0
+    info(f"executing plan {path}: {tool} " + " ".join(argv))
+    proc = run_tool([str(script)] + argv + child_args() + ["--json"])
+    for line in proc.stderr.splitlines():
+        if line.startswith("$ "):
+            STATE.commands.append(line[2:])
+        elif line.strip():
+            info("    " + line)
+    try:
+        doc = json.loads(proc.stdout.strip() or "{}")
+    except ValueError:
+        doc = {}
+    if proc.returncode != 0 or doc.get("status") != "completed":
+        err = doc.get("error") or {}
+        die(f"{tool} failed while executing the plan: {err.get('message') or proc.stderr.strip()[-300:]}",
+            kind=err.get("kind", "ffmpeg"), plan=path, tool=tool)
+    output = doc.get("output") or plan.get("output")
+    check_result = None
+    exit_code = 0
+    for step in plan.get("verify") or []:
+        if step.get("tool") == "check" and step.get("platform") and output:
+            cp = run_tool([str(HERE / "check.py"), output, "--platform", step["platform"], "--json"] + child_args())
+            try:
+                check_result = json.loads(cp.stdout)
+            except ValueError:
+                check_result = {"error": cp.stderr.strip()[-300:]}
+            if check_result.get("failed") or check_result.get("status") == "failed" or check_result.get("error"):
+                exit_code = 1
+    if exit_code:
+        die(f"plan executed but {output} does not meet the {[s.get('platform') for s in plan.get('verify') or [] if s.get('tool') == 'check'][0]} spec",
+            kind="verification", output=output, plan=path, tool=tool, stages=[tool, "check"], check=check_result)
+    info(f"plan done: {output}")
+    emit(output, plan=path, tool=tool, stages=[tool] + (["check"] if check_result else []), check=check_result, tool_result=doc)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("project", nargs="?", help="project.json")
+    ap.add_argument("project", nargs="?", help="project.json, or a plan.json written by <tool> --plan")
     ap.add_argument("--init", metavar="FILE", help="write a starter project file and exit")
     ap.add_argument("--work", help="work directory for intermediates (default: <output>_work)")
     ap.add_argument("--keep", action="store_true", help="keep intermediates (default: kept only when --work is given)")
@@ -123,6 +190,8 @@ def main() -> int:
         proj: Dict[str, Any] = json.loads(Path(args.project).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         die(f"cannot read project: {exc}")
+    if isinstance(proj, dict) and "plan_version" in proj:
+        return execute_plan(proj, args.project)
     base = Path(args.project).resolve().parent
 
     def rel(p: Any) -> str:

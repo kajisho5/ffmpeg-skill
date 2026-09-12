@@ -162,6 +162,14 @@ tool's job; only the artifact is skipped, including side files such as `--edl`, 
 generated `.ass`), and `verify` does not support dry-run (its steps run). `SKILL.md` and
 `references/scripts.md` repeat the same list; the contract is the authority.
 
+`--plan FILE` (1.6) is a dry run that also writes a plan document: `{"plan_version": 1,
+"tool", "argv", "cwd", "inputs": [{"path", "size", "sha256_head_tail"}], "commands",
+"output", "verify": [{"tool": "probe"}, {"tool": "check", "platform"}], "notes"}`. It
+implies `--dry-run`, so the same execution rules apply. `render.py FILE` executes a plan:
+it refuses (`kind: input`) when an input's size or head/tail hash differs from the plan,
+runs the tool with the planned `argv`, then the verify steps, and reports `plan`, `tool`,
+`tool_result` and `check`. `plan_version` is bumped when the document's shape changes.
+
 ### Repeatability
 
 No tool keeps state or uses randomness. `deterministic_inputs` is `false` only for

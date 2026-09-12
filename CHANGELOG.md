@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- `--plan FILE` on every tool: the dry run written as a plan (tool, argv, fingerprinted inputs, commands, expected output, verify steps) that `render.py FILE` executes later, refusing if an input changed since the plan was made and running the verify steps (probe, `check` for a platform) afterwards. "Plan → user confirms → execute" is one round trip (issue #189 C).
 
 ## 1.5.2
 

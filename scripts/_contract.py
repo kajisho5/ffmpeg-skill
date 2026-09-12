@@ -333,7 +333,7 @@ def input_schema(parser: argparse.ArgumentParser) -> Dict[str, Any]:
     props: Dict[str, Any] = {}
     required: List[str] = []
     positional: List[str] = []
-    common = {"dry_run", "json", "progress", "fast", "timeout", "overwrite"}
+    common = {"dry_run", "json", "progress", "fast", "timeout", "overwrite", "plan"}
     for action in parser._actions:
         if isinstance(action, argparse._HelpAction):
             continue
@@ -386,7 +386,10 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     elif name == "look":
         extra = {"outputs": {"type": "array", "items": {"type": "string"}}}
     elif name == "render":
-        extra = {"stages": {"type": "array", "items": {"type": "string"}}, "check": {"type": ["object", "null"]}}
+        extra = {"stages": {"type": "array", "items": {"type": "string"}}, "check": {"type": ["object", "null"]},
+                 "plan": {"type": "string", "description": "when the argument was a plan.json (written by <tool> --plan): its path"},
+                 "tool": {"type": "string", "description": "plan execution: the tool the plan ran"},
+                 "tool_result": {"type": "object", "description": "plan execution: the tool's own --json document"}}
     elif name == "verify":
         extra = {"report": {"type": ["string", "null"]}, "files": {"type": "array"}, "failed": {"type": "integer"}, "total": {"type": "integer"}}
     elif name == "batch":

@@ -1,6 +1,6 @@
 # Script reference
 
-Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `-o OUT` -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) still runs ffprobe, `check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report`/`silence`/`loudness`/`stabilize` still run their ffmpeg/ffprobe measurements (a dry-run plan rests on real numbers; they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
+Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `--plan FILE` (the dry run written as a plan document that `render.py FILE` executes later; see render.py), `-o OUT` -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) still runs ffprobe, `check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report`/`silence`/`loudness`/`stabilize` still run their ffmpeg/ffprobe measurements (a dry-run plan rests on real numbers; they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
 
 ## Contents
 - probe.py — inspect
@@ -375,7 +375,17 @@ output; the result says so with `dropped_non_av_streams: true`.
 ```
 render.py --init project.json                # starter file
 render.py project.json [--fast] [--dry-run] [--stop-after STAGE] [--work DIR --keep]
+render.py plan.json                          # execute a plan written by <tool> --plan plan.json
 ```
+A plan is a single tool's dry run as an artifact: `cut.py in.mp4 --start 2 --end 8
+--plan cut.json` writes `{plan_version, tool, argv, inputs (path, size, sha256 of
+head+tail), commands, output, verify}` and runs nothing. `render.py cut.json`
+re-fingerprints the inputs (refusing, `kind: input`, if any changed since the
+plan), runs the tool with the planned argv, then the verify steps (probe; `check`
+for a `--platform` or a platform export preset), and reports `plan`, `tool`,
+`tool_result` and `check`. Show the plan to the user, get the yes, execute:
+one round trip instead of re-deriving the command.
+
 Stages: clips (cut, optional speed) → join (transition) → silence → fit →
 captions → graphics → overlays → audio → loudness → export → check. Keys mirror the
 CLI flags of each script (see the docstring). Use it whenever an edit has

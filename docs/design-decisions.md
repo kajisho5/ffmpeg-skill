@@ -103,6 +103,13 @@ exists. When a decision changes, edit the entry in the same PR.
   130/143 are reserved for timeout, missing tool and interrupts; passing the raw code through
   made the process exit code depend on the ffmpeg build. The raw code is in the JSON failure
   document as `ffmpeg_returncode`. Code: `_common._fail()`.
+- **A plan is a dry run plus fingerprints, executed only by `render.py`.** `--plan FILE` is
+  implemented once in `emit()` (every tool gets it, nothing per tool), inputs are found from the
+  `-i` arguments of the planned commands, and the fingerprint is size + sha256 of the first and
+  last 8 MiB rather than the whole file, so planning a multi-GB master stays instant while a
+  re-export or re-trim is still caught. Execution re-runs the *tool* with the planned argv, not
+  the recorded command lines: the tool's own guards, staging and verification stay in force.
+  Code: `_common.write_plan()`, `render.execute_plan()`.
 - **The 2.0 success-document shape ships in 1.x as an opt-in parallel key.** `result_v2`
   (`FFMPEG_SKILL_RESULT_V2=1`) is built once in `emit()` from what every tool already passes,
   so no tool changes its own keys and 2.0 becomes "promote `result_v2` to the top level". Per

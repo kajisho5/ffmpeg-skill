@@ -227,7 +227,7 @@ class Context:
     makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting")
+    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan")
 
     def __init__(self) -> None:
         self.reset()
@@ -243,6 +243,7 @@ class Context:
         self.overwrite = False                       # --overwrite: an existing output may be replaced
         self.written: set = set()                    # output paths this process has written itself
         self.preexisting: dict = {}                  # output path -> (size, mtime_ns) of a file that was there before we ran
+        self.plan: Optional[str] = None              # --plan FILE: write the dry-run as a plan document (implies --dry-run)
 
 
 
@@ -261,10 +262,13 @@ def add_common(ap: "argparse.ArgumentParser") -> None:
                        help=f"kill an ffmpeg run past this many seconds, kind=timeout (default {DEFAULT_TIMEOUT:.0f}; 0 = no limit)")
     g.add_argument("--overwrite", action="store_true",
                    help="allow replacing an existing output (warned today, refused from 2.0)")
+    g.add_argument("--plan", metavar="FILE",
+                   help="write the dry run as a plan (inputs fingerprinted, commands, expected output, verify steps) that render.py FILE executes later; implies --dry-run")
 
 
 def apply_common(args: "argparse.Namespace") -> None:
-    STATE.dry_run = bool(getattr(args, "dry_run", False))
+    STATE.plan = getattr(args, "plan", None) or None
+    STATE.dry_run = bool(getattr(args, "dry_run", False)) or bool(STATE.plan)
     STATE.json = bool(getattr(args, "json", False))
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
@@ -350,9 +354,100 @@ def emit(output: Optional[str], **extra: Any) -> None:
         doc.update(extra)
         if os.environ.get("FFMPEG_SKILL_RESULT_V2", "") not in ("", "0"):
             doc["result_v2"] = _result_v2(output, meta, extra)
+        if STATE.plan:
+            doc["plan"] = write_plan(STATE.plan, output, extra)
         print_json(doc)
+    elif STATE.plan:
+        print(write_plan(STATE.plan, output, extra))
     elif output:
         print(output)
+
+
+PLAN_VERSION = 1
+_PLAN_STRIP = ("--plan", "--dry-run", "--json")
+
+
+def fingerprint(path: str) -> Dict[str, Any]:
+    """Size plus a sha256 over the first and last 8 MiB: enough to notice a re-export, a re-trim
+    or a swapped file, cheap enough for a multi-GB source (hashing a whole master would make
+    planning slower than the edit)."""
+    import hashlib
+    st = os.stat(path)
+    h = hashlib.sha256()
+    chunk = 8 * 1024 * 1024
+    with open(path, "rb") as f:
+        h.update(f.read(chunk))
+        if st.st_size > 2 * chunk:
+            f.seek(-chunk, os.SEEK_END)
+            h.update(f.read(chunk))
+        elif st.st_size > chunk:
+            h.update(f.read())
+    return {"path": os.path.abspath(path), "size": st.st_size, "sha256_head_tail": h.hexdigest()}
+
+
+def _plan_inputs(commands: Sequence[str]) -> List[str]:
+    """Every existing file named by `-i` in the planned commands (shell-quoted lines)."""
+    import shlex
+    seen: List[str] = []
+    for line in commands:
+        try:
+            toks = shlex.split(line.split("] ", 1)[1] if line.startswith("[dry-run] ") else line)
+        except ValueError:
+            continue
+        for i, tok in enumerate(toks[:-1]):
+            if tok == "-i" and os.path.isfile(toks[i + 1]) and toks[i + 1] not in seen:
+                seen.append(toks[i + 1])
+    return seen
+
+
+def write_plan(path: str, output: Optional[str], extra: Dict[str, Any]) -> str:
+    """The dry run as an artifact: what will run, on which exact inputs, producing what, checked
+    how. `render.py PLAN` executes it after re-fingerprinting the inputs (issue #189 C)."""
+    import datetime
+    argv = [a for a in sys.argv[1:]]
+    cleaned: List[str] = []
+    skip = False
+    for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a in _PLAN_STRIP:
+            skip = a == "--plan"
+            continue
+        if a.startswith("--plan="):
+            continue
+        cleaned.append(a)
+    tool = os.path.splitext(os.path.basename(sys.argv[0]))[0]
+    verify: List[Dict[str, Any]] = [{"tool": "probe"}] if output else []
+    platform = None
+    if "--platform" in cleaned:
+        platform = cleaned[cleaned.index("--platform") + 1]
+    elif tool == "export" and "--preset" in cleaned:
+        platform = {"youtube": "youtube", "youtube4k": "youtube", "reels": "reels", "x": "x"}.get(cleaned[cleaned.index("--preset") + 1])
+    if platform and output and tool != "check":
+        verify.append({"tool": "check", "platform": platform})
+    doc = {
+        "plan_version": PLAN_VERSION,
+        "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tool": tool,
+        "argv": cleaned,
+        "cwd": os.getcwd(),
+        "inputs": [fingerprint(p) for p in _plan_inputs(STATE.commands)],
+        "commands": list(STATE.commands),
+        "output": os.path.abspath(output) if output else None,
+        "verify": verify,
+        "notes": list(extra.get("notes") or []),
+    }
+    try:
+        tmp = f"{path}.tmp{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, path)
+    except OSError as exc:
+        die(f"cannot write plan {path}: {exc}", kind="output")
+    info(f"plan written: {path} ({len(doc['commands'])} command(s), {len(doc['inputs'])} input(s)); run it with render.py {path}")
+    return path
 
 
 _V2_HANDLED = ("result", "measured", "notes", "dropped_non_av_streams")
