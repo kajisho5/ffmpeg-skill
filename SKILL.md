@@ -278,6 +278,7 @@ Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | out
   -40 LUFS or below is room tone, wind or nothing; raising it 25 dB raises the
   noise, not the content. Leave the level, say so, and offer music or narration.
 - Captions burned before a crop/resize: text lands off-frame. Frame changes first, then text.
+- Captions burned at an intermediate size and then upscaled by `export.py` come out soft (a 1280x720 source fit to 9:16 is 406x720 until export scales it to 1080x1920). Fit to the delivery size first (`fit.py --width 1080 --height 1920`), then caption, then export.
 - Anything chained by hand through three re-encodes: use `render.py` so the plan is one file and the user can change one number.
 - `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot loses people at the edges. Check the sheet; pad (bars), `--crop-x`/`--crop-y` toward the subject, or a reframe is often the honest answer — a silent centre crop is a guess, not a decision.
 - Conforming 60 fps to 30 halves the motion samples: fine for a talking head, visibly choppy for sports, gaming, drone pans. Keep 60 when the platform allows it.

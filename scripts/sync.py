@@ -213,6 +213,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.analyze_seconds > 900:
+        die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
 
     for p in (args.reference, args.second):
         if not probe(p).get("audio"):

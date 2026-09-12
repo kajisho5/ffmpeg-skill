@@ -168,10 +168,11 @@ def main() -> int:
             spd = float(c["speed"])
             if not (spd > 0) or spd != spd or spd == float("inf"):
                 die(f"clip {i}: speed must be a positive number, got {c['speed']!r}")
-            dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else 10.0
-            fitted = str(work / f"clip{i:02d}_speed.mp4")
-            sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted)
-            part = fitted
+            if abs(spd - 1.0) > 1e-6:  # speed 1.0 used to cost a full re-encode for nothing
+                dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else 10.0
+                fitted = str(work / f"clip{i:02d}_speed.mp4")
+                sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted)
+                part = fitted
         parts.append(part)
     stages_done.append("clips")
     current = parts[0]

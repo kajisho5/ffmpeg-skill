@@ -450,7 +450,9 @@ def main() -> int:
     args.outline_color = color_hex(args.outline_color or bc.get("outline", "000000"))
     args.outline = args.outline if args.outline is not None else (float(bcap.get("outline", 2)) if args.brand else 2.0)
     args.position = args.position or (bcap.get("position", "bottom") if args.brand else "bottom")
-    args.animate = args.animate or (bcap.get("animate", "none") if args.brand else "none")
+    # a brand's caption.animate is a burn-in default; over --mode mux (soft subtitles) it used
+    # to be applied anyway and then refused as "animation is burn only" -- ignore it there
+    args.animate = args.animate or (bcap.get("animate", "none") if args.brand and args.mode != "mux" else "none")
     args.highlight_color = color_hex(args.highlight_color or bc.get("primary", "FFD200"))
     if args.brand and bcap.get("bold") and not args.bold:
         args.bold = True

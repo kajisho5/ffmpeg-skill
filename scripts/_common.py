@@ -258,9 +258,9 @@ def add_common(ap: "argparse.ArgumentParser") -> None:
     g.add_argument("--fast", action="store_true", help="preview quality: x264 preset veryfast (overrides --preset) for quick iterations")
     if "--timeout" not in ap._option_string_actions:  # verify.py defines its own per-step --timeout; apply_common reads either
         g.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
-                       help=f"kill any single ffmpeg run that exceeds this many seconds and report kind=timeout (default {DEFAULT_TIMEOUT:.0f}, or FFMPEG_SKILL_TIMEOUT; 0 = no limit)")
+                       help=f"kill an ffmpeg run past this many seconds, kind=timeout (default {DEFAULT_TIMEOUT:.0f}; 0 = no limit)")
     g.add_argument("--overwrite", action="store_true",
-                   help="allow replacing an output file that already exists (without it a warning is printed today; from 2.0 an existing output is refused, and FFMPEG_SKILL_NO_OVERWRITE=1 opts into that now)")
+                   help="allow replacing an existing output (warned today, refused from 2.0)")
 
 
 def apply_common(args: "argparse.Namespace") -> None:
@@ -840,7 +840,7 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
 
 
 def shell_quote(s: str) -> str:
-    if not s or any(ch in s for ch in " \t\\\"';|&<>()[]{}$*?"):
+    if not s or any(ch in s for ch in " \t\n\r\\\"';|&<>()[]{}$*?"):
         return "'" + s.replace("'", "'\\''") + "'"
     return s
 
@@ -1466,7 +1466,7 @@ def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
     # signalstats reports in the source bit depth; normalise everything to an 8-bit scale
     scale = 1.0
     if ymax > 255 or yavg > 255:
-        scale = 1 / 4.0 if ymax <= 1023 else 1 / 16.0
+        scale = 1 / 4.0 if ymax <= 1023 else (1 / 16.0 if ymax <= 4095 else 1 / 256.0)  # 10 / 12 / 16-bit
     ymin, ymax, yavg, sat = ymin * scale, ymax * scale, yavg * scale, sat * scale
     # 5th/95th percentile of per-frame lows/highs is more robust than the absolute min/max
     lows = sorted(x * scale for x in (vals.get("YLOW") or vals.get("YMIN") or [0]))

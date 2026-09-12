@@ -34,6 +34,9 @@ def main() -> int:
     has_audio = bool(meta.get("audio")) and not args.no_audio
 
     output = args.output or default_output(args.input, "reverse")
+    if (meta.get("duration") or 0) > 60:
+        info(f"warning: reverse buffers every decoded frame in memory; {meta['duration']:.0f}s of "
+             f"{meta['video']['width']}x{meta['video']['height']} can exhaust RAM -- cut the part to reverse first (cut.py)")
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", "reverse"]
     if has_audio:
         cmd += ["-af", "areverse"]

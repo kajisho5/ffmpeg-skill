@@ -1606,6 +1606,22 @@ class ContractTests(unittest.TestCase):
         out = subprocess.run([sys.executable, "-c", code], env=env, stdout=subprocess.PIPE, text=True, check=True).stdout
         self.assertEqual(out.strip(), "(7, 0)")
 
+    def test_fourth_review_p3_regressions(self):
+        """Fourth review P3 items: render re-encoded a clip at speed 1.0 (#47); a brand's default
+        caption.animate made --mode mux fail (#32); shell_quote left a newline bare (#54);
+        --analyze-seconds had no ceiling for the in-memory PCM window (#65)."""
+        self.assertEqual(_common.shell_quote("a\nb"), "'a\nb'")
+        proj = self.out("speed1.json")
+        proj.write_text(json.dumps({"output": str(self.out("speed1.mp4")), "clips": [{"src": str(self.src), "speed": 1.0}]}))
+        doc = json.loads(tool("render", proj, "--dry-run", "--json").stdout)
+        self.assertNotIn("fit.py", " ".join(map(str, doc["commands"])) + json.dumps(doc.get("stages", [])))
+        brand = self.out("brand_anim.json"); brand.write_text(json.dumps({"caption": {"animate": "pop"}}))
+        srt = self.out("mux.srt"); srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n\n", encoding="utf-8")
+        doc = json.loads(tool("caption", self.src, "--srt", srt, "--brand", brand, "--mode", "mux", "--dry-run", "--json", "-o", self.out("mux_out.mkv")).stdout)
+        self.assertEqual(doc["status"], "completed")
+        proc = tool("sync", self.src, self.src, "--analyze-seconds", "5000", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
     def test_cut_segments_refuses_output_equal_to_input(self):
         """Fourth review, P0: `cut.py in.mp4 --segments 0-1,2-3 -o in.mp4` replaced the source
         with the 2 s join. The run() guard compares the ffmpeg command's -i paths with its output,
