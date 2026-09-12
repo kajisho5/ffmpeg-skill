@@ -1158,6 +1158,9 @@ def db_to_linear(db: float) -> float:
 def read_text_or_die(path: str, flag: str) -> str:
     """Read a caller-supplied UTF-8 text file (a cue list, chapters, notes) or fail as kind input
     with the flag named, instead of a FileNotFoundError / UnicodeDecodeError traceback."""
+    if os.path.isdir(path):
+        # checked first: Windows raises PermissionError, not IsADirectoryError, for a directory
+        die(f"{flag}: {path} is a directory, not a text file")
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return fh.read()
