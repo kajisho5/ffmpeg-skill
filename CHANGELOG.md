@@ -4,8 +4,16 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 1.8.1
+
+_Automated release: version and notes generated from pull requests merged since 1.8.0._
+
 - Seventh review (the 1.8.0 encoder flags and `--normalize`). `export.py --normalize` wrote its temporary file under `loudness.py`'s own default output name and destroyed a pre-existing `<output>_loudnorm.<ext>` (P0; now a private per-process name, no forced overwrite, and the normalising encode is in `commands`); `--normalize` on a preset without a loudness spec is `kind: input` and under `--dry-run` says what it would do; `--codec prores` without `-o` failed inside ffmpeg (refused with the `.mov` hint); `waveform.py` ignored `--codec`; `cut.py --codec` on the lossless path kept the source codec (switches to `--accurate`, said so); `export.py` no longer advertises `--codec` in the contract; duplicated `encoder:libx265` optional capabilities merged; `x264_args(keep_bt709=False)` honoured under `--codec`; HDR HEVC `--quality 50/51` no longer overflows CRF; the `--crf` range message names the av1 bound; `check.py` tags `true peak` as a judgement row.
 - Eval 8 follow-ups. SKILL.md says how to run doctor (`python3 scripts/_contract.py doctor --json`; two runs looked for a doctor.py); `render.py --init` writes `"normalize": true` on the export stage; the ProRes rule says `-o NAME.mov` explicitly.
+- fix: seventh review (--normalize temp name, --codec edges, contract) and eval-8 follow-ups (#204)
+- docs: evals iteration 8 at 1.8.0 (108 runs, independent grader, trigger set) (#205)
 
 ## 1.8.0
 
