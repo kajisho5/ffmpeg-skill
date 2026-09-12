@@ -2110,7 +2110,7 @@ class FFmpegSkillTests(unittest.TestCase):
         (force_style) path."""
         hostile_font = "Arial,Bold:evil"
         ass_out = OUT / "font_inject.ass"
-        script("caption.py", self.src, "--text", self.cues, "--font", hostile_font, "--animate", "fade", "--write-ass", ass_out, "--dry-run")
+        script("caption.py", self.src, "--text", self.cues, "--font", hostile_font, "--animate", "fade", "--write-ass", ass_out, "--fast", "-o", OUT / "font_inject.mp4")
         style_line = next(l for l in ass_out.read_text(encoding="utf-8").splitlines() if l.startswith("Style: Default,"))
         self.assertNotIn(",Arial,Bold:evil,", style_line, "raw hostile font must not appear -- it would shift every later field")
         fields = style_line.split(",")
@@ -2130,7 +2130,8 @@ class FFmpegSkillTests(unittest.TestCase):
         hostile_cues = OUT / "brace_inject_cues.txt"
         hostile_cues.write_text("00:00:00 --> 00:00:03 hi {\\pos(0,0)\\fscx500}INJECTED\n", encoding="utf-8")
         ass_out = OUT / "brace_inject.ass"
-        script("caption.py", self.src, "--text", hostile_cues, "--animate", "fade", "--write-ass", ass_out, "--dry-run")
+        # a real (fast) burn: since 1.4.9 --dry-run writes no side files, the generated ASS included
+        script("caption.py", self.src, "--text", hostile_cues, "--animate", "fade", "--write-ass", ass_out, "--fast", "-o", OUT / "brace_inject.mp4")
         dialogue = next(l for l in ass_out.read_text(encoding="utf-8").splitlines() if l.startswith("Dialogue: "))
         # --animate fade legitimately prepends its own "{\fad(200,200)}" override block; only the
         # cue-text-derived braces from the hostile payload must be gone.
