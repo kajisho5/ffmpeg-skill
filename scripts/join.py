@@ -68,7 +68,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     cmd += ["-filter_complex", ";".join(parts), "-map", "[aout]", "-vn"] + audio_codec_for(output) + [output]
     run(cmd)
     expected = sum(durs) - d * (n - 1)
-    r = probe(output)
+    r = probe(output, role="output")
     a = r.get("audio") or {}
     if not STATE.dry_run:
         if r.get("video"):

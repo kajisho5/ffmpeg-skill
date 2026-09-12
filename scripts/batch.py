@@ -224,12 +224,20 @@ def main() -> int:
     results = one_pass()
     if args.watch:
         info(f"watching {folder} every {args.watch:g}s (Ctrl-C to stop)")
+        # the shared SIGINT handler (install_signal_handlers) exits 130 with "nothing was written",
+        # which is wrong for a watch that already processed files: while idle between passes,
+        # let Ctrl-C be a plain KeyboardInterrupt so the summary below prints (review 5)
+        import signal
         try:
             while True:
-                time.sleep(args.watch)
+                previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+                try:
+                    time.sleep(args.watch)
+                finally:
+                    signal.signal(signal.SIGINT, previous)
                 results = one_pass()
         except KeyboardInterrupt:
-            pass
+            info("watch stopped")
     done = sum(1 for r in results if r["ok"])
     info(f"{done}/{len(results)} processed, {sum(1 for r in results if r.get('cached'))} from cache")
     if not args.json:

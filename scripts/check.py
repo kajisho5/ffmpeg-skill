@@ -127,7 +127,7 @@ def main() -> int:
             row("fps", "PASS" if fps <= spec["fps_max"] + 0.01 else "FAIL", f"{fps:g}", f"<= {spec['fps_max']}", "fit.py --fps 30 (drops half the frames of 60 fps motion; fine for talking heads, visible on sports/gaming)")
         row("vfr", "PASS" if not v.get("variable_frame_rate_suspected") else "WARN", "variable" if v.get("variable_frame_rate_suspected") else "constant", "constant", "fit.py --fps N (any re-encode conforms it)")
         if spec["codecs"]:
-            row("video codec", "PASS" if v.get("codec") in spec["codecs"] else "FAIL", v.get("codec"), "/".join(spec["codecs"]), "export.py --preset " + args.platform.replace("shorts", "reels").replace("tiktok", "reels").replace("linkedin", "youtube"),
+            row("video codec", "PASS" if v.get("codec") in spec["codecs"] else "FAIL", v.get("codec"), "/".join(spec["codecs"]), "export.py --preset " + args.platform.replace("shorts", "reels").replace("tiktok", "reels").replace("linkedin", "youtube").replace("broadcast", "prores"),
                 reason="the platform's player may refuse to decode this codec at all, not just look worse")
         pf = v.get("pix_fmt") or ""
         if args.platform in ("reels", "tiktok", "x", "linkedin"):

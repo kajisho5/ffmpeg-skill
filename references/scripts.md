@@ -504,8 +504,9 @@ not — a timecode-shaped cue with no fps available is refused rather than misre
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
 `--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
-word from `--color` to `--highlight-color` evenly across the cue (word timing
-is distributed, not transcribed). The ASS is kept next to the output so the
+word from `--color` to `--highlight-color` across the cue; `--karaoke-timing
+energy` (default) follows the speech loudness in the audio, `even` splits the
+cue equally (word timing is derived, not transcribed). The ASS is kept next to the
 user can hand-tune timings and re-run with `--ass`.
 `--mode burn` (default) renders subtitles into the picture and always
 re-encodes both streams. `--mode mux` copies video and audio untouched and

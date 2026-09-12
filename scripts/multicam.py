@@ -77,6 +77,8 @@ def main() -> int:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
+    if not 0 <= args.audio < len(args.inputs):
+        die(f"--audio {args.audio}: inputs are numbered 0..{len(args.inputs) - 1}")
 
     n = len(args.inputs)
     if n < 2:

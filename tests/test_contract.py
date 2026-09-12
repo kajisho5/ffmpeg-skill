@@ -1118,6 +1118,9 @@ class ContractTests(unittest.TestCase):
             "silence": [self.src, "-o", outdir / "sil.mp4"],
             "join": [self.src, self.camb, "-o", outdir / "join.mp4"],
             "color": [self.hdr, "--to-sdr", "-o", outdir / "col.mp4"],
+            # review 5: --correct measured with two real signalstats passes and --transcribe ran the engine
+            "color#correct": [self.src, "--correct", "--exposure", "0.2", "-o", outdir / "colc.mp4"],
+            "caption#transcribe": [self.src, "--transcribe", "-o", outdir / "capt.mp4"],
             "export": [self.src, "--preset", "x", "-o", outdir / "exp.mp4"],
             "scenes": [self.src, "--sheet", outdir / "sc.png", "--edl", outdir / "sc.txt"],
             "look": [self.src, "-o", outdir / "look.png"],
@@ -1125,6 +1128,7 @@ class ContractTests(unittest.TestCase):
             "cropdetect": [self.src, "--seconds", "1", "--samples", "1"],
         }
         for name, args in cases.items():
+            name = name.split("#")[0]
             spec = self.tools[name]
             self.assertTrue(spec["supports_dry_run"], name)
             strict = spec["dry_run"]["ffmpeg_execution"] == "none"
@@ -1715,6 +1719,34 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(doc["result_v2"]["notes"], doc["notes"])
         doc = json.loads(tool("fit", self.src, "--aspect", "1:1", "--dry-run", "-o", self.out("v2_dry.mp4"), "--json", env=env).stdout)
         self.assertEqual((doc["result_v2"]["probe"], doc["result_v2"]["output"]), (None, doc["output"]))
+
+    def test_fifth_review_regressions(self):
+        """Review 5 (2026-09-12): render refuses an output that is one of its clip sources (it
+        overwrote the source and said completed); fit --method trim drops a subtitle track whose
+        cues would sit at the source's times (the output came out double length); multicam
+        --audio out of range is kind input, not an IndexError; check's fix for a broadcast codec
+        failure names a preset that exists; sequence.py has its docstring back."""
+        import shutil
+        src_copy = self.out("r5_src.mp4"); shutil.copy(self.src, src_copy)
+        proj = self.out("r5_proj.json")
+        proj.write_text(json.dumps({"output": str(src_copy), "clips": [{"src": str(src_copy), "in": 0, "out": 1}]}))
+        before = src_copy.stat().st_size
+        proc = tool("render", proj, "--json", "--fast", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertEqual(src_copy.stat().st_size, before, "render must not touch its own source")
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "trim", "--from-center", "--fast", "--json", "-o", self.out("r5_trim.mkv")).stdout)
+        self.assertTrue(doc["dropped_non_av_streams"])
+        self.assertAlmostEqual(doc["probe"]["duration"], 2.0, delta=0.15)
+        proc = tool("multicam", self.src, self.camb, "--audio", "5", "--switch", "0-1:0", "--dry-run", "--json", "-o", self.out("r5_mc.mp4"), check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        m4 = self.out("r5_mpeg4.mp4")
+        ffmpeg("-i", self.src, "-t", "1", "-c:v", "mpeg4", "-c:a", "copy", m4)
+        doc = json.loads(tool("check", m4, "--platform", "broadcast", "--no-loudness", "--json", check=False).stdout)
+        fix = next(c["fix"] for c in doc["checks"] if c["check"] == "video codec")
+        self.assertIn("--preset prores", fix)
+        self.assertTrue(self.tools["sequence"]["description"], "sequence.py's docstring must reach the contract")
+        with open(ROOT / "scripts" / "sequence.py", encoding="utf-8") as f:
+            self.assertTrue(f.readline().startswith("#!"))
 
     def test_settled_policies_exit_code_and_subtitle_tracks(self):
         """docs/design-decisions.md: an ffmpeg failure exits 1 whatever ffmpeg returned (the raw code

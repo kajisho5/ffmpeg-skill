@@ -239,12 +239,13 @@ def main() -> int:
     else:
         cmd += ["-an"]
     cmd += post
-    if abs(factor - 1.0) > 1e-4:
+    if abs(factor - 1.0) > 1e-4 or "-ss" in pre_input:
         # A subtitle/data stream stream-copied by run_keeping_subtitles keeps the source's
         # original timestamps; --method speed retimes video (setpts) and audio (atempo) but has
         # no equivalent way to retime a copied subtitle track, so it would desync from the
         # now-faster/slower picture. Drop them here rather than ship a captions track that lies
-        # about when a line is spoken.
+        # about when a line is spoken. --method trim's -ss moves the timeline the same way: a copied
+        # track kept its cues at the source's times and doubled the output's length (review 5).
         run(cmd + [output])
         dropped_streams = bool(meta.get("subtitle_streams") or meta.get("data_streams"))
     else:

@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Fifth review. `render.py` refused nothing when `output` named one of its own clip sources and overwrote the source (now `kind: input`); `fit.py --method trim` stream-copied a subtitle track through the `-ss` cut, so the file came out at twice the requested length with cues from the wrong part (dropped and reported like `pad --start`); `caption.py --transcribe` ran the speech engine and wrote the `.srt` under `--dry-run`, and put that sidecar next to the *input*, silently replacing a hand-written one (now planned only, written next to the output, with a warning before replacing); `color.py --correct --dry-run` ran two real signalstats passes; `multicam.py --audio N` out of range was a traceback; `check.py`'s fix for a broadcast codec failure named a preset that does not exist (`prores` now); `sequence.py` had `import re` above its shebang, so its docstring never reached `--help` or the contract; `batch.py --watch` could not be stopped with Ctrl-C without an "interrupted, nothing written" exit; `render.py --dry-run` said "copied"; `join.py`'s audio path probed its output as an input; `references/scripts.md` described karaoke timing as even when the default follows speech energy (`--karaoke-timing`).
 
 ## 1.5.0
 

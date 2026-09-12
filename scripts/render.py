@@ -55,7 +55,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input
 
 HERE = Path(__file__).resolve().parent
 
@@ -133,6 +133,8 @@ def main() -> int:
     if not clips:
         die("project.clips is empty")
     output = rel(proj.get("output") or "final.mp4")
+    # the final stage is a copy from the work dir, so run()'s own guard never sees the sources (review 5)
+    refuse_output_is_input(output, *[rel(c.get("src")) for c in clips if c.get("src")])
     # The default work dir name comes only from the output path, with no PID or timestamp --
     # two concurrent render.py runs targeting the same output (a batch.py "project" recipe
     # processing several files in parallel, or simply running render.py twice by mistake) shared
@@ -363,7 +365,7 @@ def main() -> int:
     else:
         if not STATE.dry_run:
             place_output(current, output)
-        info(f"copied final stage to {output}")
+        info(("[dry-run] would copy" if STATE.dry_run else "copied") + f" final stage to {output}")
     current = output
 
     # ---- check

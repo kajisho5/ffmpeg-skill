@@ -1,4 +1,3 @@
-import re
 #!/usr/bin/env python3
 """Turn a numbered image sequence into a video.
 
@@ -16,6 +15,7 @@ Examples:
   python3 sequence.py --dir frames --pattern "*.png" --fps 30 --start-number 1
 """
 import argparse
+import re
 import sys
 import tempfile
 from pathlib import Path

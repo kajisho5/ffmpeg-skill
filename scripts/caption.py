@@ -487,9 +487,17 @@ def main() -> int:
     if args.transcribe:
         if not args.input:
             die("--transcribe needs the input video")
-        srt_path = args.write_srt or os.path.splitext(args.input)[0] + ".srt"
-        cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream)
-        info(f"wrote {srt_path} ({len(cues)} cues)")
+        # the sidecar goes next to the output like the --text one, not into the source folder
+        # where it silently replaced a hand-written <input>.srt (review 5)
+        srt_path = args.write_srt or os.path.splitext(args.output or default_output(args.input, "captioned"))[0] + ".srt"
+        if STATE.dry_run:
+            cues = []
+            info(f"[dry-run] would transcribe {args.input} and write {srt_path}")
+        else:
+            if os.path.exists(srt_path) and not getattr(args, "overwrite", False):
+                info(f"warning: {srt_path} already exists and will be replaced by the transcript (pass --overwrite to confirm)")
+            cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream)
+            info(f"wrote {srt_path} ({len(cues)} cues)")
         args.text = None
     if args.text:
         cues = parse_text_cues(args.text, args.auto_seconds, args.gap, fps_for_tc)
@@ -515,7 +523,7 @@ def main() -> int:
     output = args.output or default_output(args.input, "captioned")
 
     if args.mode == "mux":
-        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and args.text)):
+        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and (args.text or args.transcribe))):
             die(f"SRT file not found: {srt_path}")
         codec = mux_subtitle_codec(output)
         # Keep any subtitle track(s) the input already has (e.g. chaining --mode mux once per
@@ -543,7 +551,7 @@ def main() -> int:
         return 0
 
     if (args.animate != "none" or args.karaoke) and not args.ass:
-        cues_for_ass = cues if args.text else parse_srt(srt_path)
+        cues_for_ass = cues if (args.text or args.transcribe) else parse_srt(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
         w, h = meta["video"]["width"], meta["video"]["height"]
         if meta["video"].get("rotation") in (90, -90, 270, -270):
@@ -563,7 +571,7 @@ def main() -> int:
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
     else:
-        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and args.text)):
+        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and (args.text or args.transcribe))):
             die(f"SRT file not found: {srt_path}")
         style = [
             f"FontName={ass_font_name(args.font)}",

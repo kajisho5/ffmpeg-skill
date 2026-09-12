@@ -22,7 +22,7 @@ import os
 import sys
 from typing import List
 
-from _common import add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, info, probe, run, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 
 TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
 
@@ -293,7 +293,7 @@ def main() -> int:
         tag = "correct"
         # OBSERVED technical measurements (signalstats: luma / saturation distribution), never a
         # "looks better" judgement -- the same primitive probe.py --analyze uses for Log detection.
-        measurements = {"input": analyze_levels(args.input)}
+        measurements = None if STATE.dry_run else {"input": analyze_levels(args.input)}
     else:
         if v.get("hdr") and not args.force:
             die(f"{args.input} is HDR ({v.get('hdr_format')}); a LUT made for SDR applied to PQ/HLG pixels gives a wrong picture "
