@@ -56,6 +56,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+from export import PRESETS
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION
 
 HERE = Path(__file__).resolve().parent
@@ -178,6 +179,25 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     return 0
 
 
+def frame_from_preset(frame: Dict[str, Any], export: Dict[str, Any]) -> None:
+    """Fill frame.width/height from the export preset when the project gave only an aspect.
+    Eval 7 (j08 twice, e01 by hand): "frame": {"aspect": "9:16"} with a reels export fitted a
+    1280x720 source to 406x720, captions were burned at that size, and export.py upscaled them
+    soft. A preset that names a delivery frame of the same aspect is that frame."""
+    if not frame.get("aspect") or frame.get("width") or frame.get("height"):
+        return
+    preset = PRESETS.get(str(export.get("preset") or ""), {})
+    if not (preset.get("w") and preset.get("h")):
+        return
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*", str(frame["aspect"]))
+    if not m or float(m.group(2)) == 0:
+        return
+    if abs(float(m.group(1)) / float(m.group(2)) - preset["w"] / preset["h"]) > 0.01:
+        return
+    frame["width"], frame["height"] = preset["w"], preset["h"]
+    info(f"frame: {preset['w']}x{preset['h']} from the {export['preset']} export preset (captions and overlays are sized for delivery)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project", nargs="?", help="project.json, or a plan.json written by <tool> --plan")
@@ -236,8 +256,9 @@ def main() -> int:
         import atexit
         import shutil
         atexit.register(lambda: shutil.rmtree(work, ignore_errors=True))
-    frame = proj.get("frame") or {}
+    frame = dict(proj.get("frame") or {})
     trans = proj.get("transition") or {}
+    frame_from_preset(frame, proj.get("export") or {})
     brand_args: List[str] = ["--brand", rel(proj["brand"])] if proj.get("brand") else []
     stages_done: List[str] = []
 

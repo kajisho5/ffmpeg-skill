@@ -160,7 +160,7 @@ If a request needs an FFmpeg feature none of the 42 scripts expose, say so and n
 | "remove the green screen", "chroma key this" | `overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00` |
 | "sync the lav mic to the camera", "line up the two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` / `sync.py camA.mp4 camB.mp4 --trim-second` |
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast) |
-| "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` |
+| "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` (`--normalize` meets the platform's loudness spec in the same call, no separate `loudness.py` pass) |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
 | "make a small/low-res proxy for an analysis pass", "a cheap preview file" | `proxy.py input.mp4 [--width 640 --no-audio]` — not a delivery preset, see `export.py` for those |
 | "cut out the pauses / dead air", "tighten it up", "jump cuts" | `silence.py input.mp4 [--threshold -40 --min-silence 0.8]` |
@@ -239,7 +239,7 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 
 ## Report format
 
-Reply in the language the user wrote their request in — a Japanese request gets a Japanese report, English gets English, Chinese gets Chinese, and so on for any other language. Keep the shape below and the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English (they read like log fields, not prose, and stay recognisable across languages); the sentences around them, any question asked, and any explanation of a judgement call are in the user's language. Never default to English because the tool names and flags happen to be English. A mid-conversation language switch follows the user's latest message, not the first one. This holds for a one-command job too: a three-second audio trim answered with English labels, numbers and one Japanese word in `Notes:` is an English report; the `Done:` line's own description (what was cut, from where) and `Steps:` are written in the user's language even when the values are technical.
+Reply in the language the request itself is written in: the language of the user's own sentences, not a language the request talks about (an English request for Spanish subtitles gets an English report) and not the language of a tool's error text or of the file names. Keep the shape below and the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English (they read like log fields, not prose, and stay recognisable across languages); the sentences around them, any question asked, and any explanation of a judgement call are in the user's language. Never default to English because the tool names and flags happen to be English, and never drift into another language because the job is short or the report is a failure: a one-line "file does not exist" is written in the request's language too. A mid-conversation language switch follows the user's latest message, not the first one. This holds for a one-command job too: a three-second audio trim answered with English labels, numbers and one Japanese word in `Notes:` is an English report; the `Done:` line's own description (what was cut, from where) and `Steps:` are written in the user's language even when the values are technical.
 
 Finish every job with this shape (numbers from `probe.py`/`check.py`, not memory):
 
@@ -263,7 +263,7 @@ Look: not needed (nothing written)
 Notes: send a valid .cube, or say if you want the clip left as is
 ```
 
-A refusal (the request asks for a judgement this skill does not make, or for something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run (usually only probe), `Look: not needed`. Both keep the five labels so a reader can scan a failed report the way they scan a successful one. When a tool's failure JSON carries `error.hint`, quote it in `Notes:` — it is the flag change that would make the retry meaningful.
+A refusal (the request asks for a judgement this skill does not make, or for something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run (usually only probe), `Look: not needed`. Both keep the five labels so a reader can scan a failed report the way they scan a successful one. That includes the shortest failure: a missing input or an invalid LUT still gets `Failed:`, `Steps:`, `Check:`, `Look:` and `Notes:` lines, never prose headings in their place. When a tool's failure JSON carries `error.hint`, quote it in `Notes:` — it is the flag change that would make the retry meaningful.
 
 Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool | timeout | verification | interrupted, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
 

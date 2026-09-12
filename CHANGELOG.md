@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Eval iteration 7 follow-ups. `export.py --normalize` runs `loudness.py` on the written file when a platform preset's loudness spec is missed (audio re-encoded, video copied), so a platform export is one call instead of export, loudness, export again. `render.py` fills `frame.width/height` from the export preset when the project gives only an aspect of the same shape, so captions and overlays are burned at the delivery size instead of the source's short side (406x720 before a 1080x1920 reels export). SKILL.md: the report language is the language the request is written in, not a language it talks about or the language of an error (six English refusals came back in Spanish or Portuguese); the five report labels hold for the shortest failure too.
 
 ## 1.7.0
 

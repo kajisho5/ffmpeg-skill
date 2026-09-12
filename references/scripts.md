@@ -640,7 +640,7 @@ integrated loudness ended more than 1 LU from the target because of it.
 
 ### export.py — delivery presets
 ```
-export.py INPUT --preset youtube|youtube4k|reels|x|prores|h265|gif [--fit pad|crop] [--no-scale] [--allow-long] [--crf N] [-o OUT]
+export.py INPUT --preset youtube|youtube4k|reels|x|prores|h265|gif [--fit pad|crop] [--no-scale] [--allow-long] [--crf N] [--normalize] [-o OUT]
 export.py --list
 ```
 Scales into the preset frame (pad by default), tags BT.709, sets `+faststart`,
@@ -648,7 +648,9 @@ trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`. It
 does not touch levels: for youtube / youtube4k / reels / x the written file is
 measured and the result's `loudness` (and a `notes` line) says when it is
 outside the platform's LUFS / true-peak spec, naming the `loudness.py` call
-that fixes it -- plan that pass instead of discovering it from `check.py`.
+that fixes it -- or pass `--normalize`, which runs that call on the written
+file itself (audio re-encoded, video copied; `loudness.normalized: true`) so a
+platform export is one command instead of export, loudness, export again.
 
 ### proxy.py — low-bitrate proxy for analysis/preview
 ```

@@ -400,7 +400,7 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     elif name == "report":
         extra = {"report": {"type": "string"}, "check": {"type": ["object", "null"]}}
     elif name == "export":
-        extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec"},
+        extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "loudness":
         extra = {"measured": {"type": "object", "description": "--measure-only prints the loudnorm measurement instead (input_i, input_tp, input_lra, input_thresh, target_offset)"}}

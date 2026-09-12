@@ -2488,6 +2488,53 @@ class FFmpegSkillTests(unittest.TestCase):
         m = probe(str(OUT / "render_height.mp4"))
         self.assertEqual(m["video"]["height"], 480)
 
+    def test_render_frame_aspect_takes_the_export_presets_size(self):
+        """Eval 7 (j08 twice, e01 by hand): "frame": {"aspect": "9:16"} with a reels export fitted
+        a 1280x720 source to 406x720, captions were burned there and export.py upscaled them
+        soft. When the export preset names a delivery frame of the same aspect, the fit stage
+        uses it; a preset of another shape (or an explicit width/height) is left alone."""
+        proj = OUT / "project_aspect.json"
+        work = OUT / "render_aspect_work"
+        proj.write_text(json.dumps({
+            "output": "render_aspect.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:03"}],
+            "frame": {"aspect": "9:16"},
+            "export": {"preset": "reels"},
+        }), encoding="utf-8")
+        script("render.py", proj, "--fast", "--json", "--work", work, "--keep")
+        m = probe(str(work / "fit.mp4"))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 1920))
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import render
+        finally:
+            sys.path.pop(0)
+        frame = {"aspect": "1:1"}
+        render.frame_from_preset(frame, {"preset": "reels"})
+        self.assertEqual(frame, {"aspect": "1:1"})
+        frame = {"aspect": "9:16", "width": 540}
+        render.frame_from_preset(frame, {"preset": "reels"})
+        self.assertEqual(frame, {"aspect": "9:16", "width": 540})
+
+    def test_export_normalize_meets_the_platform_loudness_in_one_call(self):
+        """Eval 7: every platform job ran export -> loudness.py -> export again. --normalize runs
+        the levels pass on the written file (audio only) so one export delivers the spec."""
+        out = OUT / "export_normalize.mp4"
+        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--fast", "--json", "--overwrite")
+        d = json.loads(proc.stdout)
+        self.assertEqual(d["status"], "completed")
+        self.assertTrue(d["loudness"]["ok"], d["loudness"])
+        self.assertTrue(d["loudness"]["normalized"])
+        self.assertTrue(d["verified"])
+        self.assertAlmostEqual(d["loudness"]["lufs"], -14.0, delta=1.0)
+        self.assertFalse((OUT / "export_normalize_loudnorm.mp4").exists())
+        # without the flag the same file is reported, not fixed
+        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite")
+        d = json.loads(proc.stdout)
+        self.assertFalse(d["loudness"]["ok"])
+        self.assertNotIn("normalized", d["loudness"])
+        self.assertIn("--normalize", " ".join(d["notes"]))
+
     def test_render_exits_nonzero_when_the_check_stage_fails(self):
         """A render whose deliverable fails its own check stage must not report success."""
         proj = OUT / "project_bad_check.json"

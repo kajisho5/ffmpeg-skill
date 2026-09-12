@@ -17,16 +17,19 @@ Presets:
 Examples:
   python3 export.py final.mp4 --preset youtube
   python3 export.py final.mp4 --preset reels --fit crop
+  python3 export.py final.mp4 --preset reels --normalize   # meet the platform's loudness in the same call
   python3 export.py final.mp4 --preset prores -o master.mov
   python3 export.py final.mp4 --preset copy -o delivered.mp4
   python3 export.py --list
 """
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, add_common, apply_common, bt709_tag_args, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color, pad_filters, add_pad_fill_args, fmt_secs
+from _common import STATE, add_common, apply_common, bt709_tag_args, child_args, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from check import SPECS as PLATFORMS, measure_loudness
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
@@ -42,6 +45,7 @@ PRESETS: Dict[str, Dict] = {
 
 
 # which check.py platform a preset targets (its loudness spec is measured after the write)
+HERE = Path(__file__).resolve().parent
 PLATFORM_OF = {"youtube": "youtube", "youtube4k": "youtube", "reels": "reels", "x": "x"}
 
 
@@ -56,6 +60,7 @@ def main() -> int:
     ap.add_argument("--no-scale", action="store_true", help="keep source resolution even for platform presets")
     ap.add_argument("--allow-long", action="store_true", help="do not trim to the platform's max duration")
     ap.add_argument("--crf", type=int, help="override CRF")
+    ap.add_argument("--normalize", action="store_true", help="youtube/youtube4k/reels/x: when the written file misses the platform's loudness spec, run loudness.py on it (audio re-encoded, video copied) so one export delivers")
     ap.add_argument("--list", action="store_true", help="list presets and exit")
     add_common(ap)
     args = ap.parse_args()
@@ -140,9 +145,34 @@ def main() -> int:
             ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"]
             extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok}
             extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform}]
-            if not ok:
+            if not ok and args.normalize:
+                # Eval 7: every platform job ran export -> loudness.py -> export again (two video
+                # encodes). The levels pass only re-encodes audio, so do it here on the written
+                # file and the caller gets one export that meets the spec.
+                info(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s spec; normalising to {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP")
+                tmp = str(Path(output).with_name(Path(output).stem + "_loudnorm" + Path(output).suffix))
+                proc = run_tool([str(HERE / "loudness.py"), output, "-I", f"{spec['lufs']:g}", "--tp", f"{spec['tp']:g}", "-o", tmp, "--json", "--overwrite"] + child_args())
+                try:
+                    child = json.loads(proc.stdout)
+                except ValueError:
+                    child = {}
+                if proc.returncode != 0 or child.get("status") != "completed":
+                    err = child.get("error") or {}
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                    die(f"--normalize: loudness.py failed: {err.get('message') or proc.stderr.strip()[-300:]}",
+                        kind=err.get("kind") or "ffmpeg", output=output, hint=err.get("hint"))
+                os.replace(tmp, output)
+                m = measure_loudness(output) or m
+                ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"]
+                extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok, "normalized": True}
+                extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform}]
+                if not ok:
+                    notes.append(f"loudness is still {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP after loudness.py (target {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP): {child.get('result', {}).get('note') or 'the encoder overshoots the ceiling'}")
+                    info("warning: " + notes[-1])
+            elif not ok:
                 notes.append(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP; "
-                             f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file (or before export)")
+                             f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file, or export with --normalize")
                 info("warning: " + notes[-1])
     if notes:
         extra["notes"] = notes
