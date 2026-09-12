@@ -1210,10 +1210,13 @@ class ContractTests(unittest.TestCase):
     def test_failed_run_never_deletes_an_output_that_predates_it(self):
         """The partial-output cleanup (#78) removed the output path after every failed ffmpeg run
         without asking whether the file had been there before: a bad filter argument aimed at an
-        existing deliverable (ffmpeg exits before opening the output) deleted the deliverable.
-        Only a file this run created, or one ffmpeg demonstrably truncated (size/mtime changed),
-        is a partial of ours; an untouched pre-existing file stays, with or without --overwrite
-        (consent to replace is not consent to delete on failure)."""
+        existing deliverable deleted the deliverable. And on FFmpeg 5.x the cleanup was not even
+        needed for that: -y truncates the output during option parsing, before the filter graph
+        is initialised, so the same bad LUT left a 0-byte file by itself (6.1+ initialises
+        filters first). An existing output is therefore written through a hidden sibling temp
+        file and replaced only on success -- with or without --overwrite (consent to replace is
+        not consent to lose the file on failure); no temp file survives a failure; a fresh path
+        the failed run created is still cleaned up."""
         keep = self.out("deliverable.mp4")
         self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "1", "-o", keep).returncode, 0)
         before = (keep.stat().st_size, keep.stat().st_mtime_ns)
@@ -1225,6 +1228,11 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "ffmpeg")
             self.assertTrue(keep.exists(), f"failed run deleted a pre-existing output ({extra})")
             self.assertEqual((keep.stat().st_size, keep.stat().st_mtime_ns), before, "pre-existing output was modified")
+            self.assertEqual([p.name for p in keep.parent.glob(".*ffskill*")], [], "temp file left behind after a failure")
+        # success replaces the file, through the same temp path, and leaves no temp behind
+        self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "2", "--overwrite", "-o", keep).returncode, 0)
+        self.assertNotEqual(keep.stat().st_size, before[0])
+        self.assertEqual([p.name for p in keep.parent.glob(".*ffskill*")], [])
         # a fresh path that the failed run created is still cleaned up
         fresh = self.out("fresh.mp4")
         proc = tool("color", self.src, "--lut", bad, "--json", "-o", fresh, check=False)

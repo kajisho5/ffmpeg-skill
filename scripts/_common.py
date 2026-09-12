@@ -399,12 +399,40 @@ def _timed_out(cmd: Sequence[str], seconds: float) -> "None":
         code=124, kind="timeout")
 
 
+def _stage_existing_output(cmd: Sequence[str]) -> Tuple[List[str], Optional[str], Optional[str]]:
+    """When the output path already holds someone's file, run ffmpeg against a hidden sibling
+    temp path and move it over the original only on success.
+
+    ffmpeg's -y truncates the output the moment it opens it, and *when* it opens it depends on
+    the version: 6.1+ initialises the filter graph first (a bad LUT fails before the file is
+    touched), 5.x opens the output during option parsing, before any filter runs, so the same
+    bad LUT leaves a 0-byte file where the deliverable was. No amount of post-failure cleanup
+    can undo that; the only way to keep an existing file safe across a failed run is for ffmpeg
+    never to write to it. Same directory, same extension (the muxer is chosen by it), hidden
+    name, so nothing else changes for the encoder. Returns (command to execute, final path,
+    temp path); (cmd, None, None) when no staging is needed."""
+    output = cmd[-1]
+    if output == "-" or output.startswith("pipe:") or output.startswith("-"):
+        return list(cmd), None, None
+    try:
+        if not os.path.isfile(output) or os.path.realpath(output) in STATE.written:
+            return list(cmd), None, None
+    except OSError:
+        return list(cmd), None, None
+    d, base = os.path.split(output)
+    stem, ext = os.path.splitext(base)
+    tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
+    return list(cmd[:-1]) + [tmp], output, tmp
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
     ffmpeg invocations are recorded in STATE.commands (for --json), skipped under --dry-run
     (a fake successful CompletedProcess is returned so scripts can keep planning), and run
-    with a progress readout under --progress. ffprobe and other tools always run.
+    with a progress readout under --progress. ffprobe and other tools always run. An output
+    path that already exists is written through a temp file and replaced only on success
+    (see _stage_existing_output), so a failed run never costs the caller the file that was there.
     """
     is_ffmpeg = _is_ffmpeg(cmd)
     if is_ffmpeg:
@@ -415,9 +443,22 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
         info(("[dry-run] $ " if STATE.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd))
     if STATE.dry_run and is_ffmpeg:
         return subprocess.CompletedProcess(list(cmd), 0, "", "")
-    if STATE.progress and is_ffmpeg and cmd[-1] != "-":
-        return _run_with_progress(list(cmd), check)
-    return _run_captured(list(cmd), check)
+    exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
+    if STATE.progress and is_ffmpeg and exec_cmd[-1] != "-":
+        proc = _run_with_progress(exec_cmd, check)
+    else:
+        proc = _run_captured(exec_cmd, check)
+    if final and tmp:
+        if proc.returncode == 0:
+            try:
+                os.replace(tmp, final)
+            except OSError as e:
+                _cleanup_partial_output(exec_cmd)
+                die(f"could not replace {final} with the new output: {e}", kind="output")
+            _remember_output(cmd)
+        else:
+            _cleanup_partial_output(exec_cmd)
+    return proc
 
 
 def run_keeping_subtitles(cmd: List[str], output: str) -> bool:

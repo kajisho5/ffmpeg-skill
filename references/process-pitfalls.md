@@ -207,11 +207,15 @@ start from the branch tip, not from the triggering commit.
 Found by the 1.4.2 review (2026-09-12), present since #78 (2026-09-07). The cleanup that removes a
 0-byte stray after a failed encode keyed on "output path exists after failure", which is also
 true of a deliverable that was there before the run and that ffmpeg never opened (a bad filter
-argument fails at graph init, before the muxer touches the output). The --overwrite consent
-added in #163 guards the success path only; the failure path had its own delete. Now the run
-snapshots size/mtime of any pre-existing output and the cleanup leaves an unchanged file alone.
-Lesson: a destructive step must know whether it created the thing it is about to destroy;
-"exists" is not that knowledge. And the second review found what the first one -- which had
+argument fails at graph init, before the muxer touches the output -- on 6.1+). The --overwrite
+consent added in #163 guards the success path only; the failure path had its own delete. The
+first fix (snapshot size/mtime, leave an unchanged file alone) passed on 6.1 and failed in the
+5.1.1 CI job: FFmpeg 5.x opens (truncates) the output during option parsing, before any filter
+initialises, so ffmpeg itself had already destroyed the file. The fix that holds on every
+version is to never let ffmpeg write to an existing path: run against a hidden sibling temp
+file and os.replace() it over the original on success only. Lessons: a destructive step must
+know whether it created the thing it is about to destroy, "exists" is not that knowledge; and
+"the tool fails before touching the file" is a version-specific fact, never a guarantee. And the second review found what the first one -- which had
 just written the overwrite guard next to this code -- did not: a reviewer who wrote the fix
 reads the file they fixed, not the one beside it.
 
