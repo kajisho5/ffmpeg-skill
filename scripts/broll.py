@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 
 
 def main() -> int:
@@ -69,13 +69,13 @@ def main() -> int:
         meta_b = probe(path)
         if not meta_b.get("video"):
             die(f"{path} has no video stream")
-        at = parse_time(args.at[i], fps)
-        start_b = parse_time(per(args.from_, i, "0"), fps)
+        at = time_arg(args.at[i], "--at", fps)
+        start_b = time_arg(per(args.from_, i, "0"), "--from", fps)
         if args.end:
-            end = parse_time(per(args.end, i, "0"), fps)
+            end = time_arg(per(args.end, i, "0"), "--end", fps)
             length = end - at
         else:
-            length = parse_time(per(args.duration, i, "4"), fps)
+            length = time_arg(per(args.duration, i, "4"), "--duration", fps)
         if length <= 0:
             die(f"cutaway {i + 1}: length must be > 0 (at {at:g}s, got {length:g}s)")
         if dur_a and at >= dur_a:

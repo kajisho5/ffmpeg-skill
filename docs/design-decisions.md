@@ -135,7 +135,9 @@ exists. When a decision changes, edit the entry in the same PR.
   accepted by `time_arg()` and documented once in `references/scripts.md`; nothing else changes,
   so no CLI is removed. Rejected: "seconds only in single tools, composite input only in
   `render.py`" -- editors quote timecode, and refusing it moves the conversion onto the agent.
-  Code: `_common.time_arg()`.
+  Code: `_common.time_arg()`. 1.9.0 shipped it: `broll`, `cut` and `freeze` (the last three
+  callers of the raw parser) go through `time_arg()`, and `@fps` is accepted everywhere, so 2.0
+  has nothing left to change here.
 - **Encoder abstraction: `--codec h264|hevc|av1|prores` and `--quality N` on every
   re-encoding tool, resolved in one place.** `video_args()` already centralises x264 + the
   HDR/10-bit branch; 2.0 adds the two flags to `add_common()` for tools that re-encode, keeps
@@ -146,6 +148,13 @@ exists. When a decision changes, edit the entry in the same PR.
   duplicated; one more duplication is the wrong direction). Code: `_common.video_args()`.
   1.8.0 shipped the two flags (`add_common()` adds them to every tool that declares `--crf`;
   `encoder_args()` resolves them; `--crf`/`--preset` unchanged), so 2.0 only has to deprecate the aliases.
+- **`hdr` keeps counting BT.2020 primaries on an SDR transfer until 2.0; `hdr_signal` (1.9) is
+  the parallel key that is true only for PQ / HLG / Dolby Vision.** The editing tools keep
+  routing every `hdr: true` source through the HEVC Main10 path with its own tags (a BT.2020 SDR
+  source re-encoded as x264 with BT.709 tags would shift its colours, so the old path is the safe
+  one); a caller that wants to know whether the file is a real HDR signal reads `hdr_signal`, and
+  `hdr_format` says "BT.2020 SDR" for the in-between case. 2.0 renames: `hdr` takes
+  `hdr_signal`'s meaning. Code: `_common.probe()`.
 - **Per-request Context: `STATE` stays process-global through 1.x; 2.0 passes a `Context`
   explicitly to `run()`/`emit()`/`die()`.** Today the MCP server spawns one subprocess per
   call, so the global is never shared between requests; the risk only appears if a future

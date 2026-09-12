@@ -1085,6 +1085,45 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue((sub / "cap_side.srt").exists(), "SRT written beside the output")
         self.assertFalse((OUT / "source.srt").exists(), "no SRT dropped next to the source")
 
+    def test_time_grammar_is_one_parser_with_an_fps_suffix(self):
+        """1.9 (roadmap): hh:mm:ss:ff@fps names the rate; broll / cut / freeze refuse a bad time as
+        kind input naming the flag, like every other tool, instead of their own wording."""
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import _common as c
+        finally:
+            sys.path.pop(0)
+        self.assertAlmostEqual(c.parse_time("00:00:01:15@30"), 1.5)
+        self.assertAlmostEqual(c.parse_time("00:00:01:15@30", fps=24), 1.5, msg="the suffix beats the fps a tool passed in")
+        self.assertAlmostEqual(c.parse_time("01:00:00:00@29.97"), 108000 / 29.97)
+        with self.assertRaises(ValueError):
+            c.parse_time("12.5@30")
+        with self.assertRaises(ValueError):
+            c.parse_time("00:00:01:15@fast")
+        with self.assertRaises(c.MissingFpsError):
+            c.parse_time("00:00:01:15")
+        # the three tools that had their own wrappers
+        d = json.loads(script("cut.py", self.src, "--start", "00:00:01:15@30", "--end", "00:00:02:00@30", "-o", OUT / "tc_cut.mp4", "--json", "--overwrite").stdout)
+        self.assertAlmostEqual(d["expected_duration"], 0.5, places=2)
+        d = json.loads(script("cut.py", self.src, "--start", "nonsense", "-o", OUT / "tc_bad.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("--start", d["error"]["message"])
+        d = json.loads(script("freeze.py", self.src, "--at", "1:xx", "--hold", "1", "-o", OUT / "tc_freeze.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("--at", d["error"]["message"])
+        d = json.loads(script("broll.py", self.src, "--insert", self.src, "--at", "1:xx", "-o", OUT / "tc_broll.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("--at", d["error"]["message"])
+
+    def test_probe_hdr_signal_is_the_transfer_not_the_primaries(self):
+        """1.9: hdr_signal is true for PQ / HLG / Dolby Vision only; hdr keeps its 1.x meaning."""
+        m = probe(str(self.hdr))
+        self.assertTrue(m["video"]["hdr"])
+        self.assertTrue(m["video"]["hdr_signal"])
+        m = probe(str(self.src))
+        self.assertFalse(m["video"]["hdr"])
+        self.assertFalse(m["video"]["hdr_signal"])
+
     def test_caption_smpte_timecode_cues_convert_frames_to_seconds(self):
         tc = OUT / "tc_cues.txt"
         tc.write_text("00:00:00:12 --> 00:00:02:00 Hello\n00:00:02:00 --> 00:00:04:00 World\n", encoding="utf-8")

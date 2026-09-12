@@ -19,7 +19,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, parse_time, fmt_secs, run
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
 
 
 def main() -> int:
@@ -45,10 +45,7 @@ def main() -> int:
     dur = meta.get("duration") or 0.0
     fps = meta["video"].get("fps") or 30.0
     if args.at is not None:
-        try:
-            at = parse_time(args.at, (meta.get("video") or {}).get("fps"))
-        except (ValueError, MissingFpsError) as e:
-            die(f"--at {args.at!r}: {e}")
+        at = time_arg(args.at, "--at", (meta.get("video") or {}).get("fps"))
     else:
         at = dur
     if at < 0 or at > dur:
