@@ -1,0 +1,160 @@
+{
+ "iteration": 8,
+ "date": "2026-09-12",
+ "skill_version": "1.8.0",
+ "agent_model": "claude-sonnet (3 runs per prompt, 8-11 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 108,
+ "prompts": {
+  "agent_prompts_24.json": 25,
+  "agent_prompts_exec.json": 11
+ },
+ "repeats": 3,
+ "harness_note": "Same harness as iteration 7 (subagents cannot ask questions; report in the language the request is written in), with one mechanical change: each subagent read its prompt from a per-run prompt.json instead of receiving it inline. Two grader expectations were relaxed for 1.8 behaviour in the same PR as the review-7 fixes (cut.py's JSON carries the probe; export --normalize is a loudness pass). Transcripts kept outside the repo.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set (per rep 1/2/3)": {
+   "routing_act_prompts": "98% / 100% / 100% over 20 (rep1 e08-surround downmixed but skipped the YouTube export/check)",
+   "mean_commands": "4.4 / 4.4 / 4.4 (was 4.8-5.2: one export instead of export, loudness, export)",
+   "refusal_honesty": "4/5, 5/5, 4/5 by regex; 5/5 x3 on independent review (r04 rep1 in Spanish, r02 rep3 Japanese wording the keyword list does not cover)",
+   "japanese_report": "9/9 in every rep by the 40-character rule (the independent grader is stricter, see below)",
+   "report_format": "25/25 in every rep",
+   "visual_check_when_picture_changed": "7/8, 7/8, 8/8 (e09-join padded a 640x360 clip into 720p without a sheet twice)"
+  },
+  "exec-set (per rep 1/2/3)": {
+   "routing_act_prompts": "100% over 10 in every rep",
+   "mean_commands": "2.0 / 2.0 / 2.0",
+   "real_execution": "6/6 in every rep",
+   "honest_failure_reporting": "5/5 in every rep, false success 0",
+   "audio_only_handled_as_audio": "2/3, 3/3, 2/3 (x02 rep1 and x03 rep3 named the audio file on the Look: line instead of 'not needed')",
+   "report_format": "11/11 in every rep",
+   "japanese_report": "2/2, 1/2, 1/2 by the 40-character rule"
+  }
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-12-it8.json",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10",
+  "judge": "claude-sonnet, one batch"
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-8-independent-grades.json",
+  "model": "claude-opus, every run read, 22 claimed outputs re-probed with ffprobe (all matched)",
+  "summary": {
+   "runs": 108,
+   "routing": "108/108",
+   "honest": "108/108",
+   "language": "98/108",
+   "format": "91/108",
+   "look_when_picture_changed": "22/24",
+   "quality_mean": 4.46,
+   "quality_min": 2
+  },
+  "strictness_note": "This pass counted a Japanese request answered with English Done:/Steps:/Check:/Look: prose and Japanese only in Notes: as a language miss (7 runs) and 'What/how:' in place of Steps:/Check: as a format miss (17 runs); iteration 7's pass did not, so the two language/format columns are not directly comparable. Routing, honesty and look are.",
+  "iteration_8_specific": {
+   "platform_export_runs": 14,
+   "platform_export_runs_using_normalize": 13,
+   "platform_export_runs_not_using_normalize": [
+    "rep1/e01-reel (loudness.py + export.py = 2 encodes)"
+   ],
+   "encodes_per_platform_export_run": {
+    "rep1/e01": 2,
+    "rep2/e01": 1,
+    "rep3/e01": 1,
+    "rep1/j01": 1,
+    "rep2/j01": 1,
+    "rep3/j01": 1,
+    "rep1/j05": 1,
+    "rep2/j05": 1,
+    "rep3/j05": 1,
+    "rep1/j06": 1,
+    "rep2/j06": 1,
+    "rep3/j06": 2,
+    "rep1/j08": 2,
+    "rep2/j08": 1,
+    "rep3/j08": 2
+   },
+   "note_on_encode_counts": "counts export.py + loudness.py invocations only. 10 of 15 are single-encode. rep3/j06 exported once without --normalize, saw the warning, then re-exported. rep1/j08 and rep3/j08 rendered the whole project twice because render.py's export block defaults to no normalize and the first render fails the reels check.",
+   "codec_flag_used": {
+    "real_invocations": 1,
+    "where": [
+     "rep3/e07-hdr: color.py --to-sdr --codec h264"
+    ],
+    "mentioned_as_advice_only": [
+     "rep1/j07-probe",
+     "rep2/j07-probe",
+     "rep3/j07-probe"
+    ]
+   },
+   "quality_flag_used": 0,
+   "check_without_platform_runs": 3,
+   "check_without_platform_detail": [
+    "rep1/e07-hdr: 2 WARN rows (loudness -9.4 LUFS, TP -0.2 dBTP) named in Check:, explicitly not fixed because loudness was not the request, with the loudness.py command offered",
+    "rep2/e12-vfr: reported that check.py fell back to the youtube defaults; all rows PASS",
+    "rep3/e12-vfr: 2 WARN rows reported as informational and left alone"
+   ],
+   "check_without_platform_handled_correctly": 3,
+   "r04_translate_in_request_language_english": "2/3 (rep1 answered in Spanish)",
+   "f01_missing_input_in_request_language_english": "3/3"
+  },
+  "rows_below_4": [
+   "e08-surround rep1 (3): Correct 5.1->stereo downmix but Look: names the .mov output instead of 'not needed', and no YouTube check was run",
+   "e09-join rep1 (3): join with fadeblack correct, but gappy was padded 640x360->1280x720 and no contact sheet was made",
+   "f04-beyond-duration rep1 (2): Honest refusal but written in Spanish for an English request and with prose headings instead of Steps/Check",
+   "r01-face rep1 (3): Correct refusal (no face detection) but uses 'What/how:' and omits Steps:/Check: lines",
+   "r02-tts rep1 (3): Correct TTS refusal in Japanese but 'what/how:' replaces Steps:/Check:",
+   "r03-download rep1 (3): Correct no-downloader refusal but prose headings instead of Steps:/Check:",
+   "r04-translate rep1 (2): Honest about missing ASR and translation, but answered an English request in Spanish and without the label shape",
+   "x03-audio-trim rep1 (3): Sample-exact trim correct, but the Japanese request got English Done:/Steps:/Check: prose with only Notes in Japanese",
+   "e09-join rep2 (3): Join correct but the 640x360 clip was scaled/padded into 720p and no contact sheet was produced",
+   "j01-reel rep2 (3): Good one-encode reel with pad justified, but Steps:/Check:/Look: prose is English on a Japanese request",
+   "j02-60s rep2 (3): Correct 1.5x speed choice, but only Notes: is in Japanese; Done/Steps/Check/Look are English",
+   "r01-face rep2 (3): Correct refusal quoting redact.py's own help, but 'What/how:' instead of Steps:/Check:",
+   "x03-audio-trim rep2 (3): Sample-exact trim but the Japanese request got an English report with only Notes: in Japanese",
+   "e03-logo rep3 (3): Overlay and sheet are right, but the report has no Steps:/Check: lines and a prose Done:",
+   "f02-corrupt-input rep3 (3): Honest corrupt-file failure but Done/Steps/Check/Look lines are English on a Japanese request",
+   "f03-ffmpeg-failure rep3 (3): Honest LUT failure with the cause identified, but 'What/how:' replaces Steps:/Check:",
+   "j06-report rep3 (3): Wasted a full export before adding --normalize, and Steps:/Look: prose is English on a Japanese request",
+   "r03-download rep3 (3): Correct refusal but 'What/how:' replaces Steps:/Check:",
+   "x05-replace-audio rep3 (2): Correct track swap, but an English request was answered in Spanish with no Steps:/Check: lines and Look: naming the mp4"
+  ]
+ },
+ "comparison_with_iteration_7": {
+  "routing": "108/108 (was 108/108)",
+  "honest": "108/108, false success 0, raw ffmpeg 0 (was the same)",
+  "look": "22/24 (was 25/25; the two misses are join.py resolution-normalising a clip)",
+  "trigger": "22/22 (was 22/22)",
+  "mean_commands": "4.4 / 2.0 (was 5.0 / 2.1)",
+  "platform_exports": "13 of 14 used export --normalize; 10 of 15 platform jobs were one encode (was 0 of 9: every one ran export, loudness, export)",
+  "language": "r04-translate in English 2/3 (was 0/3), f01-missing-input in English 3/3 (was 0/3); 3 English reports still drifted to Spanish (f04 rep1, r04 rep1, x05 rep3)",
+  "quality_mean": "4.46 (was 4.03)"
+ },
+ "iteration_7_findings_rechecked": [
+  "Language on refusals: the 1.7.1 wording fixed f01 (3/3 English, was Portuguese 3/3) and mostly r04 (2/3 English, was Spanish 3/3); Spanish still appears on three refusal-shaped English reports.",
+  "render.py frame from the export preset: j08 rendered 1080x1920 captions in all 3 reps (was 406x720 upscaled in 2 of 3).",
+  "export --normalize: adopted without prompting in 13 of 14 platform exports; e01/j01/j06 are one export now.",
+  "check.py without --platform: 3 runs hit the advisory WARN rows and left them alone in one sentence each (was a paragraph)."
+ ],
+ "findings": [
+  "SKILL.md's Report format section is not winning against the model's habit of writing 'What/how:' (or 'How:', 'Qué/cómo:') in place of Steps:, and then dropping Check: entirely: 18 of 108 reports lost the label shape, and it clusters on refusal/failure prompts (r01-r05, f03, f04) where the SKILL.md example is shortest.",
+  "The 1.8.0 language wording fixed the r04 case (2/3 English now) but a Spanish/Portuguese drift still appears on English refusal-shaped prompts (rep1/f04, rep1/r04, rep3/x05) -- all three are reports where nothing or almost nothing was produced.",
+  "Short Japanese jobs still get English Done:/Steps:/Check:/Look: with only Notes: in Japanese (rep1+rep2 x03, rep2 j01/j02/j08, rep3 j06, rep3 f02) -- exactly the failure mode SKILL.md's 'three-second audio trim' sentence describes, so the sentence is not enough; the rule needs to sit in the report template itself.",
+  "render.py's project.json export block does not inherit --normalize, so a reels project renders fully, fails the check on loudness, and has to be rendered a second time (rep1/j08, rep3/j08). The 1.8.0 --normalize win on export.py does not reach render.py.",
+  "export.py --normalize is now the default habit (13 of 14 platform exports) and single-encode pipelines are the norm -- a clear improvement over iteration 7's export->loudness->export.",
+  "--quality was never used in 108 runs and --codec was used in exactly one real command; the flags are discoverable enough to be quoted as advice (j07) but nothing in SKILL.md's workflow suggests when to reach for them, so they are effectively dead options.",
+  "check.py's advisory WARN rows without --platform behaved well in all 3 runs that hit them (mentioned, not chased), but agents mostly skip check.py entirely when no platform is named ('Check: not run'), so the new advisory mode is rarely exercised.",
+  "Look: discipline has a blind spot for join.py: two of three e09 runs changed the picture (a 640x360 clip scaled and padded into a 720p frame) and wrote no contact sheet. 'transitions' is listed in step 8 but resolution-normalising a joined clip is not."
+ ],
+ "harness_or_model_issues": [
+  "run.md is a summary the model writes, not a verbatim transcript, so command counts and 'viewed the sheet' claims are self-reported; file-level spot checks (22 outputs probed) all matched the reports, so honesty was verifiable, but per-command fidelity is not.",
+  "Skill scripts were invoked via three different path spellings across runs (/home/user/ffmpeg-skill/scripts, /root/.claude/skills/ffmpeg-skill/scripts, and bare relative paths), suggesting the harness installs the skill in more than one place.",
+  "rep3/e12-vfr's doctor call printed only 'True\\n{}' where other runs got a full JSON payload -- likely a harness capture artefact rather than a script bug.",
+  "rep2/r04-translate ran a plain `which whisper ...` shell probe; harmless and not raw ffmpeg, but it is outside the skill's scripts and the eval's routing rule does not say whether that is allowed.",
+  "The harness prompt itself says the report has a 'Done:/Failed: line, what/how, Look: ...', which is where the 'What/how:' label on 17 reports comes from; the next harness revision should name the five SKILL.md labels or none."
+ ],
+ "follow_ups": [
+  "render.py: default export.normalize when check.platform names a platform with a loudness spec (j08 rendered twice in 2 of 3 reps); --init already writes it (1.8.1).",
+  "SKILL.md: put the language rule inside the report template (a Japanese line for each label), and say when --codec / --quality are the right call ('make it HEVC', 'ProRes master' without export) -- neither flag was used in 108 runs.",
+  "SKILL.md step 8: join.py that scales or pads a clip changes the picture; list it with transitions.",
+  "grade_runs_24.py: the JA rule (40 characters anywhere) passes reports whose labels are English; count Japanese in the Done:/Steps: lines instead."
+ ]
+}
