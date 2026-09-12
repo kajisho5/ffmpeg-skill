@@ -1,0 +1,63 @@
+{
+ "iteration": 6,
+ "date": "2026-09-12",
+ "skill_version": "1.4.15",
+ "agent_model": "claude-sonnet (one run per prompt, 6-8 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 36,
+ "prompts": {
+  "agent_prompts_24.json": 25,
+  "agent_prompts_exec.json": 11
+ },
+ "repeats": 1,
+ "harness_note": "Same harness as iteration 5 (subagents cannot ask questions: state an assumption or refuse honestly; report in the language the request is written in -- this wording fixed iteration 5's r04 Spanish report). Transcripts (run.md + outputs) kept outside the repo.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set": {
+   "routing_act_prompts": "100% over 20",
+   "mean_commands": 5.0,
+   "refusal_honesty": "3/5 by regex; 5/5 on manual review (r04 'no script ... can translate' and r05 'refused to run a raw ffmpeg' are honest refusals the keyword list does not cover)",
+   "japanese_report": "9/9",
+   "report_format": "25/25 (refusal and failed reports now carry 'Look: not needed', the iteration-5 finding)",
+   "visual_check_when_picture_changed": "8/8"
+  },
+  "exec-set": {
+   "routing_act_prompts": "100% over 10",
+   "mean_commands": 2.2,
+   "real_execution": "6/6",
+   "honest_failure_reporting": "5/5, false success 0",
+   "audio_only_handled_as_audio": "3/3",
+   "report_format": "11/11",
+   "japanese_report": "1/2 (x03-audio-trim: Japanese request, report labels and values in English with only the Notes line in Japanese -- 33 Japanese characters, under the grader's 40)"
+  }
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-12.json",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10",
+  "judge": "claude-sonnet, one batch"
+ },
+ "independent_grader": "not run this iteration (regex grader plus manual review of every flagged row)",
+ "comparison_with_iteration_5": {
+  "routing": "100% (was 100%)",
+  "refusal_honesty": "5/5 manual (was 5/5)",
+  "language": "9/9 + 1/2 (was 8/9 + 2/2)",
+  "format": "36/36 by regex (was 28/36; the 'Look:' line on refusals was the gap)",
+  "look": "8/8 (was 8/8)",
+  "trigger": "22/22 (was 22/22)",
+  "mean_commands": "5.0 / 2.2 (was 5.5 / 2.3)"
+ },
+ "iteration_5_findings_rechecked": [
+  "e06-silence: no raw ffmpeg fallback this time; silence.py's default threshold found the gaps (5.25 s removed). No run in the 36 called ffmpeg or ffprobe directly.",
+  "j04-bgm: the output is 12.000 s from a 12.000 s video (was 11.93 s); the 1.4.3 fix that pads music with apad holds.",
+  "j06-report: answered in Japanese this time (was English).",
+  "r04-translate: report in English, the request's language (was Spanish); the harness wording change did it.",
+  "Refusal/failed reports: every one carries a 'Look: not needed' line, so report_format is 36/36.",
+  "e02-cut-lossless: still a re-encode (single keyframe at 0 s), explained honestly as visually lossless CRF 18; cut.py naming the keyframe-snap alternative remains open."
+ ],
+ "findings": [
+  "x03-audio-trim: a Japanese request got an English-labelled report with Japanese only in Notes. Second language miss in two iterations, both on short audio-only jobs; SKILL.md's report format is shown in English and short jobs seem to copy it verbatim.",
+  "e03-logo: overlay.py --fade with no --end fades the logo out again in the last 0.5 s; the agent flagged it. 'fade in at the start' is the common ask, so a fade-in-only spelling (or --fade applying only at --start when --end is absent) would remove the caveat.",
+  "e01-reel / j01-reel / j08-project: three runs hit the reels loudness check and added a loudness.py step; export.py could say in its result that the platform's loudness target is not met so the agent plans it in one pass.",
+  "j01-reel / j08-project: the untimed third cue in cues.txt lands at 6-9 s and falls outside a 6 s cut; both agents flagged it. Not a defect."
+ ]
+}
