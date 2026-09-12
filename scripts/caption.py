@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS
+from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -48,33 +48,32 @@ TIME_RE = re.compile(
 def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[float] = None) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
     cursor = 0.0
-    with open(path, encoding="utf-8") as fh:
-        for raw in fh:
-            line = raw.rstrip("\n")
-            if not line.strip():
-                continue
-            m = TIME_RE.match(line)
-            if m:
-                try:
-                    start, end = parse_time(m.group("a"), fps), parse_time(m.group("b"), fps)
-                except MissingFpsError as e:
-                    die(f"cue '{line}': {e} -- pass --fps, or --input's own fps is used automatically when given")
-                except ValueError:
-                    # TIME_RE matched (so m.group("text") is the real cue text, not the broken
-                    # timestamp), but one of the two timestamps itself failed to parse (e.g. a
-                    # malformed "00:00:03.15.999") -- falling back to `line.strip()` here used to
-                    # burn the whole raw line, broken timestamp included, into the caption instead
-                    # of just the text after it.
-                    start, end, text = cursor, cursor + auto_seconds, m.group("text").strip()
-                else:
-                    text = m.group("text").strip()
+    for raw in read_text_or_die(path, "--text").lstrip("\ufeff").splitlines(True):
+        line = raw.rstrip("\n")
+        if not line.strip():
+            continue
+        m = TIME_RE.match(line)
+        if m:
+            try:
+                start, end = parse_time(m.group("a"), fps), parse_time(m.group("b"), fps)
+            except MissingFpsError as e:
+                die(f"cue '{line}': {e} -- pass --fps, or --input's own fps is used automatically when given")
+            except ValueError:
+                # TIME_RE matched (so m.group("text") is the real cue text, not the broken
+                # timestamp), but one of the two timestamps itself failed to parse (e.g. a
+                # malformed "00:00:03.15.999") -- falling back to `line.strip()` here used to
+                # burn the whole raw line, broken timestamp included, into the caption instead
+                # of just the text after it.
+                start, end, text = cursor, cursor + auto_seconds, m.group("text").strip()
             else:
-                start, end, text = cursor, cursor + auto_seconds, line.strip()
-            if end <= start:
-                die(f"cue '{line}': end must be after start")
-            text = text.replace(" | ", "\n").replace("|", "\n")
-            cues.append((start, end, text))
-            cursor = end + gap
+                text = m.group("text").strip()
+        else:
+            start, end, text = cursor, cursor + auto_seconds, line.strip()
+        if end <= start:
+            die(f"cue '{line}': end must be after start")
+        text = text.replace(" | ", "\n").replace("|", "\n")
+        cues.append((start, end, text))
+        cursor = end + gap
     if not cues:
         die(f"no cues found in {path}")
     return cues
@@ -173,8 +172,7 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
 def parse_srt(path: str) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
     block: List[str] = []
-    with open(path, encoding="utf-8-sig") as fh:
-        content = fh.read().replace("\r\n", "\n") + "\n\n"
+    content = read_text_or_die(path, "--srt").lstrip("\ufeff").replace("\r\n", "\n") + "\n\n"
     for line in content.split("\n"):
         if line.strip():
             block.append(line)

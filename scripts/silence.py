@@ -12,20 +12,23 @@ Examples:
   python3 silence.py talk.mp4 --edl keep.txt                  # also save the kept ranges (START-END per line, cut.py --segments format)
 """
 import argparse
+import os
 import re
 import sys
 from typing import List, Tuple
 
-from _common import STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, require_tool, run, x264_args, X264_PRESETS, measured_level_dbfs
+from _common import STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, require_tool, run, x264_args, X264_PRESETS, measured_level_dbfs, run_analysis, dry_run_input_pending
 
 SIL_RE = re.compile(r"silence_(start|end): ([0-9.]+)")
 
 
 def detect(path: str, threshold: float, min_silence: float) -> List[Tuple[float, float]]:
+    if dry_run_input_pending(path):
+        return []
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af",
            f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
-    proc = run(cmd, quiet=True, check=False)
+    proc = run_analysis(cmd, check=False, record=True)
     if proc.returncode != 0:
         die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
     silences: List[Tuple[float, float]] = []
@@ -86,7 +89,7 @@ def main() -> int:
         "removed_seconds": round(removed, 3),
     }
     info(f"{len(silences)} silences, keeping {len(keeps)} ranges: {kept:.2f}s of {duration:.2f}s (removing {removed:.2f}s)")
-    if not silences and not STATE.dry_run:
+    if not silences and not (STATE.dry_run and not os.path.exists(args.input)):
         # Nothing under the threshold is a valid result, not a failure -- but an agent that only
         # sees "0 silences" tends to reach for raw ffmpeg next. Say what the floor actually is and
         # what threshold would bite, so the retry is a flag change, not a workaround.

@@ -215,10 +215,13 @@ DRY_RUN_ANALYSIS = {
     "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written",
     "report": "probe, loudness and contact-sheet measurements run; the HTML is not written",
     "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
+    "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written",
+    "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
+    "check": "read-only tool; the loudness measurement runs under --dry-run too, so every row is present",
+    "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
 }
 DRY_RUN_NOTES = {
     "probe": "read-only tool; --dry-run changes nothing (ffprobe still runs)",
-    "check": "read-only tool; --dry-run skips the ffmpeg loudness measurement, so loudness rows are absent",
     "verify": "not supported: the flag is accepted but the steps run and outputs are written",
 }
 

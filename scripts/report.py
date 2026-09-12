@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from _common import STATE, add_common, apply_common, die, emit, info, probe, read_text_or_die, run_tool
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, read_text_or_die, run_tool
 
 HERE = Path(__file__).resolve().parent
 
@@ -26,14 +26,14 @@ HERE = Path(__file__).resolve().parent
 def sheet_b64(path: str, tiles: str = "4x2", width: int = 1200) -> Optional[str]:
     with tempfile.TemporaryDirectory(prefix="ffskill_report_") as tmp:
         png = os.path.join(tmp, "sheet.png")
-        proc = run_tool([str(HERE / "look.py"), path, "--tiles", tiles, "--width", str(width), "-o", png])
+        proc = run_tool([str(HERE / "look.py"), path, "--tiles", tiles, "--width", str(width), "-o", png] + child_args())
         if proc.returncode != 0 or not os.path.exists(png):
             return None
         return base64.b64encode(Path(png).read_bytes()).decode("ascii")
 
 
 def loudness(path: str) -> Dict[str, Any]:
-    proc = run_tool([str(HERE / "loudness.py"), path, "--measure-only"])
+    proc = run_tool([str(HERE / "loudness.py"), path, "--measure-only"] + child_args())
     try:
         d = json.loads(proc.stdout)
         return {"lufs": round(float(d["input_i"]), 1), "tp": round(float(d["input_tp"]), 1), "lra": round(float(d["input_lra"]), 1)}
@@ -42,7 +42,7 @@ def loudness(path: str) -> Dict[str, Any]:
 
 
 def check(path: str, platform: str) -> Optional[Dict[str, Any]]:
-    proc = run_tool([str(HERE / "check.py"), path, "--platform", platform, "--json"])
+    proc = run_tool([str(HERE / "check.py"), path, "--platform", platform, "--json"] + child_args())
     try:
         doc = json.loads(proc.stdout)
     except ValueError:

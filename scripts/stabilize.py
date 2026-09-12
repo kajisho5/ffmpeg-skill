@@ -27,7 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS
+from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending
 
 
 def main() -> int:
@@ -62,18 +62,20 @@ def main() -> int:
         trf = str(Path(tmp) / "transforms.trf")
         trf_arg = escape_filter_path(trf)
 
-        if not STATE.dry_run:
-            ffmpeg = require_tool("ffmpeg")
-            detect_vf = f"vidstabdetect=shakiness={args.shakiness}:result={trf_arg}"
-            if args.tripod:
-                # A frame number, not a boolean: frame 1 is the standard reference for "lock to
-                # this fixed frame" (mirrors vidstabtransform's own tripod=1 below).
-                detect_vf += ":tripod=1"
-            detect_cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", args.input,
-                          "-vf", detect_vf, "-f", "null", "-"]
-            proc = run(detect_cmd, check=False)
+        ffmpeg = require_tool("ffmpeg")
+        detect_vf = f"vidstabdetect=shakiness={args.shakiness}:result={trf_arg}"
+        if args.tripod:
+            # A frame number, not a boolean: frame 1 is the standard reference for "lock to
+            # this fixed frame" (mirrors vidstabtransform's own tripod=1 below).
+            detect_vf += ":tripod=1"
+        detect_cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", args.input,
+                      "-vf", detect_vf, "-f", "null", "-"]
+        # Pass 1 is a measurement into a temp file (the transforms), so it runs under --dry-run
+        # as well; only pass 2, the write, is skipped there.
+        if not dry_run_input_pending(args.input):
+            proc = run_analysis(detect_cmd, check=False, record=True)
             if proc.returncode != 0:
-                die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}")
+                die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg")
 
         crop_mode = {"keep": 0, "black": 1}[args.crop]
         transform_vf = f"vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=1"

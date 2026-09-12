@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, read_text_or_die
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac"}
@@ -102,7 +102,10 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path) -> Dict
     final = final_path(src, recipe, outdir)
     t0 = time.time()
     if recipe.get("project"):
-        proj = json.loads(Path(recipe["project"]).read_text(encoding="utf-8"))
+        try:
+            proj = json.loads(read_text_or_die(str(recipe["project"]), "recipe.project"))
+        except ValueError as e:
+            die(f"recipe.project: {recipe['project']} is not valid JSON: {e}")
         idx = int(recipe.get("clip_key", 0))
         proj.setdefault("clips", [{}])
         while len(proj["clips"]) <= idx:

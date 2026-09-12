@@ -25,7 +25,7 @@ import sys
 from fractions import Fraction
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run
+from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 SPECS: Dict[str, Dict[str, Any]] = {
     "youtube":   {"max_duration": 12 * 3600, "aspects": ["16:9", "9:16", "1:1", "4:3"], "min_height": 720, "fps_max": 60, "codecs": ["h264", "hevc", "prores", "av1", "vp9"], "max_bytes": 256 * 1024 ** 3, "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": False},
@@ -41,8 +41,10 @@ SPECS: Dict[str, Dict[str, Any]] = {
 
 
 def measure_loudness(path: str) -> Dict[str, float]:
+    if dry_run_input_pending(path):
+        return {}
     ffmpeg = require_tool("ffmpeg")
-    proc = run([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", "loudnorm=I=-14:TP=-1:LRA=11:print_format=json", "-f", "null", "-"], quiet=True, check=False)
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", "loudnorm=I=-14:TP=-1:LRA=11:print_format=json", "-f", "null", "-"], check=False, record=True)
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", proc.stderr, re.S)
     if not m:
         return {}

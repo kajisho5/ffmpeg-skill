@@ -358,7 +358,7 @@ def main() -> int:
     check_result = None
     exit_code = 0
     if ck and ck.get("platform") and not STATE.dry_run:
-        proc = run_tool([str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"])
+        proc = run_tool([str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"] + child_args())
         try:
             check_result = json.loads(proc.stdout)
         except ValueError:
@@ -386,7 +386,8 @@ def main() -> int:
         # spec (or the check itself could not run): a failed delivery, reported as one.
         failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
         die(f"rendered {output} but the {ck['platform']} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""),
-            kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result)
+            kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result,
+            probe=probe(output, role="output"))
     info(f"rendered {output} via {' → '.join(stages_done)}")
     emit(output, stages=stages_done, check=check_result)
     return 0

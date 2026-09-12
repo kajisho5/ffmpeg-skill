@@ -504,7 +504,7 @@ class ContractTests(unittest.TestCase):
         tool gaining/losing an analysis-only dry-run mode is caught here instead of the docs
         silently drifting out of sync with _contract.py again (issue #82)."""
         analysis_tools = set(_contract.DRY_RUN_ANALYSIS.keys())
-        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect"},
+        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize"},
                           "the analysis-only dry-run tool set changed -- update SKILL.md/references/scripts.md's exception list to match")
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         scripts_ref = (ROOT / "references" / "scripts.md").read_text(encoding="utf-8")
@@ -1126,7 +1126,8 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in outdir.iterdir()), [], f"{name} --dry-run wrote files")
             if strict:
                 self.assertFalse(marker.exists(), f"{name} --dry-run invoked ffmpeg")
-        self.assertEqual({n for n, s in self.tools.items() if s["dry_run"]["ffmpeg_execution"] == "analysis_only"}, {"sync", "multicam", "scenes", "report", "cropdetect"})
+        self.assertEqual({n for n, s in self.tools.items() if s["dry_run"]["ffmpeg_execution"] == "analysis_only"},
+                         {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize"})
         # the read-only tools keep working under --dry-run (ffprobe still runs)
         self.assertEqual(tool("probe", self.src, "--dry-run", env=env).returncode, 0)
         self.assertEqual(tool("check", self.src, "--platform", "x", "--no-loudness", "--dry-run", env=env).returncode, 0)
@@ -1250,6 +1251,78 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["code"]), ("failed", "timeout", "TIMEOUT"))
         self.assertIn("sleeper.py", doc["error"]["message"])
         _common.STATE.reset()
+
+    def test_dry_run_plans_rest_on_real_measurements(self):
+        """silence.py, loudness.py, check.py and stabilize.py ran their measurement through run(),
+        which --dry-run replaces with a fake empty result: a dry run always reported "0 silences",
+        a made-up -20 LUFS, a loudness row that could not be measured, and no stabilisation pass.
+        A plan built on a fake measurement is not a plan. The measurement passes now go through
+        run_analysis() (real under --dry-run, still under --timeout); only the write is skipped."""
+        gappy = self.out("gappy.mp4")
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
+               "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=30", "-t", "8", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", gappy)
+        doc = json.loads(tool("silence", gappy, "--dry-run", "--list", "--json").stdout)
+        self.assertTrue(doc["dry_run"])
+        self.assertTrue(doc["silences"], "a dry run must detect the fixture's real silences")
+        self.assertTrue(any("silencedetect" in c for c in doc["commands"]))
+        doc = json.loads(tool("loudness", self.src, "--dry-run", "--json", "-o", self.out("dry_loud.mp4")).stdout)
+        self.assertTrue(doc["dry_run"])
+        self.assertNotEqual(doc["measured"]["input_i"], "-20.0", "the pass-1 measurement must be real, not the old placeholder")
+        self.assertFalse(self.out("dry_loud.mp4").exists())
+        doc = json.loads(tool("check", self.src, "--platform", "youtube", "--dry-run", "--json", check=False).stdout)
+        rows = {r["check"]: r for r in doc["checks"]}
+        self.assertNotIn("could not be measured", rows["loudness"].get("reason", ""), rows["loudness"])
+
+    def test_run_analysis_is_killed_by_timeout(self):
+        """A measurement (scenes.py's scdet pass) that hangs is killed under the same --timeout
+        as any other ffmpeg call and reported as kind timeout, not waited on forever."""
+        if platform.system() == "Windows":
+            self.skipTest("the hung ffmpeg is a #!/bin/sh shim on a POSIX-only PATH")
+        shim = self.out("hang_analysis_shim")
+        shim.mkdir()
+        (shim / "ffmpeg").write_text("#!/bin/sh\nsleep 8\nexit 1\n")
+        (shim / "ffmpeg").chmod(0o755)
+        (shim / "ffprobe").symlink_to(shutil.which("ffprobe"))
+        env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+        t0 = time.time()
+        proc = tool("scenes", self.src, "--timeout", "1", "--json", env=env, check=False)
+        self.assertEqual(proc.returncode, 124, proc.stderr[-300:])
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "timeout")
+        self.assertLess(time.time() - t0, 6)
+
+    def test_caller_supplied_text_files_fail_as_kind_input(self):
+        """--text/--srt/--chapters/--commands/--notes files that are missing, a directory or not
+        UTF-8 used to surface as FileNotFoundError / IsADirectoryError / UnicodeDecodeError
+        tracebacks. read_text_or_die() names the flag and fails as kind input."""
+        bad = self.out("latin1.txt")
+        bad.write_bytes(b"0:00-0:01 caf\xe9\n")
+        adir = self.out("a_directory")
+        adir.mkdir()
+        for args, needle in ((["--text", str(self.out("nope.txt"))], "does not exist"),
+                             (["--text", str(adir)], "is a directory"),
+                             (["--text", str(bad)], "not UTF-8")):
+            proc = tool("caption", self.src, *args, "--json", "-o", self.out("cap_bad.mp4"), check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            doc = json.loads(proc.stdout)
+            self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"), args)
+            self.assertIn("--text", doc["error"]["message"])
+            self.assertIn(needle, doc["error"]["message"])
+            self.assertEqual(doc["commands"], [], "refused before ffmpeg ran")
+
+    def test_batch_reports_failed_items_as_a_failed_run(self):
+        """batch.py printed status completed next to exit 1 when an item failed; it now fails
+        with kind verification and keeps the per-item results so the caller sees which."""
+        folder = self.out("batch_fail")
+        folder.mkdir()
+        shutil.copy(self.src, folder / "a.mp4")
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_x",
+                                      "steps": [["cut.py", "{in}", "--start", "0", "--end", "1", "--crf", "99", "-o", "{out}"]]}))
+        proc = tool("batch", folder, "--recipe", recipe, "--json", check=False)
+        self.assertEqual(proc.returncode, 1)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"], doc["processed"], doc["total"]), ("failed", "verification", 0, 1))
+        self.assertFalse(doc["results"][0]["ok"])
 
     def test_failed_run_never_deletes_an_output_that_predates_it(self):
         """The partial-output cleanup (#78) removed the output path after every failed ffmpeg run

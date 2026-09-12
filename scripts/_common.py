@@ -462,12 +462,17 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     return proc
 
 
-def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True) -> subprocess.CompletedProcess:
-    """Run an ffmpeg *measurement* (scene scores, crop rectangles, decoded PCM, signal stats):
-    output to `-f null` or a pipe, nothing written. These are not run() calls -- they run under
-    --dry-run too, since the analysis is the tool's whole job -- but they get the same wall-clock
-    limit as any other ffmpeg invocation and, with check=True, the same `kind: ffmpeg` failure
-    instead of an exit-0 "0 scenes found" over a file ffmpeg could not read."""
+def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False) -> subprocess.CompletedProcess:
+    """Run an ffmpeg *measurement* (scene scores, crop rectangles, decoded PCM, signal stats,
+    silence detection, loudness, stabilisation pass 1): output to `-f null`, a pipe or a temp
+    file, no deliverable written. These are not run() calls -- they run under --dry-run too,
+    since a plan built on a fake measurement is not a plan (silence.py used to report "0
+    silences" and loudness.py a made-up -20 LUFS under --dry-run) -- but they get the same
+    wall-clock limit as any other ffmpeg invocation and, with check=True, the same `kind: ffmpeg`
+    failure instead of an exit-0 "0 scenes found" over a file ffmpeg could not read. record=True
+    lists the command in the --json `commands` like run() does."""
+    if record:
+        STATE.commands.append(_cmdline(cmd))
     limit = _limit_for(cmd)
     try:
         proc = subprocess.run(list(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, timeout=limit)
@@ -477,6 +482,17 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True) -
         err = proc.stderr if text else proc.stderr.decode(errors="replace")
         _fail(cmd, proc.returncode, err)
     return proc
+
+
+def dry_run_input_pending(path: str) -> bool:
+    """True when a measurement cannot run because its input does not exist yet under --dry-run:
+    in a render.py/batch.py plan each stage's input is the previous stage's output, which a dry
+    run never wrote. The measurement is then skipped (with a note) rather than failing the plan;
+    on a real file the measurement runs even under --dry-run."""
+    if STATE.dry_run and not os.path.exists(path):
+        info(f"[dry-run] {path} does not exist yet (an earlier dry-run stage would write it); measurement skipped")
+        return True
+    return False
 
 
 def child_limit(per_call: Optional[float] = None) -> Optional[float]:

@@ -42,14 +42,22 @@ def detect(path: str, seconds: float, samples: int, limit: float, round_to: int,
     ffmpeg = require_tool("ffmpeg")
     per_window = max(0.5, seconds / max(1, samples))
     rects: List[Tuple[int, int, int, int]] = []
+    failures: List[List[str]] = []
     for i in range(samples):
         start = 0.0 if duration <= 0 else (duration - per_window) * i / max(1, samples - 1) if samples > 1 else 0.0
         start = max(0.0, start)
         cmd = [ffmpeg, "-hide_banner", "-nostdin", "-ss", f"{start:.3f}", "-i", path, "-t", f"{per_window:.3f}",
                "-vf", f"cropdetect=limit={limit:g}:round={round_to}:reset=1", "-f", "null", "-"]
-        proc = run_analysis(cmd)
+        proc = run_analysis(cmd, check=False)
+        if proc.returncode != 0:
+            # One window ffmpeg cannot decode (a damaged stretch) is skipped; the other windows
+            # still measure. Only when every window fails is there nothing to report.
+            failures.append(proc.stderr.strip().splitlines()[-1:] or ["?"])
+            continue
         for m in CROP_RE.finditer(proc.stderr):
             rects.append((int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))))
+    if failures and len(failures) == samples:
+        die(f"cropdetect could not decode any of the {samples} sampled windows: {failures[-1][0][:300]}", kind="ffmpeg")
     return rects
 
 

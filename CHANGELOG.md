@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-(nothing yet)
+- `--dry-run` plans rest on real measurements: `silence.py`, `loudness.py`, `check.py` and `stabilize.py` run their measurement passes (silencedetect, loudnorm pass 1, vidstabdetect) under `--dry-run` and skip only the write. Before, a dry run reported 0 silences, a made-up -20 LUFS, an unmeasured loudness row and no stabilisation pass. The contract lists them as `analysis_only`.
+- `render.py`'s check stage and `report.py`'s look/loudness/check children receive the shared flags (`--timeout`, `--overwrite`, `--fast`, `--dry-run`); `render.py`'s failure document carries the output probe.
+- `cropdetect.py` skips a sampled window ffmpeg cannot decode and measures the rest; only when every window fails is it `kind: ffmpeg`.
+- `caption.py --text`/`--srt` and `batch.py`'s `recipe.project` read through the guarded reader: a missing, directory or non-UTF-8 file is a `kind: input` refusal naming the flag.
 
 ## 1.4.6
 

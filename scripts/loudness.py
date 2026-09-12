@@ -18,16 +18,18 @@ import os
 import re
 import sys
 
-from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run
+from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 
 
 def measure(path: str, I: float, tp: float, lra: float) -> dict:
-    if STATE.dry_run:
-        return {"input_i": "-20.0", "input_tp": "-3.0", "input_lra": "8.0", "input_thresh": "-30.0", "target_offset": "0.0", "silent": False}
+    if dry_run_input_pending(path):
+        return {"input_i": "-20.0", "input_tp": "-3.0", "input_lra": "8.0", "input_thresh": "-30.0", "target_offset": "0.0", "silent": False, "placeholder": True}
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
-    proc = run(cmd, check=False)
+    # Pass 1 is a measurement: it runs under --dry-run too, so the planned pass-2 command and
+    # the reported input_i are real (before 1.4.6 a dry run returned a made-up -20 LUFS).
+    proc = run_analysis(cmd, check=False, record=True)
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", proc.stderr, re.S)
     if proc.returncode != 0 or not m:
         die(f"loudness measurement failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg")
@@ -86,6 +88,10 @@ def main() -> int:
     cmd.append(output)
     run(cmd)
 
+    if STATE.dry_run:
+        # pass 1 measured the input for real; there is no output to measure
+        emit(output, measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")})
+        return 0
     after = measure(output, args.lufs, args.tp, args.lra)
     if not after.get("silent"):
         info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {args.lufs} LUFS)")
