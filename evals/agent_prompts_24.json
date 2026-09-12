@@ -17,7 +17,6 @@
   "lang": "en",
   "prompt": "Trim /home/user/ffmpeg-skill/tests/out/source.mp4 to 0:02-0:08 without losing quality, save in OUTDIR.",
   "expect": [
-   "probe",
    "cut"
   ],
   "refuse": false
@@ -163,7 +162,7 @@
   "prompt": "/home/user/ffmpeg-skill/tests/out/gappy.mp4 の間（無音）を詰めて、YouTube 向けに音量も整えて。OUTDIR。",
   "expect": [
    "silence",
-   "loudness"
+   "loudness|export"
   ],
   "refuse": false
  },

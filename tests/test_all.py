@@ -2271,8 +2271,37 @@ class FFmpegSkillTests(unittest.TestCase):
         # --quality bounds follow the codec; export refuses --codec
         d = json.loads(script("fit.py", self.src, "--width", "320", "--quality", "60", "-o", out, "--json", expect_fail=True).stdout)
         self.assertEqual(d["error"]["kind"], "input")
-        d = json.loads(script("export.py", self.src, "--preset", "x", "--codec", "hevc", "-o", OUT / "codec_export.mp4", "--json", expect_fail=True).stdout)
+        proc = script("export.py", self.src, "--preset", "x", "--codec", "hevc", "-o", OUT / "codec_export.mp4", "--json", expect_fail=True)
+        self.assertIn("--codec", proc.stderr)  # argparse: the preset decides, the flag is not offered (review 7)
+        self.assertNotIn("--codec", script("export.py", "--help").stdout)
+        # review 7: prores without -o would have failed inside ffmpeg (mp4 cannot hold it)
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "prores", "--json", expect_fail=True).stdout)
         self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("-o NAME.mov", d["error"]["hint"])
+        # review 7: cut's lossless path used to keep the source codec under --codec
+        cutout = OUT / "codec_cut.mp4"
+        script("cut.py", self.src, "--start", "0", "--end", "2", "--codec", "hevc", "-o", cutout, "--fast", "--json", "--overwrite")
+        self.assertEqual(probe(str(cutout))["video"]["codec"], "hevc")
+        # review 7: waveform.py built its own x264 line and ignored the flag
+        wf = OUT / "codec_wave.mp4"
+        script("waveform.py", OUT / "c_tone.wav", "--codec", "hevc", "-o", wf, "--fast", "--json", "--overwrite")
+        self.assertEqual(probe(str(wf))["video"]["codec"], "hevc")
+        # review 7: the av1 bound is named in the --crf message, and HDR hevc --quality 51 does not overflow
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "av1", "--crf", "70", "-o", out, "--json", expect_fail=True).stdout)
+        self.assertIn("63", d["error"]["message"])
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import _common as c
+        finally:
+            sys.path.pop(0)
+        args = c.encoder_args("hevc", 51, "medium", {"video": {"hdr": True, "color_transfer": "smpte2084"}})
+        self.assertEqual(args[args.index("-crf") + 1], "51")
+        self.assertNotIn("-colorspace", c.encoder_args("hevc", 18, "medium", None, keep_bt709=False))
+        # the contract lists each --codec encoder once per tool
+        spec = json.loads(script("_contract.py", "--json").stdout)
+        fit_caps = [o["capability"] for o in next(t for t in spec["tools"] if t["name"] == "fit")["capabilities"]["optional"]]
+        self.assertEqual(len(fit_caps), len(set(fit_caps)), fit_caps)
+        self.assertNotIn("codec", next(t for t in spec["tools"] if t["name"] == "export")["input_schema"]["properties"])
         # no --codec: the old default line, byte for byte
         d = json.loads(script("fit.py", self.src, "--width", "320", "-o", out, "--fast", "--json", "--overwrite").stdout)
         self.assertTrue(any("libx264" in c for c in d["commands"]))
@@ -2332,6 +2361,7 @@ class FFmpegSkillTests(unittest.TestCase):
         rows = {r["check"]: r for r in data["checks"]}
         self.assertEqual(rows["true peak"]["status"], "WARN")
         self.assertEqual(rows["loudness"]["kind"], "judgement")
+        self.assertEqual(rows["true peak"]["kind"], "judgement")
         self.assertTrue(any("no --platform" in n for n in data["notes"]))
         # the same file with the platform named is the same FAIL as before
         data = json.loads(script("check.py", self.src, "--platform", "youtube", "--json", expect_fail=True).stdout)
@@ -2610,6 +2640,20 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(d["verified"])
         self.assertAlmostEqual(d["loudness"]["lufs"], -14.0, delta=1.0)
         self.assertFalse((OUT / "export_normalize_loudnorm.mp4").exists())
+        self.assertTrue(any("linear=true" in c for c in d["commands"]), "the normalising encode is in the command log (review 7)")
+        # review 7 P0: a real <output>_loudnorm.<ext> next to the export survives --normalize
+        precious = OUT / "export_normalize_loudnorm.mp4"
+        precious.write_bytes(b"PRECIOUS")
+        try:
+            script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--fast", "--json", "--overwrite")
+            self.assertEqual(precious.read_bytes(), b"PRECIOUS")
+        finally:
+            precious.unlink()
+        # --normalize on a preset without a loudness spec is refused; under --dry-run it says what it would do
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "h265", "--normalize", "-o", OUT / "export_norm_h265.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--dry-run", "--json").stdout)
+        self.assertTrue(any("--normalize" in n for n in d.get("notes", [])), d)
         # without the flag the same file is reported, not fixed
         proc = script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite")
         d = json.loads(proc.stdout)

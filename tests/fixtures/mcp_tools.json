@@ -364,7 +364,6 @@
   "properties": [
    "allow_long",
    "argv",
-   "codec",
    "crf",
    "dry_run",
    "fast",
@@ -382,7 +381,6 @@
    "plan",
    "preset",
    "progress",
-   "quality",
    "timeout"
   ],
   "required": []
