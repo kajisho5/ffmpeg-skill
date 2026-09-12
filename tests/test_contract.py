@@ -1230,6 +1230,27 @@ class ContractTests(unittest.TestCase):
             if preset and name != "export":
                 self.assertEqual(set(preset["enum"]), set(_common.X264_PRESETS), name)
 
+    def test_sibling_scripts_run_under_an_outer_ceiling(self):
+        """render/batch/report and the MCP server run sibling scripts as subprocesses. The child
+        limits each of its own ffmpeg calls with --timeout, but a child hung for any other reason
+        (a wedged pipe, a stuck import) was waited on forever: none of those outer subprocess.run
+        calls had a timeout. run_tool() applies child_limit() (4x the per-call limit + 60 s) and
+        returns this skill's own timeout failure document, so a caller parsing the child's --json
+        sees kind timeout exactly as it would from the child. Exercised with a script that sleeps
+        past a tiny limit (the ceiling is computed from the per-call limit, not fixed)."""
+        self.assertIsNone(_common.child_limit(0), "0 = no limit, as for --timeout")
+        self.assertEqual(_common.child_limit(10), 100)
+        sleeper = self.out("sleeper.py")
+        sleeper.write_text("import time\ntime.sleep(30)\n")
+        _common.STATE.reset()
+        _common.STATE.timeout = 0.01  # ceiling 60.04 s would be too slow; pass per_call explicitly instead
+        proc = _common.run_tool([str(sleeper)], per_call=-14.9)  # -14.9*4+60 = 0.4 s
+        self.assertEqual(proc.returncode, 124)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["code"]), ("failed", "timeout", "TIMEOUT"))
+        self.assertIn("sleeper.py", doc["error"]["message"])
+        _common.STATE.reset()
+
     def test_failed_run_never_deletes_an_output_that_predates_it(self):
         """The partial-output cleanup (#78) removed the output path after every failed ffmpeg run
         without asking whether the file had been there before: a bad filter argument aimed at an

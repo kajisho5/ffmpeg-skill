@@ -51,12 +51,11 @@ Examples:
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool
 
 HERE = Path(__file__).resolve().parent
 
@@ -80,9 +79,9 @@ TEMPLATE = {
 
 def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
     """Run a sibling script, forwarding --fast / --dry-run, returning its printed output path."""
-    cmd = [sys.executable, str(HERE / script)] + [str(a) for a in argv] + (extra or []) + child_args() + ["--json"]
-    info("→ " + " ".join(os.path.basename(c) if i < 2 else c for i, c in enumerate(cmd[:-1])))
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    cmd = [str(HERE / script)] + [str(a) for a in argv] + (extra or []) + child_args() + ["--json"]
+    info("→ " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd[:-1])))
+    proc = run_tool(cmd)
     for line in proc.stderr.splitlines():
         if line.startswith("$ ") or line.startswith("[dry-run]"):
             STATE.commands.append(line[2:] if line.startswith("$ ") else line)
@@ -359,7 +358,7 @@ def main() -> int:
     check_result = None
     exit_code = 0
     if ck and ck.get("platform") and not STATE.dry_run:
-        proc = subprocess.run([sys.executable, str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = run_tool([str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"])
         try:
             check_result = json.loads(proc.stdout)
         except ValueError:

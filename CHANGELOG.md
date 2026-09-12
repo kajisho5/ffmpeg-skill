@@ -6,6 +6,8 @@
 
 - Docs: README no longer claims media ffmpeg calls have no timeout; tool counts read 42 everywhere (the count test now catches the "all N by" / "same N names" phrasings); `docs/contract.md` lists every dry-run exception; the error-kind list is identical in SKILL.md, README and the contract; SKILL.md states the dry-run exceptions once and moves the Windows drawtext story to `references/ci-platform-pitfalls.md`; CODE_OF_CONDUCT.md added.
 - The npm package ships `references/scripts.md`, `devices.md` and `ci-platform-pitfalls.md` only; the maintainer diary `process-pitfalls.md` stays in the repository. Internal: the `Context` dict-style shims are gone, every call site uses attributes.
+- Every sibling-script run (`render.py`/`batch.py`/`report.py` stages and the MCP server's dispatch) has an outer wall-clock ceiling of 4x the per-ffmpeg `--timeout` plus 60 s, so a child hung for a reason other than ffmpeg is killed and reported as `kind: timeout`. The MCP caller's `timeout` argument sets both.
+- `scenes.py` and `sync.py` share one PCM decode and RMS-envelope implementation (`decode_pcm_mono`/`rms_envelope` in `_common.py`); results are unchanged.
 
 ## 1.4.5
 

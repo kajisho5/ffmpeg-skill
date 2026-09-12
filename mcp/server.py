@@ -26,6 +26,7 @@ PROTOCOL_VERSION = "2024-11-05"
 
 sys.path.insert(0, str(SCRIPTS))
 import _contract  # noqa: E402  (the contract is the only source of tool names, schemas and argument mapping)
+import _common  # noqa: E402  (run_tool: the outer wall-clock ceiling on a dispatched tool)
 
 _SPECS: Dict[str, Dict[str, Any]] = {}
 
@@ -91,7 +92,14 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     if name not in specs() or not script.exists():
         return {"isError": True, "content": [{"type": "text", "text": f"unknown tool {name}"}]}
     argv = build_argv(name, args or {})
-    proc = subprocess.run([sys.executable, str(script)] + argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # The child enforces --timeout on each ffmpeg call; this outer ceiling (4x that plus 60 s)
+    # is the only thing that ends a child hung for any other reason. The caller's own `timeout`
+    # argument sets both; otherwise FFMPEG_SKILL_TIMEOUT / the 1800 s default.
+    try:
+        per_call = float((args or {}).get("timeout", _common._env_timeout()))
+    except (TypeError, ValueError):
+        per_call = _common._env_timeout()
+    proc = _common.run_tool([str(script)] + argv, per_call=per_call)
     stdout = proc.stdout.strip()
     text = stdout
     structured = None

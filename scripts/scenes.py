@@ -21,11 +21,10 @@ import argparse
 import math
 import os
 import re
-import struct
 import sys
 from typing import Dict, List, Tuple
 
-from _common import add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run, run_analysis
+from _common import add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run, run_analysis, decode_pcm_mono, rms_envelope
 
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
 
@@ -87,19 +86,9 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
 
 
 def audio_envelope(path: str, step_s: float) -> List[float]:
-    ffmpeg = require_tool("ffmpeg")
-    proc = run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
-                        check=False, text=False)
-    n = len(proc.stdout) // 2
-    if n == 0:
-        return []
-    samples = struct.unpack(f"<{n}h", proc.stdout[: n * 2])
-    step = max(1, int(8000 * step_s))
-    env = []
-    for i in range(0, n, step):
-        block = samples[i:i + step]
-        env.append(math.sqrt(sum(x * x for x in block) / len(block)) / 32768.0)
-    return env
+    """RMS level per step_s window at 8 kHz, absolute (a loud scene scores higher); [] when the
+    audio cannot be decoded (the cut scoring then runs on the picture alone)."""
+    return rms_envelope(decode_pcm_mono(path, 8000, check=False), int(8000 * step_s))
 
 
 def main() -> int:

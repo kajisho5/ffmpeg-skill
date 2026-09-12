@@ -479,6 +479,75 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True) -
     return proc
 
 
+def child_limit(per_call: Optional[float] = None) -> Optional[float]:
+    """Wall-clock ceiling for running one sibling script as a subprocess (render/batch/report
+    stages, the MCP server's dispatch). A tool runs a handful of ffmpeg/ffprobe calls, each
+    under its own --timeout, so the outer ceiling is a multiple of that plus a margin: it never
+    fires first on a healthy run, and it is the only thing that ends a child hung for a reason
+    that is not ffmpeg (a stuck import, a wedged pipe). None when the per-call limit is 0."""
+    limit = STATE.timeout if per_call is None else per_call
+    return (limit * 4 + 60) if limit else None
+
+
+def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None) -> subprocess.CompletedProcess:
+    """Run a sibling script (`argv[0]` is the script path) under child_limit(). On overrun the
+    child is killed and a CompletedProcess is returned whose stdout is this skill's own failure
+    document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
+    exactly as they would from the child itself."""
+    limit = child_limit(per_call)
+    try:
+        return subprocess.run([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=limit)
+    except subprocess.TimeoutExpired as e:
+        name = os.path.basename(str(argv[0]))
+        msg = f"{name} did not finish within {limit:.0f} s (4x the per-ffmpeg --timeout plus 60 s) and was killed"
+        doc = {"status": "failed", "exit_code": 124,
+               "error": {"kind": "timeout", "message": msg, "code": ERROR_CODE["timeout"], "retryable": ERROR_RETRYABLE},
+               "commands": []}
+        partial = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), partial + f"\nerror: {msg}\n")
+
+
+def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None, start: float = 0.0,
+                    *, check: bool = True) -> List[float]:
+    """Decode (part of) a file's audio to mono float samples in [-1, 1) at `sample_rate` via a
+    single ffmpeg pass under --timeout. Shared by scenes.py (audio envelope for cut scoring) and
+    sync.py (cross-correlation); an undecodable input is kind ffmpeg when check=True, else []."""
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if start:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", path]
+    if seconds is not None:
+        cmd += ["-t", f"{seconds:.3f}"]
+    cmd += ["-vn", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
+    proc = run_analysis(cmd, check=False, text=False)
+    if proc.returncode != 0 or not proc.stdout:
+        if check:
+            die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
+        return []
+    n = len(proc.stdout) // 2
+    import struct
+    return [v / 32768.0 for v in struct.unpack(f"<{n}h", proc.stdout[: n * 2])]
+
+
+def rms_envelope(samples: Sequence[float], step: int, *, full_blocks_only: bool = False, remove_mean: bool = False) -> List[float]:
+    """RMS per block of `step` samples. full_blocks_only drops a short tail block (sync.py: every
+    block must be the same length for the correlation); remove_mean subtracts the envelope's mean
+    (sync.py: so silence does not correlate). scenes.py keeps the tail and the absolute level."""
+    import math
+    step = max(1, int(step))
+    n = len(samples)
+    stop = n - step + 1 if full_blocks_only else n
+    env: List[float] = []
+    for i in range(0, max(0, stop), step):
+        block = samples[i:i + step]
+        env.append(math.sqrt(sum(x * x for x in block) / len(block)))
+    if remove_mean and env:
+        mean = sum(env) / len(env)
+        env = [e - mean for e in env]
+    return env
+
+
 def child_args() -> List[str]:
     """The shared flags a tool that runs sibling scripts (render.py, batch.py) forwards to them,
     so one `--timeout`/`--overwrite`/`--fast`/`--dry-run` on the outer command governs every

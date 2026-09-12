@@ -26,13 +26,12 @@ import argparse
 import hashlib
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac"}
@@ -78,9 +77,9 @@ def run_step(argv: List[str]) -> bool:
     if script not in ALLOWED_STEP_SCRIPTS:
         die(f"recipe step names a script that isn't one of this skill's own tools: {script!r} "
             f"(must be a bare filename like 'silence.py', found in scripts/)")
-    cmd = [sys.executable, str(HERE / script)] + argv[1:] + child_args()
-    info("  → " + " ".join(os.path.basename(c) if i < 2 else c for i, c in enumerate(cmd)))
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    cmd = [str(HERE / script)] + argv[1:] + child_args()
+    info("  → " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd)))
+    proc = run_tool(cmd)
     if proc.returncode != 0:
         info("    " + "\n    ".join(proc.stderr.strip().splitlines()[-4:]))
         return False

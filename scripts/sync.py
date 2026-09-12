@@ -29,11 +29,10 @@ import cmath
 import json
 import math
 import os
-import struct
 import sys
 from typing import List
 
-from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args
+from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
 
 SR = 8000  # decode sample rate
 
@@ -55,26 +54,12 @@ OVERLAP_WEIGHT_EXP = 0.5
 
 
 def decode_mono(path: str, seconds: float, start: float = 0.0) -> List[float]:
-    ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", path, "-t", f"{seconds:.3f}",
-           "-vn", "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"]
-    proc = run_analysis(cmd, check=False, text=False)
-    if proc.returncode != 0 or not proc.stdout:
-        die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
-    n = len(proc.stdout) // 2
-    return [v / 32768.0 for v in struct.unpack(f"<{n}h", proc.stdout[: n * 2])]
+    return decode_pcm_mono(path, SR, seconds, start)
 
 
 def envelope(samples: List[float], step: int) -> List[float]:
-    """RMS energy per block, mean-removed so silence does not correlate."""
-    env = []
-    for i in range(0, len(samples) - step + 1, step):
-        block = samples[i : i + step]
-        env.append(math.sqrt(sum(x * x for x in block) / step))
-    if not env:
-        return env
-    mean = sum(env) / len(env)
-    return [e - mean for e in env]
+    """RMS energy per full block, mean-removed so silence does not correlate."""
+    return rms_envelope(samples, step, full_blocks_only=True, remove_mean=True)
 
 
 def fft(a: List[complex]) -> List[complex]:
