@@ -239,7 +239,7 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 
 ## Report format
 
-Reply in the language the user wrote their request in — a Japanese request gets a Japanese report, English gets English, Chinese gets Chinese, and so on for any other language. Keep the shape below and the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English (they read like log fields, not prose, and stay recognisable across languages); the sentences around them, any question asked, and any explanation of a judgement call are in the user's language. Never default to English because the tool names and flags happen to be English. A mid-conversation language switch follows the user's latest message, not the first one.
+Reply in the language the user wrote their request in — a Japanese request gets a Japanese report, English gets English, Chinese gets Chinese, and so on for any other language. Keep the shape below and the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English (they read like log fields, not prose, and stay recognisable across languages); the sentences around them, any question asked, and any explanation of a judgement call are in the user's language. Never default to English because the tool names and flags happen to be English. A mid-conversation language switch follows the user's latest message, not the first one. This holds for a one-command job too: a three-second audio trim answered with English labels, numbers and one Japanese word in `Notes:` is an English report; the `Done:` line's own description (what was cut, from where) and `Steps:` are written in the user's language even when the values are technical.
 
 Finish every job with this shape (numbers from `probe.py`/`check.py`, not memory):
 

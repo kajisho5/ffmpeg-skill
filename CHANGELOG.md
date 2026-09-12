@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Eval iteration 6 follow-ups. `overlay.py --fade` without `--end` no longer fades the overlay out again at the end of the clip (fade-in only; the fade-out belongs to `--end`). `export.py`'s platform presets (youtube / youtube4k / reels / x) measure the written file and report `loudness` with the platform's target plus a `notes` line naming the `loudness.py` call when it is outside the spec, so an agent plans one pass instead of two. `cut.py` reports `lossless_alternative` (the nearest keyframe `--start`) when the snap forced a re-encode. SKILL.md: a one-command job still gets its `Done:`/`Steps:` lines in the user's language.
 
 ## 1.5.1
 

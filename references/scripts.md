@@ -55,7 +55,9 @@ keyframes, instant, lossless); if the snapped result deviates more than
 `--tolerance` (0.5 s) from the request, that segment is re-encoded automatically
 (x264 CRF 18). `--accurate` always re-encodes; `--tolerance -1` never does.
 Multiple segments are concatenated in the order given. stderr reports whether
-the result was "lossless stream copy" or "re-encoded".
+the result was "lossless stream copy" or "re-encoded"; when the snap forced a
+re-encode, the result's `lossless_alternative` names the nearest keyframe
+`--start` that would stream-copy instead, so the trade can be offered.
 
 ### fit.py — target duration and/or aspect, rotate/flip
 ```
@@ -534,6 +536,9 @@ playing. `--video` composites a second video as a picture-in-picture layer
 input's audio is kept, the PiP layer's own audio is dropped. `--chromakey`
 (with `--video`) keys out that colour first for green-screen compositing.
 
+`--fade S` fades the overlay in at `--start` (or 0); the fade-out happens
+only at `--end`, so a logo with no `--end` stays to the last frame.
+
 ### sync.py — offset detection, alignment, drift correction
 ```
 sync.py REFERENCE SECOND [--json] [--max-offset 30] [--analyze-seconds 120] [--fix-drift [--drift-window 60]]
@@ -629,7 +634,11 @@ export.py INPUT --preset youtube|youtube4k|reels|x|prores|h265|gif [--fit pad|cr
 export.py --list
 ```
 Scales into the preset frame (pad by default), tags BT.709, sets `+faststart`,
-trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`.
+trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`. It
+does not touch levels: for youtube / youtube4k / reels / x the written file is
+measured and the result's `loudness` (and a `notes` line) says when it is
+outside the platform's LUFS / true-peak spec, naming the `loudness.py` call
+that fixes it -- plan that pass instead of discovering it from `check.py`.
 
 ### proxy.py — low-bitrate proxy for analysis/preview
 ```

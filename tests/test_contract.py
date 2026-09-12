@@ -1720,6 +1720,29 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("fit", self.src, "--aspect", "1:1", "--dry-run", "-o", self.out("v2_dry.mp4"), "--json", env=env).stdout)
         self.assertEqual((doc["result_v2"]["probe"], doc["result_v2"]["output"]), (None, doc["output"]))
 
+    def test_eval6_followups(self):
+        """Eval iteration 6: overlay --fade without --end fades in only; export measures the
+        written file against the platform's loudness spec and says how to fix it; cut names the
+        lossless alternative when the keyframe snap forced a re-encode."""
+        doc = json.loads(tool("overlay", self.src, "--image", self.logo, "--fade", "0.5", "--dry-run", "--json", "-o", self.out("e6_ov.mp4")).stdout)
+        self.assertIn("fade=t=in", doc["commands"][-1]); self.assertNotIn("fade=t=out", doc["commands"][-1])
+        doc = json.loads(tool("overlay", self.src, "--image", self.logo, "--fade", "0.5", "--end", "4", "--dry-run", "--json", "-o", self.out("e6_ov2.mp4")).stdout)
+        self.assertIn("fade=t=out:st=3.500", doc["commands"][-1])
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "--json", "-o", self.out("e6_x.mp4")).stdout)
+        self.assertEqual((doc["loudness"]["target_lufs"], doc["loudness"]["ok"]), (-14, False), doc["loudness"])
+        self.assertTrue(any("loudness.py -I -14 --tp -1" in n for n in doc["notes"]), doc.get("notes"))
+        norm = self.out("e6_norm.mp4")
+        tool("loudness", self.src, "-I", "-14", "--tp", "-1", "-o", norm)
+        doc = json.loads(tool("export", norm, "--preset", "x", "--fast", "--json", "-o", self.out("e6_x2.mp4")).stdout)
+        self.assertTrue(doc["loudness"]["ok"]); self.assertNotIn("notes", doc)
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--dry-run", "--json", "-o", self.out("e6_xd.mp4")).stdout)
+        self.assertNotIn("loudness", doc)
+        doc = json.loads(tool("cut", self.src, "--start", "2", "--end", "4", "--fast", "--json", "-o", self.out("e6_cut.mp4")).stdout)
+        self.assertEqual(doc["mode"], "hybrid")
+        self.assertIn("--start 0.000", doc["lossless_alternative"])
+        doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "--json", "-o", self.out("e6_cut0.mp4")).stdout)
+        self.assertIsNone(doc["lossless_alternative"])
+
     def test_fifth_review_regressions(self):
         """Review 5 (2026-09-12): render refuses an output that is one of its clip sources (it
         overwrote the source and said completed); fit --method trim drops a subtitle track whose

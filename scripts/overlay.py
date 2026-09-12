@@ -103,7 +103,7 @@ def main() -> int:
     ap.add_argument("--margin", type=int, default=24, help="margin from the edges in px (default 24)")
     ap.add_argument("--start", help="show from this time (default: whole video)")
     ap.add_argument("--end", help="hide after this time")
-    ap.add_argument("--fade", type=float, default=0.0, help="fade in/out duration in seconds")
+    ap.add_argument("--fade", type=float, default=0.0, help="fade-in duration in seconds (at --start or 0); the fade-out happens only at --end")
     ap.add_argument("--opacity", type=float, default=1.0, help="0..1 (default 1)")
     img = ap.add_argument_group("image options")
     img.add_argument("--scale", type=int, help="scale the image to this width in px (keeps aspect)")
@@ -188,12 +188,13 @@ def main() -> int:
         if args.opacity < 1:
             chain.append(f"colorchannelmixer=aa={args.opacity:g}")
         if args.fade > 0:
-            # no --start/--end: fade in at 0 and out at the end of the video
+            # no --start: fade in at 0. The fade-out only exists when --end names a moment the
+            # overlay leaves; without --end it stays to the last frame ("fade in at the start" is
+            # the common ask, and a matching fade-out at the very end surprised every eval run)
             s = start if start is not None else 0.0
-            e = end if end is not None else (meta.get("duration") or 0.0)
             chain.append(f"fade=t=in:st={s:.3f}:d={args.fade:g}:alpha=1")
-            if e > args.fade:
-                chain.append(f"fade=t=out:st={e - args.fade:.3f}:d={args.fade:g}:alpha=1")
+            if end is not None and end > args.fade:
+                chain.append(f"fade=t=out:st={end - args.fade:.3f}:d={args.fade:g}:alpha=1")
         x, y = position_exprs(args.position, args.margin, text_mode=False)
         ov = f"overlay={x}:{y}:format=auto"
         if enable:
@@ -249,8 +250,7 @@ def main() -> int:
             opts.append(f"fontfile={escape_filter_path(args.font_file)}")
         else:
             opts.append(f"font='{escape_drawtext(args.font)}'")
-        alpha = alpha_expr(args.opacity, start if start is not None else (0.0 if args.fade > 0 else None),
-                           end if end is not None else ((meta.get("duration") or None) if args.fade > 0 else None), args.fade)
+        alpha = alpha_expr(args.opacity, start if start is not None else (0.0 if args.fade > 0 else None), end, args.fade)
         opts.append(f"fontcolor={args.font_color}")
         if alpha != "1":
             opts.append(f"alpha='{alpha}'")

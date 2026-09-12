@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from _common import STATE, add_common, apply_common, bt709_tag_args, emit, cfr_args, default_output, die, ffmpeg_base, info, probe, run, validate_color, pad_filters, add_pad_fill_args, fmt_secs
+from check import SPECS as PLATFORMS, measure_loudness
 PRESETS: Dict[str, Dict] = {
     "youtube": {"w": 1920, "h": 1080, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "1080p H.264, AAC 192k"},
     "youtube4k": {"w": 3840, "h": 2160, "ext": "mp4", "video": ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"], "max": None, "desc": "2160p H.264, AAC 192k"},
@@ -38,6 +39,10 @@ PRESETS: Dict[str, Dict] = {
     "copy": {"w": None, "h": None, "ext": None, "video": ["-c:v", "copy"], "audio": ["-c:a", "copy"], "max": None, "desc": "stream copy, no re-encode (source codecs/container/colour tags unchanged)"},
 }
 
+
+
+# which check.py platform a preset targets (its loudness spec is measured after the write)
+PLATFORM_OF = {"youtube": "youtube", "youtube4k": "youtube", "reels": "reels", "x": "x"}
 
 
 def main() -> int:
@@ -123,7 +128,24 @@ def main() -> int:
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
-    emit(output, **({"notes": notes} if notes else {}))
+    extra: Dict[str, object] = {}
+    platform = PLATFORM_OF.get(args.preset)
+    if platform and has_audio and not STATE.dry_run:
+        # Every eval run that exported for a platform then had to come back with loudness.py: the
+        # preset scales and tags but does not touch levels, and only check.py said so. Measure the
+        # written file here so the result names the gap and the caller plans one pass, not two.
+        spec = PLATFORMS[platform]
+        m = measure_loudness(output)
+        if m:
+            ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"]
+            extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok}
+            if not ok:
+                notes.append(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP; "
+                             f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file (or before export)")
+                info("warning: " + notes[-1])
+    if notes:
+        extra["notes"] = notes
+    emit(output, **extra)
     return 0
 
 

@@ -181,7 +181,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "export": dict(role="execution", inputs=["video asset"], outputs=["delivery artifact in the preset's format"],
                    required=FF, optional=[{"capability": X264, "when": "preset youtube / youtube4k / reels / x"}, {"capability": AAC, "when": "preset youtube / youtube4k / reels / x / h265 (prores uses pcm_s16le, copy stream-copies, gif has no audio)"},
                                           {"capability": X265, "when": "preset h265"}, {"capability": "encoder:prores_ks", "when": "preset prores"},
-                                          {"capability": "filter:palettegen", "when": "preset gif"}, {"capability": "encoder:gif", "when": "preset gif"}, {"capability": "filter:boxblur", "when": "--pad-fill blur"}],
+                                          {"capability": "filter:palettegen", "when": "preset gif"}, {"capability": "encoder:gif", "when": "preset gif"}, {"capability": "filter:boxblur", "when": "--pad-fill blur"},
+                                          {"capability": "filter:loudnorm", "when": "preset youtube / youtube4k / reels / x with audio: the written file is measured against the platform's loudness target (result `loudness`)"}],
                    video_required=True, audio_only=False, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "check": dict(role="verification", inputs=["media artifact"], outputs=["compliance rows JSON on stdout (no file)"],
                   required=["ffprobe"], optional=[{"capability": "ffmpeg", "when": "loudness rows (default)"}, {"capability": "filter:loudnorm", "when": "loudness rows (default)"}],
@@ -392,6 +393,9 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         extra = {"results": {"type": "array"}, "processed": {"type": "integer"}, "total": {"type": "integer"}}
     elif name == "report":
         extra = {"report": {"type": "string"}, "check": {"type": ["object", "null"]}}
+    elif name == "export":
+        extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec"},
+                 "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "loudness":
         extra = {"measured": {"type": "object", "description": "--measure-only prints the loudnorm measurement instead (input_i, input_tp, input_lra, input_thresh, target_offset)"}}
     elif name == "cut":
@@ -399,7 +403,8 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},
                  "precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
                                "description": "packet: stream copy on a packet/keyframe boundary; sample: decoded audio trimmed to the sample, lossless output; codec_frame: sample-trimmed then framed by a lossy encoder (priming delay adds to the length); frame: re-encoded video"},
-                 "reencoded": {"type": "boolean"}}
+                 "reencoded": {"type": "boolean"},
+                 "lossless_alternative": {"type": ["string", "null"], "description": "when a lossless cut re-encoded because of the keyframe snap: the --start that would stream-copy instead, and how far it is from the request"}}
     elif name == "join":
         extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"}, "expected_duration": {"type": "number"},
                  "sample_rate": {"type": "integer", "description": "audio mode only"}, "channels": {"type": "integer", "description": "audio mode only"},

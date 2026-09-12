@@ -245,7 +245,11 @@ def main() -> int:
          requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
          mode=mode, keyframe_snapped=keyframe_snapped,
-         nearest_keyframes=sorted(NEAREST_KEYFRAMES) if NEAREST_KEYFRAMES else None)
+         nearest_keyframes=sorted(NEAREST_KEYFRAMES) if NEAREST_KEYFRAMES else None,
+         # the trade the caller can offer instead of a re-encode (eval e02: "without losing quality")
+         lossless_alternative=(f"--start {min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])):.3f} lands on a keyframe: "
+                               f"stream copy with no re-encode, {abs(min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])) - segments[0][0]):.2f}s off the requested start")
+         if mode == "hybrid" and NEAREST_KEYFRAMES and len(segments) == 1 else None)
     return 0
 
 
