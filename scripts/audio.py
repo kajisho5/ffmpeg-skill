@@ -131,9 +131,9 @@ def main() -> int:
     output = args.output or default_output(args.input, "audio")
     audio_out = is_audio_output(output)
     streams = meta.get("audio_streams") or []
-    if streams and not (0 <= args.audio_stream < len(streams)) and not STATE["dry_run"]:
+    if streams and not (0 <= args.audio_stream < len(streams)) and not STATE.dry_run:
         die(f"--audio-stream {args.audio_stream}: input has {len(streams)} audio stream(s), 0..{len(streams) - 1}")
-    if args.audio_stream and not streams and not STATE["dry_run"]:
+    if args.audio_stream and not streams and not STATE.dry_run:
         die("--audio-stream needs an input with audio streams")
 
     inputs: List[str] = ["-i", args.input]
@@ -222,7 +222,7 @@ def main() -> int:
     run(cmd)
     r = probe(output, role="output")
     a = r["audio"]
-    if r.get("video") and audio_out and not STATE["dry_run"]:
+    if r.get("video") and audio_out and not STATE.dry_run:
         die(f"{output} unexpectedly contains a video stream")
     info(f"wrote {output} ({r['duration']:.3f}s, audio {a['codec']} {a['channels']}ch {a['sample_rate']}Hz"
          + (", video stream-copied" if has_video and not audio_out else ", video dropped" if has_video else "") + ")")

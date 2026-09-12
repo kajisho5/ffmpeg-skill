@@ -85,7 +85,7 @@ def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     for line in proc.stderr.splitlines():
         if line.startswith("$ ") or line.startswith("[dry-run]"):
-            STATE["commands"].append(line[2:] if line.startswith("$ ") else line)
+            STATE.commands.append(line[2:] if line.startswith("$ ") else line)
         elif line.strip():
             info("    " + line)
     try:
@@ -152,7 +152,7 @@ def main() -> int:
     parts: List[str] = []
     for i, c in enumerate(clips):
         src = rel(c["src"])
-        if not STATE["dry_run"]:
+        if not STATE.dry_run:
             probe(src)
         needs_cut = c.get("in") is not None or c.get("out") is not None
         part = str(work / f"clip{i:02d}.mp4")
@@ -167,7 +167,7 @@ def main() -> int:
             part = src
         if c.get("speed"):
             spd = float(c["speed"])
-            dur = (probe(part).get("duration") or 0.0) if not STATE["dry_run"] else 10.0
+            dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else 10.0
             fitted = str(work / f"clip{i:02d}_speed.mp4")
             sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted)
             part = fitted
@@ -348,7 +348,7 @@ def main() -> int:
         sh("export.py", *argv)
         stages_done.append("export")
     else:
-        if not STATE["dry_run"]:
+        if not STATE.dry_run:
             import shutil
             shutil.copyfile(current, output)
         info(f"copied final stage to {output}")
@@ -358,7 +358,7 @@ def main() -> int:
     ck = proj.get("check")
     check_result = None
     exit_code = 0
-    if ck and ck.get("platform") and not STATE["dry_run"]:
+    if ck and ck.get("platform") and not STATE.dry_run:
         proc = subprocess.run([sys.executable, str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             check_result = json.loads(proc.stdout)

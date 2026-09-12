@@ -83,7 +83,7 @@ def main() -> int:
         if dur_a and at + length > dur_a + 0.01:
             die(f"cutaway {i + 1}: {at:g}s + {length:g}s runs past the end of the A-roll ({dur_a:.3f}s)")
         dur_b = meta_b.get("duration") or 0.0
-        if dur_b and start_b + length > dur_b + 0.01 and not STATE["dry_run"]:
+        if dur_b and start_b + length > dur_b + 0.01 and not STATE.dry_run:
             die(f"cutaway {i + 1}: {path} has only {dur_b - start_b:.3f}s from {start_b:g}s, {length:g}s asked for")
         if cutaways and at < cutaways[-1]["at"] + cutaways[-1]["length"]:
             die(f"cutaway {i + 1} at {at:g}s overlaps the previous one (ends {cutaways[-1]['at'] + cutaways[-1]['length']:g}s)")
@@ -142,7 +142,7 @@ def main() -> int:
     run(cmd)
 
     result = probe(output, role="output")
-    if not STATE["dry_run"] and dur_a and abs((result.get("duration") or 0.0) - dur_a) > max(0.1, 1.5 / fps):
+    if not STATE.dry_run and dur_a and abs((result.get("duration") or 0.0) - dur_a) > max(0.1, 1.5 / fps):
         die(f"output is {result.get('duration'):.3f}s but the A-roll is {dur_a:.3f}s -- a cutaway must not change the length", kind="output")
     info(f"wrote {output} ({result.get('duration', 0):.3f}s, {len(cutaways)} cutaway(s), audio={args.audio})")
     emit(output, cutaways=[{"insert": c["path"], "at": c["at"], "end": c["at"] + c["length"], "from": c["from"]} for c in cutaways], audio=args.audio)

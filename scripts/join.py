@@ -36,7 +36,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     durs = [m.get("duration") or 0.0 for m in metas]
     d = args.duration if args.transition != "none" else 0.0
     for p, dur in zip(args.inputs, durs):
-        if d and dur <= d * 2 and not STATE["dry_run"]:
+        if d and dur <= d * 2 and not STATE.dry_run:
             die(f"{p} is only {dur:.2f}s, too short for a {d:.2f}s crossfade; shorten --duration")
     rates = [m["audio"].get("sample_rate") or 48000 for m in metas]
     chans = [m["audio"].get("channels") or 2 for m in metas]
@@ -70,7 +70,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     expected = sum(durs) - d * (n - 1)
     r = probe(output)
     a = r.get("audio") or {}
-    if not STATE["dry_run"]:
+    if not STATE.dry_run:
         if r.get("video"):
             die(f"{output} unexpectedly contains a video stream")
         if a.get("sample_rate") != rate or a.get("channels") != channels:
@@ -137,7 +137,7 @@ def main() -> int:
     durs = [m.get("duration") or 0.0 for m in metas]
     d = args.duration if args.transition != "none" else 0.0
     for p, dur in zip(args.inputs, durs):
-        if d and dur <= d * 2 and not STATE["dry_run"]:
+        if d and dur <= d * 2 and not STATE.dry_run:
             die(f"{p} is only {dur:.2f}s, too short for a {d:.2f}s transition; shorten --duration")
 
     cmd = ffmpeg_base()

@@ -117,7 +117,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             info("stream copy failed, falling back to re-encode")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
         die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
-    if not reencode and tolerance >= 0 and not STATE["dry_run"]:
+    if not reencode and tolerance >= 0 and not STATE.dry_run:
         got = probe(dst).get("duration") or 0.0
         if abs(got - dur) > tolerance:
             near = keyframes_near(src, start)
@@ -209,7 +209,7 @@ def main() -> int:
     expected = sum(e - s for s, e in segments)
     precision = precision_of(meta, output, reencoded)
     got = result.get("duration")
-    error_ms = round((got - expected) * 1000, 3) if got is not None and not STATE["dry_run"] else None
+    error_ms = round((got - expected) * 1000, 3) if got is not None and not STATE.dry_run else None
     # mode: "copy" (untouched lossless), "accurate" (--accurate was asked for), "hybrid" (asked for
     # lossless but the keyframe snap exceeded --tolerance so this segment silently re-encoded instead)
     mode = "copy" if not reencoded else ("accurate" if args.accurate else "hybrid")

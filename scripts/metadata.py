@@ -136,9 +136,9 @@ def main() -> int:
 
     result = probe(output, role="output")
     written = result.get("chapters") or []
-    if chapters is not None and not STATE["dry_run"] and len(written) != len(chapters):
+    if chapters is not None and not STATE.dry_run and len(written) != len(chapters):
         die(f"wrote {len(written)} chapters but {len(chapters)} were asked for", kind="output")
-    if args.clear_chapters and not STATE["dry_run"] and written:
+    if args.clear_chapters and not STATE.dry_run and written:
         die(f"{len(written)} chapters survived --clear-chapters", kind="output")
     info(f"wrote {output} ({len(written)} chapters, tags: {', '.join(sorted(tags)) or 'unchanged'}, streams copied)")
     emit(output, chapters=written, tags=result.get("tags") or {}, streams_copied=True)

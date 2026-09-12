@@ -2832,17 +2832,20 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertNotIn("\nwrote ", proc.stderr, "dry-run must not claim a file was written")
 
     # ---------------------------------------------------------------- _common
-    def test_context_attribute_and_mapping_access_agree(self):
+    def test_context_is_attribute_only_and_resets(self):
+        """Context once carried dict-style shims for older call sites; every site uses attributes
+        now and the shims are gone, so a stray STATE["x"] is a TypeError at the call site rather
+        than a second, silently-diverging access path. __slots__ also refuses unknown names."""
         from _common import Context
         ctx = Context()
-        ctx["dry_run"] = True
-        self.assertTrue(ctx.dry_run)
+        ctx.dry_run = True
         ctx.fast = True
-        self.assertTrue(ctx["fast"])
-        self.assertIsNone(ctx.get("duration_hint"))
-        self.assertIsNone(ctx.get("nonexistent"))
-        with self.assertRaises(KeyError):
-            ctx["nonexistent"] = 1
+        self.assertTrue(ctx.dry_run and ctx.fast)
+        self.assertIsNone(ctx.duration_hint)
+        with self.assertRaises(TypeError):
+            ctx["dry_run"]  # noqa: B018 -- the mapping shim is gone on purpose
+        with self.assertRaises(AttributeError):
+            ctx.nonexistent = 1
         ctx.commands.append("x")
         ctx.reset()
         self.assertEqual((ctx.dry_run, ctx.fast, ctx.commands), (False, False, []))

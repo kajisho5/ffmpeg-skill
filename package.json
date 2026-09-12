@@ -30,7 +30,9 @@
     "bin/",
     "scripts/",
     "mcp/",
-    "references/",
+    "references/scripts.md",
+    "references/devices.md",
+    "references/ci-platform-pitfalls.md",
     "SKILL.md",
     "README.md",
     "LICENSE"

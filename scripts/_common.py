@@ -207,12 +207,11 @@ class Context:
     """Per-process settings that the shared flags (--dry-run, --json, --progress, --fast) set once.
 
     Scripts read it as attributes (``STATE.dry_run``) or, for older call sites, like a dict
-    (``STATE["dry_run"]``). Keeping it a single explicit object rather than module globals makes
+    (``STATE.dry_run``). Keeping it a single explicit object rather than module globals makes
     it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
     __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting")
-    _KEYS = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting")
 
     def __init__(self) -> None:
         self.reset()
@@ -229,19 +228,6 @@ class Context:
         self.written: set = set()                    # output paths this process has written itself
         self.preexisting: dict = {}                  # output path -> (size, mtime_ns) of a file that was there before we ran
 
-    # mapping-style access kept for backwards compatibility
-    def __getitem__(self, key: str) -> Any:
-        if key not in self._KEYS:
-            raise KeyError(key)
-        return getattr(self, key)
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        if key not in self._KEYS:
-            raise KeyError(key)
-        setattr(self, key, value)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default) if key in self._KEYS else default
 
 
 STATE = Context()
@@ -689,9 +675,9 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
     role="output" marks a file this tool just wrote: a read failure is then reported as an
     output-verification failure (kind "output") instead of an input problem."""
     if not os.path.exists(path):
-        if role == "output" and not STATE["dry_run"]:
+        if role == "output" and not STATE.dry_run:
             _output_failed(path, "not written")
-        if STATE["dry_run"]:
+        if STATE.dry_run:
             # width/height/fps are honestly 0/0/0.0 -- "not measured", matching duration/size_bytes
             # below -- because this is a dry run: the file doesn't exist yet, so there is nothing to
             # probe. Earlier this stub used plausible-looking placeholders (1920x1080x30.0) instead,
@@ -728,8 +714,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         duration = _to_float(video.get("duration"))
     if duration is None and audio:
         duration = _to_float(audio.get("duration"))
-    if duration and STATE.get("duration_hint") is None:
-        STATE["duration_hint"] = duration
+    if duration and STATE.duration_hint is None:
+        STATE.duration_hint = duration
 
     out: Dict[str, Any] = {
         "file": path,

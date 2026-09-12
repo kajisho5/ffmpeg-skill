@@ -62,7 +62,7 @@ def main() -> int:
         trf = str(Path(tmp) / "transforms.trf")
         trf_arg = escape_filter_path(trf)
 
-        if not STATE["dry_run"]:
+        if not STATE.dry_run:
             ffmpeg = require_tool("ffmpeg")
             detect_vf = f"vidstabdetect=shakiness={args.shakiness}:result={trf_arg}"
             if args.tripod:

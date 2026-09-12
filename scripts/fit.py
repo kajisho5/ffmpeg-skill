@@ -159,7 +159,7 @@ def main() -> int:
         if target <= 0:
             die("target duration must be > 0")
         if args.method == "speed":
-            if src_dur <= 0 and STATE["dry_run"]:
+            if src_dur <= 0 and STATE.dry_run:
                 src_dur = target  # planning against an intermediate that does not exist yet
             factor = src_dur / target  # >1 = speed up
             if factor > args.max_speed or factor < 1 / args.max_speed:
@@ -175,7 +175,7 @@ def main() -> int:
                 if has_audio:
                     af.append(atempo_chain(factor))
             post += ["-t", f"{target:.3f}"]
-            STATE["duration_hint"] = target
+            STATE.duration_hint = target
         else:
             if target < src_dur:
                 start = (src_dur - target) / 2 if args.from_center else 0.0

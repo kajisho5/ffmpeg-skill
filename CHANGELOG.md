@@ -5,6 +5,7 @@
 ## Unreleased
 
 - Docs: README no longer claims media ffmpeg calls have no timeout; tool counts read 42 everywhere (the count test now catches the "all N by" / "same N names" phrasings); `docs/contract.md` lists every dry-run exception; the error-kind list is identical in SKILL.md, README and the contract; SKILL.md states the dry-run exceptions once and moves the Windows drawtext story to `references/ci-platform-pitfalls.md`; CODE_OF_CONDUCT.md added.
+- The npm package ships `references/scripts.md`, `devices.md` and `ci-platform-pitfalls.md` only; the maintainer diary `process-pitfalls.md` stays in the repository. Internal: the `Context` dict-style shims are gone, every call site uses attributes.
 
 ## 1.4.5
 

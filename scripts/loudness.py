@@ -23,7 +23,7 @@ from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_c
 
 
 def measure(path: str, I: float, tp: float, lra: float) -> dict:
-    if STATE["dry_run"]:
+    if STATE.dry_run:
         return {"input_i": "-20.0", "input_tp": "-3.0", "input_lra": "8.0", "input_thresh": "-30.0", "target_offset": "0.0", "silent": False}
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]

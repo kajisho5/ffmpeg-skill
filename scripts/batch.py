@@ -191,7 +191,7 @@ def main() -> int:
             info(f"=== {src.name}")
             r = process(src, recipe, outdir, work)
             results.append(r)
-            if r["ok"] and not STATE["dry_run"]:
+            if r["ok"] and not STATE.dry_run:
                 cache[key] = r
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above

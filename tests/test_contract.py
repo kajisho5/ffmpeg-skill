@@ -410,11 +410,11 @@ class ContractTests(unittest.TestCase):
         reporting the honest "not measured" 0/0/0.0 instead of a fabricated 1920x1080/30fps that
         looked like a real computed preview in a tool's human-readable dry-run summary line."""
         import _common
-        _common.STATE["dry_run"] = True
+        _common.STATE.dry_run = True
         try:
             meta = _common.probe(str(self.out("does_not_exist_and_never_will.mp4")))
         finally:
-            _common.STATE["dry_run"] = False
+            _common.STATE.dry_run = False
         self.assertEqual(meta["video"]["width"], 0)
         self.assertEqual(meta["video"]["height"], 0)
         self.assertEqual(meta["video"]["fps"], 0.0)

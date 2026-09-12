@@ -100,7 +100,7 @@ def main() -> int:
     video = list(p["video"])
     if args.crf is not None and "-crf" in video:
         video[video.index("-crf") + 1] = str(args.crf)
-    if STATE["fast"] and "-preset" in video:
+    if STATE.fast and "-preset" in video:
         video[video.index("-preset") + 1] = "veryfast"
     cmd += video
     if args.preset != "copy":
