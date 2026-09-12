@@ -385,6 +385,8 @@ plan), runs the tool with the planned argv, then the verify steps (probe; `check
 for a `--platform` or a platform export preset), and reports `plan`, `tool`,
 `tool_result` and `check`. Show the plan to the user, get the yes, execute:
 one round trip instead of re-deriving the command.
+`"export": {"preset": "reels", "normalize": true}` forwards `export.py --normalize`
+so the rendered file meets the platform's loudness without a separate pass.
 
 Stages: clips (cut, optional speed) → join (transition) → silence → fit →
 captions → graphics → overlays → audio → loudness → export → check. Keys mirror the
@@ -413,7 +415,10 @@ check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|broadcast|podca
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
-step before reporting a deliverable; fix FAILs, mention WARNs.
+step before reporting a deliverable; fix FAILs, mention WARNs. Without
+`--platform` the youtube spec is assumed and the judgement rows (duration,
+aspect, fps, resolution, loudness, true peak) come back as WARN with a `notes`
+line, not FAIL: name the platform when the file is a delivery for it.
 
 ### batch.py — same recipe over a folder, cached
 ```

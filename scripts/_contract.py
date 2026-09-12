@@ -379,6 +379,7 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     extra: Dict[str, Any] = {}
     if name == "check":
         extra = {"platform": {"type": "string"}, "ok": {"type": "boolean"}, "failed": {"type": "integer"}, "warnings": {"type": "integer"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "present when no --platform was named: youtube was assumed and judgement rows are WARN"},
                  "checks": {"type": "array", "items": {"type": "object", "properties": {"check": {"type": "string"}, "status": {"enum": ["PASS", "WARN", "FAIL"]}, "value": {}, "expected": {}, "fix": {"type": "string"}, "kind": {"enum": ["format", "judgement"]}}}}}
     elif name == "scenes":
         extra = {"file": {"type": "string"}, "duration": {"type": "number"}, "scene_count": {"type": "integer"}, "scenes": {"type": "array"}, "audio_peaks": {"type": "array"}}

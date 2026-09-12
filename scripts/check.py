@@ -66,7 +66,7 @@ def aspect_name(w: int, h: int) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
-    ap.add_argument("--platform", choices=sorted(SPECS), default="youtube")
+    ap.add_argument("--platform", choices=sorted(SPECS), default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
     ap.add_argument("--max-duration", type=float, help="override max duration in seconds")
     ap.add_argument("--aspect", help="override allowed aspect (e.g. 9:16 or 16:9,1:1)")
     ap.add_argument("--lufs", type=float, help="override loudness target")
@@ -77,6 +77,11 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
+    # Eval 7: runs that only wanted the format rows got youtube's loudness / true-peak FAILs and
+    # spent a paragraph explaining why they left them alone. Without a named platform the
+    # judgement rows are advisory: WARN, not FAIL, and not counted as failed.
+    named = args.platform is not None
+    args.platform = args.platform or "youtube"
     spec = dict(SPECS[args.platform])
     if args.max_duration is not None:
         spec["max_duration"] = args.max_duration
@@ -100,6 +105,8 @@ def main() -> int:
         # (what is cut, what is cropped, how loud ambience gets) and need a decision.
         # "fix" is the command that resolves it; "reason" (only on the FAILs a non-technical
         # person would ask "so what?" about) is why it matters in plain terms, not the spec clause.
+        if status == "FAIL" and not named and (name in JUDGEMENT or name == "true peak"):
+            status = "WARN"
         rows.append({"check": name, "status": status, "value": value, "expected": expect, "fix": fix,
                      "reason": reason if status != "PASS" else "",
                      "kind": "judgement" if name in JUDGEMENT else "format"})
@@ -179,9 +186,12 @@ def main() -> int:
 
     failed = [r for r in rows if r["status"] == "FAIL"]
     warned = [r for r in rows if r["status"] == "WARN"]
+    notes: List[str] = []
+    if not named:
+        notes.append("no --platform given: youtube's spec was assumed, so judgement rows (duration, aspect, fps, resolution, loudness, true peak) are WARN, not FAIL; name a platform to enforce them")
     if not args.json:
         width = max(len(r["check"]) for r in rows)
-        print(f"{args.input} — {args.platform}")
+        print(f"{args.input} — {args.platform}" + ("" if named else " (assumed)"))
         for r in rows:
             line = f"  {r['status']:4s} {r['check']:{width}s}  {r['value']}  (expected {r['expected']})"
             if r["status"] != "PASS" and r["kind"] == "judgement":
@@ -192,11 +202,14 @@ def main() -> int:
                 line += f"  -> {r['fix']}"
             print(line)
         print(f"  {len(rows)} checks, {len(failed)} failed, {len(warned)} warnings")
+        for n in notes:
+            print(f"  note: {n}")
+    extra: Dict[str, Any] = {"notes": notes} if notes else {}
     if failed:
         die(f"{len(failed)} of {len(rows)} {args.platform} checks failed: {', '.join(r['check'] for r in failed)}",
             kind="verification", output=None, dry_run=STATE.dry_run,
-            platform=args.platform, checks=rows, failed=len(failed), warnings=len(warned), ok=False)
-    emit(None, platform=args.platform, checks=rows, failed=len(failed), warnings=len(warned), ok=True)
+            platform=args.platform, checks=rows, failed=len(failed), warnings=len(warned), ok=False, **extra)
+    emit(None, platform=args.platform, checks=rows, failed=len(failed), warnings=len(warned), ok=True, **extra)
     return 0
 
 

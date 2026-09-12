@@ -2269,6 +2269,36 @@ class FFmpegSkillTests(unittest.TestCase):
         data = json.loads(script("check.py", self.src, "--platform", "custom", "--max-duration", "5", "--no-loudness", "--json", expect_fail=True).stdout)
         self.assertEqual({r["check"]: r["status"] for r in data["checks"]}["duration"], "FAIL")
 
+    def test_check_without_a_platform_reports_judgement_rows_as_warn(self):
+        """Eval 7: runs that only wanted the format rows got youtube's loudness / true-peak FAILs
+        (the default platform) and explained at length why they left them alone. Without a
+        named platform those rows are advisory: WARN, exit 0, and a notes line says so."""
+        data = json.loads(script("check.py", self.src, "--json").stdout)
+        self.assertEqual(data["status"], "completed")
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["failed"], 0)
+        rows = {r["check"]: r for r in data["checks"]}
+        self.assertEqual(rows["true peak"]["status"], "WARN")
+        self.assertEqual(rows["loudness"]["kind"], "judgement")
+        self.assertTrue(any("no --platform" in n for n in data["notes"]))
+        # the same file with the platform named is the same FAIL as before
+        data = json.loads(script("check.py", self.src, "--platform", "youtube", "--json", expect_fail=True).stdout)
+        self.assertFalse(data["ok"])
+        self.assertNotIn("notes", data)
+
+    def test_render_export_normalize_forwards_the_flag(self):
+        proj = OUT / "project_normalize.json"
+        proj.write_text(json.dumps({
+            "output": "render_normalize.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:03"}],
+            "export": {"preset": "x", "normalize": True},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertTrue(data["check"]["ok"], data["check"])
+        rows = {r["check"]: r["status"] for r in data["check"]["checks"]}
+        self.assertEqual(rows["loudness"], "PASS", "the -9 LUFS source only passes when export ran --normalize")
+
     def test_check_unmeasurable_loudness_warns_instead_of_silently_passing(self):
         """measure_loudness() returns {} when ffmpeg's loudnorm JSON doesn't parse out of stderr
         (malformed/unexpected output). main() used to gate the loudness/true-peak rows entirely on

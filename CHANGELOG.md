@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- `check.py` without `--platform` assumes youtube and reports the judgement rows (duration, aspect, fps, resolution, loudness, true peak) as WARN with a `notes` line, not FAIL: a run that only wanted the format rows no longer fails on levels it was not asked about (eval 7). A named platform is unchanged.
+- `render.py`: `"export": {"preset": ..., "normalize": true}` forwards `--normalize`, so a project renders a platform-compliant file in one export.
 
 ## 1.7.1
 

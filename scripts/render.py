@@ -27,7 +27,7 @@ Project format (all keys optional except clips):
   "audio": {"voice": true, "music": "bed.mp3", "music_volume": -16, "duck": true, "music_fade_out": 2},
   "loudness": {"lufs": -14, "tp": -1},
   "fit": {"duration": 60},
-  "export": {"preset": "reels"},
+  "export": {"preset": "reels", "normalize": true},
   "check": {"platform": "reels"}
 }
 
@@ -464,6 +464,8 @@ def main() -> int:
             argv += ["--fit", ex["fit"]]
         if ex.get("crf") is not None:
             argv += ["--crf", str(ex["crf"])]
+        if ex.get("normalize"):
+            argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
         sh("export.py", *argv)
         stages_done.append("export")
     else:
