@@ -56,7 +56,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from export import PRESETS
+from export import PRESETS, PLATFORM_OF
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION
 
 HERE = Path(__file__).resolve().parent
@@ -464,7 +464,14 @@ def main() -> int:
             argv += ["--fit", ex["fit"]]
         if ex.get("crf") is not None:
             argv += ["--crf", str(ex["crf"])]
-        if ex.get("normalize"):
+        normalize = ex.get("normalize")
+        if normalize is None and ex["preset"] in PLATFORM_OF and not proj.get("loudness"):
+            # eval 8: a reels project without the key rendered fully, failed the loudness check and
+            # was rendered again; a platform preset with no loudness stage of its own gets the
+            # one-export behaviour by default ("normalize": false opts out)
+            normalize = True
+            info(f"export: --normalize on by default for the {ex['preset']} preset (set \"normalize\": false to skip)")
+        if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
         sh("export.py", *argv)
         stages_done.append("export")

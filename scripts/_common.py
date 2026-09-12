@@ -1322,6 +1322,10 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "pix_fmt": video.get("pix_fmt"),
             "bit_depth": _bit_depth(pix),
             "hdr": hdr,
+            # 1.9 (2.0 A1 pre-shipped as a parallel key): true only for a PQ / HLG transfer or Dolby
+            # Vision, i.e. a genuinely HDR signal. `hdr` also counts BT.2020 primaries on an SDR
+            # transfer ("BT.2020 SDR" in hdr_format) and keeps that meaning until 2.0 renames it.
+            "hdr_signal": trc in ("smpte2084", "arib-std-b67") or bool(dovi),
             "hdr_format": (("Dolby Vision %s" % (("profile %s" % dovi["profile"]) if dovi and dovi.get("profile") is not None else "")).strip() if dovi else
                            "HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
             "dolby_vision": dovi,
@@ -1429,10 +1433,23 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
     v = value.strip().replace(",", ".")
     if not v:
         raise ValueError("empty time")
+    if "@" in v:
+        # 1.9: 'hh:mm:ss:ff@29.97' names the timecode's rate explicitly (docs/design-decisions.md,
+        # time grammar); it overrides the source fps a tool passed in, and is meaningless without
+        # the four-part form
+        v, _, rate = v.rpartition("@")
+        try:
+            fps = float(rate)
+        except ValueError:
+            raise ValueError(f"bad @fps suffix in '{value}' (expected a number such as @29.97)")
+        if fps <= 0:
+            raise ValueError(f"bad @fps suffix in '{value}': the rate must be positive")
+        if len(v.split(":")) != 4:
+            raise ValueError(f"'{value}': the @fps suffix belongs to an hh:mm:ss:ff timecode, not to seconds or mm:ss")
     parts = v.split(":")
     if len(parts) == 4:
         if fps is None or fps <= 0:
-            raise MissingFpsError(f"'{value}' looks like an hh:mm:ss:ff SMPTE timecode, but no fps was given to convert its frame count to seconds")
+            raise MissingFpsError(f"'{value}' looks like an hh:mm:ss:ff SMPTE timecode, but no fps was given to convert its frame count to seconds (append @fps, e.g. {value}@29.97, or use seconds / mm:ss / hh:mm:ss.ms)")
         h, m, s, f = parts
         if "." in f:
             raise ValueError(f"bad SMPTE timecode: {value}")
@@ -1462,7 +1479,7 @@ def time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
     except MissingFpsError as e:
         die(f"{flag} {value!r}: {e}")
     except ValueError as e:
-        die(f"{flag} {value!r}: {e} (use seconds, mm:ss, hh:mm:ss.ms or, with a known fps, hh:mm:ss:ff)")
+        die(f"{flag} {value!r}: {e} (use seconds, mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff at the source's fps or with an explicit @fps suffix)")
     return 0.0  # unreachable
 
 

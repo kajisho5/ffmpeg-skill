@@ -2,6 +2,18 @@
 
 Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `--plan FILE` (the dry run written as a plan document that `render.py FILE` executes later; see render.py), `-o OUT`; every editing tool that re-encodes (not `export.py`, whose preset decides the codec) also takes `--codec h264|hevc|av1|prores` (the encoder for the re-encode; default x264 for SDR, x265 Main10 for HDR, unchanged) and `--quality N` (CRF scale, overrides `--crf`; up to 63 for av1; ignored by prores). `--codec hevc` on SDR writes 8-bit BT.709 HEVC (`hvc1`), `av1` uses SVT-AV1 (libaom fallback), `prores` is 422 HQ and needs an explicit `-o NAME.mov` (or `.mkv`), `h264` refuses an HDR source (`kind: input`, run `color.py --to-sdr` first). `export.py` keeps choosing the codec from its preset and has neither flag; a `render.py` project cannot choose a codec either -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) still runs ffprobe, `check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report`/`silence`/`loudness`/`stabilize` still run their ffmpeg/ffprobe measurements (a dry-run plan rests on real numbers; they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
 
+## Time grammar (every time-taking flag, 1.9)
+
+One parser, `time_arg()`, behind every `--start`, `--end`, `--at`, `--from`,
+`--duration`, `--segments`, cue file and project field: seconds (`12.5`),
+`mm:ss(.fff)` (`1:30`), `hh:mm:ss(.fff)` (`00:01:30.250`; a comma also works,
+as in SRT). A four-part `hh:mm:ss:ff` is SMPTE non-drop-frame timecode at the
+source's frame rate; append `@fps` (`00:01:02:15@29.97`) to name the rate
+yourself, which is the only way for a tool with no input file (`caption.py
+--text` without a video, and `--fps` there). A four-part value with no fps
+anywhere is `kind: input` naming the flag. Nothing else about times differs
+between tools.
+
 ## Contents
 - probe.py — inspect
 - cut.py — cut / join segments
@@ -43,7 +55,9 @@ Every script prints the same information with `--help`; this file exists so the 
 ```
 probe.py INPUT... [--compact] [--field duration|video.fps|...]
 ```
-JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected}`,
+JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected,hdr,hdr_signal,hdr_format}`
+(`hdr_signal` is true only for a PQ / HLG transfer or Dolby Vision; `hdr` also counts
+BT.2020 primaries on an SDR transfer, which `hdr_format` names "BT.2020 SDR" -- 2.0 renames),
 `audio{codec,channels,sample_rate}`. `--compact` gives one line per file.
 
 ### cut.py — cut / join segments

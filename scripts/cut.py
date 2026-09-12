@@ -30,7 +30,7 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
+from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
 DROPPED_STREAMS: List[str] = []
@@ -39,13 +39,9 @@ DROPPED_STREAMS: List[str] = []
 NEAREST_KEYFRAMES: list = []
 
 
-def _t(value: str, fps) -> float:
-    """parse_time() with the input's fps (SMPTE hh:mm:ss:ff) and every failure as kind input."""
-    try:
-        return parse_time(value, fps)
-    except (ValueError, MissingFpsError) as e:
-        die(f"bad time {value!r}: {e}")
-    return 0.0  # unreachable
+def _t(value: str, fps, flag: str = "--segments") -> float:
+    """time_arg() with the input's fps (SMPTE hh:mm:ss:ff, or @fps): the one parser every tool uses (1.9)."""
+    return time_arg(value, flag, fps)
 
 
 def parse_segments(spec: str, fps=None) -> List[Tuple[float, float]]:
@@ -183,17 +179,17 @@ def main() -> int:
     if args.segments:
         segments = parse_segments(args.segments, fps)
     else:
-        start = _t(args.start, fps)
+        start = _t(args.start, fps, "--start")
         if start < 0:
             die(f"--start must not be negative, got {args.start!r}")
         if args.end and args.duration:
             die("use --end or --duration, not both")
         if args.end:
-            end = _t(args.end, fps)
+            end = _t(args.end, fps, "--end")
             if end < 0:
                 die(f"--end must not be negative, got {args.end!r}")
         elif args.duration:
-            end = start + _t(args.duration, fps)
+            end = start + _t(args.duration, fps, "--duration")
         else:
             end = total
         if end <= start:

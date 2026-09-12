@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+- One time grammar (issue #189 B, docs/design-decisions.md "Time grammar", roadmap 1.9.0): `broll.py`, `cut.py` and `freeze.py` now parse their times through `time_arg()` like every other tool, so a bad or fps-less value is `kind: input` naming the flag; `hh:mm:ss:ff@fps` (e.g. `00:01:02:15@29.97`) names a timecode's rate explicitly and is accepted by every time-taking flag and cue file. `references/scripts.md` documents the grammar once.
+- Eval 8 follow-ups. `render.py` turns `--normalize` on by default for a platform export preset when the project has no `loudness` stage (`"normalize": false` opts out); SKILL.md shows the Japanese shape of the report next to the English one, lists a `join.py` that scaled or padded a clip under the Look rule, and says when `--codec` / `--quality` are the right call.
+- `probe` gains `hdr_signal` (true only for a PQ / HLG transfer or Dolby Vision) next to `hdr`, which keeps counting BT.2020 primaries on an SDR transfer until 2.0 renames it (issue #189 A1, pre-shipped as a parallel key).
 
 ## 1.8.1
 
