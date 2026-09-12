@@ -1760,7 +1760,8 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(doc["dry_run"]); self.assertFalse(out.exists())
         doc = json.loads(tool("render", plan, "--json").stdout)
         self.assertEqual((doc["status"], doc["tool"], doc["output"]), ("completed", "cut", str(out)))
-        self.assertAlmostEqual(doc["probe"]["duration"], 1.0, delta=0.15)
+        # a lossless cut lands on packet boundaries: FFmpeg 5.1.1 writes 1.23 s for this 1 s request
+        self.assertTrue(0.9 <= doc["probe"]["duration"] <= 1.6, doc["probe"]["duration"])
         self.assertEqual(doc["tool_result"]["status"], "completed")
         # an export plan carries the platform check and runs it
         xplan = self.out("plan_x.json"); xout = self.out("plan_x.mp4")
