@@ -144,7 +144,7 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
-    folder = Path(args.folder)
+    folder = Path(args.folder).resolve()  # relative 'bdir' used to become bdir/bdir/out once joined with the default outdir
     if not folder.is_dir():
         die(f"not a folder: {folder}")
     try:

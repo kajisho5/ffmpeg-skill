@@ -1494,6 +1494,33 @@ class ContractTests(unittest.TestCase):
             if ps is not None:
                 self.assertEqual(ps.stdout.strip(), "", "an ffmpeg is still running on the output")
 
+    def test_output_directory_mistakes_are_kind_input(self):
+        """Fourth review, P2: `-o some/dir` was OUTPUT_INVALID after ffmpeg ran and `-o missing/dir/x.mp4`
+        was `kind: ffmpeg` from the muxer's ENOENT, both reading as encoder failures. Both are caller
+        mistakes and are refused before ffmpeg runs, under --dry-run too."""
+        d = self.out("a_directory"); d.mkdir(exist_ok=True)
+        for out, needle in ((d, "is a directory"), (self.out("no_such_dir") / "x.mp4", "does not exist")):
+            for extra in ((), ("--dry-run",)):
+                proc = tool("fit", self.src, "--aspect", "1:1", "--json", "-o", out, *extra, check=False)
+                self.assertNotEqual(proc.returncode, 0)
+                doc = json.loads(proc.stdout)
+                self.assertEqual(doc["error"]["kind"], "input", doc)
+                self.assertIn(needle, doc["error"]["message"])
+
+    def test_batch_default_outdir_is_inside_the_folder_once(self):
+        """Fourth review, P2: `batch.py bdir --recipe r.json` with a relative folder wrote to
+        bdir/bdir/out because the default outdir (folder / "out") was joined with the folder again."""
+        import batch as batch_mod  # noqa: E402
+        bdir = self.out("bdir"); bdir.mkdir(exist_ok=True)
+        shutil.copyfile(self.src, bdir / "clip.mp4")
+        recipe = self.out("batch_recipe.json")
+        recipe.write_text(json.dumps({"glob": "*.mp4", "steps": [["fit.py", "{in}", "--aspect", "1:1", "-o", "{out}"]]}), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "batch.py"), "bdir", "--recipe", str(recipe), "--dry-run", "--json"],
+                              cwd=str(self.work), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertFalse((bdir / "bdir").exists(), "outdir was doubled")
+        self.assertTrue((bdir / "out").is_dir(), "default outdir is <folder>/out")
+
     def test_cut_segments_refuses_output_equal_to_input(self):
         """Fourth review, P0: `cut.py in.mp4 --segments 0-1,2-3 -o in.mp4` replaced the source
         with the 2 s join. The run() guard compares the ffmpeg command's -i paths with its output,
@@ -1686,7 +1713,9 @@ class ContractTests(unittest.TestCase):
     def test_ffmpeg_failures_are_loud(self):
         doc = self._fails("color", self.src, "--lut", self.badlut, "--fast", "-o", self.out("g1.mp4"), kind="ffmpeg")
         self.assertTrue(any("ffmpeg" in c for c in doc["commands"]), "the failing command is reported")
-        self._fails("loudness", self.wav, "-o", self.work / "no_such_dir" / "g2.wav", kind="ffmpeg")
+        # a missing output directory is the caller's mistake, refused before ffmpeg runs (kind input
+        # since 1.4.10; it used to surface as the muxer's ENOENT, kind ffmpeg)
+        self._fails("loudness", self.wav, "-o", self.work / "no_such_dir" / "g2.wav", kind="input")
         self._fails("cut", self.src, "--start", "1", "--end", "3", "-o", self.out("g3.txt"))  # unknown container
         self.assertFalse(self.out("g1.mp4").exists())
 

@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- An output that names a directory, or whose directory does not exist, is refused as `kind: input` before ffmpeg runs (it was `OUTPUT_INVALID` after the run, or the muxer's ENOENT as `kind: ffmpeg`).
+- `batch.py` with a relative folder no longer doubles it in the default output directory (`bdir/bdir/out`).
 
 ## 1.4.10
 

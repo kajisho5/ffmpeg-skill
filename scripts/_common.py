@@ -437,6 +437,20 @@ def refuse_output_is_input(output: str, *inputs: str) -> None:
                 f"(the result would replace the source) -- choose a different --output/-o path", kind="input")
 
 
+def _check_output_path(cmd: Sequence[str]) -> None:
+    """An output whose directory does not exist, or that names a directory, is a caller mistake:
+    say so as `kind: input` before ffmpeg runs, instead of the muxer's "No such file or directory"
+    as `kind: ffmpeg` (which reads as an encoder failure) or an `OUTPUT_INVALID` after the fact."""
+    output = cmd[-1]
+    if output == "-" or output.startswith("pipe:") or output.startswith("-"):
+        return
+    if os.path.isdir(output):
+        die(f"output {output!r} is a directory; pass a file path (e.g. {os.path.join(output, 'result.mp4')!r})")
+    parent = os.path.dirname(os.path.abspath(output))
+    if not os.path.isdir(parent):
+        die(f"output directory {parent!r} does not exist; create it first (this tool never creates directories)")
+
+
 def _check_existing_output(cmd: Sequence[str]) -> None:
     """An output path that already exists is someone's file: a previous result, a source the
     agent mis-named, a deliverable from another run. ffmpeg's -y (which every command carries so
@@ -522,6 +536,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     is_ffmpeg = _is_ffmpeg(cmd)
     if is_ffmpeg:
         _check_no_overwrite_input(cmd)
+        _check_output_path(cmd)
         _check_existing_output(cmd)
         STATE.commands.append(_cmdline(cmd))
     if not quiet:
