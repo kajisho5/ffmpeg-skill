@@ -11,6 +11,10 @@ PRs resolved to last+patch and 1.0.4 was published for a workflow-only change (2
 Rules (same label vocabulary as .github/release-drafter.yml, so the autolabeler and a human
 reading the PR see the same thing):
 
+  dependencies (Dependabot)          -> not releasable, whatever else it carries: Dependabot
+                                        labels its own semver-major bumps of an *action* `major`
+                                        (actions/checkout 4->7 blocked 1.4.9 on 2026-09-12); a
+                                        dependency pin is never this package's major
   major                              -> refuse (exit 2): a major is a hand edit of package.json
   minor / feature / enhancement      -> minor
   patch / fix / bug                  -> patch
@@ -43,6 +47,8 @@ PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
 def bump_for_labels(labels: Iterable[str]) -> Optional[str]:
     """'major' / 'minor' / 'patch' / None (not releasable) for one PR's labels."""
     names = {l.lower() for l in labels}
+    if "dependencies" in names:
+        return None
     if names & MAJOR:
         return "major"
     if names & MINOR:

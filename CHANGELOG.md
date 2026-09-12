@@ -10,6 +10,7 @@
 - `pad.py --start/--end` accept the shared time grammar (`1:30`) like every other tool; junk is a `kind: input` refusal, not an argparse exit 2 without JSON.
 - `cut.py --segments` refuses an output that is the same file as its input. The run() guard compares each ffmpeg command's `-i` with its output, and the final concat's only `-i` is the temp list file, so `-o in.mp4` replaced the source with the join (fourth review, P0); the single-segment path already refused.
 - The dry-run exception list in SKILL.md and `docs/contract.md` names `silence`, `loudness` and `stabilize` again; the pinning test now checks the sentence that states the exception in all three docs, not "the name appears somewhere in the file", which is how the list drifted twice.
+- Release resolver: a PR labelled `dependencies` is never releasable, even when Dependabot also labelled it `major` (its bump of actions/checkout 4→7 was the action's major, not this package's, and blocked the 1.4.9 release).
 
 ## 1.4.8
 

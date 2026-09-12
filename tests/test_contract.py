@@ -688,6 +688,13 @@ class ContractTests(unittest.TestCase):
         self.assertIsNone(v)
         v, _ = rv.resolve("1.0.3", ["build(deps): bump x (#132)"], labels({132: ["dependencies", "github_actions", "chore"]}))
         self.assertIsNone(v)
+        # Dependabot labels a semver-major bump of an *action* `major` (actions/checkout 4->7,
+        # #168/#169); that is the dependency's major, not ours, and it blocked 1.4.9 on 2026-09-12.
+        # A dependencies PR is not releasable whatever else it carries, and does not trip the refusal.
+        v, d = rv.resolve("1.4.8", ["fix: x (#183)", "build(deps): bump actions/checkout from 4 to 7 (#168)"],
+                          labels({183: ["chore", "fix"], 168: ["dependencies", "github_actions", "chore", "major"]}))
+        self.assertEqual(v, "1.4.9")
+        self.assertEqual([x["bump"] for x in d], ["patch", None])
         # fix wins over chore on the same PR (#136 -> 1.0.3)
         v, _ = rv.resolve("1.0.2", ["Fix the Codex install path (#136)"], labels({136: ["chore", "fix"]}))
         self.assertEqual(v, "1.0.3")
