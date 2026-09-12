@@ -201,3 +201,25 @@ then found both PRs unreleased and published 1.4.2 correctly, so nothing was los
 run and a confusing timeline. release.yml now checks out `ref: main` and rebases the bump on
 main right before pushing. Lesson: a workflow that pushes to the branch that triggered it must
 start from the branch tip, not from the triggering commit.
+
+### "Clean up the partial output on failure" deleted the user's file
+
+Found by the 1.4.2 review (2026-09-12), present since #78 (2026-09-07). The cleanup that removes a
+0-byte stray after a failed encode keyed on "output path exists after failure", which is also
+true of a deliverable that was there before the run and that ffmpeg never opened (a bad filter
+argument fails at graph init, before the muxer touches the output). The --overwrite consent
+added in #163 guards the success path only; the failure path had its own delete. Now the run
+snapshots size/mtime of any pre-existing output and the cleanup leaves an unchanged file alone.
+Lesson: a destructive step must know whether it created the thing it is about to destroy;
+"exists" is not that knowledge. And the second review found what the first one -- which had
+just written the overwrite guard next to this code -- did not: a reviewer who wrote the fix
+reads the file they fixed, not the one beside it.
+
+### --timeout only worked when ffmpeg was talking
+
+Same review. The --progress runner iterated the progress pipe and compared the clock per
+line, so the one case the timeout exists for (a deadlocked ffmpeg, which prints nothing)
+never reached the comparison. The non-progress path used subprocess.run(timeout=) and was
+fine, and the test only exercised that path. Lesson: a deadline belongs on a clock the loop
+wakes up to check, never on the arrival of the thing you are waiting for; and a test for
+"hang" must use a shim that actually hangs silently, not one that fails fast.

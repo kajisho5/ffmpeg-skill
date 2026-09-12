@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -1205,6 +1206,51 @@ class ContractTests(unittest.TestCase):
         proc = tool("fit", self.src, "--aspect", "9:16", "--json", "-o", self.out("timeout_env.mp4"), env=env, check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "timeout", "the env default applies without the flag")
         self.assertIn("timeout", self.contract["json_output"]["error_kinds"])
+
+    def test_failed_run_never_deletes_an_output_that_predates_it(self):
+        """The partial-output cleanup (#78) removed the output path after every failed ffmpeg run
+        without asking whether the file had been there before: a bad filter argument aimed at an
+        existing deliverable (ffmpeg exits before opening the output) deleted the deliverable.
+        Only a file this run created, or one ffmpeg demonstrably truncated (size/mtime changed),
+        is a partial of ours; an untouched pre-existing file stays, with or without --overwrite
+        (consent to replace is not consent to delete on failure)."""
+        keep = self.out("deliverable.mp4")
+        self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "1", "-o", keep).returncode, 0)
+        before = (keep.stat().st_size, keep.stat().st_mtime_ns)
+        bad = self.out("bad.cube")
+        bad.write_text('TITLE "x"\nLUT_3D_SIZE 2\ngarbage\n')
+        for extra in ((), ("--overwrite",)):
+            proc = tool("color", self.src, "--lut", bad, "--json", "-o", keep, *extra, check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "ffmpeg")
+            self.assertTrue(keep.exists(), f"failed run deleted a pre-existing output ({extra})")
+            self.assertEqual((keep.stat().st_size, keep.stat().st_mtime_ns), before, "pre-existing output was modified")
+        # a fresh path that the failed run created is still cleaned up
+        fresh = self.out("fresh.mp4")
+        proc = tool("color", self.src, "--lut", bad, "--json", "-o", fresh, check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertFalse(fresh.exists())
+
+    @unittest.skipIf(platform.system() == "Windows", "the hung ffmpeg is a #!/bin/sh shim on a POSIX-only PATH; the deadline logic itself is platform-neutral")
+    def test_timeout_is_enforced_under_progress_when_ffmpeg_prints_nothing(self):
+        """--progress read ffmpeg's progress pipe line by line and only compared the clock when a
+        line arrived, so the exact case --timeout exists for -- a deadlocked ffmpeg that prints
+        nothing -- waited forever. A shell shim standing in for ffmpeg that sleeps silently and
+        then fails reproduces it in seconds: with the limit at 1 s the run must end as kind
+        timeout well before the shim's own sleep would have returned."""
+        shim = self.out("hang_shim")
+        shim.mkdir()
+        (shim / "ffmpeg").write_text("#!/bin/sh\nsleep 8\nexit 1\n")
+        (shim / "ffmpeg").chmod(0o755)
+        (shim / "ffprobe").symlink_to(shutil.which("ffprobe"))
+        env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+        t0 = time.time()
+        proc = tool("fit", self.src, "--aspect", "9:16", "--progress", "--timeout", "1", "--json",
+                    "-o", self.out("hang.mp4"), env=env, check=False)
+        elapsed = time.time() - t0
+        self.assertEqual(proc.returncode, 124, proc.stderr[-300:])
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "timeout")
+        self.assertLess(elapsed, 6, f"--progress waited {elapsed:.1f}s on a silent ffmpeg; the limit was 1 s")
 
     def test_existing_output_warns_today_refuses_on_request_and_never_for_its_own_files(self):
         """Every ffmpeg command carries -y (so a run never blocks on a y/N prompt), which meant an

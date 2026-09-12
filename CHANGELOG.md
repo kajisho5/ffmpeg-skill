@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- A failed ffmpeg run no longer deletes an output file that existed before the run: the partial-output cleanup now removes only files this run created or that ffmpeg demonstrably truncated. Previously a bad filter argument aimed at an existing deliverable (ffmpeg exits before opening the output) deleted the deliverable, with or without `--overwrite`.
+- `--timeout` is enforced under `--progress`: the deadline is checked on a clock, so a deadlocked ffmpeg that prints no progress lines is killed and reported as `kind: timeout` instead of being waited on forever.
 
 ## 1.4.2
 
