@@ -109,7 +109,7 @@ def _asr_run(cmd: List[str], subprocess, name: str) -> "subprocess.CompletedProc
 
 def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int,
                    ffmpeg: str, shutil, subprocess) -> List[Tuple[float, float, str]]:
-    from _common import run_analysis
+    from _common import run_analysis, STATE, die
     wav = os.path.join(tmpdir, "audio.wav")
     # A wav in our own temp dir: a measurement input for the engine, not a deliverable, so it
     # is not a run() call (no --dry-run gate, not recorded), but it keeps the time limit and
@@ -146,7 +146,6 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
     try:
         from faster_whisper import WhisperModel  # type: ignore
         import threading
-        from _common import STATE, die
         result: list = []
 
         def work() -> None:
