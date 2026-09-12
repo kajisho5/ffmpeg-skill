@@ -225,7 +225,8 @@ run time.
 sequence.py --dir DIR --pattern "frame_%04d.png"|"*.png" --fps N
             [--start-number N] [--width W] [--height H] [-o OUT]
 ```
-Turns a numbered or glob-matched set of still images into a video. The match
+Turns a numbered or glob-matched set of still images into a video. Glob
+matches are ordered naturally (`img2` before `img10`). The match
 is checked on disk before ffmpeg runs (an empty match or a missing first
 frame is refused here, not discovered from an opaque ffmpeg error).
 
@@ -251,7 +252,10 @@ how long the freeze lasts. `--mode insert` (default) inserts the hold at
 extend` only works with `--at` at (or past) the clip's end and just makes
 the last frame last `--hold` seconds longer, with nothing pushed. Audio is
 silent during the held frame in `--mode insert` (there is no source audio
-for a frozen moment that didn't exist before).
+for a frozen moment that didn't exist before). `--mode insert` drops a
+subtitle/data track rather than copy it with timestamps that no longer match
+the pushed picture (`dropped_non_av_streams: true` in the result), as
+`fit.py --method speed` does; `--mode extend` keeps it.
 
 ### pad.py — add black/silent padding at the start/end
 ```
@@ -260,7 +264,7 @@ pad.py INPUT [--start T] [--end T] [--color C] [-o OUT]
 Distinct from `fit.py --fit pad`, which pads the *frame* (letterbox/
 pillarbox bars around each existing frame) -- this pads the *timeline*:
 extra seconds of solid colour and silence before and/or after the clip's
-existing content. At least one of `--start`/`--end` must be > 0.
+existing content (seconds or `mm:ss`). At least one of `--start`/`--end` must be > 0.
 
 ### speedramp.py — step through different speeds across a clip
 ```
@@ -272,7 +276,8 @@ pieces (repeatable) covering the clip start to end with no gaps or
 overlaps, each played at its own constant speed (pitch-preserving audio,
 matching `fit.py`), then concatenates them: "speed up, then slow way down
 for the punch, then speed back up," built from a few constant segments
-rather than a continuous curve. `FACTOR` is 0.05..20 (2.0 = twice as fast,
+rather than a continuous curve. `START`/`END` take seconds or `mm:ss`;
+`FACTOR` is 0.05..20 (2.0 = twice as fast,
 0.5 = half speed). Picking exactly where a ramp should ease in or out is a
 judgement call for the calling agent, made concrete here as the segment
 boundaries it supplies.
@@ -352,8 +357,9 @@ to `-45`; noisy ones `-30`. Always tell the user how many seconds were removed.
 join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen|none]
         [--duration 0.5] [--width W --height H] [--fps N] [--fit pad|crop] [-o OUT]
 ```
-Normalises every clip to one frame size, fps, `yuv420p` and 48 kHz stereo
-(silent track generated for clips without audio), then chains `xfade` +
+Normalises every clip to one frame size, fps, `yuv420p`, 48 kHz and one
+channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
+silent track generated for clips without audio), then chains `xfade` +
 `acrossfade`. Output length = sum of clips − transition × (n−1). Clips must be
 longer than 2 × the transition. Use `--transition none` for a plain cut.
 
@@ -529,7 +535,9 @@ sync.py REFERENCE SECOND [--json] [--max-offset 30] [--analyze-seconds 120] [--f
 Cross-correlates loudness envelopes: coarse FFT search (20 ms), then a direct
 1 ms refinement (pure Python, a 2-minute window takes ~1-3 s). Positive offset
 = the second recording started later. `--replace-audio` writes the reference
-video with the second file's audio aligned (video stream copied).
+video with the second file's audio aligned (video stream copied); the output
+keeps the reference's full length -- a shorter or head-trimmed second file is
+padded with silence, never allowed to cut the picture.
 `--trim-second` writes the second file shifted to the reference timeline.
 `--fix-drift` measures the offset again near the end of the overlap, reports
 the clock difference in ppm, and resamples the second file so a 60-minute
@@ -586,7 +594,9 @@ audio.py INPUT [--voice | --denoise [--denoise-strength 25]] [--gain dB]
 `--voice` = highpass 80 Hz → de-esser → FFT denoise → gentle compressor, the
 standard talking-head chain. `--duck` uses a sidechain compressor keyed by the
 speech so music dips under dialogue and swells in pauses. `--downmix` uses the
-ITU centre/LFE weights for 5.1/7.1 → stereo. Video is always stream-copied.
+ITU centre/LFE weights for 5.1/7.1 → stereo. `--mono` averages a stereo pair,
+leaves a 1-channel input untouched and downmixes >2 channels through
+swresample. Video is always stream-copied.
 Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation
