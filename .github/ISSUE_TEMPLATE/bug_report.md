@@ -6,7 +6,7 @@ labels: fix
 ---
 
 **Tool/script and version**
-<!-- e.g. cut.py, ffmpeg-skill 0.16.13 (`node -p "require('ffmpeg-skill/package.json').version"` or `doctor --json`'s "version") -->
+<!-- e.g. cut.py, ffmpeg-skill 1.4.2 (`node -p "require('ffmpeg-skill/package.json').version"` or `doctor --json`'s "version") -->
 
 **Command run**
 ```

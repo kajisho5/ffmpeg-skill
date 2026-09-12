@@ -8,6 +8,8 @@ creative judgement, no AI/LLM integration, no cloud dependency).
 
 ## Before you start
 
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+
 - **Read `docs/contract.md` and `scripts/_contract.py` first.** The capability
   contract (`contract --json`) is the single source of truth for tool schemas,
   verification policy, and capability detection — every surface (MCP, installer,

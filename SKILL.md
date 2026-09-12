@@ -28,20 +28,16 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    `cut.py` and `loudness.py` stream-copy video by default; only pass
    `--accurate` to `cut.py` when the user needs frame-exact cuts.
 3. **Plan with `--dry-run --json`, then execute.** Every script accepts
-   `--dry-run` (prints the ffmpeg commands that would run) and `--json`
-   (structured result: output path, probe of the output, commands run). For
-   writing tools this means nothing is written; `probe`/`check` still run
-   ffprobe/loudness-measurement passes (they're read-only, so `--dry-run`
-   changes nothing for `probe`, and only skips the loudness pass for
-   `check`), `sync`/`multicam`/`scenes`/`cropdetect`/`report` still run ffmpeg/ffprobe to
-   measure or analyse, and `verify` accepts the flag but ignores it entirely
-   (its steps run regardless) — see `contract --json`'s `dry_run` field per
-   tool for exact semantics. Trust `--json`, not a dry-run's human-readable
-   summary line, for any number after the plan (dimensions in that line can
-   be a placeholder, not a computed preview — see `docs/contract.md`). Use
-   them to confirm a plan before long encodes and to report exact facts.
-   `--fast` gives a quick preview-quality render (x264 veryfast), `--progress`
-   prints percent and ETA on stderr for long encodes. Never point `-o` at a file
+   `--dry-run` (prints the ffmpeg commands that would run; writing tools write
+   nothing, analysis tools still measure — the per-tool list is in the
+   opening paragraph above and in `contract --json`'s `dry_run` field) and
+   `--json` (structured result: output path, probe of the output, commands
+   run). Trust `--json`, not a dry-run's human-readable summary line, for any
+   number after the plan (dimensions in that line can be a placeholder, not a
+   computed preview — see `docs/contract.md`). Use them to confirm a plan
+   before long encodes and to report exact facts. `--fast` gives a quick
+   preview-quality render (x264 veryfast), `--progress` prints percent and
+   ETA on stderr for long encodes. Never point `-o` at a file
    you did not create in this job unless the user asked for it to be replaced;
    pass `--overwrite` only then.
 4. **Chain operations in a sensible order.** Colour (HDR→SDR / LUT) → cut →
@@ -320,18 +316,9 @@ Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | out
   `caption.py --fonts-dir ./fonts --font "Noto Sans CJK JP"`). Without a
   matching font you get boxes, not an error. Install: `apt install fonts-noto-cjk`,
   `brew install --cask font-noto-sans-cjk`.
-- **Windows drawtext crashes on some real builds.** On certain Windows ffmpeg
-  builds (e.g. winget's gyan.dev), `drawtext` crashes with an access violation
-  whenever it resolves a font by family name through fontconfig, even with a
-  valid `fonts.conf` (#100). `look.py`, `scenes.py --sheet`, `overlay.py --text`
-  and `graphics.py` all resolve a concrete `--font-file` by default when one is
-  available (`fontfile=` skips fontconfig entirely and is the form confirmed
-  not to crash), so this should already be handled automatically. If a
-  drawtext tool still crashes, pass `--font-file` explicitly rather than
-  relying on `--font`/`font=` resolution; `doctor` also runs a real one-frame
-  drawtext probe and reports `filter:drawtext` missing (with the crash detail
-  in `errors[]`) rather than a false "available" from the `-filters` listing
-  alone.
+- **Windows drawtext crashes on some real builds** (#100): the drawtext tools
+  resolve a concrete `--font-file` by default, which avoids it; if one still
+  crashes, pass `--font-file` explicitly. Details: `references/ci-platform-pitfalls.md`.
 - **Keyframe cuts.** A lossless `cut.py` result may start up to one GOP (often
   1–10 s) earlier than requested; the script re-encodes automatically when the
   deviation exceeds 0.5 s. If the user insists on lossless output, pass

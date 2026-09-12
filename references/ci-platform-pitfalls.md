@@ -165,3 +165,18 @@ these had ever shown up before.
   the RGB stages (exposure/colortemperature/colorbalance) make swscale go yuv→rgb with the
   frame's bt709 matrix and back with its bt601 default. The identity test only ever used an
   untagged source, where both legs pick bt601 and cancel out. Tracked separately.
+
+### Windows: drawtext crashes when it resolves a font by family name (#100)
+
+On certain Windows ffmpeg
+builds (e.g. winget's gyan.dev), `drawtext` crashes with an access violation
+whenever it resolves a font by family name through fontconfig, even with a
+valid `fonts.conf` (#100). `look.py`, `scenes.py --sheet`, `overlay.py --text`
+and `graphics.py` all resolve a concrete `--font-file` by default when one is
+available (`fontfile=` skips fontconfig entirely and is the form confirmed
+not to crash), so this should already be handled automatically. If a
+drawtext tool still crashes, pass `--font-file` explicitly rather than
+relying on `--font`/`font=` resolution; `doctor` also runs a real one-frame
+drawtext probe and reports `filter:drawtext` missing (with the crash detail
+in `errors[]`) rather than a false "available" from the `-filters` listing
+alone.

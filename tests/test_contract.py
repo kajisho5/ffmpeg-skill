@@ -162,7 +162,7 @@ class ContractTests(unittest.TestCase):
         package.json's description said 21, all at the same time."""
         real_count = len(self.contract["tools"])
         checks = [
-            (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?tools\b")),
+            (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?(?:tools|names)\b|\ball (?P<n>\d+) by\b")),
             (ROOT / "docs" / "contract.md", re.compile(r"\b(\d+)\s+tools\b")),
             (ROOT / "package.json", re.compile(r"(\d+)\s+FFmpeg tools\b")),
             # SKILL.md is the one file the agent actually reads, and it phrases the count as
@@ -173,7 +173,7 @@ class ContractTests(unittest.TestCase):
         ]
         for path, pattern in checks:
             text = path.read_text(encoding="utf-8")
-            counts = {int(m.group(1)) for m in pattern.finditer(text)}
+            counts = {int(m.group(1) or m.group("n")) for m in pattern.finditer(text)}
             self.assertTrue(counts, f"{path.relative_to(ROOT)}: no '<N> tools' wording found to check")
             self.assertEqual(counts, {real_count},
                               f"{path.relative_to(ROOT)}: states tool count(s) {sorted(counts)}, "
