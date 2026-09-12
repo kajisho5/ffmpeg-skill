@@ -309,7 +309,7 @@ before, and, when `--json` was given, on stdout:
 
 ```json
 {"status": "failed", "exit_code": 1,
- "error": {"kind": "input | ffmpeg | output | missing_tool | timeout | verification", "message": "...",
+ "error": {"kind": "input | ffmpeg | output | missing_tool | timeout | verification | interrupted", "message": "...",
            "code": "INPUT_INVALID | DEPENDENCY_MISSING | FFMPEG_EXECUTION_FAILED | OUTPUT_INVALID | TIMEOUT | VERIFICATION_FAILED | INTERNAL_ERROR",
            "retryable": false},
  "commands": ["ffmpeg ..."]}

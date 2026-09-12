@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+- `loudness.py` holds its `--tp` ceiling in the file it writes, not just in loudnorm's float output: the written file is measured and, when a lossy encoder overshot (ffmpeg's AAC at 192k turned one transient of a 12-minute film from -2.4 to +3.7 dBFS, so `--tp -1` delivered +1.2 dBTP and `check.py`'s fix hint looped back), it re-encodes at 256k then 320k when `--audio-bitrate` was not pinned, then with the ceiling lowered by the overshoot. `result` carries `tp_ceiling_used`, `audio_bitrate_used`, `encodes` and a `note` when the loudness moved more than 1 LU.
+- SIGINT/SIGTERM stop the running ffmpeg (or sibling script), remove its partial output and exit with a failure document (`kind: interrupted`, exit 130/143). Before, SIGTERM killed only the Python parent and ffmpeg carried on as an orphan finishing a file nobody verified; SIGINT was a traceback with the partial left on disk.
+- A path with an apostrophe (`Ryo's Mac/cues.srt`, `lu't.cube`) reaches `subtitles=`, `ass=`, `lut3d=` and `fontsdir=` intact: `escape_filter_path` now writes the three backslashes the two-level filter parser needs for `'` (one was consumed as a quote, so ffmpeg opened `Ryos Mac/cues.srt`).
 
 ## 1.4.9
 

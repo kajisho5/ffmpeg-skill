@@ -64,6 +64,7 @@ ERROR_CODE = {
     "output": "OUTPUT_INVALID",
     "timeout": "TIMEOUT",
     "verification": "VERIFICATION_FAILED",
+    "interrupted": "INTERRUPTED",
 }
 
 # Wall-clock ceiling for one ffmpeg/ffprobe invocation, in seconds. A hung ffmpeg (a build
@@ -263,6 +264,66 @@ def apply_common(args: "argparse.Namespace") -> None:
     crf = getattr(args, "crf", None)
     if crf is not None and not 0 <= int(crf) <= 51:
         die(f"--crf must be between 0 and 51 (x264/x265 scale; 18 is visually lossless, 23 the encoder default), got {crf}")
+    install_signal_handlers()
+
+
+# The child processes this tool is waiting on right now (an ffmpeg, or a sibling script under
+# run_tool), with the command whose partial output would need removing. A signal handler
+# reads it; the runners keep it current. Before 1.4.9 a SIGTERM to the tool (a cancelled MCP
+# call, a supervisor's stop, a closed terminal) killed only the Python parent: ffmpeg carried on
+# as an orphan, finished a file nobody verified, and the caller got no JSON at all; SIGINT was a
+# KeyboardInterrupt traceback with the partial left on disk.
+_CHILDREN: List[Tuple[subprocess.Popen, Sequence[str]]] = []
+_SIGNALS_INSTALLED = False
+
+
+def _on_signal(signum: int, frame: Any) -> None:
+    import signal as _signal
+    name = {getattr(_signal, "SIGINT", None): "SIGINT", getattr(_signal, "SIGTERM", None): "SIGTERM"}.get(signum, str(signum))
+    for proc, cmd in list(_CHILDREN):
+        try:
+            proc.terminate()  # ffmpeg exits promptly on SIGTERM; a sibling script runs this same handler
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        except OSError:
+            pass
+        if cmd:
+            _cleanup_partial_output(cmd)
+    _CHILDREN.clear()
+    die(f"interrupted by {name}: the running command was stopped and its partial output removed; nothing was written",
+        code=128 + signum, kind="interrupted")
+
+
+def install_signal_handlers() -> None:
+    """SIGINT/SIGTERM stop the child, remove its partial output and exit with a failure document
+    (kind: interrupted, exit 130/143). Main thread only; on Windows SIGTERM is never delivered,
+    SIGINT (Ctrl-C) is."""
+    global _SIGNALS_INSTALLED
+    if _SIGNALS_INSTALLED:
+        return
+    import signal as _signal
+    import threading
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for sig in (getattr(_signal, "SIGINT", None), getattr(_signal, "SIGTERM", None)):
+        if sig is None:
+            continue
+        try:
+            _signal.signal(sig, _on_signal)
+        except (ValueError, OSError):
+            pass
+    _SIGNALS_INSTALLED = True
+
+
+def _watch(proc: subprocess.Popen, cmd: Sequence[str]) -> None:
+    _CHILDREN.append((proc, cmd))
+
+
+def _unwatch(proc: subprocess.Popen) -> None:
+    _CHILDREN[:] = [(p, c) for p, c in _CHILDREN if p is not proc]
 
 
 def emit(output: Optional[str], **extra: Any) -> None:
@@ -534,9 +595,16 @@ def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None) -> subpro
     document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
     exactly as they would from the child itself."""
     limit = child_limit(per_call)
+    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     try:
-        return subprocess.run([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=limit)
+        out, err = child.communicate(timeout=limit)
+        _unwatch(child)
+        return subprocess.CompletedProcess(child.args, child.returncode, out, err)
     except subprocess.TimeoutExpired as e:
+        child.kill()
+        child.communicate()
+        _unwatch(child)
         name = os.path.basename(str(argv[0]))
         msg = f"{name} did not finish within {limit:.0f} s (4x the per-ffmpeg --timeout plus 60 s) and was killed"
         doc = {"status": "failed", "exit_code": 124,
@@ -628,10 +696,18 @@ def _limit_for(cmd: Sequence[str]) -> Optional[float]:
 def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     limit = _limit_for(cmd)
+    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _watch(child, cmd)
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=limit)
+        out, err = child.communicate(timeout=limit)
     except subprocess.TimeoutExpired:
+        child.kill()
+        child.communicate()
+        _unwatch(child)
         _timed_out(cmd, limit or 0)
+    finally:
+        _unwatch(child)
+    proc = subprocess.CompletedProcess(list(cmd), child.returncode, out, err)
     if proc.returncode == 0 and _is_ffmpeg(cmd):
         _remember_output(cmd)
     if proc.returncode != 0:
@@ -671,6 +747,7 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     t0 = time.time()
     limit = _limit_for(cmd)
     proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _watch(proc, cmd)
     assert proc.stdout is not None and proc.stderr is not None
     lines: "queue.Queue[Optional[str]]" = queue.Queue()
     err_chunks: List[str] = []
@@ -722,6 +799,7 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
         proc.wait(timeout=(max(5.0, limit - (time.time() - t0)) if limit else None))
     except subprocess.TimeoutExpired:
         timed_out()
+    _unwatch(proc)
     err_thread.join()
     err = "".join(err_chunks)
     clear_line()
@@ -1020,12 +1098,17 @@ def escape_filter_path(path: str) -> str:
     written `D\\\\:/x.srt`; with a single backslash the second pass still splits at the colon and
     ffmpeg reads `/x.srt` as the next option (`Unable to parse "original_size" option value`).
     Backslashes are turned into forward slashes first (ffmpeg accepts them on Windows), so a backslash
-    never has to be escaped itself; `'`, `,`, `;`, `[` and `]` are graph-level characters.
+    never has to be escaped itself; `,`, `;`, `[` and `]` are graph-level characters and survive with
+    one backslash. `'` is special: the graph parser also treats a quote as the start of a quoted
+    token, so a single `\\'` is consumed by the first pass and "Ryo's Mac/cues.srt" reaches the
+    filter as "Ryos Mac/cues.srt" (Unable to open ...). Three backslashes survive both passes
+    (measured on 6.1 and 7.1 with subtitles=, ass= and lut3d=file=).
     """
     p = str(Path(path))
     p = p.replace("\\", "/")
     p = p.replace(":", "\\\\:")
-    for ch in ("'", ",", ";", "[", "]"):
+    p = p.replace("'", "\\\\\\'")
+    for ch in (",", ";", "[", "]"):
         p = p.replace(ch, "\\" + ch)
     return p
 

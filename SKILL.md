@@ -265,7 +265,7 @@ Notes: send a valid .cube, or say if you want the clip left as is
 
 A refusal (the request asks for a judgement this skill does not make, or for something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run (usually only probe), `Look: not needed`. Both keep the five labels so a reader can scan a failed report the way they scan a successful one. When a tool's failure JSON carries `error.hint`, quote it in `Notes:` — it is the flag change that would make the retry meaningful.
 
-Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool | timeout | verification, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
+Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool | timeout | verification | interrupted, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
 
 ## Things that look right but are wrong
 

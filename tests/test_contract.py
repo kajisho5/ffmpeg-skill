@@ -1424,6 +1424,76 @@ class ContractTests(unittest.TestCase):
         proc = tool("pad", self.src, "--start", "abc", "--json", "-o", self.out("pad_bad.mp4"), check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
 
+    def test_filter_paths_with_apostrophes_open(self):
+        """Fourth review, P1: escape_filter_path wrote `\\'`, which the graph parser consumed as a
+        quote, so "Ryo's Mac/cues.srt" reached the subtitles filter as "Ryos Mac/cues.srt". Pin
+        the escaping and a real burn-in plus LUT through directories and names with apostrophes."""
+        self.assertEqual(_common.escape_filter_path("/a/Ryo's Mac/c.srt"), "/a/Ryo\\\\\\'s Mac/c.srt")
+        d = self.out("Ryo's Mac"); d.mkdir(exist_ok=True)
+        srt = d / "cu'es.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nhi\n\n", encoding="utf-8")
+        proc = tool("caption", self.src, "--srt", srt, "--fast", "--json", "-o", d / "ap'os.mp4")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        cube = d / "id'ent.cube"
+        with open(cube, "w") as fh:
+            fh.write("LUT_3D_SIZE 2\n")
+            for b in (0, 1):
+                for g in (0, 1):
+                    for r in (0, 1):
+                        fh.write(f"{r:.1f} {g:.1f} {b:.1f}\n")
+        proc = tool("color", self.src, "--lut", cube, "--fast", "--json", "-o", d / "lu't.mp4")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+
+    def test_loudness_holds_true_peak_in_the_written_file(self):
+        """Fourth review, P1: loudnorm held -1 dBTP on its float output and the AAC encoder then
+        overshot (+1.2 dBTP on a real film, +3.4 on this square wave), so the file failed the
+        ceiling it was made to meet and check.py's fix hint pointed back at loudness.py. The
+        tool now measures the written file and re-encodes (more bits, then a lower ceiling)
+        until it meets --tp. A lossless output needs one encode."""
+        # 50 ms square-wave bursts once a second: quiet on average (so -14 LUFS leaves the peaks
+        # at the ceiling) with the hard edges the AAC encoder overshoots on
+        sq = self.out("square.wav")
+        ffmpeg("-f", "lavfi", "-i", "sine=f=1000:r=48000:d=6,aeval='sgn(val(0))*0.9*lt(mod(t\\,1)\\,0.05)'", "-c:a", "pcm_s16le", sq)
+        doc = json.loads(tool("loudness", sq, "-I", "-14", "--tp", "-1", "--json", "-o", self.out("square_norm.m4a")).stdout)
+        self.assertEqual(doc["status"], "completed")
+        r = doc["result"]
+        self.assertLessEqual(float(r["input_tp"]), -0.9, r)
+        self.assertGreater(r["encodes"], 1, "the first AAC encode was expected to overshoot")
+        doc = json.loads(tool("loudness", sq, "-I", "-14", "--tp", "-1", "--json", "-o", self.out("square_norm.wav")).stdout)
+        self.assertEqual(doc["result"]["encodes"], 1)
+        self.assertLessEqual(float(doc["result"]["input_tp"]), -0.9)
+
+    @unittest.skipIf(platform.system() == "Windows", "SIGTERM is not deliverable to a process on Windows; the handler is registered there for Ctrl-C only")
+    def test_sigterm_and_sigint_stop_ffmpeg_and_report_interrupted(self):
+        """Fourth review, P1: SIGTERM killed only the Python parent -- ffmpeg carried on as an
+        orphan and finished a file nobody verified, with no JSON; SIGINT was a KeyboardInterrupt
+        traceback with the partial left on disk. Now both stop the child, remove the partial and
+        print a kind: interrupted failure document (exit 130/143)."""
+        import signal
+        import time
+        long_src = self.out("long_src.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "40", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", long_src)
+        for sig, code in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
+            out = self.out(f"sig{code}.mp4")
+            p = subprocess.Popen([sys.executable, str(SCRIPTS / "fit.py"), str(long_src), "--aspect", "9:16", "--preset", "placebo", "--json", "-o", str(out)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            deadline = time.time() + 30
+            while time.time() < deadline and not out.exists():
+                time.sleep(0.2)
+            self.assertTrue(out.exists(), "ffmpeg never opened the output")
+            time.sleep(1.0)
+            p.send_signal(sig)
+            stdout, stderr = p.communicate(timeout=60)
+            self.assertEqual(p.returncode, code, stderr[-400:])
+            self.assertNotIn("Traceback", stderr)
+            doc = json.loads(stdout)
+            self.assertEqual((doc["status"], doc["error"]["kind"], doc["exit_code"]), ("failed", "interrupted", code))
+            self.assertFalse(out.exists(), "partial output left behind")
+            # no orphaned ffmpeg writing that path
+            ps = subprocess.run(["pgrep", "-f", str(out)], stdout=subprocess.PIPE, text=True) if shutil.which("pgrep") else None
+            if ps is not None:
+                self.assertEqual(ps.stdout.strip(), "", "an ffmpeg is still running on the output")
+
     def test_cut_segments_refuses_output_equal_to_input(self):
         """Fourth review, P0: `cut.py in.mp4 --segments 0-1,2-3 -o in.mp4` replaced the source
         with the 2 s join. The run() guard compares the ffmpeg command's -i paths with its output,

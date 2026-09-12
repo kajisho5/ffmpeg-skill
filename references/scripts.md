@@ -596,6 +596,13 @@ loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--measure-only] [-o OUT]
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
 the true-peak ceiling allows). Video is stream-copied; audio becomes AAC in
 video containers or the codec matching the extension (.wav → PCM, .flac, .mp3).
+The written file is measured again: a lossy encoder can push peaks past the
+ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to
++3.7 dBFS). When it does, the tool re-encodes -- first at 256k then 320k if you
+did not pass `--audio-bitrate`, then with the loudnorm ceiling lowered by the
+overshoot -- until the file itself meets `--tp`. `result` reports
+`tp_ceiling_used`, `audio_bitrate_used`, `encodes`, and a `note` when the
+integrated loudness ended more than 1 LU from the target because of it.
 
 ### export.py — delivery presets
 ```
