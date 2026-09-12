@@ -2284,7 +2284,7 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(probe(str(cutout))["video"]["codec"], "hevc")
         # review 7: waveform.py built its own x264 line and ignored the flag
         wf = OUT / "codec_wave.mp4"
-        script("waveform.py", OUT / "c_tone.wav", "--codec", "hevc", "-o", wf, "--fast", "--json", "--overwrite")
+        script("waveform.py", self.src, "--codec", "hevc", "-o", wf, "--fast", "--json", "--overwrite")  # source.mp4: c_tone.wav is a test_contract fixture
         self.assertEqual(probe(str(wf))["video"]["codec"], "hevc")
         # review 7: the av1 bound is named in the --crf message, and HDR hevc --quality 51 does not overflow
         d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "av1", "--crf", "70", "-o", out, "--json", expect_fail=True).stdout)
