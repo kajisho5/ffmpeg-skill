@@ -461,6 +461,93 @@ def _check_output_path(cmd: Sequence[str]) -> None:
     parent = os.path.dirname(os.path.abspath(output))
     if not os.path.isdir(parent):
         die(f"output directory {parent!r} does not exist; create it first (this tool never creates directories)")
+    if not os.access(parent, os.W_OK):
+        die(f"output directory {parent!r} is not writable")
+
+
+EVEN_SCALE = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+
+
+class _OutputLock:
+    """Two runs writing the same output at once used to both report `completed` while one of
+    them described the other's file (sweep F1). A lock file next to the output, created with
+    O_EXCL and holding the writer's pid, makes the second run refuse as `kind: input`. A lock
+    whose pid is dead (POSIX) or older than an hour is stale and taken over."""
+    def __init__(self, output: str) -> None:
+        self.path: Optional[str] = None
+        self.fd: Optional[int] = None
+        if output == "-" or output.startswith("pipe:") or output.startswith("-"):
+            return
+        d, base = os.path.split(os.path.abspath(output))
+        self.path = os.path.join(d, f".{base}.ffskill-lock")
+
+    def __enter__(self) -> "_OutputLock":
+        if not self.path:
+            return self
+        for attempt in (0, 1):
+            try:
+                self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                os.write(self.fd, str(os.getpid()).encode())
+                return self
+            except FileExistsError:
+                if attempt == 0 and self._stale():
+                    try:
+                        os.remove(self.path)
+                    except OSError:
+                        pass
+                    continue
+                die(f"another run is writing {os.path.basename(self.path)[1:-len('.ffskill-lock')]!r} right now "
+                    f"(lock {self.path}); wait for it or choose a different --output/-o path")
+            except OSError:
+                return self  # unlockable location (read-only dir surfaces elsewhere): proceed without a lock
+        return self
+
+    def _stale(self) -> bool:
+        try:
+            pid = int(open(self.path).read().strip() or "0")
+            if os.name != "nt" and pid > 0:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    return True
+                except OSError:
+                    pass
+            import time
+            return time.time() - os.path.getmtime(self.path) > 3600
+        except (OSError, ValueError):
+            return True
+
+    def __exit__(self, *exc: Any) -> None:
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        if self.path:
+            try:
+                os.remove(self.path)
+            except OSError:
+                pass
+
+
+def _odd_dimension_retry(cmd: List[str], stderr: str) -> Optional[List[str]]:
+    """An odd-sized source (641x359 screen captures, some 4:4:4 masters) fails every yuv420p
+    encode with "width/height not divisible by 2" (sweep F8, 15 tools). Return the same command
+    with an even-dimension scale prepended to its -vf chain (or a new -vf when the command had
+    none); None when the failure is something else or the graph is a -filter_complex the
+    caller has to fix itself."""
+    if "not divisible by 2" not in stderr or EVEN_SCALE in cmd or any(EVEN_SCALE in a for a in cmd):
+        return None
+    if "-filter_complex" in cmd:
+        return None
+    new = list(cmd)
+    if "-vf" in new:
+        i = new.index("-vf") + 1
+        new[i] = EVEN_SCALE + "," + new[i]
+        return new
+    if "-c:v" in new and new[new.index("-c:v") + 1] == "copy":
+        return None
+    return new[:-1] + ["-vf", EVEN_SCALE, new[-1]]
 
 
 def _check_existing_output(cmd: Sequence[str]) -> None:
@@ -555,22 +642,39 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
         info(("[dry-run] $ " if STATE.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd))
     if STATE.dry_run and is_ffmpeg:
         return subprocess.CompletedProcess(list(cmd), 0, "", "")
-    exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
-    if STATE.progress and is_ffmpeg and exec_cmd[-1] != "-":
-        proc = _run_with_progress(exec_cmd, check)
-    else:
-        proc = _run_captured(exec_cmd, check)
-    if final and tmp:
-        if proc.returncode == 0:
-            try:
-                os.replace(tmp, final)
-            except OSError as e:
+    with _OutputLock(cmd[-1] if is_ffmpeg else "-"):
+        exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
+        proc = _execute(exec_cmd)
+        if proc.returncode != 0 and is_ffmpeg:
+            retry = _odd_dimension_retry(exec_cmd, proc.stderr or "")
+            if retry is not None:
+                info("source has odd dimensions; scaling to even before encoding (yuv420p needs it)")
+                STATE.commands[-1] = _cmdline(retry[:-1] + [cmd[-1]])
+                proc = _execute(retry)
+            elif "not divisible by 2" in (proc.stderr or ""):
+                die("the source has odd dimensions (width or height not divisible by 2) and this tool's filter graph "
+                    "cannot pad them itself; make them even first, e.g. fit.py --width/--height, then retry",
+                    kind="input")
+        if proc.returncode != 0 and check:
+            _fail(exec_cmd, proc.returncode, proc.stderr or "")
+        if final and tmp:
+            if proc.returncode == 0:
+                try:
+                    os.replace(tmp, final)
+                except OSError as e:
+                    _cleanup_partial_output(exec_cmd)
+                    die(f"could not replace {final} with the new output: {e}", kind="output")
+                _remember_output(cmd)
+            else:
                 _cleanup_partial_output(exec_cmd)
-                die(f"could not replace {final} with the new output: {e}", kind="output")
-            _remember_output(cmd)
-        else:
-            _cleanup_partial_output(exec_cmd)
     return proc
+
+
+def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
+    """One attempt, never exiting on failure (run() decides after its retries)."""
+    if STATE.progress and _is_ffmpeg(exec_cmd) and exec_cmd[-1] != "-":
+        return _run_with_progress(exec_cmd, False)
+    return _run_captured(exec_cmd, False)
 
 
 def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False) -> subprocess.CompletedProcess:

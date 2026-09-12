@@ -32,6 +32,8 @@ from typing import List, Tuple
 
 from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
 
+# outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
+DROPPED_STREAMS: List[str] = []
 # keyframe timestamps found next to a requested cut that the tolerance turned into a re-encode
 # (reported so the caller can choose a lossless cut at one of them next time)
 NEAREST_KEYFRAMES: list = []
@@ -115,6 +117,12 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         cmd = ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"]
         if is_audio_output(dst) or not meta.get("video"):
             cmd += ["-af", f"atrim=end={dur:.6f},asetpts=PTS-STARTPTS"]
+        # ffmpeg's default stream selection also picks one subtitle stream; a re-encode cannot
+        # trim it (the cues kept their timestamps and the container grew to 2 s for a 1 s cut,
+        # sweep F2), so the re-encode carries video/audio only and the result says so
+        cmd += ["-sn", "-dn"]
+        if meta.get("subtitle_streams") or meta.get("data_streams"):
+            DROPPED_STREAMS.append(dst)
         cmd += encode_args(meta, dst, crf, preset) + ["-avoid_negative_ts", "make_zero", dst]
     elif audio_only:
         # output-side seek: an input seek on a video file lands on the previous video keyframe and on
@@ -130,7 +138,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
     if not reencode and tolerance >= 0 and not STATE.dry_run:
         got = probe(dst).get("duration") or 0.0
-        if abs(got - dur) > tolerance:
+        if abs(got - dur) >= tolerance:  # a snap of exactly the tolerance is not "within" it (sweep F20)
             near = keyframes_near(src, start)
             alt = ""
             if near:
@@ -230,6 +238,7 @@ def main() -> int:
     info(f"wrote {output} ({fmt_secs(got)}, expected ~{expected:.3f}s, "
          + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
     emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
+         dropped_non_av_streams=bool(DROPPED_STREAMS),
          requested_start=round(segments[0][0], 6) if len(segments) == 1 else None,
          requested_end=round(segments[0][1], 6) if len(segments) == 1 else None,
          requested_segments=[[round(s, 6), round(e, 6)] for s, e in segments] if len(segments) > 1 else None,

@@ -74,7 +74,11 @@ def main() -> int:
     output = args.output or default_output(args.input, "redact")
     crop = f"crop={args.width}:{args.height}:{args.x}:{args.y}"
     if args.mode == "blur":
-        region = f"{crop},boxblur={args.blur_strength}:{args.blur_strength}"
+        # boxblur refuses a radius above half the plane: the chroma planes of 4:2:0 are half-size,
+        # so they get their own (halved) radius; a 30 px region with the default 20 used to fail
+        radius = max(1, min(args.blur_strength, min(args.width, args.height) // 2 - 1))
+        chroma = max(1, min(radius // 2, min(args.width, args.height) // 4 - 1))
+        region = f"{crop},boxblur={radius}:{radius}:{chroma}:{radius}"
     else:
         region = f"{crop},scale={max(1, args.width // args.block_size)}:{max(1, args.height // args.block_size)}:flags=neighbor,scale={args.width}:{args.height}:flags=neighbor"
     fc = f"[0:v]split=2[base][region];[region]{region}[patched];[base][patched]overlay={args.x}:{args.y}[out]"

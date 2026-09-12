@@ -141,7 +141,16 @@ def main() -> int:
     # shared path, e.g. to inspect intermediates across runs); only the auto-derived default is
     # made unique per process, since it's the one that's also auto-deleted at the end.
     work = Path(args.work) if args.work else Path(f"{Path(output).with_suffix('')}_work_{os.getpid()}")
-    work.mkdir(parents=True, exist_ok=True)
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        die(f"cannot create the work directory {work}: {e}")
+    if not args.keep and not args.work:
+        # a failed or dry run used to leave <output>_work_<pid>/ behind (sweep F15): the
+        # auto-named directory is ours alone, so remove it on every exit path
+        import atexit
+        import shutil
+        atexit.register(lambda: shutil.rmtree(work, ignore_errors=True))
     frame = proj.get("frame") or {}
     trans = proj.get("transition") or {}
     brand_args: List[str] = ["--brand", rel(proj["brand"])] if proj.get("brand") else []
@@ -151,6 +160,8 @@ def main() -> int:
     parts: List[str] = []
     for i, c in enumerate(clips):
         src = rel(c["src"])
+        if not os.path.exists(src):
+            die(f"clip {i}: source not found: {src}")  # under --dry-run too: a plan for a missing file is no plan
         if not STATE.dry_run:
             probe(src)
         needs_cut = c.get("in") is not None or c.get("out") is not None

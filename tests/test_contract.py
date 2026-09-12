@@ -1515,7 +1515,9 @@ class ContractTests(unittest.TestCase):
         shutil.copyfile(self.src, bdir / "clip.mp4")
         recipe = self.out("batch_recipe.json")
         recipe.write_text(json.dumps({"glob": "*.mp4", "steps": [["fit.py", "{in}", "--aspect", "1:1", "-o", "{out}"]]}), encoding="utf-8")
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "batch.py"), "bdir", "--recipe", str(recipe), "--dry-run", "--json"],
+        # a real (fast) run: since the sweep fixes a --dry-run leaves no directory behind, so the
+        # placement of the default outdir is only visible after a write
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "batch.py"), "bdir", "--recipe", str(recipe), "--fast", "--json"],
                               cwd=str(self.work), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
         self.assertFalse((bdir / "bdir").exists(), "outdir was doubled")
@@ -1621,6 +1623,101 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(doc["status"], "completed")
         proc = tool("sync", self.src, self.src, "--analyze-seconds", "5000", "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+    def test_boundary_sweep_regressions(self):
+        """Pins from the 561-run boundary sweep (2026-09-12). F1: two runs on one -o both said
+        completed while one described the other's file -- a lock file next to the output refuses
+        the second (a dead-pid lock is taken over). F2/F3: cut's re-encode and pad --start copied a
+        subtitle track with stale timestamps -- dropped and reported. F7: render --dry-run planned
+        a missing clip. F6: verify printed two JSON documents for a non-media input. F8: odd
+        source dimensions failed 15 tools with "not divisible by 2" -- run() retries with an even
+        scale. F9: redact's default blur radius failed on regions under 40 px. F10: color
+        --correct/--lut tagged PQ pixels as BT.709 without a tone map. F19: loudness
+        --measure-only --json was a bare dict. F12: an unwritable output directory is kind input."""
+        # F1
+        lock = self.out(".lock_victim.mp4.ffskill-lock"); lock.write_text(str(os.getpid()))
+        proc = tool("cut", self.src, "--start", "0", "--end", "1", "--json", "-o", self.out("lock_victim.mp4"), check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
+        self.assertIn("another run is writing", doc["error"]["message"])
+        lock.write_text("999999")
+        doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "--json", "-o", self.out("lock_victim.mp4")).stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertFalse(lock.exists(), "the lock must be released after the run")
+        # F2 / F3
+        srt = self.out("sw.srt"); srt.write_text("1\n00:00:00,500 --> 00:00:01,000\na\n\n2\n00:00:02,000 --> 00:00:02,500\nb\n\n", encoding="utf-8")
+        mkv = self.out("sw_in.mkv")
+        ffmpeg("-i", self.src, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt", mkv)
+        doc = json.loads(tool("cut", mkv, "--start", "0.5", "--end", "1.5", "--accurate", "--fast", "--json", "-o", self.out("sw_cut.mkv")).stdout)
+        self.assertTrue(doc["dropped_non_av_streams"])
+        self.assertAlmostEqual(doc["probe"]["duration"], 1.0, delta=0.15)
+        doc = json.loads(tool("pad", mkv, "--start", "1", "--fast", "--json", "-o", self.out("sw_pad.mkv")).stdout)
+        self.assertTrue(doc["dropped_non_av_streams"])
+        self.assertEqual(doc["probe"].get("subtitle_streams") or 0, 0)
+        # F7
+        proj = self.out("sw_missing.json"); proj.write_text(json.dumps({"output": str(self.out("sw_r.mp4")), "clips": [{"src": str(self.out("nope.mp4"))}]}))
+        proc = tool("render", proj, "--dry-run", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        # F6
+        txt = self.out("notmedia.txt"); txt.write_text("x")
+        proc = tool("verify", txt, "--quick", "--out", self.out("sw_v"), "--json", check=False)
+        self.assertEqual(proc.stdout.count('"status"'), 1, proc.stdout[:300])
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "verification")
+        # F8
+        odd = self.out("odd.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=641x359:rate=30", "-f", "lavfi", "-i", "sine=f=440:r=48000", "-t", "2", "-pix_fmt", "yuv444p", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", odd)
+        for name, extra in (("cut", ["--start", "0.5", "--end", "1.5", "--accurate"]), ("fit", ["--duration", "1"]), ("color", ["--correct", "--exposure", "0.2"]), ("overlay", ["--text", "hi"])):
+            doc = json.loads(tool(name, odd, *extra, "--fast", "--json", "-o", self.out(f"odd_{name}.mp4")).stdout)
+            self.assertEqual(doc["status"], "completed", name)
+            self.assertEqual((doc["probe"]["video"]["width"] % 2, doc["probe"]["video"]["height"] % 2), (0, 0), name)
+        # F9
+        doc = json.loads(tool("redact", self.src, "--x", "10", "--y", "10", "--width", "30", "--height", "30", "--mode", "blur", "--fast", "--json", "-o", self.out("sw_red.mp4")).stdout)
+        self.assertEqual(doc["status"], "completed")
+        # F10
+        hdr = self.out("sw_hdr.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "1", "-pix_fmt", "yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-tag:v", "hvc1", hdr)
+        proc = tool("color", hdr, "--correct", "--exposure", "0.2", "--fast", "--json", "-o", self.out("sw_col.mp4"), check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("--to-sdr", doc["error"]["message"])
+        # F19
+        doc = json.loads(tool("loudness", self.src, "--measure-only", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertIn("input_i", doc["measured"])
+        # F12 (permissions do not bind root)
+        if hasattr(os, "geteuid") and os.geteuid() != 0:
+            ro = self.out("ro_dir"); ro.mkdir(exist_ok=True); ro.chmod(0o555)
+            proc = tool("fit", self.src, "--aspect", "1:1", "--dry-run", "--json", "-o", ro / "x.mp4", check=False)
+            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+    def test_boundary_sweep_p3_regressions(self):
+        """Sweep P3s: export's HDR warning reaches --json (F11); graphics refuses a frame too small
+        for its templates (F16); insert refuses a video where it wants a still (F17); look builds
+        a sheet from a one-frame clip instead of printing "wrote" and then failing (F18); batch
+        --dry-run leaves no directories behind and render removes its auto work dir on failure (F15)."""
+        one = self.out("one_frame.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-frames:v", "1", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", one)
+        doc = json.loads(tool("look", one, "--tiles", "2x2", "--width", "200", "--json", "-o", self.out("one_sheet.png")).stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertTrue(self.out("one_sheet.png").exists())
+        tiny = self.out("tiny16.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=16x16:rate=30", "-t", "1", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", tiny)
+        proc = tool("graphics", tiny, "--template", "lower-third", "--name", "x", "--fast", "--json", "-o", self.out("tiny_g.mp4"), check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        proc = tool("insert", self.src, "--duration", "1", "--width", "64", "--height", "64", "--fast", "--json", "-o", self.out("ins_vid.mp4"), check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        hdr = self.out("p3_hdr.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-t", "1", "-pix_fmt", "yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-tag:v", "hvc1", hdr)
+        doc = json.loads(tool("export", hdr, "--preset", "youtube", "--fast", "--json", "-o", self.out("p3_ex.mp4")).stdout)
+        self.assertTrue(any("HDR" in n for n in doc.get("notes", [])), doc.keys())
+        bdir = self.out("p3_batch"); bdir.mkdir(exist_ok=True); shutil.copyfile(self.src, bdir / "clip.mp4")
+        recipe = self.out("p3_recipe.json"); recipe.write_text(json.dumps({"glob": "*.mp4", "steps": [["fit.py", "{in}", "--aspect", "1:1", "-o", "{out}"]]}))
+        doc = json.loads(tool("batch", bdir, "--recipe", recipe, "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertFalse((bdir / "out").exists(), "batch --dry-run left its output directory behind")
+        proj = self.out("p3_missing.json"); proj.write_text(json.dumps({"output": str(self.out("p3_r.mp4")), "clips": [{"src": str(self.out("nope.mp4"))}]}))
+        tool("render", proj, "--json", check=False)
+        self.assertEqual([p.name for p in self.work.glob("p3_r_work_*")], [], "render left its work dir after a failure")
 
     def test_cut_segments_refuses_output_equal_to_input(self):
         """Fourth review, P0: `cut.py in.mp4 --segments 0-1,2-3 -o in.mp4` replaced the source

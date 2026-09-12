@@ -64,12 +64,19 @@ def main() -> int:
     if stats.get("silent"):
         info("audio is silent (integrated loudness -inf); nothing to normalise")
         if args.measure_only:
-            print(json.dumps({"silent": True, "input_i": "-inf"}, indent=2))
+            if STATE.json:
+                emit(None, measured={"silent": True, "input_i": "-inf"})
+            else:
+                print(json.dumps({"silent": True, "input_i": "-inf"}, indent=2))
             return 0
         die("input audio is silent; loudness normalisation is meaningless (use audio.py --replace to add a track)")
     info(f"measured: {float(stats['input_i']):.1f} LUFS, TP {float(stats['input_tp']):.1f} dBTP, LRA {float(stats['input_lra']):.1f} LU")
     if args.measure_only:
-        print(json.dumps({k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}, indent=2))
+        measured = {k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+        if STATE.json:
+            emit(None, measured=measured)  # the contract's document shape (status, commands), not a bare dict
+        else:
+            print(json.dumps(measured, indent=2))
         return 0
 
     output = args.output or default_output(args.input, "loudnorm")

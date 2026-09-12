@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-(nothing yet)
+- Boundary sweep (561 runs, 42 tools × 23 inputs). Two runs writing the same output at once both reported `completed` while one of them described the other's file: `run()` now holds a lock file (`.<name>.ffskill-lock`, pid inside) next to the output and the second run is refused as `kind: input`; a lock whose pid is dead or older than an hour is taken over.
+- Odd source dimensions (641x359 screen captures, 4:4:4 masters) failed 15 tools with "width not divisible by 2": `run()` retries the encode with an even-dimension scale in front of the filter chain; a `-filter_complex` graph that cannot take it is refused as `kind: input` with the fix named.
+- `cut.py`'s re-encode path and `pad.py --start` stream-copied a subtitle track whose cues then fired early (cut's container grew to 2 s for a 1 s cut): both drop it and report `dropped_non_av_streams`, as `fit`/`freeze` already did. `cut.py` counts a keyframe snap of exactly the tolerance as outside it.
+- `render.py --dry-run` planned ten commands for a clip whose source does not exist; the source is checked first. `render.py` and `report.py` answered an unwritable output directory with a traceback; an unwritable directory is now refused as `kind: input` by every writing tool before ffmpeg runs. `verify.py --json` printed two JSON documents for a non-media input.
+- `color.py --correct` / `--lut` on an HDR source tagged PQ/HLG pixels as BT.709 without a tone map: refused as `kind: input` naming `--to-sdr` (`--force` grades the raw values anyway). `redact.py --mode blur` failed on regions under 40 px with the default radius (clamped, chroma planes get their own). `loudness.py --measure-only --json` prints the contract's document shape.
+- Sweep P3s: `export.py`'s HDR warning is in the JSON (`notes`); `graphics.py` refuses a frame under 64 px instead of building a 0-height bar; `insert.py` refuses a video where it wants a still; `look.py` builds a sheet from a one-frame clip instead of printing "wrote" and then failing; `batch.py --dry-run` leaves no directories behind and `render.py` removes its auto-named work directory on every exit path.
 
 ## 1.4.13
 

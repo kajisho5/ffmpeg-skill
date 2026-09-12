@@ -158,7 +158,10 @@ def main() -> int:
     if STATE.dry_run:
         info(f"wrote {output}")  # printed as "[dry-run] would write"; nothing is written
     else:
-        Path(output).write_text(doc, encoding="utf-8")
+        try:
+            Path(output).write_text(doc, encoding="utf-8")
+        except OSError as e:
+            die(f"cannot write {output}: {e}", kind="output")
         info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
     emit(None, report=output, check=chk)
     if not args.json:

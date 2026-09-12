@@ -65,6 +65,9 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no image/video stream")
+    if (meta.get("duration") or 0) > 0.5 or meta.get("audio"):
+        die(f"{args.input} is a video, not a still image; insert.py animates a still (Ken Burns). "
+            f"For a clip use broll.py (cutaway) or cut.py/join.py")
     sw, sh = meta["video"]["width"], meta["video"]["height"]
     ratio = sw / sh
 

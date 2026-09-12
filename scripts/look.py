@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-from _common import add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, time_arg
+from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, time_arg
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -102,19 +102,28 @@ def main() -> int:
         n = cols * rows
         if not dur:
             die("cannot build a contact sheet without a known duration")
+        frames_avail = int((meta["video"].get("fps") or 0) * dur) or 1
+        if n > frames_avail:
+            # a 2x2 sheet from a one-frame clip: tile waits for frames that never come and writes nothing
+            cols, rows = min(cols, frames_avail), 1
+            n = cols * rows
+            info(f"only {frames_avail} frame(s) available; sheet reduced to {cols}x{rows}")
         step = dur / n
         tile_w = max(2, (args.width // cols) // 2 * 2)
         out = args.output or os.path.join(outdir, f"{stem}_sheet.png")
         # sample at the middle of each slice so the first/last tiles are not black lead-in/out frames
         vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',scale={tile_w}:-2{tc},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        cmd = ffmpeg_base() + ["-ss", f"{step / 2:.6f}", "-i", args.input, "-vf", vf, "-frames:v", "1", out]
+        # with only a handful of frames a mid-slice seek skips past them all: start at 0 instead
+        seek = 0.0 if frames_avail < 4 else step / 2
+        cmd = ffmpeg_base() + ["-ss", f"{seek:.6f}", "-i", args.input, "-vf", vf, "-frames:v", "1", out]
         run(cmd)
         outputs.append(out)
         info(f"contact sheet: {n} frames every {step:.2f}s")
 
     for o in outputs:
-        info(f"wrote {o}")
+        if STATE.dry_run or os.path.exists(o):
+            info(f"wrote {o}")
     emit(outputs[0] if len(outputs) == 1 else None, outputs=outputs)
     if len(outputs) > 1 and not args.json:
         for o in outputs:

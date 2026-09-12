@@ -68,8 +68,10 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    notes: List[str] = []
     if meta["video"].get("hdr") and args.preset not in ("prores", "copy"):
-        info("warning: source is HDR (%s). This preset outputs SDR BT.709 tags without tone mapping; run color.py --to-sdr first for correct colours." % meta["video"].get("hdr_format"))
+        notes.append("source is HDR (%s). This preset outputs SDR BT.709 tags without tone mapping; run color.py --to-sdr first for correct colours." % meta["video"].get("hdr_format"))
+        info("warning: " + notes[-1])
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, args.preset, p["ext"])
     out_ext = Path(output).suffix.lstrip(".").lower()
@@ -92,7 +94,7 @@ def main() -> int:
         cmd += ["-filter_complex", fc, "-loop", "0", output]
         run(cmd)
         info(f"wrote {output}")
-        emit(output)
+        emit(output, **({"notes": notes} if notes else {}))
         return 0
 
     if vf:
@@ -121,7 +123,7 @@ def main() -> int:
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
-    emit(output)
+    emit(output, **({"notes": notes} if notes else {}))
     return 0
 
 

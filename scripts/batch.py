@@ -156,8 +156,23 @@ def main() -> int:
     if not outdir.is_absolute():
         outdir = folder / outdir
     work = Path(args.work) if args.work else outdir / ".work"
+    # the children refuse an output whose directory does not exist, under --dry-run too, so the
+    # directories are created for the plan as well -- and removed again afterwards when a dry
+    # run created them and left them empty (a plan leaves nothing behind, sweep F15)
+    created = [d for d in (outdir, work) if not d.exists()]
     outdir.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
+    if STATE.dry_run and created:
+        import atexit
+
+        def _remove_empty_dirs() -> None:
+            for d in sorted(created, key=lambda p: len(str(p)), reverse=True):
+                try:
+                    if not any(d.iterdir()):
+                        d.rmdir()
+                except OSError:
+                    pass
+        atexit.register(_remove_empty_dirs)
     cache_path = outdir / ".ffskill_cache.json"
     cache: Dict[str, Any] = {}
     if cache_path.exists() and not args.force:

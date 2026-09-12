@@ -98,6 +98,8 @@ def main() -> int:
 
     extra_inputs: List[str] = []
     fc: List[str] = []  # filter_complex chains (used by templates that need animated boxes)
+    if 0 < min(W, H) < 64:  # 0x0 is a dry-run probe of an intermediate that does not exist yet
+        die(f"the frame is {W}x{H}; the templates are sized from it and need at least 64 px on the short side")
     if args.template == "lower-third":
         if not args.name:
             die("lower-third needs --name")

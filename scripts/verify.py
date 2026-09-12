@@ -70,12 +70,15 @@ def collect(paths: List[str]) -> List[Path]:
 def step(name: str, argv: List[str], timeout: float) -> Dict:
     t0 = time.time()
     if argv[0] == "__check_hdr__":
+        was_json, STATE.json = STATE.json, False  # probe()'s die() would print a JSON document of its own
         try:
             v = probe(argv[1]).get("video") or {}
             ok = bool(v.get("hdr")) and v.get("bit_depth", 8) >= 10
             err = "" if ok else f"re-encode lost HDR: {v.get('color_transfer')}/{v.get('pix_fmt')}"
         except SystemExit:
             ok, err = False, "output missing"
+        finally:
+            STATE.json = was_json
         return {"step": name, "ok": ok, "seconds": round(time.time() - t0, 1), "error": err}
     try:
         proc = subprocess.run([sys.executable, str(HERE / argv[0])] + argv[1:], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
@@ -113,12 +116,15 @@ def main() -> int:
     for f in files:
         info(f"=== {f}")
         entry: Dict = {"file": str(f), "steps": []}
+        was_json, STATE.json = STATE.json, False  # same: one JSON document per run, printed at the end
         try:
             meta = probe(str(f))
         except SystemExit:
             entry["steps"].append({"step": "probe", "ok": False, "seconds": 0, "error": "ffprobe failed"})
             results.append(entry)
             continue
+        finally:
+            STATE.json = was_json
         entry["probe"] = {k: meta.get(k) for k in ("duration", "format")}
         entry["probe"]["video"] = {k: (meta.get("video") or {}).get(k) for k in ("codec", "width", "height", "fps", "pix_fmt", "hdr_format", "rotation", "variable_frame_rate_suspected")}
         entry["probe"]["audio"] = {k: (meta.get("audio") or {}).get(k) for k in ("codec", "channels", "sample_rate")}

@@ -16,7 +16,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
 
 
 def main() -> int:
@@ -57,7 +57,13 @@ def main() -> int:
         cmd += aac_args()
     else:
         cmd += ["-an"]
-    dropped_streams = run_keeping_subtitles(cmd, output)
+    if args.start > 0:
+        # a stream-copied subtitle track keeps its timestamps and would fire --start seconds early
+        # (sweep F3); drop it and say so, as freeze --mode insert and fit --method speed do
+        run(cmd + [output])
+        dropped_streams = bool(meta.get("subtitle_streams") or meta.get("data_streams"))
+    else:
+        dropped_streams = run_keeping_subtitles(cmd, output)
 
     result = probe(output, role="output")
     v = result["video"]

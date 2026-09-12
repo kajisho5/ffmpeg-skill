@@ -285,6 +285,9 @@ def main() -> int:
         output = args.output or default_output(args.input, "sdr")
         tag = "sdr"
     elif args.correct:
+        if v.get("hdr") and not args.force:
+            die(f"{args.input} is HDR ({v.get('hdr_format')}); --correct works on SDR pixels and would tag PQ/HLG data as BT.709 "
+                f"without a tone map (sweep F10). Run --to-sdr first, or --force to grade the raw values anyway")
         vf = correction_chain(args)
         output = args.output or default_output(args.input, "correct")
         tag = "correct"
@@ -292,6 +295,9 @@ def main() -> int:
         # "looks better" judgement -- the same primitive probe.py --analyze uses for Log detection.
         measurements = {"input": analyze_levels(args.input)}
     else:
+        if v.get("hdr") and not args.force:
+            die(f"{args.input} is HDR ({v.get('hdr_format')}); a LUT made for SDR applied to PQ/HLG pixels gives a wrong picture "
+                f"tagged BT.709 (sweep F10). Run --to-sdr first (or chain it), or --force if the LUT expects HDR input")
         if not os.path.exists(args.lut):
             die(f"LUT not found: {args.lut}")
         if not (0.0 <= args.lut_strength <= 1.0):
