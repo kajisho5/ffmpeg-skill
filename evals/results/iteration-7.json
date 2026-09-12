@@ -1,0 +1,93 @@
+{
+ "iteration": 7,
+ "date": "2026-09-12",
+ "skill_version": "1.7.0",
+ "agent_model": "claude-sonnet (3 runs per prompt, 8 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 108,
+ "prompts": {
+  "agent_prompts_24.json": 25,
+  "agent_prompts_exec.json": 11
+ },
+ "repeats": 3,
+ "harness_note": "Same harness as iteration 6 (subagents cannot ask questions: state an assumption or refuse honestly; report in the language the request is written in). Transcripts (run.md + outputs) kept outside the repo.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set (per rep 1/2/3)": {
+   "routing_act_prompts": "100% over 20 in every rep",
+   "mean_commands": "4.8 / 5.2 / 4.9",
+   "refusal_honesty": "4/5, 3/5, 4/5 by regex; 5/5, 5/5, 5/5 on manual and independent review (r04 written in Spanish, r03 rep2 'could not download' and r05 'refused' are honest refusals the keyword list does not cover)",
+   "japanese_report": "9/9, 9/9, 8/9 (j06-report rep3 answered in English)",
+   "report_format": "25/25 in every rep",
+   "visual_check_when_picture_changed": "8/8 in every rep"
+  },
+  "exec-set (per rep 1/2/3)": {
+   "routing_act_prompts": "100% over 10 in every rep",
+   "mean_commands": "2.0 / 2.3 / 2.0",
+   "real_execution": "6/6 in every rep",
+   "honest_failure_reporting": "5/5 in every rep, false success 0",
+   "audio_only_handled_as_audio": "3/3 in every rep",
+   "report_format": "11/11 in every rep (the regex does not check the language of a must_fail report; see independent grader)",
+   "japanese_report": "2/2 in every rep (x03-audio-trim now 76-88 Japanese characters; the iteration-6 miss is gone)"
+  }
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-12-it7.json",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10",
+  "judge": "claude-sonnet, one batch"
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-7-independent-grades.json",
+  "model": "claude-opus, every run read, 24 claimed outputs re-probed with ffprobe (all matched)",
+  "summary": {
+   "runs": 108,
+   "routing": "108/108",
+   "honest": "108/108",
+   "language": "101/108",
+   "format": "104/108",
+   "look_when_picture_changed": "25/25",
+   "quality_mean": 4.03,
+   "quality_min": 2
+  },
+  "rows_below_4": [
+   "e01-reel rep3 (3): captions were burned at the 406x720 interim size and then upscaled by export, exactly the soft-caption gotcha SKILL.md warns about, though the final file probes 1080x1920 and passes 12/12",
+   "f01-missing-input rep1 (2): honest refusal after probe INPUT_INVALID and nothing written, but the report is written in Portuguese for an English request and replaces Steps:/Check: with free-form Portuguese headings",
+   "f01-missing-input rep2 (2): honest refusal after probe INPUT_INVALID and nothing written, but the report is written in Portuguese for an English request and replaces Steps:/Check: with free-form Portuguese headings",
+   "f01-missing-input rep3 (2): honest refusal after probe INPUT_INVALID and nothing written, but the report is written in Portuguese for an English request and replaces Steps:/Check: with free-form Portuguese headings",
+   "f03-ffmpeg-failure rep3 (3): quoted ffmpeg's '3D LUT is empty' honestly and wrote nothing, but skipped the source probe and the report has only Failed:/Look:, no Steps: or Check:",
+   "j05-ma rep2 (3): silence+loudness correct and 11/11 youtube pass, but export upscaled the 640x360 source to 1920x1080 instead of flagging that upscaling adds no detail as the other reps did",
+   "j06-report rep3 (3): correct export+loudness+report.html pipeline with 12/12 x checks, but the entire report is in English for a Japanese request",
+   "j08-project rep2 (3): render.py project delivered and all checks pass, but fit produced a 406x720 interim that export upscaled, so captions are softer than a fit-to-delivery-size plan",
+   "j08-project rep3 (3): same 406x720 interim fit inside render.py before the 1080x1920 export, soft captions, otherwise a correct re-editable project",
+   "r04-translate rep1 (3): correct, well-evidenced refusal (no whisper, no translation path) with nothing written, but the whole report is in Spanish for an English-language request",
+   "r04-translate rep2 (3): correct, well-evidenced refusal (no whisper, no translation path) with nothing written, but the whole report is in Spanish for an English-language request",
+   "r04-translate rep3 (3): correct, well-evidenced refusal (no whisper, no translation path) with nothing written, but the whole report is in Spanish for an English-language request"
+  ]
+ },
+ "comparison_with_iteration_6": {
+  "routing": "100% x3 (was 100%)",
+  "refusal_honesty": "5/5 x3 manual (was 5/5)",
+  "language": "101/108 by independent grader; 24-set 26/27 Japanese (was 9/9), exec-set Japanese 6/6 (was 1/2). New: 6 English requests answered in Spanish (r04 x3) or Portuguese (f01 x3)",
+  "format": "108/108 by regex, 104/108 by independent grader (f01 x3 and f03 rep3 dropped Steps:/Check: on a one-line failure) (was 36/36)",
+  "look": "25/25 (was 8/8)",
+  "trigger": "22/22 (was 22/22)",
+  "mean_commands": "5.0 / 2.1 (was 5.0 / 2.2)",
+  "raw_ffmpeg_calls": "0 in 108 runs"
+ },
+ "iteration_6_findings_rechecked": [
+  "x03-audio-trim: Japanese report in all 3 reps (76-88 Japanese characters; was 33). The 1.5.2 SKILL.md language paragraph fixed the short-job case.",
+  "e03-logo: overlay.py --fade with no --end now fades in only; no run flagged a fade-out (was flagged).",
+  "e01-reel / j01-reel: export.py's loudness result and 'run loudness.py' note were read every time; each run planned exactly one loudness pass. The second export remains (see findings).",
+  "e02-cut-lossless: cut.py's lossless_alternative appeared in all 3 reps and every report explained the keyframe snap honestly.",
+  "j04-bgm: 12.000 s output from a 12.000 s video in all 3 reps.",
+  "j06-report: Japanese in rep1 and rep2, English in rep3 (was Japanese in iteration 6)."
+ ],
+ "findings": [
+  "Language regression on refusals and failures: r04-translate (English request about Spanish subtitles) answered in Spanish 3/3 and f01-missing-input (English request) answered in Portuguese 3/3; both were English in iteration 6 at 1.4.15. The 1.5.2 paragraph ('a Japanese request gets a Japanese report, English gets English, Chinese gets Chinese, and so on for any other language') fixed x03 but its enumeration seems to push the model toward a foreign language on the shortest reports. It never says 'the language the request is written in, not a language it talks about, and not the language of an error'.",
+  "Failed:/refusal template not stated as mandatory for trivial failures: f01 (3/3) and f03 rep3 replaced Steps:/Check: with free headings. SKILL.md shows a Failed: example but does not say the five labels apply to a one-line 'file does not exist'.",
+  "render.py fit to 9:16 defaults to the source short side (1280x720 -> 406x720); captions burned at that size are then upscaled by the reels export (j08 rep2/rep3, e01 rep3 by hand). SKILL.md warns in prose; render.py could size the fit step to the later export preset, or warn.",
+  "export.py never normalises loudness itself, so every reels/x/youtube job ran export -> loudness.py -> export again (two extra encodes). An export --loudness option, or export applying the preset target when the input misses it, would make it one pass.",
+  "check.py judgement rows (loudness, true peak) fire with no platform named, so runs that did not touch audio (e07, e12, j02, j04) each spent a paragraph explaining why they left them alone.",
+  "Not defects: j05 rep2 upscaled a 640x360 source to 1080p via the youtube preset where the other reps kept 640x360 and reported the WARN (model judgement); r03 rep2 and r05 rep3 logged '(no commands run)' for a SKILL.md read (harness logging)."
+ ]
+}
