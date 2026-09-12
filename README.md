@@ -316,6 +316,21 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 `doctor --json`'s `gpu_encoders` reports which GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`, `vaapi`, `amf`) this ffmpeg *build* was compiled with — read from `-encoders` alone, so it proves the capability shipped, not that the GPU/driver on this machine will actually accept a job (that needs a real encode, which `doctor`'s introspection never runs). No tool here uses one yet — every tool still assumes CPU x264/x265 — so this is purely informational and never affects `ok` or any tool's `usable`. GPU-accelerated encoding stays deliberately off the roadmap until there's a real-hardware-verified design for it (build-presence alone is not proof a job will succeed) — not a promised feature, just an honest "not yet, and not without proof it actually works."
 
+## Gotchas and best practices
+
+The short list for humans. The agent-facing version, with the reasoning, is the "Things that look right but are wrong" and "Gotchas" sections of [SKILL.md](SKILL.md).
+
+- **Variable frame rate (phone and screen recordings).** `probe.py` flags it; every re-encoding tool conforms to a constant rate automatically, and `cut.py` switches to frame-accurate mode on its own because copy-cuts on VFR land on the wrong frame. Choose the rate yourself with `fit.py input.mp4 --fps 30` when the measured average is odd.
+- **Lossless cuts snap to keyframes.** A stream-copy cut can start up to one GOP earlier than asked. `cut.py` re-encodes when the snap exceeds 0.5 s (`--tolerance` changes the limit). For a strictly lossless file pass `--tolerance -1`, and expect the cut to land on the nearest earlier keyframe; the JSON result lists them under `nearest_keyframes`.
+- **HDR stays HDR.** When the probe reports HDR (HDR10, HLG, Dolby Vision, BT.2020), the tools keep it rather than flatten it. Convert deliberately with `color.py --to-sdr` before H.264 deliverables or LUT work. `export.py` platform presets are SDR and warn on HDR input.
+- **Loudness targets.** −14 LUFS / −1 dBTP for YouTube and social platforms (the `loudness.py` default), `-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast. A clip measured at −40 LUFS or below is room tone, not content; raising it raises the noise. Check true peak as well as LUFS: `check.py file --platform podcast` measures both.
+- **Frame changes first, text second.** Captions and overlays burned before a crop or resize end up off-frame. Reframe, then caption.
+- **Cropping 16:9 to 9:16 discards 70 % of the width.** `fit.py --fit crop` centres by default; pass `--crop-x`/`--crop-y` toward the subject, or pad with `--fit pad --pad-fill blur`. Look at the contact sheet before deciding.
+- **Non-Latin captions need a font with the glyphs.** Without one you get boxes, not an error. Name it (`caption.py --font "Noto Sans CJK JP"`) or point at the file (`overlay.py --font-file /path/to/NotoSansCJK-Regular.ttc`).
+- **Silence detection finds nothing?** The default threshold is −35 dBFS. The tool prints a hint with the track's measured level; raise the threshold (`silence.py --threshold -25`) or shorten `--min-silence`.
+- **Sync results carry a confidence.** Below 0.3, or an offset near the edge of the analysis window, is probably wrong: enlarge `--analyze-seconds` or find a clap. Recordings over ten minutes from separate devices need `sync.py --fix-drift`.
+- **Long chains belong in a plan.** Three hand-chained re-encodes lose quality and are hard to change; `render.py` runs the whole edit from one JSON file, and `--dry-run` shows every ffmpeg command before anything is written.
+
 ## FFmpeg compatibility
 
 The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). What CI actually exercises on every pull request is FFmpeg 5.1.1 (static build), 6.1 (Ubuntu apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew) and 9.x (Windows gyan.dev), on Python 3.9 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:

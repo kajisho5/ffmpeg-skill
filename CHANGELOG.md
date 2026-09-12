@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- README gains a "Gotchas and best practices" section for human readers: VFR, keyframe snapping, HDR, loudness targets, caption order, 9:16 crops, fonts, silence threshold, sync confidence, plans; every flag named is checked against the scripts' `--help`.
 
 ## 1.4.8
 
