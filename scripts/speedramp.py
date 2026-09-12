@@ -115,7 +115,7 @@ def main() -> int:
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {len(segments)} speed segments)")
-    emit(output)
+    emit(output, dropped_non_av_streams=bool(meta.get("subtitle_streams") or meta.get("data_streams")))
     return 0
 
 

@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Policies settled after the boundary sweep. An ffmpeg failure now always exits 1 (ffmpeg's own code, which varied by build and stage, is `ffmpeg_returncode` in the JSON). `audio.py`, `loudness.py` and `proxy.py` keep a subtitle/data track the container can hold, as `fit`/`color`/`overlay` do; `join.py`, `broll.py` and `speedramp.py`, whose timeline moves, report `dropped_non_av_streams: true` when the source had one. The rule is written down in `docs/design-decisions.md`.
 
 ## 1.4.14
 

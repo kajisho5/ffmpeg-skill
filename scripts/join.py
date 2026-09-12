@@ -206,7 +206,8 @@ def main() -> int:
     expected = sum(durs) - d * (n - 1)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
-    emit(output, mode="video", clips=n, transition=args.transition, expected_duration=round(expected, 3))
+    emit(output, mode="video", clips=n, transition=args.transition, expected_duration=round(expected, 3),
+         dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
     return 0
 
 

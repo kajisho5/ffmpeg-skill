@@ -398,8 +398,12 @@ def _cleanup_partial_output(cmd: Sequence[str]) -> None:
 def _fail(cmd: Sequence[str], returncode: int, stderr: str) -> None:
     # Partial-output cleanup already ran in the caller (_run_captured/_run_with_progress) for
     # every failed ffmpeg invocation, not just this check=True path -- see _cleanup_partial_output.
+    # The process exit code is always 1 for an ffmpeg failure: ffmpeg's own code (1, 69, 218, 234,
+    # a negative signal number...) varies by build and by the failing stage, and 124/127/130/143
+    # are reserved for timeout, missing tool and interrupts. The raw code is kept in the JSON
+    # document as `ffmpeg_returncode` for a caller that wants it. docs/design-decisions.md.
     tail = "\n".join(stderr.strip().splitlines()[-15:])
-    die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=returncode or 1, kind="ffmpeg")
+    die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode)
 
 
 def _check_no_overwrite_input(cmd: Sequence[str]) -> None:

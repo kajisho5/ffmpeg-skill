@@ -281,6 +281,8 @@ rather than a continuous curve. `START`/`END` take seconds or `mm:ss`;
 0.5 = half speed). Picking exactly where a ramp should ease in or out is a
 judgement call for the calling agent, made concrete here as the segment
 boundaries it supplies.
+A subtitle/data track in the source is not carried into the retimed/concatenated
+output; the result says so with `dropped_non_av_streams: true`.
 
 ### loop.py — repeat a clip
 ```
@@ -308,6 +310,8 @@ overlap or run past A's end, and B must have enough material from `--from`.
 `--audio a` (default) keeps A's audio untouched and stream-copied; `b` replaces
 it inside each window with B's; `mix` plays both. The output's length is
 verified against A's.
+A subtitle/data track in the source is not carried into the retimed/concatenated
+output; the result says so with `dropped_non_av_streams: true`.
 
 ### metadata.py — chapter markers and container tags, streams copied
 ```
@@ -362,6 +366,8 @@ channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
 silent track generated for clips without audio), then chains `xfade` +
 `acrossfade`. Output length = sum of clips − transition × (n−1). Clips must be
 longer than 2 × the transition. Use `--transition none` for a plain cut.
+A subtitle/data track in the source is not carried into the retimed/concatenated
+output; the result says so with `dropped_non_av_streams: true`.
 
 ### render.py — the whole edit in one project.json
 ```
@@ -596,7 +602,8 @@ standard talking-head chain. `--duck` uses a sidechain compressor keyed by the
 speech so music dips under dialogue and swells in pauses. `--downmix` uses the
 ITU centre/LFE weights for 5.1/7.1 → stereo. `--mono` averages a stereo pair,
 leaves a 1-channel input untouched and downmixes >2 channels through
-swresample. Video is always stream-copied.
+swresample. Video is always stream-copied, and so is a subtitle/data track
+when the container can hold it (`dropped_non_av_streams` says when it could not).
 Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation
@@ -604,7 +611,8 @@ Run `loudness.py` after this for final levels.
 loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--measure-only] [-o OUT]
 ```
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
-the true-peak ceiling allows). Video is stream-copied; audio becomes AAC in
+the true-peak ceiling allows). Video and any subtitle/data track are
+stream-copied (`dropped_non_av_streams` reports a track the container refused); audio becomes AAC in
 video containers or the codec matching the extension (.wav → PCM, .flac, .mp3).
 The written file is measured again: a lossy encoder can push peaks past the
 ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to
@@ -629,6 +637,7 @@ proxy.py INPUT [--width W | --scale F] [--crf N] [--fps N] [--no-audio] [-o OUT]
 Not a delivery preset: resizes to `--width` (default 640) or by `--scale`
 factor, re-encodes at a proxy-grade `--crf` (default 30) with the fastest
 x264/x265 preset, keeps the source's own dynamic range (HDR stays HDR;
-run `color.py --to-sdr` first if SDR is wanted). Only executes the spec
+run `color.py --to-sdr` first if SDR is wanted) and keeps a subtitle/data
+track when the container can hold it (`dropped_non_av_streams`). Only executes the spec
 given — does not decide which asset to proxy or what for.
 

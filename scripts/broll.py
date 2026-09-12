@@ -145,7 +145,8 @@ def main() -> int:
     if not STATE.dry_run and dur_a and abs((result.get("duration") or 0.0) - dur_a) > max(0.1, 1.5 / fps):
         die(f"output is {fmt_secs(result.get('duration'))} but the A-roll is {dur_a:.3f}s -- a cutaway must not change the length", kind="output")
     info(f"wrote {output} ({result.get('duration', 0):.3f}s, {len(cutaways)} cutaway(s), audio={args.audio})")
-    emit(output, cutaways=[{"insert": c["path"], "at": c["at"], "end": c["at"] + c["length"], "from": c["from"]} for c in cutaways], audio=args.audio)
+    emit(output, cutaways=[{"insert": c["path"], "at": c["at"], "end": c["at"] + c["length"], "from": c["from"]} for c in cutaways], audio=args.audio,
+         dropped_non_av_streams=bool(meta_a.get("subtitle_streams") or meta_a.get("data_streams")))
     return 0
 
 

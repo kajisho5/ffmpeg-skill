@@ -46,7 +46,7 @@ For the whole of 1.x:
 | Tool ids (`ffmpeg-skill/<name>`) and script names | never removed or renamed |
 | CLI arguments (`argparse` dests, flags, positionals) | never removed, renamed, or made newly required; new optional arguments may be added |
 | `--json` output keys, and the keys of `contract --json` / `doctor --json` | never removed or given a different type; new keys may be added |
-| Exit codes (0 success, 1 failure, 2 unknown/undecidable in `doctor`) | unchanged |
+| Exit codes (0 success, 1 failure incl. ffmpeg failures, 2 unknown/undecidable in `doctor`, 124 timeout, 127 missing tool, 128+signal interrupted) | unchanged |
 | `contract_version` (`1.0`) | unchanged; a ToolSpec shape change is a major |
 | MCP `tools/list` names and `inputSchema` property names | derived from the above, so covered by the same promise |
 | Behaviour of a tool for the same input and arguments | may change only to fix a defect or to track an FFmpeg change, and every such change gets a CHANGELOG line |
@@ -318,7 +318,8 @@ before, and, when `--json` was given, on stdout:
 `message` carries the script's own reason (missing input, ffprobe failure, the last
 stderr lines of ffmpeg, the verification that failed); an optional `error.hint` names the
 flag change that would make a retry meaningful (never a diagnosis of the media); `commands` lists what was planned
-or run so the caller can retry or report without re-deriving the command. `code` is a
+or run so the caller can retry or report without re-deriving the command; `kind: ffmpeg`
+failures add `ffmpeg_returncode` (ffmpeg's own exit code; the process exits 1). `code` is a
 purely additive, statically-mapped relabelling of `kind` (never a new distinction `kind`
 doesn't already make) for a caller that wants a stable enum instead of matching `kind`
 strings. `retryable` is currently always `false`: none of the kinds are distinguishable

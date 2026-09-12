@@ -63,6 +63,14 @@ exists. When a decision changes, edit the entry in the same PR.
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the
   output directory during a run. Code: `_common._stage_existing_output()`.
+- **Subtitle/data tracks are kept where the picture's timeline is untouched and dropped where
+  it is retimed; both cases report `dropped_non_av_streams`.** Tools that re-encode the picture
+  or audio in place (`fit`, `color`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
+  `deinterlace`, `denoise`, `freeze --mode extend`) try `run_keeping_subtitles()` first and
+  report `false` unless the container refused the track. Tools that move the timeline
+  (`cut` re-encode, `pad --start`, `freeze --mode insert`, `fit --method speed`, `speedramp`,
+  `broll`, `join`) do not copy a track whose cues would fire at the wrong time and report
+  `true` when the source had one. Code: `_common.run_keeping_subtitles()` and each tool's `emit`.
 - **`caption.py` leaves its `.srt`/`.ass` sidecar next to the output by design**; it is a
   deliverable (the subtitle file), not an intermediate.
 - **`examples/out/` and `tests/out/` are not tracked**; local demo output can be large. Nothing
@@ -90,6 +98,11 @@ exists. When a decision changes, edit the entry in the same PR.
   release workflow with a PAT (the ruleset blocks the built-in token) and must not trigger a
   second run. Never quote that marker in a PR body: a squash merge copies it into the merge
   commit and skips every workflow (`references/process-pitfalls.md`).
+- **An ffmpeg failure exits 1, whatever ffmpeg's own exit code was.** ffmpeg's code varies by
+  build and by the failing stage (1, 69, 218, 234, a negative signal number), and 124/127/
+  130/143 are reserved for timeout, missing tool and interrupts; passing the raw code through
+  made the process exit code depend on the ffmpeg build. The raw code is in the JSON failure
+  document as `ffmpeg_returncode`. Code: `_common._fail()`.
 - **`retryable` is always `false` in failure documents.** No failure kind is distinguishable
   today from a deterministic one that would fail identically on a blind retry, so the field never
   invites a retry loop. Code: `_common.ERROR_RETRYABLE`.

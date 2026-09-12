@@ -25,7 +25,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, fmt_secs
+from _common import add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, fmt_secs
 
 
 def even(n: float) -> int:
@@ -67,14 +67,13 @@ def main() -> int:
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", f"scale={out_w}:-2"]
     cmd += video_args(meta, args.crf, "veryfast")
     cmd += cfr_args(meta, args.fps)
-    cmd += ["-c:a", "aac", "-b:a", "96k"] if has_audio else ["-an"]
-    cmd.append(output)
-    run(cmd)
+    cmd += ["-map", "0:v:0"] + (["-map", "0:a:0", "-c:a", "aac", "-b:a", "96k"] if has_audio else ["-an"])
+    dropped_streams = run_keeping_subtitles(cmd, output)
 
     result = probe(output)
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']}, crf {args.crf})")
-    emit(output)
+    emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 
 

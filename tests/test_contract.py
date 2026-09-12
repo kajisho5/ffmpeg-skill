@@ -1692,6 +1692,41 @@ class ContractTests(unittest.TestCase):
             proc = tool("fit", self.src, "--aspect", "1:1", "--dry-run", "--json", "-o", ro / "x.mp4", check=False)
             self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
 
+    def test_settled_policies_exit_code_and_subtitle_tracks(self):
+        """docs/design-decisions.md: an ffmpeg failure exits 1 whatever ffmpeg returned (the raw code
+        travels as ffmpeg_returncode); tools that leave the timeline alone keep a subtitle track
+        (audio/loudness/proxy joined fit/color/overlay), tools that move it say so."""
+        bad = self.out("policy_bad.cube")
+        bad.write_text('TITLE "x"\nLUT_3D_SIZE 2\ngarbage\n')
+        proc = tool("color", self.src, "--lut", bad, "--json", "-o", self.out("policy_lut.mp4"), check=False)
+        self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"], doc["exit_code"]), ("failed", "ffmpeg", 1))
+        self.assertIsInstance(doc["ffmpeg_returncode"], int)
+        self.assertNotEqual(doc["ffmpeg_returncode"], 0)
+        keep = [
+            ("audio", [self.subbed, "--gain", "3", "-o", self.out("policy_audio.mkv"), "--json"]),
+            ("loudness", [self.subbed, "-o", self.out("policy_loud.mkv"), "--json"]),
+            ("proxy", [self.subbed, "--width", "160", "-o", self.out("policy_proxy.mkv"), "--json"]),
+        ]
+        for name, args in keep:
+            doc = json.loads(tool(name, *args).stdout)
+            self.assertFalse(doc["dropped_non_av_streams"], name)
+            kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout.split()
+            self.assertEqual(kinds.count("subtitle"), 2, f"{name}: expected both source subtitle tracks, got {kinds}")
+        drop = [
+            ("join", [self.subbed, self.subbed, "--duration", "0.3", "-o", self.out("policy_join.mp4"), "--json"]),
+            ("broll", [self.subbed, "--insert", self.src, "--at", "1", "--duration", "1", "-o", self.out("policy_broll.mp4"), "--json"]),
+            ("speedramp", [self.subbed, "--segment", "0-3:2", "--segment", "3-6:1", "-o", self.out("policy_ramp.mp4"), "--json"]),
+        ]
+        for name, args in drop:
+            doc = json.loads(tool(name, *args, "--fast").stdout)
+            self.assertTrue(doc["dropped_non_av_streams"], name)
+            self.assertEqual(doc["probe"]["subtitle_streams"], 0, name)
+        # a plain source reports false, so the key is a fact and not a constant
+        doc = json.loads(tool("speedramp", self.src, "--segment", "0-6:2", "-o", self.out("policy_ramp_plain.mp4"), "--json", "--fast").stdout)
+        self.assertFalse(doc["dropped_non_av_streams"])
+
     def test_boundary_sweep_p3_regressions(self):
         """Sweep P3s: export's HDR warning reaches --json (F11); graphics refuses a frame too small
         for its templates (F16); insert refuses a video where it wants a still (F17); look builds

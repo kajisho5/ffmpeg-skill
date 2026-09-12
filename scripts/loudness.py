@@ -18,7 +18,7 @@ import os
 import re
 import sys
 
-from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, dry_run_input_pending
+from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
 
@@ -90,7 +90,10 @@ def main() -> int:
     bitrate_pinned = args.audio_bitrate is not None
     bitrate = args.audio_bitrate or "192k"
 
+    dropped_streams = False
+
     def encode(tp: float, bitrate: str) -> None:
+        nonlocal dropped_streams
         af = (
             f"loudnorm=I={args.lufs}:TP={tp}:LRA={args.lra}"
             f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
@@ -101,6 +104,8 @@ def main() -> int:
             cmd += ["-vn"] + audio_codec_for(output, bitrate)
         else:
             cmd += ["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", bitrate]
+            dropped_streams = run_keeping_subtitles(cmd, output)
+            return
         cmd.append(output)
         run(cmd)
 
@@ -149,7 +154,7 @@ def main() -> int:
             f"the encoder overshoots more than the loudnorm ceiling can absorb at this bitrate",
             kind="verification", output=output, result=result,
             hint="raise --audio-bitrate (e.g. 256k) or deliver a lossless format (wav/flac) and let the platform encode")
-    emit(output, result=result)
+    emit(output, result=result, dropped_non_av_streams=dropped_streams)
     return 0
 
 

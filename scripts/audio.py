@@ -20,7 +20,7 @@ import argparse
 import sys
 from typing import List
 
-from _common import STATE, add_common, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, fmt_secs
+from _common import STATE, add_common, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, run_keeping_subtitles, fmt_secs
 
 VOICE_CHAIN = "highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
 
@@ -226,8 +226,11 @@ def main() -> int:
     if not keep_video:
         # audio-only outputs: a looped music bed is infinite, -shortest ends the run with the main track
         cmd.append("-shortest")
-    cmd.append(output)
-    run(cmd)
+    if keep_video:
+        dropped_streams = run_keeping_subtitles(cmd, output)
+    else:
+        dropped_streams = bool(has_video and (meta.get("subtitle_streams") or meta.get("data_streams")))
+        run(cmd + [output])
     r = probe(output, role="output")
     a = r["audio"]
     if r.get("video") and audio_out and not STATE.dry_run:
@@ -235,7 +238,8 @@ def main() -> int:
     info(f"wrote {output} ({fmt_secs(r['duration'])}, audio {a['codec']} {a['channels']}ch {a['sample_rate']}Hz"
          + (", video stream-copied" if has_video and not audio_out else ", video dropped" if has_video else "") + ")")
     emit(output, video=bool(has_video and not audio_out), audio_stream=args.audio_stream,
-         dynamics=[f for f in (args.gate and "agate", args.compress and "acompressor", args.limit and "alimiter") if f])
+         dynamics=[f for f in (args.gate and "agate", args.compress and "acompressor", args.limit and "alimiter") if f],
+         dropped_non_av_streams=dropped_streams)
     return 0
 
 
