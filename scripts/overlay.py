@@ -24,7 +24,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS
+from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -155,8 +155,9 @@ def main() -> int:
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
     vw = meta["video"]["width"]
-    start = parse_time(args.start) if args.start else None
-    end = parse_time(args.end) if args.end else None
+    fps = meta["video"].get("fps")
+    start = time_arg(args.start, "--start", fps) if args.start else None
+    end = time_arg(args.end, "--end", fps) if args.end else None
     if start is not None and end is not None and end <= start:
         die("--end must be after --start")
     if not 0 <= args.opacity <= 1:

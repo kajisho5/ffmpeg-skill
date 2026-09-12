@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-from _common import add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run
+from _common import add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, time_arg
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -69,7 +69,7 @@ def main() -> int:
             die("--compare needs --at TIME")
         probe(args.compare)
         for t in args.at:
-            sec = parse_time(t)
+            sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
             out = args.output or os.path.join(outdir, f"{stem}_vs_{Path(args.compare).stem}_{sec:.3f}s.png")
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
@@ -82,7 +82,7 @@ def main() -> int:
             outputs.append(out)
     elif args.at:
         for t in args.at:
-            sec = parse_time(t)
+            sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
             if dur and sec > dur:
                 die(f"--at {t} is beyond the duration ({dur:.2f}s)")
             if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):

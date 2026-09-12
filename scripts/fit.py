@@ -38,7 +38,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
 
@@ -155,7 +155,7 @@ def main() -> int:
 
     # ---- duration
     if args.duration:
-        target = parse_time(args.duration)
+        target = time_arg(args.duration, "--duration", meta["video"].get("fps") if meta.get("video") else None)
         if target <= 0:
             die("target duration must be > 0")
         if args.method == "speed":

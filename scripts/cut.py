@@ -30,7 +30,7 @@ import sys
 import tempfile
 from typing import List, Tuple
 
-from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line
+from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, parse_time, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input
 
 # keyframe timestamps found next to a requested cut that the tolerance turned into a re-encode
 # (reported so the caller can choose a lossless cut at one of them next time)
@@ -192,6 +192,7 @@ def main() -> int:
     segments = [(s, min(e, total) if total else e) for s, e in segments]
 
     output = args.output or default_output(args.input, "cut")
+    refuse_output_is_input(output, args.input)
     ext = os.path.splitext(output)[1] or ".mp4"
 
     reencoded = False

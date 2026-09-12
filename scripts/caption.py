@@ -200,7 +200,10 @@ def parse_srt(path: str) -> List[Tuple[float, float, str]]:
             if times:
                 a, b = times.split("-->")
                 text = "\n".join(block[block.index(times) + 1:]).strip()
-                cues.append((parse_time(a), parse_time(b), text))
+                try:
+                    cues.append((parse_time(a), parse_time(b), text))
+                except ValueError as e:  # includes MissingFpsError: SRT timings are hh:mm:ss,ms, never frames
+                    die(f"{path}: cannot read the timing line {times.strip()!r}: {e}")
             block = []
     if not cues:
         die(f"no cues found in {path}")
@@ -531,12 +534,16 @@ def main() -> int:
         w, h = meta["video"]["width"], meta["video"]["height"]
         if meta["video"].get("rotation") in (90, -90, 270, -270):
             w, h = h, w
-        write_ass(cues_for_ass, ass_path, args, w, h, video=args.input if meta.get("audio") else None)
+        if not STATE.dry_run:  # the generated ASS is an artifact of this run: a plan writes nothing
+            write_ass(cues_for_ass, ass_path, args, w, h, video=args.input if meta.get("audio") else None)
         info(f"wrote {ass_path} ({len(cues_for_ass)} cues, animate={args.animate}, karaoke={args.karaoke})")
         args.ass = ass_path
+        generated_ass = True
+    else:
+        generated_ass = False
 
     if args.ass:
-        if not os.path.exists(args.ass):
+        if not generated_ass and not os.path.exists(args.ass):
             die(f"ASS file not found: {args.ass}")
         vf = f"ass={escape_filter_path(args.ass)}"
         if args.fonts_dir:

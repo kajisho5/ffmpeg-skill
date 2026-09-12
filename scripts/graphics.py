@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS
+from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS, time_arg
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug"]
 
@@ -86,8 +86,9 @@ def main() -> int:
     if meta["video"].get("rotation") in (90, -90, 270, -270):
         W, H = H, W
     dur = meta.get("duration") or 0.0
-    s = parse_time(args.start) if args.start else 0.0
-    e = parse_time(args.end) if args.end else dur
+    fps = meta["video"].get("fps")
+    s = time_arg(args.start, "--start", fps) if args.start else 0.0
+    e = time_arg(args.end, "--end", fps) if args.end else dur
     if e <= s:
         die("--end must be after --start")
     en = f"enable='between(t,{s:.3f},{e:.3f})'"

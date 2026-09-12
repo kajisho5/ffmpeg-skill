@@ -48,7 +48,7 @@ def parse_chapters(path: str, duration: float) -> List[Dict[str, Any]]:
         parts = line.split(None, 1)
         try:
             start = parse_time(parts[0])
-        except ValueError:
+        except ValueError:  # MissingFpsError is a ValueError: chapter files carry no fps
             die(f"{path}:{n}: cannot read the time in {line!r} (use seconds, mm:ss or hh:mm:ss.ms)")
         title = parts[1].strip() if len(parts) > 1 else f"Chapter {len(entries) + 1}"
         if entries and start <= entries[-1]["start"]:

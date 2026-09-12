@@ -156,9 +156,10 @@ with `--dry-run` behind a fake `ffmpeg` that records any call, and asserts that 
 call happened and no file appeared. Under `--dry-run` a tool prints the command lines
 it would run, reports `dry_run: true`, and never reports an output probe. The
 exceptions are stated per tool in the contract's `dry_run` field: `probe` and `check` are
-read-only (ffprobe still runs), `sync`, `multicam`, `scenes`, `cropdetect` and `report` still
-run their ffmpeg/ffprobe measurements (the analysis is the tool's job; only the artifact is
-skipped), and `verify` does not support dry-run (its steps run). `SKILL.md` and
+read-only (ffprobe still runs); `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`,
+`loudness` and `stabilize` still run their ffmpeg/ffprobe measurements (the analysis is the
+tool's job; only the artifact is skipped, including side files such as `--edl`, `--sheet` or a
+generated `.ass`), and `verify` does not support dry-run (its steps run). `SKILL.md` and
 `references/scripts.md` repeat the same list; the contract is the authority.
 
 ### Repeatability

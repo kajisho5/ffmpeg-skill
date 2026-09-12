@@ -18,7 +18,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS
+from _common import add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg
 
 
 def main() -> int:
@@ -49,7 +49,7 @@ def main() -> int:
         target = None
         stream_loop = args.times - 1
     else:
-        target = parse_time(args.duration)
+        target = time_arg(args.duration, "--duration", meta["video"].get("fps") if meta.get("video") else None)
         if target <= src_dur:
             die(f"--duration ({target:g}s) must be longer than the source ({src_dur:.3f}s) -- use cut.py to trim instead")
         stream_loop = math.ceil(target / src_dur) - 1

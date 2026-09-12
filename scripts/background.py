@@ -14,7 +14,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args, X264_PRESETS
+from _common import add_common, apply_common, die, emit, ffmpeg_base, info, parse_time, probe, run, validate_color, video_args, X264_PRESETS, time_arg
 
 
 def main() -> int:
@@ -34,7 +34,7 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
-    target = parse_time(args.duration)
+    target = time_arg(args.duration, "--duration", args.fps)
     if target <= 0:
         die("--duration must be > 0")
     if args.fps <= 0:

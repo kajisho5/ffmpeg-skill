@@ -5,6 +5,11 @@
 ## Unreleased
 
 - README gains a "Gotchas and best practices" section for human readers: VFR, keyframe snapping, HDR, loudness targets, caption order, 9:16 crops, fonts, silence threshold, sync confidence, plans; every flag named is checked against the scripts' `--help`.
+- `--dry-run` writes no side files either: `silence.py --edl`, `scenes.py --edl` and the `.ass` that `caption.py --animate/--karaoke` generates were written while stderr said "would write". The contract's note for these tools was right; the code was not.
+- SMPTE `hh:mm:ss:ff` times resolve with the input's fps in every tool that takes a time (`overlay`, `graphics`, `look`, `insert`, `background`, `fit`, `loop`), and a bad time is a `kind: input` failure document naming the flag instead of a traceback (`time_arg()` in `_common.py`; `cut`/`freeze` already did this).
+- `pad.py --start/--end` accept the shared time grammar (`1:30`) like every other tool; junk is a `kind: input` refusal, not an argparse exit 2 without JSON.
+- `cut.py --segments` refuses an output that is the same file as its input. The run() guard compares each ffmpeg command's `-i` with its output, and the final concat's only `-i` is the temp list file, so `-o in.mp4` replaced the source with the join (fourth review, P0); the single-segment path already refused.
+- The dry-run exception list in SKILL.md and `docs/contract.md` names `silence`, `loudness` and `stabilize` again; the pinning test now checks the sentence that states the exception in all three docs, not "the name appears somewhere in the file", which is how the list drifted twice.
 
 ## 1.4.8
 

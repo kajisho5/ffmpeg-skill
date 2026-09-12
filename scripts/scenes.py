@@ -24,7 +24,7 @@ import re
 import sys
 from typing import Dict, List, Tuple
 
-from _common import add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run, run_analysis, decode_pcm_mono, rms_envelope
+from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run, run_analysis, decode_pcm_mono, rms_envelope
 
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
 
@@ -168,9 +168,10 @@ def main() -> int:
         result["highlights_rank_by"] = args.rank_by
         info(f"proposed {len(picks)} highlight ranges totalling {result['highlights_total']:.1f}s")
         if args.edl:
-            with open(args.edl, "w", encoding="utf-8") as fh:
-                for s, e in picks:
-                    fh.write(f"{s:.2f}-{e:.2f}\n")
+            if not STATE.dry_run:  # the contract says --edl is not written under --dry-run
+                with open(args.edl, "w", encoding="utf-8") as fh:
+                    for s, e in picks:
+                        fh.write(f"{s:.2f}-{e:.2f}\n")
             info(f"wrote {args.edl}")
 
     if args.sheet:

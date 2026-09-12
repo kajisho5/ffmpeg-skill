@@ -506,13 +506,18 @@ class ContractTests(unittest.TestCase):
         analysis_tools = set(_contract.DRY_RUN_ANALYSIS.keys())
         self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize"},
                           "the analysis-only dry-run tool set changed -- update SKILL.md/references/scripts.md's exception list to match")
-        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        scripts_ref = (ROOT / "references" / "scripts.md").read_text(encoding="utf-8")
-        for name in analysis_tools:
-            self.assertIn(name, skill, f"SKILL.md's dry-run exception note is missing {name!r}")
-            self.assertIn(name, scripts_ref, f"references/scripts.md's dry-run exception note is missing {name!r}")
-        self.assertIn("verify", skill)
-        self.assertIn("verify", scripts_ref)
+        # "the name appears somewhere in the file" was too weak: every tool name is in SKILL.md's
+        # request table anyway, so the list drifted twice (#176 -> #179) with this test green.
+        # Pin the sentence that states the exception: the one naming `verify` and `--dry-run`.
+        docs = {"SKILL.md": ROOT / "SKILL.md", "references/scripts.md": ROOT / "references" / "scripts.md",
+                "docs/contract.md": ROOT / "docs" / "contract.md"}
+        for label, path in docs.items():
+            text = path.read_text(encoding="utf-8")
+            paragraphs = [p for p in text.split("\n\n") if "verify" in p and "dry-run" in p and "multicam" in p]
+            self.assertTrue(paragraphs, f"{label}: no paragraph states the dry-run exceptions (names verify, multicam and dry-run)")
+            for name in analysis_tools:
+                self.assertTrue(any(f"`{name}`" in p for p in paragraphs),
+                                f"{label}'s dry-run exception sentence is missing `{name}`")
 
     def test_skill_workflow_mentions_doctor_and_contract(self):
         """SKILL.md's Workflow section (the first thing an agent reads) used to never mention
@@ -1364,6 +1369,71 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(report_mod.fmt_dur(None), "?")
         self.assertEqual(json.loads((ROOT / "package.json").read_text())["files"].count("docs/contract.md"), 1)
         self.assertIn("'docs'", (ROOT / "bin" / "install.js").read_text())
+
+    def test_fourth_audit_regressions(self):
+        """Pins from the fourth audit (1.4.8). N01: --dry-run used to skip only ffmpeg, so
+        silence --edl, scenes --edl and caption's generated .ass were written while stderr said
+        "would write". N02: overlay/graphics/look/insert/background/fit/loop called parse_time()
+        without the input's fps, so an hh:mm:ss:ff time was a MissingFpsError traceback with no
+        --json failure document (cut/freeze had been fixed, the rest had not). N03: pad --start/--end
+        were argparse floats, so the mm:ss grammar every other tool accepts exited 2 without JSON."""
+        # N01 -- a dry run writes no side files either
+        edl = self.out("dry_silence.edl")
+        proc = tool("silence", self.src, "--dry-run", "--edl", edl, "--json")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertFalse(edl.exists(), "silence --dry-run wrote --edl")
+        edl2 = self.out("dry_scenes.edl")
+        proc = tool("scenes", self.src, "--dry-run", "--highlights", "2", "--edl", edl2, "--json")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertFalse(edl2.exists(), "scenes --dry-run wrote --edl")
+        cues = self.out("dry_cues.txt")
+        cues.write_text("0:00 hello\n0:02 world\n", encoding="utf-8")
+        cap = self.out("dry_cap.mp4")
+        proc = tool("caption", self.src, "--text", cues, "--animate", "pop", "--dry-run", "--json", "-o", cap)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertFalse(cap.with_suffix(".ass").exists(), "caption --dry-run wrote the generated .ass")
+        self.assertFalse(cap.exists())
+        # N02 -- SMPTE resolves with the input's fps; a bad timecode is a kind: input document
+        proc = tool("overlay", self.src, "--text", "hi", "--start", "00:00:01:15", "--dry-run", "--json", "-o", self.out("smpte_ov.mp4"))
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertNotIn("Traceback", proc.stderr)
+        proc = tool("look", self.src, "--at", "00:00:01:15", "--dry-run", "--json", "-o", self.out("smpte_look.png"))
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertIn("1.500", " ".join(map(str, json.loads(proc.stdout)["commands"])))
+        proc = tool("overlay", self.src, "--text", "hi", "--start", "00:00:01:99", "--json", "-o", self.out("smpte_ov_bad.mp4"), check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("Traceback", proc.stderr)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("--start", doc["error"]["message"])
+        proc = tool("fit", self.src, "--duration", "00:00:01:15", "--dry-run", "--json", "-o", self.out("smpte_fit.mp4"))
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        proc = tool("background", "--duration", "00:00:01:15", "--fps", "30", "--width", "64", "--height", "64", "--dry-run", "--json", "-o", self.out("smpte_bg.mp4"))
+        self.assertIn("1.500", " ".join(map(str, json.loads(proc.stdout)["commands"])))
+        # N03 -- pad speaks the shared time grammar and refuses junk as kind: input
+        proc = tool("pad", self.src, "--start", "1:30", "--dry-run", "--json", "-o", self.out("pad_mmss.mp4"))
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertIn("start_duration=90.000", " ".join(map(str, json.loads(proc.stdout)["commands"])))
+        proc = tool("pad", self.src, "--start", "abc", "--json", "-o", self.out("pad_bad.mp4"), check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+    def test_cut_segments_refuses_output_equal_to_input(self):
+        """Fourth review, P0: `cut.py in.mp4 --segments 0-1,2-3 -o in.mp4` replaced the source
+        with the 2 s join. The run() guard compares the ffmpeg command's -i paths with its output,
+        and the final concat command's only -i is the temp list file, so it never fired; the
+        single-segment path (whose -i is the input) refused correctly. Pin the tool-level guard
+        with both spellings of the same file, and that the source is untouched."""
+        victim = self.out("victim_segments.mp4")
+        shutil.copyfile(self.src, victim)
+        before = victim.read_bytes()
+        for spelling in (str(victim), os.path.join(str(victim.parent), ".", victim.name)):
+            proc = tool("cut", victim, "--segments", "0-1,2-3", "--json", "-o", spelling, check=False)
+            self.assertNotEqual(proc.returncode, 0, spelling)
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["status"], "failed")
+            self.assertEqual(doc["error"]["kind"], "input")
+            self.assertIn("same file as input", doc["error"]["message"])
+        self.assertEqual(victim.read_bytes(), before, "the source was modified")
 
     def test_failed_run_never_deletes_an_output_that_predates_it(self):
         """The partial-output cleanup (#78) removed the output path after every failed ffmpeg run

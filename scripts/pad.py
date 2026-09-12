@@ -16,15 +16,15 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_pad.<ext>)")
-    ap.add_argument("--start", type=float, default=0.0, help="seconds of padding to add before the clip (default 0)")
-    ap.add_argument("--end", type=float, default=0.0, help="seconds of padding to add after the clip (default 0)")
+    ap.add_argument("--start", default="0", help="padding to add before the clip: seconds or mm:ss (default 0)")
+    ap.add_argument("--end", default="0", help="padding to add after the clip: seconds or mm:ss (default 0)")
     ap.add_argument("--color", default="black", help="padding colour (default black)")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
@@ -32,6 +32,8 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
+    args.start = time_arg(args.start, "--start")
+    args.end = time_arg(args.end, "--end")
     if args.start < 0 or args.end < 0:
         die(f"--start/--end must be >= 0, got start={args.start:g} end={args.end:g}")
     if args.start == 0 and args.end == 0:

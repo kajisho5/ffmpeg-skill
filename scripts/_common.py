@@ -356,6 +356,26 @@ def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
                 continue
 
 
+def refuse_output_is_input(output: str, *inputs: str) -> None:
+    """Tool-level twin of the run() guard, for tools whose final ffmpeg command does not name
+    the user's input at all. `cut.py --segments` cuts each part into a temp dir and then concats
+    a list file: the last command's only `-i` is that list, so `-o` equal to the input sailed
+    through _check_no_overwrite_input() and replaced the source with the join (fourth audit,
+    P0). Call it once the output path is known, before any part of the input is consumed."""
+    try:
+        out_real = os.path.realpath(output)
+    except OSError:
+        return
+    for inp in inputs:
+        try:
+            same = os.path.realpath(inp) == out_real
+        except OSError:
+            continue
+        if same:
+            die(f"refusing to run: output {output!r} is the same file as input {inp!r} "
+                f"(the result would replace the source) -- choose a different --output/-o path", kind="input")
+
+
 def _check_existing_output(cmd: Sequence[str]) -> None:
     """An output path that already exists is someone's file: a previous result, a source the
     agent mis-named, a deliverable from another run. ffmpeg's -y (which every command carries so
@@ -952,6 +972,19 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
     for part in parts:
         total = total * 60 + float(part)
     return total
+
+
+def time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
+    """parse_time() for a command-line flag: SMPTE hh:mm:ss:ff resolves with the input's fps when
+    the caller has one, and every parse failure is a `kind: input` refusal naming the flag (so
+    `--json` callers get a failure document, never a traceback)."""
+    try:
+        return parse_time(value, fps)
+    except MissingFpsError as e:
+        die(f"{flag} {value!r}: {e}")
+    except ValueError as e:
+        die(f"{flag} {value!r}: {e} (use seconds, mm:ss, hh:mm:ss.ms or, with a known fps, hh:mm:ss:ff)")
+    return 0.0  # unreachable
 
 
 def fmt_srt_time(seconds: float) -> str:

@@ -104,9 +104,10 @@ def main() -> int:
         info("hint: " + summary["hint"])
 
     if args.edl:
-        with open(args.edl, "w", encoding="utf-8") as fh:
-            for s, e in keeps:
-                fh.write(f"{s:.3f}-{e:.3f}\n")
+        if not STATE.dry_run:  # the EDL is an artifact like the cut itself: a plan writes nothing
+            with open(args.edl, "w", encoding="utf-8") as fh:
+                for s, e in keeps:
+                    fh.write(f"{s:.3f}-{e:.3f}\n")
         info(f"wrote {args.edl}")
 
     if args.list:
