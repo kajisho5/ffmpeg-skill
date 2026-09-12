@@ -62,7 +62,7 @@ def main() -> int:
     ap.add_argument("--crf", type=int, help="override CRF")
     ap.add_argument("--normalize", action="store_true", help="youtube/youtube4k/reels/x: when the written file misses the platform's loudness spec, run loudness.py on it (audio re-encoded, video copied) so one export delivers")
     ap.add_argument("--list", action="store_true", help="list presets and exit")
-    add_common(ap)
+    add_common(ap, codec=False)  # the preset decides the codec; --codec would only be refused
     args = ap.parse_args()
     apply_common(args)
 
@@ -73,9 +73,9 @@ def main() -> int:
     if not args.input or not args.preset:
         die("input and --preset are required (or use --list)")
     validate_color(args.pad_color, "--pad-color")
-    if args.codec:
-        die(f"export.py's presets decide the codec (--preset h265 for HEVC, prores for ProRes); --codec {args.codec} is for the editing tools",
-            hint="drop --codec here, or run the edit with --codec and export with --preset copy")
+    if args.normalize and args.preset not in PLATFORM_OF:
+        die(f"--normalize applies to the platform presets ({', '.join(sorted(PLATFORM_OF))}); --preset {args.preset} has no loudness spec to meet",
+            hint="drop --normalize, or run loudness.py with your own target")
 
     p = PRESETS[args.preset]
     meta = probe(args.input)
@@ -153,12 +153,15 @@ def main() -> int:
                 # encodes). The levels pass only re-encodes audio, so do it here on the written
                 # file and the caller gets one export that meets the spec.
                 info(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s spec; normalising to {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP")
-                tmp = str(Path(output).with_name(Path(output).stem + "_loudnorm" + Path(output).suffix))
-                proc = run_tool([str(HERE / "loudness.py"), output, "-I", f"{spec['lufs']:g}", "--tp", f"{spec['tp']:g}", "-o", tmp, "--json", "--overwrite"] + child_args())
+                # a private name: <stem>_loudnorm.<ext> is loudness.py's own default output, so a
+                # real file of that name next to the export was overwritten and renamed away (review 7)
+                tmp = str(Path(output).with_name(f".{Path(output).stem}.normalize-{os.getpid()}{Path(output).suffix}"))
+                proc = run_tool([str(HERE / "loudness.py"), output, "-I", f"{spec['lufs']:g}", "--tp", f"{spec['tp']:g}", "-o", tmp, "--json"] + child_args())
                 try:
                     child = json.loads(proc.stdout)
                 except ValueError:
                     child = {}
+                STATE.commands.extend(child.get("commands") or [])  # the encode that changed the audio belongs in this run's log
                 if proc.returncode != 0 or child.get("status") != "completed":
                     err = child.get("error") or {}
                     if os.path.exists(tmp):
@@ -177,6 +180,9 @@ def main() -> int:
                 notes.append(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP; "
                              f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file, or export with --normalize")
                 info("warning: " + notes[-1])
+    elif platform and has_audio and args.normalize:
+        spec = PLATFORMS[platform]
+        notes.append(f"[dry-run] --normalize: loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} would run on the written file if it misses {platform}'s spec")
     if notes:
         extra["notes"] = notes
     emit(output, **extra)

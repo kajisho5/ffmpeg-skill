@@ -174,6 +174,10 @@ def main() -> int:
     if meta.get("video", {}) and meta["video"].get("variable_frame_rate_suspected") and not args.accurate:
         info("source looks variable-frame-rate; lossless cuts on VFR are unreliable, switching to --accurate")
         args.accurate = True
+    if STATE.codec and not args.accurate:
+        # "cut this and make it HEVC": a stream copy keeps the source codec, so the request is a re-encode
+        info(f"--codec {STATE.codec} asks for a re-encode; the lossless copy path keeps the source codec, switching to --accurate")
+        args.accurate = True
 
     fps = (meta.get("video") or {}).get("fps")
     if args.segments:

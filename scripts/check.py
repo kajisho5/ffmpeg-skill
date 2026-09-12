@@ -98,14 +98,14 @@ def main() -> int:
     v, a = meta.get("video") or {}, meta.get("audio") or {}
     rows: List[Dict[str, Any]] = []
 
-    JUDGEMENT = {"duration", "aspect", "loudness", "fps", "resolution"}
+    JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution"}
 
     def row(name: str, status: str, value: Any, expect: Any, fix: str = "", reason: str = "") -> None:
         # "format" rows are safe to fix mechanically; "judgement" rows change the content
         # (what is cut, what is cropped, how loud ambience gets) and need a decision.
         # "fix" is the command that resolves it; "reason" (only on the FAILs a non-technical
         # person would ask "so what?" about) is why it matters in plain terms, not the spec clause.
-        if status == "FAIL" and not named and (name in JUDGEMENT or name == "true peak"):
+        if status == "FAIL" and not named and name in JUDGEMENT:
             status = "WARN"
         rows.append({"check": name, "status": status, "value": value, "expected": expect, "fix": fix,
                      "reason": reason if status != "PASS" else "",

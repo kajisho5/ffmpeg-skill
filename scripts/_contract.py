@@ -876,6 +876,19 @@ def capability_map(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------------- contract
+def _merge_optional(base: List[Dict[str, Any]], extra: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Optional capabilities de-duplicated by name: a tool that already lists encoder:libx265 for
+    HDR sources gets its `when` extended by the --codec condition instead of a second entry."""
+    out: List[Dict[str, Any]] = [dict(o) for o in base]
+    for o in extra:
+        hit = next((b for b in out if b["capability"] == o["capability"]), None)
+        if hit is None:
+            out.append(dict(o))
+        elif o["when"] not in hit["when"]:
+            hit["when"] = f"{hit['when']}; {o['when']}"
+    return out
+
+
 def tool_spec(name: str, version: str) -> Dict[str, Any]:
     if name not in TOOL_META:
         # a public script without metadata is drift: fail loudly instead of guessing its role or capabilities
@@ -903,7 +916,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "description": (parser.description or "").strip().splitlines()[0] if parser.description else "",
         "executable": f"scripts/{name}.py",
         "role": meta["role"],
-        "capabilities": {"required": list(meta["required"]), "optional": list(meta["optional"]) + (CODEC_CAPS if "codec" in schema["properties"] else [])},
+        "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], CODEC_CAPS if "codec" in schema["properties"] else [])},
         "inputs": list(meta["inputs"]),
         "outputs": list(meta["outputs"]),
         "input_schema": schema,

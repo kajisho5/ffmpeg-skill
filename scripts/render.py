@@ -74,7 +74,7 @@ TEMPLATE = {
     "audio": None,
     "loudness": {"lufs": -14, "tp": -1},
     "fit": None,
-    "export": {"preset": "youtube"},
+    "export": {"preset": "youtube", "normalize": True},
     "check": {"platform": "youtube"},
 }
 

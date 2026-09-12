@@ -22,7 +22,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, validate_color, X264_PRESETS, fmt_secs
+from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -76,7 +76,7 @@ def main() -> int:
     vf = f"color=c={args.background}:s={args.width}x{args.height}:r={args.fps:g}[bg];[0:a:{args.audio_stream}]{vf}[vis];[bg][vis]overlay=format=auto"
 
     cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", f"0:a:{args.audio_stream}"]
-    cmd += ["-c:v", "libx264", "-preset", args.preset, "-crf", str(args.crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    cmd += video_args(None, args.crf, args.preset)  # the one encoder line, so --codec / --quality reach it (review 7)
     cmd += aac_args()
     # -shortest alone is not enough on FFmpeg 5.x: showwaves keeps emitting frames after the
     # audio ends (a 12 s source came out 14.08 s on 5.1.1, #146), so the output is also capped
