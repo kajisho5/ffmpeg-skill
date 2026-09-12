@@ -1,10 +1,11 @@
-# Roadmap: 1.7.1 → 1.10.0 → 2.0
+# Roadmap: 1.7.1 → 1.20.0 → 2.0
 
-The 1.x contract is frozen (docs/contract.md, "Stability guarantee"). Every minor below adds
-opt-in flags or parallel keys that pre-ship a 2.0 decision (issue #189, docs/design-decisions.md
-"Decided for 2.0"), plus the follow-ups the evals keep surfacing. 2.0.0 then removes the old
-spelling and flips the defaults; it adds no feature of its own. Each minor ships with an evals
-iteration and an audit pass, as 1.5 → 1.7 did. `resolve_version.py` turns `feat` PRs into a
+The 1.x contract is frozen (docs/contract.md, "Stability guarantee"). 1.8 → 1.10 pre-ship the
+2.0 decisions (issue #189, docs/design-decisions.md "Decided for 2.0") behind opt-in flags or
+parallel keys, plus the follow-ups the evals keep surfacing. 1.11 → 1.20 grow the skill on the
+frozen contract, one theme per minor, each closed by an evals iteration on the theme's own
+prompts and an audit pass, as 1.5 → 1.7 did. 2.0.0 then removes the old spelling and flips the
+defaults; it adds no feature of its own. `resolve_version.py` turns `feat` PRs into a
 minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs plus fixes.
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags
@@ -57,7 +58,106 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
   steps) re-run on the tree; `docs/contract.md` "What 2.0 changes" section written from the
   `deprecated` list.
 
-## 2.0.0 (after 1.10.x settles)
+## 1.11.0 — captions people can read
+
+- `caption.py` wraps by measured text width (fontconfig metrics, not character count) so
+  CJK and long Latin lines stop overflowing the safe area; `--max-lines` and `--min-duration`
+  per cue; `--offset SECONDS` shifts an SRT/cues file; word-level timings from whisper's own
+  word output drive `--karaoke` instead of even splitting.
+- `brand.json` caption styles (`styles.caption.{font,size,colour,box,position}`) so one brand
+  file gives every project the same look; `graphics.py` reads the same block.
+- Eval 11: the 8 caption prompts (JA/EN, CJK wrap, karaoke, SRT offset) run 3 times.
+
+## 1.12.0 — the audio bed
+
+- `audio.py`: `--voice` strength levels (`light|medium|strong`), `--stereo-widen`, stem
+  levels for dialogue / music / effects in a `render.py` project (`audio.stems`), sidechain
+  ducking parameters exposed (`--duck-threshold`, `--duck-release`).
+- `loudness.py --lra N` targets loudness range, `--dialogue` gates the measurement on speech
+  (ffmpeg `speechnorm` / `silencedetect` energy) so ambience-heavy edits are not over-boosted.
+- `check.py --platform podcast` gains chapters and mono/stereo rows; `audio.py --chapters
+  chapters.txt` writes MP4/M4A chapter markers.
+- Eval 12 on audio-only and mixed prompts.
+
+## 1.13.0 — sync and multicam at scale
+
+- `sync.py` accepts 3+ sources (one reference, N seconds) and writes one offsets JSON;
+  drift correction reports the measured ppm and where it resampled.
+- `multicam.py --switch energy` cuts to the loudest camera's audio with a minimum shot length;
+  `--edl` exports the cut list for an NLE; the timeline is a `render.py` project so it can be
+  re-rendered with different minimum shot lengths.
+- Eval 13 on multicam / sync prompts; a real-device multicam corpus (phone + camera + lav).
+
+## 1.14.0 — delivery, one preset per destination
+
+- `export.py` presets for shorts / tiktok / linkedin as named targets (today aliases of
+  reels / youtube), `youtube-hdr` (HEVC Main10 HDR10 kept), `youtube-av1`; a preset carries its
+  loudness spec so `--normalize` and `check.py` read one table.
+- `look.py --best-frame` picks a thumbnail candidate by sharpness and exposure (measured, no
+  content judgement) and writes it at the platform's thumbnail size; `report.py` embeds it.
+- Chapter markers in the delivery file from a `chapters` block in the project.
+- Eval 14 on delivery prompts, all presets checked by `check.py` on the corpus.
+
+## 1.15.0 — throughput
+
+- `batch.py --jobs N` runs independent items in parallel under one `--timeout` budget;
+  resumable (`--resume` skips items whose output verified); `--watch` folders.
+- `render.py` caches unchanged stages by content hash of inputs and stage arguments, so
+  changing the export preset re-runs export only; `--stop-after` and `--from STAGE`.
+- `proxy.py` round trip: edit on proxies, `render.py --conform` re-renders from originals.
+- Eval 15 measures wall-clock and encode counts on the 36-prompt set (the number, not just
+  pass/fail).
+
+## 1.16.0 — measured analysis (still no judgement)
+
+- `scenes.py --shots` labels each shot static / pan / motion by measured optical flow;
+  `--audio-peaks` and `--speech` (speech-vs-music energy ratio) as separate lists.
+- `silence.py --speech-aware` keeps breaths shorter than `--min-silence` inside a sentence and
+  cuts only between sentences (measured pauses), with the cut list as EDL.
+- `cropdetect.py --motion-centre` reports the motion centroid per second for a 9:16 reframe
+  that the calling agent decides on (the skill reports the number; it does not pick the subject).
+- Eval 16 on analysis prompts, scored against hand-labelled ground truth.
+
+## 1.17.0 — observability
+
+- `--trace FILE` (common flag): one JSON line per ffmpeg run with wall time, encode fps,
+  speed, exit code, bytes written; `result_v2.metrics` carries the same for the whole tool.
+- `report.py` before/after frame pairs at the same timestamps, loudness and true-peak
+  graphs, and the plan/verify chain when a plan was executed.
+- `verify.py --install` checks the install itself (ffmpeg build, encoders, fonts, whisper) and
+  prints the fix per missing capability, using the contract's capability list.
+- Eval 17 grades whether agents quote the metrics rather than re-probe.
+
+## 1.18.0 — portability
+
+- Windows: paths with spaces and non-ASCII fonts through every filter (fontconfig escaping
+  audit), long-path support; the Windows CI job runs the full corpus.
+- ffmpeg 8 / 9: filter and encoder fixtures refreshed, `bt709_tag_args` and the colour
+  negotiation path re-verified on each; a compatibility table in `references/devices.md`.
+- `--hwaccel auto` (opt-in): videotoolbox / vaapi / nvenc for previews (`--fast`) only,
+  never for the final encode unless `--hwaccel final` is given, with the encoder named in the
+  result so a difference is traceable.
+- Eval 18 on the Windows and macOS runners.
+
+## 1.19.0 — agent ergonomics
+
+- SKILL.md rewritten from evals 8–18: the request table regrouped by intent, the language and
+  report rules moved to the top, the gotchas list pruned to the ones still hit.
+- MCP: `tools/list` descriptions shortened to one line each (the schemas are unchanged), a
+  `prompts` capability with the five workflows (reel, podcast, multicam, delivery check, HDR).
+- `contract --json` gains `examples` per tool (the SKILL.md table rows, machine-readable).
+- Eval 19: trigger set doubled (44 prompts), plus 20 "second-turn" prompts where the agent
+  must continue an edit from a previous result document.
+
+## 1.20.0 — the 2.0 freeze
+
+- Everything 2.0 removes is announced (`deprecated` in the contract, `--help`, CHANGELOG) for
+  at least one minor; `docs/migrating-2.0.md` maps every old spelling to the new one.
+- `contract_version` 1.1: `deprecated`, `examples`, `metrics` documented; the real-device
+  corpus and all 19 eval sets re-run on the tree; ninth audit pass.
+- No new options after 1.20.0 on 1.x: 1.20.x is fixes only while 2.0.0 is prepared.
+
+## 2.0.0 (after 1.20.x settles)
 
 Manual `package.json` bump in one PR (the release workflow never picks a major). It removes
 the deprecated spellings, promotes `result_v2` to the top level, makes `ctx` required, renames
@@ -66,5 +166,5 @@ the deprecated spellings, promotes `result_v2` to the top level, makes `ctx` req
 ## Not planned
 
 - A feature that needs 2.0: features land in 1.x behind flags (1.4.0, 1.6.0, 1.7.0 did).
-- A new tool: the 42-tool table is the contract's surface; new behaviour goes on existing
-  tools as options.
+- A new tool where an option on an existing one fits: the 42-tool table is the contract's
+  surface, and adding a tool is allowed but is the last resort (none is planned above).
