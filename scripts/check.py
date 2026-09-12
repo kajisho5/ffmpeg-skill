@@ -25,7 +25,7 @@ import sys
 from fractions import Fraction
 from typing import Any, Dict, List
 
-from _common import add_common, apply_common, die, emit, info, probe, require_tool, run
+from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run
 
 SPECS: Dict[str, Dict[str, Any]] = {
     "youtube":   {"max_duration": 12 * 3600, "aspects": ["16:9", "9:16", "1:1", "4:3"], "min_height": 720, "fps_max": 60, "codecs": ["h264", "hevc", "prores", "av1", "vp9"], "max_bytes": 256 * 1024 ** 3, "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": False},
@@ -190,8 +190,12 @@ def main() -> int:
                 line += f"  -> {r['fix']}"
             print(line)
         print(f"  {len(rows)} checks, {len(failed)} failed, {len(warned)} warnings")
-    emit(None, platform=args.platform, checks=rows, failed=len(failed), warnings=len(warned), ok=not failed)
-    return 1 if failed else 0
+    if failed:
+        die(f"{len(failed)} of {len(rows)} {args.platform} checks failed: {', '.join(r['check'] for r in failed)}",
+            kind="verification", output=None, dry_run=STATE.dry_run,
+            platform=args.platform, checks=rows, failed=len(failed), warnings=len(warned), ok=False)
+    emit(None, platform=args.platform, checks=rows, failed=len(failed), warnings=len(warned), ok=True)
+    return 0
 
 
 if __name__ == "__main__":

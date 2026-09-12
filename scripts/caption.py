@@ -87,12 +87,36 @@ def transcribe(video: str, out_srt: str, language: Optional[str], model: str, au
     import shutil
     import subprocess
     import tempfile
-    from _common import require_tool
+    from _common import require_tool, run_analysis, STATE
     ffmpeg = require_tool("ffmpeg")
     tmpdir = tempfile.mkdtemp(prefix="ffskill_asr_")
+    try:
+        return _transcribe_in(tmpdir, video, out_srt, language, model, audio_stream, ffmpeg, shutil, subprocess)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _asr_run(cmd: List[str], subprocess, name: str) -> "subprocess.CompletedProcess":
+    """Run a speech-to-text engine under the same wall-clock limit as an ffmpeg call."""
+    from _common import STATE, die
+    limit = STATE.timeout or None
+    try:
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        die(f"{name} exceeded the {limit:.0f} s time limit and was killed; raise --timeout for a long recording",
+            code=124, kind="timeout")
+    return None  # unreachable
+
+
+def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int,
+                   ffmpeg: str, shutil, subprocess) -> List[Tuple[float, float, str]]:
+    from _common import run_analysis
     wav = os.path.join(tmpdir, "audio.wav")
-    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
-                     "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav], check=True)
+    # A wav in our own temp dir: a measurement input for the engine, not a deliverable, so it
+    # is not a run() call (no --dry-run gate, not recorded), but it keeps the time limit and
+    # reports an unreadable input as kind ffmpeg instead of a CalledProcessError traceback.
+    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
+                  "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
     # 1. whisper.cpp
     cli = shutil.which("whisper-cli") or shutil.which("whisper-cpp") or shutil.which("main")
     if cli and (shutil.which("whisper-cli") or shutil.which("whisper-cpp")):
@@ -106,7 +130,7 @@ def transcribe(video: str, out_srt: str, language: Optional[str], model: str, au
         cmd = [cli, "-m", model_path, "-f", wav, "-osrt", "-of", base]
         if language:
             cmd += ["-l", language]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = _asr_run(cmd, subprocess, "whisper.cpp")
         if proc.returncode == 0 and os.path.exists(base + ".srt"):
             info(f"transcribed with whisper.cpp ({os.path.basename(cli)}, model {os.path.basename(model_path)})")
             cues = parse_srt(base + ".srt")
@@ -130,7 +154,7 @@ def transcribe(video: str, out_srt: str, language: Optional[str], model: str, au
         cmd = ["whisper", wav, "--model", model, "--output_format", "srt", "--output_dir", tmpdir]
         if language:
             cmd += ["--language", language]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = _asr_run(cmd, subprocess, "openai-whisper")
         srt = os.path.join(tmpdir, "audio.srt")
         if proc.returncode == 0 and os.path.exists(srt):
             info("transcribed with openai-whisper")

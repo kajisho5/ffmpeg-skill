@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, die, emit, info
+from _common import STATE, add_common, apply_common, child_args, die, emit, info
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac"}
@@ -78,11 +78,7 @@ def run_step(argv: List[str]) -> bool:
     if script not in ALLOWED_STEP_SCRIPTS:
         die(f"recipe step names a script that isn't one of this skill's own tools: {script!r} "
             f"(must be a bare filename like 'silence.py', found in scripts/)")
-    cmd = [sys.executable, str(HERE / script)] + argv[1:]
-    if STATE["fast"]:
-        cmd.append("--fast")
-    if STATE["dry_run"]:
-        cmd.append("--dry-run")
+    cmd = [sys.executable, str(HERE / script)] + argv[1:] + child_args()
     info("  → " + " ".join(os.path.basename(c) if i < 2 else c for i, c in enumerate(cmd)))
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
@@ -219,11 +215,15 @@ def main() -> int:
             pass
     done = sum(1 for r in results if r["ok"])
     info(f"{done}/{len(results)} processed, {sum(1 for r in results if r.get('cached'))} from cache")
-    emit(None, results=results, processed=done, total=len(results))
     if not args.json:
         for r in results:
             print(f"{'OK  ' if r['ok'] else 'FAIL'} {r['file']} -> {r['output']}" + (" (cached)" if r.get("cached") else ""))
-    return 0 if done == len(results) else 1
+    if done != len(results):
+        failed_files = [r["file"] for r in results if not r["ok"]]
+        die(f"{len(results) - done} of {len(results)} items failed: {', '.join(failed_files[:5])}" + (" ..." if len(failed_files) > 5 else ""),
+            kind="verification", output=None, dry_run=STATE.dry_run, results=results, processed=done, total=len(results))
+    emit(None, results=results, processed=done, total=len(results))
+    return 0
 
 
 if __name__ == "__main__":

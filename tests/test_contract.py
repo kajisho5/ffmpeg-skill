@@ -1260,6 +1260,26 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "timeout")
         self.assertLess(elapsed, 6, f"--progress waited {elapsed:.1f}s on a silent ffmpeg; the limit was 1 s")
 
+    @unittest.skipIf(platform.system() == "Windows", "the failing ffmpeg is a #!/bin/sh shim on a POSIX-only PATH")
+    def test_analysis_tools_report_an_ffmpeg_failure_instead_of_an_empty_result(self):
+        """scenes.py and cropdetect.py ran their ffmpeg measurement with a bare subprocess.run and
+        never looked at the return code: a file ffprobe accepts but ffmpeg cannot decode came back
+        as "0 scenes" / "crop: none" with exit 0. The measurement now goes through run_analysis(),
+        which applies --timeout and turns a non-zero exit into kind ffmpeg. An ffmpeg shim that
+        fails on every call (ffprobe stays real, so probe() passes) reproduces the decode failure."""
+        shim = self.out("fail_shim")
+        shim.mkdir()
+        (shim / "ffmpeg").write_text("#!/bin/sh\necho 'decode error' >&2\nexit 1\n")
+        (shim / "ffmpeg").chmod(0o755)
+        (shim / "ffprobe").symlink_to(shutil.which("ffprobe"))
+        env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+        for name, args in (("scenes", ()), ("cropdetect", ())):
+            proc = tool(name, self.src, *args, "--json", env=env, check=False)
+            self.assertNotEqual(proc.returncode, 0, f"{name} exited 0 over a failing ffmpeg")
+            doc = json.loads(proc.stdout)
+            self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "ffmpeg"), name)
+            self.assertIn("decode error", doc["error"]["message"], name)
+
     def test_existing_output_warns_today_refuses_on_request_and_never_for_its_own_files(self):
         """Every ffmpeg command carries -y (so a run never blocks on a y/N prompt), which meant an
         output path that already existed -- a previous deliverable, a mis-named source -- was

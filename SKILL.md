@@ -265,7 +265,7 @@ Steps: probe -> color (failed); nothing written
 Notes: send a valid .cube, or say if you want the clip left as is
 ```
 
-Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
+Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool | timeout | verification, "message": ...}}` with `--json` and exits non-zero; quote the message, do not paraphrase it into a success.
 
 ## Things that look right but are wrong
 

@@ -22,11 +22,10 @@ import math
 import os
 import re
 import struct
-import subprocess
 import sys
 from typing import Dict, List, Tuple
 
-from _common import add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run
+from _common import add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, require_tool, run, run_analysis
 
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
 
@@ -38,9 +37,8 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
     a real cut is a one-frame spike. On real footage this roughly doubles precision at
     equal recall compared with the raw scdet threshold."""
     ffmpeg = require_tool("ffmpeg")
-    proc = subprocess.run([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-an", "-vf",
-                           "scale=320:-2,scdet=threshold=0,metadata=print:file=-", "-f", "null", "-"],
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-an", "-vf",
+                         "scale=320:-2,scdet=threshold=0,metadata=print:file=-", "-f", "null", "-"])
     # No `sc_pass=1` on scdet: on FFmpeg 5.x that option means "pass only the frames whose
     # score exceeds the threshold", so every truly static frame (score exactly 0 -- a title
     # card, colour bars) is dropped before metadata=print and the frame numbers are re-counted
@@ -90,8 +88,8 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
 
 def audio_envelope(path: str, step_s: float) -> List[float]:
     ffmpeg = require_tool("ffmpeg")
-    proc = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                        check=False, text=False)
     n = len(proc.stdout) // 2
     if n == 0:
         return []

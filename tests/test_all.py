@@ -1979,6 +1979,7 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue((out / f"{Path(self.surround).stem}_st.mp4").exists())
         # a per-step timeout is reported per step, never raised
         data = json.loads(script("verify.py", self.src, "--quick", "--timeout", "0.01", "--json", expect_fail=True).stdout)
+        self.assertEqual((data["status"], data["error"]["kind"]), ("failed", "verification"))
         timed_out = [s for f in data["files"] for s in f["steps"] if s["error"].startswith("timeout after")]
         self.assertTrue(timed_out, data)
         self.assertEqual(data["failed"], len(timed_out))
@@ -2213,6 +2214,9 @@ class FFmpegSkillTests(unittest.TestCase):
         if not reels.exists():
             script("export.py", self.src, "--preset", "reels", "--fit", "crop", "-o", reels)
         data = json.loads(script("check.py", reels, "--platform", "reels", "--json", expect_fail=True).stdout)
+        # a failed check is a failed run: status says so (before 1.4.3 it said "completed" next to exit 1)
+        self.assertEqual((data["status"], data["error"]["kind"], data["error"]["code"]), ("failed", "verification", "VERIFICATION_FAILED"))
+        self.assertFalse(data["ok"])
         names = {r["check"]: r["status"] for r in data["checks"]}
         kinds = {r["check"]: r["kind"] for r in data["checks"]}
         self.assertEqual(kinds["loudness"], "judgement")
@@ -2475,7 +2479,13 @@ class FFmpegSkillTests(unittest.TestCase):
         proc = script("render.py", proj, "--fast", "--json", expect_fail=True)
         data = json.loads(proc.stdout)
         self.assertGreater(data["check"]["failed"], 0, data["check"])
+        self.assertEqual((data["status"], data["error"]["kind"]), ("failed", "verification"))
+        self.assertIn("aspect", data["error"]["message"])
         self.assertTrue(Path(data["output"]).exists(), "the deliverable is still written even though it fails delivery spec")
+        # the outer --timeout reaches every stage: an impossible limit fails inside the first stage
+        proc = script("render.py", proj, "--fast", "--timeout", "0.05", "--json", expect_fail=True)
+        self.assertIn("time limit", proc.stderr)
+        self.assertIn("--timeout 0.05", proc.stderr, "the flag must be forwarded to the child command line")
 
     def test_join_width_keeps_aspect(self):
         out = OUT / "join_w.mp4"

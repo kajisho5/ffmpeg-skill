@@ -63,6 +63,7 @@ ERROR_CODE = {
     "ffmpeg": "FFMPEG_EXECUTION_FAILED",
     "output": "OUTPUT_INVALID",
     "timeout": "TIMEOUT",
+    "verification": "VERIFICATION_FAILED",
 }
 
 # Wall-clock ceiling for one ffmpeg/ffprobe invocation, in seconds. A hung ffmpeg (a build
@@ -149,12 +150,18 @@ def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
     parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur (default 20)")
 
 
-def die(msg: str, code: int = 1, kind: str = "input") -> "None":
+def die(msg: str, code: int = 1, kind: str = "input", **extra: Any) -> "None":
     """Exit with a message. Under --json also print a machine-readable failure document
-    (status: failed) on stdout so callers get the same shape as a success; exit codes are unchanged."""
+    (status: failed) on stdout so callers get the same shape as a success; exit codes are unchanged.
+
+    `extra` fields are added to the failure document: a tool whose *result* failed (check.py's
+    platform rows, render.py's check stage, batch.py's per-item results, verify.py's steps) keeps
+    reporting that detail while the top-level status says failed. Before 1.4.3 those four printed
+    `status: "completed"` next to a non-zero exit code, so a caller keying on the status alone
+    read a failed delivery as a success."""
     sys.stderr.write(f"error: {msg}\n")
     if STATE.json:
-        print_json({
+        doc: Dict[str, Any] = {
             "status": "failed", "exit_code": code,
             "error": {
                 "kind": kind, "message": msg,
@@ -162,7 +169,9 @@ def die(msg: str, code: int = 1, kind: str = "input") -> "None":
                 "retryable": ERROR_RETRYABLE,
             },
             "commands": list(STATE.commands),
-        })
+        }
+        doc.update(extra)
+        print_json(doc)
     sys.exit(code)
 
 
@@ -459,6 +468,39 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
         else:
             _cleanup_partial_output(exec_cmd)
     return proc
+
+
+def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True) -> subprocess.CompletedProcess:
+    """Run an ffmpeg *measurement* (scene scores, crop rectangles, decoded PCM, signal stats):
+    output to `-f null` or a pipe, nothing written. These are not run() calls -- they run under
+    --dry-run too, since the analysis is the tool's whole job -- but they get the same wall-clock
+    limit as any other ffmpeg invocation and, with check=True, the same `kind: ffmpeg` failure
+    instead of an exit-0 "0 scenes found" over a file ffmpeg could not read."""
+    limit = _limit_for(cmd)
+    try:
+        proc = subprocess.run(list(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, timeout=limit)
+    except subprocess.TimeoutExpired:
+        _timed_out(cmd, limit or 0)
+    if check and proc.returncode != 0:
+        err = proc.stderr if text else proc.stderr.decode(errors="replace")
+        _fail(cmd, proc.returncode, err)
+    return proc
+
+
+def child_args() -> List[str]:
+    """The shared flags a tool that runs sibling scripts (render.py, batch.py) forwards to them,
+    so one `--timeout`/`--overwrite`/`--fast`/`--dry-run` on the outer command governs every
+    stage. Before 1.4.3 only --fast and --dry-run were forwarded; a --timeout given to render.py
+    stopped at render.py."""
+    args: List[str] = []
+    if STATE.fast:
+        args.append("--fast")
+    if STATE.dry_run:
+        args.append("--dry-run")
+    if STATE.overwrite:
+        args.append("--overwrite")
+    args += ["--timeout", f"{STATE.timeout:g}"]
+    return args
 
 
 def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
@@ -1045,7 +1087,7 @@ def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-t", f"{seconds:.1f}", "-i", path, "-an",
            "-vf", "fps=2,signalstats,metadata=print:file=-", "-f", "null", "-"]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = run_analysis(cmd, check=False)
     vals: Dict[str, List[float]] = {}
     for line in proc.stdout.splitlines():
         if "lavfi.signalstats." in line and "=" in line:

@@ -30,11 +30,10 @@ import json
 import math
 import os
 import struct
-import subprocess
 import sys
 from typing import List
 
-from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, x264_args
+from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args
 
 SR = 8000  # decode sample rate
 
@@ -59,7 +58,7 @@ def decode_mono(path: str, seconds: float, start: float = 0.0) -> List[float]:
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", path, "-t", f"{seconds:.3f}",
            "-vn", "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
         die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
     n = len(proc.stdout) // 2

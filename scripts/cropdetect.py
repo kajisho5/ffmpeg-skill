@@ -29,12 +29,11 @@ Examples:
 """
 import argparse
 import re
-import subprocess
 import sys
 from collections import Counter
 from typing import Dict, List, Tuple
 
-from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool
+from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis
 
 CROP_RE = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
 
@@ -48,7 +47,7 @@ def detect(path: str, seconds: float, samples: int, limit: float, round_to: int,
         start = max(0.0, start)
         cmd = [ffmpeg, "-hide_banner", "-nostdin", "-ss", f"{start:.3f}", "-i", path, "-t", f"{per_window:.3f}",
                "-vf", f"cropdetect=limit={limit:g}:round={round_to}:reset=1", "-f", "null", "-"]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = run_analysis(cmd)
         for m in CROP_RE.finditer(proc.stderr):
             rects.append((int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))))
     return rects

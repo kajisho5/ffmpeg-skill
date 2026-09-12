@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
-from _common import add_common, apply_common, die, emit, info, probe
+from _common import STATE, add_common, apply_common, die, emit, info, probe
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac", ".aac"}
@@ -176,13 +176,16 @@ def main() -> int:
     if args.report:
         Path(args.report).write_text(report, encoding="utf-8")
         info(f"wrote {args.report}")
-    if args.json:
-        emit(None, report=args.report, files=results, failed=failed, total=total)
-    else:
+    if not args.json:
         print(report)
     if tmp and not args.keep:
         tmp.cleanup()
-    return 1 if failed else 0
+    if failed:
+        die(f"{failed} of {total} verification steps failed", kind="verification", output=None, dry_run=STATE.dry_run,
+            report=args.report, files=results, failed=failed, total=total)
+    if args.json:
+        emit(None, report=args.report, files=results, failed=failed, total=total)
+    return 0
 
 
 if __name__ == "__main__":

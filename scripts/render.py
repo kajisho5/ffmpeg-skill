@@ -56,7 +56,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, die, emit, info, probe
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe
 
 HERE = Path(__file__).resolve().parent
 
@@ -80,11 +80,7 @@ TEMPLATE = {
 
 def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
     """Run a sibling script, forwarding --fast / --dry-run, returning its printed output path."""
-    cmd = [sys.executable, str(HERE / script)] + [str(a) for a in argv] + (extra or [])
-    if STATE["fast"]:
-        cmd.append("--fast")
-    if STATE["dry_run"]:
-        cmd.append("--dry-run")
+    cmd = [sys.executable, str(HERE / script)] + [str(a) for a in argv] + (extra or []) + child_args()
     info("→ " + " ".join(os.path.basename(c) if i < 2 else c for i, c in enumerate(cmd)))
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     for line in proc.stderr.splitlines():
@@ -360,11 +356,11 @@ def main() -> int:
             check_result = json.loads(proc.stdout)
         except ValueError:
             check_result = {"error": proc.stderr.strip()[-300:]}
-        if check_result.get("error"):
-            info(f"check: could not run check.py — {check_result['error']}")
-            exit_code = 1
-        elif check_result.get("failed"):
+        if check_result.get("failed"):
             info(f"check: {check_result['failed']} FAIL — " + "; ".join(f"{r['check']}={r['value']} ({r['fix']})" for r in check_result["checks"] if r["status"] == "FAIL"))
+            exit_code = 1
+        elif check_result.get("error") or check_result.get("status") == "failed":
+            info(f"check: could not run check.py — {check_result.get('error')}")
             exit_code = 1
         else:
             info(f"check: OK for {ck['platform']}")
@@ -378,9 +374,15 @@ def main() -> int:
         # to before the PID suffix was added.
         import shutil
         shutil.rmtree(work, ignore_errors=True)
+    if exit_code:
+        # The deliverable is written and verified, but it does not meet the requested platform
+        # spec (or the check itself could not run): a failed delivery, reported as one.
+        failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
+        die(f"rendered {output} but the {ck['platform']} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""),
+            kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result)
     info(f"rendered {output} via {' → '.join(stages_done)}")
     emit(output, stages=stages_done, check=check_result)
-    return exit_code
+    return 0
 
 
 if __name__ == "__main__":
