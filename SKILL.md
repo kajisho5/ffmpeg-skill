@@ -66,7 +66,8 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
 7. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
 8. **Look at the picture.** Whenever the picture changed (captions, overlays,
-   graphics, crop/pad, resize, colour, transitions) run `look.py OUTPUT`
+   graphics, crop/pad, resize, colour, transitions, a `join.py` that scaled or
+   padded a clip to the first clip's frame) run `look.py OUTPUT`
    (contact sheet) or `look.py OUTPUT --at T`, view the PNG. The job is not
    finished until the report's `Look:` line names that PNG; a probe alone
    cannot see a caption sitting on someone's face. Audio-only jobs (sync,
@@ -162,6 +163,7 @@ If a request needs an FFmpeg feature none of the 42 scripts expose, say so and n
 | "remove the green screen", "chroma key this" | `overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00` |
 | "sync the lav mic to the camera", "line up the two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` / `sync.py camA.mp4 camB.mp4 --trim-second` |
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast) |
+| "cut this and make it HEVC / AV1", "a ProRes intermediate of the trimmed clip" (an edit whose *output codec* the user named) | `cut.py input.mp4 --start 0:10 --end 0:40 --codec hevc` (`--codec h264\|hevc\|av1\|prores` and `--quality N` on every editing tool that re-encodes; ProRes needs `-o NAME.mov`; without a named codec leave the default) |
 | "export for YouTube / Reels / X", "give me a ProRes master", "make it HEVC" | `export.py input.mp4 --preset youtube|reels|x|prores|h265` (`--normalize` meets the platform's loudness spec in the same call, no separate `loudness.py` pass) |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
 | "make a small/low-res proxy for an analysis pass", "a cheap preview file" | `proxy.py input.mp4 [--width 640 --no-audio]` — not a delivery preset, see `export.py` for those |
@@ -251,6 +253,18 @@ Steps: cut 0:12-1:12 (lossless) -> fit 9:16 crop -> captions (pop, karaoke) -> l
 Check: reels — all 12 checks pass (verified: true)
 Look: final_sheet.png (captions inside the safe area, logo top-right)
 Notes: source was VFR, conformed to 30 fps; audio was mono, made stereo
+```
+
+The same five lines for a Japanese request, prose in Japanese around the English labels
+(this is the shape a short job keeps too; English `Done:`/`Steps:` sentences with one Japanese
+word in `Notes:` is not a Japanese report):
+
+```
+Done: final.mp4 — 59.98 秒、1080x1920、30 fps、H.264、AAC ステレオ、-14.1 LUFS
+Steps: 0:12-1:12 をカット（無劣化）-> 9:16 にクロップ -> 字幕（ポップ、カラオケ）-> ラウドネス -14 -> Reels 書き出し
+Check: reels — 12 項目すべて合格（verified: true）
+Look: final_sheet.png（字幕はセーフエリア内、ロゴは右上）
+Notes: 元は VFR だったので 30 fps に揃えた。音声はモノラルだったのでステレオにした
 ```
 
 Keep it to those five lines plus anything the user must decide. Attach the contact sheet when the edit touched the picture. Never report success without the probe of the output; never describe a fix you did not run.

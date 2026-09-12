@@ -2411,14 +2411,31 @@ class FFmpegSkillTests(unittest.TestCase):
         proj = OUT / "project_normalize.json"
         proj.write_text(json.dumps({
             "output": "render_normalize.mp4",
-            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:03"}],
+            "clips": [{"src": "source.mp4"}],
             "export": {"preset": "x", "normalize": True},
             "check": {"platform": "x"},
         }), encoding="utf-8")
         data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
         self.assertTrue(data["check"]["ok"], data["check"])
         rows = {r["check"]: r["status"] for r in data["check"]["checks"]}
-        self.assertEqual(rows["loudness"], "PASS", "the -9 LUFS source only passes when export ran --normalize")
+        self.assertEqual(rows["loudness"], "PASS", "the -9 LUFS source (whole clip: a 2 s slice happens to sit at -13 LUFS) only passes when export ran --normalize")
+        # 1.9: a platform preset with no loudness stage normalises by default; false opts out
+        proj.write_text(json.dumps({
+            "output": "render_normalize_default.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "x"},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "PASS")
+        proj.write_text(json.dumps({
+            "output": "render_normalize_off.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "x", "normalize": False},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
 
     def test_check_unmeasurable_loudness_warns_instead_of_silently_passing(self):
         """measure_loudness() returns {} when ffmpeg's loudnorm JSON doesn't parse out of stderr
