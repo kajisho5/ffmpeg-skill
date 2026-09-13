@@ -172,5 +172,59 @@
   "lang": "de",
   "prompt": "Erstelle mit KI ein 10-Sekunden-Video von einer Katze, die surft",
   "should_trigger": false
+ },
+ {
+  "id": "t17",
+  "lang": "th",
+  "prompt": "ช่วยตัด vlog.mp4 ให้เหลือ 60 วินาที แล้วใส่คำบรรยายภาษาไทยให้ด้วย",
+  "should_trigger": true
+ },
+ {
+  "id": "t18",
+  "lang": "hi",
+  "prompt": "interview.mp4 की आवाज़ बहुत धीमी है, इसे -16 LUFS पर ठीक कर दीजिए",
+  "should_trigger": true
+ },
+ {
+  "id": "t19",
+  "lang": "he",
+  "prompt": "אפשר להפוך את clip.mov לסרטון אנכי לרילס עם כתוביות?",
+  "should_trigger": true
+ },
+ {
+  "id": "t20",
+  "lang": "ru",
+  "prompt": "Убери, пожалуйста, тишину из записи podcast.m4a",
+  "should_trigger": true
+ },
+ {
+  "id": "t21",
+  "lang": "vi",
+  "prompt": "Cắt video hop.mp4 xuống còn 60 giây và thêm phụ đề tiếng Việt giúp mình",
+  "should_trigger": true
+ },
+ {
+  "id": "t22",
+  "lang": "tr",
+  "prompt": "roportaj.mov dosyasını dikey videoya çevirip Reels'e yükleyebileceğim hâle getirir misin?",
+  "should_trigger": true
+ },
+ {
+  "id": "n14",
+  "lang": "el",
+  "prompt": "Πώς εγκαθιστώ το ffmpeg σε macOS με Homebrew;",
+  "should_trigger": false
+ },
+ {
+  "id": "n15",
+  "lang": "id",
+  "prompt": "Buatkan video 10 detik tentang kucing yang berselancar dengan AI",
+  "should_trigger": false
+ },
+ {
+  "id": "n16",
+  "lang": "it",
+  "prompt": "Scrivi un copione di 60 secondi per il video di lancio del nostro prodotto",
+  "should_trigger": false
  }
 ]

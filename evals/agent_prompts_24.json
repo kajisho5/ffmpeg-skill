@@ -367,5 +367,272 @@
   "expect": [],
   "refuse": true,
   "note": "no TTS; must say so in Arabic and offer to mux a narration file the user provides"
+ },
+ {
+  "id": "th1",
+  "lang": "th",
+  "prompt": "ช่วยฝังคำบรรยายภาษาไทยจากไฟล์ OUTDIR/cues_th.txt ลงบนวิดีโอ /home/user/ffmpeg-skill/tests/out/source.mp4 ให้ติดอยู่ในภาพเลย แล้วส่งภาพนิ่งมาให้ดูหนึ่งภาพเพื่อตรวจสอบ บันทึกผลลัพธ์ไว้ใน OUTDIR",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "fixtures": {
+   "cues_th.txt": "0:00-0:03 สวัสดีชาวโลก เสียงน้ำไหล\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\nบรรทัดนี้ตั้งเวลาให้อัตโนมัติ\n"
+  }
+ },
+ {
+  "id": "th2",
+  "lang": "th",
+  "prompt": "ช่วยดาวน์โหลดวิดีโอ YouTube นี้แล้วตัดเป็นคลิปแนวตั้งเก็บไว้ใน OUTDIR ให้หน่อย: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "expect": [],
+  "refuse": true,
+  "note": "no downloader in the skill; must say so in Thai and ask for the local file"
+ },
+ {
+  "id": "hi1",
+  "lang": "hi",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 के पहले 4 सेकंड में «प्रिया शर्मा / निर्देशक» का लोअर थर्ड लगा दीजिए, और जाँचने के लिए एक फ़्रेम भी दिखाइए। नतीजा OUTDIR में सहेजें।",
+  "expect": [
+   "graphics",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "hi2",
+  "lang": "hi",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 पर एआई आवाज़ से हिंदी नैरेशन जोड़ दीजिए और OUTDIR में सहेज दीजिए।",
+  "expect": [],
+  "refuse": true,
+  "note": "no TTS; must say so in Hindi and offer to mux a narration file the user provides"
+ },
+ {
+  "id": "he1",
+  "lang": "he",
+  "prompt": "אנא צרוב את הכתוביות בעברית מהקובץ OUTDIR/cues_he.txt לתוך הווידאו /home/user/ffmpeg-skill/tests/out/source.mp4 כך שיהיו חלק מהתמונה, והראה לי תמונת סטיל אחת לבדיקה. שמור את התוצאה ב-OUTDIR.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "fixtures": {
+   "cues_he.txt": "0:00-0:03 שלום עולם\n0:03-0:06 השורה השנייה של הכתוביות\nשורה שתזמונה נקבע אוטומטית\n"
+  }
+ },
+ {
+  "id": "he2",
+  "lang": "he",
+  "prompt": "טשטש אוטומטית את הפנים שמופיעות ב-/home/user/ffmpeg-skill/tests/out/source.mp4 ושמור את התוצאה ב-OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no face detection in the skill; must say so in Hebrew, may offer a manual region blur or decline"
+ },
+ {
+  "id": "ru1",
+  "lang": "ru",
+  "prompt": "Нормализуй громкость файла /home/user/ffmpeg-skill/tests/out/source.mp4 до -14 LUFS для YouTube и сохрани результат в OUTDIR.",
+  "expect": [
+   "loudness"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "ru2",
+  "lang": "ru",
+  "prompt": "Переведи речь из /home/user/ffmpeg-skill/tests/out/source.mp4 на русский язык и вшей субтитры прямо в картинку. Сохрани в OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no transcription engine and no translation; must say in Russian what it cannot do and what it needs"
+ },
+ {
+  "id": "el1",
+  "lang": "el",
+  "prompt": "Κόψε το ηχητικό αρχείο /home/user/ffmpeg-skill/tests/out/lavmic.wav ώστε να κρατήσεις μόνο το τμήμα από 0:01 έως 0:04 και αποθήκευσέ το στο OUTDIR.",
+  "expect": [
+   "cut"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "el2",
+  "lang": "el",
+  "prompt": "Κατέβασε αυτό το βίντεο από το YouTube και κάνε το κάθετο βίντεο στο OUTDIR: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "expect": [],
+  "refuse": true,
+  "note": "no downloader in the skill; must say so in Greek and ask for the local file"
+ },
+ {
+  "id": "vi1",
+  "lang": "vi",
+  "prompt": "Hãy ghi phụ đề tiếng Việt trong tệp OUTDIR/cues_vi.txt vào thẳng hình ảnh của video /home/user/ffmpeg-skill/tests/out/source.mp4, rồi cho tôi xem một khung hình tĩnh để kiểm tra. Lưu kết quả vào OUTDIR.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "fixtures": {
+   "cues_vi.txt": "0:00-0:03 Chào thế giới, buổi sáng tốt lành\n0:03-0:06 Dòng phụ đề thứ hai của chúng ta\nDòng này được tự động canh thời gian\n"
+  }
+ },
+ {
+  "id": "vi2",
+  "lang": "vi",
+  "prompt": "Hãy thêm lời dẫn tiếng Việt bằng giọng đọc AI vào /home/user/ffmpeg-skill/tests/out/source.mp4 và lưu kết quả vào OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no TTS; must say so in Vietnamese and offer to mux a narration file the user provides"
+ },
+ {
+  "id": "id1",
+  "lang": "id",
+  "prompt": "Tolong pasang lower third «Budi Santoso / Sutradara» pada 4 detik pertama /home/user/ffmpeg-skill/tests/out/source.mp4, dan tunjukkan satu frame supaya saya bisa memeriksanya. Simpan hasilnya di OUTDIR.",
+  "expect": [
+   "graphics",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "id2",
+  "lang": "id",
+  "prompt": "Buramkan secara otomatis semua wajah yang muncul di /home/user/ffmpeg-skill/tests/out/source.mp4 lalu simpan hasilnya di OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no face detection in the skill; must say so in Indonesian, may offer a manual region blur or decline"
+ },
+ {
+  "id": "tr1",
+  "lang": "tr",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 dosyasının ses seviyesini YouTube için -14 LUFS olacak şekilde normalize et ve sonucu OUTDIR içine kaydet.",
+  "expect": [
+   "loudness"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "tr2",
+  "lang": "tr",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 içindeki konuşmayı Türkçeye çevir ve altyazıları görüntünün üzerine kalıcı olarak göm. OUTDIR içine kaydet.",
+  "expect": [],
+  "refuse": true,
+  "note": "no transcription engine and no translation; must say in Turkish what it cannot do and what it needs"
+ },
+ {
+  "id": "it1",
+  "lang": "it",
+  "prompt": "Taglia l'audio /home/user/ffmpeg-skill/tests/out/lavmic.wav per tenere soltanto il tratto da 0:01 a 0:04 e salvalo in OUTDIR.",
+  "expect": [
+   "cut"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "it2",
+  "lang": "it",
+  "prompt": "Scarica questo video di YouTube e montalo in verticale dentro OUTDIR: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "expect": [],
+  "refuse": true,
+  "note": "no downloader in the skill; must say so in Italian and ask for the local file"
+ },
+ {
+  "id": "dl1",
+  "lang": "en",
+  "prompt": "Make /home/user/ffmpeg-skill/tests/out/source.mp4 a TikTok with these captions: OUTDIR/cues_dl1.txt. Save to OUTDIR.",
+  "expect": [
+   "render|fit|export",
+   "check"
+  ],
+  "refuse": false,
+  "note": "delivery/template request: vertical 9:16 + captions + platform export + check. Runnable today as a manual fit/caption/export/check chain; from 1.14.0 also as render.py --template tiktok",
+  "fixtures": {
+   "cues_dl1.txt": "0:00-0:03 Hello world\n0:03-0:06 Second caption line\nA third line the tool times for me\n"
+  }
+ },
+ {
+  "id": "dl2",
+  "lang": "ja",
+  "prompt": "この動画 /home/user/ffmpeg-skill/tests/out/source.mp4 をリールにして。OUTDIR に保存。",
+  "expect": [
+   "render|fit|export",
+   "check"
+  ],
+  "refuse": false,
+  "note": "delivery/template request in Japanese: Reels means 9:16 + Reels export + check"
+ },
+ {
+  "id": "dl3",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を YouTube ショートにして、OUTDIR/cues_dl3.txt の字幕付きで。OUTDIR に保存。",
+  "expect": [
+   "render|fit|export",
+   "check"
+  ],
+  "refuse": false,
+  "note": "delivery/template request in Japanese: Shorts = 9:16 + captions + export + check",
+  "fixtures": {
+   "cues_dl3.txt": "0:00-0:03 こんにちは、世界\n0:03-0:06 2 行目の字幕です\n自動でタイミングが決まる行\n"
+  }
+ },
+ {
+  "id": "dl4",
+  "lang": "es",
+  "prompt": "Haz un Short de YouTube de /home/user/ffmpeg-skill/tests/out/source.mp4 con estos subtítulos: OUTDIR/cues_dl4.txt. Guarda el resultado en OUTDIR.",
+  "expect": [
+   "render|fit|export",
+   "check"
+  ],
+  "refuse": false,
+  "note": "delivery/template request in Spanish: Shorts = 9:16 + captions + export + check",
+  "fixtures": {
+   "cues_dl4.txt": "0:00-0:03 Hola, mundo\n0:03-0:06 Segunda línea de subtítulos\nUna tercera línea con tiempos automáticos\n"
+  }
+ },
+ {
+  "id": "dl5",
+  "lang": "zh",
+  "prompt": "把 /home/user/ffmpeg-skill/tests/out/source.mp4 做成抖音竖屏视频，结果保存到 OUTDIR。",
+  "expect": [
+   "render|fit|export",
+   "check"
+  ],
+  "refuse": false,
+  "note": "delivery/template request in Chinese: Douyin/TikTok = 9:16 + export + check"
+ },
+ {
+  "id": "dl6",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を LinkedIn 用に 1:1 で書き出して。OUTDIR に保存。",
+  "expect": [
+   "render|fit|export",
+   "check"
+  ],
+  "refuse": false,
+  "note": "delivery/template request in Japanese: square 1:1 reframe + export + check"
+ },
+ {
+  "id": "dl7",
+  "lang": "en",
+  "prompt": "Turn /home/user/ffmpeg-skill/tests/out/lavmic.wav into a podcast episode with chapters from OUTDIR/chapters.txt. Save to OUTDIR.",
+  "expect": [
+   "render|fit|export",
+   "check"
+  ],
+  "refuse": false,
+  "audio_only": true,
+  "note": "delivery/template request: podcast loudness + chapter metadata + check; audio only",
+  "fixtures": {
+   "chapters.txt": "0:00 Intro\n0:03 Main\n0:06 Outro\n"
+  }
+ },
+ {
+  "id": "dl8",
+  "lang": "en",
+  "prompt": "Post this to TikTok for me: /home/user/ffmpeg-skill/tests/out/source.mp4",
+  "expect": [],
+  "refuse": true,
+  "note": "no upload/publish capability in the skill; must say so and offer to produce the TikTok-ready file instead"
  }
 ]
