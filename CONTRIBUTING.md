@@ -72,6 +72,10 @@ would have caught the original bug isn't done yet.
   table, the contract table, gotchas), `SKILL.md`, `references/scripts.md`,
   `docs/contract.md` and `CHANGELOG.md`. The README is read by people who never
   open SKILL.md, so a feature that only SKILL.md knows about is half shipped.
+- `SKILL.md` must stay under **30,000 bytes** — it is loaded into every session.
+  Since 1.15 this is a test
+  (`tests/test_contract.py::test_skill_md_stays_under_the_30kb_budget`), not a
+  convention: adding a line there means trimming one, and the PR says which.
 - A `feat` PR adds at least one before/after demo to `demos/build.py` and
   `docs/demos.md` (the page is generated: add the demo to the table in
   `demos/build.py`, then run `python3 demos/build.py --docs`). A feature nobody

@@ -226,5 +226,17 @@
   "lang": "it",
   "prompt": "Scrivi un copione di 60 secondi per il video di lancio del nostro prodotto",
   "should_trigger": false
+ },
+ {
+  "id": "t23",
+  "lang": "en",
+  "prompt": "can you burn the subtitles into my clip and keep the emoji in the captions in colour? interview.mp4",
+  "should_trigger": true
+ },
+ {
+  "id": "n17",
+  "lang": "en",
+  "prompt": "make me an emoji sticker pack as PNGs, 20 stickers with transparent backgrounds",
+  "should_trigger": false
  }
 ]

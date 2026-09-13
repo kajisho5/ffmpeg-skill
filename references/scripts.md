@@ -550,17 +550,28 @@ Inside this skill, call the scripts directly; the server is for other hosts.
 graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|sticker|hook|meme
             [--name] [--title] [--subtitle] [--text] [--top] [--bottom] [--duration 3]
             [--from N] [--start S] [--end E] [--position CORNER] [--margin PX] [--platform NAME]
-            [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [--lang XX] [-o OUT]
+            [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [--lang XX]
+            [--text-render auto|ass|drawtext] [--write-ass OUT.ass]
+            [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
 ```
 Drawn with drawbox/drawtext/overlay — no PNG assets needed. Sizes scale with
 the frame's short side; colours, font and safe margin come from `--brand`.
 Lower-third slides in over 0.4 s and out over 0.3 s; title/chapter/bug fade.
 Non-Latin `--name`/`--title`/`--subtitle` text picks a font file by script the
 same way `caption.py` does (`--lang XX` disambiguates Han-only text; no font for
-the script fails the job). RTL shaping in drawtext depends on the ffmpeg build
-(`--enable-libfribidi`/`--enable-libharfbuzz` shape it correctly, a build without
-them does not); `caption.py` always shapes, because it renders through libass:
-`references/gotchas.md#fonts-by-script`.
+the script fails the job). Arabic and Hebrew are already correct through drawtext
+on a build with `--enable-libfribidi` (bidi + joining). What drawtext cannot do on
+any build is reorder and re-cluster — Devanagari matras, Thai/Lao mark stacking —
+because it does not use harfbuzz. Since 1.15 `--text-render auto` (the default)
+therefore routes those scripts through libass: the template's geometry is written
+as a generated `<output>_gfx.ass` (`--write-ass PATH` names it) and burned with
+`ass=`, reported as `text_renderer: "ass"` with `script` and `ass` in the JSON.
+Latin/CJK/Arabic output is byte-identical to 1.14. `--text-render ass` forces the
+route; `--text-render drawtext` with a shaping script is refused by name rather
+than rendering a wrong frame. See `references/gotchas.md#fonts-by-script`.
+`--emoji*` works as on `caption.py` below; a template whose text is *only* emoji
+and that this machine can draw none of is `kind: input`, because that frame would
+be blank.
 
 All three are usable from a `render.py` project too: a `graphics[]` entry takes `text`, `top`,
 `bottom`, `duration`, `margin` and `platform` alongside the older keys.
@@ -642,7 +653,8 @@ caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
            [--max-lines N] [--min-duration S]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
            [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
-           [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass] [-o OUT]
+           [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass]
+           [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
 caption.py --text CUES.txt --write-srt OUT.srt        # generate the SRT only
 ```
 Text cue format, one per line: `0:00-0:03 Hello`, `00:00:03.500 --> 00:00:06 Two | lines`,
@@ -656,7 +668,18 @@ word from `--color` to `--highlight-color` across the cue; `--karaoke-timing
 energy` (default) follows the speech loudness in the audio, `even` splits the
 cue equally (word timing is derived, not transcribed). The ASS is kept next to the
 user can hand-tune timings and re-run with `--ass`.
-Readable by default (1.12): every cue is wrapped to the safe area (90 % of the
+Emoji (1.15): `--emoji-assets DIR` is a directory of PNGs named by code point
+(`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png` — the Twemoji/Noto
+convention), also read from `brand.json` `styles.caption.emoji_assets` and
+`FFMPEG_SKILL_EMOJI_ASSETS`. With one, the cue text keeps its place in the ASS
+with an invisible placeholder reserving the emoji's box and each PNG is
+composited on top (`--emoji-scale` sizes the box, `--emoji-max` caps the count).
+Without one the run still succeeds and says `emoji: {"mode": "mono"}` plus a
+warning; `--emoji none` strips them; `--emoji color` insists on a colour-capable
+libass and refuses otherwise. Nothing is ever downloaded. What this machine can
+do: `doctor --json` → `.fonts.emoji`. Details: `references/gotchas.md#emoji`.
+
+Readable by default (1.12, rebalanced in 1.15): every cue is wrapped to the safe area (90 % of the
 frame width) at the chosen `--size`, measured per script — CJK and Thai count a
 full em per character, Latin per character from a table read off DejaVu Sans (so
 an all-caps line measures as wide as it draws), Cyrillic/Greek about 0.55,
@@ -710,6 +733,7 @@ stream selection would have picked.
 ### overlay.py — logo, image, title, video picture-in-picture, chroma key
 ```
 overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--font-file F.ttf] [--font-size N] [--box]
+                  [--emoji auto|mono|none] [--emoji-assets DIR]
                   | --video CLIP [--chromakey COLOR [--chromakey-similarity 0-1] [--chromakey-blend 0-1]]
            [--position top-right|bottom-left|center|X,Y] [--margin N] [--platform NAME] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
 ```
@@ -724,6 +748,14 @@ input's audio is kept, the PiP layer's own audio is dropped. `--chromakey`
 
 `--fade S` fades the overlay in at `--start` (or 0); the fade-out happens
 only at `--end`, so a logo with no `--end` stays to the last frame.
+
+Since 1.15 the drawn text goes to drawtext in a **file** (`textfile=`,
+`expansion=none`), so `'` and `%` survive verbatim — `--text "it's 100% done"`
+used to lose both. `overlay.py` still draws through drawtext, which cannot shape
+Devanagari/Thai-class scripts and cannot load a colour emoji font: a shaping
+script is refused by name pointing at `caption.py`/`graphics.py`, and
+`--emoji png|color` is refused the same way (`--emoji mono`, the default here,
+draws whatever glyph the text font has; `--emoji none` strips them).
 
 ### sync.py — offset detection, alignment, drift correction
 ```

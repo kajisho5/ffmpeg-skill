@@ -361,7 +361,8 @@ typeface the caller didn't ask for.
 
 Since 1.12 the same field also carries `scripts`: one entry per writing system the tools detect,
 `{"ja": {"status": "available"|"missing"|"unknown", "file": "/path/to/font.ttc"|null}, "zh": ...,
-"ko": ..., "ar": ..., "he": ..., "hi": ..., "th": ..., "ru": ..., "el": ...}`. It answers "which
+"ko": ..., "ar": ..., "he": ..., "hi": ..., "bn": ..., "ta": ..., "th": ..., "lo": ..., "ru": ...,
+"el": ...}` (`bn`, `ta` and `lo` were added in 1.15). It answers "which
 languages can this machine actually render", which no filter or encoder capability asks:
 `available` means `fc-list :lang=<code>` (Linux/macOS) or a known system font file (Windows) covers
 the script, `missing` means fontconfig knows none, `unknown` means there is no working fontconfig to
@@ -377,6 +378,25 @@ font, it never affects `ok` or any tool's
 line to one screen width; a longer explanation, and the per-script files, are `--json` only.
 `--lang`/`--language` (caption, graphics) is the hint that says whether Han-only text is Chinese,
 Japanese or Korean.
+
+Since 1.15 `fonts` also carries `emoji`: `{"mode": "color"|"png"|"mono"|"none", "color_font": "Noto
+Color Emoji"|null, "color_font_file": "..."|null, "libass_color": true|false|null, "assets":
+"/path"|null, "detail": "...", "fix": "..."}`. `libass_color` comes from a **render probe** — one
+64x64 frame with an emoji cue through `subtitles=`, chroma-tested — because an installed colour
+emoji family proves nothing: Noto Color Emoji installs cleanly on builds whose libass still draws a
+monochrome outline. `null` means the probe was not run: `doctor --static` (and every other
+static/JSON-only path) skips it, exactly as it skips the rest of the environment detection. `mode`
+is `color` when the probe says colour, else `png` when an emoji assets directory resolves, else
+`mono` when some installed face has a glyph, else `none`. Informational like the rest of `fonts`:
+it never moves `ok` or any tool's `usable`.
+
+`caption.py`, `graphics.py` and `overlay.py` gained `--emoji auto|color|png|mono|none`,
+`--emoji-assets DIR`, `--emoji-scale FLOAT` and `--emoji-max N` in 1.15; `graphics.py` also gained
+`--text-render auto|ass|drawtext` and `--write-ass PATH`. New success keys: `emoji`
+(`{"mode", "count", "clusters", "assets", "missing", "overlays"}`) on `caption.py` and
+`graphics.py`, and `text_renderer` (`"ass"`|`"drawtext"`), `script` and `ass` (the generated file,
+when one was written) on `graphics.py`. `--json-brief` carries `emoji.mode` and `emoji.count` only.
+All additive: `contract_version` stays 1.0.
 
 ## Invocation
 

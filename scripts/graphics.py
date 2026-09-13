@@ -26,11 +26,19 @@ Examples:
   python3 graphics.py clip.mp4 --template meme --top "when the render" --bottom "finally finishes"
 """
 import argparse
+import os
 import sys
 from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
-from _common import aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs
+from _common import (aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
+                     color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path,
+                     ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args,
+                     drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
+                     LANGUAGE_NAMES, needs_shaping, font_family_of_file, font_family_for_script, has_emoji,
+                     emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
+                     EMOJI_ASSET_HINT, text_width_em, drawtext_shaping)
+from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug", "sticker", "hook", "meme"]
 
@@ -82,6 +90,22 @@ def main() -> int:
     ap.add_argument("--lang", help="language code of the text (e.g. ja, zh, ko): the hint that says whether Han-only "
                                    "text is Chinese, Japanese or Korean when a font is picked by script")
     ap.add_argument("--scale", type=float, default=1.0, help="size multiplier (default 1)")
+    ap.add_argument("--text-render", choices=["auto", "ass", "drawtext"], default="auto",
+                    help="which renderer draws the template's text: 'auto' (default) uses libass for "
+                         "scripts drawtext cannot shape (Devanagari, Bengali, Tamil, Thai, Lao ...) and for "
+                         "emoji overlays, and drawtext for everything else -- Latin/CJK/Arabic output is "
+                         "unchanged; 'ass' always uses libass; 'drawtext' forces the old renderer and is "
+                         "refused for a script it cannot shape")
+    ap.add_argument("--write-ass", metavar="PATH",
+                    help="where to save the generated ASS when the libass route is used (default: <output stem>_gfx.ass)")
+    emo = ap.add_argument_group("emoji (1.15)")
+    emo.add_argument("--emoji", choices=["auto", "color", "png", "mono", "none"], default="auto",
+                     help="how emoji in the template text are drawn (see caption.py --emoji)")
+    emo.add_argument("--emoji-assets", metavar="DIR",
+                     help="directory of emoji PNGs named by code point (1f389.png); nothing is ever downloaded")
+    emo.add_argument("--emoji-scale", type=float, default=1.0,
+                     help="emoji box as a multiple of the line's font size (default 1.0)")
+    emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build (default 60)")
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
@@ -144,6 +168,66 @@ def main() -> int:
     filters: List[str] = []
     fade_a = f"if(lt(t,{s:.3f}+0.3),(t-{s:.3f})/0.3,if(gt(t,{e:.3f}-0.3),({e:.3f}-t)/0.3,1))"
 
+    # --- which renderer draws the text (1.15) --------------------------------------------------
+    # drawtext does bidi and Arabic joining on a fribidi build, but it never reorders or
+    # re-clusters (no harfbuzz), so Indic matras and Thai/Lao mark stacking come out wrong on
+    # every build. Those scripts -- and any run that has to reserve a gap for an emoji PNG -- go
+    # through libass instead; everything else keeps the exact drawtext graph 1.14 produced.
+    all_text = " ".join(t for t in (args.name, args.title, args.subtitle, args.text, args.top, args.bottom) if t)
+    shaping = needs_shaping(_script)
+    emoji_assets = resolve_emoji_assets(args.emoji_assets, None, brand if args.brand else None)
+    emoji_mode = None
+    emoji_overlays: List[dict] = []
+    if has_emoji(all_text):
+        support = emoji_support(emoji_assets, probe=True)
+        emoji_mode = support["mode"] if args.emoji == "auto" else args.emoji
+        if args.emoji == "color" and not support["libass_color"]:
+            die("--emoji color: this ffmpeg renders emoji monochrome through libass "
+                f"({support['detail']}) -- pass --emoji-assets DIR for colour, or --emoji mono", kind="input")
+        if args.emoji == "png" and not emoji_assets:
+            die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
+        if emoji_mode == "none" and not "".join(
+                ch for ch in all_text if char_script(ch) != "emoji").strip():
+            die("the template's text is nothing but emoji and this machine can draw none of them "
+                "(no glyph, no --emoji-assets DIR): that frame would be blank, which is not a "
+                "delivery -- " + EMOJI_ASSET_HINT, kind="input")
+        if emoji_mode == "mono":
+            info("warning: emoji rendered monochrome (no colour path on this ffmpeg; "
+                 "--emoji-assets DIR for colour). " + support["detail"])
+    if args.text_render == "drawtext" and shaping:
+        die(f"{LANGUAGE_NAMES.get(_script, _script)} text cannot be shaped by drawtext on any ffmpeg "
+            "build (the marks are reordered by harfbuzz, which drawtext does not use): drop "
+            "--text-render drawtext to render it through libass, or draw it with caption.py",
+            kind="input")
+    route = "ass" if (args.text_render == "ass" or
+                      (args.text_render == "auto" and (shaping or emoji_mode == "png"))) else "drawtext"
+    elements: List[dict] = []
+
+    def ass_font_family() -> "Optional[str]":
+        explicit = args.font_file or brand.get("font_file")
+        if explicit:
+            return font_family_of_file(explicit) or args.font or brand.get("font")
+        if script_file:
+            return font_family_of_file(script_file) or font_family_for_script(_script)
+        return args.font or brand.get("font", "DejaVu Sans")
+
+    def ass_fonts_dir() -> "Optional[str]":
+        explicit = args.font_file or brand.get("font_file")
+        if explicit:
+            return os.path.dirname(os.path.abspath(explicit))
+        if script_file:
+            return os.path.dirname(os.path.abspath(script_file))
+        return None
+
+    def add_text(text, drawtext, *, target=None, **el):
+        """One line of template text: a drawtext filter on the old route, an ASS element on the
+        new one. The geometry is computed identically either way."""
+        if route != "ass":
+            (filters if target is None else target).append(drawtext)
+            return
+        el["text"] = text
+        elements.append(el)
+
     extra_inputs: List[str] = []
     fc: List[str] = []  # filter_complex chains (used by templates that need animated boxes)
     if 0 < min(W, H) < 64:  # 0x0 is a dry-run probe of an intermediate that does not exist yet
@@ -163,11 +247,31 @@ def main() -> int:
         fc.append(f"color=c=0x{primary}:s={int(base * 0.012)}x{bar_h}:r={meta['video'].get('fps') or 30:g},format=rgba[acc]")
         fc.append(f"[0:v][bar]overlay=x='{x_expr}':y={y0}:{en}:eof_action=pass[v1]")
         fc.append(f"[v1][acc]overlay=x='{x_expr}':y={y0}:{en}:eof_action=pass[v2]")
-        tx = f"({x_expr})+{int(base * 0.035)}"
-        chain = f"drawtext=text='{escape_drawtext(args.name)}':{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:x='{tx}':y={y0 + pad}:{en}"
-        if args.title:
-            chain += f",drawtext=text='{escape_drawtext(args.title)}':{fo}:fontsize={h2}:fontcolor={ff_color(primary)}:x='{tx}':y={y0 + pad + h1 + pad // 2}:{en}"
-        fc.append(f"[v2]{chain}[vout]")
+        tx_pad = int(base * 0.035)
+        tx = f"({x_expr})+{tx_pad}"
+        x_rest, x_off = m_left + tx_pad, -bar_w + tx_pad
+        draws = []
+        for text, fs, colour, ty in ((args.name, h1, text_c, y0 + pad),
+                                     (args.title, h2, primary, y0 + pad + h1 + pad // 2)):
+            if not text:
+                continue
+            draws.append(f"drawtext={drawtext_text_opts(text)}:{fo}:fontsize={fs}:"
+                         f"fontcolor={ff_color(colour)}:x='{tx}':y={ty}:{en}")
+            if route == "ass":
+                # the same three phases the bar itself slides through, as \move Dialogues
+                elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
+                                     align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
+                                     outline_color="000000", start=s, end=min(e, s + 0.4),
+                                     move=(x_off, ty, x_rest, ty, 0, 400), x_expr=tx))
+                elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
+                                     align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
+                                     outline_color="000000", start=min(e, s + 0.4), end=max(s, e - 0.3),
+                                     x_expr=tx))
+                elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
+                                     align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
+                                     outline_color="000000", start=max(s, e - 0.3), end=e,
+                                     move=(x_rest, ty, x_off, ty, 0, 300), x_expr=tx))
+        fc.append(f"[v2]{','.join(draws)}[vout]" if route != "ass" else "[v2]null[vout]")
 
     elif args.template == "title":
         if not args.title:
@@ -175,10 +279,18 @@ def main() -> int:
         h1 = int(base * 0.11)
         h2 = int(base * 0.045)
         filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:color={ff_color(bg, 0.55)}:t=fill:{en}")
-        filters.append(f"drawtext=text='{escape_drawtext(args.title)}':{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if args.subtitle else 0}:alpha='{fade_a}':{en}")
+        add_text(args.title,
+                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if args.subtitle else 0}:alpha='{fade_a}':{en}",
+                 size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2,
+                 y=H / 2 - (h2 if args.subtitle else 0), outline=max(1.0, h1 / 20.0),
+                 outline_color="000000", start=s, end=e, fade=(300, 300))
         filters.append(f"drawbox=x=(iw-{int(base * 0.12)})/2:y=(ih)/2+{h1 // 2 + (0 if args.subtitle else 0)}:w={int(base * 0.12)}:h={max(2, int(base * 0.006))}:color={ff_color(primary)}:t=fill:{en}")
         if args.subtitle:
-            filters.append(f"drawtext=text='{escape_drawtext(args.subtitle)}':{fo}:fontsize={h2}:fontcolor={ff_color(primary)}:x=(w-text_w)/2:y=(h-text_h)/2+{h1 // 2 + int(base * 0.03)}:alpha='{fade_a}':{en}")
+            add_text(args.subtitle,
+                     f"drawtext={drawtext_text_opts(args.subtitle)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}:x=(w-text_w)/2:y=(h-text_h)/2+{h1 // 2 + int(base * 0.03)}:alpha='{fade_a}':{en}",
+                     size=h2, color=primary, font=ass_font_family(), align=5, x=W / 2,
+                     y=H / 2 + h1 // 2 + int(base * 0.03), outline=max(1.0, h2 / 20.0),
+                     outline_color="000000", start=s, end=e, fade=(300, 300))
 
     elif args.template in ("chapter", "bug"):
         if not args.title:
@@ -190,7 +302,16 @@ def main() -> int:
         ye = f"{m_top}" if "top" in pos else f"h-text_h-{m_bottom}"
         box_color = ff_color(primary if args.template == "chapter" else bg, 0.9 if args.template == "chapter" else 0.7)
         txt_color = ff_color(bg if args.template == "chapter" else text_c)
-        filters.append(f"drawtext=text='{escape_drawtext(args.title)}':{fo}:fontsize={fs}:fontcolor={txt_color}:x={xe}:y={ye}:box=1:boxcolor={box_color}:boxborderw={drawtext_boxborderw(pady, padx)}:alpha='{fade_a}':{en}")
+        box_hex = primary if args.template == "chapter" else bg
+        txt_hex = bg if args.template == "chapter" else text_c
+        align = (7 if "left" in pos else 9) if "top" in pos else (1 if "left" in pos else 3)
+        add_text(args.title,
+                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={fs}:fontcolor={txt_color}:x={xe}:y={ye}:box=1:boxcolor={box_color}:boxborderw={drawtext_boxborderw(pady, padx)}:alpha='{fade_a}':{en}",
+                 size=fs, color=txt_hex, font=ass_font_family(), align=align,
+                 x=(m_left if "left" in pos else W - m_right),
+                 y=(m_top if "top" in pos else H - m_bottom),
+                 box=True, box_color=box_hex, box_alpha=(0x19 if args.template == "chapter" else 0x4C),
+                 outline=float(pady), outline_color=box_hex, start=s, end=e, fade=(300, 300))
 
     elif args.template == "progress":
         h = max(3, int(base * 0.008))
@@ -214,9 +335,19 @@ def main() -> int:
         xe = f"{m_left}" if "left" in pos else f"w-text_w-{m_right}"
         ye = (f"{m_top}+{rise}*(1-{pop})" if "top" in pos else f"h-text_h-{m_bottom}-{rise}*(1-{pop})")
         alpha = f"min({pop},{fade_a})"
-        filters.append(f"drawtext=text='{escape_drawtext(args.text)}':{fo}:fontsize={fs}:fontcolor={ff_color(bg)}:"
-                       f"x={xe}:y='{ye}':box=1:boxcolor={ff_color(primary, 0.95)}:boxborderw={drawtext_boxborderw(pady, padx)}:"
-                       f"alpha='{alpha}':{en}")
+        align = (7 if "left" in pos else 9) if "top" in pos else (1 if "left" in pos else 3)
+        y_rest = m_top if "top" in pos else H - m_bottom
+        y_start = y_rest + rise if "top" in pos else y_rest + rise
+        add_text(args.text,
+                 f"drawtext={drawtext_text_opts(args.text)}:{fo}:fontsize={fs}:fontcolor={ff_color(bg)}:"
+                 f"x={xe}:y='{ye}':box=1:boxcolor={ff_color(primary, 0.95)}:boxborderw={drawtext_boxborderw(pady, padx)}:"
+                 f"alpha='{alpha}':{en}",
+                 size=fs, color=bg, font=ass_font_family(), align=align,
+                 x=(m_left if "left" in pos else W - m_right), y=y_rest,
+                 box=True, box_color=primary, box_alpha=0x0D, outline=float(pady),
+                 outline_color=primary, start=s, end=e, fade=(250, 250),
+                 move=(m_left if "left" in pos else W - m_right, y_start,
+                       m_left if "left" in pos else W - m_right, y_rest, 0, 250))
 
     elif args.template == "hook":
         # The opener: a full-width card over the first --duration seconds with a thin bar along
@@ -232,8 +363,11 @@ def main() -> int:
         band_h = int(base * 0.30)
         y0 = (H - band_h) // 2
         filters.append(f"drawbox=x=0:y={y0}:w=iw:h={band_h}:color={ff_color(bg, 0.78)}:t=fill:{hen}")
-        filters.append(f"drawtext=text='{escape_drawtext(args.title)}':{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:"
-                       f"x=(w-text_w)/2:y=(h-text_h)/2:{hen}")
+        add_text(args.title,
+                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:"
+                 f"x=(w-text_w)/2:y=(h-text_h)/2:{hen}",
+                 size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2, y=H / 2,
+                 outline=max(1.0, h1 / 20.0), outline_color="000000", start=s, end=he)
         filters.append(f"drawbox=x=0:y=0:w='iw*max(0,1-(t-{s:.3f})/{max(0.001, he - s):.3f})':h={bar_h}:"
                        f"color={ff_color(primary)}:t=fill:{hen}")
 
@@ -248,8 +382,13 @@ def main() -> int:
         for text, y in ((args.top, f"{m_top}"), (args.bottom, f"h-text_h-{m_bottom}")):
             if not text:
                 continue
-            filters.append(f"drawtext=text='{escape_drawtext(text.upper())}':{fo}:fontsize={fs}:fontcolor={white}:"
-                           f"borderw={bw}:bordercolor={black}:x=(w-text_w)/2:y={y}:{en}")
+            add_text(text.upper(),
+                     f"drawtext={drawtext_text_opts(text.upper())}:{fo}:fontsize={fs}:fontcolor={white}:"
+                     f"borderw={bw}:bordercolor={black}:x=(w-text_w)/2:y={y}:{en}",
+                     size=fs, color="FFFFFF", font=ass_font_family(), bold=True,
+                     align=(8 if y == f"{m_top}" else 2), x=W / 2,
+                     y=(m_top if y == f"{m_top}" else H - m_bottom),
+                     outline=float(bw), outline_color="000000", start=s, end=e)
 
     elif args.template == "countdown":
         n = args.count_from
@@ -259,11 +398,102 @@ def main() -> int:
             ks = s + (n - k) * seg
             ke = ks + seg
             pulse = f"1-0.15*min(1,(t-{ks:.3f})/{seg * 0.5:.3f})"
-            filters.append(f"drawtext=text='{k}':{fo}:fontsize={fs}:fontcolor={ff_color(primary)}:borderw={max(2, fs // 40)}:bordercolor={ff_color(bg)}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='{pulse}':enable='between(t,{ks:.3f},{ke:.3f})'")
+            add_text(str(k),
+                     f"drawtext=text='{k}':{fo}:fontsize={fs}:fontcolor={ff_color(primary)}:borderw={max(2, fs // 40)}:bordercolor={ff_color(bg)}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='{pulse}':enable='between(t,{ks:.3f},{ke:.3f})'",
+                     size=fs, color=primary, font=ass_font_family(), align=5, x=W / 2, y=H / 2,
+                     outline=float(max(2, fs // 40)), outline_color=bg, start=ks, end=ke,
+                     scale_t=(0, seg * 500, 115))
 
     output = args.output or default_output(args.input, "gfx")
+    ass_path = None
+    emoji_result = None
+    if route == "ass":
+        scale_em = float(args.emoji_scale or 1.0)
+        missing: List[str] = []
+        seen: List[str] = []
+        for el in elements:
+            el["box_px"] = int(round(el["size"] * scale_em))
+            line = el["text"]
+            clusters = emoji_clusters(line)
+            if not clusters or emoji_mode not in ("png",):
+                continue
+            line_w = text_width_em(line, scale_em) * el["size"]
+            align = int(el.get("align", 7))
+            left = el["x"] if align in (7, 4, 1) else (
+                el["x"] - line_w / 2.0 if align in (8, 5, 2) else el["x"] - line_w)
+            line_h = el["size"] * 1.2
+            y_top = el["y"] if align in (7, 8, 9) else (
+                el["y"] - line_h / 2.0 if align in (4, 5, 6) else el["y"] - line_h)
+            rebuilt, cursor = "", 0
+            for idx, cluster in clusters:
+                name = emoji_codepoint_name(cluster)
+                if name not in seen:
+                    seen.append(name)
+                asset = emoji_asset_for(cluster, emoji_assets)
+                if not asset:
+                    if name not in missing:
+                        missing.append(name)
+                    rebuilt += line[cursor:idx + len(cluster)]
+                    cursor = idx + len(cluster)
+                    continue
+                prefix_px = text_width_em(line[:idx], scale_em) * el["size"]
+                if el.get("x_expr"):
+                    # the lower-third slides: the emoji rides the same expression the bar does
+                    x = f"({el['x_expr']})+{prefix_px:.0f}"
+                else:
+                    x = int(round(max(0.0, min(left + prefix_px, W - el["box_px"]))))
+                emoji_overlays.append({"asset": asset, "cluster": name, "x": x,
+                                       "y": int(round(max(0.0, min(y_top + (line_h - el["box_px"]) / 2.0,
+                                                                   H - el["box_px"])))),
+                                       "start": round(el["start"], 3), "end": round(el["end"], 3),
+                                       "box": el["box_px"]})
+                rebuilt += line[cursor:idx] + EMOJI_SENTINEL
+                cursor = idx + len(cluster)
+            el["text"] = rebuilt + line[cursor:]
+        if len(emoji_overlays) > int(args.emoji_max or 60):
+            die(f"{len(emoji_overlays)} emoji overlays would be built for this job "
+                f"(limit {args.emoji_max}, --emoji-max raises it); ffmpeg's filter graph and the "
+                "per-frame cost both grow linearly -- split the job, or use --emoji none", kind="input")
+        if missing:
+            info("warning: no PNG in the assets directory for " + ", ".join(missing))
+        if emoji_mode:
+            emoji_result = {"mode": emoji_mode, "count": len(emoji_clusters(all_text)),
+                            "clusters": sorted(seen) or sorted({emoji_codepoint_name(cl) for _i, cl in emoji_clusters(all_text)}),
+                            "assets": emoji_assets, "missing": missing,
+                            "overlays": len(emoji_overlays)}
+        ass_path = args.write_ass or os.path.splitext(output)[0] + "_gfx.ass"
+        if STATE.dry_run:
+            info(f"[dry-run] would write {ass_path} ({len(elements)} text elements)")
+        else:
+            text_overlay_ass(elements, play_w=W, play_h=H, path=ass_path, fonts_dir=ass_fonts_dir())
+            info(f"wrote {ass_path} ({len(elements)} text elements, rendered through libass)")
+    elif emoji_mode:
+        emoji_result = {"mode": emoji_mode, "count": len(emoji_clusters(all_text)),
+                        "clusters": sorted({emoji_codepoint_name(cl) for _i, cl in emoji_clusters(all_text)}),
+                        "assets": emoji_assets, "missing": [], "overlays": 0}
+
     cmd = ffmpeg_base() + ["-i", args.input]
-    if fc:
+    if route == "ass" or emoji_overlays:
+        chains = list(fc) if fc else [f"[0:v]{','.join(filters) if filters else 'null'}[vout]"]
+        last = "vout"
+        if route == "ass":
+            vf = f"ass={escape_filter_path(ass_path)}"
+            fdir = ass_fonts_dir()
+            if fdir:
+                vf += f":fontsdir={escape_filter_path(fdir)}"
+            chains.append(f"[{last}]{vf}[vtxt]")
+            last = "vtxt"
+        eo, assets = emoji_filter_chain({"overlays": emoji_overlays}, last, "vfinal", first_input=1)
+        for asset in assets:
+            cmd += ["-i", asset]
+            if asset not in STATE.plan_inputs:
+                STATE.plan_inputs.append(asset)
+        if eo:
+            chains += eo
+            last = "vfinal"
+        cmd += ["-filter_complex", ";".join(chains), "-map", f"[{last}]",
+                "-map", f"0:a:{args.audio_stream}?"]
+    elif fc:
         cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", f"0:a:{args.audio_stream}?"]
     else:
         cmd += ["-vf", ",".join(filters), "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
@@ -272,7 +502,13 @@ def main() -> int:
     dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {args.template})")
-    emit(output, template=args.template, dropped_non_av_streams=dropped_streams)
+    extra = {"template": args.template, "dropped_non_av_streams": dropped_streams,
+             "text_renderer": route, "script": _script}
+    if ass_path:
+        extra["ass"] = ass_path
+    if emoji_result:
+        extra["emoji"] = emoji_result
+    emit(output, **extra)
     return 0
 
 

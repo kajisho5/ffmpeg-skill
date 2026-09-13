@@ -17,8 +17,9 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.14.0**, evaluated by **eval 15** (`evals/results/iteration-15.json`,
-76 prompts at 1.14.0). Everything from 1.15.0 down is planned.
+The released version today is **1.15.0** (shipped, eval pending: eval 16 will grade it on the
+82-prompt set, the 76 plus the six emoji/shaping prompts). The last evaluated version is **1.14.0**,
+closed by **eval 15** (`evals/results/iteration-15.json`). Everything after 1.15.0 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -29,7 +30,8 @@ The released version today is **1.14.0**, evaluated by **eval 15** (`evals/resul
 | 1.12.0 | shipped + evaluated | eval 13 at 1.12.0 (`iteration-13.json`) |
 | 1.13.0 | shipped + evaluated | eval 14 at 1.13.0 (`iteration-14.json`) |
 | 1.14.0 | shipped + evaluated | eval 15 at 1.14.0 (`iteration-15.json`) |
-| 1.15.0 → 1.21.0, 2.0.0 | planned | — |
+| 1.15.0 | shipped, eval pending | eval 16 (planned) |
+| 1.16.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
@@ -200,21 +202,34 @@ encode because `export.py` ran without `--normalize` first.
 - Eval 15 on the delivery prompts (`dl1`–`dl8`), three repeats, measuring the encode count per
   delivery rather than pass/fail alone.
 
-## 1.15.0 — text that renders correctly everywhere (planned)
+## 1.15.0 — text people can see (shipped, eval pending)
 
-The defects eval 14 found in the text path, none of which changes a tool's surface:
+The defects eval 14 found in the text path. Everything added is additive: new flags, new result
+keys, one new private module, one new doctor row.
 
-- **Emoji and complex-script shaping for `graphics.py`**: Devanagari through `drawtext` comes
-  out wrong-shaped today even when the font covers it, while the same text through `caption.py`
-  (libass) is correct. `graphics.py` either draws its text through libass (an ASS overlay) or
-  refuses complex-script and emoji text on `drawtext` with a message naming `caption.py` — never
-  writes a wrongly shaped frame and calls it a success. Emoji fall under the same resolution
-  (a colour emoji font detected by `doctor`'s `fonts.scripts`).
-- **`'` and `%` survive a caption.** Both are filter-graph metacharacters; the escaping keeps
-  them in the drawn text instead of dropping or mangling them.
-- **No one-character orphan lines**: the measured wrap never leaves a single character alone on
-  a line (seen on `th1` and `dl3`), and prefers a break that keeps a phrase together.
-- Eval 16 re-runs the caption and graphics prompts in every script the set covers.
+- **Complex-script shaping for `graphics.py`.** The roadmap used to say "drawtext cannot shape";
+  the measurement says something narrower. On a build with `--enable-libfribidi`, drawtext gets
+  bidi and Arabic joining right — Arabic and Hebrew were already correct. What it cannot do on
+  any build is **reorder and re-cluster** (Devanagari matras, Thai/Lao mark stacking), because it
+  does not use harfbuzz even in an `--enable-libharfbuzz` build. `graphics.py --text-render auto`
+  therefore renders those scripts through libass (a generated `<output>_gfx.ass`, private helper
+  `scripts/_ass_overlay.py`) and reports `text_renderer: "ass"`; `--text-render drawtext` with
+  such a script is a refusal naming the script, never a wrongly shaped frame. Latin, CJK and
+  Arabic output is unchanged. `overlay.py --text` gets the refusal, and the route in 1.16.0.
+- **Emoji in captions and titles.** Colour emoji through drawtext is not available at all (a
+  CBDT/sbix face fails filter initialisation and writes no file), and an installed colour emoji
+  font proves nothing — Noto Color Emoji is present on the dev box and libass still renders
+  monochrome. So the colour route is a PNG overlay: `--emoji-assets DIR` (Twemoji/Noto PNGs named
+  by code point), the ASS reserving the gap and the PNG composited on top. `doctor --json`
+  `.fonts.emoji` answers what this machine can do, from a render probe. Nothing is downloaded.
+- **`'` and `%` survive.** `overlay.py --text` and `graphics.py`'s labels dropped both; drawn text
+  now goes to drawtext as `textfile=<path>:expansion=none`, so the graph parser never sees it.
+  (`caption.py` went through libass and was already correct; there is now a regression lock.)
+- **No one-character orphan lines**, and a balanced break for spaced scripts: the measured wrap
+  never leaves a single character alone on a line (`th1`, `dl3`) and prefers the break that
+  minimises the widest line (`dl1`).
+- Eval 16 re-runs the caption and graphics prompts in every script the set covers, plus six new
+  emoji/shaping prompts (`em1`–`em4`, `sh1`–`sh2`).
 
 ## Refactor release after 1.15.0 — no behaviour change (planned)
 

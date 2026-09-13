@@ -202,3 +202,34 @@ Each item is recorded here so it is not re-proposed from scratch.
   Windows, and an install reproduced by someone other than the maintainer) is still open. The
   README now says what is actually covered: the contract and test suite on Linux, macOS and
   Windows; the real-device media corpus on Linux and macOS; the Windows corpus open.
+
+## 1.15.0 — text people can see
+
+- **Colour emoji is a PNG overlay, not a font.** Two measurements, both on ffmpeg 6.1.1 with
+  Noto Color Emoji installed. (1) `drawtext` cannot use a colour emoji font *at all*: at
+  `fontsize=48` it fails filter initialisation with `Could not set font size to 48 pixels:
+  invalid library handle` → `Error initializing filters`, and at the font's only strike
+  (`fontsize=109`) with `Monocromatic (1bpp) fonts are not supported.` — no file is written
+  either way. That is a hard failure, not a degraded render, so drawtext must never be handed an
+  emoji font. (2) A colour emoji font being installed proves nothing about libass: the same
+  machine logs `Glyph 0x1F389 not found, broken font? Trying all charmaps` through `subtitles=`
+  and renders a monochrome outline from a fallback face. The only honest capability test is a
+  render probe (`doctor --json .fonts.emoji.libass_color`), and the only build-independent colour
+  path is a PNG composited over the text. Both error strings are quoted here so the font route is
+  not re-proposed.
+- **Emoji position comes from the same averaged em table the wrap uses**, not from parsing font
+  metrics and not from shelling out to a shaping library (there is no stdlib font parser, and a
+  dependency is out of scope). The consequence is stated rather than hidden: an emoji at the
+  start or end of a line is exact, and one in the middle of a Latin line is off by the accumulated
+  rounding of the characters before it — about 0.08 em per preceding character, a few pixels at
+  1080p. The overlay is clamped to the frame and the test asserts it stays inside the safe area.
+  The gap itself is exact: U+2588 FULL BLOCK was **measured**, not assumed, at 0.83 em (FreeSans),
+  0.79 (WenQuanYi Zen Hei) and 0.66 (DejaVu Sans, IPAPGothic, Loma), and figure spaces at
+  0.46–0.55 em, so neither reserves a whole em; an alpha-hidden zero-width space carrying
+  `\fsp<px>` reserves exactly the requested pixels in all five faces, including inside a karaoke
+  run.
+- **`graphics.py`'s ASS route is chosen per text, not globally.** The renderer switches only when
+  the text contains a script drawtext cannot shape, or an emoji overlay needs a reserved gap.
+  Latin, CJK and Arabic templates keep the exact drawtext filter graph 1.14.0 produced, so the
+  demos, the golden frames and every existing test do not move — and the new route carries no
+  risk for the 95 % of jobs that never needed it.

@@ -25,7 +25,7 @@ import sys
 from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
-from _common import STATE, script_font_for_text, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, script_font_for_text, drawtext_text_opts, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 
 # Per-edge margins: a platform's UI does not cover the same fraction of every edge (TikTok's
 # like column is 14 % of the width, its description block 22 % of the height), so a position
@@ -126,6 +126,15 @@ def main() -> int:
     txt.add_argument("--border", type=int, default=2, help="text outline width (default 2)")
     txt.add_argument("--border-color", default="black")
     txt.add_argument("--box", action="store_true", help="draw a translucent box behind the text")
+    emo = ap.add_argument_group("emoji (1.15)")
+    emo.add_argument("--emoji", choices=["auto", "color", "png", "mono", "none"], default="auto",
+                     help="how emoji in --text are drawn. overlay.py draws through drawtext, which cannot load "
+                          "a colour emoji font at all, so only 'mono'/'none' render here -- 'png'/'color' name "
+                          "caption.py/graphics.py instead")
+    emo.add_argument("--emoji-assets", metavar="DIR", help="directory of emoji PNGs named by code point "
+                                                           "(used by caption.py/graphics.py; overlay.py has no PNG route)")
+    emo.add_argument("--emoji-scale", type=float, default=1.0, help="emoji box as a multiple of the font size")
+    emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build")
     txt.add_argument("--box-color", default="black@0.5")
     enc = ap.add_argument_group("encoding")
     enc.add_argument("--crf", type=int, default=18)
@@ -154,6 +163,28 @@ def main() -> int:
             args.font = brand.get("font", args.font)
         if not args.font_file and brand.get("font_file"):
             args.font_file = brand["font_file"]
+    if args.text:
+        # 1.15: drawtext never reorders or re-clusters (no harfbuzz), so Devanagari matras and
+        # Thai/Lao mark stacking come out wrong on EVERY build. A wrong frame is not a delivery:
+        # refuse and name the two tools that render the script correctly through libass.
+        _sc = detect_script(args.text, getattr(args, "lang", None))
+        if needs_shaping(_sc):
+            die(f"{LANGUAGE_NAMES.get(_sc, _sc)} text cannot be shaped by drawtext on any ffmpeg build "
+                "(the marks are reordered by harfbuzz, which drawtext does not use): draw it with "
+                "caption.py (--text cues, burned through libass) or graphics.py (--template with "
+                "--text-render ass) instead", kind="input")
+        if has_emoji(args.text):
+            if args.emoji in ("png", "color"):
+                die(f"--emoji {args.emoji}: overlay.py draws text with drawtext, which cannot load a colour "
+                    "emoji font and cannot place a PNG inside a line -- use caption.py (--emoji-assets) for "
+                    "cues or graphics.py (--template) for a title card", kind="input")
+            if args.emoji == "none":
+                for _i, _cl in list(reversed(emoji_clusters(args.text))):
+                    args.text = args.text[:_i] + args.text[_i + len(_cl):]
+                info("emoji: stripped from the drawn text (--emoji none)")
+            else:
+                info("warning: emoji are drawn by the text font here (monochrome at best); "
+                     "caption.py/graphics.py composite colour PNGs with --emoji-assets")
     if args.text and not args.font_file:
         # 1.12: non-Latin overlay text picks a font by script, so a title in Japanese, Korean,
         # Arabic ... draws glyphs instead of boxes. drawtext does not shape or reorder RTL text --
@@ -276,7 +307,9 @@ def main() -> int:
             cmd += ["-shortest"]
     else:
         x, y = position_exprs(args.position, args.margin, text_mode=True, margins=safe_margins)
-        opts = [f"text='{escape_drawtext(args.text)}'", f"fontsize={args.font_size}", f"x={x}", f"y={y}",
+        # 1.15: the text goes in a FILE with expansion off, so `'` and `%` survive verbatim
+        # (they used to be dropped by escape_drawtext) and no character can reach the graph parser.
+        opts = [drawtext_text_opts(args.text), f"fontsize={args.font_size}", f"x={x}", f"y={y}",
                 f"borderw={args.border}", f"bordercolor={args.border_color}"]
         if args.font_file:
             opts.append(f"fontfile={escape_filter_path(args.font_file)}")

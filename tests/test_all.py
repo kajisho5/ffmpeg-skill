@@ -2991,24 +2991,23 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(parsed[0][2], "Hello there", "the broken timestamp text must not leak into the caption")
 
     def test_drawtext_semicolon_and_quote_render_as_inert_literal_text(self):
-        """escape_drawtext() (shared by overlay.py --text, graphics.py/overlay.py's --font
-        fallback, and grid.py's filename-derived labels) had two more gaps beyond the comma/colon/
-        bracket class fixed in 0.15.2/0.15.3: (1) an unescaped ';' -- ffmpeg's graph parser splits
-        a filterchain there exactly like an unescaped ',' does, confirmed with the minimal repro
-        `--text "a'b;c"` crashing real ffmpeg with "No such filter: 'c...'" on the unpatched code;
-        (2) the quote character itself has no backslash escape that survives every call shape --
-        both `\\'` and the POSIX `'\\''` close-insert-reopen trick corrupt a -filter_complex chain
-        that uses explicit [label] pads (confirmed by rendering: trailing option text like
-        "fontfile=...:fontsize=..." leaks into the picture as literal burnt-in text instead of
-        being parsed as options), even though the same escape works fine in a simple -vf chain.
-        Render a text containing both a quote and a semicolon and confirm it appears verbatim
-        (minus the dropped quote) with nothing named after it leaking into the frame."""
+        """Before 1.15 this text went inline into the filtergraph, where two characters had no
+        escape that survives every call shape: ';' splits a filterchain exactly like ',', and the
+        quote corrupts a -filter_complex chain that uses explicit [label] pads (trailing option
+        text leaked into the picture as burnt-in literal text). The old fix dropped the quote and
+        escaped the semicolon. 1.15 removes the whole class: the drawn text is handed to drawtext
+        as `textfile=<path>:expansion=none`, so the graph parser never sees it -- the quote is now
+        KEPT, and nothing can leak into the options. Assert the new route, not the old escape."""
         out = OUT / "semicolon_quote.mp4"
-        proc = script("overlay.py", self.src, "--text", "a'b;c", "-o", out)
-        # The quote is dropped (a'b -> ab) and the semicolon escaped, then the value must close
-        # cleanly right where the template's own quote closes it -- ":fontsize=" must follow
-        # immediately, not somewhere downstream after leaked option text.
-        self.assertIn("ab\\;c'\\'':fontsize", proc.stderr, "value must render as 'ab;c' and close cleanly into :fontsize=, no leakage")
+        doc = json.loads(script("overlay.py", self.src, "--text", "a'b;c", "-o", out, "--json").stdout)
+        graph = " ".join(doc["commands"])
+        m = re.search(r"textfile=(\S+?\.txt)", graph.replace("\\", ""))
+        self.assertTrue(m, "drawn text must go through textfile=, not inline: " + graph)
+        self.assertIn("expansion=none", graph)
+        self.assertNotIn("a\\;c", graph, "no inline escaped copy of the text may remain in the graph")
+        self.assertEqual(Path(m.group(1)).read_text(encoding="utf-8"), "a'b;c",
+                         "both the quote and the semicolon must reach drawtext verbatim")
+        self.assertEqual(doc["status"], "completed")
         frame = OUT / "semicolon_quote_frame.png"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-vframes", "1", frame)
         self.assertTrue(frame.exists())
@@ -4911,6 +4910,419 @@ class DemoGalleryTests(unittest.TestCase):
             self.assertIn(f"scripts/{script} ", commands + " ",
                           f"no demo in demos/build.py runs {script}: add one (a before/after "
                           f"demo) or, if it only ever prints a table, add it to INSPECTION")
+
+
+# ---------------------------------------------------------------------------- emoji + shaping (1.15)
+def _emoji_assets(names=("1f389", "1f44d", "1f1ef-1f1f5", "1f469-200d-1f4bb")):
+    """A directory of placeholder emoji PNGs drawn by ffmpeg at run time.
+
+    The package ships no emoji art on purpose: Twemoji is CC-BY 4.0 and Noto Emoji OFL/Apache-2.0,
+    and a test does not need to redistribute either. What --emoji-assets actually requires is the
+    NAMING (lowercase hex code points joined by '-'), which a coloured square proves exactly as
+    well as a real glyph.
+    """
+    d = OUT / "emoji_assets"
+    d.mkdir(parents=True, exist_ok=True)
+    for i, name in enumerate(names):
+        path = d / (name + ".png")
+        if not path.exists():
+            colour = ("orange", "gold", "tomato", "limegreen")[i % 4]
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "color=c=%s:s=72x72:d=0.04" % colour, "-vf", "format=rgba",
+               "-frames:v", "1", str(path))
+    return d
+
+
+class EmojiTests(unittest.TestCase):
+    """1.15: emoji are detected as clusters, measured at a full em, reserved in the ASS and
+    composited as PNGs -- and every degraded path says so instead of lying."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "emoji_src.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+               "-t", "4", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", str(cls.src))
+        cls.cues = OUT / "cues_emoji.txt"
+        cls.cues.write_text("0:00-0:02 Hello \U0001F389 world\n0:02-0:04 Nice \U0001F44D job\n",
+                            encoding="utf-8")
+
+    def test_emoji_cluster_detection_keeps_zwj_and_skin_tone_sequences_together(self):
+        from _common import emoji_clusters, emoji_codepoint_name, has_emoji
+        text = "\u3084\u3063\u305f \U0001F389 \U0001F469\u200d\U0001F4BB \U0001F1EF\U0001F1F5 \U0001F44D\U0001F3FD 1\ufe0f\u20e3"
+        names = [emoji_codepoint_name(cl) for _i, cl in emoji_clusters(text)]
+        self.assertEqual(names, ["1f389", "1f469-200d-1f4bb", "1f1ef-1f1f5", "1f44d-1f3fd", "31-fe0f-20e3"])
+        self.assertTrue(has_emoji(text))
+        self.assertFalse(has_emoji("plain ascii"))
+
+    def test_emoji_is_orthogonal_to_the_writing_system(self):
+        """A cue can be Japanese AND emoji: adding an "emoji" script would corrupt the font
+        resolution for the rest of the line."""
+        self.assertEqual(detect_script("\u3084\u3063\u305f \U0001F389"), "ja")
+        self.assertEqual(detect_script("Hello \U0001F389"), "latin")
+
+    def test_caption_wrap_counts_an_emoji_as_a_full_width_atom(self):
+        from _common import text_width_em
+        import importlib, sys as _s
+        _s.path.insert(0, str(SCRIPTS))
+        caption = importlib.import_module("caption")
+        self.assertAlmostEqual(text_width_em("\U0001F389"), 1.0, places=6)
+        self.assertAlmostEqual(text_width_em("\U0001F389", 1.5), 1.5, places=6)
+        # a wrap never breaks inside a cluster
+        lines = caption.wrap_text("aaa \U0001F469\u200d\U0001F4BB bbb", 3.0)
+        self.assertIn("\U0001F469\u200d\U0001F4BB", lines)
+        for line in lines:
+            self.assertNotEqual(line, "\U0001F469")
+
+    def _plan(self, *extra):
+        out = OUT / "emoji_out.mp4"
+        proc = script("caption.py", self.src, "--text", self.cues, "-o", out,
+                      "--dry-run", "--json", *extra)
+        return json.loads(proc.stdout)
+
+    def test_caption_emoji_overlay_places_one_png_per_cluster_inside_the_safe_area(self):
+        doc = self._plan("--emoji-assets", _emoji_assets())
+        self.assertEqual(doc["emoji"]["mode"], "png")
+        self.assertEqual(doc["emoji"]["overlays"], 2)
+        graph = [c for c in doc["commands"] if "overlay=" in c][-1]
+        overlays = re.findall(r"overlay=x=(\d+):y=(\d+):enable=\D*?between\(t,([\d.]+),([\d.]+)\)", graph)
+        self.assertEqual(len(overlays), 2, graph)
+        for x, y, start, end in overlays:
+            x, y = int(x), int(y)
+            self.assertTrue(0.05 * 640 <= x <= 0.95 * 640, f"x={x} outside the safe area")
+            self.assertTrue(0.05 * 360 <= y <= 0.95 * 360, f"y={y} outside the safe area")
+            self.assertLess(float(start), float(end))
+        self.assertEqual([(o[2], o[3]) for o in overlays], [("0.000", "2.000"), ("2.000", "4.000")])
+
+    def test_caption_emoji_placeholder_reserves_the_gap_in_the_generated_ass(self):
+        out = OUT / "emoji_ass.mp4"
+        script("caption.py", self.src, "--text", self.cues, "-o", out,
+               "--emoji-assets", _emoji_assets())
+        ass = (OUT / "emoji_ass.ass").read_text(encoding="utf-8-sig")
+        dialogue = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
+        self.assertTrue(dialogue)
+        for line in dialogue:
+            self.assertIn("\\alpha&HFF&", line)
+            self.assertNotIn("\U0001F389", line, "the raw code point must not reach the drawn text")
+            self.assertNotIn("\U0001F44D", line)
+
+    def test_the_emoji_placeholder_reserves_exactly_the_box_it_asks_for(self):
+        """The reservation is measured, not assumed: U+2588 is 0.66-0.83 em depending on the face,
+        so the gap is reserved with alpha-hidden \\fsp spacing, which is exact in every face."""
+        from _ass_overlay import emoji_placeholder
+        families = ["FreeSans", "DejaVu Sans", "IPAPGothic", "WenQuanYi Zen Hei", "Loma"]
+        tested = 0
+        for family in families:
+            if not _family_installed(family):
+                continue
+            tested += 1
+            base = _ass_advance(family, "|")
+            with_gap = _ass_advance(family, emoji_placeholder(60) + "|")
+            if base is None or with_gap is None:
+                self.skipTest("libass render probe produced no ink here")
+            self.assertAlmostEqual(with_gap - base, 60, delta=2,
+                                   msg=f"{family}: reserved {with_gap - base}px, asked for 60")
+        if not tested:
+            self.skipTest("none of the measured families is installed here")
+
+    def test_caption_emoji_without_assets_is_a_warning_not_a_failure(self):
+        from _common import emoji_support
+        support = emoji_support(probe=True)
+        if support["mode"] not in ("mono", "none"):
+            self.skipTest("this machine has a colour emoji path; the degraded branch cannot be exercised")
+        out = OUT / "emoji_mono.mp4"
+        proc = script("caption.py", self.src, "--text", self.cues, "-o", out, "--json")
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertEqual(doc["emoji"]["mode"], support["mode"])
+        if support["mode"] == "mono":
+            self.assertIn("monochrome", proc.stderr + proc.stdout)
+            self.assertTrue(any("monochrome" in n for n in doc.get("notes", [])), doc.get("notes"))
+
+    def test_emoji_assets_directory_that_does_not_exist_is_a_failed_job(self):
+        out = OUT / "emoji_missing.mp4"
+        proc = script("caption.py", self.src, "--text", self.cues, "-o", out, "--json",
+                      "--emoji-assets", str(OUT / "no_such_emoji_dir"), expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("twemoji", doc["error"]["message"].lower())
+        self.assertIn("no network", doc["error"]["message"].lower())
+
+    def test_the_skill_never_fetches_an_emoji_asset(self):
+        """Mirror of the existing no-network assertions: nothing on the emoji path may import a
+        network module, and no tool offers a download flag for one."""
+        import _common
+        source = Path(_common.__file__).read_text(encoding="utf-8")
+        for banned in ("urllib", "http.client", "requests", "socket."):
+            self.assertNotIn(banned, source, f"{banned} is reachable from the emoji path")
+        for tool in ("caption.py", "graphics.py", "overlay.py"):
+            helptext = script(tool, "--help").stdout.lower()
+            self.assertNotIn("--emoji-download", helptext)
+            self.assertNotIn("download", helptext.split("--emoji")[-1][:400])
+
+    def test_caption_emoji_overlay_is_capped(self):
+        many = OUT / "cues_many_emoji.txt"
+        many.write_text("".join("0:0%d-0:0%d %s\n" % (i, i + 1, "\U0001F389" * 9)
+                                for i in range(0, 8)), encoding="utf-8")
+        out = OUT / "emoji_capped.mp4"
+        proc = script("caption.py", self.src, "--text", many, "-o", out, "--json", "--dry-run",
+                      "--emoji-assets", _emoji_assets(), "--emoji-max", "4", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("--emoji-max", doc["error"]["message"])
+
+    def test_graphics_all_emoji_title_without_a_glyph_is_a_failed_job(self):
+        out = OUT / "emoji_title.mp4"
+        proc = script("graphics.py", self.src, "--template", "title", "--title", "\U0001F389",
+                      "--start", "0", "--end", "2", "--emoji", "none", "-o", out, "--json",
+                      expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("blank", doc["error"]["message"])
+
+    def test_overlay_text_refuses_the_png_emoji_route_and_names_the_tools_that_have_one(self):
+        out = OUT / "emoji_overlay.mp4"
+        proc = script("overlay.py", self.src, "--text", "Ship it \U0001F680", "--emoji", "png",
+                      "-o", out, "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("caption.py", doc["error"]["message"])
+        self.assertIn("graphics.py", doc["error"]["message"])
+
+
+def _family_installed(family):
+    if not shutil.which("fc-list"):
+        return False
+    proc = subprocess.run(["fc-list", ":family=%s" % family, "file"], stdout=subprocess.PIPE, text=True)
+    return bool(proc.stdout.strip())
+
+
+def _ass_advance(family, body):
+    """x of the rightmost lit pixel of a left-anchored one-line ASS render, or None."""
+    W, H, FS = 900, 140, 60
+    path = OUT / "advance.ass"
+    path.write_text(
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: %d\nPlayResY: %d\nWrapStyle: 2\n\n"
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, "
+        "Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: D,%s,%d,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:05.00,D,,0,0,0,,{\\pos(0,0)}%s\n" % (W, H, family, FS, body),
+        encoding="utf-8-sig")
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=%dx%d:d=0.04" % (W, H),
+         "-vf", "ass=%s" % str(path).replace("\\", "/"), "-frames:v", "1",
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    data = proc.stdout
+    if proc.returncode != 0 or len(data) < W * H:
+        return None
+    for x in range(W - 1, -1, -1):
+        if any(data[y * W + x] > 60 for y in range(H)):
+            return x
+    return None
+
+
+class ShapingTests(unittest.TestCase):
+    """1.15: drawtext does bidi and Arabic joining on a fribidi build but never reorders or
+    re-clusters. graphics.py routes what it cannot shape through libass; overlay.py refuses."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "emoji_src.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "4",
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(cls.src))
+
+    def _skip_without(self, script_code):
+        from _common import script_font_status
+        if script_font_status(script_code) != "available":
+            raise unittest.SkipTest("no font on this machine covers %r; tests never install fonts"
+                                    % script_code)
+
+    def test_graphics_devanagari_renders_through_libass_not_drawtext(self):
+        self._skip_without("hi")
+        out = OUT / "shape_hi.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "lower-third",
+                                "--name", "\u092a\u094d\u0930\u093f\u092f\u093e \u0936\u0930\u094d\u092e\u093e",
+                                "--title", "\u0928\u093f\u0930\u094d\u0926\u0947\u0936\u0915",
+                                "--start", "0", "--end", "3", "-o", out, "--dry-run", "--json").stdout)
+        self.assertEqual(doc["text_renderer"], "ass")
+        self.assertEqual(doc["script"], "hi")
+        graph = " ".join(doc["commands"])
+        self.assertIn("ass=", graph)
+        self.assertNotIn("drawtext=", graph, "the text must not also go through drawtext")
+
+    def test_graphics_latin_still_renders_through_drawtext(self):
+        out = OUT / "shape_latin.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "title",
+                                "--title", "Episode 12", "--start", "0", "--end", "3",
+                                "-o", out, "--dry-run", "--json").stdout)
+        self.assertEqual(doc["text_renderer"], "drawtext")
+        self.assertNotIn("ass", doc)
+        self.assertIn("drawtext=", " ".join(doc["commands"]))
+
+    def test_graphics_drawtext_forced_with_an_indic_script_is_refused_naming_the_script(self):
+        self._skip_without("hi")
+        out = OUT / "shape_refuse.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "title",
+                                "--title", "\u0915\u093f\u0924\u093e\u092c", "--start", "0", "--end", "3",
+                                "--text-render", "drawtext", "-o", out, "--json",
+                                expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("Devanagari", doc["error"]["message"])
+        self.assertIn("harfbuzz", doc["error"]["message"])
+
+    def test_graphics_arabic_is_not_rerouted_on_a_fribidi_build(self):
+        from _common import drawtext_shaping
+        if not drawtext_shaping()["fribidi"]:
+            raise unittest.SkipTest("this ffmpeg has no fribidi: Arabic legitimately needs the ASS route")
+        self._skip_without("ar")
+        out = OUT / "shape_ar.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "title",
+                                "--title", "\u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645",
+                                "--start", "0", "--end", "3", "-o", out, "--dry-run", "--json").stdout)
+        self.assertEqual(doc["text_renderer"], "drawtext")
+
+    def test_graphics_font_file_override_survives_the_ass_route(self):
+        self._skip_without("hi")
+        font = font_for_script("hi")
+        out = OUT / "shape_fontfile.mp4"
+        proc = script("graphics.py", self.src, "--template", "title", "--title",
+                      "\u0915\u093f\u0924\u093e\u092c", "--start", "0", "--end", "3",
+                      "--font-file", font, "-o", out, "--json")
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["text_renderer"], "ass")
+        self.assertIn("fontsdir=", " ".join(doc["commands"]))
+        from _common import font_family_of_file
+        family = font_family_of_file(font)
+        ass = Path(doc["ass"]).read_text(encoding="utf-8-sig")
+        self.assertIn(family, ass, "the --font-file's own family must reach the ASS Style line")
+
+    def test_overlay_text_refuses_a_shaping_script_naming_the_tools_that_render_it(self):
+        out = OUT / "shape_overlay.mp4"
+        doc = json.loads(script("overlay.py", self.src, "--text", "\u0915\u093f\u0924\u093e\u092c",
+                                "-o", out, "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("caption.py", doc["error"]["message"])
+        self.assertIn("graphics.py", doc["error"]["message"])
+
+
+class ApostropheAndPercentTests(unittest.TestCase):
+    """1.15: `'` and `%` reach the picture. They used to be dropped outright by escape_drawtext."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "emoji_src.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "4",
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(cls.src))
+
+    def test_drawtext_keeps_an_apostrophe_and_a_percent_sign(self):
+        out = OUT / "pct_overlay.mp4"
+        doc = json.loads(script("overlay.py", self.src, "--text", "it's 100% done",
+                                "-o", out, "--json").stdout)
+        graph = " ".join(doc["commands"])
+        m = re.search(r"textfile=(\S+?\.txt)", graph.replace("\\", ""))
+        self.assertTrue(m, graph)
+        self.assertIn("expansion=none", graph)
+        self.assertEqual(Path(m.group(1)).read_text(encoding="utf-8"), "it's 100% done")
+        self.assertEqual(doc["status"], "completed")
+        # the drawn ink differs from the same render with the two characters stripped
+        stripped = OUT / "pct_overlay_stripped.mp4"
+        script("overlay.py", self.src, "--text", "its 100 done", "-o", stripped)
+        self.assertNotEqual(_frame_ink(out), _frame_ink(stripped),
+                            "the apostrophe and the percent sign left no ink on the frame")
+
+    def test_caption_keeps_apostrophe_and_percent_in_the_drawn_text(self):
+        cues = OUT / "cues_pct.txt"
+        cues.write_text("0:00-0:02 it's 100% done\n", encoding="utf-8")
+        out = OUT / "pct_caption.mp4"
+        script("caption.py", self.src, "--text", cues, "--animate", "fade", "-o", out)
+        srt = (OUT / "pct_caption.srt").read_text(encoding="utf-8")
+        ass = (OUT / "pct_caption.ass").read_text(encoding="utf-8-sig")
+        self.assertIn("it's 100% done", srt)
+        self.assertIn("it's 100% done", ass)
+
+
+def _frame_ink(path):
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ss", "1", "-frames:v", "1",
+                           "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE)
+    return sum(proc.stdout)
+
+
+class WrapReadabilityTests(unittest.TestCase):
+    """1.15: no one-character orphan line, and a balanced break for spaced scripts."""
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        self.caption = importlib.import_module("caption")
+
+    def test_caption_wrap_never_leaves_a_one_character_orphan_line(self):
+        C = self.caption
+        cases = [
+            # th1's Thai cue and dl3's Japanese cue, at sizes where greedy wrapping stranded one character
+            ("\u0e1a\u0e23\u0e23\u0e17\u0e31\u0e14\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e02\u0e2d\u0e07\u0e04\u0e33\u0e1a\u0e23\u0e23\u0e22\u0e32\u0e22 "
+             "\u0e1a\u0e23\u0e23\u0e17\u0e31\u0e14\u0e19\u0e35\u0e49\u0e15\u0e31\u0e49\u0e07\u0e40\u0e27\u0e25\u0e32\u0e43\u0e2b\u0e49\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34", 8),
+            ("\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c 2 \u884c\u76ee\u306e\u5b57\u5e55\u3067\u3059 "
+             "\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c", 10),
+            ("\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c 2 \u884c\u76ee\u306e\u5b57\u5e55\u3067\u3059 "
+             "\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c", 29),
+        ]
+        for text, max_em in cases:
+            with self.subTest(max_em=max_em):
+                greedy = C.wrap_text(text, max_em, balance=False)
+                self.assertTrue(len(C._atoms(greedy[-1])) == 1 and C.text_width_em(greedy[-1]) < C.ORPHAN_MIN_EM,
+                                "the case no longer reproduces greedily: %r" % greedy)
+                lines = C.wrap_text(text, max_em)
+                self.assertGreater(C.text_width_em(lines[-1]), C.ORPHAN_MIN_EM, lines)
+                for line in lines:
+                    self.assertLessEqual(C.text_width_em(line), max_em, lines)
+                self.assertEqual("".join(lines).replace(" ", ""), "".join(greedy).replace(" ", ""))
+
+    def test_caption_wrap_prefers_a_balanced_break_for_latin(self):
+        C = self.caption
+        text = "A third line the tool times for me"
+        greedy = C.wrap_text(text, 14, balance=False)
+        balanced = C.wrap_text(text, 14)
+        self.assertEqual(len(greedy), len(balanced))
+        self.assertLessEqual(max(C.text_width_em(l) for l in balanced),
+                             max(C.text_width_em(l) for l in greedy))
+        self.assertEqual(" ".join(balanced), text)
+        self.assertNotEqual(greedy, balanced, "dl1's break did not move")
+
+    def test_caption_wrap_rebalance_never_changes_the_line_count(self):
+        C = self.caption
+        samples = ["A third line the tool times for me",
+                   "Hello world", "one two three four five six seven eight nine ten",
+                   "\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c\u306e\u5b57\u5e55\u3067\u3059",
+                   "Shipping day \U0001F389 for everyone here"]
+        for text in samples:
+            for max_em in range(4, 30):
+                with self.subTest(text=text[:12], max_em=max_em):
+                    self.assertEqual(len(C.wrap_text(text, max_em)),
+                                     len(C.wrap_text(text, max_em, balance=False)))
 
 
 def _families_for(script):

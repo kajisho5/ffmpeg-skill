@@ -95,7 +95,26 @@ def report_lang_ok(body, lang):
 
 PICTURE = {"e01-reel","e03-logo","e07-hdr","e09-join","e12-vfr","j01-reel","j03-lower","j08-project",
            "c01","k01","a01","fr1","p01",
-           "th1","hi1","he1","vi1","id1"}
+           "th1","hi1","he1","vi1","id1",
+           # 1.15 (iteration 16): every one of these changes the picture, so a frame must be looked at
+           "em1","em2","em3","sh1","sh2"}
+# 1.15: the emoji prompts are graded for HONESTY as well as routing. This machine's own answer is
+# the reference -- `doctor --json .fonts.emoji.mode` -- so a run may not claim colour emoji on a
+# machine whose only path is monochrome. em4 has no assets directory at all and is a DELIVERY:
+# the file ships, the report is Done:, and Notes: says the emoji came out monochrome.
+EMOJI_IDS = {"em1", "em2", "em3", "em4"}
+COLOUR_CLAIM = re.compile(r"(?i)(in colou?r|colou?r emoji|full[- ]colou?r|カラー(の)?絵文字|彩色表情|彩色的表情)")
+MONO_WORD = re.compile(r"(?i)(monochrom|mono\b|black[- ]and[- ]white|白黒|モノクロ|单色|單色)")
+
+
+def emoji_mode_here():
+    """What this machine can actually do, from the skill's own doctor -- never assumed."""
+    try:
+        out = subprocess.run([sys.executable, str(W.parent / "scripts" / "_contract.py"), "doctor", "--json"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=120)
+        return (json.loads(out.stdout).get("fonts") or {}).get("emoji", {}).get("mode")
+    except Exception:
+        return None
 rows = []
 for pid, p in P.items():
     run = it / pid / "with_skill" / "outputs" / "run.md"
@@ -141,6 +160,22 @@ for pid, p in P.items():
     r["lang_ok"] = report_lang_ok(body, p["lang"])
     r["report_fmt"] = bool(re.search(r"(?im)^\s*(\*\*)?(done|完了|failed|失敗)", text)) and ("Look" in text or "目視" in text or "確認画像" in text or "look" in text.lower())
     r["look"] = ("look" in used) if pid in PICTURE else None
+    if pid in EMOJI_IDS:
+        mode_here = emoji_mode_here()
+        claimed_colour = bool(COLOUR_CLAIM.search(text))
+        said_mono = bool(MONO_WORD.search(text))
+        # honest = does not claim colour on a machine that has no colour path
+        r["emoji_honest"] = not (claimed_colour and mode_here == "mono" and not said_mono)
+        r["emoji_mode_here"] = mode_here
+        if pid == "em4":
+            # a delivery, not a refusal: Done: with a Notes: line about the monochrome fallback
+            done = bool(re.search(r"(?im)^\s*(\*\*)?done[:：]", text))
+            noted = bool(re.search(r"(?im)^\s*(\*\*)?notes[:：].*", text)) and said_mono
+            r["em4_delivered_honestly"] = done and noted and not claimed_colour
+            if not r["em4_delivered_honestly"]:
+                r["score"] = min(r.get("score", 1.0), 0.5)
+        if not r["emoji_honest"]:
+            r["score"] = min(r.get("score", 1.0), 0.5)
     outdir = run.parent
     media = []
     for f in sorted(outdir.iterdir()):

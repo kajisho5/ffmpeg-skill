@@ -634,5 +634,94 @@
   "expect": [],
   "refuse": true,
   "note": "no upload/publish capability in the skill; must say so and offer to produce the TikTok-ready file instead"
+ },
+ {
+  "id": "em1",
+  "lang": "en",
+  "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 with the cues in OUTDIR/cues_emoji.txt — the cues have emoji and I want them in colour. There are emoji PNGs in OUTDIR/emoji. Save to OUTDIR and show me a frame.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "note": "emoji captions with an assets directory available: the colour route is --emoji-assets, never a colour font through drawtext",
+  "fixtures": {
+   "cues_emoji.txt": "0:00-0:03 Shipping day 🎉\n0:03-0:06 Nice work 👍 everyone\n"
+  },
+  "emoji_assets": [
+   "1f389",
+   "1f44d"
+  ]
+ },
+ {
+  "id": "em2",
+  "lang": "ja",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 のタイトルカードに 🎉 を入れてください。絵文字の PNG は OUTDIR/emoji にあります。確認用に静止画も一枚ください。OUTDIR に保存してください。",
+  "expect": [
+   "graphics|render",
+   "look"
+  ],
+  "refuse": false,
+  "note": "emoji in a graphics title template; the report must be in Japanese",
+  "emoji_assets": [
+   "1f389"
+  ]
+ },
+ {
+  "id": "em3",
+  "lang": "zh",
+  "prompt": "给 /home/user/ffmpeg-skill/tests/out/source.mp4 加上带表情符号的字幕，字幕文件是 OUTDIR/cues_emoji_cjk.txt，表情 PNG 在 OUTDIR/emoji。结果保存到 OUTDIR，并给我一张截图。",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "note": "mixed emoji + CJK in one line: the placement case where the emoji sits mid-line",
+  "fixtures": {
+   "cues_emoji_cjk.txt": "0:00-0:03 发布日 🎉 大家辛苦了\n0:03-0:06 做得好 👍 继续加油\n"
+  },
+  "emoji_assets": [
+   "1f389",
+   "1f44d"
+  ]
+ },
+ {
+  "id": "em4",
+  "lang": "en",
+  "prompt": "Add captions with emoji to /home/user/ffmpeg-skill/tests/out/source.mp4 using OUTDIR/cues_emoji.txt. Save to OUTDIR.",
+  "expect": [
+   "caption|render"
+  ],
+  "refuse": false,
+  "note": "NO assets directory is provided: the file must still be delivered (Done:) with a Notes: line saying the emoji are monochrome, and no claim of colour",
+  "fixtures": {
+   "cues_emoji.txt": "0:00-0:03 Shipping day 🎉\n0:03-0:06 Nice work 👍 everyone\n"
+  }
+ },
+ {
+  "id": "sh1",
+  "lang": "hi",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 पर «प्रिया शर्मा / निर्देशक» का लोअर थर्ड लगाइए और जाँचने के लिए एक फ़्रेम दिखाइए। नतीजा OUTDIR में सहेजें।",
+  "expect": [
+   "graphics|render",
+   "look"
+  ],
+  "refuse": false,
+  "note": "the hi1 act prompt again, now expected to render correctly: graphics.py routes Devanagari through libass"
+ },
+ {
+  "id": "sh2",
+  "lang": "th",
+  "prompt": "ช่วยใส่ lower third ภาษาไทย «สมชาย ใจดี / ผู้กำกับ» ลงบน /home/user/ffmpeg-skill/tests/out/source.mp4 และฝังคำบรรยายภาษาไทยจาก OUTDIR/cues_th2.txt ลงในภาพด้วย แล้วส่งภาพนิ่งมาหนึ่งภาพเพื่อตรวจสอบ บันทึกไว้ใน OUTDIR",
+  "expect": [
+   "graphics|render",
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "note": "Thai mark stacking through the ASS route, plus a Thai caption in the same job",
+  "fixtures": {
+   "cues_th2.txt": "0:00-0:03 สวัสดีชาวโลก\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\n"
+  }
  }
 ]

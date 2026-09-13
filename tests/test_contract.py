@@ -2657,7 +2657,7 @@ class DoctorDetectionTests(unittest.TestCase):
         d = json.loads(proc.stdout)
         expected = {s for s in DETECTED_SCRIPTS if s != "latin"}
         self.assertEqual(set(d["fonts"]["scripts"]), expected)
-        self.assertEqual(len(expected), 9, "ja zh ko ar he hi th ru el")
+        self.assertEqual(len(expected), 12, "ja zh ko ar he hi bn ta th lo ru el (bn/ta/lo added in 1.15)")
         for name, entry in d["fonts"]["scripts"].items():
             with self.subTest(script=name):
                 self.assertIn(entry["status"], ("available", "missing", "unknown"))
@@ -2682,6 +2682,76 @@ class DoctorDetectionTests(unittest.TestCase):
             if entry["status"] == "missing":
                 self.assertIn(name, font_lines[0])
             self.assertNotIn(str(entry["file"]), font_lines[0], "file paths belong in --json, not the summary")
+        # 1.15: the emoji row adds at most one clause to the same line, and no second line
+        self.assertIn("emoji", font_lines[0])
+        self.assertLessEqual(len(font_lines[0]), 200, font_lines[0])
+        self.assertNotIn("\n", font_lines[0])
+
+    def test_doctor_reports_an_emoji_row_under_fonts(self):
+        """1.15: `fonts.emoji` answers "can this machine draw an emoji, and in colour" -- a
+        question no filter or font capability asks."""
+        d = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", check=False).stdout)
+        emoji = d["fonts"]["emoji"]
+        self.assertEqual(set(emoji), {"mode", "color_font", "color_font_file", "libass_color",
+                                      "assets", "detail", "fix"})
+        self.assertIn(emoji["mode"], ("color", "png", "mono", "none"))
+        self.assertIn(emoji["libass_color"], (True, False, None))
+        self.assertTrue(emoji["detail"])
+        self.assertIn("--emoji-assets", emoji["fix"])
+        if emoji["color_font_file"]:
+            self.assertTrue(os.path.exists(emoji["color_font_file"]), emoji)
+        # an installed colour emoji family is never on its own a claim of colour
+        if emoji["color_font"] and emoji["libass_color"] is not True:
+            self.assertNotEqual(emoji["mode"], "color")
+
+    def test_emoji_capability_is_informational_like_gpu_encoders(self):
+        """A machine that cannot draw colour emoji is not a broken install: `fonts.emoji` must
+        never move `ok` or any tool's `usable`."""
+        d = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", check=False).stdout)
+        self.assertTrue(d["ok"] or d["missing"] or d["unknown"],
+                        "ok went false with nothing missing -- the emoji row must be informational")
+        for name, tool in d["tools"].items():
+            with self.subTest(tool=name):
+                for cap in tool.get("missing", []) + tool.get("unknown", []):
+                    self.assertNotIn("emoji", cap)
+        self.assertNotIn("emoji", " ".join(d["available"] + d["missing"] + d["missing_optional"] + d["unknown"]))
+
+    def test_doctor_static_skips_the_emoji_render_probe(self):
+        """The probe is a real ffmpeg render (~80 ms). Every static/JSON-only path must skip it the
+        way it skips the rest of the environment detection, and say `null` rather than `false`."""
+        static = _contract.doctor(detect=False)
+        self.assertIsNone(static["fonts"]["emoji"]["libass_color"])
+        self.assertNotEqual(static["fonts"]["emoji"]["mode"], "color",
+                            "an unprobed machine must never be reported as colour-capable")
+        out = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static", check=False).stdout
+        doc = json.loads(out)
+        self.assertNotIn("available", doc["capabilities"], "--static ran detection")
+        self.assertNotIn("fonts", doc.get("capabilities", {}))
+
+    def test_emoji_support_answers_png_or_none_without_fontconfig(self):
+        """A static ffmpeg build usually has no fontconfig at all. That is not evidence that this
+        machine cannot draw emoji -- the PNG overlay path needs no fontconfig -- so the answer must
+        never be a claim of `color`, and its detail must name the missing fontconfig."""
+        import _common
+        _common._EMOJI_SUPPORT_CACHE.clear()
+        real_which = shutil.which
+        try:
+            _common.shutil.which = lambda name: None if name in ("fc-list", "fc-scan", "fc-match", "ffmpeg") else real_which(name)
+            support = _common.emoji_support(probe=True)
+        finally:
+            _common.shutil.which = real_which
+            _common._EMOJI_SUPPORT_CACHE.clear()
+        self.assertIn(support["mode"], ("png", "none"))
+        self.assertIsNone(support["color_font"])
+        self.assertIn("fontconfig", support["detail"])
+
+    def test_skill_md_stays_under_the_30kb_budget(self):
+        """SKILL.md is loaded into every session: the 30 000-byte budget was a convention in
+        CONTRIBUTING.md, which is how it got to 51 free bytes. Now it is a test."""
+        size = (ROOT / "SKILL.md").stat().st_size
+        self.assertLess(size, 30_000,
+                        f"SKILL.md is {size} bytes, {size - 30_000} over the 30,000-byte budget -- "
+                        "trim a line rather than raising the limit (see CONTRIBUTING.md)")
 
     def test_font_fix_hint_names_the_language_and_how_to_install_one(self):
         hint = _contract._capability_fix_hint("font:ko")

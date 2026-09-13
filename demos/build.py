@@ -229,6 +229,10 @@ def build_fixtures(force=False):
                         "0:02-0:04 الترجمة محروقة عبر libass",
                         "0:04-0:06 بلا سحابة وبلا مفاتيح",
                         "0:06-0:08 يكفي python3 و ffmpeg"],
+        "cues_emoji.txt": ["0:00-0:02 Shipping day 🎉",
+                           "0:02-0:04 Nice work 👍 everyone",
+                           "0:04-0:06 Ship it 🚀 now",
+                           "0:06-0:08 Done ✅"],
         "cues_pop.txt": ["0:00-0:02 word by word",
                          "0:02-0:04 the karaoke highlight tracks the beat",
                          "0:04-0:06 pop scales each cue in",
@@ -383,6 +387,25 @@ def build_fixtures(force=False):
 
 
 # --------------------------------------------------------------------------- comparison + preview
+# The package ships NO emoji art: Twemoji is CC-BY 4.0 and Noto Emoji OFL/Apache-2.0, and a
+# gallery does not need to redistribute either. The demo draws its own coloured placeholder PNGs
+# with ffmpeg, named by code point exactly as --emoji-assets expects, so `--emoji-assets DIR`
+# is demonstrated end to end while the real glyphs stay the user's own download.
+EMOJI_PLACEHOLDERS = {"1f389": "orange", "1f44d": "gold", "1f680": "tomato", "2705": "limegreen"}
+
+
+def build_emoji_placeholders():
+    d = FIX / "emoji"
+    d.mkdir(parents=True, exist_ok=True)
+    for name, colour in EMOJI_PLACEHOLDERS.items():
+        path = d / ("%s.png" % name)
+        if not path.exists():
+            ffmpeg("-f", "lavfi", "-i", "color=c=%s:s=72x72:d=0.04" % colour,
+                   "-vf", "format=rgba,geq=r='r(X,Y)':a='if(lt((X-36)*(X-36)+(Y-36)*(Y-36),34*34),255,0)'",
+                   "-frames:v", "1", str(path))
+    return d
+
+
 def _side(idx, label, font, seconds):
     """One half of the side-by-side: letterboxed into a fixed cell so a 9:16 'after' and a
     16:9 'before' still stack cleanly, held on its last frame if it is the shorter of the two."""
@@ -528,6 +551,40 @@ def demo_captions_ar(ctx):
 def demo_captions_pop_karaoke(ctx):
     return _caption_demo(ctx, "cues_pop.txt", ("--animate", "pop", "--karaoke",
                                                "--highlight-color", "#39ff88"))
+
+
+def demo_captions_emoji(ctx):
+    """Colour emoji (PNG overlay) against the monochrome fallback the same machine gives you."""
+    assets = build_emoji_placeholders()
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    ctx.script("caption.py", FIX / "motion.mp4", "--text", FIX / "cues_emoji.txt", "--size", "30",
+               "--bold", "--margin", "40", "--emoji", "mono", "-o", before)
+    ctx.script("caption.py", FIX / "motion.mp4", "--text", FIX / "cues_emoji.txt", "--size", "30",
+               "--bold", "--margin", "40", "--emoji-assets", assets, "-o", after)
+    ctx.note("the left side is what this ffmpeg draws without --emoji-assets (monochrome or "
+             "nothing); the right side composites one PNG per cluster")
+    return before, after
+
+
+def demo_lower_third_hindi(ctx):
+    """The eval-14 defect and its fix: drawtext cannot reorder Devanagari matras, libass can."""
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    font = font_for_script("hi")
+    # The "before" is raw drawtext on purpose: graphics.py now REFUSES --text-render drawtext for a
+    # shaping script, so the wrong frame can only be produced outside the tool -- which is the point.
+    ffmpeg("-i", str(FIX / "motion.mp4"), "-t", "5", "-vf",
+           "drawtext=text='प्रिया शर्मा':fontfile=%s:fontsize=40:fontcolor=white:x=60:y=h-140,"
+           "drawtext=text='निर्देशक':fontfile=%s:fontsize=28:fontcolor=0xFFD200:x=60:y=h-90" % (font, font),
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
+           "-c:a", "copy", str(before))
+    ctx.script("graphics.py", FIX / "motion.mp4", "--template", "lower-third",
+               "--name", "प्रिया शर्मा", "--title", "निर्देशक", "--start", "0.5", "--end", "5",
+               "--text-render", "ass", "-o", after)
+    ctx.note("left: drawtext (matras unreordered, the eval-14 hi1 failure). right: the same "
+             "template through libass, which graphics.py now picks automatically")
+    return before, after
 
 
 def demo_lower_third(ctx):
@@ -1044,6 +1101,12 @@ _ROWS = [
     ("captions_pop_karaoke", CAPTIONS, "Animated pop captions with karaoke",
      "Each cue scales in, and the highlight colour walks word by word across the line.",
      demo_captions_pop_karaoke, "video", "latin"),
+    ("captions_emoji", CAPTIONS, "Emoji captions in colour",
+     "Left: emoji as this ffmpeg's libass draws them (monochrome, or missing). Right: one PNG per emoji cluster composited over the caption, with the ASS reserving the exact gap -- the text does not move.",
+     demo_captions_emoji, "video", "latin"),
+    ("lower_third_hindi", CAPTIONS, "Hindi lower third, shaped",
+     "Left: the same text through drawtext -- the i-matra is not reordered and the final matra is dropped. Right: graphics.py routing Devanagari through libass automatically. drawtext does not use harfbuzz on any build.",
+     demo_lower_third_hindi, "video", "hi"),
     ("lower_third", CAPTIONS, "Lower third",
      "Name and role slide in from the left over the picture and slide out again -- no image asset involved.",
      demo_lower_third, "video", "latin"),

@@ -38,10 +38,11 @@ import re
 import sys
 import unicodedata
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, ass_units, resolve as resolve_platform
-from _common import STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
+from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder
+from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, LEADING_VOWELS, NO_SPACE_SCRIPTS, _char_em, _is_mark, text_width_em, emoji_clusters, has_emoji, STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -298,89 +299,41 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
     return out
 
 
-# --------------------------------------------------------------------------- readable cues (1.12)
-# Average advance width per character, in em (a fraction of the font size). Proportional Latin text
-# averages a bit over half an em; CJK and Thai are drawn on a full-width grid; Arabic/Hebrew and
-# Devanagari sit in between. These are deliberately averages, not per-glyph metrics: measuring the
-# real advance needs a font parser (no stdlib one) and would still be wrong for libass's own
-# shaping, while a cue wrapped from an average is right to within a character on every line.
-# (Latin is measured per character from LATIN_EM below, not from this average.)
-ADVANCE_EM = {"ja": 1.0, "zh": 1.0, "ko": 1.0, "th": 1.0, "hi": 0.7, "ar": 0.6, "he": 0.6,
-              "ru": 0.55, "el": 0.55, "latin": 0.55}
 # How much of the frame width a caption line may use. libass's own default SRT margins are 10 of a
 # 384-wide script (2.6 % a side); 5 % a side is the safe area every platform check in this repo uses.
 SAFE_WIDTH_FRACTION = 0.9
-# Scripts written without spaces: a line breaks between any two characters.
-NO_SPACE_SCRIPTS = ("ja", "zh", "ko", "th")
-# Per-character Latin advances in em, read off DejaVu Sans (the default caption family, and close
-# enough to any other proportional sans for a wrap) and rounded UP: a capital runs 0.56-0.99 em
-# against the single 0.55 average that used to stand for all of Latin, so an all-caps caption --
-# the style most burn-ins use -- overflowed the safe area and was silently re-wrapped by libass
-# past --max-lines. Rounding up is the safe direction: libass re-wraps a too-long line, it never
-# un-wraps a short one. Characters outside the table fall back by class (0.7 uppercase/digit,
-# 0.57 lowercase and anything else Latin-ish).
-LATIN_EM = {
-    ' ': 0.32, '!': 0.41, '"': 0.46, '#': 0.84, '$': 0.64, '%': 0.96, '&': 0.78, "'": 0.28,
-    '(': 0.4, ')': 0.4, '*': 0.5, '+': 0.84, ',': 0.32, '-': 0.37, '.': 0.32, '/': 0.34, '0': 0.64,
-    '1': 0.64, '2': 0.64, '3': 0.64, '4': 0.64, '5': 0.64, '6': 0.64, '7': 0.64, '8': 0.64,
-    '9': 0.64, ':': 0.34, ';': 0.34, '<': 0.84, '=': 0.84, '>': 0.84, '?': 0.54, '@': 1.0,
-    'A': 0.69, 'B': 0.69, 'C': 0.7, 'D': 0.78, 'E': 0.64, 'F': 0.58, 'G': 0.78, 'H': 0.76,
-    'I': 0.3, 'J': 0.3, 'K': 0.66, 'L': 0.56, 'M': 0.87, 'N': 0.75, 'O': 0.79, 'P': 0.61,
-    'Q': 0.79, 'R': 0.7, 'S': 0.64, 'T': 0.62, 'U': 0.74, 'V': 0.69, 'W': 0.99, 'X': 0.69,
-    'Y': 0.62, 'Z': 0.69, '[': 0.4, '\\': 0.34, ']': 0.4, '^': 0.84, '_': 0.5, '`': 0.5, 'a': 0.62,
-    'b': 0.64, 'c': 0.55, 'd': 0.64, 'e': 0.62, 'f': 0.36, 'g': 0.64, 'h': 0.64, 'i': 0.28,
-    'j': 0.28, 'k': 0.58, 'l': 0.28, 'm': 0.98, 'n': 0.64, 'o': 0.62, 'p': 0.64, 'q': 0.64,
-    'r': 0.42, 's': 0.53, 't': 0.4, 'u': 0.64, 'v': 0.6, 'w': 0.82, 'x': 0.6, 'y': 0.6, 'z': 0.53,
-    '{': 0.64, '|': 0.34, '}': 0.64, '~': 0.84
-}
-# Thai and Lao write some vowels BEFORE the consonant they belong to: the break must not land
-# between them and the base that follows.
-LEADING_VOWELS = set(range(0x0E40, 0x0E45)) | set(range(0x0EC0, 0x0EC5))
-
-
-def _is_mark(ch: str) -> bool:
-    """A character that hangs off the one before it: a combining mark (any script) or one of the
-    Thai/Lao vowel signs and tone marks, which are Mn/Mc but carry no combining class."""
-    return unicodedata.combining(ch) != 0 or unicodedata.category(ch) in ("Mn", "Mc")
-
-
-def _char_em(ch: str) -> float:
-    # CJK punctuation and the fullwidth forms (、。，！？　and U+FF01-FF60) are drawn on the same
-    # full-width grid as the ideographs they sit between, even though they are not "Han" to a
-    # script detector -- measuring them as Latin under-counts a wrapped CJK line by a character.
-    cp = ord(ch)
-    # A combining mark is drawn on top of (or under) its base and advances the pen by nothing:
-    # charging it a full em wrapped Thai and Devanagari lines far shorter than they needed to be.
-    if unicodedata.combining(ch) != 0 or unicodedata.category(ch) == "Mn":
-        return 0.0
-    if 0x3000 <= cp <= 0x303F or 0xFF01 <= cp <= 0xFF60 or 0xFFE0 <= cp <= 0xFFE6:
-        return 1.0
-    script = char_script(ch)
-    if script == "latin":
-        if ch in LATIN_EM:
-            return LATIN_EM[ch]
-        if ch.isupper() or ch.isdigit():
-            return 0.7
-        return 0.57
-    return ADVANCE_EM.get(script, 0.55)
-
-
-def text_width_em(text: str) -> float:
-    """Width of `text` in em, from the per-script average advance table."""
-    return sum(_char_em(ch) for ch in text)
+# ORPHAN_MIN_EM: one full-width CJK/Thai character plus a hair. A last line narrower than this is a
+# single stranded character -- eval 14's th1 (a lone 'ล') and dl3 (a lone '行').
+ORPHAN_MIN_EM = 1.1
 
 
 def _atoms(line: str) -> List[Tuple[str, bool]]:
     """Break a line into the smallest pieces a wrap may separate -- one atom per CJK/Thai
-    character, one per whitespace-delimited word otherwise -- each with whether a space stood
-    before it in the original. The flag is what puts the text back together exactly as written:
-    "Hello 世界" keeps its space, "世界です" gains none."""
+    character, one per emoji cluster, one per whitespace-delimited word otherwise -- each with
+    whether a space stood before it in the original. The flag is what puts the text back together
+    exactly as written: "Hello 世界" keeps its space, "世界です" gains none."""
     out: List[Tuple[str, bool]] = []
     word = ""
     spaced = False        # a space stands before the atom being built
     pending = False       # a space stands before the NEXT atom
     attach_next = False   # a leading Thai/Lao vowel is waiting for its base consonant
-    for ch in line:
+    # An emoji cluster is one atom: a wrap must never land inside a ZWJ sequence, a flag pair or
+    # between a base and its skin-tone modifier (the same rule combining marks already follow).
+    clusters = {i: len(cl) for i, cl in emoji_clusters(line)}
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if i in clusters:
+            cluster = line[i:i + clusters[i]]
+            if word:
+                out.append((word, spaced))
+                word = ""
+            out.append((cluster, pending))
+            pending = False
+            attach_next = False
+            i += clusters[i]
+            continue
+        i += 1
         if char_script(ch) in NO_SPACE_SCRIPTS:
             if word:
                 out.append((word, spaced))
@@ -414,27 +367,223 @@ def _join(left: str, atom: str, spaced: bool) -> str:
     return left + (" " if spaced else "") + atom
 
 
-def wrap_text(text: str, max_em: float) -> List[str]:
+def _break_spaced(first: str, second: str) -> bool:
+    """Did a space stand at the break between these two wrapped lines? Only spaced scripts put one
+    there -- a CJK/Thai break sits between two characters that were written with nothing between
+    them, and re-joining them with a space would insert a character the cue never had."""
+    if not first or not second:
+        return False
+    return char_script(first[-1]) not in NO_SPACE_SCRIPTS and char_script(second[0]) not in NO_SPACE_SCRIPTS \
+        and char_script(first[-1]) != "emoji" and char_script(second[0]) != "emoji"
+
+
+def _fix_orphans(lines: List[str], max_em: float) -> List[str]:
+    """No last line that is a single stranded atom.
+
+    Greedy wrapping leaves one character alone whenever the line before it filled exactly: eval 14
+    produced a Thai cue ending in a lone `ล` and a Japanese one ending in a lone `行`. While the
+    last line is one atom narrower than ORPHAN_MIN_EM, the last atom of the line above moves down
+    onto it -- but only while the result still fits and the line above does not become an orphan
+    itself, so a two-word cue is never made worse."""
+    lines = list(lines)
+    for _ in range(len(lines)):
+        if len(lines) < 2:
+            break
+        tail = _atoms(lines[-1])
+        if len(tail) != 1 or text_width_em(lines[-1]) >= ORPHAN_MIN_EM:
+            break
+        prev = _atoms(lines[-2])
+        if len(prev) < 2:
+            break
+        moved, spaced = prev[-1]
+        new_prev = ""
+        for atom, sp in prev[:-1]:
+            new_prev = _join(new_prev, atom, sp)
+        new_last = _join(moved, tail[0][0], _break_spaced(lines[-2], lines[-1]))
+        if text_width_em(new_last) > max_em or text_width_em(new_prev) < ORPHAN_MIN_EM:
+            break
+        lines[-2], lines[-1] = new_prev, new_last
+    return lines
+
+
+def _rebalance(lines: List[str], max_em: float) -> List[str]:
+    """Move each break to the one that minimises the widest line of the pair, without changing the
+    line count.
+
+    Greedy wrapping fills line 1 to the brim and leaves line 2 short, which is what split eval 14's
+    `"A third line the tool times for me"` mid-phrase. Only spaced scripts are rebalanced: a
+    non-spaced script has no phrase structure in its atom list, so moving the break there only
+    moves the ragged edge. A break is never placed before a punctuation-only atom."""
+    if len(lines) < 2:
+        return lines
+    out = list(lines)
+    for i in range(len(out) - 1):
+        first, second = out[i], out[i + 1]
+        tail_atoms = _atoms(second)
+        if tail_atoms:
+            tail_atoms[0] = (tail_atoms[0][0], _break_spaced(first, second))
+        atoms = _atoms(first) + tail_atoms
+        if not atoms or any(char_script(ch) in NO_SPACE_SCRIPTS for ch in first + second):
+            continue
+        best = None
+        for cut in range(1, len(atoms)):
+            if not atoms[cut][1]:
+                continue  # only break where a space stood
+            if all(not ch.isalnum() for ch in atoms[cut][0]):
+                continue  # never strand punctuation at the start of a line
+            a = b = ""
+            for atom, sp in atoms[:cut]:
+                a = _join(a, atom, sp)
+            for atom, sp in atoms[cut:]:
+                b = _join(b, atom, sp)
+            wa, wb = text_width_em(a), text_width_em(b)
+            if max(wa, wb) > max_em:
+                continue
+            key = (max(wa, wb), abs(wa - wb))
+            if best is None or key < best[0]:
+                best = (key, a, b)
+        if best is not None:
+            out[i], out[i + 1] = best[1], best[2]
+    return out
+
+
+def wrap_text(text: str, max_em: float, *, balance: bool = True) -> List[str]:
     """Wrap `text` to lines no wider than `max_em` em, keeping the manual breaks it already has.
 
     An atom wider than the whole line (one very long word) is left alone on its line rather than
-    cut mid-word: an over-long line is readable, a chopped word is not.
+    cut mid-word: an over-long line is readable, a chopped word is not. Two post-passes then make
+    the result readable rather than merely legal (1.15): no one-character orphan line, and for
+    spaced scripts a break chosen to minimise the widest line instead of greedily.
     """
     lines: List[str] = []
     for raw in text.split("\n"):
         if not raw.strip():
             continue
         current = ""
+        chunk: List[str] = []
         for atom, spaced in _atoms(raw):
             candidate = _join(current, atom, spaced)
             if current and text_width_em(candidate) > max_em:
-                lines.append(current)
+                chunk.append(current)
                 current = atom
             else:
                 current = candidate
         if current:
-            lines.append(current)
+            chunk.append(current)
+        if balance and len(chunk) > 1:
+            fixed = _fix_orphans(chunk, max_em)
+            rebalanced = _rebalance(fixed, max_em)
+            if len(rebalanced) == len(chunk):
+                chunk = rebalanced
+            else:
+                chunk = fixed
+        lines.extend(chunk)
     return lines or [text]
+
+
+# --------------------------------------------------------------------------- emoji (1.15)
+def _cue_lines(text: str) -> List[str]:
+    return [l for l in text.split("\n")]
+
+
+def plan_emoji(cues, args, play_w, play_h, brand=None):
+    """Decide how this run draws the emoji in `cues`, and where each PNG goes.
+
+    Returns (cues, plan) where `cues` may have had its emoji replaced by EMOJI_SENTINEL (the PNG
+    route) or stripped (`--emoji none`), and `plan` is the `emoji` result key plus the overlay
+    entries the filter graph needs. `None` plan means "nothing to do": no emoji in the text.
+    """
+    clusters_all = [cl for _s, _e, t in cues for _i, cl in emoji_clusters(t)]
+    if not clusters_all:
+        return cues, None
+    assets = resolve_emoji_assets(getattr(args, "emoji_assets", None), None, brand)
+    want = getattr(args, "emoji", "auto")
+    support = emoji_support(assets, probe=True)
+    mode = support["mode"] if want == "auto" else want
+    if want == "color" and not support["libass_color"]:
+        die("--emoji color: this ffmpeg renders emoji monochrome through libass "
+            f"({support['detail']}) -- pass --emoji-assets DIR for colour, or --emoji mono",
+            kind="input")
+    if want == "png" and not assets:
+        die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
+    plan = {"mode": mode, "count": len(clusters_all),
+            "clusters": sorted({emoji_codepoint_name(cl) for cl in clusters_all}),
+            "assets": assets, "missing": [], "overlays": []}
+    if mode == "none":
+        out = []
+        for start, end, text in cues:
+            for cl in {cl for _i, cl in emoji_clusters(text)}:
+                text = text.replace(cl, "")
+            out.append((start, end, re.sub(r"[ \t]{2,}", " ", text).strip()))
+        info("emoji: stripped from the drawn text (--emoji none)")
+        return out, plan
+    if mode in ("color", "mono"):
+        if mode == "mono":
+            info("warning: emoji rendered monochrome (no colour path on this ffmpeg; "
+                 "--emoji-assets DIR for colour). " + support["detail"])
+        return cues, plan
+    # --- the PNG overlay route -------------------------------------------------------------
+    if not play_w or not play_h:
+        return cues, plan
+    scale = float(getattr(args, "emoji_scale", 1.0) or 1.0)
+    size_px = args.size * play_h / 288.0
+    margin_px = args.margin * play_h / 288.0
+    line_h = size_px * 1.2
+    box_px = size_px * scale
+    align = ALIGN[args.position]
+    out_cues = []
+    for start, end, text in cues:
+        lines = _cue_lines(text)
+        n = len(lines)
+        new_lines = []
+        for i, line in enumerate(lines):
+            if align in (7, 8, 9):
+                y_top = margin_px + i * line_h
+            elif align in (4, 5, 6):
+                y_top = play_h / 2.0 - (n * line_h) / 2.0 + i * line_h
+            else:
+                y_top = play_h - margin_px - (n - i) * line_h
+            line_w = text_width_em(line, scale) * size_px
+            if align in (1, 4, 7):
+                x0 = margin_px
+            elif align in (3, 6, 9):
+                x0 = play_w - margin_px - line_w
+            else:
+                x0 = (play_w - line_w) / 2.0
+            rebuilt = ""
+            cursor = 0
+            for idx, cluster in emoji_clusters(line):
+                prefix = line[:idx]
+                asset = emoji_asset_for(cluster, assets)
+                name = emoji_codepoint_name(cluster)
+                if not asset:
+                    if name not in plan["missing"]:
+                        plan["missing"].append(name)
+                    rebuilt += line[cursor:idx + len(cluster)]
+                    cursor = idx + len(cluster)
+                    continue
+                x = x0 + text_width_em(prefix, scale) * size_px
+                y = y_top + (line_h - box_px) / 2.0
+                plan["overlays"].append({
+                    "asset": asset, "cluster": name,
+                    "x": int(round(max(0.0, min(x, play_w - box_px)))),
+                    "y": int(round(max(0.0, min(y, play_h - box_px)))),
+                    "start": round(start, 3), "end": round(end, 3), "box": int(round(box_px))})
+                rebuilt += line[cursor:idx] + EMOJI_SENTINEL
+                cursor = idx + len(cluster)
+            rebuilt += line[cursor:]
+            new_lines.append(rebuilt)
+        out_cues.append((start, end, "\n".join(new_lines)))
+    limit = int(getattr(args, "emoji_max", 60) or 60)
+    if len(plan["overlays"]) > limit:
+        die(f"{len(plan['overlays'])} emoji overlays would be built for this job (limit {limit}, "
+            "--emoji-max raises it); ffmpeg's filter graph and the per-frame cost both grow "
+            "linearly -- split the job, or use --emoji none", kind="input")
+    if plan["missing"]:
+        info("warning: no PNG in the assets directory for " + ", ".join(plan["missing"]) +
+             " -- those clusters are drawn by the text font instead")
+    plan["box_px"] = int(round(box_px))
+    return out_cues, plan
 
 
 def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float], max_lines: int,
@@ -447,7 +596,7 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
     proportion to their text; a cue shorter than `min_duration` is lengthened, never past the next
     cue's start. Returns the new cues and a count of what changed.
     """
-    stats = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0}
+    stats = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0, "rebalanced": 0}
     staged: List[Tuple[float, float, str]] = []
     for start, end, text in cues:
         if offset:
@@ -461,6 +610,8 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
             lines = wrap_text(text, max_em)
             if lines != [l for l in text.split("\n") if l.strip()]:
                 stats["wrapped"] += 1
+            if lines != wrap_text(text, max_em, balance=False):
+                stats["rebalanced"] += 1
             if len(lines) > max_lines:
                 chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)]
                 weights = [max(1.0, sum(len(l) for l in c)) for c in chunks]
@@ -488,7 +639,7 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
 
 def report_layout(stats: dict) -> None:
     """One info line, only when a cue actually changed."""
-    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "split", "extended", "dropped") if stats.get(k)]
+    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "rebalanced", "split", "extended", "dropped") if stats.get(k)]
     if parts:
         info("cues: " + ", ".join(parts))
 
@@ -649,7 +800,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
             # split each line into words and give every word an equal share of the cue (\k is in centiseconds)
             dur_cs = max(1, int(round((end - start) * 100)))
             segments = body.split("\\N")
-            words = [w for seg in segments for w in seg.split(" ") if w]
+            words = [w for seg in segments for w in seg.split(" ") if w and w.strip(EMOJI_SENTINEL)]
             # real word timings from the transcript beat both the energy estimate and the even
             # split -- they are what the speaker actually did, not a proxy for it
             durs = word_durations_from_timings(getattr(args, "_word_timings", None) or [], start, end, len(words))
@@ -663,8 +814,14 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
             out_segments = []
             for seg in segments:
                 ws = [w for w in seg.split(" ") if w]
-                out_segments.append(" ".join(f"{{\\kf{next(it)}}}{w}" for w in ws))
+                # An emoji placeholder is its own ZERO-duration \kf segment: the highlight sweeps
+                # past the reserved gap without spending cue time on a glyph nobody sees (rendered
+                # and confirmed -- libass keeps the full gap inside a karaoke run).
+                out_segments.append(" ".join(
+                    ("{\\kf0}" + w) if not w.strip(EMOJI_SENTINEL) else f"{{\\kf{next(it)}}}{w}" for w in ws))
             body = "\\N".join(out_segments)
+        if EMOJI_SENTINEL in body:
+            body = body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size)))
         lines.append(f"Dialogue: 0,{t(start)},{t(end)},Default,,0,0,0,,{fx}{body}")
     with open(path, "w", encoding="utf-8-sig") as fh:
         fh.write("\n".join(header + lines) + "\n")
@@ -765,6 +922,20 @@ def main() -> int:
                      help="keep the captions out of this destination's UI: the margin becomes the platform's safe "
                           "zone (TikTok's description bar, the Reels/Shorts chrome). An explicit --margin/--position wins")
     sty.add_argument("--box", action="store_true", help="draw an opaque box behind text instead of an outline")
+    emo = ap.add_argument_group("emoji (1.15)")
+    emo.add_argument("--emoji", choices=["auto", "color", "png", "mono", "none"], default="auto",
+                     help="how emoji in the cues are drawn: 'auto' picks the best this machine can do "
+                          "(doctor --json .fonts.emoji), 'color' insists on a colour-capable libass, "
+                          "'png' composites the --emoji-assets PNGs, 'mono' draws whatever glyph the text "
+                          "font has, 'none' strips them")
+    emo.add_argument("--emoji-assets", metavar="DIR",
+                     help="directory of emoji PNGs named by code point (1f389.png, 1f1ef-1f1f5.png) -- "
+                          "Twemoji's assets/72x72 or Noto Emoji's png/128. Nothing is ever downloaded; "
+                          "also read from brand.json styles.caption.emoji_assets and FFMPEG_SKILL_EMOJI_ASSETS")
+    emo.add_argument("--emoji-scale", type=float, default=1.0,
+                     help="emoji box as a multiple of the line's font size (default 1.0)")
+    emo.add_argument("--emoji-max", type=int, default=60,
+                     help="most emoji overlays one run may build (default 60)")
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
     sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue (default 1.0)")
     anim = ap.add_argument_group("animation (generates ASS; needs --text or --srt input)")
@@ -993,11 +1164,34 @@ def main() -> int:
         if not args.fonts_dir:
             args.fonts_dir = os.path.dirname(font_file)
 
-    if (args.animate != "none" or args.karaoke) and not args.ass:
+    # Emoji (1.15). Decided once, on the cues the burn will actually use: libass cannot place a
+    # PNG, so the text keeps its place in the ASS (with the gap reserved) and each emoji becomes an
+    # overlay composited after the ass= filter. A cue file that has no emoji costs nothing here.
+    emoji_plan = None
+    emoji_cues = None
+    if not args.ass:
+        if args.text or args.transcribe:
+            src_cues = cues
+        elif planned_cues is not None:
+            src_cues = planned_cues
+        elif os.path.exists(srt_path or ""):
+            src_cues = parse_srt(srt_path)
+        else:
+            src_cues = []
+        if src_cues and has_emoji("\n".join(t for _s, _e, t in src_cues)):
+            emoji_cues, emoji_plan = plan_emoji(src_cues, args, play_w, play_h,
+                                                brand if args.brand else None)
+    # the PNG route and --emoji none both change the drawn text, so they need the generated ASS
+    force_ass = bool(emoji_plan and (emoji_plan.get("overlays") or emoji_plan.get("mode") == "none"))
+    if emoji_plan and emoji_plan.get("box_px"):
+        args._emoji_box_px = emoji_plan["box_px"]
+
+    if (args.animate != "none" or args.karaoke or force_ass) and not args.ass:
         # both sources are already laid out: `cues` above, and srt_path was rewritten in place of
         # the caller's file when --offset/--max-lines/--min-duration changed anything
-        cues_for_ass = cues if (args.text or args.transcribe) else (
-            planned_cues if planned_cues is not None else parse_srt(srt_path))
+        cues_for_ass = emoji_cues if emoji_cues is not None else (
+            cues if (args.text or args.transcribe) else (
+                planned_cues if planned_cues is not None else parse_srt(srt_path)))
         if args.karaoke and not getattr(args, "_word_timings", None):
             args._word_timings = whisper_word_timings(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
@@ -1040,15 +1234,39 @@ def main() -> int:
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0"]
+    cmd = ffmpeg_base() + ["-i", args.input]
+    chains, assets = emoji_filter_chain(emoji_plan or {}, "vsub", "vout") if emoji_plan else ([], [])
+    if chains:
+        for asset in assets:
+            cmd += ["-i", asset]
+            if asset not in STATE.plan_inputs:
+                STATE.plan_inputs.append(asset)
+        graph = ";".join([f"[0:v]{vf}[vsub]"] + chains)
+        cmd += ["-filter_complex", graph, "-map", "[vout]"]
+    else:
+        cmd += ["-map", "0:v:0", "-vf", vf]
     if meta.get("audio"):
         cmd += ["-map", f"0:a:{args.audio_stream}"]
-    cmd += ["-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
+    cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
     run(cmd)
     result = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
-    emit(output, **({"notes": side_notes} if side_notes else {}))
+    extra = {"notes": side_notes} if side_notes else {}
+    if emoji_plan:
+        notes = list(extra.get("notes") or [])
+        if emoji_plan["mode"] == "mono":
+            notes.append("emoji rendered monochrome (no colour path on this ffmpeg; "
+                         "--emoji-assets DIR for colour)")
+        if emoji_plan["mode"] == "none":
+            notes.append("emoji stripped from the drawn text (--emoji none)")
+        if emoji_plan["missing"]:
+            notes.append("no PNG asset for " + ", ".join(emoji_plan["missing"]))
+        if notes:
+            extra["notes"] = notes
+        extra["emoji"] = {k: v for k, v in emoji_plan.items() if k not in ("overlays", "box_px")}
+        extra["emoji"]["overlays"] = len(emoji_plan.get("overlays") or [])
+    emit(output, **extra)
     return 0
 
 

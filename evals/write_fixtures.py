@@ -25,6 +25,22 @@ def write(outdir: Path, prompt: dict) -> list:
         target = outdir / name
         target.write_text(text, encoding="utf-8")
         written.append(target)
+    # 1.15: a prompt may ask for a directory of emoji PNGs. The repo ships NO emoji art -- Twemoji
+    # is CC-BY 4.0 and Noto Emoji OFL/Apache-2.0 -- so the placeholders are DRAWN here with ffmpeg
+    # under the file names --emoji-assets actually requires (lowercase hex code points joined by
+    # '-'). The naming convention is what the run has to get right; the glyph is not.
+    names = prompt.get("emoji_assets") or []
+    if names:
+        import subprocess
+        assets = outdir / "emoji"
+        assets.mkdir(parents=True, exist_ok=True)
+        palette = ("orange", "gold", "tomato", "limegreen", "deepskyblue")
+        for i, name in enumerate(names):
+            target = assets / (name + ".png")
+            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                            "-i", "color=c=%s:s=72x72:d=0.04" % palette[i % len(palette)],
+                            "-vf", "format=rgba", "-frames:v", "1", str(target)], check=True)
+            written.append(target)
     return written
 
 

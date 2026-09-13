@@ -149,7 +149,7 @@ Audio is a first-class input: `probe.py`, `cut.py`, `silence.py`, `loudness.py`,
 
 ## Report format
 
-Reply in the language the request itself is written in — the user's own sentences, not a language the request talks about (a request for subtitles in another language is still answered in the language it was written in) and not the language of a tool's error text or file names. Any language works the same way. Keep the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English: they read like log fields across languages. Everything around them — the sentences, any question, any explanation of a judgement call — is in the user's language. Never default to English because the tool names are English, and never drift because the job was short or the report is a failure: a one-line "file does not exist" is in the request's language too. A mid-conversation switch follows the user's latest message. English `Done:`/`Steps:` sentences with one word of the user's language in `Notes:` is an English report — the descriptions are in the user's language even when the values are technical.
+Reply in the language the request itself is written in — the user's own sentences, not a language the request talks about (a request for subtitles in another language is still answered in the language it was written in) and not the language of a tool's error text or file names. Keep the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English: they read like log fields across languages. Everything around them — the sentences, any question, any explanation of a judgement call — is in the user's language. Never default to English because the tool names are English, and never drift because the job was short or the report is a failure: a one-line "file does not exist" is in the request's language too. A mid-conversation switch follows the user's latest message. English `Done:`/`Steps:` sentences with one word of the user's language in `Notes:` is an English report — the descriptions are in the user's language even when the values are technical.
 
 Finish every job with this shape (numbers from `--json` or `probe.py`/`check.py`, not memory):
 
@@ -171,8 +171,6 @@ Look: final_sheet.png（字幕はセーフエリア内、ロゴは右上）
 Notes: 元は VFR だったので 30 fps に揃えた。音声はモノラルだったのでステレオにした
 ```
 
-Same shape in every other language, labels still English — zh: `Done: final.mp4 — 59.98 秒、1080x1920、30 fps、H.264` / `Steps: 0:12-1:12 剪切 -> 9:16 裁剪 -> 字幕 -> Reels 导出`; ko: `Done: final.mp4 — 59.98초, 1080x1920, 30 fps, H.264` / `Steps: 0:12-1:12 컷 -> 9:16 크롭 -> 자막 -> Reels 내보내기`.
-
 Keep it to those five lines plus anything the user must decide. Never report success without the output probe; never describe a fix you did not run.
 
 When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
@@ -185,7 +183,7 @@ Look: not needed (nothing written)
 Notes: send a valid .cube, or say if you want the clip left as is
 ```
 
-A refusal (a judgement this skill does not make, or something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run, `Look: not needed`. The shortest failure still gets all five labels, never prose headings. When a failure JSON carries `error.hint`, quote it in `Notes:`: it is the flag change that makes a retry meaningful.
+A refusal (a judgement this skill does not make, or something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run, `Look: not needed`. The shortest failure still gets all five labels, never prose headings. A refusal that still delivers something is `Failed:` — the label answers the request as asked; the alternative goes in `Notes:`. When a failure JSON carries `error.hint`, quote it in `Notes:`: it is the flag change that makes a retry meaningful.
 
 Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool | timeout | verification | interrupted, "message": ...}}` with `--json` and exits non-zero; quote the message, never paraphrase it.
 
@@ -200,6 +198,8 @@ One line each, each enough to act on; open the linked `references/gotchas.md` se
 - Sync/multicam `confidence` under 0.3 (or a huge offset) is probably wrong — check every camera; these align audio, never lip sync. Details: [#sync-multicam-and-drift](references/gotchas.md#sync-multicam-and-drift)
 - "Normalised" audio can still clip (check true peak), and ambience at -40 LUFS or below must never be raised to a speech target. Details: [#loudness-and-ambience](references/gotchas.md#loudness-and-ambience)
 - Captions burned before a crop/resize land off-frame; burned small then upscaled by `export.py` they come out soft — fit to the delivery size first. Details: [#captions-fonts-and-text-order](references/gotchas.md#captions-fonts-and-text-order)
+- Emoji need `--emoji-assets DIR` (a PNG per glyph) to render in colour; without it they come out monochrome and the run says so. Details: [#emoji](references/gotchas.md#emoji)
+- `graphics.py` renders Devanagari, Bengali, Tamil and Thai through libass automatically — drawtext cannot shape them.
 - Non-Latin text picks a font by script since 1.12; `doctor --json` `fonts.scripts` says which languages this machine renders; no font = failed job. Details: [#fonts-by-script](references/gotchas.md#fonts-by-script)
 - `--fit crop` 16:9 → 9:16 throws away 70 % of the width, 60→30 fps halves the motion, and "60 seconds" by speed or by trim are different answers — say which and why. Details: [#reframing-fps-and-duration](references/gotchas.md#reframing-fps-and-duration)
 - TikTok/Reels cover the bottom fifth and the right column with their own UI — templates keep text out of those zones; `look.py --safe tiktok` shows them. Details: [#platform-safe-zones](references/gotchas.md#platform-safe-zones)
