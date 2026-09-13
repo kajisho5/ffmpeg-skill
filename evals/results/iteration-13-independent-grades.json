@@ -1,0 +1,85 @@
+{
+ "iteration": 13,
+ "skill_version": "1.12.0",
+ "runs_graded_in_full": 18,
+ "runs_language_and_format_checked": 50,
+ "summary": {
+  "runs": 50,
+  "runs_graded_fully": 18,
+  "routing": "18/18 (graded set)",
+  "honest": "18/18 (graded set)",
+  "language": "50/50 (all 50: 11 ja, 2 zh, 2 ko, 2 es, 2 pt, 2 fr, 2 de, 2 ar, 27 en - every report in the prompt's language, no drift)",
+  "format": "50/50 (all five labels present in every final report)",
+  "look_when_picture_changed": "9/9 (graded set: c01 k01 p01 fr1 a01 j03-lower e01-reel j08-project; x03/s01/d01 audio-only correctly 'not needed')",
+  "visual_check_non_latin": "5/5 non-Latin caption/lower-third runs rendered real glyphs (c01 zh, k01 ko, a01 ar, j03-lower ja, plus Latin p01/fr1 verified too)",
+  "quality_mean": 4.83,
+  "quality_min": 4
+ },
+ "iteration_13_specific": {
+  "font_selection": {
+   "count": 4,
+   "of": 4,
+   "note": "every non-Latin text run printed an explicit 'font: <file> (covers xx)' line: c01 wqy-zenhei.ttc (covers zh), k01 wqy-zenhei.ttc (covers ko), a01 DejaVuSans.ttf (covers ar), j03-lower ipagp.ttf (covers ja). I opened each produced PNG: Chinese, Korean, Japanese and Arabic all render as real glyphs, no tofu boxes, legible against the test pattern. The Arabic is correctly shaped (letters joined) and right-to-left, which DejaVu alone would not guarantee without libass/harfbuzz shaping - it worked. Latin-script lower thirds (p01 'Ana Ribeiro / Diretora de Fotografia', fr1 'Claire Dubois / Productrice') render with correct accents and need no font line."
+  },
+  "caption_wrap_fit": {
+   "note": "j08-project's render log shows 'cues: 1 wrapped'; the contact sheet confirms the wrapped cue ('Second line') is on two lines and inside the frame. e01-reel's 406x720->1080x1920 reel sheet shows both cues wrapped to two centred lines, fully inside the safe area. The 1.12.0 wrap/fit work is visibly doing its job."
+  },
+  "doctor_usage": {
+   "count": 2,
+   "runs": ["d02", "p02"],
+   "note": "back from 0/36 in iteration 12, but this is the good kind of doctor call: both are translation-refusal runs and used '_contract.py doctor' specifically to establish that external:whisper is missing_optional before refusing. Not a wasted preamble - it is the evidence for the refusal."
+  },
+  "write_outside_outdir": {
+   "count": 0,
+   "note": "the iteration-12 caption.py stray-.srt bug is fixed: e01-reel's generated step2_captioned.srt/.ass now land in OUTDIR next to the output, not next to the --text source. find over /home/user/ffmpeg-skill for files newer than 2026-09-13 00:00 returns only repo doc files (SKILL.md, references/*, plugin.json - the version bump), nothing under tests/out; git status is clean. No run wrote outside its OUTDIR."
+  },
+  "skill_path_deviation": {
+   "count": 4,
+   "runs": ["d01", "e12-vfr", "j01-reel", "x02-wav-to-mp3"],
+   "note": "these ran scripts from /root/.claude/skills/ffmpeg-skill/scripts/ rather than the /home/user/ffmpeg-skill/scripts/ path the harness prompt named - up from 3 in iteration 12. Only d01 is in the fully graded set. Three more runs (s01, p01, fr1) logged bare relative paths ('python3 scripts/probe.py'), which are presumably the repo copy from cwd but cannot be proven from the log alone."
+  },
+  "raw_ffmpeg_in_log": {
+   "run": "e12-vfr",
+   "note": "one 'ffmpeg command used: ...' line, echoed by cut.py reporting its own invocation, preceded by the python3 cut.py call. Not the agent running ffmpeg directly; the rule is not violated."
+  },
+  "agents_reading_evals_json": {
+   "count": 0,
+   "note": "no run.md references ffmpeg-skill/evals or agent_prompts."
+  }
+ },
+ "findings": [
+  "All 18 fully graded runs route correctly against expect/refuse/must_fail, are honest, and every produced file ffprobes exactly as reported.",
+  "All 14 new multilingual runs are correct: the 7 do-it prompts (c01 zh captions, k01 ko captions, a01 ar captions, s01 es audio trim, p01 pt lower third, fr1 fr lower third, d01 de loudness) produced verified output, and the 7 refusals (c02/fr2 YouTube download, k02/a02 TTS narration, s02 face detection, p02/d02 translate-and-burn) all refused for the right reason, wrote nothing, and used the Failed: label.",
+  "Non-Latin rendering is genuinely fixed, not just claimed: I opened c01's sheet (你好，世界 / 第二行字幕 / 自动计时的第三行), k01's still (안녕하세요, 여러분), a01's sheet (Arabic, correctly joined and RTL) and j03-lower's frame (山田 太郎 / プロデューサー). All are real glyphs, readable, inside the safe area.",
+  "Language and format are clean across all 50 runs, agreeing with the regex grader's 50/50. Only nit: d01's otherwise-German report mixes in a few English fragments ('not needed', 'verified: true') - I did not count this as drift since the report is German and those are label/field idioms the skill itself prescribes.",
+  "The caption.py stray-.srt bug from iterations 11 and 12 is gone; nothing was written outside any OUTDIR this iteration.",
+  "Refusal quality is high and specific rather than generic: p02 and d02 give two independent reasons (no local whisper per doctor, plus no translation capability anywhere in the skill) and name the concrete path forward; s02 quotes redact.py's own help text ('it does not locate faces or plates itself') as evidence.",
+  "j08-project chose --fit pad over crop for the 9:16 reel, which leaves large black bars on the contact sheet. It is a defensible choice on a centreless test pattern and was disclosed in Notes: with the exact project.json edit to switch to crop - honest, but pad is the weaker default for a Reels deliverable.",
+  "x03-audio-trim correctly reports the -13 ms packet-precision error of the lossless copy (ffprobe: 2.986667 s vs the requested 3.000) and names --accurate as the fix; s01 made the opposite, also-correct call and used --accurate on WAV where there are no keyframes to preserve."
+ ],
+ "harness_or_model_issues": [
+  "Only one rep (rep1) was available, so per-run variance cannot be separated from real improvement.",
+  "Four runs (d01, e12-vfr, j01-reel, x02-wav-to-mp3) executed the /root/.claude/skills copy instead of the repo path the prompt named, so their grades are not strictly against 1.12.0 in the repo; d01 is in the fully graded set.",
+  "Three runs (s01, p01, fr1) logged relative script paths, which makes the copy-under-test unverifiable from the log."
+ ],
+ "rows": [
+  {"id": "c01", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "caption.py --lang zh picked wqy-zenhei (covers zh) and burned cues_zh.txt in; ffprobe: 12.01s, 1280x720, 30fps, h264, aac mono. I opened source_captioned_sheet.png - all three Chinese cues render as clean glyphs at their timestamps, no tofu. Chinese report, correctly flags that the third cue had no timestamp and was auto-timed, and declines to touch loudness with no platform named"},
+  {"id": "c02", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "refuse=true and it refused: enumerated the 42 scripts, stated none fetch from a URL and the skill is local-only, ran nothing, wrote nothing, used Failed:. Chinese report, offers fit.py --aspect 9:16 if the user supplies a local file"},
+  {"id": "k01", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "caption.py --lang ko -> 'font: wqy-zenhei.ttc (covers ko)'; ffprobe: 12.01s, 1280x720, 30fps, h264, aac mono. source_captioned_ko_1.000s.png shows 안녕하세요, 여러분 rendered with white fill and black outline, fully legible, no boxes - matching the Look: claim. Korean report; Check: honestly says not run because no platform was named"},
+  {"id": "k02", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "refuse=true: probed the source, then stated plainly that no TTS exists in the skill and that audio.py --replace only swaps an existing track. Nothing written, Failed: used, Korean report, concrete next step offered"},
+  {"id": "s01", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "cut.py --accurate 0:01-0:04; ffprobe confirms exactly 3.000000s, pcm_s16le, mono, 48000Hz. Spanish report explains why --accurate rather than stream copy (WAV has no keyframes) and why check.py was skipped with no platform named. Look: correctly 'not needed'"},
+  {"id": "s02", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "refuse=true: read redact.py --help and quoted its own line 'it does not locate faces or plates itself', confirmed no script does face detection, wrote nothing. Spanish report, offers the exact redact.py command if the user supplies coordinates"},
+  {"id": "p01", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "graphics.py --template lower-third 0-4s; ffprobe: 12.01s, 1280x720, 30fps, h264, aac mono. source_lowerthird_frame.png at t=2s shows 'Ana Ribeiro / Diretora de Fotografia' bottom-left in the safe area with correct accents. Portuguese report; the 2 loudness WARNs are correctly labelled judgement rows against an assumed youtube spec and left alone"},
+  {"id": "p02", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "refuse=true: doctor shows external:whisper in missing_optional, and caption.py --help confirms no translation flag exists. Gives both reasons as independently sufficient, writes nothing, Portuguese report, names two honest alternatives (install whisper for same-language transcription, or supply a pre-translated SRT)"},
+  {"id": "fr1", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "graphics.py lower-third 0-4s; ffprobe: 12.01s, 1280x720, 30fps, h264, aac mono. source_bandeau_check.png shows 'Claire Dubois' in white over 'Productrice' in yellow, bottom-left, legible - exactly as the Look: line describes. French report, loudness WARNs left as judgement calls with no destination given"},
+  {"id": "fr2", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "refuse=true: listed all 42 scripts, confirmed none downloads from a URL, and explicitly noted it will not improvise a raw yt-dlp/ffmpeg command outside the skill. Nothing written, French report"},
+  {"id": "d01", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 4, "reason": "loudness.py -I -14 then check --platform youtube, all 11 PASS; ffprobe: 12.01s, 1280x720, 30fps, h264, aac mono, and the reported -14.0 LUFS / -2.1 dBTP match the check log. German report with Look: 'not needed (nur Audioänderung)'. Docked one point for running the scripts from /root/.claude/skills/ffmpeg-skill/scripts/ instead of the repo path the prompt named"},
+  {"id": "d02", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "refuse=true: doctor ('missing optional: external:whisper') then probe, then a clear two-part refusal - no local whisper to transcribe with, and no translation capability in the skill even if there were. Nothing written, German report, offers to burn in a supplied German SRT"},
+  {"id": "a01", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "--dry-run first to confirm the font resolved, then one real render: 'font: DejaVuSans.ttf (covers ar)'. ffprobe: 12.01s, 1280x720, 30fps, h264, aac mono. captioned_ar_sheet.png shows the Arabic correctly shaped (letters joined) and right-to-left at the bottom of each frame - real glyphs, readable. Arabic report; loudness WARNs correctly separated from the caption result"},
+  {"id": "a02", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "refuse=true: probe only, then an explicit refusal to synthesize speech, naming audio.py --replace as the nearest thing and stating it needs an already-existing file. Nothing written, Arabic report, will not claim the result"},
+  {"id": "e01-reel", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "fit (trim 6s, 9:16 crop) -> caption pop/karaoke -> export reels --normalize -> check 12/12 -> 3x2 sheet. ffprobe: reel_final.mp4 1080x1920, 6.0s video / 6.016s audio, 30fps, h264, aac mono; intermediates match too. The sheet confirms the Look: claim - both cues wrapped to two centred lines inside the safe area. Two iteration-12 defects are gone: it used the repo script path, and the generated .srt/.ass stayed in OUTDIR instead of the repo fixture dir. Notes: correctly explains the trim-vs-speed choice and that the third cue falls after 6s"},
+  {"id": "j03-lower", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "--lang ja with a --dry-run to confirm 'font: ipagp.ttf (covers ja)' before one real render. ffprobe: 12.01s, 1280x720, 30fps, h264, aac mono. source_lower_2.000s.png shows 山田 太郎 / プロデューサー in the lower-third bar, clean kanji and katakana, no tofu - the Look: claim of 文字化けなく読める is accurate. Japanese report, no wasted encode"},
+  {"id": "j08-project", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 4, "reason": "wrote a re-runnable project.json in OUTDIR and rendered cut 2-8s -> fit 9:16 -> captions -> reels export -> check, all PASS. ffprobe: 1080x1920, 6.033s video / 6.037s audio, 30fps, h264, aac mono. final_sheet.png shows the captions wrapped and legible. Docked one point for choosing --fit pad, which leaves heavy black bars on a vertical deliverable; the choice is disclosed in Notes: with the exact project.json edit to switch to crop, so honesty stands"},
+  {"id": "x03-audio-trim", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "cut.py 0:01-0:04 lossless copy; ffprobe confirms 2.986667s pcm_s16le mono 48000Hz, exactly the 2.99s / -13 ms error the report discloses rather than rounding to 3.00. Japanese report names --accurate as the fix and explains the output filename choice. Look: correctly 'not needed'"}
+ ]
+}
