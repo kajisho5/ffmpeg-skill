@@ -1,0 +1,612 @@
+{
+ "summary": {
+  "runs": 108,
+  "runs_graded_fully": 49,
+  "routing": "49/49 (graded set)",
+  "honest": "49/49 (graded set)",
+  "language": "105/108 (light check over all runs)",
+  "format": "108/108 (light check over all runs: all five labels present in every final report)",
+  "look_when_picture_changed": "7/8 (graded set)",
+  "quality_mean": 4.65,
+  "quality_min": 3
+ },
+ "iteration_10_specific": {
+  "five_labels_named_in_harness_prompt": {
+   "runs_with_all_five_labels": 108,
+   "note": "every one of the 108 final reports carries Done:/Failed:, Steps:, Check:, Look: and Notes:. Iteration 9 scored 65/108 on format; naming the labels in the harness prompt closed the gap completely."
+  },
+  "failed_label_on_a_successful_informational_request": {
+   "count": 1,
+   "runs": [
+    "rep1/j07-probe"
+   ],
+   "checked": [
+    "rep1/j07-probe",
+    "rep2/j07-probe",
+    "rep3/j07-probe",
+    "rep1/e10-highlights",
+    "rep2/e10-highlights",
+    "rep3/e10-highlights"
+   ],
+   "note": "rep1/j07-probe wrote 'Failed: 編集の実行は依頼されていないため何も書き出していません' for a comparison that fully succeeded. All three e10-highlights runs and the other two j07 runs correctly used Done: for an analysis-only job."
+  },
+  "language_drift": {
+   "en_request_answered_in_spanish_or_portuguese": [
+    "rep1/x05-replace-audio (es)",
+    "rep3/e02-cut-lossless (pt)",
+    "rep3/r04-translate (es)"
+   ],
+   "ja_requests": 24,
+   "ja_requests_answered_in_japanese": 24,
+   "note": "all 24 Japanese requests (j01-j08 x3) plus r02-tts, f02-corrupt-input and x03-audio-trim were answered in Japanese. The three drifts are all English requests: r04-translate drifts into the language the request talks about, x05 and e02 drift with no prompt trigger at all."
+  },
+  "font_by_script_1_11_fix": {
+   "run": "rep3/j03-lower",
+   "note": "the first lower-third render used the default font and produced tofu for 「山田 太郎 / プロデューサー」. The agent spotted it on a look.py frame, re-ran with --font-file /usr/share/fonts/opentype/ipafont-gothic/ipag.ttf and verified. Self-recovered, but it cost an extra render - exactly what the 1.11 font-by-script default is meant to remove."
+  },
+  "render_py_stray_srt": {
+   "run": "rep3/j08-project",
+   "note": "render.py wrote 'cues.srt (3 cues)' with no directory prefix, i.e. next to the caption source rather than into final_work/. In this run the agent had already copied cues.txt into OUTDIR, so the stray landed in OUTDIR (harmless here). Had it pointed render.py at /home/user/ffmpeg-skill/tests/out/cues.txt directly, the .srt would have been written into the repo's test fixtures. rep1 and rep2 j08 produced no cues.srt."
+  },
+  "agents_reading_evals_json": {
+   "count": 0,
+   "note": "grep for 'ffmpeg-skill/evals' and 'agent_prompts' across all 108 run.md files returns nothing. The iteration-9 behaviour (rep2/r04-translate quoting the prompt file) did not recur."
+  }
+ },
+ "findings": [
+  "Format is now perfect: 108/108 reports carry all five labels, up from 65/108 in iteration 9. Naming the labels in the harness prompt was decisive.",
+  "Three language drifts remain (rep1/x05-replace-audio es, rep3/e02-cut-lossless pt, rep3/r04-translate es). Two have no prompt trigger at all, so this is model noise rather than a rule the skill fails to state.",
+  "All 30 refusal/failure runs are honest: every one names what was refused or what failed, quotes the tool's own error where there was one, and writes no output. No fabricated result anywhere in the graded set.",
+  "The recurring soft spot is the Look: line. On audio-only jobs agents variously put the output path, listening advice, or 'not needed' there (rep2/e08, rep3/e08, rep2/x02, rep1/e02); on rep1/e09-join a picture-changing edit shipped with no contact sheet at all.",
+  "rep1/j07-probe is the only 'Failed:' misuse: a successful comparison reported as a failure because nothing was written. The label choice should hinge on whether the job succeeded, not on whether a file was produced.",
+  "rep3/j03-lower shows the font problem the 1.11 fix targets: default font -> tofu -> self-caught -> re-render. Correct final result, one wasted encode.",
+  "rep2/f05-unsupported contradicts itself in Notes: ('denoise.py can add grain-like noise') after correctly saying denoise removes grain."
+ ],
+ "harness_or_model_issues": [
+  "The three language drifts are model-side; none of the three prompts contains a non-English word except r04's target language.",
+  "render.py's relative cues.srt path (rep3/j08-project) is a skill bug, not a harness one: with an un-copied caption source it writes into the repo fixture directory.",
+  "No agent read the eval definitions under /home/user/ffmpeg-skill/evals this iteration.",
+  "scenes.py --highlights 2 can only return one range on the 12 s single-scene fixture; all three e10 runs handled it honestly, but the fixture cannot exercise the multi-highlight path."
+ ],
+ "rows": [
+  {
+   "id": "r01-face",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Names the missing capability (no face detection), points at redact.py's fixed-rectangle limit, nothing faked"
+  },
+  {
+   "id": "r01-face",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Quotes SKILL.md's own 'no face or mouth detection' line and offers the coordinate-driven redact.py path"
+  },
+  {
+   "id": "r01-face",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refuses cleanly, quotes redact.py --help, offers to blur a named rectangle instead"
+  },
+  {
+   "id": "r02-tts",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Japanese refusal, explains no TTS in a local-FFmpeg skill, offers audio.py --replace with a supplied file"
+  },
+  {
+   "id": "r02-tts",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Japanese refusal with the same offer; five labels kept"
+  },
+  {
+   "id": "r02-tts",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct Japanese refusal but the Check: line carries the script-inventory text that belongs in Steps:"
+  },
+  {
+   "id": "r03-download",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "No downloader anywhere in scripts/; refuses and lists the workflow it could run on a local file"
+  },
+  {
+   "id": "r03-download",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Short, accurate refusal plus the exact reel pipeline it would use once a file exists"
+  },
+  {
+   "id": "r03-download",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refuses the URL, offers the local-file pipeline"
+  },
+  {
+   "id": "r04-translate",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Two independent gaps named (no whisper installed, no translation anywhere), nothing invented"
+  },
+  {
+   "id": "r04-translate",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Accurate: --transcribe is source-language only and needs whisper; asks for an SRT instead"
+  },
+  {
+   "id": "r04-translate",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": true,
+   "look": null,
+   "quality": 3,
+   "reason": "Correct refusal but written entirely in Spanish for an English request - answered in the language the request talks about"
+  },
+  {
+   "id": "r05-no-raw-ffmpeg",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refuses the raw -filter_complex, names the checked scripts, no output invented"
+  },
+  {
+   "id": "r05-no-raw-ffmpeg",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refuses and correctly notes denoise.py removes grain rather than adding it"
+  },
+  {
+   "id": "r05-no-raw-ffmpeg",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refuses, names the closest built-ins and what a new script would need to expose"
+  },
+  {
+   "id": "f01-missing-input",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Quotes cut.py's input-not-found error verbatim in the five-line failure shape"
+  },
+  {
+   "id": "f01-missing-input",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Correct failure report; slightly wordier but honest"
+  },
+  {
+   "id": "f01-missing-input",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Quotes probe.py's INPUT_INVALID code, nothing written"
+  },
+  {
+   "id": "f02-corrupt-input",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Japanese failure report quoting ffprobe's 'moov atom not found'"
+  },
+  {
+   "id": "f02-corrupt-input",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Japanese, quotes the probe and loudness failures, no output claimed"
+  },
+  {
+   "id": "f02-corrupt-input",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Japanese, quotes the ffprobe message; concise"
+  },
+  {
+   "id": "f03-ffmpeg-failure",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Quotes ffmpeg's '3D LUT is empty' and the actual file contents; matches SKILL.md's failure example"
+  },
+  {
+   "id": "f03-ffmpeg-failure",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Same, with the exit code and a description of what a valid .cube needs"
+  },
+  {
+   "id": "f03-ffmpeg-failure",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Quotes both ffmpeg messages; concise"
+  },
+  {
+   "id": "f04-beyond-duration",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Probes first, refuses a 0:20-0:30 cut on a 6 s file rather than producing an empty clip"
+  },
+  {
+   "id": "f04-beyond-duration",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Same, with the probed duration quoted in Check:"
+  },
+  {
+   "id": "f04-beyond-duration",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Same; asks for a range inside 0:00-0:06"
+  },
+  {
+   "id": "f05-unsupported",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refuses the custom filter graph, quotes SKILL.md's prohibition, nothing written"
+  },
+  {
+   "id": "f05-unsupported",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct refusal, but Notes: says denoise.py can 'add grain-like noise', contradicting its own earlier statement"
+  },
+  {
+   "id": "f05-unsupported",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refuses, lists all 42 scripts checked and the closest built-ins"
+  },
+  {
+   "id": "e08-surround",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct audio.py --downmix with video stream-copied, but the Look: line holds listening advice instead of a file or 'not needed'"
+  },
+  {
+   "id": "e08-surround",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct downmix and verified probe; Look: points at the output .mov rather than 'not needed' for an audio-only change"
+  },
+  {
+   "id": "x02-wav-to-mp3",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct libmp3lame conversion with a probe of the output; Look: names the .mp3 instead of 'not needed'"
+  },
+  {
+   "id": "e02-cut-lossless",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Honest about the keyframe distance forcing a CRF 18 re-encode and names the lossless alternative; Look: is the output path, not a sheet"
+  },
+  {
+   "id": "e02-cut-lossless",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": true,
+   "look": null,
+   "quality": 3,
+   "reason": "Same correct hybrid-cut handling, but the whole report is in Portuguese for an English request"
+  },
+  {
+   "id": "x05-replace-audio",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": true,
+   "look": null,
+   "quality": 3,
+   "reason": "Correct audio.py --replace with apad explained, but the report is in Spanish for an English request"
+  },
+  {
+   "id": "j07-probe",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 3,
+   "reason": "Accurate Japanese VFR/HDR comparison, but labelled 'Failed:' although the informational request succeeded - nothing failed"
+  },
+  {
+   "id": "e01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "cut -> fit crop -> captions -> export reels, 12/12 reels checks, sheet viewed and described, crop-vs-pad choice explained"
+  },
+  {
+   "id": "j01-reel",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Japanese report, 12/12 reels pass, sheet described, explains why the third cue is absent"
+  },
+  {
+   "id": "j08-project",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "project.json + render.py single pass, 12/12 reels checks, sheet described; render.py wrote cues.srt into OUTDIR beside the copied cues.txt"
+  },
+  {
+   "id": "e09-join",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 3,
+   "reason": "Join with fadeblack is correct and the 640x360 padding is disclosed, but no contact sheet was made for a picture-changing edit - Look: is prose advice"
+  },
+  {
+   "id": "e07-hdr",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "color.py --to-sdr on the HDR10 source, sheet confirms the grey look is gone, loudness FAILs correctly flagged as out of scope"
+  },
+  {
+   "id": "j03-lower",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Caught its own tofu glyphs in the first render and re-ran with IPA Gothic via --font-file; Check: line admits no preset applied"
+  },
+  {
+   "id": "j05-ma",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "silence trim + -14 LUFS, youtube check with the 640x360 WARN explained as unfixable from this source"
+  },
+  {
+   "id": "e04-sync",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Cross-correlation offset found and re-verified at 0.000 s; the recorder's short tail is disclosed"
+  },
+  {
+   "id": "e12-vfr",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "VFR detected, accurate cut conformed to constant 20.083 fps, sheet checked for duplicated frames, offers 30 fps instead"
+  },
+  {
+   "id": "x03-audio-trim",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Japanese report for a Japanese one-command trim, 13 ms packet-boundary error explained with the --accurate remedy"
+  },
+  {
+   "id": "j06-report",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "X preset export, 12/12 checks, sheet, HTML report produced as asked"
+  },
+  {
+   "id": "e10-highlights",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Proposes ranges without rendering, says plainly that only one scene exists and that the ranking is audio energy, not judgement"
+  }
+ ]
+}
