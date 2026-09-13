@@ -1118,6 +1118,9 @@ class FFmpegSkillTests(unittest.TestCase):
         """Chinese has no spaces: the line breaks between any two characters, and every character
         counts as a full em (Latin averages just over half)."""
         import caption  # noqa: E402
+        from _common import font_for_script  # noqa: E402
+        if font_for_script("zh") is None:
+            self.skipTest("this machine has no font covering zh")
         text = "你好世界这是一个很长的中文字幕需要换行处理的测试"
         self.assertEqual(len(text), 24)
         cues = OUT / "wrap_cjk.txt"
