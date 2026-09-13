@@ -1438,6 +1438,8 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
         # time grammar); it overrides the source fps a tool passed in, and is meaningless without
         # the four-part form
         v, _, rate = v.rpartition("@")
+        if "@" in v:
+            raise ValueError(f"'{value}': only one @fps suffix is allowed")
         try:
             fps = float(rate)
         except ValueError:

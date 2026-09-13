@@ -27,7 +27,7 @@ Project format (all keys optional except clips):
   "audio": {"voice": true, "music": "bed.mp3", "music_volume": -16, "duck": true, "music_fade_out": 2},
   "loudness": {"lufs": -14, "tp": -1},
   "fit": {"duration": 60},
-  "export": {"preset": "reels", "normalize": true},
+  "export": {"preset": "reels", "normalize": true},   (default for platform presets; false opts out)
   "check": {"platform": "reels"}
 }
 

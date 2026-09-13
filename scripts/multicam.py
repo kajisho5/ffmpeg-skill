@@ -29,7 +29,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, x264_args, X264_PRESETS, fmt_secs
+from _common import video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs
 from sync import measure_offset
 
 
@@ -42,9 +42,10 @@ def parse_switch(spec: str, n: int) -> List[Tuple[float, float, int]]:
         try:
             rng, cam = raw.rsplit(":", 1)
             a, b = rng.rsplit("-", 1)
-            s, e, c = parse_time(a), parse_time(b), int(cam)
+            c = int(cam)
         except ValueError:
             die(f"bad switch entry '{raw}' (want START-END:CAM)")
+        s, e = time_arg(a, f"--switch {raw!r} start"), time_arg(b, f"--switch {raw!r} end")
         if not 0 <= c < n:
             die(f"camera {c} does not exist (inputs are 0..{n - 1})")
         if e <= s:

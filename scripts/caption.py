@@ -19,7 +19,7 @@ The subtitle codec is picked from the output container: mov_text for
 Text-to-SRT input format (one cue per line, blank lines ignored):
   0:00-0:03 Hello and welcome
   00:00:03.500 --> 00:00:06 Second line | with a manual line break
-  00:00:03:15 --> 00:00:06:00 SMPTE non-drop-frame timecode (hh:mm:ss:ff, needs --fps)
+  00:00:03:15 --> 00:00:06:00 SMPTE non-drop-frame timecode (hh:mm:ss:ff, needs --fps or an @fps suffix: 00:00:03:15@29.97)
   Text without a time is auto-timed after the previous cue (--auto-seconds)
 
 Examples:
@@ -41,7 +41,7 @@ from _common import STATE, color_hex, load_brand, video_args, add_common, apply_
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
 TIME_RE = re.compile(
-    r"^\s*(?P<a>[\d:.,]+)\s*(?:-->|-|–|to)\s*(?P<b>[\d:.,]+)\s+(?P<text>.+)$"
+    r"^\s*(?P<a>[\d:.,@]+)\s*(?:-->|-|–|to)\s*(?P<b>[\d:.,@]+)\s+(?P<text>.+)$"  # @ = the 1.9 @fps suffix
 )
 
 

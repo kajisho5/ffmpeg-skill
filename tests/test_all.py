@@ -1114,6 +1114,31 @@ class FFmpegSkillTests(unittest.TestCase):
         d = json.loads(script("broll.py", self.src, "--insert", self.src, "--at", "1:xx", "-o", OUT / "tc_broll.mp4", "--json", expect_fail=True).stdout)
         self.assertEqual(d["error"]["kind"], "input")
         self.assertIn("--at", d["error"]["message"])
+        # 1.9.1 (audit 8): a cue file may carry the suffix too -- the timecodes must not become the caption text
+        with self.assertRaises(ValueError) as cm:
+            c.parse_time("00:00:01:15@30@30")
+        self.assertIn("only one @fps", str(cm.exception), "no interpreter internals in the refusal")
+        tc = OUT / "tc_at_cues.txt"
+        tc.write_text("00:00:00:15@30 --> 00:00:02:00@30 Hello there\n", encoding="utf-8")
+        srt = OUT / "tc_at.srt"
+        script("caption.py", "--text", tc, "--write-srt", srt)
+        text = srt.read_text(encoding="utf-8")
+        self.assertIn("00:00:00,500 --> 00:00:02,000\nHello there", text)
+        self.assertNotIn("@30", text)
+        # metadata / multicam / speedramp refuse through the same parser and name the suffix
+        ch = OUT / "tc_chapters.txt"
+        ch.write_text("00:00:01:00 Intro\n", encoding="utf-8")
+        d = json.loads(script("metadata.py", self.src, "--chapters", ch, "-o", OUT / "tc_md.mp4", "--json", "--dry-run", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("@fps", d["error"]["message"])
+        ch.write_text("00:00:01:00@30 Intro\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", ch, "-o", OUT / "tc_md.mp4", "--json", "--dry-run")
+        d = json.loads(script("multicam.py", self.src, self.src, "--switch", "0-1:xx:0", "-o", OUT / "tc_mc.mp4", "--json", "--dry-run", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("@fps", d["error"]["message"])
+        d = json.loads(script("speedramp.py", self.src, "--segment", "0-1:xx:2", "-o", OUT / "tc_sr.mp4", "--json", "--dry-run", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("@fps", d["error"]["message"])
 
     def test_probe_hdr_signal_is_the_transfer_not_the_primaries(self):
         """1.9: hdr_signal is true for PQ / HLG / Dolby Vision only; hdr keeps its 1.x meaning."""

@@ -400,7 +400,9 @@ for a `--platform` or a platform export preset), and reports `plan`, `tool`,
 `tool_result` and `check`. Show the plan to the user, get the yes, execute:
 one round trip instead of re-deriving the command.
 `"export": {"preset": "reels", "normalize": true}` forwards `export.py --normalize`
-so the rendered file meets the platform's loudness without a separate pass.
+so the rendered file meets the platform's loudness without a separate pass. Since
+1.9.0 it is on by default when the preset is a platform (`youtube|youtube4k|reels|x`)
+and the project has no `loudness` stage; `"normalize": false` opts out.
 
 Stages: clips (cut, optional speed) → join (transition) → silence → fit →
 captions → graphics → overlays → audio → loudness → export → check. Keys mirror the

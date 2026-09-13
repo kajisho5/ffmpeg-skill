@@ -30,7 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, STATE, read_text_or_die
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, STATE, read_text_or_die
 
 CHAPTER_CONTAINERS = {".mp4", ".m4v", ".m4a", ".mov", ".mkv", ".mka", ".webm"}
 TAG_KEYS = ("title", "artist", "album", "comment", "date", "genre")
@@ -46,10 +46,8 @@ def parse_chapters(path: str, duration: float) -> List[Dict[str, Any]]:
         if not line or line.startswith("#"):
             continue
         parts = line.split(None, 1)
-        try:
-            start = parse_time(parts[0])
-        except ValueError:  # MissingFpsError is a ValueError: chapter files carry no fps
-            die(f"{path}:{n}: cannot read the time in {line!r} (use seconds, mm:ss or hh:mm:ss.ms)")
+        # chapter files carry no fps, so hh:mm:ss:ff needs its @fps suffix; time_arg() says so
+        start = time_arg(parts[0], f"{path}:{n}")
         title = parts[1].strip() if len(parts) > 1 else f"Chapter {len(entries) + 1}"
         if entries and start <= entries[-1]["start"]:
             die(f"{path}:{n}: chapter at {start:g}s does not come after the previous one at {entries[-1]['start']:g}s")
