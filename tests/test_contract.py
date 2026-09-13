@@ -1585,7 +1585,7 @@ class ContractTests(unittest.TestCase):
         read as 10-bit (#2); audio --mono halved an already-mono track (#3); sync --replace-audio
         cut the reference to the shorter second (#4); 25+ tools raised TypeError formatting a
         None duration after a successful encode (#5); energy karaoke gave the last word a
-        negative \kf on a short cue (#6); the energy decode ran outside --timeout (#7); render's
+        negative \\kf on a short cue (#6); the energy decode ran outside --timeout (#7); render's
         final copy bypassed the output guards (#8); the video join forced stereo (#10); multicam
         -shortest (#12); ffprobe JSON parse without a guard (#14); git-build version strings read
         as 0.0 (#15); freeze --mode insert desynced copied subtitles (#31); sequence globbed
