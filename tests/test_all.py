@@ -1380,8 +1380,9 @@ class FFmpegSkillTests(unittest.TestCase):
         doc = json.loads(plan.read_text(encoding="utf-8"))
         planned = [c for c in doc["commands"] if "-vf" in c]
         self.assertTrue(planned, doc["commands"])
-        self.assertIn(str(adjusted), planned[0], "the plan burns the adjusted copy, not the caller's file")
-        self.assertNotIn(f"subtitles={src_srt}", planned[0])
+        # the filter string escapes the path (Windows: `D\\:/a/...`), so match the file name
+        self.assertIn(adjusted.name, planned[0], "the plan burns the adjusted copy, not the caller's file")
+        self.assertNotIn(src_srt.name, planned[0])
         self.assertTrue(any(str(adjusted) in n for n in doc.get("notes") or []),
                         f"the plan records the side file: {doc.get('notes')}")
         self.assertFalse(adjusted.exists(), "a dry run writes no side file")
@@ -1411,7 +1412,10 @@ class FFmpegSkillTests(unittest.TestCase):
         stated.write_text(json.dumps({"font": "DejaVu Sans"}), encoding="utf-8")
         proc2 = script("caption.py", self._small(), "--text", cues, "--brand", stated,
                        "--animate", "none", "--fast", "-o", OUT / "brand_ko2.mp4")
-        self.assertIn("does not cover", proc2.stderr, "a font the brand file itself states is kept")
+        if shutil.which("fc-list"):
+            self.assertIn("does not cover", proc2.stderr, "a font the brand file itself states is kept")
+        else:
+            self.assertNotIn("does not cover", proc2.stderr, "no fontconfig: coverage is unknown, nothing is claimed")
         self.assertNotIn("(covers ko)", proc2.stderr)
 
     def test_caption_never_breaks_before_a_combining_mark(self):
