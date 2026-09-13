@@ -677,6 +677,24 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
 
 
 # ------------------------------------------------------- multi-language subtitle tracks (1.16)
+
+class AppendPath(argparse.Action):
+    """`--srt` repeated, without changing what the contract says `--srt` is.
+
+    `action="append"` would make the derived JSON Schema an array (`_contract._json_type`), and the
+    1.x guarantee says no argument changes type -- an MCP client that sends `{"srt": "subs.srt"}`
+    must keep working exactly as it did. Subclassing Action directly keeps the schema a plain
+    string while the CLI collects every occurrence, so repeating the flag is purely additive.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        current = getattr(namespace, self.dest, None)
+        if not isinstance(current, list):
+            current = [] if current is None else [current]
+        current.append(values)
+        setattr(namespace, self.dest, current)
+
+
 # BCP-47-ish: a 2-3 letter primary subtag, optionally followed by script/region/variant subtags.
 LANG_TOKEN_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 
@@ -802,7 +820,7 @@ def main() -> int:
                           "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
                           "the first track, same as leaving it unset always did")
     src = ap.add_argument_group("subtitle source")
-    src.add_argument("--srt", action="append", metavar="FILE[:LANG]",
+    src.add_argument("--srt", action=AppendPath, metavar="FILE[:LANG]",
                      help="SRT file to burn, or (with --mode mux) to add as a soft subtitle track. Repeat it once "
                           "per language to build a multi-track deliverable, each with an optional `:lang` suffix: "
                           "`--srt en.srt:en --srt ja.srt:ja`. A single --srt with no suffix takes --language, as "
@@ -815,7 +833,7 @@ def main() -> int:
     src.add_argument("--language", "--lang", help="language code (e.g. en, ja, zh, ko): the language for --transcribe (default auto), "
                                                   "the tag on the subtitle stream with --mode mux, and the hint that says whether Han-only "
                                                   "text is Chinese, Japanese or Korean when a font is picked by script")
-    src.add_argument("--track-title", action="append", metavar="TITLE",
+    src.add_argument("--track-title", action=AppendPath, metavar="TITLE",
                      help="--mode mux: the name a player lists a track under, repeated in the same order as --srt "
                           "(default: the language's display name from a frozen table, else the code itself -- the "
                           "table is data, never a guessed or translated name)")
