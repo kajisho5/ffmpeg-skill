@@ -153,7 +153,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 ## Tools
 
-42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
+42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.10.2) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
 
 **Analysis and inspection**
 
@@ -259,6 +259,9 @@ built straight from that object. (The rest of a `ToolSpec` — `role`, `capabili
 aren't things a parser can express; only `input_schema` is parser-derived.)
 
 - **The contract**'s `input_schema` for every tool is generated from the live parser directly.
+- **SKILL.md is two-tier** (1.10.2): the file the agent loads every session keeps the workflow, the
+  request→script table and one line per gotcha; the long-form detail lives in `references/gotchas.md`
+  and the other `references/` files, read only when a job needs it.
 - **The MCP server** (`mcp/server.py`) carries no schema of its own; `tools/list` is translated
   straight from the contract, `input_schema` included.
 - **The docs** (`docs/contract.md`'s field reference, this README's tool table) describe the same
@@ -286,7 +289,7 @@ The contract is generated from the code that runs, not maintained beside it. For
 | `output_schema` | what `--json` prints: `status`, `output`, `commands`, `probe`, plus tool-specific fields (`precision`, `checks`, `offset_seconds`, …) |
 | `role` | `analysis`, `analysis_and_execution`, `execution` or `verification` |
 | `capabilities` | the FFmpeg encoders, filters and bitstream filters the tool always needs, and the ones needed only for a flag or input |
-| `supports_dry_run`, `supports_json` | measured by the tests, not declared |
+| `supports_dry_run`, `supports_json`, `supports_json_brief` | measured by the tests, not declared |
 | `verification` | which tools to run on the output afterwards (`probe`, `check`, `look`) |
 | `requires_visual_verification` | the picture changed; inspect the contact sheet |
 | `audio_only`, `video_required` | whether an audio-only input is accepted or refused |

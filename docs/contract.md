@@ -128,6 +128,7 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `output_schema` | what `--json` prints on stdout |
 | `supports_dry_run`, `dry_run` | whether `--dry-run` plans without running ffmpeg or writing files |
 | `supports_json` | whether `--json` exists |
+| `supports_json_brief` | whether `--json-brief` exists (1.10.2): the same success document with `probe` replaced by a compact `summary` (`duration_s`, `width`, `height`, `fps`, `vcodec`, `acodec`, `channels`, and `lufs` when the tool measured one), `commands` replaced by the number of commands run, and the per-step `verification` list dropped (its verdict stays in `verified`). Tool-specific keys are unchanged, `--json`'s own output is unchanged, and a failure prints the same failure document either way |
 | `mutates_input` | always `false`: no tool overwrites its input |
 | `produces_artifact` | writes a file (media, PNG, HTML, EDL) |
 | `verification` | `{required, tools}`: which tools to run on the output afterwards |

@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- **SKILL.md is two-tier** (token diet, 1.10.2): 362 lines / 37.8 KB → 198 lines / 29.1 KB with no rule removed. The long "Things that look right but are wrong" and "Gotchas" prose, and the audio-only recipe table, moved to the new `references/gotchas.md`; SKILL.md keeps one line per item with a `references/gotchas.md#anchor` pointer.
+- **Workflow guidance that saves calls**: run `_contract.py doctor` only before the first job on a new machine or after a `kind: missing_tool` failure (not per job); no separate `probe.py` before every edit, because every writing tool's `--json` already carries the input and a probe of the output; use `render.py` with a project.json for jobs of three or more steps; verify with `look.py --tiles 3x2` (or `--at T`), keeping the full 4x3 sheet for jobs about layout across the whole clip.
+- `python3 scripts/_contract.py doctor` without `--json` prints counts and what is missing instead of the full capability list (1681 → 522 bytes on a healthy machine). `doctor --json` is unchanged.
+
+### Added
+
+- `--json-brief` on every tool: the same success document as `--json`, trimmed to `status`, `output`, `dry_run`, `verified`, a compact `summary` (`duration_s`, `width`, `height`, `fps`, `vcodec`, `acodec`, `channels`, and `lufs` when the tool measured one), the tool's own keys and the count of commands instead of the command lines — 2372 → 784 bytes for a `cut.py` run. It implies `--json`; `--json`'s own output is unchanged; failures print the same failure document as today.
+- `contract --json`: `supports_json_brief` per tool, mirroring the measured `supports_json`. The MCP `tools/list` schema gains the `json_brief` argument on every tool (an addition; the frozen 1.x snapshot was regenerated).
 
 ## 1.10.1
 

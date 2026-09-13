@@ -930,6 +930,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
                     "semantics": "prints the ffmpeg command lines that would run; no output file is written",
                     **({"note": DRY_RUN_ANALYSIS.get(name) or DRY_RUN_NOTES[name]} if name in DRY_RUN_ANALYSIS or name in DRY_RUN_NOTES else {})},
         "supports_json": "json" in schema["properties"],
+        # additive mirror of supports_json (1.10.2): --json-brief is the same document trimmed
+        "supports_json_brief": "json_brief" in schema["properties"],
         "mutates_input": False,
         "produces_artifact": meta["produces_artifact"],
         "verification": {"required": bool(meta["verify"]), "tools": [f"{SKILL_ID}/{t}" for t in meta["verify"]]},
@@ -1132,7 +1134,14 @@ def main() -> int:
         else:
             print(f"ffmpeg-skill {d['version']} (this installed copy; re-run `npx ffmpeg-skill` to refresh it -- copies are not updated automatically)")
             print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}")
-            print(f"available: {', '.join(d['available'])}")
+            # counts, not the full capability list: the names of the ~60 available capabilities
+            # answer no question a caller has (they are in `doctor --json .available` when one
+            # does), while what is MISSING is the whole reason to run doctor (1.10.2 token diet).
+            head = (f"{'ok' if d['ok'] else 'NOT ok'}: {len(d['available'])} capabilities available, "
+                    f"{len(d['missing'])} required missing, {len(d['missing_optional'])} optional missing")
+            if d["unknown"]:
+                head += f", {len(d['unknown'])} unknown"
+            print(head)
             print(f"missing required: {', '.join(d['missing']) or 'none'}")
             print(f"missing optional: {', '.join(d['missing_optional']) or 'none'}")
             if d["unknown"]:
@@ -1142,9 +1151,11 @@ def main() -> int:
                 print(f"note: overall 'ok' means nothing REQUIRED BY EVERY TOOL is missing -- {len(not_usable)} tool(s) still can't run today: {', '.join(not_usable)} (see doctor --json .tools for why)")
             gpu = d["gpu_encoders"]
             if gpu["status"] == "parsed":
-                print(f"GPU-backed encoders in this build: {', '.join(gpu['present']) or 'none'} (no tool here uses one yet; this build-presence check does not prove the GPU/driver will accept a job)")
+                print(f"GPU-backed encoders in this build: {len(gpu['present'])} (no tool here uses one; names in doctor --json)")
             fonts = d["fonts"]
-            print(f"default drawtext font '{fonts['default_font']}': {fonts['status']} ({fonts['detail']})")
+            print(f"default drawtext font '{fonts['default_font']}': {fonts['status']}"
+                  + (f" ({fonts['detail']})" if fonts["status"] != "available" else ""))
+            print("full detail: doctor --json (capability lists, per-tool `usable`, fix hints)")
             for err in d["errors"]:
                 print(f"detection error: {err}", file=sys.stderr)
         if d["ok"]:

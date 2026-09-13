@@ -530,6 +530,15 @@ class ContractTests(unittest.TestCase):
         self.assertIn("doctor", workflow)
         self.assertIn("contract", workflow)
 
+    def test_supports_json_brief_mirrors_the_real_flag(self):
+        """1.10.2: `--json-brief` is declared the same way `supports_json` is -- measured from the
+        parser, never hand-written -- so a tool that somehow lost the shared flag shows up here."""
+        for t in self.contract["tools"]:
+            with self.subTest(tool=t["name"]):
+                self.assertEqual(t["supports_json_brief"], "json_brief" in t["input_schema"]["properties"])
+                self.assertTrue(t["supports_json_brief"], "every tool takes --json-brief")
+                self.assertEqual(t["supports_json"], t["supports_json_brief"])
+
     def test_verification_metadata_matches_skill_workflow(self):
         for t in self.contract["tools"]:
             v = t["verification"]

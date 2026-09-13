@@ -3531,6 +3531,56 @@ class FFmpegSkillTests(unittest.TestCase):
         helptext = " ".join(script("cut.py", "--help").stdout.split())
         self.assertIn("(deprecated: use --quality)", helptext)
 
+    def test_json_brief_is_a_shorter_json_with_the_same_verdict(self):
+        """1.10.2 token diet: `--json-brief` is additive -- the same success document with the
+        probe summarised, the command lines counted and the per-step verification list dropped.
+        `--json` itself must be untouched, so both are run on the same edit and compared."""
+        full = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", str(OUT / "brief_full.mp4"), "--json").stdout)
+        brief = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", str(OUT / "brief_short.mp4"), "--json-brief").stdout)
+        self.assertEqual(set(full) - set(brief), {"probe", "verification"}, "only the bulky keys go")
+        self.assertEqual(set(brief) - set(full), {"summary"})
+        self.assertEqual(brief["status"], "completed")
+        self.assertEqual(brief["dry_run"], full["dry_run"])
+        self.assertEqual(brief["verified"], full["verified"])
+        self.assertNotIn("probe", brief)
+        self.assertNotIn("verification", brief)
+        self.assertEqual(brief["commands"], len(full["commands"]), "commands is the count, not the list")
+        summary = brief["summary"]
+        self.assertEqual(summary["width"], full["probe"]["video"]["width"])
+        self.assertEqual(summary["height"], full["probe"]["video"]["height"])
+        self.assertEqual(summary["vcodec"], full["probe"]["video"]["codec"])
+        self.assertEqual(summary["acodec"], full["probe"]["audio"]["codec"])
+        self.assertAlmostEqual(summary["duration_s"], full["probe"]["duration"], places=2)
+        for key in ("precision", "reencoded", "expected_duration"):
+            self.assertEqual(brief[key], full[key], f"{key}: the tool's own keys survive the diet")
+        self.assertLess(len(json.dumps(brief)), len(json.dumps(full)) / 2, "the point of the flag is fewer bytes")
+
+    def test_json_brief_failure_is_the_usual_failure_document(self):
+        """A failure must not be trimmed: die() prints the same document with or without the flag,
+        so a caller never loses the error kind, message or hint by asking for brevity."""
+        proc = script("cut.py", str(OUT / "does_not_exist.mp4"), "--start", "0", "--end", "1", "--json-brief", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed")
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertTrue(doc["error"]["message"])
+        self.assertNotIn("summary", doc)
+
+    def test_skill_md_stays_within_the_agent_reading_budget(self):
+        """1.10.2: SKILL.md is the file every session loads, so its size is a real per-run cost.
+        The two-tier split (long-form prose in references/gotchas.md, one line plus an anchor
+        here) brought it from 362 lines / 37.8 KB to under this ceiling; a new rule belongs in a
+        references/ file with a one-line pointer, not in an ever-growing SKILL.md."""
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        lines, size = len(text.splitlines()), len(text.encode("utf-8"))
+        self.assertLessEqual(lines, 220, f"SKILL.md is {lines} lines; move detail to references/")
+        self.assertLessEqual(size, 30000, f"SKILL.md is {size} bytes; move detail to references/")
+        gotchas = (ROOT / "references" / "gotchas.md").read_text(encoding="utf-8")
+        # every "details:" pointer resolves to a real heading in the file it names
+        for anchor in re.findall(r"references/gotchas\.md#([a-z0-9-]+)", text):
+            headings = ["".join(ch for ch in h.lower().replace(" ", "-") if ch.isalnum() or ch == "-")
+                        for h in re.findall(r"(?m)^#+ (.+)$", gotchas)]
+            self.assertIn(anchor, headings, f"SKILL.md points at references/gotchas.md#{anchor}, which has no such heading")
+
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):
             with self.subTest(script=name):

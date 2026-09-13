@@ -7,6 +7,7 @@ error reporting, and provides a compact media probe used by every script.
 from __future__ import annotations
 
 import json
+import math
 import os
 import platform
 import argparse
@@ -236,7 +237,7 @@ class Context:
     makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec")
+    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec")
 
     def __init__(self) -> None:
         self.reset()
@@ -244,6 +245,7 @@ class Context:
     def reset(self) -> None:
         self.dry_run = False      # print ffmpeg commands, run nothing (ffprobe still runs)
         self.json = False         # emit() prints a JSON document instead of the output path
+        self.json_brief = False   # --json-brief: the same document trimmed to the fields a caller acts on
         self.progress = False     # run() streams percent / ETA to stderr for ffmpeg
         self.fast = False         # x264 preset forced to veryfast
         self.duration_hint: Optional[float] = None  # expected output length, for the progress percent
@@ -277,6 +279,8 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
     g = ap.add_argument_group("agent options")
     g.add_argument("--dry-run", action="store_true", help="print the ffmpeg commands that would run, run nothing")
     g.add_argument("--json", action="store_true", help="print a JSON result (output, probe, commands) on stdout instead of the path")
+    g.add_argument("--json-brief", action="store_true",
+                   help="like --json but trimmed: status, output, dry_run, verified, a compact summary of the output probe, this tool's own keys, and the command count instead of the command lines (failures print the full failure document, unchanged)")
     g.add_argument("--progress", action="store_true", help="show percent / ETA on stderr while ffmpeg encodes")
     g.add_argument("--fast", action="store_true", help="preview quality: x264 preset veryfast (overrides --preset) for quick iterations")
     if "--timeout" not in ap._option_string_actions:  # verify.py defines its own per-step --timeout; apply_common reads either
@@ -329,7 +333,10 @@ def apply_common(args: "argparse.Namespace") -> None:
         # tools without --json) still get their plan written, at exit, unless die() ran (review 6)
         import atexit
         atexit.register(_plan_at_exit)
-    STATE.json = bool(getattr(args, "json", False))
+    STATE.json_brief = bool(getattr(args, "json_brief", False))
+    # --json-brief is a shorter --json, not a second output mode: it implies it, so a caller that
+    # passes only --json-brief still gets a JSON document (and --json --json-brief is the brief one).
+    STATE.json = bool(getattr(args, "json", False)) or STATE.json_brief
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
@@ -455,11 +462,62 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
             doc["result_v2"] = _result_v2(output, meta, dict(extra, verified=doc["verified"], verification=steps))
         if ctx.plan:
             doc["plan"] = write_plan(ctx.plan, output, extra, ctx=ctx)
-        print_json(doc)
+        print_json(_brief(doc, meta) if ctx.json_brief else doc)
     elif ctx.plan:
         print(write_plan(ctx.plan, output, extra, ctx=ctx))
     elif output:
         print(output)
+
+
+# Keys the brief document replaces or drops: the full probe (summarised), the command lines
+# (counted), the per-step verification list (its verdict stays as `verified`) and the 2.0 preview.
+_BRIEF_DROP = ("probe", "commands", "verification", "result_v2")
+
+
+def _brief_summary(meta: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    """The handful of output facts a caller reports or branches on, from the probe this tool
+    already ran -- plus the measured loudness when the tool measured one. Keys whose value is
+    unknown are left out rather than emitted as null."""
+    video = (meta or {}).get("video") or {}
+    audio = (meta or {}).get("audio") or {}
+    summary: Dict[str, Any] = {}
+    duration = (meta or {}).get("duration")
+    if duration is not None:
+        summary["duration_s"] = round(float(duration), 3)
+    for key, value in (("width", video.get("width")), ("height", video.get("height")), ("fps", video.get("fps")),
+                       ("vcodec", video.get("codec")), ("acodec", audio.get("codec")), ("channels", audio.get("channels"))):
+        if value is not None:
+            summary[key] = value
+    lufs = None
+    for source, key in ((extra.get("result"), "input_i"), (extra.get("measured"), "input_i")):
+        if lufs is None and isinstance(source, dict):
+            lufs = _to_float(source.get(key))
+    for step in extra.get("verification") or []:
+        if lufs is None and isinstance(step, dict):
+            lufs = _to_float(step.get("lufs"))
+    # a silent file measures -inf, which json.dumps writes as the non-standard -Infinity: the
+    # brief document stays valid JSON by leaving the key out instead (the full document's own
+    # `measured`/`result` still carries whatever the tool reported).
+    if lufs is not None and math.isfinite(lufs):
+        summary["lufs"] = round(lufs, 2)
+    return summary
+
+
+def _brief(doc: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
+    """--json-brief: the same success document with the bulky parts replaced by what a caller
+    acts on. Same keys, same meanings -- `commands` becomes the count of the command lines,
+    `probe` becomes `summary` -- plus every tool-specific key the tool itself passed to emit().
+    Failures are untouched: die() prints the full failure document either way."""
+    brief: Dict[str, Any] = {"status": doc["status"], "output": doc["output"], "dry_run": doc["dry_run"],
+                             "verified": doc.get("verified", False)}
+    summary = _brief_summary(meta, doc)
+    if summary:
+        brief["summary"] = summary
+    brief["commands"] = len(doc.get("commands") or [])
+    for key, value in doc.items():
+        if key not in brief and key not in _BRIEF_DROP:
+            brief[key] = value
+    return brief
 
 
 PLAN_VERSION = 1
@@ -1047,7 +1105,6 @@ def rms_envelope(samples: Sequence[float], step: int, *, full_blocks_only: bool 
     """RMS per block of `step` samples. full_blocks_only drops a short tail block (sync.py: every
     block must be the same length for the correlation); remove_mean subtracts the envelope's mean
     (sync.py: so silence does not correlate). scenes.py keeps the tail and the absolute level."""
-    import math
     step = max(1, int(step))
     n = len(samples)
     stop = n - step + 1 if full_blocks_only else n

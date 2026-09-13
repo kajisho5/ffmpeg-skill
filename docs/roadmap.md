@@ -60,6 +60,32 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
   steps) re-run on the tree — eighth audit shipped as 1.9.1; eval 10 and corpus re-run pending.
   `docs/contract.md` "What 2.0 changes" section written from the `deprecated` list (done).
 
+## 1.10.2 — token diet
+
+The eval-10 follow-up: make a job cost the agent fewer tokens and fewer calls without changing
+what any tool does. Nothing here is a behaviour change — `--json`, exit codes, contract fields
+and the default MCP `tools/list` are unchanged except for additions.
+
+- **Two-tier SKILL.md** (done): the always-loaded file keeps the workflow, the request→script
+  table, the report format and one line per gotcha; the long "Things that look right but are
+  wrong" / "Gotchas" prose and the audio-only recipes moved to `references/gotchas.md`, each
+  line pointing at its anchor. 362 lines / 37.8 KB → 198 lines / 29.1 KB, no rule dropped.
+- **Guidance that saves calls** (done): `doctor` only on a new machine or after a
+  `kind: missing_tool` failure, not per job; no separate `probe.py` before every edit (a writing
+  tool's `--json` already carries the input and the output probe); `render.py` with a project.json
+  for jobs of three or more steps; `look.py --tiles 3x2` (or `--at T`) for verification, the full
+  4x3 sheet only when the job is about layout across the whole clip.
+- **`--json-brief`** (done, additive): every tool gains a flag that prints the same success
+  document trimmed to `status`, `output`, `dry_run`, `verified`, a compact `summary`
+  (duration/width/height/fps/codecs/channels, `lufs` when measured), its own tool-specific keys
+  and the command count instead of the command lines — about a third of `--json`'s bytes.
+  `contract --json` reports it as `supports_json_brief`, mirroring `supports_json`.
+- **Shorter `doctor` summary** (done): the plain-text output states counts and what is missing
+  (1681 → 522 bytes on a healthy machine); `doctor --json` is unchanged and still carries every
+  capability name, per-tool `usable` and the fix hints.
+- **Eval iteration 11** measures tokens per run and keeps only the changes that hold routing,
+  honesty, language, report format and look behaviour at iteration-10 levels (pending).
+
 ## 1.11.0 — captions people can read
 
 - `caption.py` wraps by measured text width (fontconfig metrics, not character count) so
