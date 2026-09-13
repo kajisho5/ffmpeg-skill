@@ -283,7 +283,7 @@ afterwards -- both as second processes, so neither of those code paths is
 re-implemented here. `--image` must be a readable local file: a URL is refused
 (`kind: input`), nothing is fetched, and the skill never invents cover art --
 give an image or a colour. Without any of these flags the command line is
-byte-identical to 1.15's. The result gains an `audiogram` object (style,
+byte-identical to 1.15's. Every run's result carries an `audiogram` object (style,
 background, image, position, vis_height, platform, captions, title, stages,
 verified). `render.py --template audiogram` is the one-call form; it is
 deliberately not part of `--template all`.

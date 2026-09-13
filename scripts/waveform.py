@@ -131,8 +131,6 @@ def main() -> int:
 
     # The visualisation's own band. Without --image/--position it fills the frame, which is what
     # every 1.15 command line did, so the graph below is byte-identical when no new flag is given.
-    audiogram = bool(args.image) or args.position != "strip" or args.opacity != 1.0 \
-        or args.vis_height != 0.35 or bool(args.title) or bool(args.srt or args.text)
     vis_h = args.height
     vis_y = 0
     if args.image:
@@ -230,6 +228,8 @@ def main() -> int:
             notes.append("the render is " + fmt_secs(result.get("duration")) + " against "
                          + fmt_secs(meta.get("duration")) + " of audio")
     size_ok = (v.get("width"), v.get("height")) == (args.width, args.height) or STATE.dry_run
+    # reported on every run, not only an audiogram one: a caller that keys on `audiogram.background`
+    # should not have to guess whether the key exists (`"color"` is the plain-waveform answer).
     extra = {"audiogram": {
         "style": args.style,
         "background": "image" if args.image else "color",
@@ -241,7 +241,7 @@ def main() -> int:
         "title": args.title,
         "stages": stages,
         "verified": bool(duration_ok and size_ok),
-    }} if audiogram else {}
+    }}
     if notes:
         extra["notes"] = notes
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v.get('width')}x{v.get('height')}, {args.style}"
