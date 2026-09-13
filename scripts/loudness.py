@@ -11,6 +11,8 @@ Examples:
   python3 loudness.py input.mp4                       # -14 LUFS, -1 dBTP
   python3 loudness.py podcast.wav -I -16 --tp -1.5 -o podcast_norm.wav
   python3 loudness.py input.mp4 --measure-only
+  python3 loudness.py doc.mp4 --dialogue                # measure the speech only, not the ambience between lines
+  python3 loudness.py music.wav --lra 7                 # tighter loudness range target
 """
 import argparse
 import json
@@ -18,15 +20,70 @@ import os
 import re
 import sys
 
+from typing import List, Optional, Tuple
+
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
+# --dialogue (1.13): the loudnorm measurement is gated on speech. An edit that is half room tone
+# measures quieter than it sounds, and a gain derived from that measurement lifts the ambience
+# with the voice -- the hiss between the lines arrives at the target too. silencedetect marks the
+# gaps, the measurement pass runs over the spans between them (aselect), and the gain that
+# measurement produces is applied to the whole file, ambience included but no longer counted.
+DIALOGUE_NOISE_DB = -35.0
+DIALOGUE_MIN_SILENCE = 0.5
+DIALOGUE_MIN_FRACTION = 0.20
+DIALOGUE_MAX_SPANS = 200
+SIL_RE = re.compile(r"silence_(start|end): (-?[0-9.]+)")
 
 
-def measure(path: str, I: float, tp: float, lra: float) -> dict:
+def speech_spans(path: str, duration: float) -> Optional[List[Tuple[float, float]]]:
+    """The non-silent spans of `path`, or None when the measurement could not run."""
+    if dry_run_input_pending(path):
+        return None
+    ffmpeg = require_tool("ffmpeg")
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af",
+                         f"silencedetect=noise={DIALOGUE_NOISE_DB:g}dB:d={DIALOGUE_MIN_SILENCE:g}", "-f", "null", "-"],
+                        check=False, record=True)
+    if proc.returncode != 0:
+        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+    silences: List[Tuple[float, float]] = []
+    start = None
+    for kind, val in SIL_RE.findall(proc.stderr):
+        if kind == "start":
+            start = max(0.0, float(val))
+        elif start is not None:
+            silences.append((start, float(val)))
+            start = None
+    if start is not None:
+        silences.append((start, duration))
+    spans: List[Tuple[float, float]] = []
+    cursor = 0.0
+    for s, e in silences:
+        if s - cursor > 0.01:
+            spans.append((cursor, s))
+        cursor = max(cursor, e)
+    if duration - cursor > 0.01:
+        spans.append((cursor, duration))
+    return spans
+
+
+def aselect_expr(spans: List[Tuple[float, float]]) -> str:
+    """`aselect` keeps only the listed spans; the sum is 1 inside any of them, 0 outside."""
+    # A pathological file (hundreds of one-word answers) would otherwise build a filter string
+    # longer than the measurement is worth: the longest spans carry the loudness anyway.
+    used = sorted(sorted(spans, key=lambda s: s[1] - s[0], reverse=True)[:DIALOGUE_MAX_SPANS])
+    return "+".join(f"between(t\\,{a:.3f}\\,{b:.3f})" for a, b in used)
+
+
+
+def measure(path: str, I: float, tp: float, lra: float, spans: Optional[List[Tuple[float, float]]] = None) -> dict:
     if dry_run_input_pending(path):
         return {"input_i": "-20.0", "input_tp": "-3.0", "input_lra": "8.0", "input_thresh": "-30.0", "target_offset": "0.0", "silent": False, "placeholder": True}
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
+    af = f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json"
+    if spans:
+        af = f"aselect='{aselect_expr(spans)}',asetpts=N/SR/TB," + af
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", af, "-f", "null", "-"]
     # Pass 1 is a measurement: it runs under --dry-run too, so the planned pass-2 command and
     # the reported input_i are real (before 1.4.6 a dry run returned a made-up -20 LUFS).
     proc = run_analysis(cmd, check=False, record=True)
@@ -49,6 +106,8 @@ def main() -> int:
     ap.add_argument("-I", "--lufs", type=float, default=-14.0, help="integrated loudness target in LUFS (default -14)")
     ap.add_argument("--tp", type=float, default=-1.0, help="true peak ceiling in dBTP (default -1)")
     ap.add_argument("--lra", type=float, default=11.0, help="loudness range target in LU (default 11)")
+    ap.add_argument("--dialogue", action="store_true",
+                    help="measure the speech only: silencedetect finds the gaps and the loudness is measured over what is left, so an ambience-heavy edit is not over-boosted (falls back to the whole file when under 20%% of it is speech)")
     ap.add_argument("--measure-only", action="store_true", help="print the measured stats as JSON and exit")
     ap.add_argument("--audio-bitrate", default=None, help="AAC bitrate when the container is video (default 192k; raised to 256k/320k only when the encoder overshoots the true-peak ceiling and you did not pin it)")
     ap.add_argument("--sample-rate", type=int, help="output sample rate (default: 48000; loudnorm upsamples internally to 192k)")
@@ -60,12 +119,33 @@ def main() -> int:
     if not meta.get("audio"):
         die("input has no audio stream")
 
-    stats = measure(args.input, args.lufs, args.tp, args.lra)
+    duration = meta.get("duration") or 0.0
+    spans: Optional[List[Tuple[float, float]]] = None
+    dialogue_gate: Optional[dict] = None
+    if args.dialogue:
+        found = speech_spans(args.input, duration)
+        speech = sum(b - a for a, b in (found or []))
+        fraction = (speech / duration) if duration else 0.0
+        used = bool(found) and fraction >= DIALOGUE_MIN_FRACTION
+        if found is None:
+            info("--dialogue: the speech gate could not measure this input; the whole file is measured")
+        elif not used:
+            info(f"--dialogue: only {fraction * 100:.0f}% of the file is above {DIALOGUE_NOISE_DB:g} dB "
+                 f"(under {DIALOGUE_MIN_FRACTION * 100:.0f}%); measuring the whole file instead")
+        else:
+            info(f"--dialogue: measuring the {len(found)} speech span(s), {fraction * 100:.0f}% of the file")
+        spans = found if used else None
+        dialogue_gate = {"speech_fraction": round(fraction, 4), "used": used,
+                         "spans": len(found or []), "noise_db": DIALOGUE_NOISE_DB, "min_silence": DIALOGUE_MIN_SILENCE}
+
+    gate_kw = {"dialogue_gate": dialogue_gate} if dialogue_gate is not None else {}
+
+    stats = measure(args.input, args.lufs, args.tp, args.lra, spans)
     if stats.get("silent"):
         info("audio is silent (integrated loudness -inf); nothing to normalise")
         if args.measure_only:
             if STATE.json:
-                emit(None, measured={"silent": True, "input_i": "-inf"})
+                emit(None, measured={"silent": True, "input_i": "-inf"}, **gate_kw)
             else:
                 print(json.dumps({"silent": True, "input_i": "-inf"}, indent=2))
             return 0
@@ -74,7 +154,7 @@ def main() -> int:
     if args.measure_only:
         measured = {k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
         if STATE.json:
-            emit(None, measured=measured)  # the contract's document shape (status, commands), not a bare dict
+            emit(None, measured=measured, **gate_kw)  # the contract's document shape (status, commands), not a bare dict
         else:
             print(json.dumps(measured, indent=2))
         return 0
@@ -112,9 +192,12 @@ def main() -> int:
     encode(args.tp, bitrate)
     if STATE.dry_run:
         # pass 1 measured the input for real; there is no output to measure
-        emit(output, measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")})
+        emit(output, measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")},
+             **gate_kw)
         return 0
-    after = measure(output, args.lufs, args.tp, args.lra)
+    # the written file is measured the same way it was planned: a gated run checks the speech it
+    # actually targeted, not the ambience it deliberately left alone
+    after = measure(output, args.lufs, args.tp, args.lra, spans)
     # loudnorm holds the ceiling on the float samples it outputs; the lossy encoder then adds
     # its own overshoot. ffmpeg's native AAC at 192k turned one transient of a 12-minute film
     # from -2.4 dBFS into +3.7 dBFS, so the file measured +1.2 dBTP after "--tp -1" and
@@ -137,7 +220,7 @@ def main() -> int:
             info(f"true peak {float(after['input_tp']):.2f} dBTP exceeds the requested {args.tp:g} dBTP after encoding "
                  f"(codec overshoot); re-encoding with the loudnorm ceiling at {ceiling:.2f} dBTP")
         encode(ceiling, bitrate)
-        after = measure(output, args.lufs, args.tp, args.lra)
+        after = measure(output, args.lufs, args.tp, args.lra, spans)
     if not after.get("silent"):
         info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {args.lufs} LUFS, TP <= {args.tp:g})")
     result = {k: after[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")}
@@ -154,7 +237,9 @@ def main() -> int:
             f"the encoder overshoots more than the loudnorm ceiling can absorb at this bitrate",
             kind="verification", output=output, result=result,
             hint="raise --audio-bitrate (e.g. 256k) or deliver a lossless format (wav/flac) and let the platform encode")
-    emit(output, result=result, dropped_non_av_streams=dropped_streams,
+    emit(output, result=result, dropped_non_av_streams=dropped_streams, **gate_kw,
+         measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")},
+         targets={"lufs": args.lufs, "tp": args.tp, "lra": args.lra},
          verification=[{"step": "loudness",
                         "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + 0.1),
                         "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp}])

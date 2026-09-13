@@ -404,8 +404,21 @@ so the rendered file meets the platform's loudness without a separate pass. Sinc
 1.9.0 it is on by default when the preset is a platform (`youtube|youtube4k|reels|x`)
 and the project has no `loudness` stage; `"normalize": false` opts out.
 
+`"audio": {"stems": {"dialogue": -2, "music": -18, "effects": -24}}` names one
+level per element of the mix: `dialogue` is the main track's gain, `music` the
+bed's level, `effects` the level of the third file `"audio": {"effects":
+"sfx.wav"}` adds (never ducked). Each maps to the flag of the same meaning
+(`--gain`, `--music-volume`, `--effects-volume`); an explicit flag next to a
+stem wins, and a stems `effects` level with no `effects` file is refused.
+`"audio": {"voice": "light"|"medium"|"strong"}` picks the voice strength
+(`true` is `medium`).
+
+`"chapters"` is a chapters file path, or an inline list of `{"at": TIME,
+"title": STR}`; it runs `metadata.py` on the delivered file as the last stage
+before `check`, so the markers are in the file that ships (streams copied).
+
 Stages: clips (cut, optional speed) → join (transition) → silence → fit →
-captions → graphics → overlays → audio → loudness → export → check. Keys mirror the
+captions → graphics → overlays → audio → loudness → export → chapters → check. Keys mirror the
 CLI flags of each script (see the docstring); a key `render.py` does not read -- at
 the top level or in any stage/clip object -- is refused (`kind: input`) naming the
 key and the nearest valid one, never silently ignored. Use it whenever an edit has
@@ -437,6 +450,11 @@ step before reporting a deliverable; fix FAILs, mention WARNs. Without
 `--platform` the youtube spec is assumed and the judgement rows (duration,
 aspect, fps, resolution, loudness, true peak) come back as WARN with a `notes`
 line, not FAIL: name the platform when the file is a delivery for it.
+`--platform podcast` adds two informational rows: `channels` (PASS for mono or
+stereo, WARN above — podcast players downmix 5.1 unpredictably) and `chapters`
+(PASS when the container carries at least one marker, WARN `none` otherwise —
+write them with `metadata.py --chapters`). Neither can FAIL a delivery, and
+neither appears for another platform.
 
 ### batch.py — same recipe over a folder, cached
 ```
@@ -684,13 +702,36 @@ first on HDR or Log sources.
 
 ### audio.py — clean-up, music, ducking, layout
 ```
-audio.py INPUT [--voice | --denoise [--denoise-strength 25]] [--gain dB]
-         [--music FILE [--music-volume -14] [--duck [--duck-amount 12]] [--music-loop]]
+audio.py INPUT [--voice [light|medium|strong] | --denoise [--denoise-strength 25]] [--gain dB]
+         [--music FILE [--music-volume -14] [--duck [--duck-amount 12] [--duck-threshold -26.02]
+          [--duck-attack 20] [--duck-release 400]] [--music-loop]]
+         [--effects FILE [--effects-volume -14]] [--stereo-widen 0..1]
          [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE] [-o OUT]
 ```
-`--voice` = highpass 80 Hz → de-esser → FFT denoise → gentle compressor, the
-standard talking-head chain. `--duck` uses a sidechain compressor keyed by the
-speech so music dips under dialogue and swells in pauses. `--downmix` uses the
+`--voice` takes a strength; a bare `--voice` is `medium`, the chain it has always
+produced. The exact filter chains:
+
+| level | chain |
+| --- | --- |
+| `light` | `highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=5:release=80:makeup=1` |
+| `medium` | `highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2` |
+| `strong` | the `medium` chain, then `deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled` |
+
+`light` for a good room (rumble and level only, noise floor and sibilance left
+alone), `medium` for a normal talking head, `strong` for phone/laptop audio.
+`--duck` uses a sidechain compressor keyed by the speech so music dips under
+dialogue and swells in pauses:
+`sidechaincompress=threshold=0.05:ratio=<amount/3, min 2>:attack=20:release=400:makeup=1`
+by default. `--duck-threshold DB` (default −26.02 dBFS, i.e. the 0.05 linear),
+`--duck-attack MS` (20) and `--duck-release MS` (400) move each one; a lower
+threshold ducks on quieter speech, a shorter release brings the bed back faster.
+`--json`'s `audio` block reports the settings the run actually used.
+`--effects FILE` mixes a third track (sound effects, atmos) at
+`--effects-volume` and is never ducked — effects are cut to the picture.
+`--stereo-widen 0..1` widens the stereo image (`extrastereo=m=1+2*amount`),
+applied after the channel layout is settled; a mono input is refused (`kind:
+input`) unless `--stereo` is given too, which duplicates it to two channels
+first and widens after. `--downmix` uses the
 ITU centre/LFE weights for 5.1/7.1 → stereo. `--mono` averages a stereo pair,
 leaves a 1-channel input untouched and downmixes >2 channels through
 swresample. Video is always stream-copied, and so is a subtitle/data track
@@ -699,8 +740,24 @@ Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation
 ```
-loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--measure-only] [-o OUT]
+loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--dialogue] [--measure-only] [-o OUT]
 ```
+`--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
+wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
+`--json` reports the measured range on both sides — `measured.input_lra` for the
+input, `result.input_lra` for the written file, with `targets` echoing the
+requested lufs / tp / lra.
+
+`--dialogue` gates the measurement on speech: `silencedetect` (noise −35 dB,
+0.5 s) finds the gaps, the pass-1 loudnorm measurement runs over the spans
+between them (`aselect`), and the gain that measurement produces is applied to
+the whole file — so an ambience-heavy edit is normalised on what is being said,
+not on the room tone between the lines, and the room tone is not lifted with it.
+The written file is re-measured over the same spans. When under 20 % of the file
+is above the noise floor the gate is not trustworthy: one info line says so and
+the whole-file measurement is used. `--json` carries
+`dialogue_gate: {"speech_fraction", "used", "spans", "noise_db", "min_silence"}`.
+
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
 the true-peak ceiling allows). Video and any subtitle/data track are
 stream-copied (`dropped_non_av_streams` reports a track the container refused); audio becomes AAC in

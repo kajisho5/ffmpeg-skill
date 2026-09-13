@@ -44,6 +44,11 @@ def script(name, *args, **kw):
     return sh(sys.executable, SCRIPTS / name, *args, **kw)
 
 
+def whole_of(path):
+    """The whole-file integrated loudness of `path`, as loudness.py --measure-only reports it."""
+    return json.loads(script("loudness.py", path, "--measure-only", "--json").stdout)["measured"]["input_i"]
+
+
 class FFmpegSkillTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -2154,6 +2159,217 @@ class FFmpegSkillTests(unittest.TestCase):
         m3 = probe(str(out3))
         self.assertEqual(m3["audio"]["channels"], 2)
         self.assertClose(m3["duration"], 12.0, 0.2)
+
+    # ------------------------------------------------------------------ 1.13: the audio bed
+    def _audio_filters(self, *args):
+        """The filter graph audio.py plans, from --dry-run --json (no encode)."""
+        data = json.loads(script("audio.py", *args, "--dry-run", "--json").stdout)
+        cmd = next(c for c in data["commands"] if "-filter_complex" in c)
+        return cmd.split("-filter_complex ", 1)[1].split(" -map", 1)[0].strip("'"), data
+
+    def test_audio_voice_levels_are_three_different_chains(self):
+        """1.13: --voice takes a strength. A bare --voice must stay byte-identical to the chain
+        it produced before the flag took a value (every existing call and MCP request sends it
+        bare), and each named level must actually be a different chain -- a preset that is only
+        a different word in the help is worse than no preset."""
+        out = OUT / "voice_level.mp4"
+        bare, _ = self._audio_filters(self.src, "--voice", "-o", out)
+        self.assertEqual(bare, "[0:a:0]highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,"
+                               "acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2[main];"
+                               "[main]apad,atrim=0:12.000[out]",
+                         "a bare --voice is the 1.12 chain, unchanged")
+        chains = {}
+        for level in ("light", "medium", "strong"):
+            chains[level], data = self._audio_filters(self.src, "--voice", level, "-o", out)
+            self.assertEqual(data["audio"]["voice"], level)
+        self.assertEqual(chains["medium"], bare, "bare --voice == --voice medium")
+        self.assertEqual(len(set(chains.values())), 3, "each level is a different filter chain")
+        self.assertNotIn("deesser", chains["light"])
+        self.assertNotIn("afftdn", chains["light"], "light leaves the noise floor alone")
+        self.assertIn("acompressor=threshold=-18dB:ratio=2", chains["light"])
+        self.assertIn("deesser=i=0.6", chains["strong"])
+        self.assertIn("alimiter=limit=0.891251:level=disabled", chains["strong"], "strong ends in a soft limiter")
+        self.assertTrue(chains["strong"].count("acompressor") == 2, "strong compresses twice")
+        # and each one really encodes
+        for level in ("light", "strong"):
+            real = OUT / f"voice_{level}.m4a"
+            script("audio.py", self.mic, "--voice", level, "-o", real)
+            self.assertGreater(probe(str(real))["duration"], 1.0)
+
+    def test_audio_duck_parameters_reach_the_sidechain_filter(self):
+        """1.13: the ducking knobs are sayable. The default command line must not move (the
+        threshold flag speaks dBFS, the filter takes the same 0.05 linear it always did), and
+        every flag must land in the filter string and in --json's audio block."""
+        out = OUT / "duck_params.mp4"
+        default, data = self._audio_filters(self.src, "--music", self.long_ref, "--duck", "-o", out)
+        self.assertIn("sidechaincompress=threshold=0.05:ratio=4.0:attack=20:release=400:makeup=1", default,
+                      "the default duck filter is unchanged")
+        self.assertEqual(data["audio"]["duck"]["threshold_linear"], 0.05)
+        tuned, data = self._audio_filters(self.src, "--music", self.long_ref, "--duck", "--duck-amount", "18",
+                                          "--duck-threshold", "-30", "--duck-attack", "5", "--duck-release", "250", "-o", out)
+        self.assertIn("sidechaincompress=threshold=0.0316228:ratio=6.0:attack=5:release=250:makeup=1", tuned)
+        self.assertEqual(data["audio"]["duck"], {"amount_db": 18.0, "threshold_db": -30.0, "threshold_linear": 0.0316228,
+                                                 "ratio": 6.0, "attack_ms": 5.0, "release_ms": 250.0})
+        # no --duck: the block says so rather than describing settings nothing used
+        _, data = self._audio_filters(self.src, "--music", self.long_ref, "-o", out)
+        self.assertIsNone(data["audio"]["duck"])
+        # out of range is refused before ffmpeg sees it
+        doc = json.loads(script("audio.py", self.src, "--music", self.long_ref, "--duck", "--duck-release", "99999",
+                                "-o", out, "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("--duck-release", doc["error"]["message"])
+
+    def test_audio_stereo_widen_refuses_mono_and_widens_stereo(self):
+        """1.13: --stereo-widen needs two channels to have an image at all. A mono input is a
+        refusal naming the way out (--stereo), not a silent no-op filter."""
+        mono = OUT / "widen_mono.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(self.mic), "-ac", "1", str(mono))
+        out = OUT / "widened.wav"
+        doc = json.loads(script("audio.py", mono, "--stereo-widen", "0.5", "-o", out, "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("--stereo", doc["error"]["message"])
+        # with --stereo the mono track is duplicated first and widened after
+        graph, data = self._audio_filters(mono, "--stereo-widen", "0.5", "--stereo", "-o", out)
+        self.assertLess(graph.index("aformat=channel_layouts=stereo"), graph.index("extrastereo="),
+                        "widening happens after the duplication")
+        self.assertEqual(data["audio"]["stereo_widen"], 0.5)
+        # a stereo input is widened as given, and really encodes
+        stereo = OUT / "widen_stereo.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(self.mic), "-ac", "2", str(stereo))
+        graph, _ = self._audio_filters(stereo, "--stereo-widen", "1", "-o", out)
+        self.assertIn("extrastereo=m=3", graph)
+        script("audio.py", stereo, "--stereo-widen", "0.5", "-o", out)
+        self.assertEqual(probe(str(out))["audio"]["channels"], 2)
+        doc = json.loads(script("audio.py", stereo, "--stereo-widen", "4", "-o", out, "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+
+    def test_audio_effects_bed_is_mixed_and_never_ducked(self):
+        """1.13: --effects is a third bed at its own level. It is mixed after the ducked music,
+        outside the sidechain, because effects are cut to the picture."""
+        out = OUT / "effects.mp4"
+        graph, data = self._audio_filters(self.src, "--music", self.long_ref, "--duck",
+                                          "--effects", self.mic, "--effects-volume", "-20", "-o", out)
+        self.assertIn("volume=-20dB", graph)
+        self.assertIn("[effects]", graph)
+        self.assertGreater(graph.index("[effects]"), graph.index("sidechaincompress"),
+                           "the effects bed is mixed after the duck, so the sidechain never sees it")
+        self.assertTrue(data["audio"]["effects"])
+        script("audio.py", self.src, "--effects", self.mic, "--effects-volume", "-20", "-o", out)
+        self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
+
+    def test_loudness_dialogue_gates_the_measurement_on_speech(self):
+        """1.13: a file that is half room tone measures quieter than it sounds, and the gain that
+        measurement produces lifts the ambience with the voice. --dialogue measures the non-silent
+        spans only; under 20% speech it says so and falls back to the whole file."""
+        gappy = OUT / "gappy_dialogue.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-t", "12",
+           "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", gappy)
+        whole = json.loads(script("loudness.py", gappy, "--measure-only", "--json").stdout)
+        gated = json.loads(script("loudness.py", gappy, "--dialogue", "--measure-only", "--json").stdout)
+        self.assertNotEqual(gated["measured"]["input_i"], whole["measured"]["input_i"],
+                            "the gated measurement differs from the whole-file one")
+        self.assertGreater(float(gated["measured"]["input_i"]), float(whole["measured"]["input_i"]),
+                           "dropping the silence makes the measured loudness higher, so less gain is applied")
+        self.assertTrue(gated["dialogue_gate"]["used"])
+        self.assertClose(gated["dialogue_gate"]["speech_fraction"], 0.5, 0.15)
+        self.assertTrue(any("silencedetect" in c for c in gated["commands"]))
+        self.assertTrue(any("aselect" in c for c in gated["commands"]))
+        self.assertNotIn("dialogue_gate", whole, "the key appears only when the gate ran")
+        # the gate changes the delivered gain, and the written file is checked over the same spans
+        out = OUT / "gappy_dialogue_norm.m4a"
+        data = json.loads(script("loudness.py", gappy, "--dialogue", "-I", "-16", "-o", out, "--json").stdout)
+        self.assertTrue(data["dialogue_gate"]["used"])
+        self.assertClose(float(data["result"]["input_i"]), -16.0, 1.0, "the speech lands on the target")
+        self.assertIn("input_lra", data["measured"], "the input's loudness range is reported")
+        self.assertEqual(data["targets"], {"lufs": -16.0, "tp": -1.0, "lra": 11.0})
+        # under 20% speech: one info line, whole-file measurement, used false
+        quiet = OUT / "mostly_silent.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "aevalsrc='0.5*sin(2*PI*440*t)*lt(t\\,1)':s=48000", "-t", "12", str(quiet))
+        proc = script("loudness.py", quiet, "--dialogue", "--measure-only", "--json")
+        doc = json.loads(proc.stdout)
+        self.assertFalse(doc["dialogue_gate"]["used"])
+        self.assertLess(doc["dialogue_gate"]["speech_fraction"], 0.2)
+        self.assertIn("measuring the whole file", proc.stderr)
+        self.assertEqual(doc["measured"]["input_i"], whole_of(quiet))
+
+    def test_check_podcast_reports_chapters_and_channel_count(self):
+        """1.13: two informational podcast rows. Neither may FAIL a delivery, and neither may
+        appear for a platform that does not care."""
+        data = json.loads(script("check.py", self.mic, "--platform", "podcast", "--no-loudness", "--json").stdout)
+        rows = {r["check"]: r for r in data["checks"]}
+        self.assertEqual(rows["chapters"]["status"], "WARN")
+        self.assertEqual(rows["chapters"]["value"], "none")
+        self.assertIn("metadata.py", rows["chapters"]["fix"])
+        self.assertEqual(rows["channels"]["status"], "PASS", "mono is fine for a podcast")
+        self.assertTrue(data["ok"], "informational rows never fail the delivery")
+        # after metadata.py the chapters row passes
+        chapters = OUT / "podcast_chapters.txt"
+        chapters.write_text("0:00 Intro\n0:04 Body\n", encoding="utf-8")
+        tagged = OUT / "podcast_tagged.m4a"
+        script("audio.py", self.mic, "-o", OUT / "podcast.m4a")
+        script("metadata.py", OUT / "podcast.m4a", "--chapters", chapters, "-o", tagged)
+        rows = {r["check"]: r for r in json.loads(script("check.py", tagged, "--platform", "podcast", "--no-loudness", "--json").stdout)["checks"]}
+        self.assertEqual(rows["chapters"]["status"], "PASS")
+        self.assertEqual(rows["chapters"]["value"], "2")
+        # 5.1 warns, with the reason a publisher needs
+        rows = {r["check"]: r for r in json.loads(script("check.py", self.surround, "--platform", "podcast", "--no-loudness", "--json").stdout)["checks"]}
+        self.assertEqual(rows["channels"]["status"], "WARN")
+        self.assertIn("downmix", rows["channels"]["reason"])
+        # absent for every other platform
+        for platform in ("youtube", "reels"):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(self.src), "--platform", platform,
+                                   "--no-loudness", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            names = {r["check"] for r in json.loads(proc.stdout)["checks"]}
+            self.assertNotIn("chapters", names, platform)
+            self.assertNotIn("channels", names, platform)
+
+    def test_render_audio_stems_and_chapters_stage(self):
+        """1.13: stems are a vocabulary over the flags that already exist, and the chapters stage
+        puts the markers in the file that ships (metadata.py, streams copied)."""
+        proj = OUT / "project_stems.json"
+        proj.write_text(json.dumps({
+            "output": "render_stems.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "audio": {"music": "lavmic.wav", "effects": "lavmic.wav", "duck": True, "voice": "light",
+                      "stems": {"dialogue": -2, "music": -18, "effects": -24}},
+            "export": {"preset": "youtube", "normalize": False},
+            "chapters": [{"at": "0:00", "title": "Intro"}, {"at": 3, "title": "Body"}],
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        graph = next(c for c in data["commands"] if "sidechaincompress" in c)
+        self.assertIn("volume=-2dB", graph, "stems.dialogue is the main track's gain")
+        self.assertIn("volume=-18dB", graph, "stems.music is the bed's level")
+        self.assertIn("volume=-24dB", graph, "stems.effects is the effects bed's level")
+        self.assertIn("highpass=f=80,acompressor=threshold=-18dB:ratio=2", graph, '"voice": "light" picks the light chain')
+        # the real render lands the chapters in the delivered file
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertIn("chapters", data["stages"])
+        written = probe(str(OUT / "render_stems.mp4")).get("chapters") or []
+        self.assertEqual([c["title"] for c in written], ["Intro", "Body"])
+        self.assertClose(written[1]["start"], 3.0, 0.05)
+        # a chapters file path works the same way
+        proj2 = OUT / "project_chapters_file.json"
+        (OUT / "render_chapters.txt").write_text("0:00 One\n0:05 Two\n", encoding="utf-8")
+        proj2.write_text(json.dumps({
+            "output": "render_chapters.mp4", "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "youtube", "normalize": False}, "chapters": "render_chapters.txt",
+        }), encoding="utf-8")
+        script("render.py", proj2, "--fast", "--json")
+        self.assertEqual(len(probe(str(OUT / "render_chapters.mp4")).get("chapters") or []), 2)
+        # a stems level with no effects file, and a misspelled stem, are refusals by name
+        proj3 = OUT / "project_stems_bad.json"
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+                                     "audio": {"stems": {"effects": -20}}}), encoding="utf-8")
+        doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("effects", doc["error"]["message"])
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+                                     "audio": {"stems": {"voice": -20}}}), encoding="utf-8")
+        doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
+        self.assertIn("dialogue", doc["error"]["message"], "the nearest valid stem is named")
 
     def test_sync_fine_resolution_and_drift(self):
         data = json.loads(script("sync.py", self.long_ref, self.long_drift, "--fix-drift", "--json").stdout)

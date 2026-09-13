@@ -162,6 +162,21 @@ def main() -> int:
 
     if a:
         row("audio", "PASS", f"{a.get('codec')} {a.get('channels')}ch {a.get('sample_rate')}Hz", "present")
+        if args.platform == "podcast":
+            # Podcast rows, informational: neither can fail a delivery, both are things a
+            # publisher notices after the fact. A 5.1 podcast master is the common one -- every
+            # player downmixes it, none of them the same way, and the centre-heavy dialogue
+            # comes back at a level nobody checked.
+            ch = a.get("channels") or 0
+            row("channels", "PASS" if ch in (1, 2) else "WARN", f"{ch}ch", "1 (mono) or 2 (stereo)",
+                "audio.py --downmix (5.1/7.1 to stereo with the standard weights) or audio.py --mono",
+                reason="podcast players downmix 5.1 unpredictably")
+    if args.platform == "podcast":
+        chapters = meta.get("chapters") or []
+        row("chapters", "PASS" if chapters else "WARN", f"{len(chapters)}" if chapters else "none", ">= 1 chapter marker",
+            "metadata.py episode.m4a --chapters chapters.txt (`TIME TITLE` per line; streams copied)",
+            reason="chapter markers are optional, but a podcast app shows them as the episode's seekable table of contents")
+    if a:
         if a.get("sample_rate") and a["sample_rate"] not in (44100, 48000):
             row("sample rate", "WARN", a["sample_rate"], "44100 or 48000", "loudness.py --sample-rate 48000")
         if not args.no_loudness and spec["lufs"] is not None:

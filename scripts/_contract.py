@@ -157,13 +157,16 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "multicam": dict(role="execution", inputs=["reference camera", "other cameras / recorders"], outputs=["switched multicam video artifact"],
                      required=FF + [X264, AAC], optional=[HDR_X265],
                      video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "audio": dict(role="execution", inputs=["video or audio asset", "music bed (--music) or replacement track (--replace)"], outputs=["artifact with the processed audio (video stream-copied, or dropped when -o has an audio extension)"],
+    "audio": dict(role="execution", inputs=["video or audio asset", "music bed (--music) or replacement track (--replace)", "effects/atmos track (--effects)"], outputs=["artifact with the processed audio (video stream-copied, or dropped when -o has an audio extension)"],
                   required=FF, optional=[{"capability": "filter:afftdn", "when": "--denoise / --voice"}, {"capability": "filter:sidechaincompress", "when": "--duck"},
-                                        {"capability": "filter:acompressor", "when": "--compress / --voice"}, {"capability": "filter:alimiter", "when": "--limit"}, {"capability": "filter:agate", "when": "--gate"},
+                                        {"capability": "filter:acompressor", "when": "--compress / --voice"}, {"capability": "filter:alimiter", "when": "--limit / --voice strong"}, {"capability": "filter:agate", "when": "--gate"},
+                                        {"capability": "filter:deesser", "when": "--voice medium (the default) / --voice strong"},
+                                        {"capability": "filter:extrastereo", "when": "--stereo-widen"},
                                         {"capability": AAC, "when": "output extension isn't .mp3/.opus/.ogg/.flac (audio_codec_for()'s default)"}] + AUDIO_OUT,
                   video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video stream-copied)"],
-                     required=FF + ["filter:loudnorm"], optional=[{"capability": AAC, "when": "output extension isn't .mp3/.opus/.ogg/.flac (audio_codec_for()'s default)"}] + AUDIO_OUT,
+                     required=FF + ["filter:loudnorm"], optional=[{"capability": "filter:silencedetect", "when": "--dialogue"}, {"capability": "filter:aselect", "when": "--dialogue"},
+                                                                  {"capability": AAC, "when": "output extension isn't .mp3/.opus/.ogg/.flac (audio_codec_for()'s default)"}] + AUDIO_OUT,
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": X264, "when": "removing silences from a video"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"}] + AUDIO_OUT,
@@ -221,7 +224,7 @@ DRY_RUN_ANALYSIS = {
     "report": "probe, loudness and contact-sheet measurements run; the HTML is not written",
     "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
     "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written",
-    "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
+    "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real (with --dialogue the silencedetect pass runs too); the normalised output is not written",
     "check": "read-only tool; the loudness measurement runs under --dry-run too, so every row is present",
     "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
 }
@@ -411,7 +414,10 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "loudness":
-        extra = {"measured": {"type": "object", "description": "--measure-only prints the loudnorm measurement instead (input_i, input_tp, input_lra, input_thresh, target_offset)"}}
+        extra = {"measured": {"type": "object", "description": "the loudnorm measurement of the input (input_i, input_tp, input_lra, input_thresh, target_offset); with --measure-only it is the whole result"},
+                 "targets": {"type": "object", "description": "the requested lufs / tp / lra"},
+                 "result": {"type": "object", "description": "the written file measured again (input_i, input_tp, input_lra, ...), plus tp_ceiling_used, audio_bitrate_used and encodes"},
+                 "dialogue_gate": {"type": "object", "description": "--dialogue only: {speech_fraction, used, spans, noise_db, min_silence} -- used is false when under 20% of the file is speech and the whole file was measured instead"}}
     elif name == "cut":
         extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},
@@ -426,7 +432,8 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     elif name == "audio":
         extra = {"video": {"type": "boolean", "description": "true when the input's video stream was copied; false for an audio output extension (extraction)"},
                  "audio_stream": {"type": "integer", "description": "which input audio stream was processed (--audio-stream)"},
-                 "dynamics": {"type": "array", "items": {"enum": ["agate", "acompressor", "alimiter"]}, "description": "typed dynamics filters applied, in graph order"}}
+                 "dynamics": {"type": "array", "items": {"enum": ["agate", "acompressor", "alimiter"]}, "description": "typed dynamics filters applied, in graph order"},
+                 "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
     props = dict(base)
     props.update(extra)
     required = ["status", "output", "dry_run", "commands"]

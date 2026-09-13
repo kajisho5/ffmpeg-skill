@@ -4,7 +4,20 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`audio.py --voice` takes a strength**: `--voice light|medium|strong`, with a bare `--voice` meaning `medium` — byte for byte the chain it has always produced, so existing calls and MCP requests are unchanged. `light` is `highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=5:release=80:makeup=1` (rumble and level only, for a good room); `medium` is `highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2`; `strong` is `medium` followed by `deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled`, for phone and laptop audio.
+- **The ducking parameters are sayable**: `--duck-threshold DB` (default −26.02 dBFS, the 0.05 linear the bed has used since 1.4, so the default filter string is unchanged), `--duck-attack MS` (20) and `--duck-release MS` (400) next to the existing `--duck-amount`. `--json` gains an `audio` block reporting the voice level, the stereo width, the effects bed and the duck settings the run actually used.
+- `audio.py --stereo-widen 0..1` widens the stereo image (`extrastereo=m=1+2*amount`), applied after the channel layout is settled. A mono input is refused (`kind: input`) unless `--stereo` is given as well, which duplicates it to two channels first and widens after.
+- `audio.py --effects FILE` / `--effects-volume DB` mixes a third track (sound effects, atmos) into the bed. It is never ducked: effects are cut to the picture, so dipping them under speech would move them off their own frames.
+- **`loudness.py --dialogue`** measures the speech instead of the file: `silencedetect` (noise −35 dB, 0.5 s) finds the gaps, the pass-1 `loudnorm` measurement runs over the spans between them (`aselect`), and the gain that measurement produces is applied to the whole file — so an ambience-heavy edit is normalised on what is being said and the room tone between the lines is not lifted to the target with it. The written file is re-measured over the same spans. Under 20 % speech the gate is not trustworthy: one info line says so and the whole-file measurement is used. `--json` carries `dialogue_gate: {speech_fraction, used, spans, noise_db, min_silence}`.
+- `loudness.py --json` now reports the loudness range on both sides (`measured.input_lra` for the input, `result.input_lra` for the written file) and echoes the requested `targets` (lufs, tp, lra); `--lra N` is documented in `references/scripts.md` and the README.
+- `check.py --platform podcast` gains two informational rows: `chapters` (PASS when the container carries at least one marker, WARN `none` otherwise, with `metadata.py --chapters` as the fix) and `channels` (PASS for mono or stereo, WARN above — podcast players downmix 5.1 unpredictably). Neither can FAIL a delivery and neither appears for another platform.
+- **`render.py` project keys**: `"audio": {"stems": {"dialogue": DB, "music": DB, "effects": DB}}` names one level per element of the mix, mapping to `--gain`, `--music-volume` and `--effects-volume` (an explicit flag next to a stem wins; a stems `effects` level with no `"audio": {"effects": "sfx.wav"}` file is refused), and `"chapters"` — a chapters file path or an inline list of `{"at": TIME, "title": STR}` — runs `metadata.py` on the delivered file as the last stage before `check`, so the markers are in the file that ships. `"audio": {"voice": "light"|"medium"|"strong"}` picks the voice strength; `true` still means `medium`. Both new objects are validated against the project schema, so a misspelled stem or chapter key is refused by name.
+- `tests/fixtures/mcp_tools.json` regenerated: `audio` gains `duck_threshold`, `duck_attack`, `duck_release`, `stereo_widen`, `effects` and `effects_volume` (and `voice` becomes a `light|medium|strong` enum, which a bare boolean `true` still satisfies through the bare flag); `loudness` gains `dialogue`.
+
+### Docs
+- `docs/roadmap.md` marks 1.13.0 done and records the decision **not** to add `audio.py --chapters`: `metadata.py episode.mp4 --chapters chapters.txt` already writes chapter markers with every stream copied, and a second spelling inside a tool that re-encodes the audio would be the worse one. `render.py`'s `chapters` key is the project-level answer instead.
 
 ## 1.12.0
 

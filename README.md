@@ -196,9 +196,9 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 | Tool | What it does |
 |---|---|
-| `audio.py` | Voice clean-up chain, FFT denoise, typed compressor / limiter / gate, music bed with sidechain ducking, fades, 5.1 → stereo, track replacement, extraction (`-o out.wav`), `--audio-stream N` |
+| `audio.py` | Voice clean-up chain at three strengths (`--voice light\|medium\|strong`), FFT denoise, typed compressor / limiter / gate, music bed with sidechain ducking (`--duck-amount/-threshold/-attack/-release`), a never-ducked effects bed (`--effects`), `--stereo-widen`, fades, 5.1 → stereo, track replacement, extraction (`-o out.wav`), `--audio-stream N` |
 | `sync.py` | Offset between two recordings by audio cross-correlation (1 ms, pure Python), clock-drift correction; aligned video or audio out (audio-to-audio only — no lip-sync/face detection) |
-| `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP or any target, video stream-copied; the written file is measured again and re-encoded until it meets `--tp` (lossy encoders overshoot); `--measure-only` |
+| `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP or any target (`--lra` for the range), video stream-copied; `--dialogue` measures the speech only, so an ambience-heavy edit is not over-boosted; the written file is measured again and re-encoded until it meets `--tp` (lossy encoders overshoot); `--measure-only` |
 
 **Picture**
 
@@ -215,14 +215,14 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 |---|---|
 | `export.py` | Presets `youtube`, `youtube4k`, `reels`, `x`, `prores`, `h265`, `gif`, all tagged BT.709; `--normalize` meets the platform's loudness in the same call (`render.py` turns it on by default for platform presets) |
 | `proxy.py` | Small, low-bitrate proxy for downstream AI analysis/preview/editing decisions — resize by `--width`/`--scale`, proxy-grade `--crf` (deprecated alias of `--quality`), `--fps`, `--no-audio`; not a delivery preset |
-| `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, broadcast and podcast specs, with the fix for each failure and a `format` / `judgement` kind per row |
+| `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, broadcast and podcast specs (podcast also reports chapter markers and channel count), with the fix for each failure and a `format` / `judgement` kind per row |
 | `report.py` | Single-file HTML delivery report: before/after sheets, media facts, loudness, compliance, the commands run |
 
 **Orchestration**
 
 | Tool | What it does |
 |---|---|
-| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays, music, loudness, export, check); `--init`, `--dry-run`, `--stop-after` |
+| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after` |
 | `batch.py` | Apply a step recipe or a project to a folder with a content-hash cache; `--watch` |
 | `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list |
 | `verify.py` | Run the toolchain on real device files and report PASS / FAIL per step |
@@ -237,7 +237,7 @@ WAV, FLAC, MP3, M4A/AAC, OGG and Opus go through `probe`, `cut`, `join`, `silenc
 - **Join.** `join.py intro.wav episode.m4a outro.wav -o full.flac` resamples every clip to one rate and channel layout and crossfades them (`--transition none` for a butt join). Audio and video inputs cannot be mixed in one join.
 - **Sample-accurate trims.** `cut.py talk.wav --start 1.2345 --end 2.3456 --accurate` trims at the sample; the JSON reports `precision` (`packet` for a stream copy, `sample` for PCM / FLAC, `codec_frame` when a lossy encoder frames the audio again, `frame` for video) and the measured `duration_error_ms`. A `.wav` never receives compressed packets.
 - **Typed dynamics.** `audio.py --compress --comp-threshold -20 --comp-ratio 4`, `--limit --limit-ceiling -1`, `--gate --gate-threshold -45`. Each flag is one documented option of FFmpeg's `acompressor`, `alimiter` or `agate`, range-checked before ffmpeg runs; no filter string is accepted from the caller.
-- **Loudness.** `loudness.py talk.wav -I -16 --tp -1.5 -o talk.m4a` for podcast levels; `check.py talk.m4a --platform podcast` measures LUFS and true peak.
+- **Loudness.** `loudness.py talk.wav -I -16 --tp -1.5 -o talk.m4a` for podcast levels, `--dialogue` to measure the speech rather than the silence between lines; `check.py talk.m4a --platform podcast` measures LUFS and true peak and reports the chapter markers and channel count.
 
 Picture tools (`fit`, `caption`, `overlay`, `graphics`, `color`, `export`, `scenes`, `look`) refuse an audio file with "input has no video stream" instead of inventing a picture.
 

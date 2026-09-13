@@ -354,6 +354,17 @@ runs a shell, evaluates strings, or executes anything other than the named scrip
 
 ## JSON output
 
+Per-tool keys added in 1.13: `audio` (`audio.py`) reports the mix it built — the
+`--voice` level, `stereo_widen`, whether an `--effects` bed was mixed, and with
+`--music` the `music_volume` plus a `duck` object naming the threshold (dB and
+linear), ratio, attack and release actually used, or `null` when `--duck` was not
+given. `loudness.py` reports `measured` (the input's loudnorm measurement,
+including `input_lra`), `targets` (the requested lufs / tp / lra) and, with
+`--dialogue`, `dialogue_gate: {speech_fraction, used, spans, noise_db,
+min_silence}` — `used` is false when under 20 % of the file is speech and the
+whole file was measured instead. `check.py --platform podcast` adds two
+informational rows to `checks`, `channels` and `chapters`.
+
 Success (`exit 0`): one document matching `output_schema`, always with
 `status: "completed"`, `output`, `dry_run`, `commands`, and `probe` of the output when a
 file was written. `probe` prints its measurement document directly.

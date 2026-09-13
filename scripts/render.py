@@ -24,15 +24,17 @@ Project format (all keys optional except clips):
     {"logo": true},
     {"text": "Episode 12", "position": "bottom", "start": 1, "end": 5, "fade": 0.3, "box": true}
   ],
-  "audio": {"voice": true, "music": "bed.mp3", "music_volume": -16, "duck": true, "music_fade_out": 2},
+  "audio": {"voice": "medium", "music": "bed.mp3", "music_volume": -16, "duck": true, "music_fade_out": 2,
+            "effects": "sfx.wav", "stems": {"dialogue": 0, "music": -18, "effects": -22}},
   "loudness": {"lufs": -14, "tp": -1},
   "fit": {"duration": 60},
   "export": {"preset": "reels", "normalize": true},   (default for platform presets; false opts out)
-  "check": {"platform": "reels"}
+  "check": {"platform": "reels"},
+  "chapters": "chapters.txt"            (or [{"at": "0:00", "title": "Intro"}, ...])
 }
 
 Stages run in this order: clips (cut) → join → silence → fit → captions →
-graphics → overlays → audio → loudness → export → check. Missing stages are
+graphics → overlays → audio → loudness → export → chapters → check. Missing stages are
 skipped. "brand" points caption/graphics/overlay at a brand.json (fonts,
 colours, logo, safe margin); {"logo": true} in overlays places the brand logo.
 
@@ -76,6 +78,7 @@ TEMPLATE = {
     "loudness": {"lufs": -14, "tp": -1},
     "fit": None,
     "export": {"preset": "youtube", "normalize": True},
+    "chapters": None,
     "check": {"platform": "youtube"},
 }
 
@@ -85,7 +88,7 @@ TEMPLATE = {
 # untrimmed, and a mistyped stage name dropped the stage -- both reported as a success (review 9).
 OBJECT_KEYS: Dict[str, frozenset] = {
     "project": frozenset({"output", "frame", "clips", "transition", "silence", "brand", "captions",
-                          "graphics", "overlays", "audio", "loudness", "fit", "export", "check"}),
+                          "graphics", "overlays", "audio", "loudness", "fit", "export", "check", "chapters"}),
     "clips[]": frozenset({"src", "in", "out", "speed"}),
     "frame": frozenset({"aspect", "width", "height", "fps"}),
     "transition": frozenset({"type", "duration"}),
@@ -98,15 +101,20 @@ OBJECT_KEYS: Dict[str, frozenset] = {
     "overlays[]": frozenset({"logo", "image", "text", "position", "start", "end", "fade", "opacity",
                              "scale", "font_size", "font", "font_file", "margin", "box"}),
     "audio": frozenset({"music", "replace", "music_volume", "fade_in", "fade_out", "music_fade_out",
-                        "gain", "duck_amount", "voice", "denoise", "duck", "music_loop", "stereo",
-                        "mono", "downmix"}),
+                        "gain", "duck_amount", "duck_threshold", "duck_attack", "duck_release",
+                        "voice", "denoise", "duck", "music_loop", "stereo", "mono", "downmix",
+                        "stereo_widen", "effects", "effects_volume", "stems"}),
+    "audio.stems": frozenset({"dialogue", "music", "effects"}),
+    "chapters[]": frozenset({"at", "title"}),
     "loudness": frozenset({"lufs", "tp"}),
     "fit": frozenset({"duration", "method", "aspect", "fit", "width", "height", "fps", "smooth"}),
     "export": frozenset({"preset", "fit", "crf", "normalize"}),
     "check": frozenset({"platform"}),
 }
 # Typos difflib cannot see: a clip is trimmed with in/out, not the start/end that time a title.
-NEAR_KEYS: Dict[str, Dict[str, str]] = {"clips[]": {"start": "in", "end": "out", "from": "in", "to": "out"}}
+NEAR_KEYS: Dict[str, Dict[str, str]] = {"clips[]": {"start": "in", "end": "out", "from": "in", "to": "out"},
+                                        "audio.stems": {"voice": "dialogue", "speech": "dialogue", "sfx": "effects", "bed": "music"},
+                                        "chapters[]": {"start": "at", "time": "at", "name": "title"}}
 
 
 def check_keys(obj: Any, schema: str, label: str) -> None:
@@ -126,6 +134,10 @@ def validate_project(proj: Dict[str, Any]) -> None:
     check_keys(proj, "project", "project")
     for name in ("frame", "transition", "silence", "captions", "audio", "loudness", "fit", "export", "check"):
         check_keys(proj.get(name), name, name)
+    check_keys((proj.get("audio") or {}).get("stems"), "audio.stems", "audio.stems")
+    if isinstance(proj.get("chapters"), list):
+        for i, item in enumerate(proj["chapters"]):
+            check_keys(item, "chapters[]", f"chapters[{i}]")
     for name in ("clips", "graphics", "overlays"):
         items = proj.get(name)
         if isinstance(items, list):
@@ -475,17 +487,31 @@ def main() -> int:
         return 0
 
     # ---- audio
-    au = proj.get("audio")
+    au = dict(proj.get("audio") or {})
     if au:
+        # "stems": one level per element of the mix, the way a mixing desk names them. Each maps
+        # to the flag that already exists (dialogue = the main track's gain, music = the bed's
+        # level, effects = the third file's level), so a stems block is a vocabulary, not a
+        # second code path -- and an explicit flag next to it wins, since it is the more specific
+        # statement of the same thing.
+        stems = au.pop("stems", None) or {}
+        if stems.get("effects") is not None and not au.get("effects"):
+            die('audio.stems.effects sets the level of "audio": {"effects": "sfx.wav"}, which this project does not have')
+        for stem, key in (("dialogue", "gain"), ("music", "music_volume"), ("effects", "effects_volume")):
+            if stems.get(stem) is not None:
+                au.setdefault(key, stems[stem])
         nxt = str(work / "audio.mp4")
         argv = [current, "-o", nxt]
-        for k, flag in (("music", "--music"), ("replace", "--replace")):
+        for k, flag in (("music", "--music"), ("replace", "--replace"), ("effects", "--effects")):
             if au.get(k):
                 argv += [flag, rel(au[k])]
-        for k, flag in (("music_volume", "--music-volume"), ("fade_in", "--fade-in"), ("fade_out", "--fade-out"), ("music_fade_out", "--music-fade-out"), ("gain", "--gain"), ("duck_amount", "--duck-amount")):
+        for k, flag in (("music_volume", "--music-volume"), ("effects_volume", "--effects-volume"), ("fade_in", "--fade-in"), ("fade_out", "--fade-out"), ("music_fade_out", "--music-fade-out"), ("gain", "--gain"), ("duck_amount", "--duck-amount"), ("duck_threshold", "--duck-threshold"), ("duck_attack", "--duck-attack"), ("duck_release", "--duck-release"), ("stereo_widen", "--stereo-widen")):
             if au.get(k) is not None:
                 argv += [flag, str(au[k])]
-        for k, flag in (("voice", "--voice"), ("denoise", "--denoise"), ("duck", "--duck"), ("music_loop", "--music-loop"), ("stereo", "--stereo"), ("mono", "--mono"), ("downmix", "--downmix")):
+        # "voice": true is the medium chain; "voice": "light"|"medium"|"strong" names one
+        if au.get("voice") is not None and au.get("voice") is not False:
+            argv += ["--voice"] + ([] if au["voice"] is True else [str(au["voice"])])
+        for k, flag in (("denoise", "--denoise"), ("duck", "--duck"), ("music_loop", "--music-loop"), ("stereo", "--stereo"), ("mono", "--mono"), ("downmix", "--downmix")):
             if au.get(k):
                 argv.append(flag)
         sh("audio.py", *argv)
@@ -535,6 +561,27 @@ def main() -> int:
             place_output(current, output)
         info(("[dry-run] would copy" if STATE.dry_run else "copied") + f" final stage to {output}")
     current = output
+
+    # ---- chapters (metadata.py on the delivered file: streams copied, markers written)
+    ch = proj.get("chapters")
+    if ch:
+        if STATE.dry_run:
+            info("[dry-run] would write chapter markers with metadata.py (the delivered file does not exist yet)")
+        else:
+            if isinstance(ch, list):
+                chapter_file = str(work / "chapters.txt")
+                lines = []
+                for i, entry in enumerate(ch):
+                    if not isinstance(entry, dict) or entry.get("at") is None:
+                        die(f'chapters[{i}]: needs {{"at": TIME, "title": STR}}')
+                    lines.append(f"{entry['at']} {entry.get('title') or f'Chapter {i + 1}'}")
+                Path(chapter_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            else:
+                chapter_file = rel(ch)
+            tagged = str(work / ("chapters" + Path(output).suffix))
+            sh("metadata.py", output, "--chapters", chapter_file, "-o", tagged)
+            place_output(tagged, output)
+            stages_done.append("chapters")
 
     # ---- check
     ck = proj.get("check")

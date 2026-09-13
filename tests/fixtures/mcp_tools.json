@@ -18,6 +18,11 @@
    "dry_run",
    "duck",
    "duck_amount",
+   "duck_attack",
+   "duck_release",
+   "duck_threshold",
+   "effects",
+   "effects_volume",
    "fade_in",
    "fade_out",
    "fast",
@@ -47,6 +52,7 @@
    "progress",
    "replace",
    "stereo",
+   "stereo_widen",
    "timeout",
    "voice"
   ],
@@ -643,6 +649,7 @@
   "properties": [
    "argv",
    "audio_bitrate",
+   "dialogue",
    "dry_run",
    "fast",
    "input",

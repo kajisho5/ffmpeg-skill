@@ -109,16 +109,30 @@ and the default MCP `tools/list` are unchanged except for additions.
 - Eval 11: the 8 caption prompts (JA/EN, CJK wrap, karaoke, SRT offset) run 3 times, plus the
   per-language act/refuse prompts added for zh, ko, es, pt, fr, de and ar (pending).
 
-## 1.13.0 — the audio bed
+## 1.13.0 — the audio bed (done)
 
-- `audio.py`: `--voice` strength levels (`light|medium|strong`), `--stereo-widen`, stem
-  levels for dialogue / music / effects in a `render.py` project (`audio.stems`), sidechain
-  ducking parameters exposed (`--duck-threshold`, `--duck-release`).
-- `loudness.py --lra N` targets loudness range, `--dialogue` gates the measurement on speech
-  (ffmpeg `speechnorm` / `silencedetect` energy) so ambience-heavy edits are not over-boosted.
-- `check.py --platform podcast` gains chapters and mono/stereo rows; `audio.py --chapters
-  chapters.txt` writes MP4/M4A chapter markers.
-- Eval 12 on audio-only and mixed prompts.
+- `audio.py` (done): `--voice [light|medium|strong]` (bare `--voice` is `medium`, the chain it
+  always produced), `--stereo-widen 0..1` (a mono input is refused unless `--stereo` duplicates
+  it first), the sidechain ducking parameters exposed (`--duck-threshold`, `--duck-attack`,
+  `--duck-release`, next to the existing `--duck-amount`), and `--effects FILE` /
+  `--effects-volume`: a third bed that is deliberately never ducked. `--json` gains an `audio`
+  block naming the duck settings the run used. `render.py` spells the levels as
+  `audio.stems: {dialogue, music, effects}`, mapping to `--gain` / `--music-volume` /
+  `--effects-volume`.
+- `loudness.py` (done): `--lra N` documented and the measured input/output ranges reported in
+  `--json` (`measured.input_lra`, `result.input_lra`, `targets`); `--dialogue` runs
+  `silencedetect` (noise −35 dB, 0.5 s) and measures loudness over the non-silent spans only
+  (`aselect`), applying that gain to the whole file, with a whole-file fallback and one info
+  line when under 20 % of the file is speech. `dialogue_gate` in `--json`.
+- `check.py --platform podcast` (done) gains `chapters` (PASS with ≥ 1 marker, WARN `none`) and
+  `channels` (PASS mono/stereo, WARN above — players downmix 5.1 unpredictably); both are
+  informational and absent for other platforms.
+- `audio.py --chapters` was **not** added: `metadata.py episode.mp4 --chapters chapters.txt`
+  already writes them, losslessly, and a second spelling in a tool that re-encodes the audio
+  would be the worse one. Instead `render.py` gained a `chapters` project key (a file path or
+  an inline list of `{"at", "title"}`) that runs `metadata.py` on the delivered file as the
+  last stage before `check`.
+- Eval 12 on audio-only and mixed prompts (pending).
 
 ## 1.14.0 — sync and multicam at scale
 
