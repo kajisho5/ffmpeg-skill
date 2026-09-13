@@ -10,7 +10,8 @@ row's `fix` is the command that resolves it; a few of the less obvious FAILs
 not a restatement of the spec value -- for a caller reporting this to someone
 who doesn't already know why the spec says what it says.
 
-Platforms: youtube, shorts, reels, tiktok, x, linkedin, broadcast (EBU R128), podcast, custom
+Platforms: youtube, shorts, reels, tiktok, x, linkedin, facebook, broadcast (EBU R128),
+podcast, custom -- one table, shared with export.py and the render.py templates
 
 Examples:
   python3 check.py final.mp4 --platform youtube
@@ -25,19 +26,15 @@ import sys
 from fractions import Fraction
 from typing import Any, Dict, List
 
+from _platforms import PLATFORMS, spec_of
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
-SPECS: Dict[str, Dict[str, Any]] = {
-    "youtube":   {"max_duration": 12 * 3600, "aspects": ["16:9", "9:16", "1:1", "4:3"], "min_height": 720, "fps_max": 60, "codecs": ["h264", "hevc", "prores", "av1", "vp9"], "max_bytes": 256 * 1024 ** 3, "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": False},
-    "shorts":    {"max_duration": 180, "aspects": ["9:16", "1:1"], "min_height": 1080, "fps_max": 60, "codecs": ["h264", "hevc"], "max_bytes": 256 * 1024 ** 3, "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": False},
-    "reels":     {"max_duration": 90, "aspects": ["9:16", "4:5", "1:1"], "min_height": 1080, "fps_max": 60, "codecs": ["h264", "hevc"], "max_bytes": 4 * 1024 ** 3, "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": True},
-    "tiktok":    {"max_duration": 600, "aspects": ["9:16", "1:1"], "min_height": 1080, "fps_max": 60, "codecs": ["h264", "hevc"], "max_bytes": 4 * 1024 ** 3, "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": True},
-    "x":         {"max_duration": 140, "aspects": ["16:9", "1:1", "9:16"], "min_height": 720, "fps_max": 60, "codecs": ["h264"], "max_bytes": 512 * 1024 ** 2, "lufs": -14, "lufs_tol": 3.0, "tp": -1.0, "sdr_only": True},
-    "linkedin":  {"max_duration": 600, "aspects": ["16:9", "1:1", "9:16", "4:5"], "min_height": 720, "fps_max": 60, "codecs": ["h264"], "max_bytes": 5 * 1024 ** 3, "lufs": -14, "lufs_tol": 3.0, "tp": -1.0, "sdr_only": True},
-    "broadcast": {"max_duration": None, "aspects": ["16:9"], "min_height": 1080, "fps_max": 60, "codecs": ["prores", "dnxhd", "h264", "hevc", "mpeg2video"], "max_bytes": None, "lufs": -23, "lufs_tol": 1.0, "tp": -1.0, "sdr_only": False},
-    "podcast":   {"max_duration": None, "aspects": None, "min_height": 0, "fps_max": None, "codecs": None, "max_bytes": None, "lufs": -16, "lufs_tol": 1.0, "tp": -1.0, "sdr_only": False},
-    "custom":    {"max_duration": None, "aspects": None, "min_height": 0, "fps_max": None, "codecs": None, "max_bytes": None, "lufs": None, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": False},
-}
+# The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
+# render.py templates all read it, so a platform's loudness spec is stated once. Only the
+# destinations that are compliance targets appear here; youtube-hdr / youtube-av1 are export
+# presets of the youtube target, not separate specs.
+SPECS: Dict[str, Dict[str, Any]] = {name: spec_of(name) for name in sorted(PLATFORMS)
+                                    if PLATFORMS[name]["check"] == name}
 
 
 def measure_loudness(path: str) -> Dict[str, float]:
@@ -134,10 +131,10 @@ def main() -> int:
             row("fps", "PASS" if fps <= spec["fps_max"] + 0.01 else "FAIL", f"{fps:g}", f"<= {spec['fps_max']}", "fit.py --fps 30 (drops half the frames of 60 fps motion; fine for talking heads, visible on sports/gaming)")
         row("vfr", "PASS" if not v.get("variable_frame_rate_suspected") else "WARN", "variable" if v.get("variable_frame_rate_suspected") else "constant", "constant", "fit.py --fps N (any re-encode conforms it)")
         if spec["codecs"]:
-            row("video codec", "PASS" if v.get("codec") in spec["codecs"] else "FAIL", v.get("codec"), "/".join(spec["codecs"]), "export.py --preset " + args.platform.replace("shorts", "reels").replace("tiktok", "reels").replace("linkedin", "youtube").replace("broadcast", "prores"),
+            row("video codec", "PASS" if v.get("codec") in spec["codecs"] else "FAIL", v.get("codec"), "/".join(spec["codecs"]), "export.py --preset " + (PLATFORMS[args.platform].get("preset") or "youtube"),
                 reason="the platform's player may refuse to decode this codec at all, not just look worse")
         pf = v.get("pix_fmt") or ""
-        if args.platform in ("reels", "tiktok", "x", "linkedin"):
+        if args.platform in ("reels", "tiktok", "x", "linkedin", "facebook"):
             row("pixel format", "PASS" if pf == "yuv420p" else "FAIL", pf, "yuv420p (8-bit 4:2:0)", "export.py preset re-encodes to yuv420p",
                 reason="QuickTime and iOS commonly reject video that isn't 8-bit 4:2:0")
         if spec["sdr_only"] and v.get("hdr"):

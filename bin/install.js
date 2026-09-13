@@ -27,7 +27,7 @@ const { spawnSync } = require('child_process');
 
 const SKILL_NAME = 'ffmpeg-skill';
 const ROOT = path.resolve(__dirname, '..');
-const PAYLOAD = ['SKILL.md', 'scripts', 'references', 'docs', 'mcp', 'package.json'];
+const PAYLOAD = ['SKILL.md', 'scripts', 'templates', 'references', 'docs', 'mcp', 'package.json'];
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(flag);

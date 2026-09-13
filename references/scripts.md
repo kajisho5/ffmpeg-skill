@@ -29,6 +29,7 @@ between tools.
 - silence.py — remove dead air / jump cuts
 - join.py — concatenate with transitions
 - render.py — the whole edit in one project.json
+- delivery templates — one command per destination (`--template`)
 - scenes.py — scene changes and highlight candidates
 - check.py — pre-delivery compliance
 - batch.py — same recipe over a folder, cached
@@ -76,7 +77,7 @@ re-encode, the result's `lossless_alternative` names the nearest keyframe
 ### fit.py — target duration and/or aspect, rotate/flip
 ```
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
-             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
+             [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop|blur [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`); it
@@ -94,7 +95,11 @@ automatically even without it.
 `--pad-fill blur` fills the letterbox/pillarbox bars with a blurred, scaled-to-cover copy
 of the frame (the look every phone editor gives landscape footage posted as a Short/Reel)
 instead of the solid `--pad-color`; `--pad-blur` is the blur radius. `export.py --fit pad`
-takes the same two flags.
+takes the same two flags. `--fit blur` (1.14) is the same fill named in one word and with the
+background dimmed (`eq brightness=-0.15`) so the picture in front reads as the subject: the
+whole frame is kept (nothing cropped), the borders are a blurred copy of it rather than black.
+A delivery template asks for it as `"frame": {"aspect": "9:16", "fit": "blur"}`, or
+`render.py --template tiktok clip.mp4 --fit blur`.
 
 ### crop.py — crop to an exact pixel rectangle
 ```
@@ -430,6 +435,46 @@ more than two steps or the user is likely to ask for changes: edit the JSON,
 re-render, and the result is reproducible. `--dry-run --json` prints the
 complete command plan for review.
 
+### Delivery templates — one command per destination (1.14)
+```
+render.py --template tiktok INPUT [--cues cues.txt | --srt subs.srt] [--logo logo.png] [--title "..."]
+          [--brand brand.json] [--chapters chapters.txt] [--fit crop|pad|blur] [-o OUT]
+render.py --template all INPUT ...        # or a comma list: one delivery per destination + <stem>_pack.md
+render.py --list-templates                # the table below, from the running install
+render.py --template tiktok INPUT --write-project project.json    # fill it, edit it, render it later
+```
+A template is a `render.py` project shipped in `templates/<name>.json` with `$INPUT`, `$OUTPUT`,
+`$CUES`/`$SRT`, `$LOGO`, `$TITLE`, `$BRAND` and `$CHAPTERS` placeholders. Filling it substitutes
+what the run was given and **drops any block whose placeholder has no value** — no `--logo` means
+no overlay stage at all, not an overlay of nothing. The filled project then renders through the
+normal stages, so `--dry-run --json`, `--stop-after` and the work directory behave as always. An
+unknown name is refused (`kind: input`) with the list. Output defaults to
+`<input>_<template>.mp4` (`.m4a` for `podcast`).
+
+Each template's frame, duration limit, loudness target and safe zones come from the one delivery
+table (`scripts/_platforms.py`). Safe zones are the fraction of the frame the app's own UI covers;
+the template places captions clear of them, and `caption.py --platform` / `graphics.py --platform`
+apply them to a hand-built step:
+
+| template | frame | max duration | loudness | safe top | safe bottom | safe left | safe right |
+|---|---|---|---|---|---|---|---|
+| `tiktok` | 1080x1920 (9:16) | 600 s | -14 LUFS / -1 dBTP | 0.10 | 0.22 | 0.05 | 0.14 |
+| `reels` | 1080x1920 (9:16) | 90 s | -14 LUFS / -1 dBTP | 0.08 | 0.20 | 0.05 | 0.12 |
+| `shorts` | 1080x1920 (9:16) | 180 s | -14 LUFS / -1 dBTP | 0.06 | 0.18 | 0.05 | 0.12 |
+| `youtube-shorts` | 1080x1920 (9:16) | 180 s | -14 LUFS / -1 dBTP | 0.06 | 0.18 | 0.05 | 0.12 |
+| `youtube` | 1920x1080 (16:9) | 43200 s | -14 LUFS / -1 dBTP | 0.05 | 0.05 | 0.05 | 0.05 |
+| `x` | 1280x720 (16:9) | 140 s | -14 LUFS / -1 dBTP | 0.05 | 0.05 | 0.05 | 0.05 |
+| `linkedin` | 1080x1080 (1:1) | 600 s | -14 LUFS / -1 dBTP | 0.05 | 0.05 | 0.05 | 0.05 |
+| `facebook` | 1920x1080 (16:9) | 14400 s | -14 LUFS / -1 dBTP | 0.05 | 0.05 | 0.05 | 0.05 |
+| `podcast` | audio only | — | -16 LUFS / -1 dBTP | 0.00 | 0.00 | 0.00 | 0.00 |
+
+`podcast` is audio: silence trim, −16 LUFS / −1 dBTP, chapter markers when `--chapters` is given,
+and `check.py --platform podcast`. `--template all` renders `tiktok, reels, shorts, youtube, x,
+linkedin, facebook` (not the audio template, not the `youtube-shorts` alias) into
+`<stem>_<platform>.mp4`, runs each platform's check and writes `<stem>_pack.md` with one row per
+destination; `report.py --pack <stem>_pack.md` renders that table as a single HTML page. A pack
+whose destinations did not all pass exits non-zero with the per-destination rows in `pack`.
+
 ### scenes.py — scene changes and highlight candidates
 ```
 scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECONDS] [--max-scene 15]] [--edl picks.txt] [--sheet scenes.png] [--json]
@@ -446,7 +491,7 @@ and why (energy, scene length).
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|broadcast|podcast|custom [--no-loudness] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -458,7 +503,11 @@ line, not FAIL: name the platform when the file is a delivery for it.
 stereo, WARN above — podcast players downmix 5.1 unpredictably) and `chapters`
 (PASS when the container carries at least one marker, WARN `none` otherwise —
 write them with `metadata.py --chapters`). Neither can FAIL a delivery, and
-neither appears for another platform.
+neither appears for another platform. Since 1.14 the per-platform numbers (duration, aspects,
+minimum height, fps, codecs, size, LUFS, true peak, SDR-only) come from the one delivery table
+in `scripts/_platforms.py`, which `export.py` and the `render.py` templates read too -- so the
+loudness a preset normalises to and the loudness this tool checks are the same value by
+construction, not by two lists agreeing.
 
 ### batch.py — same recipe over a folder, cached
 ```
@@ -486,8 +535,10 @@ Inside this skill, call the scripts directly; the server is for other hosts.
 
 ### graphics.py — motion-graphics templates
 ```
-graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug [--name] [--title] [--subtitle]
-            [--from N] [--start S] [--end E] [--position CORNER] [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [--lang XX] [-o OUT]
+graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|sticker|hook|meme
+            [--name] [--title] [--subtitle] [--text] [--top] [--bottom] [--duration 3]
+            [--from N] [--start S] [--end E] [--position CORNER] [--margin PX] [--platform NAME]
+            [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [--lang XX] [-o OUT]
 ```
 Drawn with drawbox/drawtext/overlay — no PNG assets needed. Sizes scale with
 the frame's short side; colours, font and safe margin come from `--brand`.
@@ -498,6 +549,13 @@ the script fails the job). RTL shaping in drawtext depends on the ffmpeg build
 (`--enable-libfribidi`/`--enable-libharfbuzz` shape it correctly, a build without
 them does not); `caption.py` always shapes, because it renders through libass:
 `references/gotchas.md#fonts-by-script`.
+
+1.14 adds three social templates: `sticker` (`--text`, a filled chip that pops in at
+`--position`), `hook` (`--title --duration 3`, the full-width opening card with a thin progress
+bar along the top that empties as the card's time runs out) and `meme` (`--top` / `--bottom`,
+upper-case white with a heavy black outline). `--platform NAME` takes each edge's margin from
+that destination's safe zone (see "Delivery templates" above), so a sticker stays off TikTok's
+like column; `--margin PX` sets all four edges and wins over `--platform`.
 
 ### brand.json — one file for fonts, colours, logo, margins
 ```json
@@ -555,9 +613,13 @@ seen before, and fix or report what fails.
 look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes
 look.py INPUT --at 2.5 [--at 7] [-o basename]                     # single frames -> basename_2.500s.png
 look.py BEFORE --compare AFTER --at 4 [-o cmp.png]                # side-by-side frame
+look.py INPUT --safe tiktok [--at 3]                              # shade what the app's UI covers
 ```
 Outputs PNG. View it with the Read tool (or any image viewer) and judge the
-frame like an editor would. Use `--compare` to show before/after to the user.
+frame like an editor would. Use `--compare` to show before/after to the user. `--safe NAME` (1.14) shades the zones that
+destination's own UI covers -- TikTok's description block and like column, the Reels/Shorts
+chrome -- on the sheet or the frame, so "is the caption readable" can be answered about the app
+rather than about the file.
 
 ### caption.py — subtitles (static, animated, karaoke)
 ```
@@ -772,7 +834,8 @@ integrated loudness ended more than 1 LU from the target because of it.
 
 ### export.py — delivery presets
 ```
-export.py INPUT --preset youtube|youtube4k|reels|x|prores|h265|gif [--fit pad|crop] [--no-scale] [--allow-long] [--crf N] [--normalize] [-o OUT]
+export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|h265|gif|copy
+                [--fit pad|crop] [--no-scale] [--allow-long] [--crf N] [--normalize] [-o OUT]
 export.py --list
 ```
 Scales into the preset frame (pad by default), tags BT.709, sets `+faststart`,
@@ -783,6 +846,15 @@ outside the platform's LUFS / true-peak spec, naming the `loudness.py` call
 that fixes it -- or pass `--normalize`, which runs that call on the written
 file itself (audio re-encoded, video copied; `loudness.normalized: true`) so a
 platform export is one command instead of export, loudness, export again.
+
+Since 1.14 each social destination is its own preset rather than an alias: `tiktok`
+(1080x1920, max 600 s), `shorts` (1080x1920, max 180 s), `reels` (1080x1920, max 90 s),
+`linkedin` (1080x1080), `facebook` (1920x1080), each with its platform's loudness spec from the
+same table `check.py` reads, so `--normalize` and the check agree. `youtube-hdr` writes HEVC
+Main10 keeping the source's own HDR10/HLG tags and refuses an SDR source (`kind: input`, hinting
+at `--preset youtube`) rather than labelling SDR as HDR; `youtube-av1` encodes AV1 with
+SVT-AV1 (libaom fallback) and refuses with `kind: missing_tool` on an ffmpeg built with
+neither.
 
 ### proxy.py — low-bitrate proxy for analysis/preview
 ```

@@ -4,7 +4,7 @@
 Duration: --duration N with --method speed (retime video+audio, pitch-preserving
 via atempo chaining) or --method trim (keep the first N seconds, or a centred
 window with --from-center). Aspect: --aspect 16:9|9:16|1:1|4:5|W:H with
---fit pad (letterbox/pillarbox with --pad-color, default black, or --pad-fill blur\nfor a blurred copy of the frame behind the picture) or --fit crop.
+--fit pad (letterbox/pillarbox with --pad-color, default black, or --pad-fill blur\nfor a blurred copy of the frame behind the picture), --fit crop, or --fit blur\n(the whole picture centred on a blurred, darkened copy of itself -- nothing\ncropped, no black bars).
 --width and/or --height set the output size: give one and the other follows
 the aspect (source aspect if --aspect is not also given); give both for an
 exact frame. --rotate 90|180|270 (clockwise) and --flip h|v apply a new
@@ -25,6 +25,7 @@ Examples:
   python3 fit.py input.mp4 --duration 30 --method trim
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --width 1080
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --pad-fill blur   # the phone-editor look: blurred frame behind the bars
+  python3 fit.py input.mp4 --aspect 9:16 --fit blur                  # same look in one word (blurred + darkened fill)
   python3 fit.py input.mp4 --aspect 1:1 --fit crop --duration 15
   python3 fit.py input.mp4 --aspect 9:16 --fit crop --crop-x 1   # keep the right edge (e.g. product held stage-right)
   python3 fit.py input.mp4 --height 1080                         # width follows the source aspect
@@ -39,6 +40,7 @@ from fractions import Fraction
 from typing import List
 
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs
+BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
 
@@ -89,7 +91,9 @@ def main() -> int:
                    help="slow-motion quality: blend (frame blending) or interpolate (motion-compensated, slow but fluid). default none = duplicate frames")
     a = ap.add_argument_group("aspect")
     a.add_argument("--aspect", help="target aspect ratio, e.g. 16:9, 9:16, 1:1, 4:5")
-    a.add_argument("--fit", choices=["pad", "crop"], default="pad", help="pad (letterbox) or crop to reach the aspect (default pad)")
+    a.add_argument("--fit", choices=["pad", "crop", "blur"], default="pad",
+                   help="how to reach the aspect: pad (letterbox), crop, or blur -- the whole picture centred on a "
+                        "blurred, darkened copy of itself filling the rest (the phone-editor vertical, 1.14)")
     a.add_argument("--width", type=int, help="output width in px (default: keep source width or the width implied by the aspect); with --height also given, both are used directly")
     a.add_argument("--height", type=int, help="output height in px (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
@@ -214,6 +218,10 @@ def main() -> int:
         if args.fit == "crop":
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")
+        elif args.fit == "blur":
+            # nothing is cropped and nothing is a black bar: the picture keeps its own aspect in
+            # the middle of a blurred, dimmed copy of itself (BLUR_DARKEN) filling the frame
+            vf.append(pad_filters(out_w, out_h, "blur", args.pad_color, args.pad_blur, BLUR_DARKEN))
         else:
             vf.append(pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur))
         vf.append("setsar=1")

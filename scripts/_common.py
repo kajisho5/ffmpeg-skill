@@ -140,7 +140,7 @@ def drawtext_boxborderw(vertical: int, horizontal: int) -> str:
     return str(max(vertical, horizontal))
 
 
-def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int) -> str:
+def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken: float = 0.0) -> str:
     """The letterbox/pillarbox step shared by fit.py and export.py, as one -vf segment.
 
     fill="color": scale to fit, then pad with a solid colour (the historical behaviour).
@@ -148,14 +148,17 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int) -> str
     phone editor's "make it vertical" does with landscape footage (#139). Built as a small
     graph inside the -vf chain: split, one branch scaled to cover and cropped to the frame
     then boxblur'ed, the other scaled to fit, overlaid centred. Only `filter:boxblur` is
-    needed beyond the usual scale/pad set, and that is already required by redact.py."""
+    needed beyond the usual scale/pad set, and that is already required by redact.py.
+    `darken` > 0 also dims that background copy by that much brightness (eq), so the picture in
+    front reads as the subject instead of competing with a bright blurred copy of itself --
+    what `fit.py --fit blur` uses (1.14)."""
     if fill == "blur":
         # boxblur rejects a radius larger than half the smaller dimension ("radius 20, must be
         # <= 8" on a 16 px target); clamp instead of failing an otherwise valid request
         radius = max(1, min(int(blur), max(1, min(out_w, out_h) // 2 - 1)))
         return (f"split[__fitfg][__fitbg];"
                 f"[__fitbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},"
-                f"boxblur={radius}:2[__fitbgb];"
+                f"boxblur={radius}:2" + (f",eq=brightness=-{darken:g}" if darken else "") + "[__fitbgb];"
                 f"[__fitfg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[__fitfgs];"
                 f"[__fitbgb][__fitfgs]overlay=(W-w)/2:(H-h)/2:format=auto")
     return f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color={color}"

@@ -264,6 +264,38 @@ downstream analysis/preview, distinct from `export.py`'s delivery
 presets) resolves to `proxy` - itself a mechanical resize + re-encode
 with no opinion on which asset should be proxied or what for.
 
+## Delivery table and templates (1.14)
+
+`scripts/_platforms.py` is the one table every delivery tool reads. Per destination
+(`tiktok`, `reels`, `shorts`, `youtube`, `youtube-hdr`, `youtube-av1`, `x`, `linkedin`,
+`facebook`, `podcast`, plus the `broadcast` / `custom` compliance targets):
+
+| field | meaning |
+|---|---|
+| `frame` | `{w, h, aspect}` the destination is delivered at, or `null` for an audio-only one |
+| `fps` | the frame rate a delivery is conformed to (`null`: leave the source's alone) |
+| `spec` | `check.py`'s row values: `max_duration`, `aspects`, `min_height`, `fps_max`, `codecs`, `max_bytes`, `lufs`, `lufs_tol`, `tp`, `sdr_only` |
+| `safe` | the fraction of the frame the app's own UI covers, per edge (`top`, `bottom`, `left`, `right`) |
+| `caption` | caption defaults a template uses: `size` (fraction of frame height), `position`, `box`, `outline`, `animate` |
+| `preset` | the `export.py` preset that writes this destination |
+| `check` | the `check.py` platform a delivery is verified against |
+
+It is an internal module (leading underscore), not a tool: the public tool count is unchanged.
+`check.py`'s `SPECS` and `export.py`'s `PRESETS` / `PLATFORM_OF` are derived from it, so the
+loudness `export.py --normalize` targets and the loudness `check.py` enforces are one value.
+
+New in the same release, all additive: `export.py --preset tiktok|shorts|linkedin|facebook`
+(real presets, not aliases of `reels`/`youtube`), `--preset youtube-hdr` (HEVC Main10 keeping
+the source's HDR tags; `kind: input` on an SDR source) and `--preset youtube-av1`
+(`kind: missing_tool` when the build has neither SVT-AV1 nor libaom); `caption.py --platform`
+and `graphics.py --platform` / `--margin` (margins from the safe zone, an explicit
+`--margin`/`--position` wins); `look.py --safe NAME`; `fit.py --fit blur`; `report.py --pack`;
+`graphics.py --template sticker|hook|meme`; and `render.py --template NAME INPUT`
+(`--cues/--srt/--logo/--title/--brand/--chapters/--fit/-o/--write-project/--list-templates`),
+which fills a `templates/<name>.json` project shipped with the skill. `--template all` or a
+comma-separated list renders every named destination and writes a `<stem>_pack.md` table.
+A project may now carry `"template"` (the name it was filled from) and `"frame": {"fit": ...}`.
+
 ## Capabilities
 
 Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
@@ -483,6 +515,8 @@ ffmpeg-skill contains no agent-specific code.
 
 ## Where things live
 
+- `scripts/_platforms.py`: the delivery table (destinations, specs, safe zones) read by check/export/render/caption/graphics/look
+- `templates/*.json`: the shipped delivery templates `render.py --template NAME` fills
 - `scripts/_contract.py`: the generator (`--json`, `--static`, `doctor`)
 - `bin/install.js`: `ffmpeg-skill contract` and `ffmpeg-skill doctor`
 - `tests/test_contract.py`: schema, consistency (scripts = MCP = installer), MCP inputSchema derived from the contract (equality, determinism, drift, round trips), dry-run, JSON shapes, verification policy, real-media run

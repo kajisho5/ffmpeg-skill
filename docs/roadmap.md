@@ -17,8 +17,9 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.13.0**, evaluated by **eval 14** (`evals/results/iteration-14.json`,
-76 prompts at 1.13.0). Everything from 1.14.0 down is planned.
+The released version today is **1.14.0** (shipped, eval pending: eval 15 will grade it on the
+76-prompt set plus the delivery prompts). The last evaluated version is **1.13.0**, closed by
+**eval 14** (`evals/results/iteration-14.json`). Everything from 1.15.0 down is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -28,7 +29,8 @@ The released version today is **1.13.0**, evaluated by **eval 14** (`evals/resul
 | 1.11.0 / 1.11.1 | shipped + evaluated | eval 11 at 1.11.0, eval 12 at 1.11.1 |
 | 1.12.0 | shipped + evaluated | eval 13 at 1.12.0 (`iteration-13.json`) |
 | 1.13.0 | shipped + evaluated | eval 14 at 1.13.0 (`iteration-14.json`) |
-| 1.14.0 → 1.21.0, 2.0.0 | planned | — |
+| 1.14.0 | shipped, eval pending | eval 15 (planned) |
+| 1.15.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
@@ -174,7 +176,7 @@ and the default MCP `tools/list` are unchanged except for additions.
   (drawtext) coming out wrong-shaped.
 
 
-## 1.14.0 — delivery templates (planned)
+## 1.14.0 — delivery templates (shipped, eval pending)
 
 Eval 14's delivery baseline: the destination is named ("make this a TikTok", 「リールにして」),
 the chain behind it is always the same, and four of seven producing runs paid a second full

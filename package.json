@@ -29,6 +29,7 @@
   "files": [
     "bin/",
     "scripts/",
+    "templates/",
     "mcp/",
     "references/scripts.md",
     "references/devices.md",

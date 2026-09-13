@@ -1,0 +1,22 @@
+{
+  "template": "podcast",
+  "output": "$OUTPUT",
+  "clips": [
+    {
+      "src": "$INPUT"
+    }
+  ],
+  "silence": {
+    "threshold": -40,
+    "min_silence": 1.0,
+    "margin": 0.15
+  },
+  "loudness": {
+    "lufs": -16,
+    "tp": -1
+  },
+  "chapters": "$CHAPTERS",
+  "check": {
+    "platform": "podcast"
+  }
+}

@@ -40,6 +40,7 @@ import unicodedata
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from _platforms import PLATFORMS, SAFE_NAMES, ass_units
 from _common import STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
@@ -759,7 +760,10 @@ def main() -> int:
     sty.add_argument("--shadow", type=float, default=0.0, help="shadow depth (default 0)")
     sty.add_argument("--bold", action="store_true")
     sty.add_argument("--position", choices=sorted(ALIGN), default=None, help="on-screen placement (default bottom)")
-    sty.add_argument("--margin", type=int, default=30, help="vertical margin from the edge (default 30)")
+    sty.add_argument("--margin", type=int, default=None, help="vertical margin from the edge in ASS units (default 30, or the --platform safe zone)")
+    sty.add_argument("--platform", choices=SAFE_NAMES, default=None,
+                     help="keep the captions out of this destination's UI: the margin becomes the platform's safe "
+                          "zone (TikTok's description bar, the Reels/Shorts chrome). An explicit --margin/--position wins")
     sty.add_argument("--box", action="store_true", help="draw an opaque box behind text instead of an outline")
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
     sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue (default 1.0)")
@@ -792,6 +796,16 @@ def main() -> int:
     args.outline_color = color_hex(args.outline_color or bc.get("outline", "000000"))
     args.outline = args.outline if args.outline is not None else (float(bcap.get("outline", 2)) if args.brand else 2.0)
     args.position = args.position or (bcap.get("position", "bottom") if args.brand else "bottom")
+    # --platform: the margin is the fraction of the frame that platform's own UI covers
+    # (scripts/_platforms.py). An explicit --margin is the more specific statement and wins;
+    # without either, the historical default 30 is unchanged.
+    if args.margin is None and args.platform:
+        edge = PLATFORMS[args.platform]["safe"]["top" if args.position.startswith("top") else "bottom"]
+        args.margin = ass_units(edge)
+        info(f"--platform {args.platform}: caption margin {args.margin} ASS units ({edge * 100:.0f}% of the frame height, "
+             f"clear of the app's own UI)")
+    if args.margin is None:
+        args.margin = 30
     # a brand's caption.animate is a burn-in default; over --mode mux (soft subtitles) it used
     # to be applied anyway and then refused as "animation is burn only" -- ignore it there
     args.animate = args.animate or (bcap.get("animate", "none") if args.brand and args.mode != "mux" else "none")

@@ -7,6 +7,7 @@ Examples:
   python3 look.py final.mp4 --tiles 4x5 --width 1600
   python3 look.py final.mp4 --at 2.5 --at 7          # single frames -> final_2.500s.png, final_7.000s.png
   python3 look.py before.mp4 --compare after.mp4 --at 4   # side-by-side frame
+  python3 look.py reel.mp4 --safe tiktok --at 3          # shade what TikTok's own UI covers
 Then view the PNG (Read tool / image viewer) and verify before reporting.
 """
 import argparse
@@ -15,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import List
 
+from _platforms import PLATFORMS, SAFE_NAMES
 from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, time_arg
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
@@ -39,6 +41,8 @@ def main() -> int:
     ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image (default 1280)")
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
     ap.add_argument("--no-timecode", action="store_true")
+    ap.add_argument("--safe", choices=SAFE_NAMES, help="shade the zones this platform's UI covers (its description bar, "
+                                                       "like column, status bar) so you can see whether anything readable is under them")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -55,6 +59,27 @@ def main() -> int:
     default_font = default_font_file("DejaVu Sans")
     font_prefix = f"fontfile={escape_filter_path(default_font)}:" if default_font else ""
     tc = "" if args.no_timecode else "," + timecode_filter(font_prefix)
+    # --safe: the platform's occluded zones, drawn as shaded boxes in fractions of the frame so
+    # the same filter is right at any scale (a tile of a contact sheet as much as a full frame).
+    safe_filter = ""
+    if args.safe:
+        z = PLATFORMS[args.safe]["safe"]
+        boxes = []
+        for edge, frac in (("top", z["top"]), ("bottom", z["bottom"]), ("left", z["left"]), ("right", z["right"])):
+            if frac <= 0:
+                continue
+            if edge == "top":
+                boxes.append(f"drawbox=x=0:y=0:w=iw:h=ih*{frac:g}:color=red@0.35:t=fill")
+            elif edge == "bottom":
+                boxes.append(f"drawbox=x=0:y=ih*(1-{frac:g}):w=iw:h=ih*{frac:g}:color=red@0.35:t=fill")
+            elif edge == "left":
+                boxes.append(f"drawbox=x=0:y=0:w=iw*{frac:g}:h=ih:color=red@0.20:t=fill")
+            else:
+                boxes.append(f"drawbox=x=iw*(1-{frac:g}):y=0:w=iw*{frac:g}:h=ih:color=red@0.20:t=fill")
+        safe_filter = "," + ",".join(boxes) if boxes else ""
+        info(f"--safe {args.safe}: shaded top {z['top'] * 100:.0f}% / bottom {z['bottom'] * 100:.0f}% / "
+             f"left {z['left'] * 100:.0f}% / right {z['right'] * 100:.0f}% of the frame -- keep text out of those")
+    tc = safe_filter + tc
     # HDR sources: tone-map for the PNG so the agent judges representative colours, not raw HLG/PQ
     if meta["video"].get("hdr"):
         v = meta["video"]

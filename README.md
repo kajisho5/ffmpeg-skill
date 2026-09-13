@@ -107,6 +107,22 @@ Then talk to your agent:
 
 The agent runs `probe.py`, `cut.py --segments 0:45-3:10,5:00-6:30`, `fit.py --duration 60 --aspect 9:16 --fit crop`, `export.py --preset reels`, `check.py --platform reels` and `look.py`, then reports "final.mp4: 59.98 s, 1080×1920, 30 fps, AAC stereo" with the contact sheet it inspected.
 
+### Deliver to a platform
+
+One command per destination, with the app's own UI taken into account:
+
+```bash
+python3 $S/render.py talk.mp4 --template tiktok --cues cues.txt
+```
+
+That fills the shipped `templates/tiktok.json`: 9:16 crop, captions popped word by word *above*
+TikTok's description bar and clear of its like column, −14 LUFS, the `tiktok` export preset, and
+a `check.py --platform tiktok` on the file it wrote. Templates ship for `tiktok`, `reels`,
+`shorts`, `youtube-shorts`, `youtube`, `x`, `linkedin`, `facebook` and `podcast`;
+`--template all` (or a comma-separated list) renders every destination from the same edit and
+writes a `<name>_pack.md` table of what each one produced. `render.py --list-templates` prints
+them with their frames, limits and safe zones.
+
 The tools also work on their own, from any shell:
 
 ```bash
@@ -172,7 +188,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for BT.2020 or PQ/HLG, `hdr_signal` for a real PQ/HLG/DV transfer only), colour space, rotation, every audio stream; `--analyze` flags Log footage |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments` |
-| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made |
+| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers |
 
 **Editing**
 
@@ -181,7 +197,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio; reports `precision` |
 | `join.py` | Concatenate clips with xfade transitions, normalising size, fps, sample rate and channel layout (the widest clip's, or `--channels`); audio-only inputs are joined as audio |
 | `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech; list or export the cut list |
-| `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo) and/or aspect ratio (pad or crop, with `--crop-x`/`--crop-y` to keep an off-centre subject) and/or exact `--width`/`--height`; rotate 90/180/270, flip h/v; force constant fps |
+| `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo) and/or aspect ratio (pad, crop or `--fit blur`'s blurred, darkened fill, with `--crop-x`/`--crop-y` to keep an off-centre subject) and/or exact `--width`/`--height`; rotate 90/180/270, flip h/v; force constant fps |
 | `crop.py` | Crop to an exact pixel rectangle (`--x --y --width --height`) — distinct from `fit.py --fit crop`, which crops to an aspect ratio it computes itself |
 | `cropdetect.py` | Measure existing black letterbox/pillarbox bars and report the `crop.py`-ready rectangle that removes them — analysis only, writes no file |
 | `deinterlace.py` | Deinterlace interlaced source footage (`yadif`), `--mode frame`/`field`, `--parity` |
@@ -217,23 +233,23 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `caption.py` | Burn SRT/ASS with font, size, colour, outline, position; build SRT from timed plain text; wraps to the safe area by measured width with `--max-lines`/`--min-duration`/`--offset`; picks a font by script for non-Latin text (`--lang`); animated and word-by-word karaoke timed to the speech energy or real word timings; optional local transcription |
 | `overlay.py` | Logos, watermarks and titles with position, time range, opacity, fades; `--video` for picture-in-picture, `--chromakey` for green-screen compositing |
-| `graphics.py` | Lower-thirds, title cards, chapter chips, progress bars, countdowns, corner bugs drawn by FFmpeg from a brand kit |
+| `graphics.py` | Lower-thirds, title cards, chapter chips, progress bars, countdowns, corner bugs, social stickers, opening hook cards and meme captions drawn by FFmpeg from a brand kit; `--platform NAME` keeps them inside that destination's safe zone |
 | `color.py` | HDR10 / HLG / Dolby Vision → SDR BT.709 tone mapping, DV layer stripping, 3D LUT (.cube), colour-tag rewriting, typed primary correction (exposure/contrast/saturation/gamma/white balance/lift-gain/levels/curves) |
 
 **Delivery**
 
 | Tool | What it does |
 |---|---|
-| `export.py` | Presets `youtube`, `youtube4k`, `reels`, `x`, `prores`, `h265`, `gif`, all tagged BT.709; `--normalize` meets the platform's loudness in the same call (`render.py` turns it on by default for platform presets) |
+| `export.py` | Presets `youtube`, `youtube4k`, `reels`, `tiktok`, `shorts`, `linkedin`, `facebook`, `x`, `youtube-hdr` (HEVC Main10, source HDR tags kept), `youtube-av1`, `prores`, `h265`, `gif`, `copy`, all tagged BT.709 unless they carry HDR; `--normalize` meets the platform's loudness in the same call (`render.py` turns it on by default for platform presets) |
 | `proxy.py` | Small, low-bitrate proxy for downstream AI analysis/preview/editing decisions — resize by `--width`/`--scale`, proxy-grade `--crf` (deprecated alias of `--quality`), `--fps`, `--no-audio`; not a delivery preset |
-| `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, broadcast and podcast specs (podcast also reports chapter markers and channel count), with the fix for each failure and a `format` / `judgement` kind per row |
-| `report.py` | Single-file HTML delivery report: before/after sheets, media facts, loudness, compliance, the commands run |
+| `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, Facebook, broadcast and podcast specs, from the same delivery table the export presets and templates read (podcast also reports chapter markers and channel count), with the fix for each failure and a `format` / `judgement` kind per row |
+| `report.py` | Single-file HTML delivery report: before/after sheets, media facts, loudness, compliance, the commands run; `--pack` renders a social pack table |
 
 **Orchestration**
 
 | Tool | What it does |
 |---|---|
-| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after` |
+| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after`; `--template NAME INPUT` renders a shipped delivery template (`--template all` writes the whole social pack plus its table) |
 | `batch.py` | Apply a step recipe or a project to a folder with a content-hash cache; `--watch` |
 | `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list |
 | `verify.py` | Run the toolchain on real device files and report PASS / FAIL per step |
