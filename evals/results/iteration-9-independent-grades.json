@@ -1,0 +1,1320 @@
+{
+ "summary": {
+  "runs": 108,
+  "routing": "108/108",
+  "honest": "108/108",
+  "language": "105/108",
+  "format": "65/108",
+  "look_when_picture_changed": "23/26",
+  "quality_mean": 4.32,
+  "quality_min": 2
+ },
+ "iteration_9_specific": {
+  "time_grammar_hhmmssff_or_at_fps": {
+   "runs_where_the_agent_used_it_in_a_command": 0,
+   "runs_where_it_only_appears_in_tool_output": [
+    "rep2/e01-reel",
+    "rep2/j01-reel",
+    "rep3/e01-reel",
+    "rep3/j01-reel"
+   ],
+   "note": "the hh:mm:ss:ff@fps form shows up only inside caption.py's own 'wrote .srt (3 cues, 00:00:00:00-00:00:09:00 @ 30fps)' line. Every agent-written --start/--end used 0, 2, 0:01 or 0:02. In 108 runs no agent ever typed a frame-accurate or @fps time, so the 1.9.0 grammar is invisible in practice; other hits of the regex (rep1/e09, rep1/x05, rep2/e09, rep3/e09) are '1280x720 @ 30fps' resolution strings, not times."
+  },
+  "hdr_signal_vs_hdr": {
+   "runs_that_should_surface_it": [
+    "rep1/e07-hdr",
+    "rep2/e07-hdr",
+    "rep3/e07-hdr",
+    "rep1/j07-probe",
+    "rep2/j07-probe",
+    "rep3/j07-probe"
+   ],
+   "mentioned_hdr_signal": [
+    "rep1/e07-hdr",
+    "rep3/e07-hdr",
+    "rep2/j07-probe",
+    "rep3/j07-probe"
+   ],
+   "showed_only_hdr": [
+    "rep2/e07-hdr",
+    "rep1/j07-probe"
+   ],
+   "note": "4 of 6; where it appears it is quoted straight out of probe --json and never explained to the user as a separate signal, so it reads as noise rather than as information"
+  },
+  "render_py_runs": {
+   "runs": [
+    "rep1/j08-project",
+    "rep2/j08-project",
+    "rep3/j08-project"
+   ],
+   "renders_per_run": {
+    "rep1/j08": 1,
+    "rep2/j08": 1,
+    "rep3/j08": 1
+   },
+   "normalize_applied": 3,
+   "normalize_applied_automatically_by_default": 0,
+   "note": "all three project.json files were hand-written with an explicit \"normalize\": true (rep2/rep3) or an export block edited to include normalize (rep1). No run's log contains the phrase '--normalize on by default', so the 1.9.0 default was never observable; the iteration-8 double-render failure is gone, but because the agents set the flag themselves it cannot be attributed to the default."
+  },
+  "platform_export_runs": {
+   "count": 15,
+   "encodes_per_run": {
+    "rep1/e01": 1,
+    "rep2/e01": 2,
+    "rep3/e01": 1,
+    "rep1/j01": 1,
+    "rep2/j01": 1,
+    "rep3/j01": 1,
+    "rep1/j05": 1,
+    "rep2/j05": 1,
+    "rep3/j05": 1,
+    "rep1/j06": 1,
+    "rep2/j06": 2,
+    "rep3/j06": 2,
+    "rep1/j08": 1,
+    "rep2/j08": 1,
+    "rep3/j08": 1
+   },
+   "single_encode": 12,
+   "two_encode": [
+    "rep2/e01-reel (loudness.py then export.py)",
+    "rep2/j06-report (export, saw the loudness warning, re-exported with --normalize)",
+    "rep3/j06-report (same pattern)"
+   ],
+   "note": "counts export.py + loudness.py + render.py's export stage. 12 of 15 are single-encode, up from 10 of 15 in iteration 8; the remaining waste is j06, where the agent exports first and only adds --normalize after reading the warning."
+  },
+  "check_without_platform_runs": {
+   "runs": [
+    "rep1/e12-vfr",
+    "rep2/e04-sync",
+    "rep2/e12-vfr",
+    "rep3/e12-vfr"
+   ],
+   "warn_rows_named_in_check_line": [
+    "rep1/e12-vfr",
+    "rep3/e12-vfr"
+   ],
+   "handled_correctly": 3,
+   "detail": [
+    "rep1/e12-vfr: 2 WARN rows (loudness -9.8 LUFS, true peak -0.4 dBTP) named in Check: and explicitly left alone because no destination was given",
+    "rep3/e12-vfr: same two WARNs named and left alone, with the reason",
+    "rep2/e12-vfr: ran the platform-less check but the Check: line only says 'all checks PASS' -- the log itself lists no WARN row, so nothing was hidden, but nothing was surfaced either",
+    "rep2/e04-sync: the WARN rows were acted on -- an unrequested loudness normalisation was applied to a sync job, which is the judgement-row behaviour SKILL.md asks agents not to chase"
+   ]
+  },
+  "cases_where_a_regex_grader_would_disagree": [
+   "rep3/r05-no-raw-ffmpeg: refuses with 'The ffmpeg-skill's scripts have no tool for this request' -- a correct refusal that a keyword list looking for 'cannot'/'not supported' would miss",
+   "rep1/r05 and rep2/r05 similarly refuse without ever naming a closest built-in option, which a keyword grader would score identically to rep3 even though rep1's is a single collapsed paragraph",
+   "rep2/x01, rep2/x02, rep2/x03, rep1/x04, rep1/x05, rep1/x06, rep3/x04: the Look: line for an audio-only or picture-unchanged job names the output file (or, in rep3/e10, run.md) instead of 'not needed' -- semantically honest, but a regex looking for 'not needed' would flag them, and rep3/e10's Look: naming run.md is genuinely wrong",
+   "rep1/f01 and rep2/r01 and rep3/e10 are graded language failures (Spanish reply to an English request) that a language-agnostic keyword grader would pass",
+   "rep1/j07 and rep3/j07 invent script names ('hdr_to_sdr', 'encode.py') that no routing regex would catch because no wrong command was actually run"
+  ]
+ },
+ "findings": [
+  "Format is still the weakest axis: 43 of 108 reports drop at least one of the five labels, and the pattern is unchanged from iteration 8 -- 'What/how:' or 'How:' replaces Steps:, and then Check: and Notes: vanish. It clusters almost perfectly on short jobs and refusals (x02/x04/x05/x06, r01-r05, f01/f04/f05) where the work itself was correct.",
+  "Language drift persists at exactly the same 3-run rate and in the same shape: Spanish prose for an English request on reports where little or nothing was produced (rep1/f01-missing-input, rep2/r01-face, rep3/e10-highlights). The Japanese side is now clean -- every ja prompt got a Japanese report, which is an improvement over iteration 8's English-labels-with-one-Japanese-word failures.",
+  "The 1.9.0 time grammar was never exercised. No agent wrote an hh:mm:ss:ff or @fps argument in 108 runs; the only occurrences are inside caption.py's own output. Nothing in SKILL.md's workflow gives an agent a reason to reach for frame-accurate times, so the feature is currently dead weight.",
+  "probe's hdr_signal appears in 4 of the 6 HDR-relevant runs but is always pasted from --json and never used: no report distinguishes 'tagged as HDR' from 'actually HDR', which is what the field exists to express.",
+  "render.py's normalize default cannot be confirmed: all three j08 runs wrote \"normalize\": true into project.json themselves and no log printed '--normalize on by default'. The good news is the iteration-8 double-render regression is gone (1 render per j08 run, down from 2 in two of three).",
+  "Single-encode platform exports improved to 12/15. The residual waste is entirely j06 (2 of 3 runs) and rep2/e01, where the agent exports first and only then reacts to the loudness warning -- the warning works, but a habit of exporting with --normalize up front would save the encode.",
+  "Look: discipline for join.py and colour work is still the blind spot. rep2/e09, rep3/e09 (a 640x360 clip padded into a 720p frame) and rep3/e07 (HDR->SDR tone map) changed the picture and produced no contact sheet; rep1/x06 and rep3/x06 reversed a clip with nothing looked at. SKILL.md step 8 lists transitions and colour but agents read 'join' and 'transcode' as picture-neutral.",
+  "Two runs invented tool names while refusing nothing: rep1/j07 recommends an 'hdr_to_sdr conversion script' and rep3/j07 recommends 'encode.py --codec hevc'. Neither ran a wrong command, but both hand the user a command that does not exist -- a new failure mode the routing check does not see.",
+  "rep2/e04-sync applied an unrequested loudness normalisation after a platform-less check WARN, the one clear case of chasing a judgement row this iteration."
+ ],
+ "harness_or_model_issues": [
+  "run.md remains a model-written summary, not a transcript: encode counts, 'viewed the sheet' claims and quoted --json fragments are self-reported and cannot be independently verified per command.",
+  "Scripts were again invoked through three different path spellings (/home/user/ffmpeg-skill/scripts, /root/.claude/skills/ffmpeg-skill/scripts, and bare relative paths), so the skill is installed in more than one place.",
+  "rep2/r04-translate ran a bare `which whisper-cli whisper faster-whisper` shell probe and rep1/j03, rep2/j03, rep3/j03 ran `fc-list`; harmless and not raw ffmpeg, but the eval's routing rule does not state whether non-ffmpeg shell probes are allowed.",
+  "rep3/e10-highlights wrote its Look: line pointing at run.md itself, which suggests the agent treated the run log as a deliverable."
+ ],
+ "rows": [
+  {
+   "id": "e01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Single-encode export --normalize reel, 12/12 reels pass, sheet viewed and described"
+  },
+  {
+   "id": "e02-cut-lossless",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Honest lossless-vs-accurate tradeoff, but delivered an 8.09 s file that is not the requested 0:02-0:08 window"
+  },
+  {
+   "id": "e03-logo",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "overlay.py top-right/opacity/fade plus a contact sheet named in Look:"
+  },
+  {
+   "id": "e04-sync",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "sync.py offset 2.5 s with confidence reported and the apad tail flagged"
+  },
+  {
+   "id": "e05-lufs",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "loudness -16/-1.5 then check podcast, all 7 pass"
+  },
+  {
+   "id": "e06-silence",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "silence.py defaults, 5.25 s removed and reported as asked"
+  },
+  {
+   "id": "e07-hdr",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "probe reports hdr_signal, color.py --to-sdr --codec h264, sheet inspected for the grey wash"
+  },
+  {
+   "id": "e08-surround",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "downmix then youtube check, loudness fixed and re-checked"
+  },
+  {
+   "id": "e09-join",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "fade join with the 640x360 clip padded to 720p and a contact sheet named"
+  },
+  {
+   "id": "e10-highlights",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "scenes.py only, ranges proposed with the audio-proxy caveat, nothing rendered"
+  },
+  {
+   "id": "e11-ready",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "check tiktok, loudness fix, re-check all pass"
+  },
+  {
+   "id": "e12-vfr",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "VFR detected and conformed; check.py without --platform, both WARN rows named and left alone"
+  },
+  {
+   "id": "f01-missing-input",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": false,
+   "look": null,
+   "quality": 2,
+   "reason": "Honest missing-input failure but written in Spanish for an English request and with no Steps/Check/Notes labels"
+  },
+  {
+   "id": "f02-corrupt-input",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "Correct ffprobe failure in Japanese but only Failed/what-how/Look; no Check: or Notes:"
+  },
+  {
+   "id": "f03-ffmpeg-failure",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Exact SKILL.md failure shape with ffmpeg's own LUT error quoted"
+  },
+  {
+   "id": "f04-beyond-duration",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "Refused on probe numbers without fabricating, but prose headings replace Steps/Check/Notes"
+  },
+  {
+   "id": "f05-unsupported",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct refusal after auditing scripts/, but no Check:/Notes: lines"
+  },
+  {
+   "id": "j01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Single-encode reels pipeline, Japanese report, sheet described"
+  },
+  {
+   "id": "j02-60s",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "fit.py --duration 8 at 1.5x speed so no words are lost, reasoning stated in Japanese"
+  },
+  {
+   "id": "j03-lower",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py lower-third with an explicit CJK font and a confirmation frame"
+  },
+  {
+   "id": "j04-bgm",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "audio.py --music --duck --music-loop correct; ran an unrequested youtube check but labelled it informational"
+  },
+  {
+   "id": "j05-ma",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "silence then export youtube --normalize in one encode, 11/11 pass"
+  },
+  {
+   "id": "j06-report",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "export x --normalize in one encode plus report.html, sheet viewed"
+  },
+  {
+   "id": "j07-probe",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "Good VFR/HDR comparison but invents an 'hdr_to_sdr' script instead of color.py --to-sdr, no hdr_signal, and no Steps/Check/Notes labels"
+  },
+  {
+   "id": "j08-project",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py project.json in one pass with normalize applied, sheet viewed, re-edit path explained"
+  },
+  {
+   "id": "r01-face",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Refusal grounded in redact.py --help; missing Steps/Check/Notes labels"
+  },
+  {
+   "id": "r02-tts",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct no-TTS refusal in Japanese offering --replace; label shape incomplete"
+  },
+  {
+   "id": "r03-download",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "No downloader, asks for a local file; label shape incomplete"
+  },
+  {
+   "id": "r04-translate",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Names caption.py --transcribe's limits, full five-label shape, English as requested"
+  },
+  {
+   "id": "r05-no-raw-ffmpeg",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "Refuses raw ffmpeg but never names a closest built-in option and collapses the report into one paragraph"
+  },
+  {
+   "id": "x01-lufs-wav",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct -16 LUFS normalise but only Done/Steps/Look, no Check: or Notes:"
+  },
+  {
+   "id": "x02-wav-to-mp3",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "audio.py extension-driven conversion with full label shape"
+  },
+  {
+   "id": "x03-audio-trim",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Sample-accurate 3.000 s wav cut reported in Japanese with all five labels"
+  },
+  {
+   "id": "x04-transcode",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "h265 preset correct, but Done/How/Look only and Look: names the mp4 instead of 'not needed'"
+  },
+  {
+   "id": "x05-replace-audio",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "Correct track swap; Look: points at the mp4 and Check:/Notes: are missing"
+  },
+  {
+   "id": "x06-reverse",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "reverse.py verified by probe only; no sheet for a reversed picture and no Check:/Notes:"
+  },
+  {
+   "id": "e01-reel",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Correct reel and sheet, but loudness.py then export.py = two encodes instead of export --normalize"
+  },
+  {
+   "id": "e02-cut-lossless",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Accepted cut.py's automatic re-encode and explained the lossless alternative"
+  },
+  {
+   "id": "e03-logo",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": true,
+   "quality": 4,
+   "reason": "Overlay and sheet correct; Done/How/Look only"
+  },
+  {
+   "id": "e04-sync",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "Sync verified by re-running sync.py, but an unrequested loudness change was applied and there is no Look: line"
+  },
+  {
+   "id": "e05-lufs",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Loudness and podcast check correct; Done/How/Look only and Look: names the mp4"
+  },
+  {
+   "id": "e06-silence",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Silence removal reported with numbers; Look: names the mp4 rather than 'not needed'"
+  },
+  {
+   "id": "e07-hdr",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "HDR->SDR with a look.py --compare frame; probe output shown without hdr_signal"
+  },
+  {
+   "id": "e08-surround",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Downmix correct but no check.py --platform youtube although YouTube was the stated destination"
+  },
+  {
+   "id": "e09-join",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": false,
+   "quality": 3,
+   "reason": "fadeblack join correct but no contact sheet for a clip that was scaled/padded, and Done/How/Look only"
+  },
+  {
+   "id": "e10-highlights",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Good analysis-only answer with caveats; Check:/Notes: labels missing"
+  },
+  {
+   "id": "e11-ready",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "check -> loudness -> re-check all correct; no Look: line"
+  },
+  {
+   "id": "e12-vfr",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "VFR conformed with --accurate; check.py without --platform reported as a generic sanity pass"
+  },
+  {
+   "id": "f01-missing-input",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Honest missing-input failure in English; Failed/What-how/Look only"
+  },
+  {
+   "id": "f02-corrupt-input",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Both failures quoted with the ffprobe message, full label shape in Japanese"
+  },
+  {
+   "id": "f03-ffmpeg-failure",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Accurate LUT failure with the file's real contents explained; no Check: line"
+  },
+  {
+   "id": "f04-beyond-duration",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Refused on probe numbers, offered a valid range; label shape incomplete"
+  },
+  {
+   "id": "f05-unsupported",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Quotes SKILL.md's no-raw-ffmpeg rule and rules out color.py; label shape incomplete"
+  },
+  {
+   "id": "j01-reel",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "fit --duration trim, captions, export reels --normalize in one encode, sheet described in Japanese"
+  },
+  {
+   "id": "j02-60s",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Speed change chosen over trimming with the reasoning and an alternative offered"
+  },
+  {
+   "id": "j03-lower",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Lower-third with CJK font checked first and a confirmation frame"
+  },
+  {
+   "id": "j04-bgm",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Ducked BGM with loop and fade-out; Done/How/Look only and Look: names the mp4"
+  },
+  {
+   "id": "j05-ma",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Silence then export youtube --normalize in one encode, 11/11 pass"
+  },
+  {
+   "id": "j06-report",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Correct X export and report.html, but exported once without --normalize and had to re-export"
+  },
+  {
+   "id": "j07-probe",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "VFR vs HDR10 comparison quoting hdr_signal and the --codec h264 HDR refusal, full label shape"
+  },
+  {
+   "id": "j08-project",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "project.json with normalize, dry-run then one render, sheet viewed"
+  },
+  {
+   "id": "r01-face",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": false,
+   "look": null,
+   "quality": 2,
+   "reason": "Correct no-face-detection refusal but answered in Spanish to an English request with no Steps/Check/Notes"
+  },
+  {
+   "id": "r02-tts",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 3,
+   "reason": "Honest no-TTS refusal in Japanese but the report is one Failed: paragraph with no other labels"
+  },
+  {
+   "id": "r03-download",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "No downloader, asks for a local file and names the follow-up tools; label shape incomplete"
+  },
+  {
+   "id": "r04-translate",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Notes both the missing whisper binary and the absent translation path; label shape incomplete"
+  },
+  {
+   "id": "r05-no-raw-ffmpeg",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Greps the scripts to prove no filter_complex passthrough; no Check:/Notes: labels"
+  },
+  {
+   "id": "x01-lufs-wav",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Normalised and re-measured with the full five-label shape"
+  },
+  {
+   "id": "x02-wav-to-mp3",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Conversion correct; Done/How/Look only and Look: names the mp3"
+  },
+  {
+   "id": "x03-audio-trim",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Lossless packet-boundary cut with the -13 ms error explained; Look: names the wav instead of 'not needed'"
+  },
+  {
+   "id": "x04-transcode",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "h265 preset with the archival assumption stated; Check:/Notes: missing and Look: names the mp4"
+  },
+  {
+   "id": "x05-replace-audio",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Swap correct with the short-track padding flagged; Done/How/Look only"
+  },
+  {
+   "id": "x06-reverse",
+   "rep": 2,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "reverse.py plus a look.py --compare frame proving the reversal, full label shape"
+  },
+  {
+   "id": "e01-reel",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Single-encode reels pipeline with blurred pad, 12/12 pass, sheet described"
+  },
+  {
+   "id": "e02-cut-lossless",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Took cut.py's frame-accurate re-encode and spelled out the lossless alternative"
+  },
+  {
+   "id": "e03-logo",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": true,
+   "quality": 4,
+   "reason": "Overlay plus sheet correct; Done/How/Look only"
+  },
+  {
+   "id": "e04-sync",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Offset applied and verified by a second sync.py run, full label shape"
+  },
+  {
+   "id": "e05-lufs",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Dry-run then normalise then podcast check, all pass"
+  },
+  {
+   "id": "e06-silence",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "--list then cut with a sheet confirming the jump cuts"
+  },
+  {
+   "id": "e07-hdr",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": false,
+   "quality": 3,
+   "reason": "Correct --to-sdr --codec h264 with hdr_signal quoted, but no contact sheet for a colour change and Look: names the mp4"
+  },
+  {
+   "id": "e08-surround",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Downmix correct but no youtube check although YouTube was the destination"
+  },
+  {
+   "id": "e09-join",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": false,
+   "quality": 3,
+   "reason": "fadeblack join correct but no sheet for the rescaled clip and Done/What-how/Look only"
+  },
+  {
+   "id": "e10-highlights",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": false,
+   "look": null,
+   "quality": 2,
+   "reason": "Sound analysis-only answer, but written in Spanish for an English request and Look: points at run.md"
+  },
+  {
+   "id": "e11-ready",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "check tiktok, loudness fix, re-check, verdict stated plainly"
+  },
+  {
+   "id": "e12-vfr",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "VFR conformed, sheet inspected for stutter, both WARN rows from the platform-less check named"
+  },
+  {
+   "id": "f01-missing-input",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Honest missing-input failure; Failed/What-how/Look only"
+  },
+  {
+   "id": "f02-corrupt-input",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "ffprobe error quoted with the full five-label shape in Japanese"
+  },
+  {
+   "id": "f03-ffmpeg-failure",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Exact failure shape with the invalid .cube explained"
+  },
+  {
+   "id": "f04-beyond-duration",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Refused before running cut.py using probe numbers, full label shape"
+  },
+  {
+   "id": "f05-unsupported",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct refusal citing SKILL.md and look.py --help; Check:/Notes: missing"
+  },
+  {
+   "id": "j01-reel",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Crop-based 9:16 reel in one encode, sheet described including the crop cost"
+  },
+  {
+   "id": "j02-60s",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "1.5x speed change so nothing is cut, reasoning in Japanese"
+  },
+  {
+   "id": "j03-lower",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Caught tofu glyphs on the first frame check and re-ran with IPAGothic"
+  },
+  {
+   "id": "j04-bgm",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Ducked, looped BGM at -22 dB; Done/how/Look only and Look: names the mp4"
+  },
+  {
+   "id": "j05-ma",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Silence then export youtube --normalize in one encode with a sheet"
+  },
+  {
+   "id": "j06-report",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Correct X export plus report.html, but the first export ran without --normalize and had to be repeated"
+  },
+  {
+   "id": "j07-probe",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 3,
+   "reason": "Full label shape and hdr_signal quoted, but invents an 'encode.py' tool twice as the CFR/HDR path"
+  },
+  {
+   "id": "j08-project",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "project.json dry-run then one render with normalize, sheet viewed and the pad explained"
+  },
+  {
+   "id": "r01-face",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "No-face-detection refusal with the full five-label shape and a concrete manual alternative"
+  },
+  {
+   "id": "r02-tts",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Honest no-TTS refusal in Japanese offering --replace/--mix; label shape incomplete"
+  },
+  {
+   "id": "r03-download",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "No downloader, asks for the local file; label shape incomplete"
+  },
+  {
+   "id": "r04-translate",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Both blockers named with the full label shape and a burn-in offer"
+  },
+  {
+   "id": "r05-no-raw-ffmpeg",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Greps prove no vignette/grain/filter_complex and says there is no tool for this request; only Failed:/Look:"
+  },
+  {
+   "id": "x01-lufs-wav",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Normalise plus podcast check with the full label shape"
+  },
+  {
+   "id": "x02-wav-to-mp3",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Minimal correct conversion with all five labels"
+  },
+  {
+   "id": "x03-audio-trim",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Sample-accurate 3.000 s cut reported in Japanese with all five labels"
+  },
+  {
+   "id": "x04-transcode",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": null,
+   "quality": 4,
+   "reason": "Dry-run then h265 export; Done/How/Look only and Look: names the mp4"
+  },
+  {
+   "id": "x05-replace-audio",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Swap with both inputs probed, silence tail flagged, full label shape"
+  },
+  {
+   "id": "x06-reverse",
+   "rep": 3,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 4,
+   "reason": "Correct reverse with all five labels, but no frame or sheet to confirm the reversal by eye"
+  }
+ ]
+}

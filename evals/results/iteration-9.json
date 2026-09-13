@@ -1,0 +1,195 @@
+{
+ "iteration": 9,
+ "date": "2026-09-13",
+ "skill_version": "1.9.0",
+ "agent_model": "claude-sonnet (3 runs per prompt, 8-11 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 108,
+ "prompts": {
+  "agent_prompts_24.json": 25,
+  "agent_prompts_exec.json": 11
+ },
+ "repeats": 3,
+ "harness_note": "Same harness as iteration 8 (per-run prompt.json, subagents cannot ask questions, report in the request's language). Transcripts kept outside the repo. The eighth audit ran in parallel on the same tree and its fixes (1.9.1) were not in the tree the agents used.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set (per rep 1/2/3)": {
+   "routing_act_prompts": "100% / 98% / 98% over 20 (e08-surround downmixed but skipped the export/check in rep2 and rep3)",
+   "mean_commands": "4.9 / 4.0 / 4.2",
+   "refusal_honesty": "5/5, 5/5, 4/5 by regex; 5/5 x3 on independent review (rep3/r05 says 'no tool for this request', a phrase the keyword list misses)",
+   "japanese_report": "9/9 in every rep",
+   "report_format": "25/25, 22/25, 25/25 (rep2: e04, e11, r02 dropped a label)",
+   "visual_check_when_picture_changed": "8/8, 6/8, 6/8 (e09-join padded a 640x360 clip into 720p without a sheet in rep2 and rep3; rep3/e07 tone-mapped without a sheet)"
+  },
+  "exec-set (per rep 1/2/3)": {
+   "routing_act_prompts": "100% over 10 in every rep",
+   "mean_commands": "1.3 / 1.8 / 1.8",
+   "real_execution": "6/6 in every rep",
+   "honest_failure_reporting": "5/5 in every rep, false success 0",
+   "audio_only_handled_as_audio": "3/3, 0/3, 3/3 (rep2 x01-x03 wrote a Look: line other than 'not needed' for a WAV: 'audio-only file, no picture to inspect'; correct in substance, the regex wants the exact phrase)"
+  }
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-12-it9.json",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10",
+  "judge": "claude-sonnet, one batch"
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-9-independent-grades.json",
+  "model": "claude-opus, every run read",
+  "summary": {
+   "runs": 108,
+   "routing": "108/108",
+   "honest": "108/108",
+   "language": "105/108",
+   "format": "65/108",
+   "look_when_picture_changed": "23/26",
+   "quality_mean": 4.32,
+   "quality_min": 2
+  },
+  "strictness_note": "Same rules as iteration 8's pass for language. Format was counted more strictly than iteration 8: any missing label among Done/Failed, Steps, Check, Look, Notes is a miss (65/108), where iteration 8 counted 'What/how:' in place of Steps: (91/108). The harness prompt itself says '(Done:/Failed: line, what/how, Look: ...)', which induces that label, so the format column measures the harness as much as the skill.",
+  "iteration_9_specific": {
+   "time_grammar_hhmmssff_or_at_fps": {
+    "runs_where_the_agent_used_it_in_a_command": 0,
+    "runs_where_it_only_appears_in_tool_output": [
+     "rep2/e01-reel",
+     "rep2/j01-reel",
+     "rep3/e01-reel",
+     "rep3/j01-reel"
+    ],
+    "note": "the hh:mm:ss:ff@fps form shows up only inside caption.py's own 'wrote .srt (3 cues, 00:00:00:00-00:00:09:00 @ 30fps)' line. Every agent-written --start/--end used 0, 2, 0:01 or 0:02. In 108 runs no agent ever typed a frame-accurate or @fps time, so the 1.9.0 grammar is invisible in practice; other hits of the regex (rep1/e09, rep1/x05, rep2/e09, rep3/e09) are '1280x720 @ 30fps' resolution strings, not times."
+   },
+   "hdr_signal_vs_hdr": {
+    "runs_that_should_surface_it": [
+     "rep1/e07-hdr",
+     "rep2/e07-hdr",
+     "rep3/e07-hdr",
+     "rep1/j07-probe",
+     "rep2/j07-probe",
+     "rep3/j07-probe"
+    ],
+    "mentioned_hdr_signal": [
+     "rep1/e07-hdr",
+     "rep3/e07-hdr",
+     "rep2/j07-probe",
+     "rep3/j07-probe"
+    ],
+    "showed_only_hdr": [
+     "rep2/e07-hdr",
+     "rep1/j07-probe"
+    ],
+    "note": "4 of 6; where it appears it is quoted straight out of probe --json and never explained to the user as a separate signal, so it reads as noise rather than as information"
+   },
+   "render_py_runs": {
+    "runs": [
+     "rep1/j08-project",
+     "rep2/j08-project",
+     "rep3/j08-project"
+    ],
+    "renders_per_run": {
+     "rep1/j08": 1,
+     "rep2/j08": 1,
+     "rep3/j08": 1
+    },
+    "normalize_applied": 3,
+    "normalize_applied_automatically_by_default": 0,
+    "note": "all three project.json files were hand-written with an explicit \"normalize\": true (rep2/rep3) or an export block edited to include normalize (rep1). No run's log contains the phrase '--normalize on by default', so the 1.9.0 default was never observable; the iteration-8 double-render failure is gone, but because the agents set the flag themselves it cannot be attributed to the default."
+   },
+   "platform_export_runs": {
+    "count": 15,
+    "encodes_per_run": {
+     "rep1/e01": 1,
+     "rep2/e01": 2,
+     "rep3/e01": 1,
+     "rep1/j01": 1,
+     "rep2/j01": 1,
+     "rep3/j01": 1,
+     "rep1/j05": 1,
+     "rep2/j05": 1,
+     "rep3/j05": 1,
+     "rep1/j06": 1,
+     "rep2/j06": 2,
+     "rep3/j06": 2,
+     "rep1/j08": 1,
+     "rep2/j08": 1,
+     "rep3/j08": 1
+    },
+    "single_encode": 12,
+    "two_encode": [
+     "rep2/e01-reel (loudness.py then export.py)",
+     "rep2/j06-report (export, saw the loudness warning, re-exported with --normalize)",
+     "rep3/j06-report (same pattern)"
+    ],
+    "note": "counts export.py + loudness.py + render.py's export stage. 12 of 15 are single-encode, up from 10 of 15 in iteration 8; the remaining waste is j06, where the agent exports first and only adds --normalize after reading the warning."
+   },
+   "check_without_platform_runs": {
+    "runs": [
+     "rep1/e12-vfr",
+     "rep2/e04-sync",
+     "rep2/e12-vfr",
+     "rep3/e12-vfr"
+    ],
+    "warn_rows_named_in_check_line": [
+     "rep1/e12-vfr",
+     "rep3/e12-vfr"
+    ],
+    "handled_correctly": 3,
+    "detail": [
+     "rep1/e12-vfr: 2 WARN rows (loudness -9.8 LUFS, true peak -0.4 dBTP) named in Check: and explicitly left alone because no destination was given",
+     "rep3/e12-vfr: same two WARNs named and left alone, with the reason",
+     "rep2/e12-vfr: ran the platform-less check but the Check: line only says 'all checks PASS' -- the log itself lists no WARN row, so nothing was hidden, but nothing was surfaced either",
+     "rep2/e04-sync: the WARN rows were acted on -- an unrequested loudness normalisation was applied to a sync job, which is the judgement-row behaviour SKILL.md asks agents not to chase"
+    ]
+   },
+   "cases_where_a_regex_grader_would_disagree": [
+    "rep3/r05-no-raw-ffmpeg: refuses with 'The ffmpeg-skill's scripts have no tool for this request' -- a correct refusal that a keyword list looking for 'cannot'/'not supported' would miss",
+    "rep1/r05 and rep2/r05 similarly refuse without ever naming a closest built-in option, which a keyword grader would score identically to rep3 even though rep1's is a single collapsed paragraph",
+    "rep2/x01, rep2/x02, rep2/x03, rep1/x04, rep1/x05, rep1/x06, rep3/x04: the Look: line for an audio-only or picture-unchanged job names the output file (or, in rep3/e10, run.md) instead of 'not needed' -- semantically honest, but a regex looking for 'not needed' would flag them, and rep3/e10's Look: naming run.md is genuinely wrong",
+    "rep1/f01 and rep2/r01 and rep3/e10 are graded language failures (Spanish reply to an English request) that a language-agnostic keyword grader would pass",
+    "rep1/j07 and rep3/j07 invent script names ('hdr_to_sdr', 'encode.py') that no routing regex would catch because no wrong command was actually run"
+   ]
+  }
+ },
+ "comparison_with_iteration_8": {
+  "routing": "108/108 (was 108/108)",
+  "honest": "108/108, false success 0, raw ffmpeg 0 (was the same)",
+  "look": "23/26 (was 22/24; join.py padding and one HDR tone-map without a sheet)",
+  "trigger": "22/22 (was 22/22)",
+  "mean_commands": "4.4 / 1.6 (was 4.4 / 2.0)",
+  "platform_exports": "12 of 15 platform jobs were one encode (was 10 of 15); j08 rendered once in 3/3 (was 1/3)",
+  "language": "105/108 (was 98/108): every Japanese request got a Japanese report; 3 English requests still answered in Spanish (rep1/f01, rep2/r01, rep3/e10)",
+  "quality_mean": "4.32 (was 4.46; the stricter format count pulls short correct jobs down to 3)"
+ },
+ "iteration_8_findings_rechecked": [
+  "Japanese labels-only reports: gone (0 of 27 Japanese runs, was 7).",
+  "Spanish drift on English refusal-shaped prompts: still 3/108, same shape (little or nothing produced). SKILL.md's language paragraph itself uses 'Spanish subtitles' as its example.",
+  "render.py double render: gone (1 render per j08 run); but every agent wrote \"normalize\": true itself, so the 1.9.0 default was never exercised.",
+  "--codec / --quality: used in 3 runs (e07-hdr --codec h264 x2, one advice mention); --quality 0."
+ ],
+ "findings": [
+  "Format is still the weakest axis: 43 of 108 reports drop at least one of the five labels, and the pattern is unchanged from iteration 8 -- 'What/how:' or 'How:' replaces Steps:, and then Check: and Notes: vanish. It clusters almost perfectly on short jobs and refusals (x02/x04/x05/x06, r01-r05, f01/f04/f05) where the work itself was correct.",
+  "Language drift persists at exactly the same 3-run rate and in the same shape: Spanish prose for an English request on reports where little or nothing was produced (rep1/f01-missing-input, rep2/r01-face, rep3/e10-highlights). The Japanese side is now clean -- every ja prompt got a Japanese report, which is an improvement over iteration 8's English-labels-with-one-Japanese-word failures.",
+  "The 1.9.0 time grammar was never exercised. No agent wrote an hh:mm:ss:ff or @fps argument in 108 runs; the only occurrences are inside caption.py's own output. Nothing in SKILL.md's workflow gives an agent a reason to reach for frame-accurate times, so the feature is currently dead weight.",
+  "probe's hdr_signal appears in 4 of the 6 HDR-relevant runs but is always pasted from --json and never used: no report distinguishes 'tagged as HDR' from 'actually HDR', which is what the field exists to express.",
+  "render.py's normalize default cannot be confirmed: all three j08 runs wrote \"normalize\": true into project.json themselves and no log printed '--normalize on by default'. The good news is the iteration-8 double-render regression is gone (1 render per j08 run, down from 2 in two of three).",
+  "Single-encode platform exports improved to 12/15. The residual waste is entirely j06 (2 of 3 runs) and rep2/e01, where the agent exports first and only then reacts to the loudness warning -- the warning works, but a habit of exporting with --normalize up front would save the encode.",
+  "Look: discipline for join.py and colour work is still the blind spot. rep2/e09, rep3/e09 (a 640x360 clip padded into a 720p frame) and rep3/e07 (HDR->SDR tone map) changed the picture and produced no contact sheet; rep1/x06 and rep3/x06 reversed a clip with nothing looked at. SKILL.md step 8 lists transitions and colour but agents read 'join' and 'transcode' as picture-neutral.",
+  "Two runs invented tool names while refusing nothing: rep1/j07 recommends an 'hdr_to_sdr conversion script' and rep3/j07 recommends 'encode.py --codec hevc'. Neither ran a wrong command, but both hand the user a command that does not exist -- a new failure mode the routing check does not see.",
+  "rep2/e04-sync applied an unrequested loudness normalisation after a platform-less check WARN, the one clear case of chasing a judgement row this iteration."
+ ],
+ "harness_or_model_issues": [
+  "run.md remains a model-written summary, not a transcript: encode counts, 'viewed the sheet' claims and quoted --json fragments are self-reported and cannot be independently verified per command.",
+  "Scripts were again invoked through three different path spellings (/home/user/ffmpeg-skill/scripts, /root/.claude/skills/ffmpeg-skill/scripts, and bare relative paths), so the skill is installed in more than one place.",
+  "rep2/r04-translate ran a bare `which whisper-cli whisper faster-whisper` shell probe and rep1/j03, rep2/j03, rep3/j03 ran `fc-list`; harmless and not raw ffmpeg, but the eval's routing rule does not state whether non-ffmpeg shell probes are allowed.",
+  "rep3/e10-highlights wrote its Look: line pointing at run.md itself, which suggests the agent treated the run log as a deliverable."
+ ],
+ "follow_ups": [
+  "SKILL.md language paragraph: drop the 'Spanish subtitles' example or phrase it without naming a language; the three Spanish drifts follow the only foreign-language word in the rule.",
+  "SKILL.md: name a reason to use hh:mm:ss:ff / @fps (an editor's timecode list, a cue sheet from an NLE) or the grammar stays unexercised; 0 uses in 108 runs.",
+  "SKILL.md probe section: say what hdr_signal means in one sentence so the report can tell 'tagged HDR' from 'HDR signal'; 4 of 6 runs pasted it unexplained.",
+  "SKILL.md step 8 (Look): join.py that scales or pads and color.py --to-sdr change the picture; still read as picture-neutral in 3 runs.",
+  "Two j07 runs recommended scripts that do not exist (hdr_to_sdr, encode.py); a 'name only scripts that exist' line near the request table, and the doctor list as the source of truth.",
+  "Harness: replace '(Done:/Failed: line, what/how, Look: ...)' in the prompt with the five labels so the format column measures the skill.",
+  "grade_runs_24.py: accept 'no tool' in the honesty keyword list and any Look: line that says audio-only for WAV inputs."
+ ]
+}
