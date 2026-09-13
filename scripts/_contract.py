@@ -394,6 +394,20 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         extra = {"platform": {"type": "string"}, "ok": {"type": "boolean"}, "failed": {"type": "integer"}, "warnings": {"type": "integer"},
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "present when no --platform was named: youtube was assumed and judgement rows are WARN"},
                  "checks": {"type": "array", "items": {"type": "object", "properties": {"check": {"type": "string"}, "status": {"enum": ["PASS", "WARN", "FAIL"]}, "value": {}, "expected": {}, "fix": {"type": "string"}, "kind": {"enum": ["format", "judgement"]}}}}}
+    elif name == "caption":
+        extra = {"caption": {"type": "object", "description": "cue layout: shifted / wrapped / rebalanced / split / extended / dropped counts, plus wrap ('phrase' or 'measured') and phrase_breaks (1.16)"},
+                 "tracks": {"type": "array", "description": "--mode mux: one entry per subtitle stream in the output ({index, file, language, title, codec, default, cues, kept_from_input}); a stream the input already carried has file null and kept_from_input true (1.16)"},
+                 "subtitle_tracks": {"type": "integer", "description": "--mode mux: how many subtitle streams the output carries"},
+                 "emoji": {"type": "object", "description": "how the emoji in the text were drawn (mode, overlays, missing)"},
+                 "notes": {"type": "array", "items": {"type": "string"}}}
+    elif name == "metadata":
+        extra = {"chapters": {"type": "array", "description": "the chapter markers read back off the written file"},
+                 "tags": {"type": "object"}, "streams_copied": {"type": "boolean"},
+                 "auto_chapters": {"type": "object", "description": "--auto-chapters: {source, min_chapter, max_chapters, proposed, kept, titles, chapters, description_block, files}. titles is always 'placeholder' -- the skill proposes where a chapter starts, never what it is called (1.16)"},
+                 "notes": {"type": "array", "items": {"type": "string"}}}
+    elif name == "waveform":
+        extra = {"audiogram": {"type": "object", "description": "{style, background ('image' or 'color'), image, position, vis_height, platform, captions, title, stages, verified} -- present on every run, so a plain waveform answers background 'color' (1.16)"},
+                 "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "scenes":
         extra = {"file": {"type": "string"}, "duration": {"type": "number"}, "scene_count": {"type": "integer"}, "scenes": {"type": "array"}, "audio_peaks": {"type": "array"}}
     elif name == "silence":
