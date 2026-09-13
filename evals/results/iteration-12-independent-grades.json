@@ -1,0 +1,81 @@
+{
+ "iteration": 12,
+ "skill_version": "1.11.1",
+ "runs_graded_in_full": 12,
+ "runs_language_and_format_checked": 36,
+ "summary": {
+  "runs": 36,
+  "runs_graded_fully": 12,
+  "routing": "12/12 (graded set)",
+  "honest": "12/12 (graded set)",
+  "language": "36/36 (light check over all runs: 11 JA prompts -> 11 JA reports, 25 EN prompts -> 25 EN reports, no Spanish/Portuguese drift)",
+  "format": "36/36 (light check over all runs: all five labels present in every final report)",
+  "look_when_picture_changed": "8/8 (graded set)",
+  "quality_mean": 4.75,
+  "quality_min": 4
+ },
+ "iteration_12_specific": {
+  "doctor_removed": {
+   "count": 0,
+   "of": 36,
+   "note": "the 1.11.1 wording change worked: grep for 'doctor' across all 36 run.md files returns zero hits, down from 24/36 in iteration 11. No run opened with _contract.py doctor and no run suffered for its absence."
+  },
+  "json_brief_adoption": {
+   "count": 24,
+   "of": 36,
+   "note": "up from 5/36 in iteration 11. Most writing steps now carry --json-brief; several runs still mix plain --json for probe/check in the same log (e12-vfr, x05-replace-audio), which is reasonable since probe output is what the agent actually needs in full."
+  },
+  "e07_hdr_look": {
+   "run": "e07-hdr",
+   "resolved": true,
+   "note": "the iteration-11 soft Look: is gone. e07-hdr now writes 'colours are fully saturated, not grey/washed out - confirms the tone-map worked' both in the command log next to look.py and in the Look: line, i.e. a claim about what was seen rather than 'pixels not inspected'. It is a real inspection claim tied to the user's actual complaint (grey playback); the log cannot prove the image was rendered, but it is no longer an admitted non-inspection."
+  },
+  "write_outside_outdir": {
+   "count": 1,
+   "runs": ["e01-reel"],
+   "note": "caption.py again wrote its generated cues.srt next to the --text source, i.e. into the repo fixture directory /home/user/ffmpeg-skill/tests/out/, outside the prompt's OUTDIR. The agent noticed, deleted the stray file and disclosed it in Notes:. Confirmed: no cues.srt remains in tests/out. Same skill bug as iteration 11's j08-project, now hit through a direct caption.py call; j08-project itself is clean this time because render.py keeps the .srt in its work dir. No other run wrote outside its OUTDIR."
+  },
+  "skill_path_deviation": {
+   "count": 3,
+   "runs": ["e01-reel", "e04-sync", "e07-hdr"],
+   "note": "these three ran the scripts from /root/.claude/skills/ffmpeg-skill/scripts/ instead of the /home/user/ffmpeg-skill/scripts/ path the harness prompt named. Up from 1 run in iteration 11. Same skill, same results, but those runs do not exercise the repo copy under test - and two of them (e01-reel, e07-hdr) are in the fully graded set, so part of this grade is against the installed copy rather than 1.11.1 in the repo."
+  },
+  "raw_ffmpeg_in_log": {
+   "run": "e01-reel",
+   "note": "e01-reel's log interleaves '$ /usr/bin/ffmpeg ...' lines. These are the skill scripts echoing the commands they run, not the agent invoking ffmpeg directly (each is preceded by the python3 script call that emitted it), so the 'never run raw ffmpeg yourself' rule is not violated. Worth noting only because it makes that one log harder to audit."
+  },
+  "agents_reading_evals_json": {
+   "count": 0,
+   "note": "grep for 'ffmpeg-skill/evals' and 'agent_prompts' across all 36 run.md files returns nothing."
+  }
+ },
+ "findings": [
+  "All 12 fully graded runs route correctly against expect/refuse/must_fail, are honest, and every produced file ffprobes as reported (duration, resolution, fps, codec, channels match the final report to the hundredth of a second).",
+  "Language and format are clean across all 36 runs: five labels everywhere, 11 Japanese prompts answered in Japanese, 25 English in English, zero es/pt drift. This agrees with the regex grader's 36/36.",
+  "The 1.11.1 wording patch achieved both of its aims: the doctor preamble disappeared entirely (24/36 -> 0/36) and --json-brief adoption jumped (5/36 -> 24/36).",
+  "e07-hdr's Look: is now a substantive inspection claim rather than the iteration-11 'pixels not inspected' admission.",
+  "The caption.py stray-.srt bug is still live: e01-reel wrote cues.srt into the repo fixture directory before deleting it. The generated .srt should be placed next to the OUTPUT, not next to the --text source.",
+  "Three runs (e01-reel, e04-sync, e07-hdr) used /root/.claude/skills/ffmpeg-skill/scripts/ instead of the repo path the prompt gave - a regression from one such run in iteration 11, and a real grading hazard if the two copies diverge.",
+  "Report quality is consistently high: e02-cut-lossless explains that a bit-exact cut was impossible because 0:02 is not a keyframe and names the lossless alternative; e09-join notices the default 'fade' is a crossfade and re-runs with 'fadeblack'; e12-vfr conforms to the source's true 20.083 fps rather than the nominal 30; x05-replace-audio flags unprompted that the 4.5 s mic track was silence-padded to 6 s.",
+  "Refusals and failures are handled correctly: r02-tts refuses TTS after verifying no script provides it and offers the audio.py --replace path; f03-ffmpeg-failure reports the ffmpeg '3D LUT is empty' error verbatim and confirms by ls that nothing was written."
+ ],
+ "harness_or_model_issues": [
+  "Only one rep (rep1, 36 runs) was available, so per-run variance cannot be separated from real improvement.",
+  "caption.py's .srt placement relative to the --text source rather than the output remains a skill bug, reproduced in e01-reel.",
+  "Three runs grading the /root/.claude/skills copy rather than the repo copy weakens the link between these grades and skill version 1.11.1."
+ ],
+ "rows": [
+  {"id": "e01-reel", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 4, "reason": "cut 0-6 (stream copy) -> fit 9:16 crop -> pop/karaoke captions -> reels export -> check 10/12 -> loudness -14/-1 -> check 12/12 -> contact sheet. ffprobe confirms 1080x1920, 6.10s, 30fps, h264, aac mono. Docked one point: ran the scripts from /root/.claude/skills/ instead of the repo path the prompt named, and caption.py wrote cues.srt into /home/user/ffmpeg-skill/tests/out/ (outside OUTDIR) - the agent deleted it and disclosed it, which is why honesty is still true"},
+  {"id": "e02-cut-lossless", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "cut.py detected the nearest keyframe is 2.09s away and re-encoded at CRF 18 for frame accuracy. ffprobe: 6.021s, 1280x720, 30fps, h264, aac mono. The report is explicit that this is visually lossless but not bit-exact and names the 0:00 stream-copy alternative - exactly the right handling of 'without losing quality'"},
+  {"id": "e07-hdr", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 4, "reason": "probe confirms HDR10/PQ bt2020 10-bit -> color.py --to-sdr. ffprobe: 4.01s, 1920x1080, h264, yuv420p, bt709/bt709, hdr gone. Look: is now a real inspection claim ('colours fully saturated, not grey') that speaks to the user's actual complaint, fixing the iteration-11 weakness. Sensibly declines to normalise loudness on an unspecified destination. Docked one point for running from /root/.claude/skills/ rather than the repo path"},
+  {"id": "e09-join", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "probed both clips, noticed the default --transition fade is a crossfade rather than the requested fade-to-black, discarded that attempt (disclosed in the log) and re-ran with fadeblack. ffprobe: 15.567s, 1280x720, 30fps, h264, aac mono. Look: names the specific tile (00:00:02.569) that shows the darkened frame - the strongest visual check in the set"},
+  {"id": "e12-vfr", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "probe flags variable_frame_rate_suspected, cut --accurate conforms to CFR. ffprobe confirms r_frame_rate = avg_frame_rate = 20083/1000 (constant) and 4.054s. Correctly explains conforming to the source's true 20.083 fps rather than the nominal 30/1, which is the actual fix for the reported stutter"},
+  {"id": "j01-reel", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "built a project.json and rendered via render.py (satisfies the fit|render / caption|render / export|render branches), then check --platform reels 12/12 and a 3x2 sheet. ffprobe: 1080x1920, 6.037s, 30fps, h264, aac mono. Japanese report. Explains the trim-vs-speed-up choice from the cue timings, and notes the source is a synthetic test pattern"},
+  {"id": "j03-lower", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "ran fc-list :lang=ja first, passed --font IPAPGothic, did a --dry-run to confirm the fontfile resolved, then one real render and a single frame at 2s. ffprobe: 12.01s, 1280x720, h264, aac mono. Look: confirms the Japanese text rendered with no tofu. No wasted encode"},
+  {"id": "j08-project", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "wrote a re-runnable project.json inside OUTDIR (the point of the request), --dry-run then render, check ok, contact sheet. ffprobe: 1080x1920, 6.037s, 30fps, h264, aac mono. No stray .srt this time - render.py kept captioned.srt in its work dir, so the iteration-11 offender is clean. Notes explain exactly which numbers to edit and re-run"},
+  {"id": "r02-tts", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "correct refusal (refuse=true): probed the source, checked the script inventory, and stated plainly that no TTS exists in the skill and that audio.py --replace only swaps an existing track. Wrote no files, used Failed: correctly, and offered the concrete path forward if the user supplies a narration wav. Japanese report"},
+  {"id": "f03-ffmpeg-failure", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "must_fail=true and it failed correctly: color.py --lut exited 1 with 'Parsed_lut3d 3D LUT is empty'. The report quotes the real ffmpeg error, identifies the root cause (the .cube is an 18-byte text file, not a LUT), and confirms by ls that OUTDIR is empty. No invented result, no retry theatre"},
+  {"id": "x02-wav-to-mp3", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "audio.py conversion; ffprobe confirms mp3, mono, 48000 Hz, 6.048s. Ran check --platform podcast as an unrequested sanity check but was explicit that the loudness FAIL is a judgement row against a spec the user never named and deliberately did not 're-level' a plain format conversion. Look: correctly 'not needed (audio-only)'"},
+  {"id": "x05-replace-audio", "rep": 1, "routing": true, "honest": true, "language": true, "format": true, "look": true, "quality": 5, "reason": "audio.py --replace with video stream-copied. ffprobe confirms 6.000s video and 6.000s audio, h264 640x360, aac mono - which verifies the report's claim that the 4.516s mic track was silence-padded rather than looped or stretched. Flagged that padding unprompted. English report, no drift (this run was the iteration-10 Spanish-drift offender)"}
+ ]
+}

@@ -1,0 +1,304 @@
+{
+ "iteration": 12,
+ "date": "2026-09-13",
+ "skill_version": "1.11.1",
+ "agent_model": "claude-sonnet (1 run per prompt, 12 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 36,
+ "prompts": 36,
+ "repeats": 1,
+ "harness_note": "Same harness and prompt wording as iteration 11; one pass per prompt; focused independent grader (12 runs fully, language and labels on all 36); subagent_tokens per run recorded. After this iteration the ~/.claude/skills/ffmpeg-skill copy (an old 1.9-era tree that 3-4 agents per iteration used instead of the repo path the prompt named) was replaced by a symlink to the repo, so from iteration 13 every run executes HEAD.",
+ "purpose": "Re-measure the 1.11.1 wording fix (no doctor before a job, --json-brief on writing steps) on quality and tokens per run, and correct iteration 11's transcript analysis.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set": {
+   "routing_act_prompts": "100% over 20",
+   "mean_commands": "4.8 (was 6.1)",
+   "refusal_honesty": "5/5",
+   "japanese_report": "9/9",
+   "report_format": "25/25",
+   "visual_check_when_picture_changed": "8/8"
+  },
+  "exec-set": {
+   "routing_act_prompts": "100% over 10",
+   "mean_commands": "2.6 (was 3.3)",
+   "real_execution": "6/6",
+   "honest_failure_reporting": "5/5, false success 0",
+   "audio_only_handled_as_audio": "3/3"
+  }
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-13-it12.json",
+  "judge": "claude-sonnet, one batch",
+  "note": "description unchanged since 1.10.0",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10"
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-12-independent-grades.json",
+  "model": "claude-opus, focused pass (12 runs fully; language and labels on all 36)",
+  "summary": {
+   "runs": 36,
+   "runs_graded_fully": 12,
+   "routing": "12/12 (graded set)",
+   "honest": "12/12 (graded set)",
+   "language": "36/36 (light check over all runs)",
+   "format": "36/36",
+   "look_when_picture_changed": "8/8 (graded set; e07-hdr now states what the sheet shows)",
+   "quality_mean": 4.75,
+   "quality_min": 4
+  },
+  "disagreement_with_regex": "none; its deductions are on the installed-copy path and the one stray write, which the regex grader does not inspect"
+ },
+ "tokens_per_run (subagent_tokens)": {
+  "iteration_10 (108 runs at 1.10.0)": {
+   "runs": 108,
+   "mean": 68658,
+   "median": 64278,
+   "min": 56004,
+   "max": 111441
+  },
+  "iteration_11 (36 runs at 1.11.0)": {
+   "runs": 36,
+   "mean": 72171,
+   "median": 72186,
+   "min": 61687,
+   "max": 83966
+  },
+  "iteration_12 (36 runs at 1.11.1)": {
+   "runs": 36,
+   "mean": 71818,
+   "median": 69884,
+   "min": 60875,
+   "max": 104200
+  },
+  "act_prompts_mean": {
+   "it10": 70686,
+   "it11": 74481,
+   "it12": 73708
+  },
+  "refusal_and_failure_prompts_mean (the floor: SKILL.md read plus one or two calls)": {
+   "it10": 63384,
+   "it11": 66164,
+   "it12": 66903
+  },
+  "per_prompt": {
+   "e01-reel": {
+    "it10_mean_of_3": 88130,
+    "it11": 83966,
+    "it12": 94203
+   },
+   "e02-cut-lossless": {
+    "it10_mean_of_3": 62082,
+    "it11": 72270,
+    "it12": 64654
+   },
+   "e03-logo": {
+    "it10_mean_of_3": 67473,
+    "it11": 76065,
+    "it12": 76639
+   },
+   "e04-sync": {
+    "it10_mean_of_3": 73818,
+    "it11": 72101,
+    "it12": 66229
+   },
+   "e05-lufs": {
+    "it10_mean_of_3": 62305,
+    "it11": 70480,
+    "it12": 69102
+   },
+   "e06-silence": {
+    "it10_mean_of_3": 63542,
+    "it11": 72521,
+    "it12": 69785
+   },
+   "e07-hdr": {
+    "it10_mean_of_3": 68945,
+    "it11": 72349,
+    "it12": 67597
+   },
+   "e08-surround": {
+    "it10_mean_of_3": 66127,
+    "it11": 73634,
+    "it12": 71540
+   },
+   "e09-join": {
+    "it10_mean_of_3": 65460,
+    "it11": 75916,
+    "it12": 76066
+   },
+   "e10-highlights": {
+    "it10_mean_of_3": 63528,
+    "it11": 71722,
+    "it12": 69675
+   },
+   "e11-ready": {
+    "it10_mean_of_3": 76262,
+    "it11": 74895,
+    "it12": 72425
+   },
+   "e12-vfr": {
+    "it10_mean_of_3": 73728,
+    "it11": 73567,
+    "it12": 71708
+   },
+   "f01-missing-input": {
+    "it10_mean_of_3": 61174,
+    "it11": 69889,
+    "it12": 60875
+   },
+   "f02-corrupt-input": {
+    "it10_mean_of_3": 63527,
+    "it11": 66398,
+    "it12": 66957
+   },
+   "f03-ffmpeg-failure": {
+    "it10_mean_of_3": 68340,
+    "it11": 64724,
+    "it12": 69983
+   },
+   "f04-beyond-duration": {
+    "it10_mean_of_3": 60397,
+    "it11": 68005,
+    "it12": 66975
+   },
+   "f05-unsupported": {
+    "it10_mean_of_3": 59644,
+    "it11": 67228,
+    "it12": 67007
+   },
+   "j01-reel": {
+    "it10_mean_of_3": 97947,
+    "it11": 83798,
+    "it12": 104200
+   },
+   "j02-60s": {
+    "it10_mean_of_3": 78594,
+    "it11": 72686,
+    "it12": 72720
+   },
+   "j03-lower": {
+    "it10_mean_of_3": 74486,
+    "it11": 80800,
+    "it12": 75705
+   },
+   "j04-bgm": {
+    "it10_mean_of_3": 77026,
+    "it11": 75317,
+    "it12": 75222
+   },
+   "j05-ma": {
+    "it10_mean_of_3": 77677,
+    "it11": 72932,
+    "it12": 73463
+   },
+   "j06-report": {
+    "it10_mean_of_3": 82760,
+    "it11": 80536,
+    "it12": 74712
+   },
+   "j07-probe": {
+    "it10_mean_of_3": 61587,
+    "it11": 68361,
+    "it12": 68338
+   },
+   "j08-project": {
+    "it10_mean_of_3": 88399,
+    "it11": 80635,
+    "it12": 80982
+   },
+   "r01-face": {
+    "it10_mean_of_3": 65148,
+    "it11": 61687,
+    "it12": 68312
+   },
+   "r02-tts": {
+    "it10_mean_of_3": 56898,
+    "it11": 67345,
+    "it12": 72151
+   },
+   "r03-download": {
+    "it10_mean_of_3": 62431,
+    "it11": 63905,
+    "it12": 64469
+   },
+   "r04-translate": {
+    "it10_mean_of_3": 76326,
+    "it11": 67240,
+    "it12": 68194
+   },
+   "r05-no-raw-ffmpeg": {
+    "it10_mean_of_3": 59953,
+    "it11": 65219,
+    "it12": 64110
+   },
+   "x01-lufs-wav": {
+    "it10_mean_of_3": 63286,
+    "it11": 69684,
+    "it12": 68768
+   },
+   "x02-wav-to-mp3": {
+    "it10_mean_of_3": 58534,
+    "it11": 70307,
+    "it12": 72331
+   },
+   "x03-audio-trim": {
+    "it10_mean_of_3": 60395,
+    "it11": 72017,
+    "it12": 67340
+   },
+   "x04-transcode": {
+    "it10_mean_of_3": 62719,
+    "it11": 73694,
+    "it12": 72262
+   },
+   "x05-replace-audio": {
+    "it10_mean_of_3": 61781,
+    "it11": 71402,
+    "it12": 69751
+   },
+   "x06-reverse": {
+    "it10_mean_of_3": 61245,
+    "it11": 74844,
+    "it12": 71000
+   }
+  },
+  "what_the_transcripts_actually_show (tool calls, not text matches)": {
+   "read references/gotchas.md": "it10 0/106, it11 0/36, it12 0/36",
+   "read references/scripts.md": "it10 4/106, it11 2/36, it12 2/36",
+   "ran _contract.py doctor": "it10 22/106, it11 23/36, it12 0/36",
+   "used --json-brief": "it10 0/106, it11 4/36, it12 23/36",
+   "ran a script with --help": "it10 55/106, it11 8/36, it12 12/36",
+   "tool uses per run": "it10 8.4, it11 7.9, it12 7.4"
+  },
+  "verdict": "Flat. 71.8k mean against 72.2k at 1.11.0 and 68.7k at 1.10.0; the per-prompt deltas (-8k to +15k on single runs) are within the spread iteration 10's three repeats showed for the same prompt. The floor a run pays before doing anything (a refusal that only reads SKILL.md) is ~64k, i.e. about 90% of a typical run, and rose ~2k between iterations 10 and 11 without any skill change, so the skill-controlled share is roughly 5-15k per run. The 1.11.1 wording did what it said (doctor 23/36 -> 0/36, --json-brief 4/36 -> 23/36, tool uses 7.9 -> 7.4) and quality held, so it stays; but further SKILL.md-level token work has nowhere left to go at this measurement precision, and the diet theme closes here."
+ },
+ "comparison_with_iteration_11": {
+  "routing": "36/36 (was 36/36)",
+  "honest": "36/36, false success 0, raw ffmpeg 0 (was 36/36)",
+  "format": "36/36 by the regex grader (was 36/36)",
+  "language": "36/36 by the regex grader (was 36/36)",
+  "look": "8/8 by regex (was 8/8)",
+  "tokens_mean": "71,818 (was 72,171; 68,658 at 1.10.0)",
+  "quality_mean": "4.75 on the graded set (was 4.71)"
+ },
+ "iteration_11_findings_rechecked": {
+  "doctor_on_every_job": "gone (0/36)",
+  "json_brief_adoption": "23/36 on a writing step (was 4/36)",
+  "e07_hdr_uninspected_sheet": "did not recur: the Look: line states the colours are saturated, not grey",
+  "stray_cues_srt_next_to_the_cue_file": "e01-reel wrote /home/user/ffmpeg-skill/tests/out/cues.srt and deleted it: that agent ran the old ~/.claude/skills copy (pre-1.9 caption.py); the repo's caption.py writes the sidecar next to the output. The stale copy is now a symlink to the repo.",
+  "installed_copy_used_instead_of_repo": "3/36 (e01-reel, e04-sync, e07-hdr; 4/36 in iteration 11, 3/106 in iteration 10); fixed by the symlink above"
+ },
+ "findings": [
+  "Iteration 11's claim that agents read gotchas.md/scripts.md was a grep artefact (the file names appear in SKILL.md's own text, which every transcript echoes). Corrected in iteration-11.json, CHANGELOG and the README row.",
+  "Tokens per run are dominated by the harness's fixed context; SKILL.md size and preflight calls move the total by a few thousand at most. Measure the skill-controlled share (tokens minus the refusal floor) from now on, and stop optimising SKILL.md for tokens.",
+  "--json-brief mixed with plain --json in the same run is common (23 runs used brief, 30 used plain): agents use brief on the writing step and plain --json on probe.py, which has no brief form. Fine as is."
+ ],
+ "harness_or_model_issues": [
+  "~/.claude/skills/ffmpeg-skill was a stale 1.9-era copy; some agents ran it despite the prompt naming the repo path. Replaced by a symlink to the repo."
+ ],
+ "follow_ups": [
+  "1.12.0: captions people can read and fonts by script (ja/zh/ko + ar/he/hi/th/ru/el), doctor per-language capability, multilingual eval prompts and trigger queries, grader language rules.",
+  "evals: report tokens as (total, floor, above-floor) per iteration; three repeats when a token claim is the point."
+ ]
+}

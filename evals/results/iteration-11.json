@@ -290,5 +290,6 @@
   "1.11.1 (fix PR): SKILL.md wording per the token verdict; then iteration 12 at 1.11.1: 36 prompts x1, tokens per run vs iterations 10 and 11.",
   "1.12.0: captions people can read and fonts by script (ja/zh/ko + ar/he/hi/th/ru/el), doctor per-language capability, multilingual eval prompts (+14) and trigger queries (+7), grader language rules.",
   "evals: record subagent_tokens per run every iteration (tokens.json next to the runs) so the cost axis is tracked like quality."
- ]
+ ],
+ "correction_from_iteration_12": "The 'what_the_transcripts_show' counts for references/gotchas.md (31/36) and references/scripts.md (36/36) were wrong: the grep matched the file names inside the SKILL.md text that every agent had just read, not a read of those files. Counting actual Read/cat tool calls: gotchas.md 0/36 (0/106 at 1.10.0), scripts.md 2/36 (4/106), doctor 23/36 (22/106), --json-brief 4/36. So the reference files were never the cost; the real differences at 1.11.0 were doctor on most runs and a fixed per-run floor about 2k higher than iteration 10 (a refusal run that only reads SKILL.md cost 62.4k at 1.10.0, 63.9k at 1.11.0, 64.5k at 1.11.1), which the skill does not control. The 1.11.1 wording change still stands on its own (doctor 23/36 -> 0/36, --json-brief 4/36 -> 23/36 in iteration 12)."
 }

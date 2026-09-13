@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+### Docs
+- Correction to the 1.11.1 entry: iteration 11's agents did not read `references/gotchas.md` or `references/scripts.md` (0 of 36 and 2 of 36 actual reads; the earlier counts matched the file names inside SKILL.md's own text). What 1.11.1 changed in practice, measured in iteration 12: `doctor` before a job 23 of 36 runs → 0, `--json-brief` on a writing step 4 of 36 → 23. Tokens per run are flat (72.2k → 71.8k) because about 64k of every run is the harness's own context, not the skill.
 
 ## 1.11.1
 
