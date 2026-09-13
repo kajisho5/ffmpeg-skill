@@ -2643,6 +2643,62 @@ class FFmpegSkillTests(unittest.TestCase):
         p.write_text(json.dumps(dict({"output": name.replace(".json", ".mp4")}, **body)), encoding="utf-8")
         return p
 
+    def test_render_refuses_an_unknown_project_key_naming_the_nearest_valid_one(self):
+        """Review 9: a project was read with dict.get only, so a mistyped key was silently
+        ignored -- a clip "start"/"end" (the spelling graphics and overlays use for their own
+        times) rendered the whole clip untrimmed, and "exports" dropped the export stage, both
+        reported as a successful render. Every key of the project and of each stage/clip object
+        is now checked, and the template still validates."""
+        cases = {
+            "clip_key": ({"clips": [{"src": "source.mp4", "start": 0, "end": 2}], "export": {"preset": "reels"}},
+                         "clips[0]: unknown key 'start' (did you mean 'in'?)"),
+            "stage_key": ({"clips": [{"src": "source.mp4", "in": 0, "out": 2}], "exports": {"preset": "reels"}},
+                          "project: unknown key 'exports' (did you mean 'export'?)"),
+            "nested_key": ({"clips": [{"src": "source.mp4"}], "export": {"preset": "reels", "quality": 20}},
+                           "export: unknown key 'quality'"),
+        }
+        for name, (body, message) in cases.items():
+            proc = script("render.py", self._proj(f"render_key_{name}.json", body), "--dry-run", "--json", expect_fail=True)
+            self.assertIn(message, proc.stderr, f"{name}: {proc.stderr[-400:]}")
+            doc = json.loads(proc.stdout)
+            self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
+        tmpl = OUT / "render_template_valid.json"
+        script("render.py", "--init", tmpl)
+        proc = script("render.py", tmpl, "--dry-run", expect_fail=True)  # only REPLACE_ME.mp4 is missing
+        self.assertIn("source not found", proc.stderr)
+        self.assertNotIn("unknown key", proc.stderr)
+
+    def test_emit_and_die_use_the_ctx_they_were_given_for_the_plan(self):
+        """Review 9: run()/emit()/die() took ctx= but write_plan() and the atexit hook still read
+        STATE -- emit(ctx=...) wrote an empty plan while reporting one, and die(ctx=...) let the
+        hook write a plan for a failed run."""
+        code = (
+            "import sys, atexit, json\n"
+            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+            "import _common as c\n"
+            "atexit.register(c._plan_at_exit)\n"
+            "mode, src, plan = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+            "ctx = c.Context(); ctx.json = True; ctx.dry_run = True; ctx.plan = plan\n"
+            "c.STATE.plan = plan\n"
+            "c.run(['/usr/bin/ffmpeg', '-i', src, '-t', '1', src + '.out.mp4'], ctx=ctx)\n"
+            "if mode == 'emit':\n"
+            "    c.emit(None, ctx=ctx)\n"
+            "else:\n"
+            "    c.die('boom', ctx=ctx)\n"
+        )
+        src = str(OUT / "source.mp4")
+        plan = OUT / "ctx_plan.json"
+        sh(sys.executable, "-c", code, "emit", src, plan)
+        doc = json.loads(plan.read_text(encoding="utf-8"))
+        self.assertEqual(len(doc["commands"]), 1, doc)
+        self.assertIn("ffmpeg", doc["commands"][0])
+        plan2 = OUT / "ctx_plan_die.json"
+        if plan2.exists():
+            plan2.unlink()
+        proc = sh(sys.executable, "-c", code, "die", src, plan2, expect_fail=True)
+        self.assertIn("boom", proc.stderr)
+        self.assertFalse(plan2.exists(), "die() left a plan behind for a failed run")
+
     def test_render_default_work_dir_is_unique_per_process(self):
         """The default work dir name came only from the output path (e.g. "out_work"), no PID or
         timestamp -- two concurrent render.py runs targeting the same output (a batch.py "project"

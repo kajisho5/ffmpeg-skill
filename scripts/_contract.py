@@ -342,12 +342,15 @@ def input_schema(parser: argparse.ArgumentParser) -> Dict[str, Any]:
         if isinstance(action, argparse._HelpAction):
             continue
         prop: Dict[str, Any] = _json_type(action)
+        # add_common() parks a deprecated --crf's default aside (so an explicit flag is
+        # distinguishable from the default); the schema still advertises the real one
+        default = getattr(action, "deprecated_default", action.default)
         if action.help and action.help != argparse.SUPPRESS:
-            prop["description"] = action.help % {"default": action.default} if "%(default)" in action.help else action.help
+            prop["description"] = action.help % {"default": default} if "%(default)" in action.help else action.help
         if action.choices:
             prop["enum"] = list(action.choices)
-        if action.default not in (None, False, argparse.SUPPRESS):
-            prop["default"] = action.default
+        if default not in (None, False, argparse.SUPPRESS):
+            prop["default"] = default
         if action.option_strings:
             prop["cli"] = list(action.option_strings)
             if action.required:

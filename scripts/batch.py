@@ -83,6 +83,9 @@ def run_step(argv: List[str]) -> bool:
     if proc.returncode != 0:
         info("    " + "\n    ".join(proc.stderr.strip().splitlines()[-4:]))
         return False
+    for line in proc.stderr.splitlines():
+        if line.startswith("warning:"):  # a step's deprecation notice is not swallowed by a success (review 9)
+            info("    " + line)
     return True
 
 

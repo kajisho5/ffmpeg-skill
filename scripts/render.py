@@ -49,6 +49,7 @@ Examples:
   python3 render.py project.json --fast          # preview quality
 """
 import argparse
+import difflib
 import re
 import json
 import os
@@ -77,6 +78,58 @@ TEMPLATE = {
     "export": {"preset": "youtube", "normalize": True},
     "check": {"platform": "youtube"},
 }
+
+
+# Every key render.py reads, per object. Anything else is a refusal rather than a silent no-op:
+# a clip "start"/"end" (the spelling titles, graphics and overlays use) rendered the whole clip
+# untrimmed, and a mistyped stage name dropped the stage -- both reported as a success (review 9).
+OBJECT_KEYS: Dict[str, frozenset] = {
+    "project": frozenset({"output", "frame", "clips", "transition", "silence", "brand", "captions",
+                          "graphics", "overlays", "audio", "loudness", "fit", "export", "check"}),
+    "clips[]": frozenset({"src", "in", "out", "speed"}),
+    "frame": frozenset({"aspect", "width", "height", "fps"}),
+    "transition": frozenset({"type", "duration"}),
+    "silence": frozenset({"threshold", "min_silence", "margin"}),
+    "captions": frozenset({"text", "srt", "ass", "font", "size", "color", "position", "margin",
+                           "animate", "highlight_color", "outline", "karaoke", "bold", "box"}),
+    "graphics[]": frozenset({"template", "name", "title", "subtitle", "start", "end", "position",
+                             "from", "scale", "primary", "text_color"}),
+    "overlays[]": frozenset({"logo", "image", "text", "position", "start", "end", "fade", "opacity",
+                             "scale", "font_size", "font", "font_file", "margin", "box"}),
+    "audio": frozenset({"music", "replace", "music_volume", "fade_in", "fade_out", "music_fade_out",
+                        "gain", "duck_amount", "voice", "denoise", "duck", "music_loop", "stereo",
+                        "mono", "downmix"}),
+    "loudness": frozenset({"lufs", "tp"}),
+    "fit": frozenset({"duration", "method", "aspect", "fit", "width", "height", "fps", "smooth"}),
+    "export": frozenset({"preset", "fit", "crf", "normalize"}),
+    "check": frozenset({"platform"}),
+}
+# Typos difflib cannot see: a clip is trimmed with in/out, not the start/end that time a title.
+NEAR_KEYS: Dict[str, Dict[str, str]] = {"clips[]": {"start": "in", "end": "out", "from": "in", "to": "out"}}
+
+
+def check_keys(obj: Any, schema: str, label: str) -> None:
+    """Refuse an unrecognised key, naming the object, the key and the nearest valid one."""
+    if not isinstance(obj, dict):
+        return
+    valid = OBJECT_KEYS[schema]
+    for key in obj:
+        if key in valid:
+            continue
+        near = NEAR_KEYS.get(schema, {}).get(str(key)) or next(iter(difflib.get_close_matches(str(key), sorted(valid), n=1, cutoff=0.6)), None)
+        die(f"{label}: unknown key {key!r}" + (f" (did you mean {near!r}?)" if near
+            else f" (valid keys: {', '.join(sorted(valid))})"))
+
+
+def validate_project(proj: Dict[str, Any]) -> None:
+    check_keys(proj, "project", "project")
+    for name in ("frame", "transition", "silence", "captions", "audio", "loudness", "fit", "export", "check"):
+        check_keys(proj.get(name), name, name)
+    for name in ("clips", "graphics", "overlays"):
+        items = proj.get(name)
+        if isinstance(items, list):
+            for i, item in enumerate(items):
+                check_keys(item, f"{name}[]", f"{name}[{i}]")
 
 
 def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
@@ -226,6 +279,7 @@ def main() -> int:
         die(f"{args.project}: not a project or plan object (top level is {type(proj).__name__})")
     if "plan_version" in proj:
         return execute_plan(proj, os.path.abspath(args.project))
+    validate_project(proj)
     base = Path(args.project).resolve().parent
 
     def rel(p: Any) -> str:

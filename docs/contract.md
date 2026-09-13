@@ -426,8 +426,9 @@ identical to the translation of `contract --json`), which the tests check.
 them required). They are transport flags `mcp/server.py` sets itself -- it appends `--json` for
 every tool but `look` and `probe` -- rather than arguments a caller chooses, and 2.0 drops them
 for good (see "What 2.0 changes"). The flag is opt-in and changes nothing else: without it
-`tools/list` is byte-identical to what it has always been, which is what the frozen 1.x snapshot
-pins, so a lean client and a default client see the same tools with the same names.
+`tools/list` carries the tool names, argument names and `required` lists the frozen 1.x snapshot
+pins -- descriptions may change between releases (the `--crf` deprecation mark did) -- so a lean
+client and a default client see the same tools with the same names.
 
 ## Consuming the contract from an agent
 

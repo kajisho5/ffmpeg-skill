@@ -177,7 +177,9 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
     read a failed delivery as a success."""
     hint = extra.pop("hint", None)
     ctx = ctx or STATE  # 1.10: the optional per-request Context (2.0 makes it required); STATE is the default instance
+    _set_current_ctx(ctx)  # the atexit hook has no argument: it reads the ctx emit()/die() last used
     ctx.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
+    STATE.plan = None  # the hook falls back to STATE when nothing passed a ctx; a failed run plans nothing there either
     sys.stderr.write(f"error: {msg}\n" + (f"hint: {hint}\n" if hint else ""))
     if ctx.json:
         doc: Dict[str, Any] = {
@@ -259,6 +261,15 @@ class Context:
 
 STATE = Context()
 
+# The atexit plan hook takes no arguments, so emit()/die() record the Context they were given
+# here; nothing passed a ctx = it stays None and the hook falls back to STATE, as before (1.10).
+_CURRENT_CTX: "Optional[Context]" = None
+
+
+def _set_current_ctx(ctx: "Context") -> None:
+    global _CURRENT_CTX
+    _CURRENT_CTX = ctx
+
 
 def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
     """Add the flags every script shares. `codec=False` is for a tool that re-encodes but whose
@@ -280,8 +291,17 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         # `deprecated` list in `contract --json` and docs/contract.md "What 2.0 changes"). Marked
         # here, once, rather than in each re-encoding tool's own parser.
         crf = ap._option_string_actions["--crf"]
-        if crf.help and "deprecated" not in crf.help:
-            crf.help += " (deprecated: use --quality)"
+        # The flag's own default moves aside so apply_common() can tell an explicit --crf (in any
+        # spelling argparse accepts, including the --cr / --c abbreviations) from the default;
+        # apply_common() puts _CRF_DEFAULT back when the flag was absent.
+        global _CRF_DEFAULT
+        _CRF_DEFAULT = crf.default
+        crf.deprecated_default = crf.default  # the schema still advertises it (_contract._json_type)
+        crf.default = None
+        if "deprecated" not in (crf.help or ""):
+            # the nine tools that declare --crf with no help string used to fall through this and
+            # never show the mark at all (review 9)
+            crf.help = (crf.help or "x264 CRF when re-encoding (default 18)") + " (deprecated: use --quality)"
         # only the tools that re-encode (they declare --crf before add_common): one encoder choice
         # resolved in video_args(), the 2.0 encoder abstraction pre-shipped in 1.8 (docs/roadmap.md)
         g.add_argument("--codec", choices=CODECS, default=None,
@@ -290,13 +310,18 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
                        help="encoder quality on the CRF scale (lower = better; 18 visually lossless for x264/x265, up to 63 for av1); overrides --crf, ignored by prores")
 
 
-def _passed_explicitly(flag: str) -> bool:
-    """True when this process was given `flag` on the command line (`--flag` or `--flag=V`),
-    as opposed to argparse filling in its default. Used for the deprecation warnings."""
-    return any(a == flag or a.startswith(flag + "=") for a in sys.argv[1:])
+# The declared default of a deprecated --crf, parked by add_common() (one parser per process).
+_CRF_DEFAULT: Optional[int] = None
 
 
 def apply_common(args: "argparse.Namespace") -> None:
+    # Was --crf typed? add_common() parked the flag's default (None in its place) on every tool
+    # whose --crf is deprecated, i.e. the ones that also have --quality; export.py's --crf is not
+    # an alias and keeps its own default. Scanning sys.argv for "--crf" instead missed the unique
+    # prefixes argparse accepts (--cr, --c) and never ran for batch.py's recipe steps (review 9).
+    crf_explicit = hasattr(args, "quality") and getattr(args, "crf", None) is not None
+    if hasattr(args, "quality") and hasattr(args, "crf") and args.crf is None:
+        args.crf = _CRF_DEFAULT
     STATE.plan = getattr(args, "plan", None) or None
     STATE.dry_run = bool(getattr(args, "dry_run", False)) or bool(STATE.plan)
     if STATE.plan:
@@ -330,12 +355,10 @@ def apply_common(args: "argparse.Namespace") -> None:
             die(f"--codec prores needs a .mov (or .mkv) output; {os.path.basename(str(out))} cannot hold ProRes",
                 hint="give -o NAME.mov")
     crf = getattr(args, "crf", None)
-    # The warning the deprecation policy asks for, only when the user typed the flag: argparse's
-    # own default for --crf is 18 on every re-encoding tool, so `args.crf is not None` cannot tell
-    # an explicit --crf from the default (sys.argv can).
-    # export.py has no --quality (its preset chooses the encoder), so its --crf is not an alias and
-    # is not deprecated: warn only where --quality exists.
-    if crf is not None and hasattr(args, "quality") and _passed_explicitly("--crf"):
+    # The warning the deprecation policy asks for, only when the caller typed the flag (see
+    # crf_explicit above). export.py has no --quality (its preset chooses the encoder), so its
+    # --crf is not an alias and is not deprecated: warn only where --quality exists.
+    if crf is not None and crf_explicit:
         info("warning: --crf is deprecated since 1.10.0; use --quality N (the same CRF scale, codec-neutral). --crf is removed in 2.0.")
     top = 63 if STATE.codec == "av1" else 51
     if crf is not None and not 0 <= int(crf) <= top:
@@ -408,6 +431,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
     `ctx` is the optional per-request Context added in 1.10 (2.0 makes it required, issue #189 B);
     omitted, every read falls back to the process-global STATE as before."""
     ctx = ctx or STATE
+    _set_current_ctx(ctx)  # so the atexit hook writes (or skips) this ctx's plan, not STATE's
     meta: Dict[str, Any] = {}
     if output and not ctx.dry_run:
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
@@ -430,10 +454,10 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         if os.environ.get("FFMPEG_SKILL_RESULT_V2", "") not in ("", "0"):
             doc["result_v2"] = _result_v2(output, meta, dict(extra, verified=doc["verified"], verification=steps))
         if ctx.plan:
-            doc["plan"] = write_plan(ctx.plan, output, extra)
+            doc["plan"] = write_plan(ctx.plan, output, extra, ctx=ctx)
         print_json(doc)
     elif ctx.plan:
-        print(write_plan(ctx.plan, output, extra))
+        print(write_plan(ctx.plan, output, extra, ctx=ctx))
     elif output:
         print(output)
 
@@ -443,9 +467,10 @@ _PLAN_STRIP = ("--plan", "--dry-run", "--json")
 
 
 def _plan_at_exit() -> None:
-    if STATE.plan and not STATE.plan_written:
+    ctx = _CURRENT_CTX or STATE
+    if ctx.plan and not ctx.plan_written:
         try:
-            write_plan(STATE.plan, None, {})
+            write_plan(ctx.plan, None, {}, ctx=ctx)
         except SystemExit:
             pass
 
@@ -468,13 +493,13 @@ def fingerprint(path: str) -> Dict[str, Any]:
     return {"path": os.path.abspath(path), "size": st.st_size, "sha256_head_tail": h.hexdigest()}
 
 
-def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = ()) -> List[str]:
+def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = (), ctx: "Optional[Context]" = None) -> List[str]:
     """Every existing file the plan depends on: the `-i` inputs of the planned commands, any
     existing file named in argv (a recipe, a project, an SRT, a LUT, a still), and the side
     inputs tools register through escape_filter_path() (review 6: only `-i` files were bound)."""
     import shlex
     seen: List[str] = []
-    for a in list(argv) + list(STATE.plan_inputs):
+    for a in list(argv) + list((ctx or STATE).plan_inputs):
         if a and not a.startswith("-") and os.path.isfile(a) and a not in seen:
             seen.append(a)
     for line in commands:
@@ -488,10 +513,14 @@ def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = ()) -> List[str]
     return seen
 
 
-def write_plan(path: str, output: Optional[str], extra: Dict[str, Any]) -> str:
+def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Optional[Context]" = None) -> str:
     """The dry run as an artifact: what will run, on which exact inputs, producing what, checked
-    how. `render.py PLAN` executes it after re-fingerprinting the inputs (issue #189 C)."""
+    how. `render.py PLAN` executes it after re-fingerprinting the inputs (issue #189 C).
+
+    `ctx` is the Context whose commands and inputs the plan describes (emit()/die() pass the one
+    they were given); omitted, it is the process-global STATE as before."""
     import datetime
+    ctx = ctx or STATE
     argv = [a for a in sys.argv[1:]]
     cleaned: List[str] = []
     skip = False
@@ -520,8 +549,8 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any]) -> str:
         "tool": tool,
         "argv": cleaned,
         "cwd": os.getcwd(),
-        "inputs": [fingerprint(p) for p in _plan_inputs(STATE.commands, cleaned)],
-        "commands": list(STATE.commands),
+        "inputs": [fingerprint(p) for p in _plan_inputs(ctx.commands, cleaned, ctx)],
+        "commands": list(ctx.commands),
         "output": os.path.abspath(output) if output else None,
         "verify": verify,
         "notes": list(extra.get("notes") or []),
@@ -534,8 +563,8 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any]) -> str:
         os.replace(tmp, path)
     except OSError as exc:
         die(f"cannot write plan {path}: {exc}", kind="output")
-    STATE.plan_written = True
-    info(f"plan written: {path} ({len(doc['commands'])} command(s), {len(doc['inputs'])} input(s)); run it with render.py {path}")
+    ctx.plan_written = True
+    info(f"plan written: {path} ({len(doc['commands'])} command(s), {len(doc['inputs'])} input(s)); run it with render.py {path}", ctx)
     return path
 
 
@@ -1497,7 +1526,11 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
         raise ValueError(f"bad time: {value}")
     total = 0.0
     for part in parts:
-        total = total * 60 + float(part)
+        try:
+            total = total * 60 + float(part)
+        except ValueError:
+            # not the interpreter's "could not convert string to float: 'zz'" (review 9)
+            raise ValueError(f"'{value}': not a time")
     return total
 
 

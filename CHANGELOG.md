@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- `render.py` now refuses an unrecognised key in a project — top level or in any stage/clip object — naming the object, the key and the nearest valid key, instead of silently ignoring it (a clip `start`/`end` typo rendered the clip untrimmed; a stage typo dropped the stage, both reported as success).
+- `write_plan()` and the at-exit plan hook use the `Context` `emit()`/`die()` were given: `emit(ctx=…)` no longer writes an empty plan, and `die(ctx=…)` no longer leaves a plan behind for a failed run.
+- The nine tools that declared `--crf` without a help string now show the `(deprecated: use --quality)` mark in `--help` (and in their MCP `crf` description).
+- The `--crf` deprecation warning fires for the abbreviations argparse accepts (`--cr`, `--c`) as well, and `batch.py` no longer swallows a recipe step's warning; `export.py` stays exempt.
+- A non-numeric time says `'zz': not a time` instead of leaking the interpreter's `could not convert string to float`.
+- docs/contract.md: `tools/list` under `FFMPEG_SKILL_MCP_LEAN` is stable in tool and argument names and `required` lists — what the frozen snapshot pins — not byte-identical (descriptions may change).
+- SKILL.md: the time-grammar sentence is scoped to the timestamp flags (`--start`/`--end`/`--at`/`--from`/`--duration`/`--offset` and cue/chapter files); `doctor`'s tool list is `doctor --json`'s `tools`.
+- references/scripts.md notes the `--crf` deprecation and `FFMPEG_SKILL_NO_OVERWRITE`; README marks `proxy.py --crf` as the deprecated alias.
 
 ## 1.10.0
 

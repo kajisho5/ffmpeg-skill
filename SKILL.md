@@ -130,9 +130,9 @@ If a request needs an FFmpeg feature none of the 42 scripts expose, say so and n
 
 ## Request → script
 
-This table and `doctor`'s tool list are the source of truth for what exists: name only a script you have seen in one of them, never a plausible-sounding one (there is no `doctor.py`, no `trim.py`, no `subtitle.py`).
+This table and `doctor --json`'s `tools` list are the source of truth for what exists: name only a script you have seen in one of them, never a plausible-sounding one (there is no `doctor.py`, no `trim.py`, no `subtitle.py`).
 
-Times take seconds, `mm:ss(.fff)`, `hh:mm:ss(.fff)` or four-part SMPTE `hh:mm:ss:ff` everywhere, with `@fps` naming the rate (`00:01:02:15@29.97`): use the timecode forms when the user pastes an editor's timecode list or an NLE cue sheet, so nothing is converted by hand on the way in.
+Timestamp flags -- `--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`, and the times in cue and chapter files -- take seconds, `mm:ss(.fff)`, `hh:mm:ss(.fff)` or four-part SMPTE `hh:mm:ss:ff`, with `@fps` naming the rate (`00:01:02:15@29.97`); tolerance-style flags that are a length rather than a point in time (`--min-silence`, `--margin`, `--min-keep`, `--fade`) are plain seconds. Use the timecode forms when the user pastes an editor's timecode list or an NLE cue sheet, so nothing is converted by hand on the way in.
 
 | User says | Do |
 |-----------|----|
