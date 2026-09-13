@@ -68,6 +68,10 @@ would have caught the original bug isn't done yet.
   all three must pass.
 - Explain *why*, not just *what*, in the PR description — the reasoning is what
   future maintainers (human or agent) need most.
+- A `feat` PR updates every place the feature is stated: `README.md` (the tool
+  table, the contract table, gotchas), `SKILL.md`, `references/scripts.md`,
+  `docs/contract.md` and `CHANGELOG.md`. The README is read by people who never
+  open SKILL.md, so a feature that only SKILL.md knows about is half shipped.
 
 ## Reporting issues
 
