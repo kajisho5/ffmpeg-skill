@@ -130,5 +130,47 @@
   "lang": "en",
   "prompt": "Remove the silence from this recording, it's a 40 minute M4A",
   "should_trigger": true
+ },
+ {
+  "id": "t13",
+  "lang": "zh",
+  "prompt": "这个 vlog.mp4 太长了，帮我剪成 60 秒并加上中文字幕",
+  "should_trigger": true
+ },
+ {
+  "id": "t14",
+  "lang": "ko",
+  "prompt": "인터뷰.mov 파일 세로 영상으로 바꿔서 릴스에 올릴 수 있게 해 주세요",
+  "should_trigger": true
+ },
+ {
+  "id": "t15",
+  "lang": "es",
+  "prompt": "El audio de entrevista.mp4 está muy bajo, ¿puedes dejarlo a -16 LUFS?",
+  "should_trigger": true
+ },
+ {
+  "id": "t16",
+  "lang": "ar",
+  "prompt": "هل يمكنك قص المقاطع الصامتة من التسجيل podcast.m4a؟",
+  "should_trigger": true
+ },
+ {
+  "id": "n11",
+  "lang": "pt",
+  "prompt": "Escreva um roteiro de 60 segundos para o vídeo de lançamento do nosso produto",
+  "should_trigger": false
+ },
+ {
+  "id": "n12",
+  "lang": "fr",
+  "prompt": "Comment installer ffmpeg sur macOS avec Homebrew ?",
+  "should_trigger": false
+ },
+ {
+  "id": "n13",
+  "lang": "de",
+  "prompt": "Erstelle mit KI ein 10-Sekunden-Video von einer Katze, die surft",
+  "should_trigger": false
  }
 ]

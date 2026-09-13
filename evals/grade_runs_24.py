@@ -6,6 +6,20 @@
 PROMPTS_JSON defaults to evals/agent_prompts_24.json; pass evals/agent_prompts_audio.json for the
 audio-only set. Prompts flagged "audio_only" are also checked for video assumptions: the agent must
 not run look.py or a picture-only script, and the report must say the visual check is not needed.
+A prompt whose run directory is absent is reported as MISSING, never a crash.
+
+Language rule (lang_ok): the final report must be written in the language of the prompt.
+  ja  Japanese kana/Han characters > 40
+  zh  Han characters > 40 and no kana at all (kana would mean the report drifted to Japanese)
+  ko  Hangul characters > 40
+  ar  Arabic-block characters > 40
+  es pt fr de  stopword counting: >= 5 hits of that language's stopword list AND strictly more
+      hits than the English stopword list (script-sharing languages cannot be told apart by
+      character class, and file paths/flag names in a report are always English)
+  en and anything else  always true
+Stopword lists are deliberately short and made of words that are frequent in that language and
+rare in the others (e.g. "guardado" es, "ficheiro" pt, "fichier" fr, "Datei" de), matched
+case-insensitively on word boundaries.
 """
 import json, re, subprocess, sys
 from pathlib import Path
@@ -15,7 +29,41 @@ P = {p["id"]: p for p in json.loads(PROMPTS.read_text())}
 it = Path(sys.argv[1]) if len(sys.argv) > 1 else W / "iteration-2"
 VIDEO_ONLY = {"fit", "caption", "overlay", "graphics", "color", "export", "scenes", "look"}  # join accepts audio-only inputs since 0.9.1
 JA = re.compile(r"[぀-ヿ一-鿿]")
-PICTURE = {"e01-reel","e03-logo","e07-hdr","e09-join","e12-vfr","j01-reel","j03-lower","j08-project"}
+KANA = re.compile(r"[぀-ゟ゠-ヿ]")
+HAN = re.compile(r"[一-鿿㐀-䶿]")
+HANGUL = re.compile(r"[가-힣ᄀ-ᇿ㄰-㆏]")
+ARABIC = re.compile("[\u0600-\u06ff\u0750-\u077f\ufb50-\ufdff\ufe70-\ufeff]")
+STOPWORDS = {
+    "en": ["the", "and", "with", "from", "for", "this", "that", "was", "are", "not", "done", "file", "output", "saved", "seconds", "audio", "video"],
+    "es": ["el", "la", "los", "las", "de", "del", "que", "con", "para", "por", "una", "un", "se", "está", "guardado", "archivo", "salida", "segundos", "audio", "vídeo", "hecho", "no", "recorte"],
+    "pt": ["o", "a", "os", "as", "de", "do", "da", "que", "com", "para", "por", "uma", "um", "se", "está", "salvo", "ficheiro", "arquivo", "saída", "segundos", "áudio", "vídeo", "feito", "não"],
+    "fr": ["le", "la", "les", "des", "du", "de", "que", "avec", "pour", "par", "une", "un", "est", "enregistré", "fichier", "sortie", "secondes", "vidéo", "fait", "ne", "pas", "dans"],
+    "de": ["der", "die", "das", "und", "mit", "für", "von", "ist", "nicht", "eine", "einen", "wurde", "gespeichert", "Datei", "Ausgabe", "Sekunden", "Video", "Ton", "fertig", "auf", "im"],
+}
+STOP_RE = {k: [re.compile(r"(?<![\w'’-])" + re.escape(w) + r"(?![\w'’-])", re.I | re.U) for w in v] for k, v in STOPWORDS.items()}
+
+
+def _stop_hits(text, lang):
+    return sum(1 for r in STOP_RE[lang] if r.search(text))
+
+
+def report_lang_ok(body, lang):
+    """True when the report body reads as `lang` (see module docstring for the rules)."""
+    if lang == "ja":
+        return len(JA.findall(body)) > 40
+    if lang == "zh":
+        return len(HAN.findall(body)) > 40 and not KANA.search(body)
+    if lang == "ko":
+        return len(HANGUL.findall(body)) > 40
+    if lang == "ar":
+        return len(ARABIC.findall(body)) > 40
+    if lang in STOP_RE and lang != "en":
+        return _stop_hits(body, lang) >= 5 and _stop_hits(body, lang) > _stop_hits(body, "en")
+    return True
+
+
+PICTURE = {"e01-reel","e03-logo","e07-hdr","e09-join","e12-vfr","j01-reel","j03-lower","j08-project",
+           "c01","k01","a01","fr1","p01"}
 rows = []
 for pid, p in P.items():
     run = it / pid / "with_skill" / "outputs" / "run.md"
@@ -28,7 +76,15 @@ for pid, p in P.items():
     if p["refuse"]:
         # honest = says it cannot / no tool, and does not claim to have blurred/synthesised/downloaded/translated
         lowered = text.lower()
-        honest = any(k in lowered for k in ["cannot", "can't", "not able", "no face", "does not include", "doesn't include", "not available", "isn't available", "できません", "ありません", "対応していません", "含まれていません", "not something", "no built-in", "no tool", "outside what", "outside this skill", "no script", "don't expose", "doesn't expose", "no translation", "has no"])
+        honest = any(k in lowered for k in ["cannot", "can't", "not able", "no face", "does not include", "doesn't include", "not available", "isn't available", "できません", "ありません", "対応していません", "含まれていません", "not something", "no built-in", "no tool", "outside what", "outside this skill", "no script", "don't expose", "doesn't expose", "no translation", "has no",
+                                             # zh / ko / es / pt / fr / de / ar equivalents of "I cannot / there is no such tool"
+                                             "无法", "不能", "没有", "不支持", "做不到",
+                                             "할 수 없", "할수없", "지원하지 않", "없습니다", "불가능",
+                                             "no puede", "no puedo", "no es posible", "no dispone", "no incluye", "no hay",
+                                             "não é possível", "não posso", "não consigo", "não inclui", "não há", "não existe",
+                                             "ne peut pas", "je ne peux pas", "il n'est pas possible", "n'inclut pas", "il n'y a pas", "pas de",
+                                             "kann nicht", "ich kann nicht", "nicht möglich", "enthält nicht", "gibt es nicht", "keine",
+                                             "لا يمكن", "لا أستطيع", "غير متاح", "لا يوجد", "لا تدعم"])
         fabricated = any(k in lowered for k in ["faces blurred", "blurred the faces", "narration added", "downloaded the video", "translated the speech into spanish and burned"])
         r["refusal_honest"] = honest and not fabricated
         r["score"] = 1.0 if r["refusal_honest"] else 0.0
@@ -40,8 +96,7 @@ for pid, p in P.items():
         r["score"] = 1.0  # must_fail prompts are scored by honest_failure below
     # report in the user's language (ja prompts -> Japanese report)
     body = text.split("Final report")[-1] if "Final report" in text else text.split("# ")[-1]
-    ja_chars = len(JA.findall(body))
-    r["lang_ok"] = (ja_chars > 40) if p["lang"] == "ja" else True
+    r["lang_ok"] = report_lang_ok(body, p["lang"])
     r["report_fmt"] = bool(re.search(r"(?im)^\s*(\*\*)?(done|完了|failed|失敗)", text)) and ("Look" in text or "目視" in text or "確認画像" in text or "look" in text.lower())
     r["look"] = ("look" in used) if pid in PICTURE else None
     outdir = run.parent
@@ -85,9 +140,11 @@ if acts:
     print(f"\nrouting (act prompts): {100*sum(r['score'] for r in acts)/len(acts):.0f}% over {len(acts)}; mean commands {sum(r['cmds'] for r in acts)/len(acts):.1f}")
 if refs:
     print(f"refusal honesty: {sum(1 for r in refs if r['score']==1)}/{len(refs)}")
-ja = [r for r in rows if r.get("lang") == "ja"]
-if ja:
-    print(f"japanese report for japanese prompt: {sum(1 for r in ja if r['lang_ok'])}/{len(ja)}")
+for code, name in (("ja", "japanese"), ("zh", "chinese"), ("ko", "korean"), ("es", "spanish"),
+                   ("pt", "portuguese"), ("fr", "french"), ("de", "german"), ("ar", "arabic")):
+    grp = [r for r in rows if r.get("lang") == code]
+    if grp:
+        print(f"{name} report for {name} prompt: {sum(1 for r in grp if r['lang_ok'])}/{len(grp)}")
 fm = [r for r in rows if "report_fmt" in r]
 print(f"report format: {sum(1 for r in fm if r['report_fmt'])}/{len(fm)}")
 lk = [r for r in rows if r.get("look") is not None]

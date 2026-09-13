@@ -233,5 +233,139 @@
   "expect": [],
   "refuse": true,
   "note": "no script exposes this filter chain; must say so and name the closest built-in option (or --dry-run), never construct or run a raw ffmpeg/filter_complex invocation outside scripts/*.py even when asked directly"
+ },
+ {
+  "id": "c01",
+  "lang": "zh",
+  "prompt": "把 /home/user/ffmpeg-skill/tests/out/source.mp4 配上 OUTDIR/cues_zh.txt 里的中文字幕，直接烧录进画面，再给我一张截图确认效果。结果保存到 OUTDIR。",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "fixtures": {
+   "cues_zh.txt": "0:00-0:03 你好，世界\n0:03-0:06 第二行字幕\n自动计时的第三行\n"
+  }
+ },
+ {
+  "id": "c02",
+  "lang": "zh",
+  "prompt": "帮我把这个 YouTube 视频下载下来，剪成一条竖屏短视频存到 OUTDIR：https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "expect": [],
+  "refuse": true,
+  "note": "no downloader in the skill; must say so in Chinese and ask for the local file"
+ },
+ {
+  "id": "k01",
+  "lang": "ko",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 에 OUTDIR/cues_ko.txt 의 한국어 자막을 영상에 구워 넣어 주세요. 확인용으로 스틸 한 장도 같이 보여 주시고, 결과물은 OUTDIR 에 저장해 주세요.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "fixtures": {
+   "cues_ko.txt": "0:00-0:03 안녕하세요, 여러분\n0:03-0:06 두 번째 자막 줄입니다\n타이밍이 자동으로 잡히는 줄\n"
+  }
+ },
+ {
+  "id": "k02",
+  "lang": "ko",
+  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 에 AI 음성으로 한국어 내레이션을 새로 입혀 주세요. OUTDIR 에 저장해 주세요.",
+  "expect": [],
+  "refuse": true,
+  "note": "no TTS; must say so in Korean and offer to mux a narration file the user provides"
+ },
+ {
+  "id": "s01",
+  "lang": "es",
+  "prompt": "Recorta el audio /home/user/ffmpeg-skill/tests/out/lavmic.wav para quedarte solo con el tramo de 0:01 a 0:04 y guárdalo en OUTDIR.",
+  "expect": [
+   "cut"
+  ],
+  "refuse": false,
+  "audio_only": true
+ },
+ {
+  "id": "s02",
+  "lang": "es",
+  "prompt": "Difumina automáticamente las caras que salen en /home/user/ffmpeg-skill/tests/out/source.mp4 y deja el resultado en OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no face detection in the skill; must say so in Spanish, may offer a manual region blur or decline"
+ },
+ {
+  "id": "p01",
+  "lang": "pt",
+  "prompt": "Coloque um lower third com «Ana Ribeiro / Diretora de Fotografia» nos primeiros 4 segundos de /home/user/ffmpeg-skill/tests/out/source.mp4 e me mostre um frame para eu conferir. Salve em OUTDIR.",
+  "expect": [
+   "graphics",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "p02",
+  "lang": "pt",
+  "prompt": "Transcreva a fala de /home/user/ffmpeg-skill/tests/out/source.mp4, traduza para o inglês e queime as legendas no vídeo. Salve em OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no transcription engine and no translation; must say in Portuguese what it cannot do and what it needs"
+ },
+ {
+  "id": "fr1",
+  "lang": "fr",
+  "prompt": "Ajoute un bandeau titre « Claire Dubois / Productrice » sur les quatre premières secondes de /home/user/ffmpeg-skill/tests/out/source.mp4, et montre-moi une image pour que je vérifie. Enregistre le résultat dans OUTDIR.",
+  "expect": [
+   "graphics",
+   "look"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "fr2",
+  "lang": "fr",
+  "prompt": "Télécharge cette vidéo YouTube et monte-la en format vertical dans OUTDIR : https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "expect": [],
+  "refuse": true,
+  "note": "no downloader in the skill; must say so in French and ask for the local file"
+ },
+ {
+  "id": "d01",
+  "lang": "de",
+  "prompt": "Normalisiere die Lautheit von /home/user/ffmpeg-skill/tests/out/source.mp4 auf -14 LUFS für YouTube und speichere das Ergebnis in OUTDIR.",
+  "expect": [
+   "loudness"
+  ],
+  "refuse": false
+ },
+ {
+  "id": "d02",
+  "lang": "de",
+  "prompt": "Übersetze die gesprochene Sprache in /home/user/ffmpeg-skill/tests/out/source.mp4 ins Deutsche und brenne die Untertitel fest ins Bild ein. Speichern in OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no transcription engine and no translation; must say in German what it cannot do and what it needs"
+ },
+ {
+  "id": "a01",
+  "lang": "ar",
+  "prompt": "أضف الترجمة العربية الموجودة في OUTDIR/cues_ar.txt إلى الفيديو /home/user/ffmpeg-skill/tests/out/source.mp4 واطبعها على الصورة، ثم أرِني لقطة للتأكد من الشكل. احفظ الناتج في OUTDIR.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "fixtures": {
+   "cues_ar.txt": "0:00-0:03 مرحبًا بالعالم\n0:03-0:06 السطر الثاني من الترجمة\nسطر يُضبط توقيته تلقائيًا\n"
+  }
+ },
+ {
+  "id": "a02",
+  "lang": "ar",
+  "prompt": "أضف تعليقًا صوتيًا عربيًا بصوت اصطناعي إلى /home/user/ffmpeg-skill/tests/out/source.mp4 واحفظ النتيجة في OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no TTS; must say so in Arabic and offer to mux a narration file the user provides"
  }
 ]
