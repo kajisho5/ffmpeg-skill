@@ -167,12 +167,16 @@ exists. When a decision changes, edit the entry in the same PR.
 An outside review of the repository at 1.13.0 (eval 14). What it raised, and what was decided.
 Each item is recorded here so it is not re-proposed from scratch.
 
-- **`scripts/_common.py` is too large to review in one pass.** Accepted, with the split deferred
-  to a **behaviour-free refactor release after 1.15.0**, not folded into a feature minor: the
-  module becomes a package (`runner`, `probe`, `decision`, `emit`, `color`) and
-  `scripts/_common/__init__.py` stays a facade re-exporting today's names, so every
-  `from _common import ...` in the tools and tests keeps working and the diff is checkable as
-  "no caller changed". `tests/test_all.py` splits by tool group in the same release. Two things
+- **`scripts/_common.py` is too large to review in one pass.** Accepted, and **done** in the
+  behaviour-free refactor release after 1.15.0, not folded into a feature minor: the module is a
+  package of six -- `runner` (process execution and timeouts), `probe` (ffprobe and the measured
+  facts), `decision` (the pure copy-vs-re-encode and capability choices), `emit` (result
+  documents, `die()`, `info()`), `color` (colour tags and the HDR paths) and `text` (fonts,
+  scripts, emoji, drawtext) -- and `scripts/_common/__init__.py` is a facade re-exporting all 184
+  of their names, so every `from _common import ...` and every `_common.<name>` in the tools and
+  tests keeps working and the diff is checkable as "no caller changed": the contract snapshot,
+  the MCP tool surface and every `--help` came out byte-identical. `tests/test_all.py` split by
+  tool group in the same release. Two things
   the review suggested alongside it were **rejected**: a `MediaInfo` dataclass in place of the
   probe dicts (the dicts are the `--json` payload and the contract's `output_schema`; a
   dataclass would add a conversion layer on the hot path and a second shape to keep in sync),

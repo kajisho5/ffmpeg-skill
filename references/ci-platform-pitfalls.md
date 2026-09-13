@@ -124,7 +124,12 @@ these had ever shown up before.
 - **`drawtext` `boxborderw=v|h` (and the four-value form) is 6.1+.** 5.x and 6.0 fail the whole
   filter with "Error setting option boxborderw to value 9|16". `_common.drawtext_boxborderw()`
   emits the larger single value on older builds (`_common.ffmpeg_version()` parses
-  `ffmpeg -version` once; it is the only place the tools branch on a version string).
+  `ffmpeg -version` once; it is the only place the tools branch on a version string). Both names
+  are still spelled exactly that way: `_common` is a package since the refactor release after
+  1.15.0, and its `__init__.py` re-exports every name the single module defined, so
+  `_common.drawtext_boxborderw()`, `_common.ffmpeg_version()` and `_common.bt709_tag_args()`
+  below resolve through the facade unchanged. The definitions are in `_common/text.py`,
+  `_common/runner.py` and `_common/color.py` respectively.
 - **`showwaves` keeps emitting frames after the audio ends, `-shortest` notwithstanding.** A
   12 s source came out 14.08 s on 5.1.1. `waveform.py` now also passes `-t <source duration>`.
 - **`-display_rotation` is 6.0+.** Only the test fixture builder used it (to make a rotated

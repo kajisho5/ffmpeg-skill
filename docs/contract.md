@@ -450,7 +450,8 @@ measurement dicts flattened, plus any numeric top-level key such as `expected_du
 1.x keys are not moved; the environment variable only adds the key, and its absence is the
 default until 2.0.
 
-Success is decided by `verify_output` in `_common.py`, not by the ffmpeg exit code alone:
+Success is decided by `verify_output` in `_common` (`scripts/_common/probe.py`), not by the
+ffmpeg exit code alone:
 the file must exist, be non-empty and give ffprobe at least one stream. A tool that ran
 ffmpeg successfully but has no usable artifact fails with `kind: output` (a 0-byte file is
 removed so a later step cannot mistake it for a result).

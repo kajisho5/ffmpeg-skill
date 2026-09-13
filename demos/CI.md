@@ -19,7 +19,7 @@ demos skip themselves and the job silently proves less than it looks like it doe
 ```yaml
   # Renders the whole before/after gallery from synthetic footage on every PR. This is a real
   # end-to-end test of every script under scripts/ except the four inspection-only ones
-  # (probe, verify, batch, report), which print a table rather than a picture -- tests/test_all.py
+  # (probe, verify, batch, report), which print a table rather than a picture -- tests/test_orchestration.py
   # pins that split, so a new tool cannot land without either a demo or an entry on that list.
   # It is also the gate on
   # what lands in docs/demos/: build.py fails when a committed preview goes over 500 KB, so a

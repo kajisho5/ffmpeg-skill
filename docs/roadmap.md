@@ -19,7 +19,8 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 
 The released version today is **1.15.0**, shipped and evaluated: **eval 16**
 (`evals/results/iteration-16.json`) graded it on the 82-prompt set, the 76 plus the six
-emoji/shaping prompts. Everything after 1.15.0 is planned.
+emoji/shaping prompts. After it comes the behaviour-free refactor release below; everything
+after that is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -31,6 +32,7 @@ emoji/shaping prompts. Everything after 1.15.0 is planned.
 | 1.13.0 | shipped + evaluated | eval 14 at 1.13.0 (`iteration-14.json`) |
 | 1.14.0 | shipped + evaluated | eval 15 at 1.14.0 (`iteration-15.json`) |
 | 1.15.0 | shipped + evaluated | eval 16 at 1.15.0 (`iteration-16.json`) |
+| refactor after 1.15.0 | shipped, eval pending | contract + MCP snapshots and every `--help` byte-identical; 323/323 cases |
 | 1.16.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -238,19 +240,25 @@ keys, one new private module, one new doctor row.
   one-character ban removed the `th1`/`dl3` orphans but not the cause. A phrase-aware breaker is
   the first item of 1.16.0.
 
-## Refactor release after 1.15.0 — no behaviour change (planned)
+## Refactor release after 1.15.0 — no behaviour change (shipped, eval pending)
 
 A release of its own so that "nothing changed for a caller" is checkable in one diff: no flag,
 no JSON key, no exit code, no contract field moves. The contract snapshot and the MCP snapshot
-must come out byte-identical.
+came out byte-identical, as did `--help` for all 42 tools.
 
-- **`scripts/_common.py` becomes a package**: `runner` (process execution and timeouts),
+- **`scripts/_common.py` is a package**: `runner` (process execution and timeouts),
   `probe` (ffprobe and the measured facts), `decision` (the copy-vs-re-encode and capability
-  choices), `emit` (result documents, `die()`, `info()`) and `color` (colour tags, HDR paths).
-  `scripts/_common/__init__.py` is a facade that re-exports today's names, so every
-  `from _common import ...` in every tool and test keeps working unchanged.
-- **`tests/test_all.py` splits by tool group** (analysis, editing, audio, picture, delivery,
-  orchestration) with the shared fixtures in one place; `npm test` still runs the same set.
+  choices), `emit` (result documents, `die()`, `info()`), `color` (colour tags, HDR paths) and
+  `text` (fonts, script detection, emoji, drawtext), which the plan did not name separately and
+  which is the second-largest of the six.
+  `scripts/_common/__init__.py` is a facade that re-exports all 184 names the single file
+  defined, so every `from _common import ...` and every `_common.<name>` in every tool and test
+  keeps working unchanged — including the ones tests rebind (`_common._FFMPEG_VERSION`), which
+  the facade mirrors onto the module that defines them.
+- **`tests/test_all.py` split by tool group** (analysis, editing, audio, picture, delivery,
+  orchestration) with the shared fixtures in `tests/_fixtures.py`; `test_all.py` is now a
+  `load_tests` aggregator over the six, so `npm test` runs the same 323 cases under the same
+  names. The footage is built once per process, not once per group.
 - No eval iteration of its own: the release is proved by the existing suite plus the two
   snapshots, and the next themed eval runs on top of it.
 

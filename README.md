@@ -386,8 +386,11 @@ FFmpeg 8 shortened the flag column of `ffmpeg -filters`. A parser anchored on th
 ## Tested on real footage
 
 **What is tested where.** The contract and the test suite (`tests/test_contract.py`,
-`tests/test_all.py`) run on Linux, macOS and Windows on every pull request, minus the handful of
-POSIX-shim tests listed under [Development](#development). The real-device media corpus
+`tests/test_all.py`, which aggregates one module per tool group — `test_analysis.py`,
+`test_editing.py`, `test_audio.py`, `test_picture.py`, `test_delivery.py`,
+`test_orchestration.py` — over the shared footage in `tests/_fixtures.py`) run on Linux, macOS
+and Windows on every pull request, minus the handful of POSIX-shim tests listed under
+[Development](#development). The real-device media corpus
 (`tests/corpus.py`) has been run on Linux and macOS; the full corpus has **not** been run on
 Windows yet, and neither has an install by someone other than the maintainer been reproduced
 there — [issue #143](https://github.com/kajisho5/ffmpeg-skill/issues/143) tracks both. Treat the
@@ -478,6 +481,7 @@ FFmpeg itself:
 
 ```bash
 npm test                      # tests/test_all.py (end-to-end incl. VFR, rotated, 5.1, HDR10, drifting sources) + tests/test_contract.py
+python3 tests/test_picture.py # one tool group on its own (analysis, editing, audio, picture, delivery, orchestration)
 npm run release-check         # pack, install, contract from the installed copy, MCP == contract, doctor, tests, contract evals
 npm run demo                  # python3 demos/build.py: synthetic footage -> every before/after demo + docs/demos/*.gif
 npm run demo:pipeline         # examples/make_demo.sh: the older single end-to-end run of every script

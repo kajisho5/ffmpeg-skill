@@ -18,7 +18,7 @@ echo "== 1. pack contents"
 npm pack --pack-destination "$TMP" >/dev/null 2>&1
 TGZ="$(ls "$TMP"/*.tgz)"
 LIST="$(tar -tzf "$TGZ")"
-for need in package/SKILL.md package/scripts/_common.py package/scripts/_contract.py package/scripts/probe.py package/references/scripts.md package/references/devices.md package/mcp/server.py package/bin/install.js; do
+for need in package/SKILL.md package/scripts/_common/__init__.py package/scripts/_contract.py package/scripts/probe.py package/references/scripts.md package/references/devices.md package/mcp/server.py package/bin/install.js; do
   echo "$LIST" | grep -qx "$need" || { echo "FAIL: $need missing from the package"; exit 1; }
 done
 echo "   ok ($(echo "$LIST" | wc -l | tr -d ' ') files)"
@@ -33,8 +33,9 @@ done
 echo "   ok"
 
 echo "== 3. every script answers --help"
+# _common was the one file here with no --help; it is a package directory since the refactor
+# after 1.15.0, which scripts/*.py does not match, so every file this glob finds answers --help.
 for f in "$TMP"/home/.claude/skills/ffmpeg-skill/scripts/*.py; do
-  case "$(basename "$f")" in _common.py) continue;; esac
   python3 "$f" --help >/dev/null 2>&1 || { echo "FAIL: $(basename "$f") --help"; exit 1; }
 done
 echo "   ok"

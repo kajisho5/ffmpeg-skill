@@ -1,0 +1,1041 @@
+#!/usr/bin/env python3
+"""End-to-end tests for cut, fit, crop, join, insert, broll, freeze, pad, speedramp, loop, reverse, sequence, silence, metadata, straighten and sphere.
+
+    python3 tests/test_editing.py       # this group alone
+    python3 tests/test_all.py            # every group
+"""
+import json
+import re
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _fixtures import MediaFixtures, OUT, SCRIPTS, script, sh  # noqa: E402
+from _common import probe  # noqa: E402
+
+
+class EditingTests(MediaFixtures):
+    """Cut, fit, crop, join, insert, broll, freeze, pad, speedramp, loop, reverse, sequence, silence, metadata, straighten and sphere."""
+
+    # ---------------------------------------------------------------- cut
+    def test_cut_single_copy(self):
+        out = OUT / "cut1.mp4"
+        script("cut.py", self.src, "--start", "2", "--end", "6", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 4.0, 0.5, "lossless cut falls back to re-encode when the keyframe snap is too far")
+        self.assertEqual(m["video"]["codec"], "h264")
+
+    def test_cut_copy_never_reencodes_when_tolerance_disabled(self):
+        out = OUT / "cut3.mp4"
+        proc = script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out)
+        self.assertIn("lossless stream copy", proc.stderr)
+
+    def test_cut_segments_accurate(self):
+        out = OUT / "cut2.mp4"
+        script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out)
+        self.assertClose(probe(str(out))["duration"], 5.0, 0.15)
+
+    def test_cut_json_reports_requested_vs_actual_and_mode(self):
+        # exact-second cut on a keyframe-aligned GOP: expect a clean lossless copy
+        out = OUT / "cut_honest_copy.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertEqual(data["requested_start"], 2.0)
+        self.assertEqual(data["requested_end"], 6.0)
+        self.assertEqual(data["requested_duration"], 4.0)
+        self.assertAlmostEqual(data["output_duration"], probe(str(out))["duration"], places=2)
+        self.assertAlmostEqual(data["duration_delta_seconds"], data["duration_error_ms"] / 1000, places=6)
+
+        # --accurate: forced re-encode, never "hybrid"
+        out2 = OUT / "cut_honest_accurate.mp4"
+        data2 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--accurate", "-o", out2, "--json").stdout)
+        self.assertEqual(data2["mode"], "accurate")
+        self.assertFalse(data2["keyframe_snapped"])
+
+        # a start/end that doesn't land on a keyframe, with a tight tolerance, must silently
+        # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true"
+        out3 = OUT / "cut_honest_hybrid.mp4"
+        data3 = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "0.02", "-o", out3, "--json").stdout)
+        self.assertTrue(data3["reencoded"])
+        self.assertEqual(data3["mode"], "hybrid")
+        self.assertFalse(data3["keyframe_snapped"])
+        # ...and name the keyframes a lossless cut could have used instead (x264's default GOP on the
+        # fixture puts the only one within 5 s of 1.13 at 0.0)
+        self.assertTrue(data3["nearest_keyframes"], data3)
+        self.assertIn(0.0, data3["nearest_keyframes"])
+        self.assertIsNone(data["nearest_keyframes"], "a clean copy has no alternative to offer")
+
+        # multi-segment: requested_start/end are None, requested_segments lists each range
+        out4 = OUT / "cut_honest_segments.mp4"
+        data4 = json.loads(script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out4, "--json").stdout)
+        self.assertIsNone(data4["requested_start"])
+        self.assertIsNone(data4["requested_end"])
+        self.assertEqual(data4["requested_segments"], [[1.0, 3.0], [6.0, 9.0]])
+        self.assertEqual(data4["requested_duration"], 5.0)
+
+    def test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta(self):
+        """Pins the actual failure mode `mode`/`keyframe_snapped`/`duration_delta_seconds` exist to
+        surface: a non-keyframe-aligned request that stays within --tolerance keeps the fast
+        stream copy (mode=copy) rather than upgrading to hybrid, but the copy still snapped to an
+        earlier keyframe and pulled in extra content -- output_duration and requested_duration
+        genuinely diverge, and a caller must be told this happened, not left to assume the file
+        starts exactly where it asked."""
+        out = OUT / "cut_copy_keyframe_snap.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "2.0", "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertFalse(data["reencoded"])
+        actual = probe(str(out))["duration"]
+        self.assertAlmostEqual(data["output_duration"], actual, places=2)
+        self.assertGreater(abs(data["duration_delta_seconds"]), 0.05, "this scenario must produce a real, visible divergence, not a rounding artefact")
+        self.assertAlmostEqual(data["duration_delta_seconds"], data["output_duration"] - data["requested_duration"], places=6)
+
+    def test_cut_bad_range_fails(self):
+        script("cut.py", self.src, "--start", "5", "--end", "2", expect_fail=True)
+
+    def test_cut_refuses_negative_start_and_end(self):
+        """Unlike freeze.py/background.py, which explicitly refuse negative durations, cut.py
+        passed --start/--end straight through to parse_time() with no sign check at all, so a
+        negative value (e.g. from an agent computing an offset that went wrong) reached ffmpeg's
+        -ss as -5.000000 instead of being refused with a clear error naming the flag."""
+        proc = script("cut.py", self.src, "--start", "-5", "--end", "2", expect_fail=True)
+        self.assertIn("--start", proc.stderr)
+        proc = script("cut.py", self.src, "--start", "0", "--end", "-2", expect_fail=True)
+        self.assertIn("--end", proc.stderr)
+
+    # ---------------------------------------------------------------- fit
+    def test_fit_duration_speed_and_aspect_pad(self):
+        out = OUT / "fit1.mp4"
+        script("fit.py", self.src, "--duration", "6", "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 6.0, 0.15)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
+
+    def test_broll_cutaway_shows_b_in_the_window_and_keeps_a_elsewhere(self):
+        """#141: broll.py shows B's picture over A for a window and returns to A at A's own time;
+        the output is exactly A's length. Checked frame by frame: inside the window a frame
+        matches B (at --from + offset) and not A; outside it matches A. --audio a stream-copies
+        A's audio; two cutaways in one call; overlapping or past-the-end windows are refused."""
+        def frame_luma(path, t):
+            proc = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path, "-frames:v", "1",
+                      "-vf", "signalstats,metadata=print:file=-", "-f", "null", "-")
+            return float(re.search(r"lavfi\.signalstats\.YAVG=([0-9.]+)", proc.stdout).group(1))
+        b = OUT / "broll_b.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "smptebars=size=960x540:rate=25:d=8",
+           "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", b)
+        out = OUT / "broll_out.mp4"
+        data = json.loads(script("broll.py", self.src, "--insert", b, "--at", "4", "--end", "7", "--from", "1", "--fast", "--json", "-o", out).stdout)
+        # --pad-color is spliced into the filter graph like every other colour flag, so it is validated like them
+        inj = script("broll.py", self.src, "--insert", b, "--at", "4", "--end", "7", "--pad-color", "black,drawtext=text=INJECTED",
+                     "--json", "-o", OUT / "broll_inj.mp4", expect_fail=True)
+        self.assertIn("plain colour", json.loads(inj.stdout)["error"]["message"])
+        self.assertEqual(json.loads(inj.stdout)["commands"], [], "refused before ffmpeg ran")
+        self.assertEqual(data["cutaways"], [{"insert": str(b), "at": 4.0, "end": 7.0, "from": 1.0}])
+        m = probe(str(out))
+        self.assertClose(m["duration"], probe(str(self.src))["duration"], 0.1)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+        self.assertEqual(m["audio"]["codec"], probe(str(self.src))["audio"]["codec"], "--audio a stream-copies A's audio")
+        inside_out, inside_b, inside_a = frame_luma(str(out), 5.5), frame_luma(str(b), 2.5), frame_luma(str(self.src), 5.5)
+        self.assertLess(abs(inside_out - inside_b), 6, f"inside the window the frame must be B's: out {inside_out} b {inside_b} a {inside_a}")
+        self.assertGreater(abs(inside_out - inside_a), 6, "inside the window the frame must not be A's")
+        for t in (2.0, 9.0):
+            self.assertLess(abs(frame_luma(str(out), t) - frame_luma(str(self.src), t)), 3, f"outside the window ({t}s) A must show unchanged")
+        # two cutaways, B's audio mixed in, per-cutaway durations
+        out2 = OUT / "broll_out2.mp4"
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "2", "--insert", b, "--at", "8", "--duration", "3", "--audio", "mix", "--fast", "-o", out2)
+        m2 = probe(str(out2))
+        self.assertClose(m2["duration"], 12.0, 0.1)
+        self.assertEqual(m2["audio"]["codec"], "aac")
+        self.assertLess(abs(frame_luma(str(out2), 9.5) - frame_luma(str(b), 1.5)), 6)
+        # refusals: overlap, past the end, B too short, missing --at
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "3", "--insert", b, "--at", "2", "-o", OUT / "broll_bad1.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--at", "10", "--duration", "5", "-o", OUT / "broll_bad2.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--at", "1", "--duration", "5", "--from", "5", "-o", OUT / "broll_bad3.mp4", expect_fail=True)
+        script("broll.py", self.src, "--insert", b, "--insert", b, "--at", "1", "-o", OUT / "broll_bad4.mp4", expect_fail=True)
+        dry = OUT / "broll_dry.mp4"
+        script("broll.py", self.src, "--insert", b, "--at", "4", "--dry-run", "-o", dry)
+        self.assertFalse(dry.exists())
+
+    def test_metadata_writes_chapters_and_tags_with_streams_copied(self):
+        """#140: metadata.py writes container chapter markers from a `TIME TITLE` file and the
+        common tags, with every stream copied bit for bit; probe reports both back. Chapters on a
+        container that cannot hold them are refused, --clear-chapters removes them, a chapter
+        past the end or out of order is refused, and the input is never rewritten in place."""
+        chapters = OUT / "chapters.txt"
+        chapters.write_text("# episode\n0:00 Intro\n4 Setup, with a comma; and =signs\n0:08 Outro\n", encoding="utf-8")
+        out = OUT / "meta_chapters.mp4"
+        data = json.loads(script("metadata.py", self.src, "--chapters", chapters, "--title", "Episode 12", "--artist", "Studio", "--comment", "final", "--json", "-o", out).stdout)
+        self.assertTrue(data["streams_copied"])
+        m = probe(str(out))
+        self.assertEqual([(round(c["start"]), round(c["end"]), c["title"]) for c in m["chapters"]],
+                         [(0, 4, "Intro"), (4, 8, "Setup, with a comma; and =signs"), (8, 12, "Outro")])
+        self.assertEqual(m["tags"].get("title"), "Episode 12")
+        self.assertEqual(m["tags"].get("artist"), "Studio")
+        self.assertEqual(m["tags"].get("comment"), "final")
+        src = probe(str(self.src))
+        self.assertEqual((m["video"]["codec"], m["audio"]["codec"]), (src["video"]["codec"], src["audio"]["codec"]))
+        self.assertEqual(self._frame_count(out), self._frame_count(self.src))
+        self.assertEqual(self._psnr(self.src, out), float("inf"), "streams must be copied, not re-encoded")
+        # tags alone keep the chapters; --clear-chapters removes them and keeps the tags
+        tagged = OUT / "meta_tagged.mp4"
+        script("metadata.py", out, "--comment", "v2", "-o", tagged)
+        self.assertEqual(len(probe(str(tagged))["chapters"]), 3)
+        self.assertEqual(probe(str(tagged))["tags"].get("comment"), "v2")
+        cleared = OUT / "meta_cleared.mp4"
+        script("metadata.py", out, "--clear-chapters", "-o", cleared)
+        self.assertEqual(probe(str(cleared))["chapters"], [])
+        self.assertEqual(probe(str(cleared))["tags"].get("title"), "Episode 12")
+        # refusals
+        script("metadata.py", OUT / "long_ref.wav", "--chapters", chapters, "-o", OUT / "meta_bad.wav", expect_fail=True)
+        script("metadata.py", self.src, "-o", OUT / "meta_nothing.mp4", expect_fail=True)
+        script("metadata.py", self.src, "--title", "x", "-o", self.src, expect_fail=True)
+        bad = OUT / "chapters_bad.txt"
+        bad.write_text("0:00 A\n0:30 B\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", bad, "-o", OUT / "meta_bad2.mp4", expect_fail=True)
+        bad.write_text("0:05 A\n0:02 B\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", bad, "-o", OUT / "meta_bad3.mp4", expect_fail=True)
+        # dry run writes nothing
+        dry = OUT / "meta_dry.mp4"
+        script("metadata.py", self.src, "--chapters", chapters, "--dry-run", "-o", dry)
+        self.assertFalse(dry.exists())
+
+    def test_fit_pad_fill_blur_puts_picture_in_the_bars_and_color_stays_solid(self):
+        """#139: --fit pad --pad-fill blur fills the letterbox/pillarbox bars with a blurred,
+        scaled-to-cover copy of the frame (the phone-editor "make it vertical" look) instead of a
+        solid --pad-color. The source is landscape, so 9:16 gives bars above and below: with
+        blur they must carry picture (not black, not one flat value), with color (the default)
+        they must stay the solid pad colour exactly as before. export.py shares the same path."""
+        def bar_stats(path, top_px=60):
+            # mean and spread of the top bar's luma over a frame at t=1s
+            proc = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", path, "-frames:v", "1",
+                      "-vf", f"crop=iw:{top_px}:0:0,signalstats,metadata=print:file=-", "-f", "null", "-")
+            vals = {k: float(v) for k, v in re.findall(r"lavfi\.signalstats\.(YAVG|YMIN|YMAX)=([0-9.]+)", proc.stdout)}
+            return vals["YAVG"], vals["YMAX"] - vals["YMIN"]
+        blur = OUT / "fit_pad_blur.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
+        m = probe(str(blur))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
+        avg, spread = bar_stats(str(blur))
+        self.assertGreater(avg, 20, f"blurred bar is (nearly) black: YAVG {avg}")
+        self.assertGreater(spread, 10, f"blurred bar is flat: spread {spread}")
+        solid = OUT / "fit_pad_color.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
+        avg, spread = bar_stats(str(solid))
+        self.assertLess(avg, 20, f"solid black bar is not black: YAVG {avg}")
+        self.assertLess(spread, 4, f"solid bar is not flat: spread {spread}")
+        # the same option on export.py's preset frame
+        exp = OUT / "export_pad_blur.mp4"
+        script("export.py", self.src, "--preset", "reels", "--pad-fill", "blur", "--fast", "-o", exp)
+        avg, spread = bar_stats(str(exp), 120)
+        self.assertGreater(avg, 20); self.assertGreater(spread, 10)
+        script("fit.py", self.src, "--aspect", "9:16", "--pad-fill", "blur", "--pad-blur", "0", "--dry-run", expect_fail=True)
+
+    def test_fit_trim_and_crop_square(self):
+        out = OUT / "fit2.mp4"
+        script("fit.py", self.src, "--duration", "4", "--method", "trim", "--from-center", "--aspect", "1:1", "--fit", "crop", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 4.0, 0.15)
+        self.assertEqual(m["video"]["width"], m["video"]["height"])
+
+    def test_fit_aspect_only_never_upscales_past_source_resolution(self):
+        """With only --aspect given (no --width/--height), the "elif ratio and src_ratio" branch
+        used to bound a narrower/taller target by the source's WIDTH, not its height -- so a
+        1280x720 (16:9) source asked for 9:16 came out 1280x2276, a ~3.16x unrequested upscale in
+        both fit=pad and fit=crop. Neither dimension of the output should exceed the source's."""
+        out = OUT / "fit_aspect_only_tall.mp4"
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--fast", "-o", out)
+        m = probe(str(out))
+        self.assertLessEqual(m["video"]["width"], 1280)
+        self.assertLessEqual(m["video"]["height"], 720)
+        self.assertEqual(m["video"]["height"], 720, "bounded by source height, not blown up")
+
+    def test_fit_refuses_extreme_speed(self):
+        script("fit.py", self.src, "--duration", "1", expect_fail=True)
+
+    def test_fit_crop_anchor_keeps_a_chosen_edge_not_just_the_centre(self):
+        """A centre crop can cut a subject held to one side; --crop-x/-y say what to keep."""
+        left = OUT / "fit_crop_left.mp4"
+        right = OUT / "fit_crop_right.mp4"
+        center = OUT / "fit_crop_center.mp4"
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--width", "360", "--crop-x", "0", "-o", left)
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--width", "360", "--crop-x", "1", "-o", right)
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--width", "360", "-o", center)
+        for out in (left, right, center):
+            m = probe(str(out))
+            self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
+        # different horizontal anchors must crop different content, not just resize the same crop
+        self.assertLess(self._psnr(left, right), 40, "crop-x=0 vs crop-x=1 kept the same picture")
+
+    def test_fit_crop_anchor_out_of_range_is_refused(self):
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-x", "1.5", expect_fail=True)
+        script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-y", "-0.1", expect_fail=True)
+
+    def test_fit_height_alone_follows_source_aspect(self):
+        out = OUT / "fit_h.mp4"
+        script("fit.py", self.src, "--height", "480", "-o", out)
+        m = probe(str(out))
+        # source is 1280x720 (16:9); height 480 -> width 853.33 rounds to even 854
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (854, 480))
+
+    def test_fit_width_and_height_both_given_is_exact(self):
+        out = OUT / "fit_wh.mp4"
+        script("fit.py", self.src, "--width", "500", "--height", "500", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (500, 500))
+
+    def test_fit_width_alone_still_works(self):
+        out = OUT / "fit_w.mp4"
+        script("fit.py", self.src, "--width", "640", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+
+    def test_fit_rotate_90_swaps_dimensions(self):
+        out = OUT / "fit_rot90.mp4"
+        script("fit.py", self.src, "--rotate", "90", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (720, 1280))
+
+    def test_fit_rotate_and_flip_change_actual_pixels(self):
+        """Not just that dimensions are right -- a known left/right split must actually swap or rotate."""
+        quad = OUT / "quad_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=100x50",
+           "-f", "lavfi", "-i", "color=c=blue:s=100x50", "-filter_complex", "[0][1]hstack", "-frames:v", "1", "-t", "1",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", quad)
+
+        def px(path, x, y):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                                 "-vf", f"crop=2:2:{x}:{y}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        fliph = OUT / "quad_fliph.mp4"
+        script("fit.py", quad, "--flip", "h", "-o", fliph)
+        self.assertGreater(px(fliph, 10, 10)[2], 100, "flip h: left side should now be blue (high B channel)")
+        self.assertGreater(px(fliph, 150, 10)[0], 100, "flip h: right side should now be red (high R channel)")
+
+        rot90 = OUT / "quad_rot90.mp4"
+        script("fit.py", quad, "--rotate", "90", "-o", rot90)
+        self.assertGreater(px(rot90, 10, 10)[0], 100, "rotate 90cw: original left (red) column becomes the top row")
+
+    def test_fit_nothing_to_do_is_refused(self):
+        script("fit.py", self.src, expect_fail=True)
+
+    def test_fit_audio_stream_selects_the_requested_track_not_always_the_first(self):
+        two = OUT / "fit_two_streams.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100",
+           "-t", "4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", two)
+        self.assertEqual(len(probe(str(two))["audio_streams"]), 2)
+        out1 = OUT / "fit_two_s1.mp4"
+        script("fit.py", two, "--audio-stream", "1", "--width", "160", "-o", out1, "--preset", "veryfast")
+        self.assertIsNotNone(probe(str(out1))["audio"], "default fit.py now explicitly maps audio too, not just the automatic 'best stream' pick")
+        proc = script("fit.py", two, "--audio-stream", "5", "--width", "160", "-o", OUT / "fit_nope.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertIn("audio-stream", proc.stderr)
+
+    # ---------------------------------------------------------------- crop
+    def test_crop_exact_rectangle(self):
+        out = OUT / "crop1.mp4"
+        script("crop.py", self.src, "--x", "100", "--y", "0", "--width", "1080", "--height", "720", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 720))
+        self.assertClose(m["duration"], 12.0, 0.2)
+
+    def test_crop_out_of_bounds_is_refused(self):
+        script("crop.py", self.src, "--x", "1200", "--y", "0", "--width", "200", "--height", "200", expect_fail=True)
+
+    def test_crop_odd_dimensions_refused(self):
+        script("crop.py", self.src, "--x", "0", "--y", "0", "--width", "101", "--height", "100", expect_fail=True)
+
+    def test_crop_negative_offset_refused(self):
+        script("crop.py", self.src, "--x", "-5", "--y", "0", "--width", "100", "--height", "100", expect_fail=True)
+
+    # ---------------------------------------------------------------- sphere
+    def test_sphere_extracts_a_flat_viewport(self):
+        out = OUT / "sphere1.mp4"
+        script("sphere.py", self.src, "--yaw", "90", "--pitch", "10", "--h-fov", "100", "--v-fov", "70",
+               "--width", "640", "--height", "360", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
+        self.assertClose(m["duration"], 12.0, 0.2)
+        self.assertIsNotNone(m["audio"])
+
+    def test_sphere_defaults_and_no_audio_source(self):
+        no_audio = OUT / "sphere_no_audio_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x320:rate=25",
+           "-t", "2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", no_audio)
+        out = OUT / "sphere2.mp4"
+        script("sphere.py", no_audio, "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1920, 1080))
+        self.assertIsNone(m["audio"])
+
+    def test_sphere_yaw_out_of_range_refused(self):
+        script("sphere.py", self.src, "--yaw", "200", expect_fail=True)
+
+    def test_sphere_fov_out_of_range_refused(self):
+        script("sphere.py", self.src, "--h-fov", "0", expect_fail=True)
+
+    def test_sphere_odd_dimensions_refused(self):
+        script("sphere.py", self.src, "--width", "641", "--height", "360", expect_fail=True)
+
+    def test_sphere_audio_stream_out_of_range_refused(self):
+        script("sphere.py", self.src, "--audio-stream", "5", expect_fail=True)
+
+    # ---------------------------------------------------------------- straighten
+    def test_straighten_crop_fit_has_no_black_corner(self):
+        out = OUT / "straighten1.mp4"
+        script("straighten.py", self.src, "--degrees", "10", "--fit", "crop", "-o", out)
+        m = probe(str(out))
+        self.assertLess(m["video"]["width"], 1280)
+        self.assertLess(m["video"]["height"], 720)
+        self.assertEqual(m["video"]["width"] % 2, 0)
+        self.assertEqual(m["video"]["height"] % 2, 0)
+        frame = OUT / "straighten1_corner.raw"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-vf", "crop=8:8:0:0",
+           "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", frame)
+        data = frame.read_bytes()
+        self.assertFalse(all(b == 0 for b in data), "top-left corner is pure black -- straighten left a visible gap")
+
+    def test_straighten_pad_fit_grows_the_frame(self):
+        out = OUT / "straighten2.mp4"
+        script("straighten.py", self.src, "--degrees", "-8", "--fit", "pad", "-o", out)
+        m = probe(str(out))
+        self.assertGreater(m["video"]["width"], 1280)
+        self.assertGreater(m["video"]["height"], 720)
+
+    def test_straighten_zero_degrees_refused(self):
+        script("straighten.py", self.src, "--degrees", "0", expect_fail=True)
+
+    def test_straighten_out_of_range_refused(self):
+        script("straighten.py", self.src, "--degrees", "60", expect_fail=True)
+
+    # ---------------------------------------------------------------- freeze
+    def test_freeze_insert_extends_duration(self):
+        out = OUT / "freeze1.mp4"
+        script("freeze.py", self.src, "--at", "5", "--hold", "1", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 13.0, 0.3)
+
+    def test_freeze_extend_mode_at_end(self):
+        out = OUT / "freeze2.mp4"
+        script("freeze.py", self.src, "--hold", "1.5", "--mode", "extend", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 13.5, 0.3)
+
+    def test_freeze_mid_clip_audio_pad_matches_the_frame_rounded_video_hold(self):
+        """The video hold is n = round(hold * fps) whole frames -- n / fps in general isn't
+        exactly --hold when hold*fps isn't an integer (e.g. 1.4s at 30fps -> n=42, 42/30=1.4
+        exactly here, so use a value where it doesn't divide evenly). apad used to pad by the
+        raw --hold value instead of that same frame-rounded duration, so video and audio drifted
+        apart by up to half a frame -- a permanent A/V sync error from that point on. Verify the
+        constructed apad=pad_dur= matches n/fps, not the raw --hold value."""
+        out = OUT / "freeze_avsync.mp4"
+        fps = probe(self.src)["video"]["fps"]
+        hold = 1.03  # picked so hold*fps is not a whole number at this source's fps
+        data = json.loads(script("freeze.py", self.src, "--at", "5", "--hold", str(hold), "-o", out, "--fast", "--json").stdout)
+        n = round(hold * fps)
+        expected_pad = n / fps
+        cmd = data["commands"][0]
+        m = re.search(r"apad=pad_dur=([\d.]+)", cmd)
+        self.assertIsNotNone(m, f"expected an apad=pad_dur= in: {cmd}")
+        self.assertAlmostEqual(float(m.group(1)), expected_pad, places=4)
+
+    def test_freeze_extend_mode_before_end_refused(self):
+        script("freeze.py", self.src, "--at", "2", "--hold", "1", "--mode", "extend", expect_fail=True)
+
+    def test_freeze_zero_hold_refused(self):
+        script("freeze.py", self.src, "--hold", "0", expect_fail=True)
+
+    def test_freeze_at_zero_holds_the_first_frame(self):
+        """--at 0 has no preceding segment to trim/clone from in the general insert-mode filter
+        graph (an empty trim=end=0 stream broke ffmpeg filtering entirely); this exercises the
+        dedicated at==0 branch that pads the front of the clip instead."""
+        out = OUT / "freeze3.mp4"
+        script("freeze.py", self.src, "--at", "0", "--hold", "1", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 13.0, 0.3)
+
+    # ---------------------------------------------------------------- pad
+    def test_pad_start_and_end_extend_duration(self):
+        out = OUT / "pad1.mp4"
+        script("pad.py", self.src, "--start", "1", "--end", "2", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 15.0, 0.3)
+
+    def test_pad_nothing_refused(self):
+        script("pad.py", self.src, expect_fail=True)
+
+    def test_pad_negative_refused(self):
+        script("pad.py", self.src, "--start", "-1", expect_fail=True)
+
+    # ---------------------------------------------------------------- speedramp
+    def test_speedramp_segments_change_overall_duration(self):
+        out = OUT / "ramp1.mp4"
+        script("speedramp.py", self.src, "--segment", "0-6:1.0", "--segment", "6-9:0.5", "--segment", "9-12:2.0", "-o", out)
+        m = probe(str(out))
+        # 6/1.0 + 3/0.5 + 3/2.0 = 6 + 6 + 1.5 = 13.5s
+        self.assertClose(m["duration"], 13.5, 0.5)
+
+    def test_speedramp_bad_segment_format_refused(self):
+        script("speedramp.py", self.src, "--segment", "not-a-segment", expect_fail=True)
+
+    def test_speedramp_gap_refused(self):
+        script("speedramp.py", self.src, "--segment", "0-5:1.0", "--segment", "6-12:1.0", expect_fail=True)
+
+    def test_speedramp_must_start_at_zero_refused(self):
+        script("speedramp.py", self.src, "--segment", "1-12:1.0", expect_fail=True)
+
+    # ---------------------------------------------------------------- loop
+    def test_loop_times_multiplies_duration(self):
+        out = OUT / "loop1.mp4"
+        script("loop.py", self.src, "--times", "3", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 36.0, 1.0)
+
+    def test_loop_duration_hits_exact_target(self):
+        out = OUT / "loop2.mp4"
+        script("loop.py", self.src, "--duration", "20", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 20.0, 0.1)
+
+    def test_loop_times_too_small_refused(self):
+        script("loop.py", self.src, "--times", "1", expect_fail=True)
+
+    def test_loop_duration_shorter_than_source_refused(self):
+        script("loop.py", self.src, "--duration", "3", expect_fail=True)
+
+    # ---------------------------------------------------------------- insert
+    def test_insert_native_size_and_duration(self):
+        out = OUT / "insert1.mp4"
+        script("insert.py", self.logo, "--duration", "3", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 3.0, 0.15)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (240, 90))
+        self.assertIsNone(m["audio"])
+
+    def test_insert_exact_frame_size_and_fps(self):
+        out = OUT / "insert2.mp4"
+        script("insert.py", self.logo, "--duration", "2", "--width", "500", "--height", "500", "--fps", "24", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 2.0, 0.15)
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (500, 500))
+        self.assertClose(m["video"]["fps"], 24.0, 0.01)
+
+    def test_insert_refuses_zero_duration(self):
+        script("insert.py", self.logo, "--duration", "0", expect_fail=True)
+
+    def test_insert_ken_burns_zoom_in_actually_scales_over_time(self):
+        """The frame must actually change scale over the clip, not just accept the flag."""
+        kb_src = OUT / "kb_src.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=800x800",
+           "-vf", "drawbox=x=300:y=300:w=200:h=200:color=red:t=fill", "-frames:v", "1", kb_src)
+        out = OUT / "kb1.mp4"
+        script("insert.py", kb_src, "--duration", "3", "--zoom", "in", "--zoom-amount", "1.3",
+               "--width", "640", "--height", "640", "--fps", "10", "-o", out)
+
+        def px(path, t, x, y):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-ss", str(t),
+                                 "-vf", f"crop=2:2:{x}:{y}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        # a screen point between the square's edge at zoom=1 (0.625 normalised) and zoom=1.3 (0.6625):
+        # white at the start (not yet covered by the square), red by the end (zoomed in enough to cover it).
+        # Tolerant of lossy x264 rounding (e.g. macOS's build lands white at 0xfd, not a pure 0xff).
+        start_r, start_g, start_b = px(out, 0.1, 410, 410)
+        self.assertGreater(start_r, 240, "should still be white/unpainted before the zoom covers it")
+        self.assertGreater(start_g, 240)
+        self.assertGreater(start_b, 240)
+        end_r, end_g, end_b = px(out, 2.9, 410, 410)
+        self.assertGreater(end_r, 200, "should be red by the end (zoomed in enough to cover this point)")
+        self.assertLess(end_b, 60)
+
+    def test_insert_pan_without_zoom_is_refused(self):
+        script("insert.py", self.logo, "--duration", "2", "--pan", "left", expect_fail=True)
+
+    def test_insert_bad_zoom_amount_refused(self):
+        script("insert.py", self.logo, "--duration", "2", "--zoom", "in", "--zoom-amount", "1.0", expect_fail=True)
+
+    # ---------------------------------------------------------------- reverse
+    def test_reverse_swaps_start_and_end(self):
+        halfcolor = OUT / "halfcolor.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1.5",
+           "-f", "lavfi", "-i", "color=c=blue:s=64x64:d=1.5", "-filter_complex", "[0][1]concat=n=2:v=1:a=0",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", halfcolor)
+        out = OUT / "rev1.mp4"
+        script("reverse.py", halfcolor, "-o", out)
+
+        def px(path, t):
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-ss", str(t),
+                                 "-vf", "crop=2:2:10:10", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return r.stdout[:3]
+
+        self.assertGreater(px(out, 0.2)[2], 100, "reversed clip starts with the original's last half (blue)")
+        self.assertGreater(px(out, 2.8)[0], 100, "reversed clip ends with the original's first half (red)")
+
+    def test_reverse_no_audio_drops_track(self):
+        out = OUT / "rev_noaudio.mp4"
+        script("reverse.py", self.src, "--no-audio", "-o", out)
+        m = probe(str(out))
+        self.assertIsNone(m["audio"])
+
+    # ---------------------------------------------------------------- sequence
+    def test_sequence_numbered_pattern_preserves_order(self):
+        frames_dir = OUT / "seqframes"
+        frames_dir.mkdir(exist_ok=True)
+        for i in range(5):
+            color = "red" if i % 2 == 0 else "blue"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", f"-i", f"color=c={color}:s=64x48",
+               "-frames:v", "1", frames_dir / f"frame_{i:04d}.png")
+        out = OUT / "seq1.mp4"
+        script("sequence.py", "--dir", frames_dir, "--pattern", "frame_%04d.png", "--fps", "5", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 1.0, 0.1)
+
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(out), "-vf", "crop=2:2:10:10",
+                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+        frame_px = [raw[i * 12:i * 12 + 3] for i in range(len(raw) // 12)]
+        self.assertEqual(len(frame_px), 5)
+        for i, px in enumerate(frame_px):
+            if i % 2 == 0:
+                self.assertGreater(px[0], 100, f"frame {i} should be red")
+            else:
+                self.assertGreater(px[2], 100, f"frame {i} should be blue")
+
+    def test_sequence_glob_pattern(self):
+        frames_dir = OUT / "seqframes_glob"
+        frames_dir.mkdir(exist_ok=True)
+        for i in range(5):
+            color = "red" if i % 2 == 0 else "blue"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", f"-i", f"color=c={color}:s=64x48",
+               "-frames:v", "1", frames_dir / f"frame_{i:04d}.png")
+        out = OUT / "seq2.mp4"
+        script("sequence.py", "--dir", frames_dir, "--pattern", "*.png", "--fps", "5", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 1.0, 0.1)
+
+    def test_sequence_no_match_refused(self):
+        frames_dir = OUT / "seqframes"
+        script("sequence.py", "--dir", frames_dir, "--pattern", "*.jpg", "--fps", "5", expect_fail=True)
+
+    def test_sequence_missing_dir_refused(self):
+        script("sequence.py", "--dir", str(OUT / "does_not_exist"), "--pattern", "*.png", "--fps", "5", expect_fail=True)
+
+    def test_time_grammar_is_one_parser_with_an_fps_suffix(self):
+        """1.9 (roadmap): hh:mm:ss:ff@fps names the rate; broll / cut / freeze refuse a bad time as
+        kind input naming the flag, like every other tool, instead of their own wording."""
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import _common as c
+        finally:
+            sys.path.pop(0)
+        self.assertAlmostEqual(c.parse_time("00:00:01:15@30"), 1.5)
+        self.assertAlmostEqual(c.parse_time("00:00:01:15@30", fps=24), 1.5, msg="the suffix beats the fps a tool passed in")
+        self.assertAlmostEqual(c.parse_time("01:00:00:00@29.97"), 108000 / 29.97)
+        with self.assertRaises(ValueError):
+            c.parse_time("12.5@30")
+        with self.assertRaises(ValueError):
+            c.parse_time("00:00:01:15@fast")
+        with self.assertRaises(c.MissingFpsError):
+            c.parse_time("00:00:01:15")
+        # the three tools that had their own wrappers
+        d = json.loads(script("cut.py", self.src, "--start", "00:00:01:15@30", "--end", "00:00:02:00@30", "-o", OUT / "tc_cut.mp4", "--json", "--overwrite").stdout)
+        self.assertAlmostEqual(d["expected_duration"], 0.5, places=2)
+        d = json.loads(script("cut.py", self.src, "--start", "nonsense", "-o", OUT / "tc_bad.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("--start", d["error"]["message"])
+        d = json.loads(script("freeze.py", self.src, "--at", "1:xx", "--hold", "1", "-o", OUT / "tc_freeze.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("--at", d["error"]["message"])
+        d = json.loads(script("broll.py", self.src, "--insert", self.src, "--at", "1:xx", "-o", OUT / "tc_broll.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("--at", d["error"]["message"])
+        # 1.9.1 (audit 8): a cue file may carry the suffix too -- the timecodes must not become the caption text
+        with self.assertRaises(ValueError) as cm:
+            c.parse_time("00:00:01:15@30@30")
+        self.assertIn("only one @fps", str(cm.exception), "no interpreter internals in the refusal")
+        tc = OUT / "tc_at_cues.txt"
+        tc.write_text("00:00:00:15@30 --> 00:00:02:00@30 Hello there\n", encoding="utf-8")
+        srt = OUT / "tc_at.srt"
+        script("caption.py", "--text", tc, "--write-srt", srt)
+        text = srt.read_text(encoding="utf-8")
+        self.assertIn("00:00:00,500 --> 00:00:02,000\nHello there", text)
+        self.assertNotIn("@30", text)
+        # metadata / multicam / speedramp refuse through the same parser and name the suffix
+        ch = OUT / "tc_chapters.txt"
+        ch.write_text("00:00:01:00 Intro\n", encoding="utf-8")
+        d = json.loads(script("metadata.py", self.src, "--chapters", ch, "-o", OUT / "tc_md.mp4", "--json", "--dry-run", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("@fps", d["error"]["message"])
+        ch.write_text("00:00:01:00@30 Intro\n", encoding="utf-8")
+        script("metadata.py", self.src, "--chapters", ch, "-o", OUT / "tc_md.mp4", "--json", "--dry-run")
+        d = json.loads(script("multicam.py", self.src, self.src, "--switch", "0-1:xx:0", "-o", OUT / "tc_mc.mp4", "--json", "--dry-run", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("@fps", d["error"]["message"])
+        d = json.loads(script("speedramp.py", self.src, "--segment", "0-1:xx:2", "-o", OUT / "tc_sr.mp4", "--json", "--dry-run", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("@fps", d["error"]["message"])
+
+    def test_vfr_is_conformed_to_cfr_on_cut_and_fit(self):
+        out = OUT / "vfr_cut.mp4"
+        proc = script("cut.py", self.vfr, "--start", "2", "--end", "6", "-o", out)
+        self.assertIn("variable-frame-rate", proc.stderr)
+        m = probe(str(out))
+        self.assertFalse(m["video"]["variable_frame_rate_suspected"])
+        self.assertClose(m["duration"], 4.0, 0.2)
+        out2 = OUT / "vfr_fit.mp4"
+        script("fit.py", self.vfr, "--fps", "30", "--aspect", "1:1", "-o", out2)
+        m2 = probe(str(out2))
+        self.assertClose(m2["video"]["fps"], 30.0, 0.05)
+        self.assertFalse(m2["video"]["variable_frame_rate_suspected"])
+
+    def test_rotated_source_uses_display_orientation(self):
+        out = OUT / "rot_fit.mp4"
+        script("fit.py", self.rot, "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
+        self.assertEqual(m["video"]["rotation"], 0)
+
+    def test_fit_smooth_slow_motion_blend(self):
+        out = OUT / "slow.mp4"
+        script("fit.py", self.src, "--duration", "18", "--smooth", "blend", "--preset", "veryfast", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 18.0, 0.2)
+        self.assertClose(m["video"]["fps"], 30.0, 0.05, "frame rate preserved while slowing down")
+
+    def test_silence_removal(self):
+        gappy = OUT / "gappy.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", gappy)
+        data = json.loads(script("silence.py", gappy, "--list", "--json").stdout)
+        self.assertEqual(len(data["silences"]), 3)
+        self.assertNotIn("hint", data, "a hit needs no hint")
+        # a track with nothing under the threshold says what the floor is and which flag to change,
+        # instead of a bare "0 silences" that sends an agent off to raw ffmpeg (evals iteration 5, finding 1)
+        tone = OUT / "tone.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-t", "4", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", tone)
+        none = json.loads(script("silence.py", tone, "--list", "--json").stdout)
+        self.assertEqual(none["silences"], [])
+        self.assertIn("--threshold", none["hint"])
+        self.assertIn("mean level", none["hint"])
+        self.assertClose(data["removed_seconds"], 5.25, 0.3)
+        out = OUT / "tight.mp4"
+        edl = OUT / "keep.txt"
+        script("silence.py", gappy, "--preset", "veryfast", "--edl", edl, "-o", out)
+        self.assertClose(probe(str(out))["duration"], 6.75, 0.3)
+        self.assertEqual(len(edl.read_text().strip().splitlines()), 3)
+        # the EDL feeds cut.py --segments directly
+        segs = ",".join(edl.read_text().split())
+        out2 = OUT / "tight_via_cut.mp4"
+        script("cut.py", gappy, "--segments", segs, "--accurate", "--preset", "veryfast", "-o", out2)
+        self.assertClose(probe(str(out2))["duration"], 6.75, 0.4)
+
+    def test_silence_on_wav_input_keeps_pcm_not_forced_aac(self):
+        """silence.py's final ffmpeg command used to unconditionally append aac_args() (-c:a aac)
+        regardless of the output container. That's fine for .mp4/.m4a, but AAC cannot be muxed
+        into a .wav file -- so silence removal on any audio-only WAV input (a very ordinary case:
+        podcasts, voice memos, any --list workflow feeding straight into a WAV pipeline) crashed
+        ffmpeg outright, whether or not -o was given explicitly. Verify a WAV input still produces
+        a valid, playable WAV output (PCM), not a codec/container mismatch crash."""
+        wav_in = OUT / "silence_wav_in.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
+           "-t", "6", wav_in)
+        proc = script("silence.py", wav_in)
+        out = Path(proc.stdout.strip())
+        self.assertEqual(out.suffix, ".wav")
+        m = probe(str(out))
+        self.assertTrue(m["audio"]["codec"].startswith("pcm"), f"WAV output must stay PCM, got {m['audio']['codec']}")
+
+    def test_join_with_transition_normalises_mismatched_clips(self):
+        out = OUT / "joined.mp4"
+        # 720p 30fps stereo + rotated portrait + 640x360 mono clip without audio
+        silent = OUT / "silent.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "4", "-c:v", "libx264", "-preset", "veryfast", silent)
+        script("join.py", self.src, self.rot, silent, "--transition", "fadeblack", "--duration", "0.5", "--preset", "veryfast", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
+        self.assertClose(m["video"]["fps"], 30.0, 0.05)
+        self.assertEqual(m["audio"]["channels"], 2)
+        self.assertClose(m["duration"], 12 + 6 + 4 - 1.0, 0.3)
+        out2 = OUT / "joined_cut.mp4"
+        script("join.py", self.src, silent, "--transition", "none", "--preset", "veryfast", "-o", out2)
+        self.assertClose(probe(str(out2))["duration"], 16.0, 0.3)
+        script("join.py", self.src, expect_fail=True)
+
+    def test_join_two_or_more_audio_less_clips(self):
+        """Every no-audio clip gets a synthetic silent audio track added as an extra ffmpeg input (join.py
+        builds this itself, not this test's fixtures) -- `idx` must be this ffmpeg input's actual position
+        (n + how many synthetic inputs were already added), not `n + len(extra_inputs)` (the six argv tokens
+        each synthetic input contributes, not a count of inputs). With exactly one no-audio clip both counts
+        happen to agree; a real multi-camera join where every clip lacked audio is what caught the divergence
+        starting from the second one -- ffmpeg refused with "Invalid file index" naming an input far past the
+        real count, since the miscomputed index grew by 6 (not 1) per extra no-audio clip."""
+        silent_a = OUT / "silent_a.mp4"
+        silent_b = OUT / "silent_b.mp4"
+        silent_c = OUT / "silent_c.mp4"
+        for out, size in ((silent_a, "640x360"), (silent_b, "480x270"), (silent_c, "960x540")):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=25", "-t", "3", "-c:v", "libx264", "-preset", "veryfast", out)
+        out = OUT / "joined_all_silent.mp4"
+        script("join.py", silent_a, silent_b, silent_c, "--transition", "none", "--preset", "veryfast", "-o", out)
+        m = probe(str(out))
+        self.assertClose(m["duration"], 9.0, 0.3)
+        self.assertEqual(m["audio"]["channels"], 2, "every clip's missing track became silent stereo, not a dropped audio stream")
+        # mixed: audio-bearing clip first, then two without -- exercises the same off-by-more-than-one index
+        # for the second and third synthetic input regardless of which position the real audio clip sits in
+        out2 = OUT / "joined_mixed_silent.mp4"
+        script("join.py", self.src, silent_a, silent_b, "--transition", "none", "--preset", "veryfast", "-o", out2)
+        self.assertClose(probe(str(out2))["duration"], 12 + 3 + 3, 0.3)
+
+    def test_progress_and_fast_flags(self):
+        out = OUT / "prog.mp4"
+        proc = script("fit.py", self.src, "--duration", "6", "--fast", "--progress", "-o", out)
+        self.assertIn("%", proc.stderr)
+        self.assertIn("-preset veryfast", proc.stderr, "--fast overrides the preset")
+        self.assertClose(probe(str(out))["duration"], 6.0, 0.2)
+
+    # ---------------------------------------------------------------- v0.5: check / scenes / render
+    def test_codec_and_quality_resolve_in_one_place(self):
+        """1.8 (issue #189 B pre-shipped): --codec / --quality on every re-encoding tool, resolved by
+        encoder_args(). hevc on SDR is 8-bit BT.709 HEVC; prores needs a .mov; h264 refuses HDR;
+        --quality is the CRF; export keeps its presets; without --codec nothing changes."""
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import _common
+        finally:
+            sys.path.pop(0)
+        out = OUT / "codec_hevc.mp4"
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "hevc", "--quality", "30", "-o", out, "--fast", "--json", "--overwrite").stdout)
+        self.assertEqual(d["status"], "completed")
+        m = probe(str(out))
+        self.assertEqual(m["video"]["codec"], "hevc")
+        self.assertIn("yuv420p", m["video"].get("pix_fmt", "yuv420p"))
+        self.assertTrue(any("-crf 30" in c for c in d["commands"]), d["commands"])
+        # prores wants a .mov: .mp4 is refused before ffmpeg runs, .mov works
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "prores", "-o", OUT / "codec_prores.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn(".mov", d["error"]["hint"])
+        mov = OUT / "codec_prores.mov"
+        script("fit.py", self.src, "--width", "320", "--codec", "prores", "-o", mov, "--fast", "--json", "--overwrite")
+        self.assertEqual(probe(str(mov))["video"]["codec"], "prores")
+        # h264 cannot carry HDR; hevc keeps it
+        d = json.loads(script("fit.py", self.hdr, "--width", "320", "--codec", "h264", "-o", OUT / "codec_hdr_h264.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("to-sdr", d["error"]["hint"])
+        hdr_out = OUT / "codec_hdr_hevc.mp4"
+        script("fit.py", self.hdr, "--width", "320", "--codec", "hevc", "-o", hdr_out, "--fast", "--json", "--overwrite")
+        self.assertTrue(probe(str(hdr_out))["video"]["hdr"])
+        # av1 when the build has an encoder, a missing_tool refusal otherwise
+        av1 = OUT / "codec_av1.mp4"
+        proc = script("fit.py", self.src, "--width", "320", "--codec", "av1", "-o", av1, "--fast", "--json", "--overwrite", expect_fail=not (_common.ffmpeg_encoders() & {"libsvtav1", "libaom-av1"}))
+        d = json.loads(proc.stdout)
+        if d["status"] == "completed":
+            self.assertEqual(probe(str(av1))["video"]["codec"], "av1")
+        else:
+            self.assertEqual(d["error"]["kind"], "missing_tool")
+        # --quality bounds follow the codec; export refuses --codec
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--quality", "60", "-o", out, "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        proc = script("export.py", self.src, "--preset", "x", "--codec", "hevc", "-o", OUT / "codec_export.mp4", "--json", expect_fail=True)
+        self.assertIn("--codec", proc.stderr)  # argparse: the preset decides, the flag is not offered (review 7)
+        self.assertNotIn("--codec", script("export.py", "--help").stdout)
+        # review 7: prores without -o would have failed inside ffmpeg (mp4 cannot hold it)
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "prores", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        self.assertIn("-o NAME.mov", d["error"]["hint"])
+        # review 7: cut's lossless path used to keep the source codec under --codec
+        cutout = OUT / "codec_cut.mp4"
+        script("cut.py", self.src, "--start", "0", "--end", "2", "--codec", "hevc", "-o", cutout, "--fast", "--json", "--overwrite")
+        self.assertEqual(probe(str(cutout))["video"]["codec"], "hevc")
+        # review 7: waveform.py built its own x264 line and ignored the flag
+        wf = OUT / "codec_wave.mp4"
+        script("waveform.py", self.src, "--codec", "hevc", "-o", wf, "--fast", "--json", "--overwrite")  # source.mp4: c_tone.wav is a test_contract fixture
+        self.assertEqual(probe(str(wf))["video"]["codec"], "hevc")
+        # review 7: the av1 bound is named in the --crf message, and HDR hevc --quality 51 does not overflow
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "av1", "--crf", "70", "-o", out, "--json", expect_fail=True).stdout)
+        self.assertIn("63", d["error"]["message"])
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import _common as c
+        finally:
+            sys.path.pop(0)
+        args = c.encoder_args("hevc", 51, "medium", {"video": {"hdr": True, "color_transfer": "smpte2084"}})
+        self.assertEqual(args[args.index("-crf") + 1], "51")
+        self.assertNotIn("-colorspace", c.encoder_args("hevc", 18, "medium", None, keep_bt709=False))
+        # the contract lists each --codec encoder once per tool
+        spec = json.loads(script("_contract.py", "--json").stdout)
+        fit_caps = [o["capability"] for o in next(t for t in spec["tools"] if t["name"] == "fit")["capabilities"]["optional"]]
+        self.assertEqual(len(fit_caps), len(set(fit_caps)), fit_caps)
+        self.assertNotIn("codec", next(t for t in spec["tools"] if t["name"] == "export")["input_schema"]["properties"])
+        # no --codec: the old default line, byte for byte
+        d = json.loads(script("fit.py", self.src, "--width", "320", "-o", out, "--fast", "--json", "--overwrite").stdout)
+        self.assertTrue(any("libx264" in c for c in d["commands"]))
+        # every tool that declares --crf now advertises the two flags
+        for name in ("cut", "caption", "overlay", "color", "join", "proxy"):
+            h = script(f"{name}.py", "--help").stdout
+            self.assertIn("--codec", h, name)
+            self.assertIn("--quality", h, name)
+
+    def test_join_width_keeps_aspect(self):
+        out = OUT / "join_w.mp4"
+        script("join.py", self.src, self.src, "--transition", "none", "--width", "640", "--fast", "-o", out)
+        m = probe(str(out))["video"]
+        self.assertEqual((m["width"], m["height"]), (640, 360))
+
+    def test_fit_blur_keeps_the_whole_picture_on_a_blurred_border(self):
+        """--fit blur: the target aspect, nothing cropped, borders that carry a dimmed copy of the
+        picture rather than black, and a centre band that is still the scaled source."""
+        out = OUT / "fit_blur.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "blur",
+               "--width", "360", "--fast", "-o", out)
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
+        top_avg, top_spread = self._region_stats(out, "iw:80:0:0")
+        self.assertGreater(top_avg, 10, f"blurred border is black: {top_avg}")
+        self.assertGreater(top_spread, 8, f"blurred border is flat: {top_spread}")
+        # the centre band is the fitted source: 360x202 sits at y=(640-202)/2
+        ref = OUT / "fit_blur_ref.mp4"
+        script("fit.py", self.src, "--duration", "3", "--width", "360", "--fast", "-o", ref)
+        mid_avg, _ = self._region_stats(out, "iw:180:0:230")
+        ref_avg, _ = self._region_stats(ref, "iw:180:0:10")
+        self.assertClose(mid_avg, ref_avg, 12, "the centre of a blur fit is the scaled source")
+        # the darkening is an eq on code values: a -15 % perceptual dim on SDR, something else on
+        # PQ/HLG, so an HDR source keeps its background at its own levels (review 12)
+        sdr_plan = json.loads(script("fit.py", self.src, "--aspect", "9:16", "--fit", "blur",
+                                     "--dry-run", "--json", "-o", str(OUT / "blur_sdr.mp4")).stdout)
+        hdr_plan = json.loads(script("fit.py", self.hdr, "--aspect", "9:16", "--fit", "blur",
+                                     "--dry-run", "--json", "-o", str(OUT / "blur_hdr.mp4")).stdout)
+        self.assertTrue(any("eq=brightness" in c for c in sdr_plan["commands"]))
+        self.assertTrue(any("boxblur" in c for c in hdr_plan["commands"]))
+        self.assertFalse(any("eq=brightness" in c for c in hdr_plan["commands"]),
+                         "an HDR source must not be dimmed by an SDR-shaped eq")
+
+    def test_join_audio_only_inputs(self):
+        """WAV + M4A + MP3 of different rates and channel counts join as audio; video containers and mixed inputs are refused."""
+        st = OUT / "j_stereo44.m4a"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100", "-t", "3", "-ac", "2", "-c:a", "aac", st)
+        mp3 = OUT / "j_mono.mp3"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=500:sample_rate=48000", "-t", "3", "-c:a", "libmp3lame", mp3)
+        mic_dur = probe(str(self.mic))["duration"]
+        # crossfade -> flac: rate of the first clip, widest layout
+        out = OUT / "j_audio.flac"
+        data = json.loads(script("join.py", self.mic, st, mp3, "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "audio")
+        self.assertEqual((data["sample_rate"], data["channels"]), (48000, 2))
+        self.assertIsNone(data["probe"]["video"])
+        self.assertEqual(data["probe"]["audio"]["codec"], "flac")
+        self.assertClose(data["probe"]["duration"], mic_dur + 3 + 3 - 2 * 0.5, 0.15)
+        # butt join -> wav, explicit rate and channels
+        out2 = OUT / "j_audio.wav"
+        data = json.loads(script("join.py", st, mp3, "--transition", "none", "--sample-rate", "44100", "--channels", "1", "-o", out2, "--json").stdout)
+        self.assertEqual(self._samples(out2)[:2], ("pcm_s16le", 44100))
+        self.assertEqual(data["probe"]["audio"]["channels"], 1)
+        self.assertClose(data["probe"]["duration"], 6.0, 0.1)
+        # refusals are input errors, before ffmpeg runs
+        proc = script("join.py", self.mic, mp3, "-o", OUT / "j_audio.mp4", "--json", expect_fail=True)
+        self.assertIn("audio extension", json.loads(proc.stdout)["error"]["message"])
+        self.assertNotIn("ffmpeg ", proc.stderr.replace("/usr/bin/", ""), "refused before ffmpeg ran")
+        proc = script("join.py", self.src, self.mic, "-o", OUT / "j_mixed.mp4", "--json", expect_fail=True)
+        self.assertIn("has no video stream", proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        # dry-run plans the audio join and writes nothing
+        planned = OUT / "j_dry.wav"
+        data = json.loads(script("join.py", self.mic, mp3, "-o", planned, "--dry-run", "--json").stdout)
+        self.assertTrue(data["dry_run"])
+        self.assertIn("acrossfade", data["commands"][0])
+        self.assertFalse(planned.exists())
+
+    def test_cut_audio_precision_is_measured(self):
+        """Stream copy is packet-accurate, --accurate is sample-exact on PCM/FLAC, lossy outputs say codec_frame."""
+        start, end = 1.2345, 2.3456
+        want = round((end - start) * 48000)  # 53333 samples
+        # WAV copy: packet boundary, reported as such, within a few ms
+        cw = OUT / "prec_copy.wav"
+        data = json.loads(script("cut.py", self.mic, "--start", str(start), "--end", str(end), "-o", cw, "--json").stdout)
+        self.assertEqual(data["precision"], "packet")
+        self.assertFalse(data["reencoded"])
+        self.assertLess(abs(data["duration_error_ms"]), 50)
+        self.assertEqual(self._samples(cw)[0], "pcm_s16le")
+        # WAV --accurate: exactly the requested number of samples
+        ca = OUT / "prec_acc.wav"
+        data = json.loads(script("cut.py", self.mic, "--start", str(start), "--end", str(end), "--accurate", "-o", ca, "--json").stdout)
+        self.assertEqual(data["precision"], "sample")
+        self.assertEqual(self._samples(ca), ("pcm_s16le", 48000, want))
+        self.assertLess(abs(data["duration_error_ms"]), 0.05)
+        # 44.1 kHz FLAC, --accurate: exact at its own rate
+        flac = OUT / "prec_44.flac"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100", "-t", "3", "-c:a", "flac", flac)
+        fa = OUT / "prec_44_cut.flac"
+        data = json.loads(script("cut.py", flac, "--start", "0.5", "--end", "1.7", "--accurate", "-o", fa, "--json").stdout)
+        self.assertEqual(data["precision"], "sample")
+        self.assertEqual(self._samples(fa), ("flac", 44100, round(1.2 * 44100)))
+        # compressed source (AAC in mp4) decoded to PCM with --accurate: exact; to AAC: codec_frame, not "sample"
+        ma = OUT / "prec_from_aac.wav"
+        data = json.loads(script("cut.py", self.src, "--start", str(start), "--end", str(end), "--accurate", "-o", ma, "--json").stdout)
+        self.assertEqual(data["precision"], "sample")
+        self.assertEqual(self._samples(ma)[2], want)
+        m4a = OUT / "prec_to_aac.m4a"
+        data = json.loads(script("cut.py", self.src, "--start", str(start), "--end", str(end), "--accurate", "-o", m4a, "--json").stdout)
+        self.assertEqual(data["precision"], "codec_frame")
+        self.assertEqual(self._samples(m4a)[0], "aac")
+        # video re-encode keeps reporting frame precision; a plain copy keeps packet
+        mp4 = OUT / "prec_video.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "1", "--end", "3", "--accurate", "--preset", "ultrafast", "-o", mp4, "--json").stdout)
+        self.assertEqual(data["precision"], "frame")
+        self.assertIsNotNone(data["probe"]["video"])
+
+    def test_crf_warns_once_as_a_deprecated_alias_of_quality(self):
+        """docs/contract.md, "Deprecation policy" step 1: the old spelling keeps working and says
+        what replaces it. argparse's own default (18) must stay silent."""
+        quiet = script("cut.py", self.src, "--start", "0", "--end", "1", "--dry-run", "-o", str(OUT / "crf_default.mp4"))
+        self.assertNotIn("--crf is deprecated", quiet.stderr)
+        warned = script("cut.py", self.src, "--start", "0", "--end", "1", "--crf", "20", "--dry-run", "-o", str(OUT / "crf_explicit.mp4"))
+        self.assertIn("--crf is deprecated", warned.stderr)
+        self.assertIn("--quality", warned.stderr)
+        helptext = " ".join(script("cut.py", "--help").stdout.split())
+        self.assertIn("(deprecated: use --quality)", helptext)
+
+    def test_json_brief_is_a_shorter_json_with_the_same_verdict(self):
+        """1.11.0 token diet: `--json-brief` is additive -- the same success document with the
+        probe summarised, the command lines counted and the per-step verification list dropped.
+        `--json` itself must be untouched, so both are run on the same edit and compared."""
+        full = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", str(OUT / "brief_full.mp4"), "--json").stdout)
+        brief = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", str(OUT / "brief_short.mp4"), "--json-brief").stdout)
+        self.assertEqual(set(full) - set(brief), {"probe", "verification"}, "only the bulky keys go")
+        self.assertEqual(set(brief) - set(full), {"summary"})
+        self.assertEqual(brief["status"], "completed")
+        self.assertEqual(brief["dry_run"], full["dry_run"])
+        self.assertEqual(brief["verified"], full["verified"])
+        self.assertNotIn("probe", brief)
+        self.assertNotIn("verification", brief)
+        self.assertEqual(brief["commands"], len(full["commands"]), "commands is the count, not the list")
+        summary = brief["summary"]
+        self.assertEqual(summary["width"], full["probe"]["video"]["width"])
+        self.assertEqual(summary["height"], full["probe"]["video"]["height"])
+        self.assertEqual(summary["vcodec"], full["probe"]["video"]["codec"])
+        self.assertEqual(summary["acodec"], full["probe"]["audio"]["codec"])
+        self.assertAlmostEqual(summary["duration_s"], full["probe"]["duration"], places=2)
+        for key in ("precision", "reencoded", "expected_duration"):
+            self.assertEqual(brief[key], full[key], f"{key}: the tool's own keys survive the diet")
+        self.assertLess(len(json.dumps(brief)), len(json.dumps(full)) / 2, "the point of the flag is fewer bytes")
+
+    def test_json_brief_failure_is_the_usual_failure_document(self):
+        """A failure must not be trimmed: die() prints the same document with or without the flag,
+        so a caller never loses the error kind, message or hint by asking for brevity."""
+        proc = script("cut.py", str(OUT / "does_not_exist.mp4"), "--start", "0", "--end", "1", "--json-brief", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed")
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertTrue(doc["error"]["message"])
+        self.assertNotIn("summary", doc)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

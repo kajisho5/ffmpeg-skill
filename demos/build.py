@@ -1260,7 +1260,7 @@ BY_NAME = {d.name: d for d in DEMOS}
 
 # Tools whose whole output is a table, a JSON document or an HTML file: there is no before/after
 # picture to render, so they are listed in the gallery's Inspection section with the command
-# instead. tests/test_all.py reads this list -- every other script under scripts/ must appear in
+# instead. tests/test_orchestration.py reads this list -- every other script under scripts/ must appear in
 # at least one demo's command, so a tool cannot quietly arrive with nothing to look at.
 INSPECTION = [
     ("probe.py", "python3 scripts/probe.py demos/out/render_project_after.mp4 --compact",

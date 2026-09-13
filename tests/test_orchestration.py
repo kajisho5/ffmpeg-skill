@@ -1,0 +1,908 @@
+#!/usr/bin/env python3
+"""End-to-end tests for render, batch and multicam, plus the toolkit-wide invariants every script has to satisfy.
+
+    python3 tests/test_orchestration.py       # this group alone
+    python3 tests/test_all.py            # every group
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, script, sh  # noqa: E402
+from _common import font_for_script, probe, shell_quote  # noqa: E402
+
+
+class OrchestrationTests(MediaFixtures):
+    """Render, batch and multicam, plus the toolkit-wide invariants every script has to satisfy."""
+
+    def test_zero_or_negative_fps_refused_across_every_cfr_script(self):
+        """--fps flows straight into cfr_args(meta, args.fps) / a `fps or source_fps or 30.0`
+        fallback in several scripts without ever being validated first. `0` is falsy in Python, so
+        `--fps 0` used to be silently discarded and fall back to the source's own fps (or 30) --
+        the tool claims to force a specific constant frame rate and quietly does something else
+        instead. A negative value is truthy, so `--fps -5` passed straight through to ffmpeg's
+        `-r`/`fps=` filter option, which rejects it -- an unhelpful ffmpeg-level crash instead of a
+        clear error naming --fps. Verify every affected script now refuses both up front."""
+        for name, extra in (
+            ("crop.py", ["--x", "0", "--y", "0", "--width", "32", "--height", "32"]),
+            ("denoise.py", []),
+            ("redact.py", ["--x", "0", "--y", "0", "--width", "32", "--height", "32"]),
+            ("straighten.py", ["--degrees", "3"]),
+            ("sphere.py", []),
+            ("join.py", []),  # fps is validated before the "give >= 2 clips" check, one input is enough
+            ("multicam.py", []),  # fps is validated before the "give >= 2 inputs" check too
+        ):
+            for bad in ("0", "-5"):
+                proc = script(name, self.src, *extra, "--fps", bad, expect_fail=True)
+                self.assertIn("--fps", proc.stderr, f"{name} --fps {bad} should name --fps in its error")
+
+    def test_a_brand_file_without_a_font_does_not_switch_font_by_script_off(self):
+        """BRAND_DEFAULTS always supplies a font, so the merged brand document cannot say whether
+        the CALLER chose one: a brand.json that only sets colours must still resolve a font by
+        script (and still refuse when nothing covers it)."""
+        if _no_fontconfig():
+            self.skipTest("no fc-list on this machine")
+        if font_for_script("ko") is None:
+            self.skipTest("this machine has no font covering ko")
+        brand = OUT / "brand_no_font.json"
+        brand.write_text(json.dumps({"colors": {"text": "FFFFFF"}}), encoding="utf-8")
+        cues = OUT / "brand_ko.txt"
+        cues.write_text("0:00-0:03 안녕하세요\n", encoding="utf-8")
+        proc = script("caption.py", self._small(), "--text", cues, "--brand", brand,
+                      "--animate", "none", "--fast", "-o", OUT / "brand_ko.mp4")
+        self.assertRegex(proc.stderr, r"(?m)^font: .+? \(covers ko\)")
+        self.assertNotIn("does not cover", proc.stderr)
+        stated = OUT / "brand_with_font.json"
+        stated.write_text(json.dumps({"font": "DejaVu Sans"}), encoding="utf-8")
+        proc2 = script("caption.py", self._small(), "--text", cues, "--brand", stated,
+                       "--animate", "none", "--fast", "-o", OUT / "brand_ko2.mp4")
+        if shutil.which("fc-list"):
+            self.assertIn("does not cover", proc2.stderr, "a font the brand file itself states is kept")
+        else:
+            self.assertNotIn("does not cover", proc2.stderr, "no fontconfig: coverage is unknown, nothing is claimed")
+        self.assertNotIn("(covers ko)", proc2.stderr)
+
+    def test_render_audio_stems_and_chapters_stage(self):
+        """1.13: stems are a vocabulary over the flags that already exist, and the chapters stage
+        puts the markers in the file that ships (metadata.py, streams copied)."""
+        proj = OUT / "project_stems.json"
+        proj.write_text(json.dumps({
+            "output": "render_stems.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "audio": {"music": "lavmic.wav", "effects": "lavmic.wav", "duck": True, "voice": "light",
+                      "stems": {"dialogue": -2, "music": -18, "effects": -24}},
+            "export": {"preset": "youtube", "normalize": False},
+            "chapters": [{"at": "0:00", "title": "Intro"}, {"at": 3, "title": "Body"}],
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        graph = next(c for c in data["commands"] if "sidechaincompress" in c)
+        self.assertIn("volume=-2dB", graph, "stems.dialogue is the main track's gain")
+        self.assertIn("volume=-18dB", graph, "stems.music is the bed's level")
+        self.assertIn("volume=-24dB", graph, "stems.effects is the effects bed's level")
+        self.assertIn("highpass=f=80,acompressor=threshold=-18dB:ratio=2", graph, '"voice": "light" picks the light chain')
+        # the chapters stage is planned like every other stage: the dry run names the same
+        # metadata.py command against the same delivered file, and lists the stage. A plan that
+        # hides a stage is a plan the user cannot approve.
+        planned = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        real = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertIn("chapters", planned["stages"])
+        self.assertEqual(planned["stages"], real["stages"], "the plan lists the stages the run does")
+        for doc in (planned, real):
+            chapter_cmds = [c for c in doc["commands"] if "-map_chapters 1" in c]
+            self.assertEqual(len(chapter_cmds), 1, doc["stages"])
+            self.assertIn(str(OUT / "render_stems.mp4"), chapter_cmds[0], "planned against the delivered file")
+        data = real
+        written = probe(str(OUT / "render_stems.mp4")).get("chapters") or []
+        self.assertEqual([c["title"] for c in written], ["Intro", "Body"])
+        self.assertClose(written[1]["start"], 3.0, 0.05)
+        # a chapters file path works the same way
+        proj2 = OUT / "project_chapters_file.json"
+        (OUT / "render_chapters.txt").write_text("0:00 One\n0:05 Two\n", encoding="utf-8")
+        proj2.write_text(json.dumps({
+            "output": "render_chapters.mp4", "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "youtube", "normalize": False}, "chapters": "render_chapters.txt",
+        }), encoding="utf-8")
+        script("render.py", proj2, "--fast", "--json")
+        self.assertEqual(len(probe(str(OUT / "render_chapters.mp4")).get("chapters") or []), 2)
+        # a stems level with no effects file, and a misspelled stem, are refusals by name
+        proj3 = OUT / "project_stems_bad.json"
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+                                     "audio": {"stems": {"effects": -20}}}), encoding="utf-8")
+        doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("effects", doc["error"]["message"])
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+                                     "audio": {"stems": {"voice": -20}}}), encoding="utf-8")
+        doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
+        self.assertIn("dialogue", doc["error"]["message"], "the nearest valid stem is named")
+        # a music level with no music file is refused the same way an effects level is
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+                                     "audio": {"stems": {"music": -18}}}), encoding="utf-8")
+        doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("music", doc["error"]["message"])
+
+    def test_render_chapters_are_validated_before_any_stage_runs(self):
+        """1.13: every other project error is raised before the first ffmpeg call. A bad chapter
+        entry used to surface inside the last stage, after place_output had already delivered an
+        unchaptered file and reported the render as done."""
+        out = OUT / "render_bad_chapters.mp4"
+        proj = OUT / "project_bad_chapters.json"
+        for chapters, needle in (([{"title": "A"}], "at"), ([{"at": "0:00"}], "title"),
+                                 ("no_such_chapters.txt", "not found")):
+            if out.exists():
+                out.unlink()
+            proj.write_text(json.dumps({"output": "render_bad_chapters.mp4", "clips": [{"src": "source.mp4"}],
+                                        "export": {"preset": "youtube", "normalize": False},
+                                        "chapters": chapters}), encoding="utf-8")
+            doc = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
+            self.assertEqual(doc["error"]["kind"], "input", chapters)
+            self.assertIn(needle, doc["error"]["message"], chapters)
+            self.assertEqual(doc.get("commands") or [], [], "refused before the first ffmpeg call")
+            self.assertFalse(out.exists(), "no half-done delivery is left behind")
+
+    def test_shell_quote_quotes_backslashes(self):
+        """CodeRabbit (#101): fixing the invalid-escape-sequence SyntaxWarning in shell_quote()'s
+        character set (a stray `\\` before an already-unescaped `;`) accidentally dropped a real,
+        load-bearing backslash from the quoting trigger set -- the original `\\;` literal, due to
+        Python keeping an unrecognised escape's backslash, actually matched on `\\` OR `;`, not just
+        `;`. Without a backslash trigger, a Windows path like `C:\\media\\clip.mp4` would render
+        unquoted in --dry-run/--json command output. Assert the fixed version still quotes it."""
+        self.assertEqual(shell_quote("C:\\media\\clip.mp4"), "'C:\\media\\clip.mp4'")
+        self.assertEqual(shell_quote("plain.mp4"), "plain.mp4")
+        self.assertEqual(shell_quote("has;semicolon"), "'has;semicolon'")
+
+    def test_dry_run_and_json_on_every_script(self):
+        cases = [
+            ("cut.py", [self.src, "--start", "1", "--end", "3"]),
+            ("fit.py", [self.src, "--duration", "6"]),
+            ("caption.py", [self.src, "--srt", OUT / "cues.srt"]),
+            ("overlay.py", [self.src, "--image", self.logo]),
+            ("export.py", [self.src, "--preset", "x"]),
+            ("color.py", [self.src, "--retag", "bt709"]),
+            ("audio.py", [self.src, "--denoise"]),
+            ("join.py", [self.src, self.src]),
+        ]
+        if not (OUT / "cues.srt").exists():
+            script("caption.py", "--text", self.cues, "--write-srt", OUT / "cues.srt")
+        for name, argv in cases:
+            out = OUT / f"dry_{name}.mp4"
+            proc = script(name, *argv, "-o", out, "--dry-run", "--json")
+            self.assertFalse(out.exists(), f"{name} wrote a file in --dry-run")
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["dry_run"], name)
+            self.assertTrue(data["commands"] and all("ffmpeg" in c for c in data["commands"]), name)
+            self.assertEqual(data["output"], str(out), name)
+        # --json on a real run includes the probe of the output
+        out = OUT / "json_cut.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", out, "--json").stdout)
+        self.assertClose(data["probe"]["duration"], 2.0, 0.6)
+
+    def test_multicam_offsets_and_switch(self):
+        camB = OUT / "camB.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.5", "-i", self.src, "-vf", "hue=h=90", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", camB)
+        data = json.loads(script("multicam.py", self.src, camB, self.mic, "--offsets-only", "--json").stdout)
+        self.assertClose(data["offsets_seconds"][1], 1.5, 0.05)
+        self.assertClose(data["offsets_seconds"][2], 2.5, 0.05)
+        out = OUT / "mc.mp4"
+        data = json.loads(script("multicam.py", self.src, camB, self.mic, "--audio", "2", "--switch", "0-3:0,3-6:1,6-9:0", "--fast", "-o", out, "--json").stdout)
+        self.assertEqual(len(data["cuts"]), 4, "three named ranges plus the gap-fill to the end")
+        m = probe(str(out))
+        self.assertClose(m["duration"], 12.0, 0.2)
+        self.assertEqual(m["audio"]["channels"], 2)
+        # camB is hue-shifted: a frame at 4.5 s (camera 1) must differ from one at 2 s (camera 0)
+        script("look.py", out, "--at", "2", "--at", "4.5", "-o", OUT / "mcf")
+        self.assertNotEqual((OUT / "mcf_2.000s.png").read_bytes()[100:2000], (OUT / "mcf_4.500s.png").read_bytes()[100:2000])
+        auto = OUT / "mc_auto.mp4"
+        script("multicam.py", self.src, camB, "--auto", "4", "--fast", "-o", auto)
+        self.assertClose(probe(str(auto))["duration"], 12.0, 0.2)
+        script("multicam.py", self.src, camB, "--switch", "0-3:5", expect_fail=True)
+
+    def test_multicam_fix_drift_trims_before_resample_not_after(self):
+        """--fix-drift's audio path computes a_start (an atrim start point) in the source's own
+        pre-correction time axis, but the filter chain used to apply asetrate/aresample (the drift
+        correction) *before* atrim -- so the trim landed on the already-rescaled timeline instead
+        of the raw one it was computed for, same bug class as sync.py already avoids by seeking
+        with -ss (an input-level, pre-filter operation) before its own drift_af. Build a camera
+        whose audio started before the reference (offsets[a] < 0, so a_start > 0) and also drifts
+        (ratios[a] != 1), then check the constructed [<audio input>:a] filter chain: atrim=start=
+        must appear before asetrate, mirroring sync.py's ordering."""
+        base = OUT / "mc_drift_base.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000", "-t", "200", "-c:a", "pcm_s16le", base)
+        ref_audio = OUT / "mc_drift_ref.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.2", "-i", base, "-c:a", "pcm_s16le", ref_audio)
+        camB = OUT / "mc_drift_camB.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", base, "-af", "asetrate=48000*0.9995,aresample=48000", "-c:a", "pcm_s16le", camB)
+        cam0 = OUT / "mc_drift_cam0.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=15", "-i", ref_audio, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", cam0)
+
+        data = json.loads(script("multicam.py", cam0, camB, "--audio", "1", "--switch", "0-198:0", "--fix-drift", "--max-offset", "5", "--fast", "-o", OUT / "mc_drift_out.mp4", "--json").stdout)
+        self.assertLess(data["offsets_seconds"][1], 0, "camera 1 must have started before the reference for a_start > 0 to be exercised")
+        self.assertNotEqual(data["drift_ppm"][1], 0.0, "drift must actually be detected for asetrate/aresample to be in the chain")
+        audio_chain = data["commands"][0].split("[1:a]", 1)[1]
+        self.assertLess(audio_chain.index("atrim=start="), audio_chain.index("asetrate="),
+                         "atrim=start= (in the pre-correction time axis) must run before asetrate/aresample rescale that axis")
+
+    def test_multicam_negative_auto_interval_refused_not_infinite_loop(self):
+        """--auto builds cuts with `while t < ref_dur: ... t += args.auto` -- `elif args.auto:` is
+        only false for exactly 0, so a negative value used to pass that check and enter the loop
+        with t decreasing every iteration, meaning t < ref_dur never becomes false: the process
+        hangs forever instead of erroring on invalid input. Must be refused up front instead."""
+        script("multicam.py", self.src, self.src, "--auto", "-1", "--fast", "-o", OUT / "mc_auto_neg.mp4", expect_fail=True)
+
+    def test_multicam_warns_on_a_camera_with_no_shared_audio_event(self):
+        """A camera whose audio has nothing in common with the reference must not align silently."""
+        unrelated = OUT / "camC_unrelated.mp4"
+        # a flat-envelope tone: nothing for the envelope-based cross-correlation to lock onto,
+        # unlike the reference's gated tones -- unrelated in the way a different room's constant hum would be
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+           "-f", "lavfi", "-i", "sine=frequency=233:sample_rate=48000", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", unrelated)
+        proc = script("multicam.py", self.src, unrelated, "--offsets-only", "--json")
+        data = json.loads(proc.stdout)
+        self.assertLess(data["confidence"][1], 0.1)
+        self.assertIn("low correlation confidence", proc.stderr)
+
+    def test_render_export_normalize_forwards_the_flag(self):
+        proj = OUT / "project_normalize.json"
+        proj.write_text(json.dumps({
+            "output": "render_normalize.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "x", "normalize": True},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertTrue(data["check"]["ok"], data["check"])
+        rows = {r["check"]: r["status"] for r in data["check"]["checks"]}
+        self.assertEqual(rows["loudness"], "PASS", "the -9 LUFS source (whole clip: a 2 s slice happens to sit at -13 LUFS) only passes when export ran --normalize")
+        # 1.9: a platform preset with no loudness stage normalises by default; false opts out
+        proj.write_text(json.dumps({
+            "output": "render_normalize_default.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "x"},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "PASS")
+        proj.write_text(json.dumps({
+            "output": "render_normalize_off.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "x", "normalize": False},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
+
+    def test_render_project(self):
+        proj = OUT / "project.json"
+        proj.write_text(json.dumps({
+            "output": "render_final.mp4",
+            "frame": {"aspect": "9:16", "width": 720, "fps": 30},
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:05"}, {"src": "source.mp4", "in": 6, "out": 10, "speed": 1.25}],
+            "transition": {"type": "fade", "duration": 0.5},
+            "captions": {"text": "cues.txt", "animate": "pop", "karaoke": True, "size": 26},
+            "overlays": [{"text": "render test", "position": "top-left", "start": 0.5, "end": 3, "fade": 0.3, "box": True}],
+            "audio": {"music": "long_ref.wav", "music_volume": -20, "duck": True, "fade_out": 1},
+            "loudness": {"lufs": -14, "tp": -1},
+            "export": {"preset": "reels"},
+            "check": {"platform": "reels"},
+        }), encoding="utf-8")
+        if not (OUT / "cues.txt").exists():
+            (OUT / "cues.txt").write_text("0:00-0:03 Hello world\n", encoding="utf-8")
+        (OUT / "render_final.mp4").unlink(missing_ok=True)
+        plan = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        self.assertTrue(plan["dry_run"])
+        self.assertFalse((OUT / "render_final.mp4").exists())
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertEqual(data["stages"], ["clips", "join", "fit", "captions", "overlays", "audio", "loudness", "export", "check"])
+        self.assertTrue(data["check"]["ok"], data["check"])
+        m = probe(str(OUT / "render_final.mp4"))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 1920))
+        self.assertClose(m["duration"], 4 + 3.2 - 0.5, 0.4)
+        self.assertEqual(list(OUT.glob("render_final_work*")), [], "work dir removed when not kept")
+        init = OUT / "init.json"
+        script("render.py", "--init", init)
+        self.assertIn("clips", json.loads(init.read_text()))
+        # --stop-after keeps the intermediate
+        out = json.loads(script("render.py", proj, "--fast", "--stop-after", "join", "--work", OUT / "rw", "--json").stdout)
+        self.assertEqual(out["stages"], ["clips", "join"])
+        self.assertTrue(Path(out["output"]).exists())
+
+    def test_render_every_stage_flag_and_every_refusal(self):
+        """render.py's stage branches that test_render_project does not take (silence, captions
+        from srt/ass, graphics, image and logo overlays, audio replace/loop/stereo/mono/downmix,
+        export fit/crf, brand forwarding, the no-export copy path) and its refusals (no project,
+        unreadable project, empty clips, captions/graphics/overlays without their required key,
+        a child script failing) were untested (#147). --dry-run drives every argv-building branch
+        without encoding; the copy path and the child failure run for real on a 2 s clip."""
+        srt = OUT / "render_full.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello\n\n", encoding="utf-8")
+        ass = OUT / "render_full.ass"
+        logo = OUT / "render_full_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1", "-frames:v", "1", logo)
+        brand = OUT / "render_full_brand.json"
+        brand.write_text(json.dumps({"logo": logo.name, "logo_position": "top-right", "colors": {"primary": "FF6A00", "text": "FFFFFF"}}), encoding="utf-8")
+        full = {
+            "output": "render_full.mp4",
+            "brand": brand.name,
+            "clips": [{"src": "source.mp4", "in": 0, "out": 2}, {"src": "source.mp4", "in": 2, "out": 4}],
+            "frame": {"width": 640, "height": 360, "fps": 25},
+            "fit": {"duration": 3.5, "method": "trim"},
+            "captions": {"srt": srt.name, "font": "DejaVu Sans", "position": "top", "bold": True, "box": True},
+            "graphics": [{"template": "lower-third", "name": "Ada", "title": "Analyst", "start": 0, "end": 2},
+                         {"template": "title", "title": "T", "subtitle": "S", "start": 0, "end": 1, "position": "top-left"}],
+            "overlays": [{"image": logo.name, "position": "bottom-right", "opacity": 0.5, "scale": 80},
+                         {"logo": True, "start": 0, "end": 1},
+                         {"text": "txt", "font_size": 24, "margin": 12, "box": True}],
+            "audio": {"replace": "long_ref.wav", "music_volume": -12, "gain": 1, "music_loop": True, "stereo": True, "denoise": True},
+            "loudness": {"lufs": -16},
+            "export": {"preset": "youtube", "fit": "pad", "crf": 20},
+        }
+        proj = OUT / "render_full.json"
+        proj.write_text(json.dumps(full), encoding="utf-8")
+        proc = script("render.py", proj, "--dry-run", "--json")
+        plan = json.loads(proc.stdout)
+        self.assertEqual(plan["stages"], ["clips", "join", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export"])
+        forwarded = "\n".join(l for l in proc.stderr.splitlines() if l.startswith("→ "))  # render's own child invocations
+        for needle in ("--srt", "--template lower-third", "--image", "--logo", "--replace", "--music-loop", "--fit pad --crf 20", "--brand"):
+            self.assertIn(needle, forwarded, f"{needle} not forwarded:\n{forwarded}")
+        for stage in ("fit", "captions", "graphics", "overlays", "audio", "loudness"):
+            out = json.loads(script("render.py", proj, "--dry-run", "--stop-after", stage, "--json").stdout)
+            self.assertEqual(out["stages"][-1], stage)
+        # single uncut clip (so silence.py can analyse a real file under --dry-run), silence stage,
+        # captions from .ass, mono/downmix/duck audio, voice flag: the other branches of the same tables
+        alt = dict(full, clips=[{"src": "source.mp4"}], silence={"threshold": -40, "min_silence": 0.4, "margin": 0.1},
+                   captions={"ass": ass.name}, audio={"music": "long_ref.wav", "mono": True, "downmix": True, "duck": True, "voice": True, "duck_amount": 8}, graphics=[], overlays=[])
+        ass.write_text("[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,hi\n", encoding="utf-8")
+        (OUT / "render_full_alt.json").write_text(json.dumps(alt), encoding="utf-8")
+        proc = script("render.py", OUT / "render_full_alt.json", "--dry-run", "--json")
+        self.assertEqual(json.loads(proc.stdout)["stages"], ["clips", "silence", "fit", "captions", "audio", "loudness", "export"])
+        forwarded = "\n".join(l for l in proc.stderr.splitlines() if l.startswith("→ "))
+        for needle in ("--ass", "--min-silence 0.4", "--mono", "--downmix", "--duck-amount 8", "--voice"):
+            self.assertIn(needle, forwarded, f"{needle} not forwarded:\n{forwarded}")
+        out = json.loads(script("render.py", OUT / "render_full_alt.json", "--dry-run", "--stop-after", "silence", "--json").stdout)
+        self.assertEqual(out["stages"], ["clips", "silence"])
+        # no export block: the last stage is copied to the output, for real
+        copy_proj = OUT / "render_copy.json"
+        copy_proj.write_text(json.dumps({"output": "render_copy.mp4", "clips": [{"src": "source.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        data = json.loads(script("render.py", copy_proj, "--fast", "--json").stdout)
+        self.assertEqual(data["stages"], ["clips"])
+        self.assertClose(probe(str(OUT / "render_copy.mp4"))["duration"], 2.0, 0.3)
+        # refusals: each names its cause and exits non-zero
+        cases = {
+            "no_project": ([], "give a project.json"),
+            "unreadable": ([OUT / "render_missing.json"], "cannot read project"),
+            "empty_clips": ([self._proj("render_e1.json", {"clips": []})], "clips is empty"),
+            "captions_key": ([self._proj("render_e2.json", {"clips": full["clips"], "captions": {"size": 20}}), "--dry-run"], "captions needs text, srt or ass"),
+            "graphics_key": ([self._proj("render_e3.json", {"clips": full["clips"], "graphics": [{"name": "x"}]}), "--dry-run"], "needs a template"),
+            "overlay_key": ([self._proj("render_e4.json", {"clips": full["clips"], "overlays": [{"opacity": 1}]}), "--dry-run"], "needs image or text"),
+            "child_failed": ([self._proj("render_e5.json", {"clips": [{"src": "source.mp4", "in": "not-a-time", "out": 2}]}), "--dry-run"], "cut.py failed"),
+        }
+        for name, (argv, message) in cases.items():
+            proc = script("render.py", *argv, expect_fail=True)
+            self.assertIn(message, proc.stderr, f"{name}: {proc.stderr[-400:]}")
+
+    def test_render_refuses_an_unknown_project_key_naming_the_nearest_valid_one(self):
+        """Review 9: a project was read with dict.get only, so a mistyped key was silently
+        ignored -- a clip "start"/"end" (the spelling graphics and overlays use for their own
+        times) rendered the whole clip untrimmed, and "exports" dropped the export stage, both
+        reported as a successful render. Every key of the project and of each stage/clip object
+        is now checked, and the template still validates."""
+        cases = {
+            "clip_key": ({"clips": [{"src": "source.mp4", "start": 0, "end": 2}], "export": {"preset": "reels"}},
+                         "clips[0]: unknown key 'start' (did you mean 'in'?)"),
+            "stage_key": ({"clips": [{"src": "source.mp4", "in": 0, "out": 2}], "exports": {"preset": "reels"}},
+                          "project: unknown key 'exports' (did you mean 'export'?)"),
+            "nested_key": ({"clips": [{"src": "source.mp4"}], "export": {"preset": "reels", "quality": 20}},
+                           "export: unknown key 'quality'"),
+        }
+        for name, (body, message) in cases.items():
+            proc = script("render.py", self._proj(f"render_key_{name}.json", body), "--dry-run", "--json", expect_fail=True)
+            self.assertIn(message, proc.stderr, f"{name}: {proc.stderr[-400:]}")
+            doc = json.loads(proc.stdout)
+            self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
+        tmpl = OUT / "render_template_valid.json"
+        script("render.py", "--init", tmpl)
+        proc = script("render.py", tmpl, "--dry-run", expect_fail=True)  # only REPLACE_ME.mp4 is missing
+        self.assertIn("source not found", proc.stderr)
+        self.assertNotIn("unknown key", proc.stderr)
+
+    def test_emit_and_die_use_the_ctx_they_were_given_for_the_plan(self):
+        """Review 9: run()/emit()/die() took ctx= but write_plan() and the atexit hook still read
+        STATE -- emit(ctx=...) wrote an empty plan while reporting one, and die(ctx=...) let the
+        hook write a plan for a failed run."""
+        code = (
+            "import sys, atexit, json\n"
+            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+            "import _common as c\n"
+            "atexit.register(c._plan_at_exit)\n"
+            "mode, src, plan = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+            "ctx = c.Context(); ctx.json = True; ctx.dry_run = True; ctx.plan = plan\n"
+            "c.STATE.plan = plan\n"
+            "c.run(['/usr/bin/ffmpeg', '-i', src, '-t', '1', src + '.out.mp4'], ctx=ctx)\n"
+            "if mode == 'emit':\n"
+            "    c.emit(None, ctx=ctx)\n"
+            "else:\n"
+            "    c.die('boom', ctx=ctx)\n"
+        )
+        src = str(OUT / "source.mp4")
+        plan = OUT / "ctx_plan.json"
+        sh(sys.executable, "-c", code, "emit", src, plan)
+        doc = json.loads(plan.read_text(encoding="utf-8"))
+        self.assertEqual(len(doc["commands"]), 1, doc)
+        self.assertIn("ffmpeg", doc["commands"][0])
+        plan2 = OUT / "ctx_plan_die.json"
+        if plan2.exists():
+            plan2.unlink()
+        proc = sh(sys.executable, "-c", code, "die", src, plan2, expect_fail=True)
+        self.assertIn("boom", proc.stderr)
+        self.assertFalse(plan2.exists(), "die() left a plan behind for a failed run")
+
+    def test_render_default_work_dir_is_unique_per_process(self):
+        """The default work dir name came only from the output path (e.g. "out_work"), no PID or
+        timestamp -- two concurrent render.py runs targeting the same output (a batch.py "project"
+        recipe processing files in parallel, or simply two runs by mistake) shared the same work
+        directory and clobbered each other's same-named intermediates (clip00.mp4, fit.mp4, ...)
+        mid-run. Verify the auto-derived work dir name includes this process's own PID."""
+        proj = OUT / "project_workdir.json"
+        proj.write_text(json.dumps({"output": "render_workdir_check.mp4", "clips": [{"src": "source.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        # --keep leaves the PID-suffixed dir behind, so a second run of this suite in the same
+        # OUT (a local re-run, or a coverage pass) would count the previous run's dir too.
+        for stale in OUT.glob("render_workdir_check_work*"):
+            if stale.is_dir():
+                shutil.rmtree(stale)
+        out = json.loads(script("render.py", proj, "--fast", "--stop-after", "clips", "--keep", "--json").stdout)
+        self.assertEqual(out["stages"], ["clips"])
+        work_dirs = [p for p in OUT.glob("render_workdir_check_work*") if p.is_dir()]
+        self.assertEqual(len(work_dirs), 1)
+        self.assertRegex(work_dirs[0].name, r"^render_workdir_check_work_\d+$",
+                          "the default work dir name must carry a PID suffix, not just the bare output stem")
+
+    def test_render_single_clip_fit_height_is_not_silently_dropped(self):
+        """The single-clip fit path only ever inherited width/fps from project.frame, and the
+        flag-forwarding list that turns project.fit's own keys into fit.py argv omitted height
+        entirely -- so a project.json specifying "fit": {"height": N} (with no other fit key)
+        used to build fit.py argv with nothing in it at all ("nothing to do" crash), and combined
+        with another fit key (e.g. duration) the height silently never reached fit.py -- the
+        output's height was left unchanged with no error. Verify height alone now actually
+        resizes a single-clip render."""
+        proj = OUT / "project_height.json"
+        proj.write_text(json.dumps({
+            "output": "render_height.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:04"}],
+            "fit": {"height": 480},
+        }), encoding="utf-8")
+        script("render.py", proj, "--fast", "--json")
+        m = probe(str(OUT / "render_height.mp4"))
+        self.assertEqual(m["video"]["height"], 480)
+
+    def test_render_frame_aspect_takes_the_export_presets_size(self):
+        """Eval 7 (j08 twice, e01 by hand): "frame": {"aspect": "9:16"} with a reels export fitted
+        a 1280x720 source to 406x720, captions were burned there and export.py upscaled them
+        soft. When the export preset names a delivery frame of the same aspect, the fit stage
+        uses it; a preset of another shape (or an explicit width/height) is left alone."""
+        proj = OUT / "project_aspect.json"
+        work = OUT / "render_aspect_work"
+        proj.write_text(json.dumps({
+            "output": "render_aspect.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:03"}],
+            "frame": {"aspect": "9:16"},
+            "export": {"preset": "reels"},
+        }), encoding="utf-8")
+        script("render.py", proj, "--fast", "--json", "--work", work, "--keep")
+        m = probe(str(work / "fit.mp4"))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 1920))
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import render
+        finally:
+            sys.path.pop(0)
+        frame = {"aspect": "1:1"}
+        render.frame_from_preset(frame, {"preset": "reels"})
+        self.assertEqual(frame, {"aspect": "1:1"})
+        frame = {"aspect": "9:16", "width": 540}
+        render.frame_from_preset(frame, {"preset": "reels"})
+        self.assertEqual(frame, {"aspect": "9:16", "width": 540})
+
+    def test_render_exits_nonzero_when_the_check_stage_fails(self):
+        """A render whose deliverable fails its own check stage must not report success."""
+        proj = OUT / "project_bad_check.json"
+        proj.write_text(json.dumps({
+            "output": "render_bad.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:04"}],
+            "export": {"preset": "reels"},  # portrait 9:16 output
+            "check": {"platform": "broadcast"},  # broadcast requires 16:9 -- guaranteed aspect FAIL
+        }), encoding="utf-8")
+        proc = script("render.py", proj, "--fast", "--json", expect_fail=True)
+        data = json.loads(proc.stdout)
+        self.assertGreater(data["check"]["failed"], 0, data["check"])
+        self.assertEqual((data["status"], data["error"]["kind"]), ("failed", "verification"))
+        self.assertIn("aspect", data["error"]["message"])
+        self.assertTrue(Path(data["output"]).exists(), "the deliverable is still written even though it fails delivery spec")
+        # the outer --timeout reaches every stage: an impossible limit fails inside the first stage
+        proc = script("render.py", proj, "--fast", "--timeout", "0.05", "--json", expect_fail=True)
+        self.assertIn("time limit", proc.stderr)
+        self.assertIn("--timeout 0.05", proc.stderr, "the flag must be forwarded to the child command line")
+        # ...and the stage's own failure is what render reports: kind timeout, exit 124, the stage named
+        tdoc = json.loads(proc.stdout)
+        self.assertEqual((tdoc["status"], tdoc["error"]["kind"], tdoc["exit_code"], tdoc["stage"]), ("failed", "timeout", 124, "cut.py"))
+
+    def test_write_project_writes_a_project_render_accepts(self):
+        """--write-project is the "let me edit it first" path: it must write a project the real
+        renderer takes without a single further change, and render nothing itself."""
+        proj = OUT / "wp_project.json"
+        out = OUT / "wp_out.mp4"
+        out.unlink(missing_ok=True)
+        doc = json.loads(script("render.py", self.src, "--template", "reels", "--cues", self.cues,
+                                "--write-project", proj, "-o", out, "--json").stdout)
+        self.assertEqual(doc["output"], str(proj))
+        self.assertFalse(out.exists(), "--write-project renders nothing")
+        loaded = json.loads(proj.read_text())
+        self.assertEqual(loaded["template"], "reels")
+        self.assertEqual(loaded["clips"][0]["src"], str(self.src.resolve()))
+        plan = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        self.assertEqual(plan["status"], "completed")
+        self.assertIn("export", plan["stages"])
+
+    def test_project_graphics_entry_renders_a_sticker_and_a_meme(self):
+        """The three social graphics templates are advertised as usable inside a render.py
+        graphics[] entry, and until review 12 the project validator refused their own keys
+        (text/top/bottom/duration), so sticker and meme could only be run from the CLI."""
+        out = OUT / "gproj_out.mp4"
+        proj = OUT / "gproj.json"
+        proj.write_text(json.dumps({
+            "output": str(out),
+            "clips": [{"src": str(self.src.resolve()), "in": 0, "out": 4}],
+            "graphics": [
+                {"template": "sticker", "text": "NEW", "position": "top-right", "platform": "tiktok"},
+                {"template": "meme", "top": "when the render", "bottom": "finally finishes"},
+                {"template": "hook", "title": "How I cut this", "duration": 2},
+            ]}), encoding="utf-8")
+        doc = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertIn("graphics", doc["stages"])
+        self.assertTrue(out.exists())
+        # ink where the meme layout puts it: the two edges of the frame change, and the sticker
+        # corner does too -- a validator that accepted the keys but dropped them would not show here
+        for crop, y in (("iw:100:0:20", "top"), ("iw:100:0:600", "bottom")):
+            before, _ = self._region_stats(self.src, crop, at=1.0)
+            after, _ = self._region_stats(out, crop, at=1.0)
+            self.assertNotAlmostEqual(before, after, delta=0.5, msg=f"nothing was drawn at the {y}")
+        # an unknown key is still a refusal, with the valid ones named
+        proj.write_text(json.dumps({"output": str(out), "clips": [{"src": str(self.src.resolve())}],
+                                    "graphics": [{"template": "sticker", "caption": "NEW"}]}), encoding="utf-8")
+        proc = script("render.py", proj, "--dry-run", "--json", expect_fail=True)
+        self.assertIn("unknown key", proc.stderr)
+
+    def test_pack_dry_run_plans_every_command_and_reports_no_result(self):
+        """A pack is the one path that writes seven files, so --dry-run has to show all of them --
+        and must never report a check result or a file size for a run that encoded nothing (the
+        sizes used to be read off files left behind by an earlier real run)."""
+        packdir = OUT / "packdry"
+        packdir.mkdir(exist_ok=True)
+        stale = packdir / "source_tiktok.mp4"
+        stale.write_bytes(b"0" * 4096)  # a leftover from an earlier real run
+        doc = json.loads(script("render.py", self.src, "--template", "tiktok,podcast",
+                                "--cues", self.cues, "--dry-run", "--json",
+                                "-o", str(packdir / "ignored.mp4")).stdout)
+        self.assertTrue(any("ffmpeg" in c for c in doc["commands"]),
+                        "the pack's planned commands are the plan; --dry-run must show them")
+        self.assertTrue(any("loudnorm" in c or "libx264" in c for c in doc["commands"]))
+        for row in doc["pack"]:
+            self.assertEqual(row["check"], "planned", row)
+            self.assertIsNone(row["size_bytes"], row)
+            self.assertIsNone(row["duration"], row)
+        self.assertEqual(stale.stat().st_size, 4096, "a dry run must not touch the files it plans")
+        # the audio-only destination of a pack is named like the single-template form: .m4a
+        self.assertEqual([Path(r["file"]).suffix for r in doc["pack"]], [".mp4", ".m4a"])
+        self.assertFalse((packdir / "source_pack.md").exists(), "a dry run writes no table either")
+
+    def test_brand_defaults_apply_to_caption_and_logo(self):
+        brand = OUT / "brand.json"
+        if not brand.exists():
+            self.test_graphics_templates()
+        ass = OUT / "brand.ass"
+        script("caption.py", self.src, "--text", self.cues, "--brand", brand, "--write-ass", ass, "--fast", "-o", OUT / "brand_cap.mp4")
+        style = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Style:")][0]
+        self.assertIn("&H00006AFF", style, "primary FF6A00 becomes the karaoke fill (BGR)")
+        self.assertIn(",70,", style, "size 28 scaled to 720p")
+        self.assertIn("\\kf", ass.read_text(encoding="utf-8-sig"), "brand enables karaoke")
+        proc = script("overlay.py", self.src, "--logo", "--brand", brand, "--fast", "-o", OUT / "brand_logo.mp4")
+        self.assertIn("scale=140:-1", proc.stderr)
+        self.assertIn("overlay=W-w-40:40", proc.stderr)
+        script("overlay.py", self.src, "--logo", expect_fail=True)
+
+    # ---------------------------------------------------------------- v0.7: MCP server / batch / ASR bridge
+    def test_mcp_server_stdio(self):
+        server = ROOT / "mcp" / "server.py"
+        reqs = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "probe", "arguments": {"inputs": [str(self.src)]}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "cut", "arguments": {"input": str(self.src), "start": 1, "end": 3, "output": str(OUT / "mcp_cut.mp4")}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "cut", "arguments": {"argv": [str(self.src), "--start", "0", "--end", "2", "-o", str(OUT / "mcp_cut2.mp4")]}}},
+            {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "nope", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 7, "method": "bogus/method"},
+        ]
+        proc = subprocess.run([sys.executable, str(server)], input="\n".join(json.dumps(r) for r in reqs) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        resp = {r["id"]: r for r in (json.loads(l) for l in proc.stdout.splitlines() if l.strip())}
+        self.assertEqual(resp[1]["result"]["serverInfo"]["name"], "ffmpeg-skill")
+        names = {t["name"] for t in resp[2]["result"]["tools"]}
+        self.assertTrue({"probe", "cut", "render", "check", "scenes", "batch"} <= names or {"probe", "cut", "render", "check", "scenes"} <= names)
+        self.assertEqual(resp[3]["result"]["structuredContent"]["duration"], 12.0)
+        self.assertClose(resp[4]["result"]["structuredContent"]["probe"]["duration"], 2.0, 0.6)
+        self.assertTrue(Path(resp[5]["result"]["structuredContent"]["output"]).exists())
+        self.assertTrue(resp[6]["result"].get("isError"))
+        self.assertEqual(resp[7]["error"]["code"], -32601)
+
+    def test_mcp_server_survives_a_non_object_json_line(self):
+        """json.loads accepts any valid JSON value, not just an object -- a bare `42`, `null`,
+        `true` or `[1,2]` line parses without raising, but main()'s very next line, `"id" not in
+        req`, raised an uncaught TypeError for a non-dict req (an int/bool/None isn't iterable the
+        way `in` needs). That check sat outside the try/except wrapping handle(), so the exception
+        propagated out of the stdin loop and killed the whole stdio server process -- not just
+        that one malformed line, but every other in-flight and future tool call in the session.
+        Verify a line like this is now skipped, and the server stays alive and answers the next
+        (valid) request instead of exiting non-zero with nothing produced for it."""
+        server = ROOT / "mcp" / "server.py"
+        lines = ["42", "null", "true", "[1,2,3]",
+                 json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})]
+        proc = subprocess.run([sys.executable, str(server)], input="\n".join(lines) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, f"server must not crash on non-object JSON lines; stderr: {proc.stderr}")
+        resp = [json.loads(response_line) for response_line in proc.stdout.splitlines() if response_line.strip()]
+        self.assertEqual(len(resp), 1, "only the one real request should get a response")
+        self.assertEqual(resp[0]["id"], 1)
+        self.assertIn("tools", resp[0]["result"])
+
+    def test_batch_recipe_and_cache(self):
+        folder = OUT / "batch_in"
+        folder.mkdir(exist_ok=True)
+        for name in ("a.mp4", "b.mp4"):
+            (folder / name).write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_final",
+                                      "steps": [["fit.py", "{in}", "--duration", "5", "-o", "{out}"], ["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertEqual(data["processed"], 2)
+        self.assertFalse(any(r.get("cached") for r in data["results"]))
+        for r in data["results"]:
+            m = probe(r["output"])
+            self.assertClose(m["duration"], 5.0, 0.3)
+            self.assertEqual(m["video"]["width"], 1280)
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertTrue(all(r.get("cached") for r in data["results"]), "second run served from cache")
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--json").stdout)
+        self.assertFalse(any(r.get("cached") for r in data["results"]))
+        # project-based recipe
+        proj = folder / "p.json"
+        proj.write_text(json.dumps({"clips": [{"src": "x", "in": 0, "out": 3}], "export": {"preset": "x"}}))
+        recipe2 = folder / "batch2.json"
+        recipe2.write_text(json.dumps({"glob": "a.mp4", "output_dir": "out2", "suffix": "_p", "project": "p.json"}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
+        self.assertEqual(data["processed"], 1)
+        self.assertClose(probe(data["results"][0]["output"])["duration"], 3.0, 0.3)
+
+    def test_batch_project_recipe_cache_invalidates_on_project_json_content_change(self):
+        """A "project" recipe is just {"project": "<path>", "clip_key": N} -- the real settings
+        (export preset, captions, everything) live in the file at that path. The cache key used
+        to hash only this outer recipe dict, so editing project.json's content (export preset
+        swapped from "copy" to "x", a real re-encode) without touching batch.json itself left the
+        key unchanged, and the stale cached output was served for the new settings with no error
+        or warning. Verify a content-only change to project.json invalidates the cache."""
+        folder = OUT / "batch_project_cache"
+        folder.mkdir(exist_ok=True)
+        (folder / "clip.mp4").write_bytes(Path(self.src).read_bytes())
+        proj = folder / "p.json"
+        proj.write_text(json.dumps({"clips": [{}], "export": {"preset": "copy"}}))
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "clip.mp4", "output_dir": "out", "project": "p.json"}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertFalse(data["results"][0].get("cached"))
+        proj.write_text(json.dumps({"clips": [{}], "export": {"preset": "x"}}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertFalse(data["results"][0].get("cached"), "a content-only project.json change must not be served from a stale cache")
+
+    def test_batch_cache_write_is_atomic_no_leftover_temp_file(self):
+        """The cache file used to be written with a plain write_text(), which is not atomic -- a
+        process killed mid-write leaves a truncated file that the next run's json.loads() treats
+        as corrupt and silently discards (every prior cache entry lost, not just the interrupted
+        one). Now written via a sibling temp file + os.replace(). Verify a normal run leaves the
+        cache file valid and no stray .tmp<pid> file behind."""
+        folder = OUT / "batch_cache_atomic"
+        folder.mkdir(exist_ok=True)
+        (folder / "clip.mp4").write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "clip.mp4", "output_dir": "out", "steps": [["export.py", "{in}", "--preset", "copy", "-o", "{out}"]]}))
+        script("batch.py", folder, "--recipe", recipe, "--fast")
+        outdir = folder / "out"
+        cache_path = outdir / ".ffskill_cache.json"
+        self.assertTrue(cache_path.exists())
+        json.loads(cache_path.read_text(encoding="utf-8"))  # must not be truncated/corrupt
+        leftover = list(outdir.glob(".ffskill_cache.json.tmp*"))
+        self.assertEqual(leftover, [], f"temp cache file(s) left behind: {leftover}")
+
+    def test_batch_refuses_a_recipe_step_naming_a_script_outside_scripts_dir(self):
+        """run_step() built its command as `HERE / argv[0]`, where argv[0] came straight from an
+        untrusted recipe JSON step. Path's / operator silently ignores the left side when the
+        right side is itself an absolute path, and does nothing to stop a "../" traversal either
+        -- so a recipe (from a template, a shared config, anywhere the caller didn't author it
+        themselves) naming an absolute or ../-relative path got that file executed as a Python
+        script, with the caller's own privileges, once per matching media file. Verify both an
+        absolute path and a traversal path are refused instead of executed."""
+        folder = OUT / "batch_security"
+        folder.mkdir(exist_ok=True)
+        (folder / "a.mp4").write_bytes(Path(self.src).read_bytes())
+        evil = OUT / "batch_security_evil.py"
+        marker = OUT / "batch_security_pwned.txt"
+        marker.unlink(missing_ok=True)
+        evil.write_text(f"open({str(marker)!r}, 'w').write('pwned')\n", encoding="utf-8")
+
+        for step in ([str(evil)], ["../../../../tmp/does_not_matter.py"]):
+            recipe = folder / "batch.json"
+            recipe.write_text(json.dumps({"glob": "*.mp4", "steps": [step]}))
+            proc = script("batch.py", folder, "--recipe", recipe, "--fast", "--force", expect_fail=True)
+            self.assertIn("scripts/", proc.stderr)
+            self.assertFalse(marker.exists(), f"step {step} must not have executed")
+
+    def test_batch_refuses_a_fixed_ext_recipe_that_collapses_two_sources_to_one_output(self):
+        """final_path() falls back to each source's OWN extension by default, so files that only
+        differ by extension don't collide -- but a recipe with a fixed "ext" (e.g. converting a
+        folder of mixed .mp4/.mov masters to one format) makes two sources with the same stem
+        (clip.mp4 and clip.mov) resolve to the identical final path (clip_out.mp4). process() had
+        no collision detection: the file processed later in sorted() order used to silently
+        overwrite the earlier one's finished output, with the cache still recording both entries
+        as ok. Verify this is now refused up front, before either file is processed, rather than
+        one silently clobbering the other."""
+        folder = OUT / "batch_collision_in"
+        folder.mkdir(exist_ok=True)
+        for name in ("clip.mp4", "clip.mov"):
+            (folder / name).write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "collide.json"
+        recipe.write_text(json.dumps({"ext": "mp4", "steps": [["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
+        proc = script("batch.py", folder, "--recipe", recipe, "--fast", expect_fail=True)
+        self.assertIn("collision", proc.stderr)
+        self.assertIn("clip.mp4", proc.stderr)
+        self.assertIn("clip.mov", proc.stderr)
+        self.assertFalse((folder / "out" / "clip_out.mp4").exists(), "nothing should be written once a collision is detected")
+
+    # ---------------------------------------------------------------- _common
+    def test_context_is_attribute_only_and_resets(self):
+        """Context once carried dict-style shims for older call sites; every site uses attributes
+        now and the shims are gone, so a stray STATE["x"] is a TypeError at the call site rather
+        than a second, silently-diverging access path. __slots__ also refuses unknown names."""
+        from _common import Context
+        ctx = Context()
+        ctx.dry_run = True
+        ctx.fast = True
+        self.assertTrue(ctx.dry_run and ctx.fast)
+        self.assertIsNone(ctx.duration_hint)
+        with self.assertRaises(TypeError):
+            ctx["dry_run"]  # noqa: B018 -- the mapping shim is gone on purpose
+        with self.assertRaises(AttributeError):
+            ctx.nonexistent = 1
+        ctx.commands.append("x")
+        ctx.reset()
+        self.assertEqual((ctx.dry_run, ctx.fast, ctx.commands), (False, False, []))
+
+    def test_run_records_commands_on_a_passed_context_not_the_global_state(self):
+        """1.10 threads an optional `ctx=` through run()/emit()/die() (issue #189 B; 2.0 makes it
+        required). A fresh Context() must collect that call's commands itself and leave the
+        process-global STATE untouched, which is the property the 2.0 signature change relies on."""
+        import _common
+        ctx = _common.Context()
+        ctx.dry_run = True
+        before = list(_common.STATE.commands)
+        proc = _common.run(["ffmpeg", "-i", "in.mp4", "out.mp4"], quiet=True, ctx=ctx)
+        self.assertEqual(proc.returncode, 0, "a dry run plans without executing ffmpeg")
+        self.assertEqual(ctx.commands, ["ffmpeg -i in.mp4 out.mp4"])
+        self.assertEqual(_common.STATE.commands, before, "the global STATE must not have seen this call")
+
+    def test_skill_md_stays_within_the_agent_reading_budget(self):
+        """1.11.0: SKILL.md is the file every session loads, so its size is a real per-run cost.
+        The two-tier split (long-form prose in references/gotchas.md, one line plus an anchor
+        here) brought it from 362 lines / 37.8 KB to under this ceiling; a new rule belongs in a
+        references/ file with a one-line pointer, not in an ever-growing SKILL.md."""
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        lines, size = len(text.splitlines()), len(text.encode("utf-8"))
+        self.assertLessEqual(lines, 220, f"SKILL.md is {lines} lines; move detail to references/")
+        self.assertLessEqual(size, 30000, f"SKILL.md is {size} bytes; move detail to references/")
+        gotchas = (ROOT / "references" / "gotchas.md").read_text(encoding="utf-8")
+        # every "details:" pointer resolves to a real heading in the file it names
+        for anchor in re.findall(r"references/gotchas\.md#([a-z0-9-]+)", text):
+            headings = ["".join(ch for ch in h.lower().replace(" ", "-") if ch.isalnum() or ch == "-")
+                        for h in re.findall(r"(?m)^#+ (.+)$", gotchas)]
+            self.assertIn(anchor, headings, f"SKILL.md points at references/gotchas.md#{anchor}, which has no such heading")
+
+    def test_every_script_has_help(self):
+        for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):
+            with self.subTest(script=name):
+                out = script(name, "--help").stdout
+                self.assertIn("usage:", out)
+
+
+class DemoGalleryTests(unittest.TestCase):
+    """The gallery in docs/demos.md is committed, so its builder is a shipped artefact: if
+    demos/build.py stops rendering, the README's pictures quietly describe an older tool.
+
+    One cheap demo is enough to prove the whole path -- fixtures, a real script invocation, the
+    side-by-side, the preview and the size budget -- without spending several minutes of CI on all
+    of them (the `demos` job in demos/CI.md runs the full set)."""
+
+    def test_build_one_demo_and_stay_under_the_preview_budget(self):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        from _common import script_font_status
+        if script_font_status("ja") == "missing":
+            # Not a failure: the demo itself skips for the same reason. A machine with no CJK
+            # font cannot render Japanese captions, and a tofu-filled GIF would be worse than none.
+            raise unittest.SkipTest("no font on this machine covers Japanese: captions_ja cannot render")
+        preview = ROOT / "docs" / "demos" / "captions_ja.gif"
+        before = preview.read_bytes() if preview.exists() else None
+        try:
+            sh(sys.executable, ROOT / "demos" / "build.py", "--only", "captions_ja")
+            self.assertTrue(preview.exists(), f"{preview} was not written")
+            size = preview.stat().st_size
+            self.assertLessEqual(size, 500 * 1024,
+                                 f"{preview.name} is {size} bytes; previews are committed and "
+                                 f"capped at 500 KB (demos/build.py enforces this too)")
+            self.assertGreater(size, 1024, "a preview that small did not render anything")
+            for name in ("captions_ja_before.mp4", "captions_ja_after.mp4", "captions_ja.mp4"):
+                self.assertTrue((ROOT / "demos" / "out" / name).exists(), f"demos/out/{name} missing")
+        finally:
+            # Leave the committed preview exactly as it was: this machine's ffmpeg writes
+            # different GIF bytes than the one that built the gallery, and a test must not
+            # dirty the working tree it ran in.
+            if before is not None:
+                preview.write_bytes(before)
+
+    def test_every_demo_in_the_table_is_listed_and_documented(self):
+        """--list and docs/demos.md are two views of the same table; a demo added to the
+        builder without a gallery entry is a picture nobody ever sees."""
+        listed = sh(sys.executable, ROOT / "demos" / "build.py", "--list").stdout
+        names = [line.split()[0] for line in listed.splitlines() if line.strip()]
+        self.assertGreaterEqual(len(names), 10, "the gallery lost most of its demos")
+        page = (ROOT / "docs" / "demos.md").read_text(encoding="utf-8")
+        for name in names:
+            self.assertIn(f"demos/{name}.gif", page,
+                          f"{name} is built but has no section in docs/demos.md "
+                          f"(run: python3 demos/build.py --docs)")
+
+    def test_every_script_is_shown_working_by_a_demo(self):
+        """A tool nobody can see working is hard to review and harder to trust. Every script
+        under scripts/ either appears in a demo's command line (so the gallery renders it end to
+        end on every build) or is on the builder's INSPECTION list -- the tools whose entire
+        output is a table or an HTML file, which get a command and a sentence in docs/demos.md
+        instead of a picture. Nothing is allowed to be in neither list."""
+        sys.path.insert(0, str(ROOT / "demos"))
+        try:
+            import build as demo_build
+        finally:
+            sys.path.pop(0)
+        commands = " ".join(cmd for name in demo_build.BY_NAME
+                            for cmd in demo_build._commands_for(name))
+        inspection = {tool for tool, _cmd, _what in demo_build.INSPECTION}
+        page = (ROOT / "docs" / "demos.md").read_text(encoding="utf-8")
+        for script in sorted(p.name for p in (ROOT / "scripts").glob("*.py")):
+            if script.startswith("_"):
+                continue
+            if script in inspection:
+                self.assertIn(script, page,
+                              f"{script} is on demos/build.py's INSPECTION list but is not in "
+                              f"docs/demos.md (run: python3 demos/build.py --docs)")
+                continue
+            self.assertIn(f"scripts/{script} ", commands + " ",
+                          f"no demo in demos/build.py runs {script}: add one (a before/after "
+                          f"demo) or, if it only ever prints a table, add it to INSPECTION")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

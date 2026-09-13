@@ -28,6 +28,16 @@ import _common  # noqa: E402
 import server as mcp_server  # noqa: E402
 
 
+def script_sources():
+    """Every Python file under scripts/, the _common package included.
+
+    _common is a directory since the refactor after 1.15.0, so a plain `scripts/*.py` glob no
+    longer reaches the helpers -- which is exactly the source a scan like "no shell=True
+    anywhere" must not stop covering. Tool *enumeration* still uses the bare glob on purpose:
+    a package directory is not a tool."""
+    return sorted(SCRIPTS.glob("*.py")) + sorted(SCRIPTS.glob("*/*.py"))
+
+
 def sh(*cmd, check=True, env=None, cwd=None):
     proc = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env, cwd=cwd)
     if check and proc.returncode != 0:
@@ -329,7 +339,7 @@ class ContractTests(unittest.TestCase):
         for cap in caps["required"] + caps["optional"]:
             self.assertTrue(re.fullmatch(r"ffmpeg|ffprobe|encoder:\w+|filter:\w+|bsf:\w+|external:\w+", cap), cap)
         # every encoder / filter / bsf named in the contract is referenced by some script
-        source = "\n".join(p.read_text(encoding="utf-8") for p in SCRIPTS.glob("*.py"))
+        source = "\n".join(p.read_text(encoding="utf-8") for p in script_sources())
         for cap in caps["required"] + caps["optional"]:
             if ":" in cap and not cap.startswith("external:"):
                 self.assertIn(cap.split(":", 1)[1], source, f"{cap} declared but no script uses it")
@@ -1596,7 +1606,7 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(_common._bit_depth(pix), depth, pix)
         self.assertEqual(_common.fmt_secs(None), "?s")
         self.assertEqual(_common.fmt_secs(1.5), "1.500s")
-        leftovers = [p.name for p in SCRIPTS.glob("*.py") if re.search(r"duration['\"]\]:\.3f\}s|duration['\"]\):\.3f\}s", p.read_text(encoding="utf-8"))]
+        leftovers = [p.name for p in script_sources() if re.search(r"duration['\"]\]:\.3f\}s|duration['\"]\):\.3f\}s", p.read_text(encoding="utf-8"))]
         self.assertEqual(leftovers, [], "a script still formats a possibly-None duration with :.3f")
         self.assertIn(".mxf", _common.MEDIA_EXT)
         import batch as batch_mod  # noqa: E402
@@ -2239,7 +2249,7 @@ class ContractTests(unittest.TestCase):
         for name in ("cut", "audio", "loudness", "silence", "fit", "export", "caption", "overlay", "color", "join", "graphics", "multicam"):
             src = (SCRIPTS / f"{name}.py").read_text(encoding="utf-8")
             self.assertIn("emit(", src, f"{name} does not go through emit()")
-        self.assertIn("verify_output(output)", (SCRIPTS / "_common.py").read_text(encoding="utf-8"))
+        self.assertIn("verify_output(output)", (SCRIPTS / "_common" / "emit.py").read_text(encoding="utf-8"))
         with self.assertRaises(SystemExit):
             _common.verify_output(str(self.work / "never_written.mp4"))
 
@@ -2350,7 +2360,7 @@ class ContractTests(unittest.TestCase):
     def test_every_tool_help_and_no_shell_paths(self):
         for t in self.contract["tools"]:
             self.assertIn("usage:", tool(t["name"], "--help").stdout)
-        for path in list(SCRIPTS.glob("*.py")) + [ROOT / "mcp" / "server.py"]:
+        for path in script_sources() + [ROOT / "mcp" / "server.py"]:
             src = path.read_text(encoding="utf-8")
             for forbidden in ("shell=True", "os.system(", "eval(", "exec(", "os.popen("):
                 self.assertNotIn(forbidden, src, f"{path.name} uses {forbidden}")

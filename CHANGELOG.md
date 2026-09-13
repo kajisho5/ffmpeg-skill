@@ -4,7 +4,35 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- **refactor: `scripts/_common.py` is a package, and `tests/test_all.py` splits by tool group.
+  No behaviour change.** A release of its own so that "nothing changed for a caller" is checkable
+  in one diff (roadmap, "Refactor release after 1.15.0"). The 3072-line helper module is now
+  `scripts/_common/` with one module per responsibility — `runner.py` (process execution,
+  timeouts, signals, the output lock and staging, `run_tool`, the drawtext text-file spool),
+  `probe.py` (ffprobe and the measured facts: `probe()`, `verify_output()`, the level and
+  envelope measurements), `decision.py` (the pure choices: encoder and codec arguments, times,
+  paths, brand defaults — nothing here starts a subprocess), `emit.py` (`emit()`, `die()`,
+  `info()`, the brief and 2.0 shapes, the plan file), `color.py` (bt709 tagging, the HDR-to-SDR
+  path, colour-token validation) and `text.py` (fonts per script, emoji clusters and assets,
+  drawtext escaping and options, the advance table the caption wrap measures with).
+  `scripts/_common/__init__.py` is a facade re-exporting all **184** names the single file
+  defined — public and underscore alike — so every `from _common import ...` and every
+  `_common.<name>` in the tools, the MCP server, the demos, the evals and the tests keeps
+  working unchanged; rebinding a name on the facade (`_common._FFMPEG_VERSION = (7, 1)`, a
+  `mock.patch("_common.<name>")`) rebinds it on the module that defines it, so the test seams
+  that reached into the module still hold. Function bodies were moved, not edited.
+  `tests/test_all.py` is a `load_tests` aggregator over `tests/test_analysis.py`,
+  `test_editing.py`, `test_audio.py`, `test_picture.py`, `test_delivery.py` and
+  `test_orchestration.py` with the shared footage in `tests/_fixtures.py` (built once per
+  process, not once per group); each group module also runs on its own. `npm test` and every CI
+  job are unchanged and run the same 323 cases under the same names.
+  Proof of no behaviour change: `scripts/_contract.py --json`, the MCP `tools/list` response and
+  `--help` for all 42 tools are **byte-identical** to 1.15.0. The tool count stays 42 — a package
+  directory is not a tool, and every `scripts/*.py` enumeration (the contract, the MCP server,
+  `demos/build.py`, the every-script tests) skips it unchanged; the source *scans* that must not
+  stop covering the helpers (`shell=True` and friends) now read `scripts/_common/*.py` too.
 
 ## 1.15.0
 
