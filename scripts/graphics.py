@@ -38,7 +38,8 @@ from _common import (aac_args, add_common, brand_caption_style, script_font_for_
                      drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
                      LANGUAGE_NAMES, needs_shaping, detect_script, BIDI_SCRIPTS, font_family_of_file, font_family_for_script, has_emoji,
                      emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
-                     EMOJI_ASSET_HINT, text_width_em, drawtext_shaping)
+                     EMOJI_ASSET_HINT, text_width_em, drawtext_shaping, wrap_text, WRAP_MODES,
+                     SAFE_WIDTH_FRACTION)
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug", "sticker", "hook", "meme"]
@@ -91,6 +92,12 @@ def main() -> int:
     ap.add_argument("--lang", help="language code of the text (e.g. ja, zh, ko): the hint that says whether Han-only "
                                    "text is Chinese, Japanese or Korean when a font is picked by script")
     ap.add_argument("--scale", type=float, default=1.0, help="size multiplier (default 1)")
+    ap.add_argument("--wrap", choices=list(WRAP_MODES), default="phrase",
+                    help="how a label too wide for the frame is broken into lines: 'phrase' (default, 1.16) never "
+                         "breaks inside a word or a hyphen's wrong side, never leaves a lone digit, kana or "
+                         "punctuation on its own line, prefers Japanese sentence ends and particles, and never ends "
+                         "a line on an article or preposition; 'measured' is 1.15's width-only wrap. A label that "
+                         "already fits one line is untouched either way")
     ap.add_argument("--text-render", choices=["auto", "ass", "drawtext"], default="auto",
                     help="which renderer draws the template's text: 'auto' (default) uses libass for "
                          "scripts drawtext cannot shape (Devanagari, Bengali, Tamil, Thai, Lao ...) and for "
@@ -247,6 +254,26 @@ def main() -> int:
             return os.path.dirname(os.path.abspath(script_file))
         return None
 
+    def wrapped(text, size_px, frac=SAFE_WIDTH_FRACTION):
+        """A label broken to the frame's safe width (1.16).
+
+        drawtext and libass both render a literal newline as a line break, and every template
+        below already passes its label through one of them -- so wrapping is a matter of putting
+        the breaks in, at the same measured width and by the same four phrase rules caption.py
+        uses. A label that already fits comes back unchanged, which is why this is additive: the
+        only text it touches is text that used to run off the edge of the frame.
+        """
+        text = str(text or "")
+        if not text or not size_px:
+            return text
+        max_em = (W * frac) / float(size_px)
+        if max_em <= 0:
+            return text
+        out = []
+        for para in text.split("\n"):
+            out.extend(wrap_text(para, max_em, mode=args.wrap, lang=args.lang) if para.strip() else [para])
+        return "\n".join(out)
+
     def add_text(text, drawtext, *, target=None, **el):
         """One line of template text: a drawtext filter on the old route, an ASS element on the
         new one. The geometry is computed identically either way."""
@@ -366,8 +393,9 @@ def main() -> int:
         align = (7 if "left" in pos else 9) if "top" in pos else (1 if "left" in pos else 3)
         y_rest = m_top if "top" in pos else H - m_bottom
         y_start = y_rest + rise if "top" in pos else y_rest + rise
-        add_text(args.text,
-                 f"drawtext={drawtext_text_opts(args.text)}:{fo}:fontsize={fs}:fontcolor={ff_color(bg)}:"
+        sticker_text = wrapped(args.text, fs)
+        add_text(sticker_text,
+                 f"drawtext={drawtext_text_opts(sticker_text)}:{fo}:fontsize={fs}:fontcolor={ff_color(bg)}:"
                  f"x={xe}:y='{ye}':box=1:boxcolor={ff_color(primary, 0.95)}:boxborderw={drawtext_boxborderw(pady, padx)}:"
                  f"alpha='{alpha}':{en}",
                  size=fs, color=bg, font=ass_font_family(), align=align,
@@ -391,8 +419,9 @@ def main() -> int:
         band_h = int(base * 0.30)
         y0 = (H - band_h) // 2
         filters.append(f"drawbox=x=0:y={y0}:w=iw:h={band_h}:color={ff_color(bg, 0.78)}:t=fill:{hen}")
-        add_text(args.title,
-                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:"
+        hook_title = wrapped(args.title, h1)
+        add_text(hook_title,
+                 f"drawtext={drawtext_text_opts(hook_title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:"
                  f"x=(w-text_w)/2:y=(h-text_h)/2:{hen}",
                  size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2, y=H / 2,
                  outline=max(1.0, h1 / 20.0), outline_color="000000", start=s, end=he)
@@ -401,7 +430,8 @@ def main() -> int:
 
     elif args.template == "meme":
         # The classic layout: heavy white upper-case lines with a black outline, top and bottom,
-        # sized so a short line fills the frame's width without wrapping (drawtext never wraps).
+        # sized so a short line fills the frame's width; a longer one is broken by the same
+        # phrase-aware wrap caption.py uses (1.16 -- drawtext itself still never wraps).
         if not (args.top or args.bottom):
             die("meme needs --top and/or --bottom")
         fs = int(base * 0.09)
@@ -410,8 +440,9 @@ def main() -> int:
         for text, y in ((args.top, f"{m_top}"), (args.bottom, f"h-text_h-{m_bottom}")):
             if not text:
                 continue
-            add_text(text.upper(),
-                     f"drawtext={drawtext_text_opts(text.upper())}:{fo}:fontsize={fs}:fontcolor={white}:"
+            meme_line = wrapped(text.upper(), fs)
+            add_text(meme_line,
+                     f"drawtext={drawtext_text_opts(meme_line)}:{fo}:fontsize={fs}:fontcolor={white}:"
                      f"borderw={bw}:bordercolor={black}:x=(w-text_w)/2:y={y}:{en}",
                      size=fs, color="FFFFFF", font=ass_font_family(), bold=True,
                      align=(8 if y == f"{m_top}" else 2), x=W / 2,

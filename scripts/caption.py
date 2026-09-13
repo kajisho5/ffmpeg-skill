@@ -432,7 +432,8 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
 
 
 def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float], max_lines: int,
-                min_duration: float, offset: float) -> Tuple[List[Tuple[float, float, str]], dict]:
+                min_duration: float, offset: float, wrap: str = "phrase",
+                lang: Optional[str] = None) -> Tuple[List[Tuple[float, float, str]], dict]:
     """Shift, wrap, split and lengthen cues so they can actually be read.
 
     `offset` moves every cue (a transcript that runs early/late); `max_em` wraps each cue to the
@@ -441,7 +442,8 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
     proportion to their text; a cue shorter than `min_duration` is lengthened, never past the next
     cue's start. Returns the new cues and a count of what changed.
     """
-    stats = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0, "rebalanced": 0}
+    stats = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0, "rebalanced": 0,
+             "wrap": wrap, "phrase_breaks": 0}
     staged: List[Tuple[float, float, str]] = []
     for start, end, text in cues:
         if offset:
@@ -452,11 +454,13 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
             start = max(0.0, start)
             stats["shifted"] += 1
         if max_em and max_em > 0:
-            lines = wrap_text(text, max_em)
+            lines = wrap_text(text, max_em, mode=wrap, lang=lang)
             if lines != [l for l in text.split("\n") if l.strip()]:
                 stats["wrapped"] += 1
-            if lines != wrap_text(text, max_em, balance=False):
+            if lines != wrap_text(text, max_em, balance=False, mode=wrap):
                 stats["rebalanced"] += 1
+            if wrap != "measured" and lines != wrap_text(text, max_em, mode="measured"):
+                stats["phrase_breaks"] += 1
             if len(lines) > max_lines:
                 chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)]
                 weights = [max(1.0, sum(len(l) for l in c)) for c in chunks]
@@ -484,7 +488,7 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
 
 def report_layout(stats: dict) -> None:
     """One info line, only when a cue actually changed."""
-    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "rebalanced", "split", "extended", "dropped") if stats.get(k)]
+    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "rebalanced", "phrase_breaks", "split", "extended", "dropped") if stats.get(k)]
     if parts:
         info("cues: " + ", ".join(parts))
 
@@ -783,6 +787,13 @@ def main() -> int:
                      help="most emoji overlays one run may build (default 60)")
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
     sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue (default 1.0)")
+    sty.add_argument("--wrap", choices=list(WRAP_MODES), default="phrase",
+                     help="how a cue too wide for the safe area is broken into lines: 'phrase' (default, 1.16) never "
+                          "breaks inside a word or on the wrong side of a hyphen, never leaves a lone digit, kana or "
+                          "punctuation on a line, prefers Japanese sentence ends and particles over a mid-word break, "
+                          "and never ends a line on an article or preposition; 'measured' is 1.15's width-only wrap, "
+                          "kept so an older split can be reproduced. Neither ever changes the number of lines, "
+                          "rewrites the text or shortens a cue")
     anim = ap.add_argument_group("animation (generates ASS; needs --text or --srt input)")
     anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default=None, help="per-cue entrance animation (default none, or brand caption.animate)")
     anim.add_argument("--karaoke", action="store_true", help="word-by-word highlight (fills from --color to --highlight-color across each cue)")
@@ -869,15 +880,20 @@ def main() -> int:
         if meta["video"].get("rotation") in (90, -90, 270, -270):
             play_w, play_h = play_h, play_w
 
+    caption_stats: dict = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0,
+                           "rebalanced": 0, "wrap": args.wrap, "phrase_breaks": 0}
+
     def lay_out(cue_list):
         """Wrap to the safe area, split past --max-lines, lengthen to --min-duration, shift by
         --offset -- the one place every cue source goes through, so an SRT, a cue file and a
         transcript all come out equally readable."""
         out, stats = layout_cues(cue_list, max_em=max_line_em(args, play_w, play_h),
                                  max_lines=args.max_lines, min_duration=args.min_duration,
-                                 offset=args.offset)
+                                 offset=args.offset, wrap=args.wrap, lang=args.language)
         report_layout(stats)
-        return out, any(stats.values())
+        caption_stats.clear()
+        caption_stats.update(stats)
+        return out, any(v for k, v in stats.items() if k != "wrap")
 
     srt_path = args.srt
     if args.transcribe:
@@ -1099,6 +1115,7 @@ def main() -> int:
     result = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
     extra = {"notes": side_notes} if side_notes else {}
+    extra["caption"] = dict(caption_stats)
     if emoji_plan:
         notes = list(extra.get("notes") or [])
         if emoji_plan["mode"] == "mono":

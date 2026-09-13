@@ -291,6 +291,32 @@ class PictureTests(MediaFixtures):
                                       f"line wider than the safe area: {line!r}")
         self.assertEqual(" ".join(l for _, lines in blocks for l in lines), text, "no word is lost or cut")
 
+    def test_phrase_wrap_burns_and_reports(self):
+        """1.16 end to end: the dl1 and dl4 cues are burnt in, the ASS the run writes carries the
+        phrase breaks, and the result document says which wrap produced them."""
+        import caption  # noqa: E402
+        cues = OUT / "wrap_phrase.txt"
+        cues.write_text("0:00-0:02 A third line the tool times for me\n"
+                        "0:02-0:04 Una tercera l\u00ednea con tiempos autom\u00e1ticos\n", encoding="utf-8")
+        out = OUT / "wrap_phrase.mp4"
+        ass = OUT / "wrap_phrase.ass"
+        res = json.loads(script("caption.py", self._small(), "--text", cues, "--size", "32",
+                                "--max-lines", "2", "--animate", "fade", "--write-ass", ass,
+                                "--json", "--fast", "-o", out).stdout)
+        self.assertEqual(res["caption"]["wrap"], "phrase")
+        self.assertIn("phrase_breaks", res["caption"])
+        self.assertTrue(out.exists())
+        body = ass.read_text(encoding="utf-8")
+        self.assertIn("A third line the tool\\Ntimes for me", body)
+        self.assertIn("Una tercera l\u00ednea\\Ncon tiempos autom\u00e1ticos", body)
+        # and --wrap measured still reproduces 1.15's split, byte for byte in the ASS
+        ass2 = OUT / "wrap_measured.ass"
+        script("caption.py", self._small(), "--text", cues, "--size", "32", "--max-lines", "2",
+               "--wrap", "measured", "--animate", "fade", "--write-ass", ass2, "--fast", "-o", OUT / "wrap_measured.mp4")
+        self.assertIn("A third line the\\Ntool times for me", ass2.read_text(encoding="utf-8"))
+        self.assertEqual(caption.wrap_text("A third line the tool times for me", 12.96),
+                         ["A third line the tool", "times for me"])
+
     def test_caption_wraps_cjk_between_characters(self):
         """Chinese has no spaces: the line breaks between any two characters, and every character
         counts as a full em (Latin averages just over half)."""
