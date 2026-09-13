@@ -70,8 +70,9 @@ and the default MCP `tools/list` are unchanged except for additions.
   table, the report format and one line per gotcha; the long "Things that look right but are
   wrong" / "Gotchas" prose and the audio-only recipes moved to `references/gotchas.md`, each
   line pointing at its anchor. 362 lines / 37.8 KB → 198 lines / 29.1 KB, no rule dropped.
-- **Guidance that saves calls** (done): `doctor` only on a new machine or after a
-  `kind: missing_tool` failure, not per job; no separate `probe.py` before every edit (a writing
+- **Guidance that saves calls** (done): `doctor` only after a failure or when the user asks
+  (1.11.1; the 1.11.0 wording "before the first job on a new machine" made fresh agents run it
+  in 31 of 36 eval runs), not per job; no separate `probe.py` before every edit (a writing
   tool's `--json` already carries the input and the output probe); `render.py` with a project.json
   for jobs of three or more steps; `look.py --tiles 3x2` (or `--at T`) for verification, the full
   4x3 sheet only when the job is about layout across the whole clip.
