@@ -4415,6 +4415,56 @@ class ScriptFontTests(unittest.TestCase):
         self.assertEqual(font_for_script("ja"), font_for_script("ja"))
 
 
+class DemoGalleryTests(unittest.TestCase):
+    """The gallery in docs/demos.md is committed, so its builder is a shipped artefact: if
+    demos/build.py stops rendering, the README's pictures quietly describe an older tool.
+
+    One cheap demo is enough to prove the whole path -- fixtures, a real script invocation, the
+    side-by-side, the preview and the size budget -- without spending two minutes of CI on all
+    23 of them (the `demos` job in demos/CI.md runs the full set)."""
+
+    def test_build_one_demo_and_stay_under_the_preview_budget(self):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        from _common import script_font_status
+        if script_font_status("ja") == "missing":
+            # Not a failure: the demo itself skips for the same reason. A machine with no CJK
+            # font cannot render Japanese captions, and a tofu-filled GIF would be worse than none.
+            raise unittest.SkipTest("no font on this machine covers Japanese: captions_ja cannot render")
+        preview = ROOT / "docs" / "demos" / "captions_ja.gif"
+        before = preview.read_bytes() if preview.exists() else None
+        try:
+            sh(sys.executable, ROOT / "demos" / "build.py", "--only", "captions_ja")
+            self.assertTrue(preview.exists(), f"{preview} was not written")
+            size = preview.stat().st_size
+            self.assertLessEqual(size, 500 * 1024,
+                                 f"{preview.name} is {size} bytes; previews are committed and "
+                                 f"capped at 500 KB (demos/build.py enforces this too)")
+            self.assertGreater(size, 1024, "a preview that small did not render anything")
+            for name in ("captions_ja_before.mp4", "captions_ja_after.mp4", "captions_ja.mp4"):
+                self.assertTrue((ROOT / "demos" / "out" / name).exists(), f"demos/out/{name} missing")
+        finally:
+            # Leave the committed preview exactly as it was: this machine's ffmpeg writes
+            # different GIF bytes than the one that built the gallery, and a test must not
+            # dirty the working tree it ran in.
+            if before is not None:
+                preview.write_bytes(before)
+
+    def test_every_demo_in_the_table_is_listed_and_documented(self):
+        """--list and docs/demos.md are two views of the same table; a demo added to the
+        builder without a gallery entry is a picture nobody ever sees."""
+        listed = sh(sys.executable, ROOT / "demos" / "build.py", "--list").stdout
+        names = [line.split()[0] for line in listed.splitlines() if line.strip()]
+        self.assertGreaterEqual(len(names), 10, "the gallery lost most of its demos")
+        page = (ROOT / "docs" / "demos.md").read_text(encoding="utf-8")
+        for name in names:
+            self.assertIn(f"demos/{name}.gif", page,
+                          f"{name} is built but has no section in docs/demos.md "
+                          f"(run: python3 demos/build.py --docs)")
+
+
 def _families_for(script):
     """Families fontconfig lists for `script`, or [] where there is no fontconfig to ask (Windows
     resolves fonts by file name, so font_for_script() answers there without an fc-list on PATH --

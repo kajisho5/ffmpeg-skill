@@ -28,7 +28,18 @@
 npx ffmpeg-skill
 ```
 
-![before / after demo](assets/demo.gif)
+<table>
+  <tr>
+    <td width="50%"><img src="docs/demos/captions_pop_karaoke.gif" alt="animated captions with a karaoke highlight"><br><sub><code>caption.py --animate pop --karaoke</code></sub></td>
+    <td width="50%"><img src="docs/demos/reframe_crop.gif" alt="16:9 reframed to 9:16"><br><sub><code>fit.py --aspect 9:16 --fit crop</code></sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/demos/silence_removal.gif" alt="silence removed, timeline shorter"><br><sub><code>silence.py --threshold -35</code></sub></td>
+    <td width="50%"><img src="docs/demos/loudness.gif" alt="waveform before and after loudness normalisation"><br><sub><code>loudness.py -I -14 --tp -1</code></sub></td>
+  </tr>
+</table>
+
+Left half is the input, right half is what the command produced. **[All 23 before/after demos, with the exact command under each one →](docs/demos.md)** — all of it generated from synthetic footage by `python3 demos/build.py`, so you can rebuild every frame of it yourself.
 
 `ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **42 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also an MCP tool, and the whole set is described by a machine-readable contract.
 
@@ -107,7 +118,7 @@ python3 $S/export.py input.mp4 --preset reels --json                 # structure
 
 On Windows in Git Bash, `python3` is only on PATH if Python was installed from the Microsoft Store; a python.org install exposes `python` (or the `py` launcher) instead — replace `python3` with `python` above if you see a "command not found". `bin/install.js` and `doctor`/`contract` already handle this for you; only the raw script examples above need it spelled out manually.
 
-More requests and the commands behind them: [examples/README.md](examples/README.md). To see everything run end-to-end on generated footage: `npm run demo`.
+More requests and the commands behind them: [examples/README.md](examples/README.md). To see everything run end-to-end on generated footage: `npm run demo` (the gallery in [docs/demos.md](docs/demos.md)).
 
 ## How it works
 
@@ -437,7 +448,8 @@ FFmpeg itself:
 ```bash
 npm test                      # tests/test_all.py (end-to-end incl. VFR, rotated, 5.1, HDR10, drifting sources) + tests/test_contract.py
 npm run release-check         # pack, install, contract from the installed copy, MCP == contract, doctor, tests, contract evals
-npm run demo                  # generate footage, run every tool, rebuild assets/demo.gif
+npm run demo                  # python3 demos/build.py: synthetic footage -> every before/after demo + docs/demos/*.gif
+npm run demo:pipeline         # examples/make_demo.sh: the older single end-to-end run of every script
 python3 evals/run.py --list   # agent eval prompts (see evals/)
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```

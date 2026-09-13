@@ -2,6 +2,10 @@
 # Generate demo footage from nothing (ffmpeg testsrc2 + synthesized audio),
 # run every script in scripts/ on it, and build assets/demo.gif (before/after).
 #
+# This is the single end-to-end pipeline run (one clip through every script). For the
+# per-feature before/after gallery in docs/demos.md, use demos/build.py instead --
+# that is what `npm run demo` runs now; this script is `npm run demo:pipeline`.
+#
 #   bash examples/make_demo.sh            # writes examples/out/
 #   OUT=/tmp/demo bash examples/make_demo.sh
 set -euo pipefail

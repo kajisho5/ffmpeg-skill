@@ -1,5 +1,6 @@
 # demo / test output
 examples/out/
+demos/out/
 tests/out/
 *.log
 

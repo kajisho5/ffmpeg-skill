@@ -72,6 +72,11 @@ would have caught the original bug isn't done yet.
   table, the contract table, gotchas), `SKILL.md`, `references/scripts.md`,
   `docs/contract.md` and `CHANGELOG.md`. The README is read by people who never
   open SKILL.md, so a feature that only SKILL.md knows about is half shipped.
+- A `feat` PR adds at least one before/after demo to `demos/build.py` and
+  `docs/demos.md` (the page is generated: add the demo to the table in
+  `demos/build.py`, then run `python3 demos/build.py --docs`). A feature nobody
+  can see working is hard to review and harder to trust; the demo also runs the
+  new tool end to end, so a broken flag fails the build instead of the reader.
 
 ## Reporting issues
 

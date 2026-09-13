@@ -42,7 +42,8 @@
   "scripts": {
     "test": "python3 tests/test_all.py && python3 tests/test_contract.py",
     "release-check": "bash tests/release_check.sh",
-    "demo": "bash examples/make_demo.sh",
+    "demo": "python3 demos/build.py",
+    "demo:pipeline": "bash examples/make_demo.sh",
     "contract": "python3 scripts/_contract.py --json",
     "doctor": "python3 scripts/_contract.py doctor"
   },
