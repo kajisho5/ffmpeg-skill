@@ -99,6 +99,12 @@ It reads `ITERATION_DIR/<id>/with_skill/outputs/run.md`, prints a row per prompt
 that directory is absent) and then the summary counters: routing, refusal honesty, per-language
 report checks, report format, visual check, real execution, honest failure, audio-only handling.
 
+**Counting tool calls.** "Commands" and "tool calls" in a results file mean one thing: the
+`tool_use` entries in the agent's transcript, counted verbatim — one entry is one call, whether it
+ran a script, read a file or listed a directory. Commands quoted inside the run's prose report are
+not counted, and a single `tool_use` that runs a shell pipeline counts once. `mean_commands` in
+`evals/results/iteration-*.json` is that count averaged over the runs in the set.
+
 ### Language rules (`lang_ok`)
 
 The report has to be in the language of the request. The rules, also stated in the grader's header

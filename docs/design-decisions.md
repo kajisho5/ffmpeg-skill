@@ -161,3 +161,44 @@ exists. When a decision changes, edit the entry in the same PR.
   server runs tools in-process. 2.0 threads `ctx` through the three choke points (a signature
   change, hence major); tools that only call those keep working with a one-line change. Rejected:
   thread-locals (hides the dependency the reviews keep asking about). Code: `_common.Context`.
+
+## External review, 2026-09-13
+
+An outside review of the repository at 1.13.0 (eval 14). What it raised, and what was decided.
+Each item is recorded here so it is not re-proposed from scratch.
+
+- **`scripts/_common.py` is too large to review in one pass.** Accepted, with the split deferred
+  to a **behaviour-free refactor release after 1.15.0**, not folded into a feature minor: the
+  module becomes a package (`runner`, `probe`, `decision`, `emit`, `color`) and
+  `scripts/_common/__init__.py` stays a facade re-exporting today's names, so every
+  `from _common import ...` in the tools and tests keeps working and the diff is checkable as
+  "no caller changed". `tests/test_all.py` splits by tool group in the same release. Two things
+  the review suggested alongside it were **rejected**: a `MediaInfo` dataclass in place of the
+  probe dicts (the dicts are the `--json` payload and the contract's `output_schema`; a
+  dataclass would add a conversion layer on the hot path and a second shape to keep in sync),
+  and a different overwrite policy (writing to a temp path and renaming into place stays — it is
+  what makes a killed or timed-out run leave no partial output, and 2.0's refusal default is
+  built on it).
+- **The evaluation is Claude-only.** True, and it is stated rather than fixed: the agent runs use
+  a Sonnet agent, the independent grader is Opus, and the trigger judge is Sonnet. The maintainer
+  cannot run other vendors' models from this environment, so a cross-vendor number would be
+  invented, not measured. What is being done instead: `evals/run.py` and the regex grader
+  (`evals/grade_runs_24.py`) are being made runnable from Cursor and Codex, so anyone with access
+  to another model can run the routing/refusal set — the original 50 prompts — there and publish
+  the result. The harness reads transcripts and files; nothing in it is Claude-specific by design.
+- **`references/` is rarely read during evals.** Measured and expected. The reference files are
+  the long-form detail, and SKILL.md's request→script table is what carries a job: iteration 11
+  showed that pointing agents at the reference files cost tokens without changing outcomes, and
+  1.11.1 reworded step 0 accordingly. The answer is not to make `references/` more attractive but
+  to make the table better: the **intent-clustered request table is planned for 1.20.0**.
+- **The MCP catalogue costs a client context on every session.** A 42-tool `tools/list` is paid
+  for by every session, including the ones that call two tools. Decided for **1.19.0**: the
+  default listing becomes the core 12, the other 30 are reachable lazily through the contract.
+  The contract still describes all 42 — the surface does not shrink, only the default listing.
+- **The roadmap read as though planned work had shipped.** Fixed: `docs/roadmap.md` now marks
+  every version shipped + evaluated (naming the iteration), shipped with eval pending, or
+  planned, and the reconciliation is against `CHANGELOG.md` and `evals/results/`.
+- **The README over-claimed platform coverage.** Issue #143 (the full real-device corpus on
+  Windows, and an install reproduced by someone other than the maintainer) is still open. The
+  README now says what is actually covered: the contract and test suite on Linux, macOS and
+  Windows; the real-device media corpus on Linux and macOS; the Windows corpus open.

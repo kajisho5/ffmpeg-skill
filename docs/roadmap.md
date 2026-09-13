@@ -8,7 +8,29 @@ prompts and an audit pass, as 1.5 → 1.7 did. 2.0.0 then removes the old spelli
 defaults; it adds no feature of its own. `resolve_version.py` turns `feat` PRs into a
 minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs plus fixes.
 
-## 1.8.0 — one-call delivery, quieter checks, encoder flags
+**Every heading carries one of three states**, so that "on the roadmap" is never mistaken for
+"in the released package":
+
+- **shipped + evaluated** — released, and closed by a named evals iteration whose results are in
+  `evals/results/`.
+- **shipped, eval pending** — released, but no evals iteration has graded it yet.
+- **planned** — not released. Nothing below a *planned* heading exists in any published version;
+  the feature lines are the intent, not a description of the code.
+
+The released version today is **1.13.0**, evaluated by **eval 14** (`evals/results/iteration-14.json`,
+76 prompts at 1.13.0). Everything from 1.14.0 down is planned.
+
+| version | state | evidence |
+|---|---|---|
+| 1.8.0 | shipped + evaluated | eval 8 at 1.8.0 (`iteration-8.json`) |
+| 1.9.0 | shipped + evaluated | eval 9 at 1.9.0 (`iteration-9.json`) |
+| 1.10.0 | shipped + evaluated | eval 10 at 1.10.0 (`iteration-10.json`), corpus re-run 101/101 |
+| 1.11.0 / 1.11.1 | shipped + evaluated | eval 11 at 1.11.0, eval 12 at 1.11.1 |
+| 1.12.0 | shipped + evaluated | eval 13 at 1.12.0 (`iteration-13.json`) |
+| 1.13.0 | shipped + evaluated | eval 14 at 1.13.0 (`iteration-14.json`) |
+| 1.14.0 → 1.21.0, 2.0.0 | planned | — |
+
+## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
 - **`check.py` judgement rows without a named platform.** Today `--platform` defaults to
   `youtube`, so a run that only wanted the format rows gets loudness / true-peak FAILs and the
@@ -26,7 +48,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
   fix (r04 / f01), measures whether `--normalize` removed the second export, and whether
   `--codec` gets picked for "make it HEVC" / "ProRes master". Seventh audit pass on the tree.
 
-## 1.9.0 — one time grammar, one HDR meaning
+## 1.9.0 — one time grammar, one HDR meaning (shipped + evaluated, eval 9)
 
 - **`time_arg()` everywhere** (2.0 B): `broll.py`, `cut.py`, `freeze.py`, `render.py`,
   `sequence.py`, `verify.py` still call `parse_time()` or their own helpers; every time-taking
@@ -40,7 +62,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
   going down the HDR path, with `hdr_format: "BT.2020 SDR"` as the explanation.
 - **Eval iteration 9**; pins in `docs/design-decisions.md` for the grammar and the HDR split.
 
-## 1.10.0 — 2.0 readiness
+## 1.10.0 — 2.0 readiness (shipped + evaluated, eval 10)
 
 - **Deprecation notices** (done), per the three-step policy in `docs/contract.md`: `--help` text,
   CHANGELOG, and a `deprecated` list in `contract --json` for what 2.0 removes: the per-tool
@@ -56,11 +78,14 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **`FFMPEG_SKILL_NO_OVERWRITE=1`** (done) documented in SKILL.md as the recommended agent setting;
   the test is `test_contract.py`'s `test_existing_output_warns_today_refuses_on_request_and_never_for_its_own_files`,
   so 2.0's default flip has been exercised.
-- **Eval iteration 10** and an eighth audit pass; the real-device corpus (92 verification
-  steps) re-run on the tree — eighth audit shipped as 1.9.1; eval 10 and corpus re-run pending.
+- **Eval iteration 10** and an eighth audit pass; the real-device corpus re-run on the tree —
+  all done: the eighth audit shipped as 1.9.1, eval 10 graded 108/108 at 1.10.0
+  (`evals/results/iteration-10.json`) and the corpus re-ran 101/101 steps PASS.
   `docs/contract.md` "What 2.0 changes" section written from the `deprecated` list (done).
 
-## 1.11.0 — token diet (shipped; the PR was `feat:`, so the release bot cut a minor, and the themes below move up one)
+## 1.11.0 — token diet (shipped + evaluated, eval 11; the 1.11.1 follow-up by eval 12)
+
+The PR was `feat:`, so the release bot cut a minor and the themes below moved up one.
 
 The eval-10 follow-up: make a job cost the agent fewer tokens and fewer calls without changing
 what any tool does. Nothing here is a behaviour change — `--json`, exit codes, contract fields
@@ -84,10 +109,12 @@ and the default MCP `tools/list` are unchanged except for additions.
 - **Shorter `doctor` summary** (done): the plain-text output states counts and what is missing
   (1681 → 522 bytes on a healthy machine); `doctor --json` is unchanged and still carries every
   capability name, per-tool `usable` and the fix hints.
-- **Eval iteration 11** measures tokens per run and keeps only the changes that hold routing,
-  honesty, language, report format and look behaviour at iteration-10 levels (pending).
+- **Eval iteration 11** measured tokens per run and kept only the changes that hold routing,
+  honesty, language, report format and look behaviour at iteration-10 levels (done, 36/36 at
+  1.11.0). It also showed the 1.11.0 wording sending agents to the reference files and to
+  `doctor` on every job, which 1.11.1 reworded and eval 12 re-measured (36/36 at 1.11.1).
 
-## 1.12.0 — captions people can read, in any script (shipped)
+## 1.12.0 — captions people can read, in any script (shipped + evaluated, eval 13)
 
 - **Fonts by script** (done): `caption.py`, `graphics.py` and `overlay.py --text` detect the
   writing system of the text (ja, zh, ko, ar, he, hi, th, ru, el) and resolve a font file that
@@ -106,10 +133,12 @@ and the default MCP `tools/list` are unchanged except for additions.
   `--karaoke` when the transcript has them, instead of an even split.
 - **brand.json caption styles** (done): `styles.caption.{font,size,colour,box,position}` gives
   every project the same look; `graphics.py` reads `font` and `colour` from the same block.
-- Eval 11: the 8 caption prompts (JA/EN, CJK wrap, karaoke, SRT offset) run 3 times, plus the
-  per-language act/refuse prompts added for zh, ko, es, pt, fr, de and ar (pending).
+- The caption prompts (JA/EN, CJK wrap, karaoke, SRT offset) plus the per-language act/refuse
+  prompts added for zh, ko, es, pt, fr, de and ar were graded by **eval 13** at 1.12.0 (done):
+  50/50 on the grown set, every non-Latin caption and lower-third picking a covering font by
+  itself (`evals/results/iteration-13.json`).
 
-## 1.13.0 — the audio bed (done)
+## 1.13.0 — the audio bed (shipped + evaluated, eval 14)
 
 - `audio.py` (done): `--voice [light|medium|strong]` (bare `--voice` is `medium`, the chain it
   always produced), `--stereo-widen 0..1` (refused on a mono input, and on more than two
@@ -138,38 +167,94 @@ and the default MCP `tools/list` are unchanged except for additions.
   would be the worse one. Instead `render.py` gained a `chapters` project key (a file path or
   an inline list of `{"at", "title"}`) that runs `metadata.py` on the delivered file as the
   last stage before `check`.
-- Eval 12 on audio-only and mixed prompts (pending).
+- The audio-only and mixed prompts were graded by **eval 14** at 1.13.0 (done): 76/76 on the
+  set grown to 76 prompts (50 + 18 language + 8 delivery), `evals/results/iteration-14.json`.
+  Eval 14 also found the two defects 1.14.0 and 1.15.0 answer: delivery runs paying a second
+  encode because `export.py` ran without `--normalize`, and Devanagari through `graphics.py`
+  (drawtext) coming out wrong-shaped.
 
-## 1.14.0 — sync and multicam at scale
 
-- `sync.py` accepts 3+ sources (one reference, N seconds) and writes one offsets JSON;
-  drift correction reports the measured ppm and where it resampled.
-- `multicam.py --switch energy` cuts to the loudest camera's audio with a minimum shot length;
-  `--edl` exports the cut list for an NLE; the timeline is a `render.py` project so it can be
-  re-rendered with different minimum shot lengths.
-- Eval 13 on multicam / sync prompts; a real-device multicam corpus (phone + camera + lav).
+## 1.14.0 — delivery templates (planned)
 
-## 1.15.0 — delivery, one preset per destination
+Eval 14's delivery baseline: the destination is named ("make this a TikTok", 「リールにして」),
+the chain behind it is always the same, and four of seven producing runs paid a second full
+encode because `export.py` ran without `--normalize` first.
 
+- `render.py --template tiktok|reels|shorts|youtube|linkedin|podcast`: one call for the whole
+  chain a platform name implies (reframe, captions when cues are given, platform export,
+  `check.py`), with `--normalize` on by default whenever a platform is named, so a delivery is
+  one encode rather than two.
+- **Blurred-background fit**: `fit.py --fit pad --pad-fill blur` as the template default for
+  16:9 into 9:16, instead of two thirds black bars (the dl8 case).
+- **Social pack**: `--template all` renders the same source to every vertical destination in one
+  run, sharing the decode and the caption pass.
+- **Sticker, hook and meme graphics** in `graphics.py`: the hook card (an opening caption on a solid or blurred plate), the
+  top/bottom meme caption and the sticker-style label that short-form deliverables ask for,
+  drawn from the same brand kit as the existing lower-thirds.
 - `export.py` presets for shorts / tiktok / linkedin as named targets (today aliases of
   reels / youtube), `youtube-hdr` (HEVC Main10 HDR10 kept), `youtube-av1`; a preset carries its
   loudness spec so `--normalize` and `check.py` read one table.
 - `look.py --best-frame` picks a thumbnail candidate by sharpness and exposure (measured, no
   content judgement) and writes it at the platform's thumbnail size; `report.py` embeds it.
-- Chapter markers in the delivery file from a `chapters` block in the project.
-- Eval 14 on delivery prompts, all presets checked by `check.py` on the corpus.
+- Eval 15 on the delivery prompts (`dl1`–`dl8`), three repeats, measuring the encode count per
+  delivery rather than pass/fail alone.
 
-## 1.16.0 — throughput
+## 1.15.0 — text that renders correctly everywhere (planned)
 
+The defects eval 14 found in the text path, none of which changes a tool's surface:
+
+- **Emoji and complex-script shaping for `graphics.py`**: Devanagari through `drawtext` comes
+  out wrong-shaped today even when the font covers it, while the same text through `caption.py`
+  (libass) is correct. `graphics.py` either draws its text through libass (an ASS overlay) or
+  refuses complex-script and emoji text on `drawtext` with a message naming `caption.py` — never
+  writes a wrongly shaped frame and calls it a success. Emoji fall under the same resolution
+  (a colour emoji font detected by `doctor`'s `fonts.scripts`).
+- **`'` and `%` survive a caption.** Both are filter-graph metacharacters; the escaping keeps
+  them in the drawn text instead of dropping or mangling them.
+- **No one-character orphan lines**: the measured wrap never leaves a single character alone on
+  a line (seen on `th1` and `dl3`), and prefers a break that keeps a phrase together.
+- Eval 16 re-runs the caption and graphics prompts in every script the set covers.
+
+## Refactor release after 1.15.0 — no behaviour change (planned)
+
+A release of its own so that "nothing changed for a caller" is checkable in one diff: no flag,
+no JSON key, no exit code, no contract field moves. The contract snapshot and the MCP snapshot
+must come out byte-identical.
+
+- **`scripts/_common.py` becomes a package**: `runner` (process execution and timeouts),
+  `probe` (ffprobe and the measured facts), `decision` (the copy-vs-re-encode and capability
+  choices), `emit` (result documents, `die()`, `info()`) and `color` (colour tags, HDR paths).
+  `scripts/_common/__init__.py` is a facade that re-exports today's names, so every
+  `from _common import ...` in every tool and test keeps working unchanged.
+- **`tests/test_all.py` splits by tool group** (analysis, editing, audio, picture, delivery,
+  orchestration) with the shared fixtures in one place; `npm test` still runs the same set.
+- No eval iteration of its own: the release is proved by the existing suite plus the two
+  snapshots, and the next themed eval runs on top of it.
+
+## 1.16.0 — long-form delivery (planned)
+
+- **Audiogram**: a `waveform.py` / `render.py` template that turns an audio episode into a
+  shareable video (waveform or spectrum over a still or brand background, captions burned in).
+- **Auto chapters**: chapter markers proposed from measured structure (silence spans and scene
+  changes), written by `metadata.py` — the skill proposes the timestamps, the caller names them.
+- **Multi-language subtitle tracks**: `caption.py --mode mux` takes more than one subtitle file
+  and tags each stream with its language, so one deliverable carries several tracks.
+- Eval 17 on long-form and podcast prompts.
+
+## 1.17.0 — throughput (planned)
+
+- `silence.py --filler` removes filler words when a transcript is available (whisper stays
+  optional: no transcript, no filler removal, and the tool says so).
+- **Beat-synced cuts**: measured onsets from the music bed as a cut grid `cut.py`/`render.py`
+  can snap to; the beat list is reported so the caller can see what it snapped to.
 - `batch.py --jobs N` runs independent items in parallel under one `--timeout` budget;
   resumable (`--resume` skips items whose output verified); `--watch` folders.
 - `render.py` caches unchanged stages by content hash of inputs and stage arguments, so
   changing the export preset re-runs export only; `--stop-after` and `--from STAGE`.
-- `proxy.py` round trip: edit on proxies, `render.py --conform` re-renders from originals.
-- Eval 15 measures wall-clock and encode counts on the 36-prompt set (the number, not just
-  pass/fail).
+- Eval 18 measures wall-clock and encode counts on the delivery and batch prompts (the number,
+  not just pass/fail).
 
-## 1.17.0 — measured analysis (still no judgement)
+## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
 
 - `scenes.py --shots` labels each shot static / pan / motion by measured optical flow;
   `--audio-peaks` and `--speech` (speech-vs-music energy ratio) as separate lists.
@@ -177,9 +262,15 @@ and the default MCP `tools/list` are unchanged except for additions.
   cuts only between sentences (measured pauses), with the cut list as EDL.
 - `cropdetect.py --motion-centre` reports the motion centroid per second for a 9:16 reframe
   that the calling agent decides on (the skill reports the number; it does not pick the subject).
-- Eval 16 on analysis prompts, scored against hand-labelled ground truth.
+- `sync.py` accepts 3+ sources (one reference, N seconds) and writes one offsets JSON;
+  drift correction reports the measured ppm and where it resampled.
+- `multicam.py --switch energy` cuts to the loudest camera's audio with a minimum shot length;
+  `--edl` exports the cut list for an NLE; the timeline is a `render.py` project so it can be
+  re-rendered with different minimum shot lengths.
+- Eval 19 on analysis and multicam prompts, scored against hand-labelled ground truth; a
+  real-device multicam corpus (phone + camera + lav).
 
-## 1.18.0 — observability
+## 1.19.0 — observability, portability, a smaller MCP surface (planned)
 
 - `--trace FILE` (common flag): one JSON line per ffmpeg run with wall time, encode fps,
   speed, exit code, bytes written; `result_v2.metrics` carries the same for the whole tool.
@@ -187,38 +278,44 @@ and the default MCP `tools/list` are unchanged except for additions.
   graphs, and the plan/verify chain when a plan was executed.
 - `verify.py --install` checks the install itself (ffmpeg build, encoders, fonts, whisper) and
   prints the fix per missing capability, using the contract's capability list.
-- Eval 17 grades whether agents quote the metrics rather than re-probe.
-
-## 1.19.0 — portability
-
 - Windows: paths with spaces and non-ASCII fonts through every filter (fontconfig escaping
-  audit), long-path support; the Windows CI job runs the full corpus.
+  audit), long-path support; the Windows CI job runs the full real-device corpus, which closes
+  issue #143.
 - ffmpeg 8 / 9: filter and encoder fixtures refreshed, `bt709_tag_args` and the colour
   negotiation path re-verified on each; a compatibility table in `references/devices.md`.
 - `--hwaccel auto` (opt-in): videotoolbox / vaapi / nvenc for previews (`--fast`) only,
   never for the final encode unless `--hwaccel final` is given, with the encoder named in the
   result so a difference is traceable.
-- Eval 18 on the Windows and macOS runners.
+- **MCP: core 12 tools, the rest lazily.** A 42-tool `tools/list` costs a client's context on
+  every session for tools most sessions never call. The default listing becomes the core 12
+  (`probe`, `cut`, `join`, `fit`, `caption`, `audio`, `loudness`, `export`, `check`, `look`,
+  `render`, `doctor`/`contract`); the other 30 stay reachable and are fetched through the
+  contract on demand. The contract itself still describes all 42 — nothing is removed from the
+  surface, only from the default listing.
+- Eval 20 on the Windows and macOS runners; it also grades whether agents quote the metrics
+  rather than re-probe.
 
-## 1.20.0 — agent ergonomics
+## 1.20.0 — agent ergonomics (planned)
 
-- SKILL.md rewritten from evals 8–18: the request table regrouped by intent, the language and
-  report rules moved to the top, the gotchas list pruned to the ones still hit.
+- SKILL.md rewritten from evals 8–20: **the request table regrouped by intent** (the clusters
+  people actually ask in — shorten, reframe, caption, fix the audio, deliver, inspect — rather
+  than by script name), the language and report rules moved to the top, the gotchas list pruned
+  to the ones still hit.
 - MCP: `tools/list` descriptions shortened to one line each (the schemas are unchanged), a
   `prompts` capability with the five workflows (reel, podcast, multicam, delivery check, HDR).
 - `contract --json` gains `examples` per tool (the SKILL.md table rows, machine-readable).
-- Eval 19: trigger set doubled (44 prompts), plus 20 "second-turn" prompts where the agent
-  must continue an edit from a previous result document.
+- Eval 21: trigger set doubled, plus "second-turn" prompts where the agent must continue an edit
+  from a previous result document.
 
-## 1.21.0 — the 2.0 freeze
+## 1.21.0 — the 2.0 freeze (planned)
 
 - Everything 2.0 removes is announced (`deprecated` in the contract, `--help`, CHANGELOG) for
   at least one minor; `docs/migrating-2.0.md` maps every old spelling to the new one.
 - `contract_version` 1.1: `deprecated`, `examples`, `metrics` documented; the real-device
-  corpus and all 19 eval sets re-run on the tree; ninth audit pass.
+  corpus and every eval set re-run on the tree; ninth audit pass.
 - No new options after 1.21.0 on 1.x: 1.21.x is fixes only while 2.0.0 is prepared.
 
-## 2.0.0 (after 1.21.x settles)
+## 2.0.0 (planned, after 1.21.x settles)
 
 Manual `package.json` bump in one PR (the release workflow never picks a major). It removes
 the deprecated spellings, promotes `result_v2` to the top level, makes `ctx` required, renames
