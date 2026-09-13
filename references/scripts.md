@@ -256,7 +256,11 @@ frame is refused here, not discovered from an opaque ffmpeg error).
 ### waveform.py — audio waveform/spectrum visualization video
 ```
 waveform.py INPUT [--style waveform|spectrum] [--width W] [--height H] [--fps N]
-                   [--color C] [--background C] [--waveform-mode M] [--split-channels] [-o OUT]
+                   [--color C] [--background C] [--waveform-mode M] [--split-channels]
+                   [--image PATH] [--image-fit cover|contain|blur]
+                   [--position bottom|centre|top|strip] [--vis-height FRAC] [--opacity 0..1]
+                   [--platform NAME] [--srt FILE | --text FILE] [--title TEXT] [--brand brand.json]
+                   [-o OUT]
 ```
 Renders the input's audio as a video: `--style waveform` (default, FFmpeg's
 `showwaves`) draws amplitude over time; `--style spectrum` (`showspectrum`)
@@ -264,6 +268,25 @@ draws a frequency-over-time heatmap instead, reading more out of dense
 mixes at the cost of being less immediately readable. The output always
 carries the audio it visualizes. For an audio-only input (no video stream
 needed) or any file with an audio track worth visualizing.
+
+**Audiogram (1.16).** `--image PATH` puts a local still behind the
+visualisation, which is what turns a podcast episode into something postable.
+`--image-fit cover` (default) scales to cover and centre-crops; `contain` pads
+with `--background`; `blur` uses fit.py's blurred-pad plate. `--position`
+places the band (`strip`, the default, is a band of `--vis-height` -- a
+fraction of the frame, default 0.35 -- along the bottom, the podcast
+convention); `--opacity` fades the visualisation over the plate. `--platform`
+takes the frame size and fps from the delivery table and refuses a destination
+with no frame (`podcast`). `--title` draws one label through graphics.py's
+sticker template and `--srt`/`--text` burns captions by running caption.py
+afterwards -- both as second processes, so neither of those code paths is
+re-implemented here. `--image` must be a readable local file: a URL is refused
+(`kind: input`), nothing is fetched, and the skill never invents cover art --
+give an image or a colour. Without any of these flags the command line is
+byte-identical to 1.15's. The result gains an `audiogram` object (style,
+background, image, position, vis_height, platform, captions, title, stages,
+verified). `render.py --template audiogram` is the one-call form; it is
+deliberately not part of `--template all`.
 
 ### freeze.py — hold a frame for N seconds
 ```
@@ -338,7 +361,10 @@ output; the result says so with `dropped_non_av_streams: true`.
 
 ### metadata.py — chapter markers and container tags, streams copied
 ```
-metadata.py INPUT [--chapters chapters.txt | --clear-chapters]
+metadata.py INPUT [--chapters chapters.txt | --clear-chapters | --auto-chapters]
+                  [--min-chapter S] [--max-chapters N] [--from silence|scenes|both]
+                  [--silence-threshold dB] [--silence-min S] [--scene-threshold N]
+                  [--chapters-out FILE] [--description-out FILE]
                   [--title T] [--artist A] [--album A] [--comment C] [--date D] [--genre G] [-o OUT]
 ```
 `chapters.txt` holds one chapter per line, `TIME TITLE` (cut.py's time syntax:
@@ -351,6 +377,27 @@ container that can hold them (.mp4/.m4v/.m4a/.mov, .mkv/.mka/.webm); `.wav`,
 silently dropping them. Tags alone are written to any container that has them.
 `--clear-chapters` removes existing markers; an empty tag value (`--comment ""`)
 clears that tag.
+
+**Proposed chapters (1.16).** `--auto-chapters` measures the file's own
+structure instead of reading a file: silencedetect for the pauses (`--from
+silence`), scdet for the scene cuts (`--from scenes`), both by default. A
+chapter starts where speech resumes; a scene cut within 1 s of one is the same
+event and merges to `silence+scene` evidence, which `--max-chapters` never
+drops before a single-evidence marker. `--min-chapter` (default 60, a
+long-form default) is the shortest chapter, and nothing is proposed within it
+of the end of the file. **Two detectors mean two full decodes of the input**
+(`notes` says so); `--from silence` is the cheap path. Every title is
+`Chapter N` and the result says `"titles": "placeholder"`: the skill proposes
+where a chapter starts, it cannot know what is in one -- naming them is the
+caller's job, and asking this skill to do it is a refusal.
+`--chapters-out FILE` writes the proposal in this tool's own `--chapters`
+format, so the titles can be edited and fed straight back;
+`--description-out FILE` writes the YouTube block (`00:00 Chapter 1` per
+line, rounded down to the second). The output is still `-c copy`. An input
+with no video degrades to `--from silence` with a note; an explicit `--from
+scenes` on it is refused, as is `--from silence` on an input with no audio.
+The result gains `auto_chapters` (source, min_chapter, proposed, kept,
+titles, chapters with their evidence, description_block, files).
 
 ### grid.py — composite clips into a grid
 ```
@@ -440,13 +487,13 @@ complete command plan for review.
 ### Delivery templates — one command per destination (1.14)
 ```
 render.py --template tiktok INPUT [--cues cues.txt | --srt subs.srt] [--logo logo.png] [--title "..."]
-          [--brand brand.json] [--chapters chapters.txt] [--fit crop|pad|blur] [-o OUT]
+          [--brand brand.json] [--chapters chapters.txt] [--image cover.png] [--fit crop|pad|blur] [-o OUT]
 render.py --template all INPUT ...        # or a comma list: one delivery per destination + <stem>_pack.md
 render.py --list-templates                # the table below, from the running install
 render.py --template tiktok INPUT --write-project project.json    # fill it, edit it, render it later
 ```
 A template is a `render.py` project shipped in `templates/<name>.json` with `$INPUT`, `$OUTPUT`,
-`$CUES`/`$SRT`, `$LOGO`, `$TITLE`, `$BRAND` and `$CHAPTERS` placeholders. Filling it substitutes
+`$CUES`/`$SRT`, `$LOGO`, `$TITLE`, `$BRAND`, `$CHAPTERS` and `$IMAGE` placeholders. Filling it substitutes
 what the run was given and **drops any block whose placeholder has no value** — no `--logo` means
 no overlay stage at all, not an overlay of nothing. The filled project then renders through the
 normal stages, so `--dry-run --json`, `--stop-after` and the work directory behave as always. An
@@ -479,6 +526,7 @@ hand-built step:
 | `linkedin` | 1080x1080 (1:1) | 600 s | -14 LUFS / -1 dBTP | 0.05 | 0.05 | 0.05 | 0.05 |
 | `facebook` | 1920x1080 (16:9) | 14400 s | -14 LUFS / -1 dBTP | 0.05 | 0.05 | 0.05 | 0.05 |
 | `podcast` | audio only | — | -16 LUFS / -1 dBTP | 0.00 | 0.00 | 0.00 | 0.00 |
+| `audiogram` | 1920x1080 (16:9), or `--platform` / `--image` | 43200 s | -14 LUFS / -1 dBTP | 0.05 | 0.05 | 0.05 | 0.05 |
 
 `podcast` is audio: silence trim, −16 LUFS / −1 dBTP, chapter markers when `--chapters` is given,
 and `check.py --platform podcast`. `--template all` renders `tiktok, reels, shorts, youtube, x,
@@ -486,6 +534,13 @@ linkedin, facebook` (not the audio template, not the `youtube-shorts` alias) int
 `<stem>_<platform>.mp4`, runs each platform's check and writes `<stem>_pack.md` with one row per
 destination; `report.py --pack <stem>_pack.md` renders that table as a single HTML page. A pack
 whose destinations did not all pass exits non-zero with the per-destination rows in `pack`.
+
+`audiogram` (1.16) is the one-call form of the podcast-to-video job: an `audiogram` stage runs
+**first** (it makes the picture the rest of the chain works on, through `waveform.py --image`),
+then captions, loudness, export and check. It needs `--image` (a local file) or a `background`
+colour in the project — this skill fetches nothing and invents no cover art — and it is
+deliberately **not** part of `--template all`, whose destinations all assume a source that
+already has a picture.
 
 ### scenes.py — scene changes and highlight candidates
 ```
@@ -551,9 +606,13 @@ graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|st
             [--name] [--title] [--subtitle] [--text] [--top] [--bottom] [--duration 3]
             [--from N] [--start S] [--end E] [--position CORNER] [--margin PX] [--platform NAME]
             [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [--lang XX]
-            [--text-render auto|ass|drawtext] [--write-ass OUT.ass]
+            [--wrap phrase|measured] [--text-render auto|ass|drawtext] [--write-ass OUT.ass]
             [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
 ```
+Since 1.16 a label too wide for the frame is broken into lines by the same phrase-aware wrap
+caption.py uses (`--wrap phrase|measured`; see caption.py above) instead of running off the edge —
+the hook card, the meme lines and the sticker chip. A label that already fits is untouched.
+
 Drawn with drawbox/drawtext/overlay — no PNG assets needed. Sizes scale with
 the frame's short side; colours, font and safe margin come from `--brand`.
 Lower-third slides in over 0.4 s and out over 0.3 s; title/chapter/bug fade.
@@ -658,9 +717,10 @@ rather than about the file.
 
 ### caption.py — subtitles (static, animated, karaoke)
 ```
-caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
-           [--mode burn|mux] [--audio-stream N] [--fps N] [--lang XX] [--offset TIME]
-           [--max-lines N] [--min-duration S]
+caption.py INPUT --srt FILE[:LANG] | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
+           [--mode burn|mux] [--srt FILE:LANG ...] [--track-title T ...] [--default-track LANG]
+           [--audio-stream N] [--fps N] [--lang XX] [--offset TIME]
+           [--max-lines N] [--min-duration S] [--wrap phrase|measured]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
            [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
            [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass]
@@ -707,6 +767,47 @@ never edited: the adjusted copy is written next to the output
 comes from, but nothing is written until the real run. `--min-duration` and
 `--offset` also work with `--write-srt` alone; `--max-lines` does not, because
 wrapping needs the input video's real frame size.
+
+Phrase-aware breaking (1.16), `--wrap phrase` (default) — four rules over the
+break positions that already fit, so a line is never widened and the line count
+never changes: **R1** never inside a word, and a hyphenated token may break only
+after its hyphen (never after a non-breaking `‑`, nor a leading/trailing
+one); **R2** no line that is a lone digit, one or two punctuation characters, or
+a single kana, checked at every boundary rather than only the last; **R3** for
+Japanese and Chinese, a break is preferred after `。、！？」』）` and (Japanese
+only) before a particle, discouraged between a kanji stem and its okurigana, and
+forbidden before a small kana, `ー` or a closing bracket; **R4** for
+en/es/pt/fr/de/it, a line does not end on an article or preposition (a frozen
+table, matched case-folded; `--lang`, else the script detector, picks the set,
+and with no language the union of the six is used). `--wrap measured` is 1.15's
+width-only wrap exactly, kept so an older split can be reproduced. The result's
+`caption` object carries the layout counts plus `wrap` and `phrase_breaks`.
+graphics.py takes the same flag for the labels that can hold more than one line
+(the hook card, the meme lines, the sticker chip). The breaker never rewrites,
+shortens or translates the text: a cue that cannot fit `--max-lines` is split
+into consecutive cues, as it always was.
+
+Several languages in one file (1.16): `--srt` is repeatable and each file may
+carry a `:lang` suffix — `--mode mux --srt en.srt:en --srt ja.srt:ja --srt
+es.srt:es -o ep.mkv` writes one deliverable with three language-tagged,
+toggleable streams and copies the video and audio bit for bit. The suffix splits
+on the last colon, and only when the tail is a BCP-47-shaped code *and* the whole
+token is not itself a file on disk, so `C:\subs\en.srt` and a file named
+`a:b.srt` are never mangled; a single `--srt` with no suffix still takes
+`--language`. `--track-title` names a track (repeated in `--srt` order;
+otherwise a frozen display-name table, and a code the table does not know gets
+the code itself — never a guessed or translated name), `--default-track LANG`
+marks one for auto-selection (default: none). Two tracks with the same code, a
+code that is not BCP-47-shaped, a `--default-track` no track carries, and more
+than one `--srt` with `--mode burn` are all refused. **Container note:** `.mp4`
+and `.mov` accept several `mov_text` tracks but many players show only the
+first, and MPEG-4 stores an ISO-639-2 code — a two-letter one is silently
+dropped, so this tool converts it (`en` → `eng`); Matroska keeps the code you
+give. Past two tracks in an MPEG-4 container the result carries a note
+recommending `.mkv`. The result gains `tracks` and `subtitle_tracks`; check.py
+prints an informational `subtitles` row (WARN for an untagged stream, never
+counted in `failed`). The skill never translates and never generates a second
+language.
 
 Fonts by script (1.12): with no `--font` and no font named in your brand file, the
 script of the cue text (Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari,

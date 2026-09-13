@@ -247,3 +247,45 @@ Each item is recorded here so it is not re-proposed from scratch.
   1.14.0, so the demos, the golden frames and every existing test do not move (the filter
   string itself did change: the label moved from `text=` into `textfile=…:expansion=none`) —
   and the new route carries no risk for the 95 % of jobs that never needed it.
+
+
+## 1.16.0 — long-form delivery
+
+**The audiogram extends `waveform.py`; there is no `audiogram.py`.** `waveform.py` already owns
+`showwaves`/`showspectrum`, `--width/--height/--fps/--color/--background`, `--split-channels`,
+`--audio-stream`, the one encoder line and the FFmpeg-5.x `-t` cap (#146). An `audiogram.py`
+would be that file plus a background image: a second spelling of one tool, which is exactly the
+mistake recorded for `audio.py --chapters`. The 1.x guarantee forbids *removing* a tool, so an
+`audiogram.py` would be permanent surface; `--image` is one additive argument. The composite job
+(visualisation over a plate, a title, captions burnt in, platform size, `check.py`) is a chain,
+and this repo already has one answer for a chain: a `render.py` template, as 1.14 established and
+`templates/podcast.json` precedes. The tool count therefore stays 42, which is asserted in five
+files by `test_docs_tool_count_matches_the_real_tool_list`. Do not re-propose it.
+
+**The title and the captions on an audiogram are second processes.** `waveform.py --title` runs
+`graphics.py --template sticker` and `--srt`/`--text` runs `caption.py` on the rendered file,
+rather than adding drawtext or an ASS path here. One code path per job is worth two process
+spawns; the alternative is a second subtitle renderer that drifts from the first.
+
+**`--auto-chapters` lives in `metadata.py`, and the detectors moved into `_common`.**
+`metadata.py` already owns the chapter format, the `-c copy` graph and the written-vs-asked-for
+count assertion; `scenes.py --chapters-out` would put chapter writing in a tool that cannot write
+chapters. No script in `scripts/` imports a sibling tool (only the `_`-prefixed modules are
+shared), so `silence.detect` and `scenes.detect_scenes` moved into `_common/probe.py` byte-for-byte
+and all three tools import them from there. The merge/keep/drop decision itself is
+`propose_chapters()` in `_common/decision.py`: pure, subprocess-free, unit-testable.
+
+**The skill proposes chapter timestamps; it never names them.** Every proposed title is
+`Chapter N` and the result says `"titles": "placeholder"`. Naming a chapter needs knowing what is
+said in it, which is content understanding — the boundary SKILL.md's "What this skill does and
+does not decide" holds. A request to title them is a refusal with the placeholder list offered.
+
+**Only the `--srt FILE:lang` suffix form.** The parallel-list alternative (`--srt a --srt b
+--lang en,ja`) was specified and dropped: it can get out of order, and two spellings of one
+argument is the thing the deprecation policy exists to avoid. A single `--srt` with no suffix
+still honours `--language`, so nothing that worked before changed.
+
+**The Japanese particle table is a preference, not grammar.** `は が を に で と の へ も や から
+まで より` come from the task brief plus the five a reader would add. There is no upstream source
+for it and no precedent in this repo; it is tunable data, applied as a *penalty* among break
+positions that already fit, so it can never widen a line or change the line count.

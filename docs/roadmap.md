@@ -17,7 +17,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.15.0**, shipped and evaluated: **eval 16**
+The released version today is **1.15.1**; **1.15.0** is the last one an eval graded: **eval 16**
 (`evals/results/iteration-16.json`) graded it on the 82-prompt set, the 76 plus the six
 emoji/shaping prompts. After it comes the behaviour-free refactor release below; everything
 after that is planned.
@@ -33,7 +33,8 @@ after that is planned.
 | 1.14.0 | shipped + evaluated | eval 15 at 1.14.0 (`iteration-15.json`) |
 | 1.15.0 | shipped + evaluated | eval 16 at 1.15.0 (`iteration-16.json`) |
 | refactor after 1.15.0 | shipped, eval pending | contract + MCP snapshots and every `--help` byte-identical; 323/323 cases |
-| 1.16.0 → 1.21.0, 2.0.0 | planned | — |
+| 1.16.0 | shipped, eval pending | contract and MCP snapshots additive only; tool count still 42; eval 17 is a separate PR |
+| 1.17.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
@@ -262,19 +263,31 @@ came out byte-identical, as did `--help` for all 42 tools.
 - No eval iteration of its own: the release is proved by the existing suite plus the two
   snapshots, and the next themed eval runs on top of it.
 
-## 1.16.0 — long-form delivery (planned)
+## 1.16.0 — long-form delivery (shipped, eval pending)
 
-- **Phrase-aware caption breaking** (eval 16 follow-up): the wrap never splits inside a word or
-  between a determiner and its noun, and balances lines by measured width; the `dl1`/`dl3`/`dl4`
-  cues become the regression lock. The label lines (`Done:`/`Steps:`/`Check:`) are stated in
-  SKILL.md to be part of the user's-language report (`dl4`, `id1`).
-- **Audiogram**: a `waveform.py` / `render.py` template that turns an audio episode into a
-  shareable video (waveform or spectrum over a still or brand background, captions burned in).
-- **Auto chapters**: chapter markers proposed from measured structure (silence spans and scene
-  changes), written by `metadata.py` — the skill proposes the timestamps, the caller names them.
-- **Multi-language subtitle tracks**: `caption.py --mode mux` takes more than one subtitle file
-  and tags each stream with its language, so one deliverable carries several tracks.
-- Eval 17 on long-form and podcast prompts.
+- **Phrase-aware caption breaking** (eval 16 follow-up): `caption.py`/`graphics.py --wrap
+  phrase|measured`, default `phrase`. Four rules over the break positions that already fit, so
+  no line is widened and the line count never changes — never inside a word or on the wrong side
+  of a hyphen; no lone digit, punctuation pair or single kana on its own line, at every boundary
+  rather than only the last; Japanese/Chinese sentence ends and particles preferred over a
+  mid-word break; no line ending on an article or preposition in six Latin-script languages. The
+  `dl1`/`dl3`/`dl4`/`th1` cues are the regression lock. `--wrap measured` restores 1.15 exactly.
+  Where R4 and the spec's pinned `dl1` split disagreed the rule won, and the CHANGELOG says so.
+  The label lines (`Done:`/`Steps:`/`Check:`) are now stated in SKILL.md to carry the user's
+  language (`dl4`, `id1`).
+- **Audiogram**: `waveform.py --image` plus `templates/audiogram.json` and a `render.py`
+  `audiogram` stage — an audio episode over a still or brand plate, with a title and captions.
+  **No new tool** (`docs/design-decisions.md` records why), so the count stays 42, and a run with
+  none of the new flags builds the same command line 1.15 did.
+- **Auto chapters**: `metadata.py --auto-chapters` proposes markers from measured pauses and
+  scene changes, with `--chapters-out`/`--description-out`. Every title is `Chapter N` and the
+  result says `"titles": "placeholder"` — the skill proposes the timestamps, the caller names
+  them.
+- **Multi-language subtitle tracks**: `caption.py --mode mux --srt file:lang`, repeatable, with
+  `--track-title` and `--default-track`; the result lists every stream under `tracks` and
+  `check.py` gains an informational `subtitles` row.
+- Eval 17 on long-form and podcast prompts: **still pending**, a separate `docs:` PR as every
+  previous iteration was.
 
 ## 1.17.0 — throughput (planned)
 

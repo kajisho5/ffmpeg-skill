@@ -423,6 +423,21 @@ including `input_lra`) and `targets` (the requested lufs / tp / lra).
 `check.py --platform podcast` adds two informational rows to `checks`,
 `channels` and `chapters`.
 
+Per-tool keys added in 1.16, all additive (no 1.15 key is removed, renamed or
+given a different type):
+
+| key | tool | what it holds |
+|---|---|---|
+| `caption` | `caption.py` | the cue-layout counts the run only printed before (`shifted`, `wrapped`, `rebalanced`, `split`, `extended`, `dropped`) plus `wrap` (`"phrase"` or `"measured"`) and `phrase_breaks`, the number of cues a phrase rule broke somewhere the 1.15 width rule would not |
+| `tracks`, `subtitle_tracks` | `caption.py --mode mux` | one entry per subtitle stream in the output — `{index, file, language, title, codec, default, cues, kept_from_input}`; a stream the input already carried has `file: null` and `kept_from_input: true`. `subtitle_tracks` is the total |
+| `auto_chapters` | `metadata.py --auto-chapters` | `{source, min_chapter, max_chapters, proposed, kept, titles, chapters, description_block, files}`. `titles` is always `"placeholder"`: the machine-readable form of "the skill did not name these". Each chapter carries its `evidence` (`start`, `silence`, `scene`, or `silence+scene` with the span, its length and the cut time) |
+| `audiogram` | `waveform.py` with an audiogram flag | `{style, background, image, position, vis_height, platform, captions, title, stages, verified}`. `background` is `"image"` or `"color"`; `verified` is true when the render probes at the asked-for frame size and within 0.05 s of the source audio |
+
+`check.py` also gains an informational `subtitles` row on **every** platform:
+`PASS` when every soft subtitle stream carries a language tag, `WARN` when one
+does not (or when there are none). Like `channels` and `chapters` it is never
+counted in `failed` — no platform refuses a delivery over it.
+
 The MCP `audio` tool publishes `voice` as `{"type": "string", "enum": ["light",
 "medium", "strong"]}`. A client that still sends the 1.12 boolean `{"voice":
 true}` keeps working: `true` emits the bare `--voice`, which is `medium` — the
