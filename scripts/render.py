@@ -67,7 +67,7 @@ HERE = Path(__file__).resolve().parent
 TEMPLATE_DIR = HERE.parent / "templates"
 # The placeholders a delivery template carries; a block whose placeholder has no value
 # (no --logo, no --title, no cues) is dropped from the filled project rather than rendered empty.
-PLACEHOLDERS = ("$INPUT", "$OUTPUT", "$CUES", "$SRT", "$LOGO", "$TITLE", "$BRAND", "$CHAPTERS")
+PLACEHOLDERS = ("$INPUT", "$OUTPUT", "$CUES", "$SRT", "$LOGO", "$TITLE", "$BRAND", "$CHAPTERS", "$IMAGE")
 # Intermediates follow the delivery's own media kind: an audio-only project (the podcast
 # template) must not carry its stages through .mp4 containers.
 AUDIO_EXT = frozenset({".wav", ".m4a", ".mp3", ".flac", ".aac", ".ogg", ".opus"})
@@ -97,11 +97,14 @@ TEMPLATE = {
 OBJECT_KEYS: Dict[str, frozenset] = {
     "project": frozenset({"output", "frame", "clips", "transition", "silence", "brand", "captions",
                           "graphics", "overlays", "audio", "loudness", "fit", "export", "check", "chapters",
-                          "template"}),
+                          "audiogram", "template"}),
     "clips[]": frozenset({"src", "in", "out", "speed"}),
     "frame": frozenset({"aspect", "width", "height", "fps", "fit"}),
     "transition": frozenset({"type", "duration"}),
     "silence": frozenset({"threshold", "min_silence", "margin"}),
+    # 1.16: the picture an audio-only source gets before the rest of the chain can work on it
+    "audiogram": frozenset({"image", "image_fit", "style", "position", "vis_height", "opacity",
+                            "platform", "title", "color", "background", "width", "height", "fps"}),
     "captions": frozenset({"text", "srt", "ass", "font", "size", "color", "position", "margin",
                            "animate", "highlight_color", "outline", "karaoke", "bold", "box",
                            "lang", "offset", "max_lines", "min_duration"}),
@@ -202,9 +205,10 @@ def template_project(name: str, args) -> Dict[str, Any]:
         "$BRAND": os.path.abspath(args.brand) if args.brand else None,
         "$CHAPTERS": os.path.abspath(args.chapters) if args.chapters else None,
         "$TITLE": args.title,
+        "$IMAGE": os.path.abspath(args.image) if args.image else None,
     }
     for flag, path in (("--cues", args.cues), ("--srt", args.srt), ("--logo", args.logo),
-                       ("--brand", args.brand), ("--chapters", args.chapters)):
+                       ("--brand", args.brand), ("--chapters", args.chapters), ("--image", args.image)):
         if path and not os.path.isfile(path):
             die(f"{flag}: file not found: {path}")
     proj, _ = fill_template(tpl, values)
@@ -286,7 +290,7 @@ def render_pack(names: List[str], args) -> int:
         argv = [str(HERE / "render.py"), args.input, "--template", name, "-o", dest_out]
         for flag, value in (("--cues", args.cues), ("--srt", args.srt), ("--logo", args.logo),
                             ("--title", args.title), ("--brand", args.brand), ("--fit", args.fit),
-                            ("--chapters", args.chapters)):
+                            ("--chapters", args.chapters), ("--image", args.image)):
             if value:
                 argv += [flag, str(value)]
         info(f"→ pack: {name}")
@@ -355,7 +359,7 @@ def check_keys(obj: Any, schema: str, label: str) -> None:
 
 def validate_project(proj: Dict[str, Any]) -> None:
     check_keys(proj, "project", "project")
-    for name in ("frame", "transition", "silence", "captions", "audio", "loudness", "fit", "export", "check"):
+    for name in ("frame", "transition", "silence", "audiogram", "captions", "audio", "loudness", "fit", "export", "check"):
         check_keys(proj.get(name), name, name)
     check_keys((proj.get("audio") or {}).get("stems"), "audio.stems", "audio.stems")
     if isinstance(proj.get("chapters"), list):
@@ -508,6 +512,7 @@ def main() -> int:
     tpl.add_argument("--title", help="title text for the template's opening card / lower third")
     tpl.add_argument("--brand", help="brand.json the template's captions, graphics and overlays use")
     tpl.add_argument("--chapters", help="chapter file (podcast template)")
+    tpl.add_argument("--image", help="still image behind the visualisation (audiogram template); a local file, nothing is fetched")
     tpl.add_argument("--fit", choices=["crop", "pad", "blur"], help="override how the template reaches its aspect")
     tpl.add_argument("-o", "--output", help="output file (default: next to the input, <input>_<template>.mp4, "
                                             "or .m4a for an audio-only destination); for a list of templates "
@@ -544,7 +549,7 @@ def main() -> int:
     else:
         for flag, value in (("--cues", args.cues), ("--srt", args.srt), ("--logo", args.logo),
                             ("--title", args.title), ("--brand", args.brand), ("--chapters", args.chapters),
-                            ("--fit", args.fit), ("--write-project", args.write_project)):
+                            ("--image", args.image), ("--fit", args.fit), ("--write-project", args.write_project)):
             if value:
                 die(f"{flag} belongs to --template NAME INPUT; a project.json states it in the project itself")
         try:
@@ -645,6 +650,28 @@ def main() -> int:
         parts.append(part)
     stages_done.append("clips")
     current = parts[0]
+
+    # ---- audiogram: the picture an audio-only source needs before anything else can work on it
+    ag = proj.get("audiogram")
+    if ag:
+        if not ag.get("image") and not ag.get("background"):
+            die('audiogram: give an "image" (a local file) or a "background" colour -- this skill '
+                "never fetches a picture and never invents cover art", kind="input")
+        nxt = str(work / f"audiogram{mid}")
+        argv = [current, "-o", nxt]
+        for key, flag in (("image", "--image"), ("image_fit", "--image-fit"), ("style", "--style"),
+                          ("position", "--position"), ("vis_height", "--vis-height"),
+                          ("opacity", "--opacity"), ("platform", "--platform"), ("title", "--title"),
+                          ("color", "--color"), ("background", "--background"),
+                          ("width", "--width"), ("height", "--height"), ("fps", "--fps")):
+            if ag.get(key) is not None:
+                argv += [flag, str(ag[key])]
+        argv += brand_args
+        sh("waveform.py", *argv)
+        current = nxt
+        parts = [current]
+        stages_done.append("audiogram")
+
     if args.stop_after == "clips":
         emit(current, stages=stages_done)
         return 0

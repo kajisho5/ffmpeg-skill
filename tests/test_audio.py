@@ -5,13 +5,14 @@
     python3 tests/test_all.py            # every group
 """
 import json
+import shlex
 import sys
 import unittest
 
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, script, sh  # noqa: E402
 from _common import probe  # noqa: E402
 
 
@@ -397,6 +398,127 @@ class AudioTests(MediaFixtures):
         data = json.loads(script("audio.py", self.src, "--limit", "--limit-ceiling", "-1", "-o", mp4, "--json").stdout)
         self.assertIsNotNone(data["probe"]["video"])
         self.assertLessEqual(self._peak_rms(mp4)[0], -1.0 + 0.3)
+
+
+class AudiogramTests(MediaFixtures):
+    """1.16: waveform.py over a still plate. The command line without any of the new flags must
+    stay byte-identical to 1.15, which is the whole reason this is not a new tool."""
+
+    @staticmethod
+    def _plan(*args):
+        """The ffmpeg command a run would build, from its own --dry-run plan."""
+        doc = json.loads(script("waveform.py", *args, "--dry-run", "--json").stdout)
+        cmd = doc["commands"][0]
+        return shlex.split(cmd) if isinstance(cmd, str) else list(cmd)
+
+    def _plate(self, w=1080, h=1920):
+        png = OUT / f"ag_plate_{w}x{h}.png"
+        if not png.exists():
+            mp4 = OUT / f"ag_plate_{w}x{h}.mp4"
+            script("background.py", "--width", str(w), "--height", str(h),
+                   "--gradient", "#1a2b3c:#cc3333", "--duration", "1", "-o", mp4)
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", mp4, "-frames:v", "1", png)
+        return png
+
+    def test_waveform_without_image_is_byte_identical_to_1_15(self):
+        """The 1.15 command line, argument for argument: no plate input, the colour source, no
+        [v] map. Anything else here would mean an existing caller's output changed."""
+        plan = self._plan(self.src, "--width", "640", "--height", "360",
+                          "-o", OUT / "ag_identical.mp4")
+        joined = " ".join(plan)
+        self.assertIn("color=c=black:s=640x360:r=25[bg];", joined)
+        self.assertIn("[bg][vis]overlay=format=auto", joined)
+        self.assertNotIn("-loop", plan)
+        self.assertNotIn("[v]", plan)
+        self.assertNotIn("[plate]", joined)
+        self.assertEqual(plan.count("-i"), 1, "an unflagged run reads one input, as it always did")
+        # and the visualisation still fills the frame
+        self.assertIn("showwaves=s=640x360:", joined)
+
+    def test_audiogram_graph_has_one_overlay_per_layer(self):
+        plate = self._plate(640, 360)
+        plan = self._plan(self.src, "--image", plate, "--width", "640", "--height", "360",
+                          "-o", OUT / "ag_graph.mp4")
+        joined = " ".join(plan)
+        self.assertEqual(joined.count("overlay="), 1, "one overlay: the plate and the visualisation")
+        self.assertIn("-loop", plan)
+        self.assertIn("[1:v]scale=640:360:force_original_aspect_ratio=increase,crop=640:360", joined)
+        self.assertIn("format=rgba[plate]", joined)
+        self.assertIn("[v]", plan)
+
+    def test_audiogram_position_maps_to_y(self):
+        plate = self._plate(640, 360)
+        base = [self.src, "--image", plate, "--width", "640", "--height", "360",
+                "--vis-height", "0.5"]
+        for position, expect_y in (("top", "y=0"), ("centre", "y=90"),
+                                   ("bottom", "y=180"), ("strip", "y=180")):
+            with self.subTest(position=position):
+                joined = " ".join(self._plan(*base, "--position", position,
+                                             "-o", OUT / f"ag_pos_{position}.mp4"))
+                self.assertIn(expect_y, joined)
+                self.assertIn("showwaves=s=640x180:", joined, "the band is --vis-height of the frame")
+
+    def test_audiogram_platform_frame_comes_from_platforms_table(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        frame = importlib.import_module("_platforms").PLATFORMS["reels"]["frame"]
+        joined = " ".join(self._plan(self.src, "--image", self._plate(), "--platform", "reels",
+                                     "-o", OUT / "ag_reels.mp4"))
+        self.assertIn(f"crop={frame['w']}:{frame['h']}", joined)
+        # podcast has no frame: refused, not guessed at
+        script("waveform.py", self.src, "--platform", "podcast", "-o", OUT / "ag_pod.mp4",
+               expect_fail=True)
+
+    def test_audiogram_refuses_a_url_image(self):
+        proc = script("waveform.py", self.src, "--image", "https://example.com/cover.png",
+                      "-o", OUT / "ag_url.mp4", expect_fail=True)
+        self.assertIn("no network access", proc.stderr)
+        script("waveform.py", self.src, "--image", "/nonexistent/cover.png",
+               "-o", OUT / "ag_missing.mp4", expect_fail=True)
+        # an image and a colour plate are two answers to the same question
+        script("waveform.py", self.src, "--image", self._plate(), "--background", "white",
+               "-o", OUT / "ag_both.mp4", expect_fail=True)
+
+    def test_audiogram_renders_with_image_and_captions(self):
+        plate = self._plate()
+        cues = OUT / "ag_cues.txt"
+        cues.write_text("0.0 1.5 Episode twelve\n1.5 3.0 The long one\n", encoding="utf-8")
+        out = OUT / "audiogram.mp4"
+        res = json.loads(script("waveform.py", self.src, "--image", plate, "--platform", "reels",
+                                "--title", "Episode 12", "--text", cues, "--json", "-o", out).stdout)
+        ag = res["audiogram"]
+        self.assertEqual(ag["background"], "image")
+        self.assertTrue(ag["verified"])
+        self.assertEqual(ag["stages"], ["waveform", "title", "captions"])
+        m, src_m = probe(str(out)), probe(str(self.src))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1080, 1920))
+        self.assertLessEqual(abs(m["duration"] - src_m["duration"]), 0.15)
+        # the plate is really there: a frame of it is not flat black
+        frame = OUT / "audiogram_look.png"
+        script("look.py", out, "--at", "1", "-o", frame)
+        self.assertTrue(frame.exists())
+        # a flat plate compresses to almost nothing; a gradient with a waveform over it does not
+        self.assertGreater(frame.stat().st_size, 1000, "the plate is flat: the image never reached the picture")
+
+    def test_render_template_audiogram_runs_the_whole_chain(self):
+        cues = OUT / "ag_tpl_cues.txt"
+        cues.write_text("0.0 2.0 Episode twelve\n", encoding="utf-8")
+        out = OUT / "audiogram_tpl.mp4"
+        res = json.loads(script("render.py", self.src, "--template", "audiogram",
+                                "--image", self._plate(), "--cues", cues,
+                                "--json", "-o", out).stdout)
+        self.assertIn("audiogram", res["stages"])
+        self.assertEqual(res["stages"][1], "audiogram", "the picture is made before anything uses it")
+        self.assertIn("captions", res["stages"])
+        self.assertIn("check", res["stages"])
+        self.assertTrue(out.exists())
+
+    def test_audiogram_is_not_part_of_template_all(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        render = importlib.import_module("render")
+        self.assertIn("audiogram", render.template_names())
+        self.assertNotIn("audiogram", render.expand_templates("all"))
 
 
 if __name__ == "__main__":
