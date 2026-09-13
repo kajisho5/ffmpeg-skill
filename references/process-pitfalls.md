@@ -227,3 +227,12 @@ never reached the comparison. The non-progress path used subprocess.run(timeout=
 fine, and the test only exercised that path. Lesson: a deadline belongs on a clock the loop
 wakes up to check, never on the arrival of the thing you are waiting for; and a test for
 "hang" must use a shim that actually hangs silently, not one that fails fast.
+
+### README lagged three minors behind
+
+1.8.0 (--codec/--quality, export --normalize), 1.9.0 (the time grammar, hdr_signal) and
+1.10.0 (the deprecated list, FFMPEG_SKILL_MCP_LEAN, NO_OVERWRITE) each updated SKILL.md,
+references/scripts.md and docs/contract.md and forgot README.md's tool table and contract
+table; the results table was the only README row each release touched. Caught by the user
+after eval 10. Lesson: the surface inventory for a feature includes the README, and the PR
+checklist in CONTRIBUTING.md now says so.

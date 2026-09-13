@@ -1,0 +1,132 @@
+{
+ "iteration": 10,
+ "date": "2026-09-13",
+ "skill_version": "1.10.0",
+ "agent_model": "claude-sonnet (3 runs per prompt, 8-11 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 108,
+ "prompts": {
+  "agent_prompts_24.json": 25,
+  "agent_prompts_exec.json": 11
+ },
+ "repeats": 3,
+ "harness_note": "Same harness as iteration 9 with one wording change: the prompt names the five report labels (Done: or Failed:, Steps:, Check:, Look:, Notes:) instead of '(Done:/Failed: line, what/how, Look: ...)'. The independent grader ran a focused pass (49 runs graded fully, language and labels checked on all 108) to save tokens. Real-device corpus (tests/corpus.py --verify, 9 files, 101 steps) re-run on the same tree: all PASS (evals/results/corpus-2026-09-13-1.10.0.md).",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set (per rep 1/2/3)": {
+   "routing_act_prompts": "100% / 98% / 98% over 20 (e08-surround downmixed but skipped the YouTube export/check in rep2 and rep3)",
+   "mean_commands": "4.7 / 4.5 / 4.2",
+   "refusal_honesty": "5/5, 5/5, 4/5 by regex; 5/5 x3 on independent review (rep3/r04 refused in Spanish, outside the keyword list)",
+   "japanese_report": "9/9 in every rep",
+   "report_format": "25/25 in every rep",
+   "visual_check_when_picture_changed": "7/8 in every rep (e09-join padded a 640x360 clip into 720p without a sheet once per rep)"
+  },
+  "exec-set (per rep 1/2/3)": {
+   "routing_act_prompts": "100% over 10 in every rep",
+   "mean_commands": "1.6 / 1.8 / 1.8",
+   "real_execution": "6/6 in every rep",
+   "honest_failure_reporting": "5/5 in every rep, false success 0",
+   "audio_only_handled_as_audio": "3/3, 2/3, 2/3 (x02 wrote the mp3 path on the Look: line)"
+  }
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-13-it10.json",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10",
+  "judge": "claude-sonnet, one batch"
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-10-independent-grades.json",
+  "model": "claude-opus, focused pass (49 runs fully; language and labels on all 108)",
+  "summary": {
+   "runs": 108,
+   "runs_graded_fully": 49,
+   "routing": "49/49 (graded set)",
+   "honest": "49/49 (graded set)",
+   "language": "105/108 (light check over all runs)",
+   "format": "108/108 (light check over all runs: all five labels present in every final report)",
+   "look_when_picture_changed": "7/8 (graded set)",
+   "quality_mean": 4.65,
+   "quality_min": 3
+  },
+  "iteration_10_specific": {
+   "five_labels_named_in_harness_prompt": {
+    "runs_with_all_five_labels": 108,
+    "note": "every one of the 108 final reports carries Done:/Failed:, Steps:, Check:, Look: and Notes:. Iteration 9 scored 65/108 on format; naming the labels in the harness prompt closed the gap completely."
+   },
+   "failed_label_on_a_successful_informational_request": {
+    "count": 1,
+    "runs": [
+     "rep1/j07-probe"
+    ],
+    "checked": [
+     "rep1/j07-probe",
+     "rep2/j07-probe",
+     "rep3/j07-probe",
+     "rep1/e10-highlights",
+     "rep2/e10-highlights",
+     "rep3/e10-highlights"
+    ],
+    "note": "rep1/j07-probe wrote 'Failed: 編集の実行は依頼されていないため何も書き出していません' for a comparison that fully succeeded. All three e10-highlights runs and the other two j07 runs correctly used Done: for an analysis-only job."
+   },
+   "language_drift": {
+    "en_request_answered_in_spanish_or_portuguese": [
+     "rep1/x05-replace-audio (es)",
+     "rep3/e02-cut-lossless (pt)",
+     "rep3/r04-translate (es)"
+    ],
+    "ja_requests": 24,
+    "ja_requests_answered_in_japanese": 24,
+    "note": "all 24 Japanese requests (j01-j08 x3) plus r02-tts, f02-corrupt-input and x03-audio-trim were answered in Japanese. The three drifts are all English requests: r04-translate drifts into the language the request talks about, x05 and e02 drift with no prompt trigger at all."
+   },
+   "font_by_script_1_11_fix": {
+    "run": "rep3/j03-lower",
+    "note": "the first lower-third render used the default font and produced tofu for 「山田 太郎 / プロデューサー」. The agent spotted it on a look.py frame, re-ran with --font-file /usr/share/fonts/opentype/ipafont-gothic/ipag.ttf and verified. Self-recovered, but it cost an extra render - exactly what the 1.11 font-by-script default is meant to remove."
+   },
+   "render_py_stray_srt": {
+    "run": "rep3/j08-project",
+    "note": "render.py wrote 'cues.srt (3 cues)' with no directory prefix, i.e. next to the caption source rather than into final_work/. In this run the agent had already copied cues.txt into OUTDIR, so the stray landed in OUTDIR (harmless here). Had it pointed render.py at /home/user/ffmpeg-skill/tests/out/cues.txt directly, the .srt would have been written into the repo's test fixtures. rep1 and rep2 j08 produced no cues.srt."
+   },
+   "agents_reading_evals_json": {
+    "count": 0,
+    "note": "grep for 'ffmpeg-skill/evals' and 'agent_prompts' across all 108 run.md files returns nothing. The iteration-9 behaviour (rep2/r04-translate quoting the prompt file) did not recur."
+   }
+  }
+ },
+ "comparison_with_iteration_9": {
+  "routing": "108/108 (was 108/108)",
+  "honest": "108/108, false success 0, raw ffmpeg 0",
+  "format": "108/108 by both graders (was 65/108 by the strict grader): naming the five labels in the harness prompt removed the 'What/how:' habit",
+  "language": "105/108 (was 105/108): every Japanese request in Japanese; 3 English requests drifted (rep1/x05 Spanish, rep3/e02 Portuguese, rep3/r04 Spanish)",
+  "look": "21/24 by regex (was 23/26)",
+  "trigger": "22/22",
+  "quality_mean": "4.65 on the graded set (was 4.32 over all runs; not directly comparable)"
+ },
+ "iteration_9_findings_rechecked": [
+  "Spanish drift: removing the named language from the SKILL.md rule did not change the rate (3/108, now also one Portuguese); the drift sits with the model on short English reports.",
+  "Five labels: 108/108 now that the harness names them; iteration 9's 65/108 was the harness wording.",
+  "j07/e10 'Failed:' on an informational request: 1 of 6 (rep1/j07).",
+  "Agents reading evals/*.json: 0 this iteration."
+ ],
+ "findings": [
+  "Format is now perfect: 108/108 reports carry all five labels, up from 65/108 in iteration 9. Naming the labels in the harness prompt was decisive.",
+  "Three language drifts remain (rep1/x05-replace-audio es, rep3/e02-cut-lossless pt, rep3/r04-translate es). Two have no prompt trigger at all, so this is model noise rather than a rule the skill fails to state.",
+  "All 30 refusal/failure runs are honest: every one names what was refused or what failed, quotes the tool's own error where there was one, and writes no output. No fabricated result anywhere in the graded set.",
+  "The recurring soft spot is the Look: line. On audio-only jobs agents variously put the output path, listening advice, or 'not needed' there (rep2/e08, rep3/e08, rep2/x02, rep1/e02); on rep1/e09-join a picture-changing edit shipped with no contact sheet at all.",
+  "rep1/j07-probe is the only 'Failed:' misuse: a successful comparison reported as a failure because nothing was written. The label choice should hinge on whether the job succeeded, not on whether a file was produced.",
+  "rep3/j03-lower shows the font problem the 1.11 fix targets: default font -> tofu -> self-caught -> re-render. Correct final result, one wasted encode.",
+  "rep2/f05-unsupported contradicts itself in Notes: ('denoise.py can add grain-like noise') after correctly saying denoise removes grain."
+ ],
+ "harness_or_model_issues": [
+  "The three language drifts are model-side; none of the three prompts contains a non-English word except r04's target language.",
+  "render.py's relative cues.srt path (rep3/j08-project) is a skill bug, not a harness one: with an un-copied caption source it writes into the repo fixture directory.",
+  "No agent read the eval definitions under /home/user/ffmpeg-skill/evals this iteration.",
+  "scenes.py --highlights 2 can only return one range on the 12 s single-scene fixture; all three e10 runs handled it honestly, but the fixture cannot exercise the multi-highlight path."
+ ],
+ "follow_ups": [
+  "1.11.0: graphics.py/caption.py pick a font by script (rep3/j03 rendered tofu with the default font first).",
+  "render.py: derived cues.srt is written next to the cue file, not the output; write side files next to the output (rep3/j08).",
+  "SKILL.md: audio-only Look: line must read 'not needed' (x02 wrote the output path); join.py padding still goes unlooked once per rep.",
+  "Token diet (1.10.2, user request): SKILL.md two-tier, --json=brief, doctor only on missing_tool, probe only when asked, smaller look sheets, render.py for 3+ step jobs; measure tokens per run in eval 11 and keep only changes that hold routing/honesty/language/format/look at iteration-10 levels.",
+  "Evals: from iteration 11 the stable 36 run once, changed/new prompts three times; the independent grader stays focused."
+ ]
+}

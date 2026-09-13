@@ -153,13 +153,13 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 ## Tools
 
-42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, non-zero exit and a reason on stderr on failure.
+42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
 
 **Analysis and inspection**
 
 | Tool | What it does |
 |---|---|
-| `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision, colour space, rotation, every audio stream; `--analyze` flags Log footage |
+| `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for BT.2020 or PQ/HLG, `hdr_signal` for a real PQ/HLG/DV transfer only), colour space, rotation, every audio stream; `--analyze` flags Log footage |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments` |
 | `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made |
 
@@ -213,7 +213,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 | Tool | What it does |
 |---|---|
-| `export.py` | Presets `youtube`, `youtube4k`, `reels`, `x`, `prores`, `h265`, `gif`, all tagged BT.709 |
+| `export.py` | Presets `youtube`, `youtube4k`, `reels`, `x`, `prores`, `h265`, `gif`, all tagged BT.709; `--normalize` meets the platform's loudness in the same call (`render.py` turns it on by default for platform presets) |
 | `proxy.py` | Small, low-bitrate proxy for downstream AI analysis/preview/editing decisions — resize by `--width`/`--scale`, proxy-grade `--crf` (deprecated alias of `--quality`), `--fps`, `--no-audio`; not a delivery preset |
 | `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, broadcast and podcast specs, with the fix for each failure and a `format` / `judgement` kind per row |
 | `report.py` | Single-file HTML delivery report: before/after sheets, media facts, loudness, compliance, the commands run |
@@ -293,6 +293,8 @@ The contract is generated from the code that runs, not maintained beside it. For
 | `mutates_input` | always `false` |
 | `idempotency_hint` | `bit_exact`, `content_equivalent`, `cached` or `environment_dependent` |
 
+Next to the tool list the document carries a top-level `deprecated` list (1.10): what 2.0.0 removes, since when, the replacement and the surface it lives on. `docs/contract.md` "What 2.0 changes" is written from it.
+
 `contract_version` (1.0) is separate from the skill version, so a consumer can pin the shape and read the version for provenance. The document also states the invocation mapping (structured arguments → argv), the JSON shapes for success and failure (`{"status": "failed", "error": {"kind": "input | ffmpeg | output | missing_tool | timeout | verification | interrupted", "message": …}}`), and that no tool runs a shell or executes anything other than the named script, `ffmpeg` and `ffprobe`. Field-by-field reference: [docs/contract.md](docs/contract.md).
 
 ### MCP
@@ -331,6 +333,7 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 - **Non-Latin captions need a font with the glyphs.** Without one you get boxes, not an error. Name it (`caption.py --font "Noto Sans CJK JP"`) or point at the file (`overlay.py --font-file /path/to/NotoSansCJK-Regular.ttc`).
 - **Silence detection finds nothing?** The default threshold is −35 dBFS. The tool prints a hint with the track's measured level; raise the threshold (`silence.py --threshold -25`) or shorten `--min-silence`.
 - **Sync results carry a confidence.** Below 0.3, or an offset near the edge of the analysis window, is probably wrong: enlarge `--analyze-seconds` or find a clap. Recordings over ten minutes from separate devices need `sync.py --fix-drift`.
+- **Outputs are never overwritten silently.** An existing output path is warned about today and refused from 2.0; set `FFMPEG_SKILL_NO_OVERWRITE=1` (the recommended agent setting) to get the refusal now and pass `--overwrite` where a replacement is intended.
 - **Long chains belong in a plan.** Three hand-chained re-encodes lose quality and are hard to change; `render.py` runs the whole edit from one JSON file, and `--dry-run` shows every ffmpeg command before anything is written.
 
 ## FFmpeg compatibility
@@ -357,6 +360,7 @@ FFmpeg 8 shortened the flag column of `ffmpeg -filters`. A parser anchored on th
 | **F1 0.97** | `scenes.py`, 53 hard cuts between single takes, precision 0.95, recall 1.00 at the default threshold |
 | **exact to the sample** | `cut.py --accurate` on WAV, FLAC (44.1 kHz) and AAC → WAV; WAV stream copy within 2 ms; AAC output +21 ms of encoder priming, reported as `codec_frame` (0.9.1) |
 | **72 / 72** | agent runs of 24 prompts (12 English edits, 8 Japanese, 4 that must be declined), three repeats, graded by an independent model: routing, honest refusals and user's language 72/72, report format 71/72, visual check whenever the picture changed 24/24 (0.8.4) |
+| **108 / 108** | 1.10.0 re-run (2026-09-13, three passes per prompt, Sonnet agent, regex grader + focused Opus grader): routing 108/108, honest refusals and failures 108/108 with 0 false successes and 0 raw ffmpeg calls, report format 108/108 by both graders (the harness now names the five labels), user's language 105/108 (every Japanese request in Japanese; 3 English requests drifted to Spanish or Portuguese), visual check 21/24, trigger set 22/22; real-device corpus 101/101 steps PASS. Details in `evals/results/iteration-10.json` |
 | **108 / 108** | 1.9.0 re-run (2026-09-13, three passes per prompt, Sonnet agent, regex grader + independent Opus grader): routing 108/108, honest refusals and failures 108/108 with 0 false successes and 0 raw ffmpeg calls, visual check 23/26, user's language 105/108 (every Japanese request answered in Japanese; 3 English requests drifted to Spanish), report format 108/108 by regex (65/108 by the stricter grader, which now counts any missing label), trigger set 22/22; 12 of 15 platform jobs were one encode and `render.py` rendered once in 3/3 (was 1/3). The 1.9.0 time grammar was not used by any agent. Details in `evals/results/iteration-9.json` |
 | **108 / 108** | 1.8.0 re-run (2026-09-12, three passes per prompt, Sonnet agent, regex grader + independent Opus grader that re-probed 22 outputs): routing 108/108, honest refusals and failures 108/108 with 0 false successes and 0 raw ffmpeg calls, visual check 22/24, report format 108/108 by regex (91/108 by the stricter grader: 'What/how:' in place of Steps:), user's language 98/108 by the stricter grader (Japanese labels-only reports counted), trigger set 22/22; 13 of 14 platform exports used `--normalize` and platform jobs went from three encodes to one; r04/f01 now answered in the request's language 5/6 (was 0/6). Details in `evals/results/iteration-8.json` |
 | **108 / 108** | 1.7.0 re-run (2026-09-12, three passes per prompt, Sonnet agent, regex grader + independent Opus grader that re-probed 24 outputs): routing 108/108, honest refusals and failures 108/108 with 0 false successes and 0 raw ffmpeg calls, visual check 25/25, report format 108/108 by regex (104/108 by the stricter grader), user's language 101/108 (six English refusals answered in Spanish or Portuguese, one Japanese request in English); trigger set 22/22. Iteration-6 fixes held (fade-in only, Japanese audio trims, music no longer shortens the video). Details in `evals/results/iteration-7.json` |
@@ -420,7 +424,7 @@ FFmpeg itself:
 
 ## Stability
 
-1.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 2.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-1x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch.
+1.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 2.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-1x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. What 2.0 will remove is already announced: `contract --json` lists it under `deprecated`, `--crf` prints a one-line warning where `--quality` exists, and [docs/contract.md](docs/contract.md#what-20-changes) says what a caller does today to be ready.
 
 ## Development
 
