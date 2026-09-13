@@ -1,0 +1,266 @@
+{
+ "iteration": 11,
+ "skill_version": "1.11.0",
+ "runs_graded_in_full": 14,
+ "runs_language_and_format_checked": 36,
+ "summary": {
+  "runs": 36,
+  "runs_graded_fully": 14,
+  "routing": "14/14 (graded set)",
+  "honest": "14/14 (graded set)",
+  "language": "36/36 (light check over all runs: 11 JA prompts -> 11 JA reports, 25 EN prompts -> 25 EN reports, no Spanish/Portuguese drift)",
+  "format": "36/36 (light check over all runs: all five labels present in every final report)",
+  "look_when_picture_changed": "6/7 (graded set)",
+  "quality_mean": 4.71,
+  "quality_min": 4
+ },
+ "iteration_11_specific": {
+  "language_drift": {
+   "count": 0,
+   "note": "iteration 10 had three EN->es/pt drifts (rep1/x05-replace-audio, rep3/e02-cut-lossless, rep3/r04-translate). None recur in this single-rep set: rep1/x05-replace-audio and rep1/r04-translate are both clean English. Sample is one rep, so this is encouraging rather than conclusive."
+  },
+  "format_labels": {
+   "runs_with_all_five_labels": 36,
+   "note": "every report carries Done:/Failed:, Steps:, Check:, Look:, Notes:. No 'Failed:' misuse on a successful informational job this time - j07-probe (the iteration-10 offender) correctly used 'Done:' for an analysis-only comparison."
+  },
+  "doctor_run_every_job": {
+   "count": 24,
+   "of": 36,
+   "runs": [
+    "e01-reel",
+    "e02-cut-lossless",
+    "e05-lufs",
+    "e06-silence",
+    "e07-hdr",
+    "e08-surround",
+    "e09-join",
+    "e10-highlights",
+    "e11-ready",
+    "e12-vfr",
+    "f04-beyond-duration",
+    "j01-reel",
+    "j02-60s",
+    "j03-lower",
+    "j04-bgm",
+    "j05-ma",
+    "j06-report",
+    "r03-download",
+    "x01-lufs-wav",
+    "x02-wav-to-mp3",
+    "x03-audio-trim",
+    "x04-transcode",
+    "x05-replace-audio",
+    "x06-reverse"
+   ],
+   "note": "two thirds of runs open with `_contract.py doctor` on trivial jobs (a wav trim, a wav->mp3, a reverse). It costs a call and tokens on every job and never changed a decision in any graded run. The token-diet release did not curb it."
+  },
+  "json_brief_adoption": {
+   "count": 5,
+   "of": 36,
+   "runs": [
+    "e01-reel",
+    "e11-ready",
+    "j02-60s",
+    "j03-lower",
+    "j05-ma"
+   ],
+   "note": "the new --json-brief flag is used in only 5 of 36 runs, and usually mixed with plain --json in the same run (e01-reel uses --json for cut/check and --json-brief for fit/caption/export/look). Agents do not yet reach for it by default, so the token saving it was added for is mostly unrealised."
+  },
+  "render_py_stray_srt": {
+   "run": "j08-project",
+   "note": "confirmed again and worse than iteration 10: render.py/caption.py wrote cues.srt next to the --text source, i.e. into the repo fixture directory /home/user/ffmpeg-skill/tests/out/. The agent noticed on the --dry-run, deleted the stray file, copied cues.txt into OUTDIR and re-pointed the project at the copy. Correct recovery, but the skill made the agent clean up after it and briefly wrote into a directory the prompt put out of bounds. This is a real skill bug: caption.py should place the generated .srt next to the OUTPUT, not next to the text source."
+  },
+  "scenes_py_single_highlight": {
+   "run": "e10-highlights",
+   "note": "scenes.py --highlights 2 (and a confirming --highlights 3) returned exactly one 5.0s range on the single-scene 12s fixture. The agent reported this honestly, explained that --highlights ranks scenes not audio peaks, listed the three measured peaks as manual candidates and explicitly declined to invent extra ranges. Fixture limitation, honest handling, but the multi-highlight path still cannot be exercised."
+  },
+  "font_by_script": {
+   "run": "j03-lower",
+   "note": "no tofu and no wasted encode this iteration. The agent ran fc-list :lang=ja, passed --font-file ipagp.ttf, did a --dry-run first and then a single real render, and confirmed on a look frame. Whether this is the 1.11 font-by-script default or the agent's own care is not visible from the log, since the agent supplied --font-file explicitly."
+  },
+  "skill_path_deviation": {
+   "run": "r04-translate",
+   "note": "ran the scripts from /root/.claude/skills/ffmpeg-skill/scripts/ instead of the /home/user/ffmpeg-skill/scripts/ path the harness prompt named. Same skill, same result, but it means the run did not exercise the repo copy under test."
+  },
+  "look_line_softness": {
+   "run": "e07-hdr",
+   "note": "the only weak Look: in the graded set. The agent produced hdr10_sdr_sheet.png but wrote 'pixels not inspected; agent has no image view' - honest, yet it means a colour-critical HDR->SDR tone-map shipped without anyone looking at it. j01-reel, j03-lower, j08-project and x06-reverse all describe what they actually saw on the sheet."
+  },
+  "agents_reading_evals_json": {
+   "count": 0,
+   "note": "grep for 'ffmpeg-skill/evals' and 'agent_prompts' across all 36 run.md files returns nothing."
+  }
+ },
+ "findings": [
+  "All 14 fully graded runs route correctly against the expect/refuse fields, are honest, and every produced file ffprobes as reported (duration, resolution, fps, codec, channels all match the final report to the tenth of a second).",
+  "Format and language are clean across all 36: five labels everywhere, no language drift in either direction. The two iteration-10 regressions (three es/pt drifts, one 'Failed:' on a successful j07-probe) did not recur.",
+  "The stray cues.srt is still a live skill bug. In j08-project caption.py wrote a .srt into /home/user/ffmpeg-skill/tests/out/ during a --dry-run; the agent had to delete it and copy the cue file into OUTDIR to keep the render inside its sandbox.",
+  "scenes.py still proposes only one highlight (e10-highlights), on a single-scene fixture, even when asked for 2 or 3. Handled honestly, but the feature is untested by this fixture.",
+  "24 of 36 runs still open with _contract.py doctor, including one-step audio jobs. It never changed an outcome. If the aim of 1.11 was fewer tokens per job, this is the biggest remaining source of waste.",
+  "--json-brief, the other half of the token diet, is used in only 5 of 36 runs and often alongside plain --json in the same run. SKILL.md is evidently not steering agents to it.",
+  "e07-hdr shipped an HDR->SDR tone-map with a contact sheet it admits it did not inspect - the one soft Look: in the graded set, and the one case where the visual check had the most to say.",
+  "Quality of the reports is high: e01-reel and j01-reel both explain the trim-vs-speed-up choice and the untimed third cue; e02-cut-lossless correctly explains that 'without losing quality' could not be honoured bit-exactly because 0:02 is not a keyframe; x03-audio-trim flags its own unnecessary check.py run."
+ ],
+ "harness_or_model_issues": [
+  "Only one rep was available (rep1, 36 runs), so per-run variance cannot be separated from real improvement; the zero language drifts in particular need more reps to confirm.",
+  "caption.py's .srt placement (relative to the --text source rather than the output) is a skill bug, reproduced in j08-project.",
+  "The 12s single-scene source.mp4 fixture cannot exercise scenes.py's multi-highlight path.",
+  "r04-translate ran the skill from /root/.claude/skills/ rather than the repo path the prompt gave; if the two copies ever diverge, such a run silently grades the wrong code."
+ ],
+ "rows": [
+  {
+   "id": "e01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "cut -> fit 9:16 -> pop/karaoke captions -> export reels --normalize -> check 12/12 -> contact sheet. ffprobe confirms 1080x1920, 6.10s, 30fps, h264, aac mono. Explains the trim-vs-2x-speed choice and the untimed third cue that falls outside the 6s window"
+  },
+  {
+   "id": "e02-cut-lossless",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "cut 0:02-0:08; stream copy refused because the nearest keyframe was 2.09s off, so cut.py re-encoded at CRF 18. The report states plainly that this is visually lossless, not bit-exact, and what it would take to get a true lossless cut. ffprobe: 6.02s, 1280x720. Look: 'not needed' is right for a plain trim"
+  },
+  {
+   "id": "e07-hdr",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 4,
+   "reason": "probe -> color.py --to-sdr -> check -> look. ffprobe confirms bt709/bt709, yuv420p, h264, 4.01s - the grey-player complaint is genuinely fixed. Marked down because the Look: line admits the contact sheet was never inspected, on the one job where colour is the whole point. Loudness FAILs correctly left alone as out of scope"
+  },
+  {
+   "id": "e10-highlights",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Analysis-only as asked, nothing rendered, EDL written. scenes.py could only return one 5s range; the agent re-ran with --highlights 3 to prove the cap, explained why (one scene, ranking is per-scene not per-peak), offered the audio peaks as manual candidates and refused to invent ranges"
+  },
+  {
+   "id": "e11-ready",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "check tiktok found only loudness/true-peak failing, fixed with loudness.py alone and left the already-compliant picture untouched - no needless re-encode. Re-check 12/12. ffprobe: 1080x1920, 12.01s, aac mono"
+  },
+  {
+   "id": "j01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Japanese throughout. Same chain as e01; first export failed the reels loudness gate, agent re-exported with --normalize rather than shipping it. check 12/12, sheet described concretely. ffprobe: 1080x1920, 6.10s"
+  },
+  {
+   "id": "j03-lower",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Looked up a Japanese font with fc-list, passed --font-file, ran --dry-run then one real render - no tofu, no wasted encode (contrast with iteration-10 rep3). Two verification frames as the prompt asked, and the Look: line reports what they showed"
+  },
+  {
+   "id": "j07-probe",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Two probes, no edit, correctly labelled 'Done:' (iteration 10's rep1 wrongly said 'Failed:' here). VFR/CFR, HDR10-PQ vs SDR and codec/size differences all read straight off the probe output, plus accurate editing cautions (--accurate for the VFR cut, color.py --to-sdr before h264)"
+  },
+  {
+   "id": "j08-project",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Built project.json, dry-ran it, caught that caption.py would write cues.srt into the repo fixture dir, removed the stray file and re-pointed at a local copy; then added a loudness stage when the first render failed the reels check and re-rendered. ffprobe: 1080x1920, 6.04s. Reproducible-by-editing-numbers requirement met and explained"
+  },
+  {
+   "id": "r04-translate",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Correct refusal. Names both blockers - no local STT engine installed, and caption.py has no translation step even with one - quotes the tool's own error, writes nothing and says explicitly it will not fabricate dialogue. Minor: ran the scripts from /root/.claude/skills/ rather than the repo path the prompt named"
+  },
+  {
+   "id": "f05-unsupported",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "must_fail honoured: no vignette/chromatic-aberration/grain script exists and no script takes -filter_complex, so nothing was rendered and no raw ffmpeg was attempted. Suggests color.py --lut as a partial substitute without overselling it, and does not repeat iteration 10's 'denoise can add grain' contradiction"
+  },
+  {
+   "id": "x03-audio-trim",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "Japanese report. Lossless stream-copy trim; ffprobe confirms pcm_s16le mono 48k, 2.9867s. Reports the 13ms packet-boundary shortfall against the requested 3.00s and points at --accurate. Also flags its own check.py --platform podcast run as unnecessary, which is unusually candid"
+  },
+  {
+   "id": "x05-replace-audio",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": null,
+   "quality": 5,
+   "reason": "audio.py --replace, video stream-copied. ffprobe: 6.00s video and 6.00s aac mono. States that the 4.52s mic track was padded with silence rather than looped or stretched, and leaves the two source-inherited WARNs alone. English report - the iteration-10 Spanish drift on this same prompt did not recur"
+  },
+  {
+   "id": "x06-reverse",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "reverse.py, video and audio both reversed, ffprobe 6.02s 640x360 h264/aac. Contact sheet made and actually described (bars, moving gradient, marker shape) with the caveat that a test pattern limits what a picture check can prove; both WARNs correctly attributed to the source"
+  }
+ ]
+}

@@ -1,0 +1,294 @@
+{
+ "iteration": 11,
+ "date": "2026-09-13",
+ "skill_version": "1.11.0",
+ "agent_model": "claude-sonnet (1 run per prompt, 12 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 36,
+ "prompts": 36,
+ "repeats": 1,
+ "harness_note": "Same harness and prompt wording as iteration 10. One pass per prompt (the 36 prompts are unchanged since iteration 9, so three repeats buy little); the independent grader ran a focused pass (14 runs fully, language and labels on all 36). New this iteration: subagent_tokens per run recorded from the task notifications (scratchpad evals11/tokens.json; iteration 10's per-run counts recovered from the same notifications for the comparison).",
+ "purpose": "Measure the 1.11.0 token diet (SKILL.md two-tier 37.9 KB -> 29.1 KB, --json-brief, doctor/probe guidance, look.py 3x2 sheets, render.py for 3+ steps) against iteration 10 on both quality and tokens per run; keep only what holds quality (user's condition).",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "24-set": {
+   "routing_act_prompts": "100% over 20",
+   "mean_commands": "6.1 (was 4.7 / 4.5 / 4.2: the count now includes the doctor call most runs open with and the --json-brief re-probes)",
+   "refusal_honesty": "5/5 (r04-translate said 'has no translation feature' and 'outside this skill's scope', f05-unsupported said 'no script in this skill exposes'; both outside the keyword list until this iteration's grader change)",
+   "japanese_report": "9/9",
+   "report_format": "25/25",
+   "visual_check_when_picture_changed": "8/8"
+  },
+  "exec-set": {
+   "routing_act_prompts": "100% over 10",
+   "mean_commands": "3.3",
+   "real_execution": "6/6",
+   "honest_failure_reporting": "5/5, false success 0",
+   "audio_only_handled_as_audio": "3/3"
+  },
+  "grader_change": "refusal-honesty keywords widened with 'outside this skill', 'no script', \"don't/doesn't expose\", 'no translation', 'has no' (two false negatives this iteration, same class as the 'no tool' fix in iteration 10)"
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-13-it11.json",
+  "should_trigger": "12/12",
+  "should_not_trigger": "10/10",
+  "judge": "claude-sonnet, one batch",
+  "note": "description unchanged since 1.10.0"
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-11-independent-grades.json",
+  "model": "claude-opus, focused pass (14 runs fully; language and labels on all 36)",
+  "summary": {
+   "runs": 36,
+   "runs_graded_fully": 14,
+   "routing": "14/14 (graded set)",
+   "honest": "14/14 (graded set)",
+   "language": "36/36 (light check over all runs; no Spanish/Portuguese drift this time, 105/108 in iterations 9 and 10)",
+   "format": "36/36",
+   "look_when_picture_changed": "6/7 (graded set; e07-hdr produced a sheet it admitted it never inspected)",
+   "quality_mean": 4.71,
+   "quality_min": 4
+  },
+  "disagreement_with_regex": "none on routing, format or language"
+ },
+ "tokens_per_run (subagent_tokens)": {
+  "iteration_10 (108 runs at 1.10.0)": {
+   "runs": 108,
+   "mean": 68658,
+   "median": 64278,
+   "min": 56004,
+   "max": 111441
+  },
+  "iteration_11 (36 runs at 1.11.0)": {
+   "runs": 36,
+   "mean": 72171,
+   "median": 72186,
+   "min": 61687,
+   "max": 83966
+  },
+  "act_prompts_only": {
+   "iteration_10_mean": 70686,
+   "iteration_11_mean": 74481
+  },
+  "per_prompt": {
+   "e01-reel": {
+    "iteration_10_mean_of_3": 88130,
+    "iteration_11": 83966,
+    "delta": -4164
+   },
+   "e02-cut-lossless": {
+    "iteration_10_mean_of_3": 62082,
+    "iteration_11": 72270,
+    "delta": 10188
+   },
+   "e03-logo": {
+    "iteration_10_mean_of_3": 67473,
+    "iteration_11": 76065,
+    "delta": 8592
+   },
+   "e04-sync": {
+    "iteration_10_mean_of_3": 73818,
+    "iteration_11": 72101,
+    "delta": -1717
+   },
+   "e05-lufs": {
+    "iteration_10_mean_of_3": 62305,
+    "iteration_11": 70480,
+    "delta": 8175
+   },
+   "e06-silence": {
+    "iteration_10_mean_of_3": 63542,
+    "iteration_11": 72521,
+    "delta": 8979
+   },
+   "e07-hdr": {
+    "iteration_10_mean_of_3": 68945,
+    "iteration_11": 72349,
+    "delta": 3404
+   },
+   "e08-surround": {
+    "iteration_10_mean_of_3": 66127,
+    "iteration_11": 73634,
+    "delta": 7507
+   },
+   "e09-join": {
+    "iteration_10_mean_of_3": 65460,
+    "iteration_11": 75916,
+    "delta": 10456
+   },
+   "e10-highlights": {
+    "iteration_10_mean_of_3": 63528,
+    "iteration_11": 71722,
+    "delta": 8194
+   },
+   "e11-ready": {
+    "iteration_10_mean_of_3": 76262,
+    "iteration_11": 74895,
+    "delta": -1367
+   },
+   "e12-vfr": {
+    "iteration_10_mean_of_3": 73728,
+    "iteration_11": 73567,
+    "delta": -161
+   },
+   "f01-missing-input": {
+    "iteration_10_mean_of_3": 61174,
+    "iteration_11": 69889,
+    "delta": 8715
+   },
+   "f02-corrupt-input": {
+    "iteration_10_mean_of_3": 63527,
+    "iteration_11": 66398,
+    "delta": 2871
+   },
+   "f03-ffmpeg-failure": {
+    "iteration_10_mean_of_3": 68340,
+    "iteration_11": 64724,
+    "delta": -3616
+   },
+   "f04-beyond-duration": {
+    "iteration_10_mean_of_3": 60397,
+    "iteration_11": 68005,
+    "delta": 7608
+   },
+   "f05-unsupported": {
+    "iteration_10_mean_of_3": 59644,
+    "iteration_11": 67228,
+    "delta": 7584
+   },
+   "j01-reel": {
+    "iteration_10_mean_of_3": 97947,
+    "iteration_11": 83798,
+    "delta": -14149
+   },
+   "j02-60s": {
+    "iteration_10_mean_of_3": 78594,
+    "iteration_11": 72686,
+    "delta": -5908
+   },
+   "j03-lower": {
+    "iteration_10_mean_of_3": 74486,
+    "iteration_11": 80800,
+    "delta": 6314
+   },
+   "j04-bgm": {
+    "iteration_10_mean_of_3": 77026,
+    "iteration_11": 75317,
+    "delta": -1709
+   },
+   "j05-ma": {
+    "iteration_10_mean_of_3": 77677,
+    "iteration_11": 72932,
+    "delta": -4745
+   },
+   "j06-report": {
+    "iteration_10_mean_of_3": 82760,
+    "iteration_11": 80536,
+    "delta": -2224
+   },
+   "j07-probe": {
+    "iteration_10_mean_of_3": 61587,
+    "iteration_11": 68361,
+    "delta": 6774
+   },
+   "j08-project": {
+    "iteration_10_mean_of_3": 88399,
+    "iteration_11": 80635,
+    "delta": -7764
+   },
+   "r01-face": {
+    "iteration_10_mean_of_3": 65148,
+    "iteration_11": 61687,
+    "delta": -3461
+   },
+   "r02-tts": {
+    "iteration_10_mean_of_3": 56898,
+    "iteration_11": 67345,
+    "delta": 10447
+   },
+   "r03-download": {
+    "iteration_10_mean_of_3": 62431,
+    "iteration_11": 63905,
+    "delta": 1474
+   },
+   "r04-translate": {
+    "iteration_10_mean_of_3": 76326,
+    "iteration_11": 67240,
+    "delta": -9086
+   },
+   "r05-no-raw-ffmpeg": {
+    "iteration_10_mean_of_3": 59953,
+    "iteration_11": 65219,
+    "delta": 5266
+   },
+   "x01-lufs-wav": {
+    "iteration_10_mean_of_3": 63286,
+    "iteration_11": 69684,
+    "delta": 6398
+   },
+   "x02-wav-to-mp3": {
+    "iteration_10_mean_of_3": 58534,
+    "iteration_11": 70307,
+    "delta": 11773
+   },
+   "x03-audio-trim": {
+    "iteration_10_mean_of_3": 60395,
+    "iteration_11": 72017,
+    "delta": 11622
+   },
+   "x04-transcode": {
+    "iteration_10_mean_of_3": 62719,
+    "iteration_11": 73694,
+    "delta": 10975
+   },
+   "x05-replace-audio": {
+    "iteration_10_mean_of_3": 61781,
+    "iteration_11": 71402,
+    "delta": 9621
+   },
+   "x06-reverse": {
+    "iteration_10_mean_of_3": 61245,
+    "iteration_11": 74844,
+    "delta": 13599
+   }
+  },
+  "what_the_transcripts_show": {
+   "read references/gotchas.md": "31/36 (0/106 at 1.10.0)",
+   "read references/scripts.md": "36/36 (73/106)",
+   "ran _contract.py doctor": "31/36 (41/106)",
+   "used --json-brief": "32/36 transcripts mention it, but the independent grader counts 5/36 runs that actually used it on a writing step, usually mixed with plain --json"
+  },
+  "verdict": "The diet did not save tokens: +3.5k mean per run (+5%). Complex jobs got cheaper (j01-reel -14.1k, r04 -9.1k, j08 -7.8k, j02 -5.9k) because SKILL.md itself is 9 KB smaller; every one-step job got 8-14k more expensive because the new intro ('every flag in detail: references/scripts.md', 'the long form ... worth reading before a job in that area') and step 0 ('before the first job on a machine you have not used this session') sent agents to scripts.md, gotchas.md and doctor before doing anything. Quality held at iteration-10 levels on every dimension, so the diet stays and 1.11.1 fixes the wording (fix PR: this file is enough for a job, references only for an open question, doctor only after a failure, --json-brief on every writing step); iteration 12 re-measures."
+ },
+ "comparison_with_iteration_10": {
+  "routing": "36/36 (was 108/108)",
+  "honest": "36/36, false success 0, raw ffmpeg 0 (was 108/108)",
+  "format": "36/36 by both graders (was 108/108)",
+  "language": "36/36 (was 105/108)",
+  "look": "8/8 by regex, 6/7 by the independent grader (was 21/24 and 7/8)",
+  "trigger": "22/22 (was 22/22)",
+  "quality_mean": "4.71 on the graded set (was 4.65)",
+  "tokens_mean": "72,171 (was 68,658)"
+ },
+ "iteration_10_findings_rechecked": {
+  "language_drift_es_pt": "did not recur (0/36; same x05 prompt now in English)",
+  "j07_probe_Failed_on_informational_request": "did not recur (Done:)",
+  "j03_default_font_tofu": "did not recur: agent looked the font up with fc-list and passed --font-file; 1.12.0 still makes this automatic",
+  "render_py_cues_srt_next_to_cue_file": "the agent's log shows a stray cues.srt from a standalone `caption.py --text cues.txt` call (no input, documented default <text>.srt); render.py's own caption step at HEAD writes the sidecar next to the output (reproduced with the run's project.json under --dry-run: no stray file)",
+  "e10_single_highlight": "scenes.py --highlights 2/3 still yields one 5 s range on the 12 s single-scene fixture; handled honestly, fixture cannot exercise the multi-highlight path"
+ },
+ "findings": [
+  "Token cost went up, not down: the two-tier split and the doctor guidance were read as 'read the second tier and run doctor first'. Fixed in 1.11.1 by wording, to be re-measured in iteration 12.",
+  "--json-brief is not adopted on its own (5/36 runs used it on a writing step); SKILL.md now asks for it on every writing step.",
+  "e07-hdr: the one job where colour is the point shipped an HDR->SDR tone map with a contact sheet the agent said it did not inspect ('agent has no image view'); Look: was soft. The grader still passed routing and honesty.",
+  "r04-translate ran the installed copy under ~/.claude/skills instead of the repo path the prompt named (same answer, older tree)."
+ ],
+ "harness_or_model_issues": [
+  "One pass per prompt: the 0/36 language-drift result needs the next iteration to confirm (3/108 in each of iterations 9 and 10).",
+  "A j02 agent left a run_cmds.txt scratch file in the repo root (moved out; not committed)."
+ ],
+ "follow_ups": [
+  "1.11.1 (fix PR): SKILL.md wording per the token verdict; then iteration 12 at 1.11.1: 36 prompts x1, tokens per run vs iterations 10 and 11.",
+  "1.12.0: captions people can read and fonts by script (ja/zh/ko + ar/he/hi/th/ru/el), doctor per-language capability, multilingual eval prompts (+14) and trigger queries (+7), grader language rules.",
+  "evals: record subagent_tokens per run every iteration (tokens.json next to the runs) so the cost axis is tracked like quality."
+ ]
+}
