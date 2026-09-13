@@ -1,0 +1,167 @@
+{
+ "iteration": 13,
+ "date": "2026-09-13",
+ "skill_version": "1.12.0",
+ "agent_model": "claude-sonnet (1 run per prompt, 12-14 in parallel)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 50,
+ "prompts": 50,
+ "repeats": 1,
+ "harness_note": "First iteration on the 50-prompt set: the 36 stable prompts plus 14 multilingual ones (two per language for zh, ko, es, pt, fr, de, ar; cue-file fixtures written into OUTDIR by evals/write_fixtures.py). Same prompt boilerplate as iteration 12. ~/.claude/skills/ffmpeg-skill is now a symlink to the repo, so the 5 runs that used that path executed HEAD. Focused independent grader (18 runs fully, all 14 multilingual ones included; language and labels on all 50).",
+ "purpose": "Verify 1.12.0 on the request that motivated it (captions and on-screen text in Chinese, Korean and other languages render with a real font, reports come back in the user's language) and keep the stable 36 at iteration-12 levels.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "39-set (24 stable + 14 multilingual + the exec split)": {
+   "routing_act_prompts": "100% over 27",
+   "mean_commands": "4.3",
+   "refusal_honesty": "12/12",
+   "language_by_prompt": "ja 9/9, zh 2/2, ko 2/2, es 2/2, pt 2/2, fr 2/2, de 2/2, ar 2/2",
+   "report_format": "39/39",
+   "visual_check_when_picture_changed": "13/13"
+  },
+  "exec-set": {
+   "routing_act_prompts": "100% over 10",
+   "mean_commands": "2.8",
+   "real_execution": "6/6",
+   "honest_failure_reporting": "5/5, false success 0",
+   "audio_only_handled_as_audio": "3/3"
+  }
+ },
+ "fonts_by_script_in_the_wild": {
+  "c01 (zh cues)": "font: wqy-zenhei.ttc (covers zh)",
+  "k01 (ko cues)": "font: wqy-zenhei.ttc (covers ko)",
+  "a01 (ar cues)": "font: DejaVuSans.ttf (covers ar)",
+  "j03 (ja lower-third)": "agent passed --lang ja; IPAPGothic",
+  "note": "no agent had to look a font up by hand (iteration 11/12's j03 ran fc-list itself); no tofu in any sheet the independent grader opened"
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-13-it13.json",
+  "judge": "claude-sonnet, one batch of 29 (22 + 7 multilingual)",
+  "should_trigger": "16/16",
+  "should_not_trigger": "13/13",
+  "note": "the 7 multilingual queries route on file extensions and cues the description names, so the description needed no change"
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-13-independent-grades.json",
+  "model": "claude-opus, focused pass (18 runs fully: all 14 multilingual + e01, j03, j08, x03; language and labels on all 50)",
+  "summary": {
+   "runs": 50,
+   "runs_graded_fully": 18,
+   "routing": "18/18 (graded set)",
+   "honest": "18/18 (graded set)",
+   "language": "50/50 (light check over all runs; ja zh ko es pt fr de ar en, no drift)",
+   "format": "50/50",
+   "look_when_picture_changed": "9/9 (graded set)",
+   "quality_mean": 4.83,
+   "quality_min": 4
+  },
+  "fonts_and_glyphs": "every PNG opened: c01 zh, k01 ko, a01 ar (shaped, RTL), j03 ja rendered real glyphs with the font the run.md names; no tofu; e01 and j08 show two-line wrapped cues inside the safe area",
+  "disagreement_with_regex": "none; the grader docked d01 for running through the ~/.claude/skills path and j08 for choosing --fit pad on a Reels deliverable (disclosed)"
+ },
+ "tokens_per_run (subagent_tokens)": {
+  "stable_36 at 1.12.0": {
+   "runs": 36,
+   "mean": 72337,
+   "median": 71800,
+   "min": 58712,
+   "max": 105509
+  },
+  "stable_36 at 1.11.1 (iteration 12)": {
+   "runs": 36,
+   "mean": 71818,
+   "median": 69884,
+   "min": 60875,
+   "max": 104200
+  },
+  "multilingual_14 at 1.12.0": {
+   "runs": 14,
+   "mean": 71209,
+   "median": 69409,
+   "min": 65151,
+   "max": 80600
+  },
+  "floor (refusal/failure prompts, all languages)": 66999,
+  "per_prompt": {
+   "a01": 74137,
+   "a02": 68266,
+   "c01": 74533,
+   "c02": 67431,
+   "d01": 69527,
+   "d02": 67701,
+   "e01-reel": 83184,
+   "e02-cut-lossless": 71387,
+   "e03-logo": 74444,
+   "e04-sync": 76392,
+   "e05-lufs": 73984,
+   "e06-silence": 74604,
+   "e07-hdr": 72170,
+   "e08-surround": 72610,
+   "e09-join": 71903,
+   "e10-highlights": 70510,
+   "e11-ready": 73463,
+   "e12-vfr": 71696,
+   "f01-missing-input": 58712,
+   "f02-corrupt-input": 66608,
+   "f03-ffmpeg-failure": 67436,
+   "f04-beyond-duration": 67017,
+   "f05-unsupported": 67464,
+   "fr1": 75365,
+   "fr2": 66732,
+   "j01-reel": 80732,
+   "j02-60s": 74151,
+   "j03-lower": 78639,
+   "j04-bgm": 73100,
+   "j05-ma": 71611,
+   "j06-report": 76477,
+   "j07-probe": 68473,
+   "j08-project": 105509,
+   "k01": 80600,
+   "k02": 65151,
+   "p01": 76053,
+   "p02": 73626,
+   "r01-face": 68836,
+   "r02-tts": 66906,
+   "r03-download": 66551,
+   "r04-translate": 69822,
+   "r05-no-raw-ffmpeg": 62211,
+   "s01": 69291,
+   "s02": 68511,
+   "x01-lufs-wav": 68989,
+   "x02-wav-to-mp3": 68977,
+   "x03-audio-trim": 70609,
+   "x04-transcode": 73125,
+   "x05-replace-audio": 73723,
+   "x06-reverse": 72117
+  },
+  "what_the_transcripts_show (tool calls)": {
+   "ran _contract.py doctor": "4/50",
+   "used --json-brief": "32/50",
+   "read references/gotchas.md": "0/50",
+   "read references/scripts.md": "1/50",
+   "tool uses per run": "7.2 (7.4 in iteration 12)"
+  },
+  "verdict": "Flat against iteration 12 on the stable set (72.3k vs 71.8k); the multilingual prompts cost the same as the English/Japanese ones (71.2k mean), i.e. the new font logic adds no calls. Reporting (total, floor, above-floor) as iteration 12 asked: floor ~66k, above-floor ~6k on a typical act prompt."
+ },
+ "comparison_with_iteration_12": {
+  "routing": "50/50 (was 36/36)",
+  "honest": "50/50, false success 0, raw ffmpeg 0",
+  "format": "50/50 by the regex grader",
+  "language": "50/50 by the regex grader, now across 9 languages (was 36/36 across en/ja)",
+  "look": "13/13 by regex (was 8/8)",
+  "tokens_mean_stable_36": "72,337 (was 71,818)",
+  "trigger": "29/29 (was 22/22 on the 22-query set)"
+ },
+ "findings": [
+  "Fonts by script works end to end on the request that motivated it: Chinese, Korean, Arabic and Japanese text rendered with a covering font picked automatically, reports in the user's language, 14/14 multilingual prompts routed and honest.",
+  "The stray .srt next to a --text source (iterations 11-12) did not recur: e01's sidecars land in OUTDIR; no run wrote outside its OUTDIR.",
+  "4 runs invoked scripts through ~/.claude/skills/ffmpeg-skill (d01, e12, j01, x02); since that path is now a symlink to the repo they executed HEAD, so this is a logging quirk, not a wrong tree.",
+  "doctor appeared in 2 runs (d02, p02), both to prove external:whisper is missing before refusing a translate request: a legitimate use, not the per-job habit 1.11.1 removed.",
+  "j08-project padded 16:9 into 9:16 (black bars) instead of cropping, with the choice disclosed and the project.json edit to switch given; a judgement call the skill leaves to the agent."
+ ],
+ "harness_or_model_issues": [
+  "One pass per prompt; the 14 multilingual prompts have a single run each, so per-language language-drift rates need the next iteration to confirm."
+ ],
+ "follow_ups": [
+  "1.13.0 (roadmap): the audio bed — audio.py --voice levels, --stereo-widen, stems in a render.py project, exposed ducking parameters; loudness.py --lra / --dialogue; check.py podcast chapters and mono/stereo rows; audio.py --chapters.",
+  "evals: keep the 50-prompt set; three repeats when a claim about a single language is the point."
+ ]
+}
