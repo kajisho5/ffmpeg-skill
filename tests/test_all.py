@@ -3532,7 +3532,7 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertIn("(deprecated: use --quality)", helptext)
 
     def test_json_brief_is_a_shorter_json_with_the_same_verdict(self):
-        """1.10.2 token diet: `--json-brief` is additive -- the same success document with the
+        """1.11.0 token diet: `--json-brief` is additive -- the same success document with the
         probe summarised, the command lines counted and the per-step verification list dropped.
         `--json` itself must be untouched, so both are run on the same edit and compared."""
         full = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", str(OUT / "brief_full.mp4"), "--json").stdout)
@@ -3566,7 +3566,7 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertNotIn("summary", doc)
 
     def test_skill_md_stays_within_the_agent_reading_budget(self):
-        """1.10.2: SKILL.md is the file every session loads, so its size is a real per-run cost.
+        """1.11.0: SKILL.md is the file every session loads, so its size is a real per-run cost.
         The two-tier split (long-form prose in references/gotchas.md, one line plus an anchor
         here) brought it from 362 lines / 37.8 KB to under this ceiling; a new rule belongs in a
         references/ file with a one-line pointer, not in an ever-growing SKILL.md."""

@@ -153,7 +153,7 @@ These are the rules the skill file gives the agent and the code enforces. Togeth
 
 ## Tools
 
-42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.10.2) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
+42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.11.0) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
 
 **Analysis and inspection**
 
@@ -259,7 +259,7 @@ built straight from that object. (The rest of a `ToolSpec` — `role`, `capabili
 aren't things a parser can express; only `input_schema` is parser-derived.)
 
 - **The contract**'s `input_schema` for every tool is generated from the live parser directly.
-- **SKILL.md is two-tier** (1.10.2): the file the agent loads every session keeps the workflow, the
+- **SKILL.md is two-tier** (1.11.0): the file the agent loads every session keeps the workflow, the
   request→script table and one line per gotcha; the long-form detail lives in `references/gotchas.md`
   and the other `references/` files, read only when a job needs it.
 - **The MCP server** (`mcp/server.py`) carries no schema of its own; `tools/list` is translated
@@ -452,7 +452,7 @@ Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 | | |
 |---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | scope, dev setup, tests, PR expectations |
-| [docs/roadmap.md](docs/roadmap.md) | 1.8.0 to 1.20.0 one theme per minor (1.8 to 1.10 pre-ship 2.0), and what 2.0.0 then removes |
+| [docs/roadmap.md](docs/roadmap.md) | 1.8.0 to 1.21.0 one theme per minor (1.8 to 1.10 pre-ship 2.0, 1.11 the token diet), and what 2.0.0 then removes |
 | [docs/design-decisions.md](docs/design-decisions.md) | behaviours that look like bugs but are decisions, with rationale and the pinning test; read before filing a bug |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1; reports go through the SECURITY.md channel |
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately |

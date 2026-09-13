@@ -930,7 +930,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
                     "semantics": "prints the ffmpeg command lines that would run; no output file is written",
                     **({"note": DRY_RUN_ANALYSIS.get(name) or DRY_RUN_NOTES[name]} if name in DRY_RUN_ANALYSIS or name in DRY_RUN_NOTES else {})},
         "supports_json": "json" in schema["properties"],
-        # additive mirror of supports_json (1.10.2): --json-brief is the same document trimmed
+        # additive mirror of supports_json (1.11.0): --json-brief is the same document trimmed
         "supports_json_brief": "json_brief" in schema["properties"],
         "mutates_input": False,
         "produces_artifact": meta["produces_artifact"],
@@ -1136,7 +1136,7 @@ def main() -> int:
             print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}")
             # counts, not the full capability list: the names of the ~60 available capabilities
             # answer no question a caller has (they are in `doctor --json .available` when one
-            # does), while what is MISSING is the whole reason to run doctor (1.10.2 token diet).
+            # does), while what is MISSING is the whole reason to run doctor (1.11.0 token diet).
             head = (f"{'ok' if d['ok'] else 'NOT ok'}: {len(d['available'])} capabilities available, "
                     f"{len(d['missing'])} required missing, {len(d['missing_optional'])} optional missing")
             if d["unknown"]:

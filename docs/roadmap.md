@@ -1,4 +1,4 @@
-# Roadmap: 1.7.1 → 1.20.0 → 2.0
+# Roadmap: 1.7.1 → 1.21.0 → 2.0
 
 The 1.x contract is frozen (docs/contract.md, "Stability guarantee"). 1.8 → 1.10 pre-ship the
 2.0 decisions (issue #189, docs/design-decisions.md "Decided for 2.0") behind opt-in flags or
@@ -60,7 +60,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
   steps) re-run on the tree — eighth audit shipped as 1.9.1; eval 10 and corpus re-run pending.
   `docs/contract.md` "What 2.0 changes" section written from the `deprecated` list (done).
 
-## 1.10.2 — token diet
+## 1.11.0 — token diet (shipped; the PR was `feat:`, so the release bot cut a minor, and the themes below move up one)
 
 The eval-10 follow-up: make a job cost the agent fewer tokens and fewer calls without changing
 what any tool does. Nothing here is a behaviour change — `--json`, exit codes, contract fields
@@ -86,7 +86,7 @@ and the default MCP `tools/list` are unchanged except for additions.
 - **Eval iteration 11** measures tokens per run and keeps only the changes that hold routing,
   honesty, language, report format and look behaviour at iteration-10 levels (pending).
 
-## 1.11.0 — captions people can read
+## 1.12.0 — captions people can read
 
 - `caption.py` wraps by measured text width (fontconfig metrics, not character count) so
   CJK and long Latin lines stop overflowing the safe area; `--max-lines` and `--min-duration`
@@ -96,7 +96,7 @@ and the default MCP `tools/list` are unchanged except for additions.
   file gives every project the same look; `graphics.py` reads the same block.
 - Eval 11: the 8 caption prompts (JA/EN, CJK wrap, karaoke, SRT offset) run 3 times.
 
-## 1.12.0 — the audio bed
+## 1.13.0 — the audio bed
 
 - `audio.py`: `--voice` strength levels (`light|medium|strong`), `--stereo-widen`, stem
   levels for dialogue / music / effects in a `render.py` project (`audio.stems`), sidechain
@@ -107,7 +107,7 @@ and the default MCP `tools/list` are unchanged except for additions.
   chapters.txt` writes MP4/M4A chapter markers.
 - Eval 12 on audio-only and mixed prompts.
 
-## 1.13.0 — sync and multicam at scale
+## 1.14.0 — sync and multicam at scale
 
 - `sync.py` accepts 3+ sources (one reference, N seconds) and writes one offsets JSON;
   drift correction reports the measured ppm and where it resampled.
@@ -116,7 +116,7 @@ and the default MCP `tools/list` are unchanged except for additions.
   re-rendered with different minimum shot lengths.
 - Eval 13 on multicam / sync prompts; a real-device multicam corpus (phone + camera + lav).
 
-## 1.14.0 — delivery, one preset per destination
+## 1.15.0 — delivery, one preset per destination
 
 - `export.py` presets for shorts / tiktok / linkedin as named targets (today aliases of
   reels / youtube), `youtube-hdr` (HEVC Main10 HDR10 kept), `youtube-av1`; a preset carries its
@@ -126,7 +126,7 @@ and the default MCP `tools/list` are unchanged except for additions.
 - Chapter markers in the delivery file from a `chapters` block in the project.
 - Eval 14 on delivery prompts, all presets checked by `check.py` on the corpus.
 
-## 1.15.0 — throughput
+## 1.16.0 — throughput
 
 - `batch.py --jobs N` runs independent items in parallel under one `--timeout` budget;
   resumable (`--resume` skips items whose output verified); `--watch` folders.
@@ -136,7 +136,7 @@ and the default MCP `tools/list` are unchanged except for additions.
 - Eval 15 measures wall-clock and encode counts on the 36-prompt set (the number, not just
   pass/fail).
 
-## 1.16.0 — measured analysis (still no judgement)
+## 1.17.0 — measured analysis (still no judgement)
 
 - `scenes.py --shots` labels each shot static / pan / motion by measured optical flow;
   `--audio-peaks` and `--speech` (speech-vs-music energy ratio) as separate lists.
@@ -146,7 +146,7 @@ and the default MCP `tools/list` are unchanged except for additions.
   that the calling agent decides on (the skill reports the number; it does not pick the subject).
 - Eval 16 on analysis prompts, scored against hand-labelled ground truth.
 
-## 1.17.0 — observability
+## 1.18.0 — observability
 
 - `--trace FILE` (common flag): one JSON line per ffmpeg run with wall time, encode fps,
   speed, exit code, bytes written; `result_v2.metrics` carries the same for the whole tool.
@@ -156,7 +156,7 @@ and the default MCP `tools/list` are unchanged except for additions.
   prints the fix per missing capability, using the contract's capability list.
 - Eval 17 grades whether agents quote the metrics rather than re-probe.
 
-## 1.18.0 — portability
+## 1.19.0 — portability
 
 - Windows: paths with spaces and non-ASCII fonts through every filter (fontconfig escaping
   audit), long-path support; the Windows CI job runs the full corpus.
@@ -167,7 +167,7 @@ and the default MCP `tools/list` are unchanged except for additions.
   result so a difference is traceable.
 - Eval 18 on the Windows and macOS runners.
 
-## 1.19.0 — agent ergonomics
+## 1.20.0 — agent ergonomics
 
 - SKILL.md rewritten from evals 8–18: the request table regrouped by intent, the language and
   report rules moved to the top, the gotchas list pruned to the ones still hit.
@@ -177,15 +177,15 @@ and the default MCP `tools/list` are unchanged except for additions.
 - Eval 19: trigger set doubled (44 prompts), plus 20 "second-turn" prompts where the agent
   must continue an edit from a previous result document.
 
-## 1.20.0 — the 2.0 freeze
+## 1.21.0 — the 2.0 freeze
 
 - Everything 2.0 removes is announced (`deprecated` in the contract, `--help`, CHANGELOG) for
   at least one minor; `docs/migrating-2.0.md` maps every old spelling to the new one.
 - `contract_version` 1.1: `deprecated`, `examples`, `metrics` documented; the real-device
   corpus and all 19 eval sets re-run on the tree; ninth audit pass.
-- No new options after 1.20.0 on 1.x: 1.20.x is fixes only while 2.0.0 is prepared.
+- No new options after 1.21.0 on 1.x: 1.21.x is fixes only while 2.0.0 is prepared.
 
-## 2.0.0 (after 1.20.x settles)
+## 2.0.0 (after 1.21.x settles)
 
 Manual `package.json` bump in one PR (the release workflow never picks a major). It removes
 the deprecated spellings, promotes `result_v2` to the top level, makes `ctx` required, renames
