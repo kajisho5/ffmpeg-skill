@@ -2612,7 +2612,10 @@ def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
     joined = " ".join(str(a) for a in cmd)
     written = []
     for path, body in list(_DRAWTEXT_PENDING.items()):
-        if path not in joined or os.path.exists(path):
+        # match on the unique file name, not the full path: inside a filter string the path is
+        # escaped (a Windows drive colon becomes `C\\:`, and the separators are forward slashes),
+        # so the registered spelling never appears verbatim in the command
+        if os.path.basename(path) not in joined or os.path.exists(path):
             continue
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
