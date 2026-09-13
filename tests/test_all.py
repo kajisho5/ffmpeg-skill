@@ -1490,9 +1490,14 @@ class FFmpegSkillTests(unittest.TestCase):
         latin_only = Path(default_font_file("DejaVu Sans") or "")
         if not latin_only.exists():
             self.skipTest("no DejaVu Sans file to point --fonts-dir at")
+        # an isolated directory holding only the Latin face: the system font directory that
+        # file lives in may well cover Korean too (macOS ships Apple SD Gothic Neo next to it)
+        latin_dir = OUT / "fontsdir_latin_only"
+        latin_dir.mkdir(exist_ok=True)
+        shutil.copyfile(latin_only, latin_dir / latin_only.name)
         cues = OUT / "fontsdir_ko.txt"
         cues.write_text("0:00-0:03 안녕하세요\n", encoding="utf-8")
-        proc = script("caption.py", self._small(), "--text", cues, "--fonts-dir", latin_only.parent,
+        proc = script("caption.py", self._small(), "--text", cues, "--fonts-dir", latin_dir,
                       "--fast", "-o", OUT / "fontsdir_ko.mp4", "--json")
         self.assertIn("covers ko", proc.stderr, proc.stderr)
         self.assertIn("no face in", proc.stderr, "the caller is told the directory does not cover the script")
