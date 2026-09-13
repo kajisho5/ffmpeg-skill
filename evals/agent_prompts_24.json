@@ -723,5 +723,94 @@
   "fixtures": {
    "cues_th2.txt": "0:00-0:03 สวัสดีชาวโลก\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\n"
   }
+ },
+ {
+  "id": "cw1",
+  "lang": "en",
+  "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 with OUTDIR/cues_cw1.txt for TikTok — the lines have to break sensibly. Save the result in OUTDIR and show me a frame.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "note": "the dl1 cue: the phrase-aware wrap is the default, so no flag is needed",
+  "fixtures": {
+   "cues_cw1.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Segunda linea de subtitulos\n"
+  }
+ },
+ {
+  "id": "cw2",
+  "lang": "es",
+  "prompt": "Los subtítulos de OUTDIR/cues_dl4.txt no caben en dos líneas — reescríbelos más cortos y ponlos en el vídeo /home/user/ffmpeg-skill/tests/out/source.mp4. Guarda todo en OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "the skill wraps and splits cues, it never rewrites the user's words; the refusal offers --max-lines / a split and is written in Spanish, labels included",
+  "fixtures": {
+   "cues_dl4.txt": "0:00-0:03 Segunda línea de subtítulos\n0:03-0:06 Una tercera línea con tiempos automáticos\n"
+  }
+ },
+ {
+  "id": "ag1",
+  "lang": "en",
+  "prompt": "Turn OUTDIR/music.m4a into a video I can post, with OUTDIR/cover.png behind the waveform. Save it in OUTDIR and show me a frame.",
+  "expect": [
+   "waveform|render",
+   "check|export",
+   "look"
+  ],
+  "refuse": false,
+  "note": "the audiogram: waveform.py --image or render.py --template audiogram"
+ },
+ {
+  "id": "ag2",
+  "lang": "ja",
+  "prompt": "OUTDIR/music.m4a のポッドキャスト音声を動画にして。背景はいい感じの画像を探して付けておいて。OUTDIR に保存して。",
+  "expect": [],
+  "refuse": true,
+  "note": "no network, no image search, no invented cover art: the refusal asks for a local image or a colour, in Japanese, labels included"
+ },
+ {
+  "id": "ch1",
+  "lang": "en",
+  "prompt": "Propose chapter markers for OUTDIR/gappy.mp4 from where the pauses are — don't rename anything yet. Write them next to the file in OUTDIR.",
+  "expect": [
+   "metadata|silence|scenes"
+  ],
+  "refuse": false,
+  "note": "metadata.py --auto-chapters; the titles stay Chapter N"
+ },
+ {
+  "id": "ch2",
+  "lang": "pt",
+  "prompt": "Cria os capítulos do episódio OUTDIR/gappy.mp4 e dá um título a cada um conforme o assunto. Guarda em OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "the skill proposes timestamps from measured structure; it cannot know the subject. Offers the Chapter N placeholders, in Portuguese, labels included"
+ },
+ {
+  "id": "ml1",
+  "lang": "en",
+  "prompt": "Put the English and Japanese SRTs (OUTDIR/en.srt, OUTDIR/ja.srt) into /home/user/ffmpeg-skill/tests/out/source.mp4 as switchable tracks. Save the result in OUTDIR.",
+  "expect": [
+   "caption",
+   "check|probe"
+  ],
+  "refuse": false,
+  "note": "caption.py --mode mux with a repeated --srt file:lang; .mkv is the honest container",
+  "fixtures": {
+   "en.srt": "1\n00:00:00,000 --> 00:00:03,000\nHello world\n",
+   "ja.srt": "1\n00:00:00,000 --> 00:00:03,000\nこんにちは世界\n"
+  }
+ },
+ {
+  "id": "ml2",
+  "lang": "de",
+  "prompt": "Häng die deutschen Untertitel mit dran — übersetz die englischen aus OUTDIR/en.srt einfach. Alles nach OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "note": "no translation engine (same rule as r04); the refusal is in German, labels included",
+  "fixtures": {
+   "en.srt": "1\n00:00:00,000 --> 00:00:03,000\nHello world\n"
+  }
  }
 ]

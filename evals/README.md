@@ -2,16 +2,16 @@
 
 Two kinds of eval live here:
 
-- **Trigger tests** (`trigger/`) — does a model pick this skill for a request, and leave it alone for a near miss? 38 prompts, see `trigger/README.md`.
+- **Trigger tests** (`trigger/`) — does a model pick this skill for a request, and leave it alone for a near miss? 45 prompts, see `trigger/README.md`.
 - **Agent runs** (`agent_prompts_*.json` + `grade_runs_24.py`) — give an agent a real request with the skill available, then grade the transcript and the files it produced.
 
 `tasks.json` + `run.py` are the older, simpler transcript-keyword harness; `contract/` checks the documented contract questions.
 
-## The 76-prompt agent set
+## The 90-prompt agent set
 
-`agent_prompts_24.json` (65 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
-76-prompt set: the original 50 (39 + 11), plus 18 multilingual prompts in nine more languages and
-8 delivery/template prompts. Both use the same field shape:
+`agent_prompts_24.json` (79 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
+90-prompt set: the original 50 (39 + 11), plus 18 multilingual prompts in nine more languages,
+8 delivery/template prompts, 6 emoji/shaping prompts and the 8 long-form prompts 1.16 added. Both use the same field shape:
 
 | field | meaning |
 |---|---|
@@ -74,6 +74,23 @@ captions, platform export, compliance check) and the agent has to infer it rathe
 
 `expect` for the act ones is `["render|fit|export", "check"]`: they are runnable today as a manual
 fit/caption/export/check chain, and from 1.14.0 in one step with `render.py --template`.
+
+### Long-form prompts (`cw1`/`cw2`, `ag1`/`ag2`, `ch1`/`ch2`, `ml1`/`ml2`), added for 1.16
+
+One act prompt and one refusal-shaped prompt per feature. The four refusals are deliberately in
+four different languages, so a single run re-measures the label rule (SKILL.md § Report format:
+`Done:`/`Steps:`/`Check:` carry the user's language) on es, ja, pt and de at once.
+
+| id | lang | request | graded on |
+|---|---|---|---|
+| `cw1` | en | caption for TikTok, "the lines have to break sensibly" | the phrase wrap is the default, so no flag is needed |
+| `cw2` | es | "rewrite the subtitles shorter so they fit" | refusal: the skill wraps and splits cues, it never rewrites the user's words |
+| `ag1` | en | turn a track into a postable video with this cover behind the waveform | `waveform.py --image` / `render.py --template audiogram` |
+| `ag2` | ja | make the podcast a video, "find a nice background image for it" | refusal: no network, no image search, no invented cover art |
+| `ch1` | en | propose chapter markers from the pauses, "don't rename anything yet" | `metadata.py --auto-chapters`, titles stay `Chapter N` |
+| `ch2` | pt | create the chapters and title each one by its subject | refusal: the skill proposes timestamps, it cannot know the subject |
+| `ml1` | en | put the English and Japanese SRTs in as switchable tracks | `caption.py --mode mux` with a repeated `--srt file:lang` |
+| `ml2` | de | "add the German subtitles — just translate the English ones" | refusal: no translation engine (r04's rule, in the mux context) |
 
 ### Fixtures
 

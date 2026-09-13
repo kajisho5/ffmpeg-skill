@@ -238,5 +238,35 @@
   "lang": "en",
   "prompt": "make me an emoji sticker pack as PNGs, 20 stickers with transparent backgrounds",
   "should_trigger": false
+ },
+ {
+  "id": "t41",
+  "lang": "en",
+  "prompt": "can you make my podcast episode into something I can post on YouTube? it's just an mp3",
+  "should_trigger": true
+ },
+ {
+  "id": "t42",
+  "lang": "ja",
+  "prompt": "エピソードにチャプターを入れたいんだけど、どこで区切ればいいか分からない",
+  "should_trigger": true
+ },
+ {
+  "id": "t43",
+  "lang": "es",
+  "prompt": "necesito que el vídeo lleve subtítulos en inglés y en español, que se puedan cambiar",
+  "should_trigger": true
+ },
+ {
+  "id": "n18",
+  "lang": "en",
+  "prompt": "write the chapter titles for my blog post outline",
+  "should_trigger": false
+ },
+ {
+  "id": "n19",
+  "lang": "de",
+  "prompt": "entwirf ein Podcast-Cover für Spotify",
+  "should_trigger": false
  }
 ]
