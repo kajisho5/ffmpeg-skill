@@ -2617,7 +2617,10 @@ def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
         # so the registered spelling never appears verbatim in the command
         if os.path.basename(path) not in joined or os.path.exists(path):
             continue
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        # O_NOFOLLOW exists on POSIX only; the directory is private (mkdtemp, 0700) so the
+        # symlink guard is belt and braces there and unavailable on Windows
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(body)
         written.append(path)
