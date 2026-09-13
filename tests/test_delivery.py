@@ -168,15 +168,27 @@ class DeliveryTests(MediaFixtures):
         the export preset and check.py agreeing is exactly the thing a template promises and the
         thing that used to be assembled by hand differently every time."""
         names = sorted(p.stem for p in (ROOT / "templates").glob("*.json"))
-        self.assertEqual(names, ["facebook", "linkedin", "podcast", "reels", "shorts", "tiktok",
-                                 "x", "youtube", "youtube-shorts"], "every shipped template is exercised here")
+        self.assertEqual(names, ["audiogram", "facebook", "linkedin", "podcast", "reels", "shorts",
+                                 "tiktok", "x", "youtube", "youtube-shorts"],
+                         "every shipped template is exercised here")
+        plate = OUT / "tpl_audiogram_plate.png"
+        if not plate.exists():
+            plate_clip = OUT / "tpl_audiogram_plate.mp4"
+            script("background.py", "--width", "640", "--height", "360",
+                   "--gradient", "#101014:#cc3333", "--duration", "1", "-o", plate_clip)
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", plate_clip,
+               "-frames:v", "1", plate)
         for name in names:
             with self.subTest(template=name):
-                src = self.mic if name == "podcast" else self.src
+                src = self.mic if name in ("podcast", "audiogram") else self.src
                 argv = [str(src), "--template", name, "--fast", "--json",
                         "-o", str(OUT / ("tpl_%s.%s" % (name, "m4a" if name == "podcast" else "mp4")))]
                 if name != "podcast":
                     argv += ["--cues", str(self.cues)]
+                if name == "audiogram":
+                    # the one template that needs a picture given to it: the skill fetches nothing
+                    # and invents no cover art, so a run without --image is a refusal by design
+                    argv += ["--image", str(plate)]
                 doc = json.loads(script("render.py", *argv).stdout)
                 self.assertEqual(doc["status"], "completed")
                 self.assertTrue(os.path.exists(doc["output"]), doc["output"])

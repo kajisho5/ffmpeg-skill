@@ -13,8 +13,9 @@
   },
   "captions": {
     "text": "$CUES",
-    "size": 26,
-    "position": "bottom"
+    "size": 20,
+    "position": "bottom",
+    "margin": 14
   },
   "loudness": {
     "lufs": -14,
