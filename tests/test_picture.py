@@ -2126,5 +2126,176 @@ class WrapReadabilityTests(unittest.TestCase):
                                      len(C.wrap_text(text, max_em, balance=False)))
 
 
+class PhraseWrapTests(unittest.TestCase):
+    """1.16: the four phrase rules (R1 never inside a word, R2 no weak line, R3 ja/zh preferred
+    break points, R4 no function word at the end of a line), locked against the eval-16 cues."""
+
+    # The em width a caption line has at a real destination's caption size, computed from the
+    # platform table rather than pinned as a magic float (the size, the frame and the safe-area
+    # fraction can all move; the test should move with them).
+    @staticmethod
+    def _max_em(platform_name):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        _platforms = importlib.import_module("_platforms")
+        caption = importlib.import_module("caption")
+        frame = _platforms.PLATFORMS[platform_name]["frame"]
+        cap = _platforms.caption_defaults(platform_name)
+        size_px = cap["size"] * frame["h"] / 288.0
+        return (frame["w"] * caption.SAFE_WIDTH_FRACTION) / size_px
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        self.caption = importlib.import_module("caption")
+        self.W = self._max_em("linkedin")     # 12.96 em: wide enough for a two-line cue
+        self.NARROW = self._max_em("tiktok")  # 6.075 em: the vertical caption width
+
+    # -------------------------------------------------------------- R1: never inside a word
+    def test_wrap_never_splits_inside_a_word(self):
+        C = self.caption
+        corpus = [
+            "A third line the tool times for me",
+            "Segunda linea de subtitulos con acentos",
+            "one two three four five six seven eight nine ten",
+            "\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c 2 \u884c\u76ee\u306e\u5b57\u5e55\u3067\u3059",
+            "\u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35\u0e0a\u0e32\u0e27\u0e42\u0e25\u0e01 \u0e40\u0e2a\u0e35\u0e22\u0e07\u0e19\u0e49\u0e33\u0e44\u0e2b\u0e25",
+        ]
+        for text in corpus:
+            for max_em in (4.0, 6.075, 9.0, 12.96, 20.0):
+                with self.subTest(text=text[:12], max_em=max_em):
+                    lines = C.wrap_text(text, max_em)
+                    self.assertEqual("".join(lines).replace(" ", ""), text.replace(" ", ""))
+                    # every boundary between two spaced-script lines stood at a space or a hyphen
+                    for a, b in zip(lines, lines[1:]):
+                        if not a or not b:
+                            continue
+                        spaced = C.char_script(a[-1]) not in C.NO_SPACE_SCRIPTS \
+                            and C.char_script(b[0]) not in C.NO_SPACE_SCRIPTS
+                        if not spaced:
+                            continue   # a no-space script breaks between characters by design
+                        if not C._break_spaced(a, b):
+                            self.assertTrue(a.endswith(("-", "\u2010")),
+                                            "broke inside a word: %r | %r" % (a, b))
+
+    def test_wrap_breaks_a_hyphenated_word_only_after_the_hyphen(self):
+        C = self.caption
+        lines = C.wrap_text("an end-to-end example", 6.0)
+        self.assertEqual("".join(lines).replace(" ", ""), "anend-to-endexample")
+        for a, b in zip(lines, lines[1:]):
+            if a and b and not C._break_spaced(a, b):
+                self.assertTrue(a.endswith("-"), "broke inside a word: %r | %r" % (a, b))
+        # a non-breaking hyphen is never a break point
+        self.assertEqual(C._split_hyphens([("well\u2011known", False)]), [("well\u2011known", False)])
+        # ... and neither is a leading or trailing one
+        self.assertEqual(C._split_hyphens([("-5", False)]), [("-5", False)])
+
+    # -------------------------------------------------------------- R2: no weak line
+    def test_is_weak_line_names_the_lines_no_reader_should_get(self):
+        C = self.caption
+        for weak in ("2", "--", "\u3066", "\u30f3", " "):
+            self.assertTrue(C._is_weak_line(weak), repr(weak))
+        for fine in ("me", "\u4e16\u754c", "\u0e44\u0e2b\u0e25"):
+            self.assertFalse(C._is_weak_line(fine), repr(fine))
+
+    def test_dl3_cue_exact_split(self):
+        """dl3: no line that is a lone digit, and the break is not between a kanji stem and its
+        okurigana (`\u6c7a\u307e` | `\u308b`)."""
+        C = self.caption
+        for max_em in (self.NARROW, self.W, 10.0, 14.0):
+            with self.subTest(max_em=max_em):
+                lines = C.wrap_text("2 \u884c\u76ee\u306e\u5b57\u5e55\u3067\u3059", max_em)
+                self.assertNotIn("2", lines, lines)
+                lines = C.wrap_text("\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c", max_em)
+                for a, b in zip(lines, lines[1:]):
+                    self.assertFalse(a.endswith("\u6c7a\u307e") and b.startswith("\u308b"),
+                                     "broke inside \u6c7a\u307e\u308b: %r" % (lines,))
+
+    def test_th1_cue_exact_split(self):
+        """th1: the trailing line is never the stranded `\u0e44\u0e2b\u0e25` alone."""
+        C = self.caption
+        text = "\u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35\u0e0a\u0e32\u0e27\u0e42\u0e25\u0e01 \u0e40\u0e2a\u0e35\u0e22\u0e07\u0e19\u0e49\u0e33\u0e44\u0e2b\u0e25"
+        for max_em in (self.NARROW, 8.0, self.W):
+            with self.subTest(max_em=max_em):
+                lines = C.wrap_text(text, max_em)
+                self.assertNotEqual(lines[-1].strip(), "\u0e44\u0e2b\u0e25", lines)
+                self.assertFalse(C._is_weak_line(lines[-1]), lines)
+
+    # -------------------------------------------------------------- R4: function words
+    def test_function_word_never_ends_a_line(self):
+        C = self.caption
+        cases = {
+            "en": "A third line the tool times for me",
+            "es": "Una tercera linea con tiempos automaticos",
+            "pt": "Uma terceira linha com tempos automaticos",
+            "fr": "La ligne trois avec temps automatiques",
+            "de": "Zeile drei zeigt die Zeiten automatisch",
+            "it": "Una terza riga con i tempi automatici",
+        }
+        for lang, text in cases.items():
+            with self.subTest(lang=lang):
+                lines = C.wrap_text(text, self.W, lang=lang)
+                for line in lines[:-1]:
+                    last = C._bare_word(line.split(" ")[-1])
+                    self.assertNotIn(last, C._function_words(lang),
+                                     "%s: line ends on a function word: %r" % (lang, lines))
+
+    def test_dl4_cue_exact_split(self):
+        """dl4, both cues, at the width that reproduced the eval-16 splits."""
+        C = self.caption
+        self.assertEqual(C.wrap_text("Segunda l\u00ednea de subt\u00edtulos", self.W, lang="es"),
+                         ["Segunda l\u00ednea", "de subt\u00edtulos"])
+        self.assertEqual(C.wrap_text("Una tercera l\u00ednea con tiempos autom\u00e1ticos", self.W, lang="es"),
+                         ["Una tercera l\u00ednea", "con tiempos autom\u00e1ticos"])
+
+    def test_dl1_cue_exact_split(self):
+        """dl1. NOTE: the 1.16.0 spec pinned `["A third line the", "tool times for me"]` here --
+        1.15's balance-only output. R4 forbids a line ending on `the`, and the two cannot both
+        hold: the R4-clean break is the one below, and the spec's own
+        `test_function_word_never_ends_a_line` is what settles the tie. `--wrap measured` still
+        gives 1.15's split, which the next test pins."""
+        C = self.caption
+        self.assertEqual(C.wrap_text("A third line the tool times for me", self.W, lang="en"),
+                         ["A third line the tool", "times for me"])
+        self.assertEqual(C.wrap_text("A third line the tool times for me", self.W,
+                                     mode="measured"),
+                         ["A third line the", "tool times for me"])
+
+    # -------------------------------------------------------------- modes and invariants
+    def test_wrap_measured_is_byte_identical_to_1_15(self):
+        """`--wrap measured` reproduces the outputs the 1.15 tests pinned."""
+        C = self.caption
+        self.assertEqual(C.wrap_text("A third line the tool times for me", 14.0, mode="measured"),
+                         ["A third line the", "tool times for me"])
+        self.assertEqual(C.wrap_text("A third line the tool times for me", 14.0,
+                                     balance=False, mode="measured"),
+                         ["A third line the tool times", "for me"])
+        self.assertEqual(C.wrap_text("Segunda l\u00ednea de subt\u00edtulos", self.W, mode="measured"),
+                         ["Segunda l\u00ednea", "de subt\u00edtulos"])
+
+    def test_wrap_line_count_never_grows(self):
+        C = self.caption
+        corpus = ["A third line the tool times for me", "Hello world",
+                  "one two three four five six seven eight nine ten",
+                  "Una tercera l\u00ednea con tiempos autom\u00e1ticos",
+                  "\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c\u306e\u5b57\u5e55\u3067\u3059",
+                  "\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c",
+                  "an end-to-end example of a long hyphenated line"]
+        for text in corpus:
+            for max_em in range(4, 30):
+                with self.subTest(text=text[:12], max_em=max_em):
+                    for mode in ("phrase", "measured"):
+                        self.assertEqual(len(C.wrap_text(text, float(max_em), mode=mode)),
+                                         len(C.wrap_text(text, float(max_em), balance=False)),
+                                         mode)
+
+    def test_break_penalty_prefers_a_sentence_end_and_a_particle(self):
+        C = self.caption
+        self.assertEqual(C.break_penalty("\u3002", "\u6b21", "ja"), 0.0)
+        self.assertLess(C.break_penalty("\u754c", "\u306f", "ja"),      # before a particle
+                        C.break_penalty("\u6c7a", "\u307e", "ja"))      # inside a word
+        self.assertEqual(C.break_penalty("\u3042", "\u3063", "ja"), 1.0)  # small kana may not start a line
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

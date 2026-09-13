@@ -87,6 +87,12 @@ from _common.text import (
     font_for_script, FONT_INSTALL_HINT, fonts_dir_covers_script, has_emoji, _is_emoji_base, _is_emoji_char,
     _is_mark, _KEYCAP, _KEYCAP_BASES, LANGUAGE_NAMES, LATIN_EM, LEADING_VOWELS, _libass_color_probe, needs_shaping,
     NO_SPACE_SCRIPTS, PREFERRED_FAMILIES, resolve_emoji_assets, _SCRIPT_FONT_CACHE, _script_font_entry,
+    _atoms, best_break, _bare_word, break_penalty, _break_spaced, _cut_penalty, _fix_orphans, _fix_weak_lines,
+    _function_words, FUNCTION_WORDS, _HYPHENS, _is_hiragana, _is_ideograph, _is_kana, _is_weak_line,
+    JA_NO_LINE_END, JA_NO_LINE_START, JA_PARTICLE_WORDS, JA_PARTICLES, JA_SENTENCE_END, _join, ORPHAN_MIN_EM,
+    PENALTY_FORBIDDEN, PENALTY_FUNCTION_WORD, PENALTY_IDEOGRAPHS, PENALTY_NEUTRAL, PENALTY_OKURIGANA,
+    PENALTY_PARTICLE, PENALTY_SENTENCE_END, _rebalance, _rebalance_phrase, SAFE_WIDTH_FRACTION, _split_hyphens,
+    wrap_moved_breaks, wrap_text, WRAP_MODES,
     script_font_for_text, script_font_status, _script_font_uncached, _SCRIPT_RANGES, SCRIPTS, _SHAPING_BUILD_CACHE,
     SHAPING_SCRIPTS, text_width_em, _VS15, _VS16, WINDOWS_FONTS, _ZWJ
 )
@@ -183,5 +189,12 @@ __all__ = [
     "_SIGNALS_INSTALLED", "signed_time_arg", "_stage_existing_output", "STATE", "SVT_PRESET", "text_width_em",
     "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "_V2_HANDLED", "validate_color", "verify_output",
     "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
-    "_x264_raw", "_ZWJ"
+    "_x264_raw", "_ZWJ",
+    "_atoms", "best_break", "_bare_word", "break_penalty", "_break_spaced", "_cut_penalty", "_fix_orphans",
+    "_fix_weak_lines", "_function_words", "FUNCTION_WORDS", "_HYPHENS", "_is_hiragana", "_is_ideograph",
+    "_is_kana", "_is_weak_line", "JA_NO_LINE_END", "JA_NO_LINE_START", "JA_PARTICLE_WORDS", "JA_PARTICLES",
+    "JA_SENTENCE_END", "_join", "ORPHAN_MIN_EM", "PENALTY_FORBIDDEN", "PENALTY_FUNCTION_WORD",
+    "PENALTY_IDEOGRAPHS", "PENALTY_NEUTRAL", "PENALTY_OKURIGANA", "PENALTY_PARTICLE", "PENALTY_SENTENCE_END",
+    "_rebalance", "_rebalance_phrase", "SAFE_WIDTH_FRACTION", "_split_hyphens", "wrap_moved_breaks",
+    "wrap_text", "WRAP_MODES"
 ]

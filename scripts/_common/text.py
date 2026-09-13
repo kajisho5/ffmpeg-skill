@@ -978,3 +978,463 @@ def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
     path = os.path.join(tmpdir, name)
     _DRAWTEXT_PENDING[path] = cleaned
     return f"textfile={escape_filter_path(path)}:expansion=none"
+
+
+# --------------------------------------------------------------- caption line breaking (1.16)
+# Lifted out of caption.py in 1.16.0 so graphics.py can wrap the same way (caption.py keeps the
+# names it exported, re-imported from here). The whole breaker is pure: a string in, a list of
+# lines out, no subprocess and no probe, which is what makes the eval regression corpus cheap
+# to lock down in unit tests.
+
+# How much of the frame width a caption line may use. libass's own default SRT margins are 10 of a
+# 384-wide script (2.6 % a side); 5 % a side is the safe area every platform check in this repo uses.
+SAFE_WIDTH_FRACTION = 0.9
+# ORPHAN_MIN_EM: one full-width CJK/Thai character plus a hair. A last line narrower than this is a
+# single stranded character -- eval 14's th1 (a lone 'ล') and dl3 (a lone '行').
+ORPHAN_MIN_EM = 1.1
+
+WRAP_MODES = ("phrase", "measured")
+
+# R3's Japanese preference table. These are *preferences*, never hard rules: a preferred break is
+# only ever taken among positions that already fit the line, so the table can never make a line
+# too wide or change the line count. The particle list is the eight case/topic particles named in
+# the 1.16.0 task brief (は が を に で と の へ) plus も や から まで より, which a reader of
+# Japanese would add for the same reason -- a break *before* a particle keeps the particle with
+# the phrase it marks. It is a judgement call with no upstream source; treat it as tunable data.
+JA_PARTICLES = "はがをにでとのへもやから"          # a break BEFORE one of these is preferred
+JA_PARTICLE_WORDS = ("から", "まで", "より")        # the multi-character members of the same table
+JA_SENTENCE_END = "。、！？」』）"                  # a break AFTER one of these is preferred
+# Characters that may never start a line: small kana, the prolonged sound mark, closing brackets
+# and the Japanese punctuation that hangs on the end of the line before it.
+JA_NO_LINE_START = "ぁぃぅぇぉっゃゅょァィゥェォッャュョーヽヾゝゞ、。！？）」』】〕》’”％"
+JA_NO_LINE_END = "（「『【〔《‘“"                   # ... and the ones that may never end a line
+
+# R4. Function words that should not be left at the end of a line: an article or preposition
+# stranded away from the word it governs reads as a stumble. Frozen data, matched case-folded on
+# the atom with its punctuation stripped; six languages because those are the Latin-script
+# languages the eval corpus covers. A word in several sets means the same thing structurally in
+# each, so the union is used when no --lang was given.
+FUNCTION_WORDS = {
+    "en": {"a", "an", "the", "of", "to", "in", "on", "at", "for", "with", "by", "from", "and",
+           "or", "as", "is", "it", "its", "this", "that", "into", "than", "but", "so"},
+    "es": {"el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "en", "con",
+           "por", "para", "y", "o", "que", "su", "sus", "lo", "se", "es"},
+    "pt": {"o", "a", "os", "as", "um", "uma", "de", "do", "da", "dos", "das", "em", "no", "na",
+           "nos", "nas", "com", "por", "para", "e", "que", "se", "ao", "aos"},
+    "fr": {"le", "la", "les", "un", "une", "de", "du", "des", "à", "au", "aux", "en", "dans",
+           "et", "ou", "que", "qui", "ce", "ces", "son", "sa", "ses", "par", "pour", "avec", "sur"},
+    "de": {"der", "die", "das", "ein", "eine", "einen", "einem", "einer", "den", "dem", "des",
+           "zu", "in", "im", "auf", "mit", "und", "oder", "von", "vom", "für", "aus", "an"},
+    "it": {"il", "lo", "la", "i", "gli", "le", "un", "una", "uno", "di", "del", "della", "da",
+           "in", "nel", "con", "per", "e", "che", "su", "al", "ai"},
+}
+_FUNCTION_WORDS_ANY = frozenset().union(*FUNCTION_WORDS.values())
+
+# Penalty scores. Only the ordering matters; 1.0 means "never choose this if anything else fits".
+PENALTY_FORBIDDEN = 1.0
+PENALTY_OKURIGANA = 0.9       # between a kanji stem and the hiragana that inflects it
+PENALTY_FUNCTION_WORD = 0.8   # R4: the line before the break ends in an article/preposition
+PENALTY_IDEOGRAPHS = 0.6      # between two kanji: no evidence either way, mildly discouraged
+PENALTY_NEUTRAL = 0.5
+PENALTY_PARTICLE = 0.2        # R3: before a particle, so the particle stays with its phrase
+PENALTY_SENTENCE_END = 0.0    # R3: after 。、！？ -- the one break a reader expects
+
+_HYPHENS = ("-", "‐")    # ‑ (non-breaking hyphen) is deliberately NOT here
+
+
+def _atoms(line: str) -> "List[Tuple[str, bool]]":
+    """Break a line into the smallest pieces a wrap may separate -- one atom per CJK/Thai
+    character, one per emoji cluster, one per whitespace-delimited word otherwise -- each with
+    whether a space stood before it in the original. The flag is what puts the text back together
+    exactly as written: "Hello 世界" keeps its space, "世界です" gains none."""
+    out: "List[Tuple[str, bool]]" = []
+    word = ""
+    spaced = False        # a space stands before the atom being built
+    pending = False       # a space stands before the NEXT atom
+    attach_next = False   # a leading Thai/Lao vowel is waiting for its base consonant
+    # An emoji cluster is one atom: a wrap must never land inside a ZWJ sequence, a flag pair or
+    # between a base and its skin-tone modifier (the same rule combining marks already follow).
+    clusters = {i: len(cl) for i, cl in emoji_clusters(line)}
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if i in clusters:
+            cluster = line[i:i + clusters[i]]
+            if word:
+                out.append((word, spaced))
+                word = ""
+            out.append((cluster, pending))
+            pending = False
+            attach_next = False
+            i += clusters[i]
+            continue
+        i += 1
+        if char_script(ch) in NO_SPACE_SCRIPTS:
+            if word:
+                out.append((word, spaced))
+                word = ""
+            if out and (attach_next or _is_mark(ch)):
+                # never break between a base and the mark (or the leading vowel) that belongs to
+                # it: the line would start with an orphaned tone mark or vowel sign
+                out[-1] = (out[-1][0] + ch, out[-1][1])
+            else:
+                out.append((ch, pending))
+                pending = False
+            attach_next = ord(ch) in LEADING_VOWELS
+        elif ch.isspace():
+            if word:
+                out.append((word, spaced))
+                word = ""
+            pending = True
+        else:
+            if not word:
+                spaced, pending = pending, False
+            word += ch
+    if word:
+        out.append((word, spaced))
+    return out
+
+
+def _split_hyphens(atoms: "List[Tuple[str, bool]]") -> "List[Tuple[str, bool]]":
+    """R1's one addition to the atom list: a hyphenated token may break *after* its hyphen.
+
+    "end-to-end" becomes `end-` / `to-` / `end`, each piece carrying the space flag of the token
+    it came from for the first piece and False for the rest, so _join() puts it back with no space
+    at all. A hyphen that is the first or last character of the token (`-5`, `well-`) is never a
+    break point: the guard is that both sides must be non-empty."""
+    out: "List[Tuple[str, bool]]" = []
+    for atom, spaced in atoms:
+        if len(atom) < 3 or not any(h in atom[1:-1] for h in _HYPHENS):
+            out.append((atom, spaced))
+            continue
+        piece = ""
+        first = True
+        for i, ch in enumerate(atom):
+            piece += ch
+            if ch in _HYPHENS and 0 < i < len(atom) - 1:
+                out.append((piece, spaced if first else False))
+                piece = ""
+                first = False
+        if piece:
+            out.append((piece, spaced if first else False))
+    return out
+
+
+def _join(left: str, atom: str, spaced: bool) -> str:
+    """Put an atom back on a line, restoring the space that stood before it."""
+    if not left:
+        return atom
+    return left + (" " if spaced else "") + atom
+
+
+def _break_spaced(first: str, second: str) -> bool:
+    """Did a space stand at the break between these two wrapped lines? Only spaced scripts put one
+    there -- a CJK/Thai break sits between two characters that were written with nothing between
+    them, and re-joining them with a space would insert a character the cue never had."""
+    if not first or not second:
+        return False
+    return char_script(first[-1]) not in NO_SPACE_SCRIPTS and char_script(second[0]) not in NO_SPACE_SCRIPTS \
+        and char_script(first[-1]) != "emoji" and char_script(second[0]) != "emoji"
+
+
+def _is_kana(ch: str) -> bool:
+    return 0x3040 <= ord(ch) <= 0x30FF
+
+
+def _is_hiragana(ch: str) -> bool:
+    return 0x3040 <= ord(ch) <= 0x309F
+
+
+def _is_ideograph(ch: str) -> bool:
+    cp = ord(ch)
+    return 0x3400 <= cp <= 0x4DBF or 0x4E00 <= cp <= 0x9FFF or 0xF900 <= cp <= 0xFAFF
+
+
+def _is_weak_line(line: str) -> "bool":
+    """A line no reader should be given on its own (R2).
+
+    1.15 asked only "is the last line one atom narrower than ORPHAN_MIN_EM", which a full-width
+    character passes: dl3 still showed a lone `2` and a stranded `行`. Three cases instead, any of
+    which makes a line too thin to stand alone:
+      - a single character narrower than ORPHAN_MIN_EM (1.15's rule, kept);
+      - nothing but digits, punctuation and symbols, at most two characters ("2", "--");
+      - a single kana, whatever its width -- a kana is a full em and passes the width test, but a
+        line holding one is a syllable, not a word.
+    """
+    stripped = (line or "").strip()
+    if not stripped:
+        return True
+    if len(stripped) == 1 and text_width_em(stripped) < ORPHAN_MIN_EM:
+        return True
+    if len(stripped) <= 2 and all(unicodedata.category(c)[0] in "NPS" for c in stripped):
+        return True
+    if len(stripped) == 1 and char_script(stripped) == "ja" and _is_kana(stripped):
+        return True
+    return False
+
+
+def _function_words(lang: "Optional[str]") -> "frozenset":
+    """R4's table for this language. An unknown or absent language gets the union of the six sets:
+    a token that appears in several of them is the same kind of word in each, which is why the
+    rule is a penalty and not a refusal."""
+    key = (lang or "").strip().lower().split("-")[0]
+    if key in FUNCTION_WORDS:
+        return frozenset(FUNCTION_WORDS[key])
+    return _FUNCTION_WORDS_ANY
+
+
+def _bare_word(atom: str) -> str:
+    return "".join(c for c in (atom or "") if c.isalpha() or c == "'").strip("'").lower()
+
+
+def break_penalty(prev_char: str, next_char: str, lang: "Optional[str]" = None) -> float:
+    """How bad a break between these two characters is, 0.0 (preferred) to 1.0 (forbidden).
+
+    Only consulted among break positions that already fit `max_em`, so a preference can never
+    widen a line or change the line count. Japanese gets the particle half of the table; Chinese
+    gets only the sentence-end and forbidden halves, because particles are Japanese grammar."""
+    if not prev_char or not next_char:
+        return PENALTY_NEUTRAL
+    script = (lang or "").strip().lower().split("-")[0]
+    if script not in ("ja", "zh"):
+        script = char_script(next_char)
+        if script not in ("ja", "zh"):
+            script = char_script(prev_char)
+    if next_char in JA_NO_LINE_START or prev_char in JA_NO_LINE_END or _is_mark(next_char):
+        return PENALTY_FORBIDDEN
+    if script not in ("ja", "zh"):
+        return PENALTY_NEUTRAL
+    if prev_char in JA_SENTENCE_END:
+        return PENALTY_SENTENCE_END
+    if script == "ja" and next_char in JA_PARTICLES:
+        return PENALTY_PARTICLE
+    if script == "ja" and _is_ideograph(prev_char) and _is_hiragana(next_char):
+        # okurigana: 決|まる is inside a word even though neither half is a "word" on its own
+        return PENALTY_OKURIGANA
+    if _is_ideograph(prev_char) and _is_ideograph(next_char):
+        return PENALTY_IDEOGRAPHS
+    return PENALTY_NEUTRAL
+
+
+def _cut_penalty(atoms: "Sequence[Tuple[str, bool]]", cut: int, lang: "Optional[str]") -> float:
+    """The penalty of breaking `atoms` before index `cut`."""
+    prev_atom = atoms[cut - 1][0]
+    next_atom = atoms[cut][0]
+    if not prev_atom or not next_atom:
+        return PENALTY_NEUTRAL
+    if atoms[cut][1]:
+        # a space stood here: a spaced script, so R4 is the rule that applies
+        if _bare_word(prev_atom) in _function_words(lang):
+            return PENALTY_FUNCTION_WORD
+        if all(not ch.isalnum() for ch in next_atom):
+            return PENALTY_FORBIDDEN   # never strand punctuation at the start of a line
+        return PENALTY_NEUTRAL
+    if prev_atom.endswith(_HYPHENS):
+        return PENALTY_NEUTRAL         # R1: a hyphen is a legitimate break point
+    return break_penalty(prev_atom[-1], next_atom[0], lang)
+
+
+def best_break(atoms: "Sequence[Tuple[str, bool]]", max_em: float,
+               lang: "Optional[str]" = None) -> "Optional[int]":
+    """The index to break `atoms` at so they become two lines, or None when none fits.
+
+    Among every position whose two halves both fit `max_em`, the one minimising
+    (penalty, widest line, |width difference|) wins: R1-R4 choose first, and 1.15's
+    minimise-the-widest-line rule breaks the ties it used to decide alone."""
+    best = None
+    for cut in range(1, len(atoms)):
+        a = b = ""
+        for atom, sp in atoms[:cut]:
+            a = _join(a, atom, sp)
+        for atom, sp in atoms[cut:]:
+            b = _join(b, atom, sp)
+        wa, wb = text_width_em(a), text_width_em(b)
+        if max(wa, wb) > max_em:
+            continue
+        if _is_weak_line(a) or _is_weak_line(b):
+            continue
+        key = (_cut_penalty(atoms, cut, lang), max(wa, wb), abs(wa - wb))
+        if best is None or key < best[0]:
+            best = (key, cut)
+    return None if best is None else best[1]
+
+
+def _fix_orphans(lines: "List[str]", max_em: float) -> "List[str]":
+    """No last line that is a single stranded atom.
+
+    Greedy wrapping leaves one character alone whenever the line before it filled exactly: eval 14
+    produced a Thai cue ending in a lone `ล` and a Japanese one ending in a lone `行`. While the
+    last line is one atom narrower than ORPHAN_MIN_EM, the last atom of the line above moves down
+    onto it -- but only while the result still fits and the line above does not become an orphan
+    itself, so a two-word cue is never made worse."""
+    lines = list(lines)
+    for _ in range(len(lines)):
+        if len(lines) < 2:
+            break
+        tail = _atoms(lines[-1])
+        if len(tail) != 1 or text_width_em(lines[-1]) >= ORPHAN_MIN_EM:
+            break
+        prev = _atoms(lines[-2])
+        if len(prev) < 2:
+            break
+        moved, spaced = prev[-1]
+        new_prev = ""
+        for atom, sp in prev[:-1]:
+            new_prev = _join(new_prev, atom, sp)
+        new_last = _join(moved, tail[0][0], _break_spaced(lines[-2], lines[-1]))
+        if text_width_em(new_last) > max_em or text_width_em(new_prev) < ORPHAN_MIN_EM:
+            break
+        lines[-2], lines[-1] = new_prev, new_last
+    return lines
+
+
+def _fix_weak_lines(lines: "List[str]", max_em: float) -> "List[str]":
+    """R2, generalised: _fix_orphans run at *every* boundary, against _is_weak_line.
+
+    1.15 only ever looked at the last line, so a stranded digit or kana in the middle of a
+    three-line cue survived. Walking upward from the last line, while a line is weak the last atom
+    of the line above moves down onto it -- with 1.15's two guards intact (the result must still
+    fit, and the line above must not itself become weak), so the line count never changes."""
+    lines = list(lines)
+    for i in range(len(lines) - 1, 0, -1):
+        for _ in range(len(lines)):
+            if not _is_weak_line(lines[i]):
+                break
+            prev = _atoms(lines[i - 1])
+            if len(prev) < 2:
+                break
+            moved, _spaced = prev[-1]
+            new_prev = ""
+            for atom, sp in prev[:-1]:
+                new_prev = _join(new_prev, atom, sp)
+            new_last = _join(moved, lines[i], _break_spaced(lines[i - 1], lines[i]))
+            if text_width_em(new_last) > max_em or _is_weak_line(new_prev) \
+                    or text_width_em(new_prev) < ORPHAN_MIN_EM:
+                break
+            lines[i - 1], lines[i] = new_prev, new_last
+    return lines
+
+
+def _rebalance(lines: "List[str]", max_em: float) -> "List[str]":
+    """Move each break to the one that minimises the widest line of the pair, without changing the
+    line count.
+
+    Greedy wrapping fills line 1 to the brim and leaves line 2 short, which is what split eval 14's
+    `"A third line the tool times for me"` mid-phrase. Only spaced scripts are rebalanced: a
+    non-spaced script has no phrase structure in its atom list, so moving the break there only
+    moves the ragged edge. A break is never placed before a punctuation-only atom."""
+    if len(lines) < 2:
+        return lines
+    out = list(lines)
+    for i in range(len(out) - 1):
+        first, second = out[i], out[i + 1]
+        tail_atoms = _atoms(second)
+        if tail_atoms:
+            tail_atoms[0] = (tail_atoms[0][0], _break_spaced(first, second))
+        atoms = _atoms(first) + tail_atoms
+        if not atoms or any(char_script(ch) in NO_SPACE_SCRIPTS for ch in first + second):
+            continue
+        best = None
+        for cut in range(1, len(atoms)):
+            if not atoms[cut][1]:
+                continue  # only break where a space stood
+            if all(not ch.isalnum() for ch in atoms[cut][0]):
+                continue  # never strand punctuation at the start of a line
+            a = b = ""
+            for atom, sp in atoms[:cut]:
+                a = _join(a, atom, sp)
+            for atom, sp in atoms[cut:]:
+                b = _join(b, atom, sp)
+            wa, wb = text_width_em(a), text_width_em(b)
+            if max(wa, wb) > max_em:
+                continue
+            key = (max(wa, wb), abs(wa - wb))
+            if best is None or key < best[0]:
+                best = (key, a, b)
+        if best is not None:
+            out[i], out[i + 1] = best[1], best[2]
+    return out
+
+
+def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]") -> "Tuple[List[str], int]":
+    """_rebalance with R1-R4 deciding, for every script rather than spaced ones only.
+
+    Returns the new lines and how many breaks a phrase rule moved away from the position 1.15's
+    widest-line rule alone would have chosen -- the `phrase_breaks` count in the result."""
+    if len(lines) < 2:
+        return list(lines), 0
+    out = list(lines)
+    moved = 0
+    for i in range(len(out) - 1):
+        first, second = out[i], out[i + 1]
+        tail_atoms = _atoms(second)
+        if tail_atoms:
+            tail_atoms[0] = (tail_atoms[0][0], _break_spaced(first, second))
+        atoms = _split_hyphens(_atoms(first) + tail_atoms)
+        if len(atoms) < 2:
+            continue
+        cut = best_break(atoms, max_em, lang)
+        if cut is None:
+            continue
+        a = b = ""
+        for atom, sp in atoms[:cut]:
+            a = _join(a, atom, sp)
+        for atom, sp in atoms[cut:]:
+            b = _join(b, atom, sp)
+        if (a, b) != (first, second):
+            moved += 1
+        out[i], out[i + 1] = a, b
+    return out, moved
+
+
+def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "phrase",
+              lang: "Optional[str]" = None) -> "List[str]":
+    """Wrap `text` to lines no wider than `max_em` em, keeping the manual breaks it already has.
+
+    An atom wider than the whole line (one very long word) is left alone on its line rather than
+    cut mid-word: an over-long line is readable, a chopped word is not.
+
+    `mode="phrase"` (the default since 1.16) then applies the four phrase rules -- never inside a
+    word or across a hyphen's wrong side (R1), no line that is a lone digit, punctuation or kana
+    (R2), Japanese/Chinese breaks preferred at sentence ends and before particles rather than
+    inside a word (R3), and no line ending in an article or preposition (R4). `mode="measured"` is
+    1.15's behaviour exactly: no one-character orphan line, and a break chosen only to minimise the
+    widest line. Neither mode ever changes the number of lines the greedy fill produced.
+    """
+    lines: "List[str]" = []
+    for raw in text.split("\n"):
+        if not raw.strip():
+            continue
+        current = ""
+        chunk: "List[str]" = []
+        for atom, spaced in _atoms(raw):
+            candidate = _join(current, atom, spaced)
+            if current and text_width_em(candidate) > max_em:
+                chunk.append(current)
+                current = atom
+            else:
+                current = candidate
+        if current:
+            chunk.append(current)
+        if balance and len(chunk) > 1:
+            if mode == "measured":
+                fixed = _fix_orphans(chunk, max_em)
+                rebalanced = _rebalance(fixed, max_em)
+            else:
+                fixed = _fix_weak_lines(_fix_orphans(chunk, max_em), max_em)
+                rebalanced, _moved = _rebalance_phrase(fixed, max_em, lang)
+                rebalanced = _fix_weak_lines(rebalanced, max_em)
+            if len(rebalanced) == len(chunk):
+                chunk = rebalanced
+            else:
+                chunk = fixed if len(fixed) == len(chunk) else chunk
+        lines.extend(chunk)
+    return lines or [text]
+
+
+def wrap_moved_breaks(text: str, max_em: float, lang: "Optional[str]" = None) -> int:
+    """How many breaks `mode="phrase"` puts somewhere `mode="measured"` would not -- the
+    `phrase_breaks` statistic, computed by comparing the two wraps of the same text."""
+    phrase = wrap_text(text, max_em, mode="phrase", lang=lang)
+    measured = wrap_text(text, max_em, mode="measured")
+    return 0 if phrase == measured else 1

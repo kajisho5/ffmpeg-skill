@@ -42,7 +42,18 @@ from typing import Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, ass_units, resolve as resolve_platform
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
-from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, LEADING_VOWELS, NO_SPACE_SCRIPTS, _char_em, _is_mark, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
+from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
+# The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
+from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_moved_breaks, best_break,
+                     break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
+                     _split_hyphens, FUNCTION_WORDS, _fix_orphans, _rebalance)
+
+# The breaker's names are caption.py's public surface as much as _common's: every caller and test
+# that reached for `caption.wrap_text` before 1.16 still does.
+__all__ = ["SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_moved_breaks",
+           "best_break", "break_penalty", "_is_weak_line", "_atoms", "_join", "_break_spaced",
+           "_bare_word", "_function_words", "_split_hyphens", "FUNCTION_WORDS", "_fix_orphans",
+           "_rebalance", "char_script", "NO_SPACE_SCRIPTS", "text_width_em"]
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -298,187 +309,6 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
         out[-1] += take
     return out
 
-
-# How much of the frame width a caption line may use. libass's own default SRT margins are 10 of a
-# 384-wide script (2.6 % a side); 5 % a side is the safe area every platform check in this repo uses.
-SAFE_WIDTH_FRACTION = 0.9
-# ORPHAN_MIN_EM: one full-width CJK/Thai character plus a hair. A last line narrower than this is a
-# single stranded character -- eval 14's th1 (a lone 'ล') and dl3 (a lone '行').
-ORPHAN_MIN_EM = 1.1
-
-
-def _atoms(line: str) -> List[Tuple[str, bool]]:
-    """Break a line into the smallest pieces a wrap may separate -- one atom per CJK/Thai
-    character, one per emoji cluster, one per whitespace-delimited word otherwise -- each with
-    whether a space stood before it in the original. The flag is what puts the text back together
-    exactly as written: "Hello 世界" keeps its space, "世界です" gains none."""
-    out: List[Tuple[str, bool]] = []
-    word = ""
-    spaced = False        # a space stands before the atom being built
-    pending = False       # a space stands before the NEXT atom
-    attach_next = False   # a leading Thai/Lao vowel is waiting for its base consonant
-    # An emoji cluster is one atom: a wrap must never land inside a ZWJ sequence, a flag pair or
-    # between a base and its skin-tone modifier (the same rule combining marks already follow).
-    clusters = {i: len(cl) for i, cl in emoji_clusters(line)}
-    i = 0
-    while i < len(line):
-        ch = line[i]
-        if i in clusters:
-            cluster = line[i:i + clusters[i]]
-            if word:
-                out.append((word, spaced))
-                word = ""
-            out.append((cluster, pending))
-            pending = False
-            attach_next = False
-            i += clusters[i]
-            continue
-        i += 1
-        if char_script(ch) in NO_SPACE_SCRIPTS:
-            if word:
-                out.append((word, spaced))
-                word = ""
-            if out and (attach_next or _is_mark(ch)):
-                # never break between a base and the mark (or the leading vowel) that belongs to
-                # it: the line would start with an orphaned tone mark or vowel sign
-                out[-1] = (out[-1][0] + ch, out[-1][1])
-            else:
-                out.append((ch, pending))
-                pending = False
-            attach_next = ord(ch) in LEADING_VOWELS
-        elif ch.isspace():
-            if word:
-                out.append((word, spaced))
-                word = ""
-            pending = True
-        else:
-            if not word:
-                spaced, pending = pending, False
-            word += ch
-    if word:
-        out.append((word, spaced))
-    return out
-
-
-def _join(left: str, atom: str, spaced: bool) -> str:
-    """Put an atom back on a line, restoring the space that stood before it."""
-    if not left:
-        return atom
-    return left + (" " if spaced else "") + atom
-
-
-def _break_spaced(first: str, second: str) -> bool:
-    """Did a space stand at the break between these two wrapped lines? Only spaced scripts put one
-    there -- a CJK/Thai break sits between two characters that were written with nothing between
-    them, and re-joining them with a space would insert a character the cue never had."""
-    if not first or not second:
-        return False
-    return char_script(first[-1]) not in NO_SPACE_SCRIPTS and char_script(second[0]) not in NO_SPACE_SCRIPTS \
-        and char_script(first[-1]) != "emoji" and char_script(second[0]) != "emoji"
-
-
-def _fix_orphans(lines: List[str], max_em: float) -> List[str]:
-    """No last line that is a single stranded atom.
-
-    Greedy wrapping leaves one character alone whenever the line before it filled exactly: eval 14
-    produced a Thai cue ending in a lone `ล` and a Japanese one ending in a lone `行`. While the
-    last line is one atom narrower than ORPHAN_MIN_EM, the last atom of the line above moves down
-    onto it -- but only while the result still fits and the line above does not become an orphan
-    itself, so a two-word cue is never made worse."""
-    lines = list(lines)
-    for _ in range(len(lines)):
-        if len(lines) < 2:
-            break
-        tail = _atoms(lines[-1])
-        if len(tail) != 1 or text_width_em(lines[-1]) >= ORPHAN_MIN_EM:
-            break
-        prev = _atoms(lines[-2])
-        if len(prev) < 2:
-            break
-        moved, spaced = prev[-1]
-        new_prev = ""
-        for atom, sp in prev[:-1]:
-            new_prev = _join(new_prev, atom, sp)
-        new_last = _join(moved, tail[0][0], _break_spaced(lines[-2], lines[-1]))
-        if text_width_em(new_last) > max_em or text_width_em(new_prev) < ORPHAN_MIN_EM:
-            break
-        lines[-2], lines[-1] = new_prev, new_last
-    return lines
-
-
-def _rebalance(lines: List[str], max_em: float) -> List[str]:
-    """Move each break to the one that minimises the widest line of the pair, without changing the
-    line count.
-
-    Greedy wrapping fills line 1 to the brim and leaves line 2 short, which is what split eval 14's
-    `"A third line the tool times for me"` mid-phrase. Only spaced scripts are rebalanced: a
-    non-spaced script has no phrase structure in its atom list, so moving the break there only
-    moves the ragged edge. A break is never placed before a punctuation-only atom."""
-    if len(lines) < 2:
-        return lines
-    out = list(lines)
-    for i in range(len(out) - 1):
-        first, second = out[i], out[i + 1]
-        tail_atoms = _atoms(second)
-        if tail_atoms:
-            tail_atoms[0] = (tail_atoms[0][0], _break_spaced(first, second))
-        atoms = _atoms(first) + tail_atoms
-        if not atoms or any(char_script(ch) in NO_SPACE_SCRIPTS for ch in first + second):
-            continue
-        best = None
-        for cut in range(1, len(atoms)):
-            if not atoms[cut][1]:
-                continue  # only break where a space stood
-            if all(not ch.isalnum() for ch in atoms[cut][0]):
-                continue  # never strand punctuation at the start of a line
-            a = b = ""
-            for atom, sp in atoms[:cut]:
-                a = _join(a, atom, sp)
-            for atom, sp in atoms[cut:]:
-                b = _join(b, atom, sp)
-            wa, wb = text_width_em(a), text_width_em(b)
-            if max(wa, wb) > max_em:
-                continue
-            key = (max(wa, wb), abs(wa - wb))
-            if best is None or key < best[0]:
-                best = (key, a, b)
-        if best is not None:
-            out[i], out[i + 1] = best[1], best[2]
-    return out
-
-
-def wrap_text(text: str, max_em: float, *, balance: bool = True) -> List[str]:
-    """Wrap `text` to lines no wider than `max_em` em, keeping the manual breaks it already has.
-
-    An atom wider than the whole line (one very long word) is left alone on its line rather than
-    cut mid-word: an over-long line is readable, a chopped word is not. Two post-passes then make
-    the result readable rather than merely legal (1.15): no one-character orphan line, and for
-    spaced scripts a break chosen to minimise the widest line instead of greedily.
-    """
-    lines: List[str] = []
-    for raw in text.split("\n"):
-        if not raw.strip():
-            continue
-        current = ""
-        chunk: List[str] = []
-        for atom, spaced in _atoms(raw):
-            candidate = _join(current, atom, spaced)
-            if current and text_width_em(candidate) > max_em:
-                chunk.append(current)
-                current = atom
-            else:
-                current = candidate
-        if current:
-            chunk.append(current)
-        if balance and len(chunk) > 1:
-            fixed = _fix_orphans(chunk, max_em)
-            rebalanced = _rebalance(fixed, max_em)
-            if len(rebalanced) == len(chunk):
-                chunk = rebalanced
-            else:
-                chunk = fixed
-        lines.extend(chunk)
-    return lines or [text]
 
 
 # --------------------------------------------------------------------------- emoji (1.15)
