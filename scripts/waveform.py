@@ -227,7 +227,8 @@ def main() -> int:
     if not STATE.dry_run and meta.get("duration") and result.get("duration"):
         duration_ok = abs(float(result["duration"]) - float(meta["duration"])) <= 0.05
         if not duration_ok:
-            notes.append(f"the render is {result['duration']:.3f}s against {float(meta['duration']):.3f}s of audio")
+            notes.append("the render is " + fmt_secs(result.get("duration")) + " against "
+                         + fmt_secs(meta.get("duration")) + " of audio")
     size_ok = (v.get("width"), v.get("height")) == (args.width, args.height) or STATE.dry_run
     extra = {"audiogram": {
         "style": args.style,
