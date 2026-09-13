@@ -906,3 +906,30 @@ class DemoGalleryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class CommonFacadeTests(unittest.TestCase):
+    """`_common` is a package with a facade since the refactor release after 1.15.0. A name
+    rebound through the facade must reach the module that defines it, a read through the facade
+    must see the live value the defining module holds, and a reload must not rewrite the
+    submodules' own dunders (audit 14, P1-1 and P1-2)."""
+
+    def test_rebinding_through_the_facade_reaches_the_defining_module_and_reads_live(self):
+        import importlib
+        from unittest import mock
+        import _common
+        runner = sys.modules["_common.runner"]
+        _common.ffmpeg_version()
+        self.assertIsNotNone(runner._FFMPEG_VERSION)
+        self.assertEqual(_common._FFMPEG_VERSION, runner._FFMPEG_VERSION)
+        with mock.patch.object(_common, "_FFMPEG_VERSION", (7, 1)):
+            self.assertEqual(runner._FFMPEG_VERSION, (7, 1))
+            self.assertEqual(runner.ffmpeg_version(), (7, 1))
+        self.assertEqual(_common._FFMPEG_VERSION, runner._FFMPEG_VERSION)
+        with mock.patch("_common.ffmpeg_version", return_value=(9, 9)):
+            self.assertEqual(runner.ffmpeg_version(), (9, 9))
+        self.assertNotEqual(runner.ffmpeg_version(), (9, 9))
+        before = runner.__file__
+        importlib.reload(_common)
+        self.assertEqual(runner.__file__, before)
+        self.assertTrue(callable(_common.emit) and callable(_common.probe))

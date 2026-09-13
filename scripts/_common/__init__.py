@@ -96,7 +96,9 @@ from _common import color, decision, runner, text  # noqa: F401,E402
 # `_common.emit` and `_common.probe` are the FUNCTIONS, as they have always been -- the
 # from-imports above rebound the package attribute the submodule import had set. The two modules
 # that share a name with a helper are reached through sys.modules instead; nothing outside this
-# package refers to them.
+# package refers to them. Consequently `import _common.emit` / `import _common.probe` bind the
+# function, not the module: reach the modules as `from _common import emit as _` never, use
+# `sys.modules["_common.emit"]` or `importlib.import_module("_common.emit")` instead.
 _emit_module = sys.modules["_common.emit"]
 _probe_module = sys.modules["_common.probe"]
 
@@ -115,14 +117,32 @@ class _Facade(_types.ModuleType):
     the facade re-exports the same object.
     """
 
+    # The globals a helper REBINDS (`global x; x = ...`) live in their submodule; the facade's
+    # own copy is the import-time binding and would read stale. Reads of these names go to the
+    # defining module (audit 14, P1-1); every other name is a plain re-export of the same object.
+    _LIVE = {
+        "_FFMPEG_VERSION": "runner", "_CRF_DEFAULT": "runner", "_SIGNALS_INSTALLED": "runner",
+        "_DRAWTEXT_TMPDIR": "runner", "_ENCODERS": "runner", "_CURRENT_CTX": "emit",
+    }
+
+    def __getattribute__(self, name):
+        live = _types.ModuleType.__getattribute__(self, "_LIVE")
+        if name in live:
+            return getattr(sys.modules["_common." + live[name]], name)
+        return _types.ModuleType.__getattribute__(self, name)
+
     def __setattr__(self, name, value):
         _types.ModuleType.__setattr__(self, name, value)
+        if name.startswith("__") and name.endswith("__"):
+            return   # importlib.reload() rewrites __file__/__spec__: those stay per module (P1-2)
         for _m in _MODULES:
             if name in _m.__dict__:
                 _types.ModuleType.__setattr__(_m, name, value)
 
     def __delattr__(self, name):
         _types.ModuleType.__delattr__(self, name)
+        if name.startswith("__") and name.endswith("__"):
+            return
         for _m in _MODULES:
             if name in _m.__dict__:
                 _types.ModuleType.__delattr__(_m, name)
