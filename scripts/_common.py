@@ -983,6 +983,8 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         info(("[dry-run] $ " if ctx.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd), ctx=ctx)
     if ctx.dry_run and is_ffmpeg:
         return subprocess.CompletedProcess(list(cmd), 0, "", "")
+    if is_ffmpeg:
+        flush_drawtext_textfiles(cmd)
     with _OutputLock(cmd[-1] if is_ffmpeg else "-"):
         exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
         proc = _execute(exec_cmd)
@@ -1812,12 +1814,18 @@ EMOJI_RANGES = (
     (0xFE0F, 0xFE0F),     # VS16 (emoji presentation selector)
     (0x1F1E6, 0x1F1FF),   # regional indicators (flags)
     (0x20E3, 0x20E3),     # combining enclosing keycap
-    (0x200D, 0x200D),     # ZWJ
     (0x1F3FB, 0x1F3FF),   # skin-tone modifiers
 )
+# U+200D ZWJ is deliberately NOT in EMOJI_RANGES: it is ordinary Indic/Persian orthography
+# (क्‍ष is ka + virama + ZWJ + ssa) and only becomes emoji glue *between two emoji bases*.
 # Characters that never START a cluster: they bind to whatever stands before them.
 _EMOJI_TAIL = frozenset({0x200D, 0xFE0F, 0x20E3} | set(range(0x1F3FB, 0x1F400)))
 _EMOJI_REGIONAL = range(0x1F1E6, 0x1F200)
+_ZWJ = 0x200D
+_VS15 = 0xFE0E   # text-presentation selector: "draw this as a character, not as an emoji"
+_VS16 = 0xFE0F
+_KEYCAP = 0x20E3
+_KEYCAP_BASES = frozenset("0123456789#*")
 
 
 def _is_emoji_char(ch: str) -> bool:
@@ -1825,38 +1833,62 @@ def _is_emoji_char(ch: str) -> bool:
     return any(lo <= cp <= hi for lo, hi in EMOJI_RANGES)
 
 
+def _is_emoji_base(ch: str) -> bool:
+    """Can this character START an emoji cluster? Pictographs and regional indicators can;
+    the joiners and modifiers (ZWJ, VS16, keycap, skin tone) never can -- they only bind to an
+    emoji base that already stands before them. Without this, a ZWJ or a VS16 sitting after an
+    ordinary letter turned that letter into "an emoji" and the PNG route replaced it with a gap."""
+    return ord(ch) not in _EMOJI_TAIL and _is_emoji_char(ch)
+
+
 def emoji_clusters(text: str) -> "List[Tuple[int, str]]":
     """(index in `text`, cluster) for every emoji in it, ZWJ sequences, VS16, keycaps, flag pairs
     and skin-tone modifiers kept together -- 👩‍💻 is one cluster, not three, and 1️⃣ starts at the
-    digit even though the digit is not itself an emoji character."""
+    digit even though the digit is not itself an emoji character.
+
+    A cluster can only START at an emoji base (a pictograph, a regional indicator) or at a keycap
+    base (`0-9 # *`) that is actually followed by U+20E3. A ZWJ is glue *inside* a cluster, never
+    a starter and never a tail on its own: `क्‍ष` (Hindi ka + virama + ZWJ + ssa) and `abc‍def`
+    contain no emoji. A base explicitly marked with U+FE0E (VS15, text presentation) is likewise
+    not an emoji -- the author asked for the character, not the picture.
+    """
     out: "List[Tuple[int, str]]" = []
     i = 0
     n = len(text or "")
     while i < n:
         ch = text[i]
-        cp = ord(ch)
-        if not _is_emoji_char(ch):
+        start = i
+        if _is_emoji_base(ch):
+            j = i + 1
+            if j < n and ord(text[j]) == _VS15:      # text presentation requested: not an emoji
+                i = j + 1
+                continue
+        elif ch in _KEYCAP_BASES:
+            j = i + 1
+            if j < n and ord(text[j]) == _VS16:
+                j += 1
+            if not (j < n and ord(text[j]) == _KEYCAP):
+                i += 1
+                continue
+            j += 1
+        else:
             i += 1
             continue
-        start = i
-        if cp in _EMOJI_TAIL and start > 0:
-            # VS16 / keycap after a plain character (digits, #, *): the cluster starts there
-            start -= 1
-            if out and out[-1][0] + len(out[-1][1]) > start:
-                start, prev = out[-1][0], out.pop()[1]
-        i += 1
-        while i < n:
-            nxt = ord(text[i])
-            if nxt in _EMOJI_TAIL:
-                i += 1
-                if text[i - 1] == "\u200d" and i < n:   # ZWJ always glues the next glyph on
-                    i += 1
+        # extend: modifiers bind rightwards, a ZWJ only when a real emoji base follows it
+        while j < n:
+            cp = ord(text[j])
+            if cp in (_VS16, _KEYCAP) or 0x1F3FB <= cp <= 0x1F3FF:
+                j += 1
                 continue
-            if cp in _EMOJI_REGIONAL and nxt in _EMOJI_REGIONAL and i == start + 1:
-                i += 1
+            if cp == _ZWJ and j + 1 < n and _is_emoji_base(text[j + 1]):
+                j += 2
+                continue
+            if (j == start + 1 and ord(ch) in _EMOJI_REGIONAL and cp in _EMOJI_REGIONAL):
+                j += 1
                 continue
             break
-        out.append((start, text[start:i]))
+        out.append((start, text[start:j]))
+        i = j
     return out
 
 
@@ -1968,7 +2000,7 @@ def emoji_support(assets: "Optional[str]" = None, probe: bool = True) -> "Dict[s
     `mode` is `color` when a render probe proves libass draws colour, else `png` when an assets
     directory resolves, else `mono` when some installed face has a glyph at all, else `none`.
     An installed colour emoji font proves nothing on its own -- that is why `libass_color` comes
-    from a render (see references/gotchas.md#emoji). `probe=False` (doctor --static, and every
+    from a render (see references/gotchas.md#emoji). `probe=False` (`contract --json --static`, and every
     static/JSON-only path) skips the render entirely and leaves `libass_color` unknown.
     """
     key = (assets or None, bool(probe))
@@ -2077,7 +2109,9 @@ def _char_em(ch: str) -> float:
     cp = ord(ch)
     # A combining mark is drawn on top of (or under) its base and advances the pen by nothing:
     # charging it a full em wrapped Thai and Devanagari lines far shorter than they needed to be.
-    if unicodedata.combining(ch) != 0 or unicodedata.category(ch) == "Mn":
+    if unicodedata.combining(ch) != 0 or unicodedata.category(ch) in ("Mn", "Cf"):
+        # "Cf" catches ZWJ/ZWNJ: an Indic joiner is orthography, and it advances the pen by
+        # nothing -- charging it a full em (it used to count as "emoji") shrank a Hindi line.
         return 0.0
     if 0x3000 <= cp <= 0x303F or 0xFF01 <= cp <= 0xFF60 or 0xFFE0 <= cp <= 0xFFE6:
         return 1.0
@@ -2098,8 +2132,6 @@ def _char_em(ch: str) -> float:
 def text_width_em(text: str, emoji_em: float = 1.0) -> float:
     """Width of `text` in em, from the per-script average advance table. `emoji_em` is what one
     emoji cluster costs (--emoji-scale), so a wrap counts the box that will actually be drawn."""
-    if emoji_em == 1.0:
-        return sum(_char_em(ch) for ch in text)
     total = 0.0
     spans = {i: len(c) for i, c in emoji_clusters(text)}
     i = 0
@@ -2114,36 +2146,68 @@ def text_width_em(text: str, emoji_em: float = 1.0) -> float:
 
 
 def emoji_filter_chain(plan, base_label, out_label, first_input=1):
-    """(chains, extra ffmpeg inputs) that composite the planned PNGs on top of `base_label`."""
+    """(chains, inputs) that composite the planned PNGs on top of `base_label`.
+
+    `inputs` is a list of argv fragments, each ending in the asset path, to be appended to the
+    ffmpeg command in order (an overlay that fades needs `-loop 1` on its input so the still has
+    a timeline the fade filter can move along; one that does not is a plain `-i`).
+    """
     overlays = plan.get("overlays") or []
     if not overlays:
         return [], []
-    assets: List[str] = []
+    # Group by everything that makes two uses of the same PNG a different STREAM: the fade is
+    # expressed in the cue's own timeline, so two cues cannot share one faded input.
+    def _key(o):
+        fades = (round(float(o.get("fade_in") or 0.0), 3), round(float(o.get("fade_out") or 0.0), 3))
+        window = (round(float(o["start"]), 3), round(float(o["end"]), 3)) if any(fades) else (None, None)
+        return (o["asset"], o["box"]) + fades + window
+
+    groups: "List[Tuple]" = []
     for o in overlays:
-        if o["asset"] not in assets:
-            assets.append(o["asset"])
+        if _key(o) not in groups:
+            groups.append(_key(o))
     chains: List[str] = []
-    pads: Dict[str, List[str]] = {}
-    for k, asset in enumerate(assets):
-        uses = [o for o in overlays if o["asset"] == asset]
+    inputs: "List[List[str]]" = []
+    pads: "Dict[Tuple, List[str]]" = {}
+    for k, key in enumerate(groups):
+        asset, box, fin, fout, gstart, gend = key
+        uses = [o for o in overlays if _key(o) == key]
         idx = first_input + k
-        box = uses[0]["box"]
         labels = [f"e{k}_{j}" for j in range(len(uses))]
         chain = f"[{idx}:v]format=rgba,scale={box}:{box}"
+        if fin or fout:
+            # -loop 1 gives the still an advancing timeline on the SAME clock as the main video,
+            # so the fade times below are the cue's own seconds. The emoji then appears and
+            # leaves with the text instead of popping in against a fading line.
+            # -t bounds the loop at the cue's end: an unbounded looped still never EOFs and the
+            # whole encode hangs (overlay keeps pulling from it after the main video is done).
+            inputs.append(["-loop", "1", "-t", f"{gend:.3f}", "-i", asset])
+            if fin:
+                chain += f",fade=t=in:st={gstart:.3f}:d={fin:.3f}:alpha=1"
+            if fout:
+                chain += f",fade=t=out:st={max(gstart, gend - fout):.3f}:d={fout:.3f}:alpha=1"
+        else:
+            inputs.append(["-i", asset])
         if len(labels) > 1:
             chain += f",split={len(labels)}"
         chains.append(chain + "".join(f"[{l}]" for l in labels))
-        pads[asset] = labels
+        pads[key] = labels
     cur = base_label
+    remaining = {key: list(v) for key, v in pads.items()}
     for j, o in enumerate(overlays):
-        label = pads[o["asset"]].pop(0)
+        label = remaining[_key(o)].pop(0)
         nxt = out_label if j == len(overlays) - 1 else f"eov{j}"
         x = o["x"]
         x = f"'{x}'" if isinstance(x, str) else x
+        # No eof_action=pass here: a PNG input is a SINGLE frame at pts 0, and eof_action=pass
+        # switches off overlay's default "hold the last frame of the secondary input", so the
+        # asset would be composited on frame 0 only and vanish for the rest of the cue (that is
+        # exactly what shipped first). eof_action=repeat (the default) holds the still for the
+        # whole timeline; enable= is what confines it to the cue's window.
         chains.append(f"[{cur}][{label}]overlay=x={x}:y={o['y']}:"
-                      f"enable='between(t,{o['start']:.3f},{o['end']:.3f})':eof_action=pass[{nxt}]")
+                      f"enable='between(t,{o['start']:.3f},{o['end']:.3f})'[{nxt}]")
         cur = nxt
-    return chains, assets
+    return chains, inputs
 
 
 # --------------------------------------------------------------------------- shaping (1.15)
@@ -2508,6 +2572,53 @@ def escape_drawtext(text: str) -> str:
 
 
 _DRAWTEXT_TMPDIR: "Optional[str]" = None
+_DRAWTEXT_PENDING: "Dict[str, str]" = {}
+
+
+def _drawtext_tmpdir(create: bool = True) -> str:
+    """The private, per-run directory drawn-text files live in.
+
+    tempfile.mkdtemp() creates it 0700 under a name nobody can guess, which is the whole point:
+    the 1.15.0 shape (a fixed, world-writable `/tmp/ffmpeg-skill-text` entered with
+    makedirs(exist_ok=True) and content-addressed filenames) let any other user on the machine
+    pre-create the directory or plant a symlink at a predictable name, and handed the second
+    user of a shared box a PermissionError out of filter construction instead of a `kind: input`
+    refusal. The directory is removed when the process ends, whether it succeeded or failed.
+    """
+    global _DRAWTEXT_TMPDIR
+    import tempfile
+    if _DRAWTEXT_TMPDIR and os.path.isdir(_DRAWTEXT_TMPDIR):
+        return _DRAWTEXT_TMPDIR
+    if not create:
+        # --dry-run names the path it WOULD use and creates nothing (a dry run writes nothing).
+        return os.path.join(tempfile.gettempdir(), "ffmpeg-skill-text-%d" % os.getpid())
+    import atexit
+    _DRAWTEXT_TMPDIR = tempfile.mkdtemp(prefix="ffmpeg-skill-text-")
+    atexit.register(shutil.rmtree, _DRAWTEXT_TMPDIR, True)
+    return _DRAWTEXT_TMPDIR
+
+
+def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
+    """Write the drawn-text files this command actually names, and return their paths.
+
+    The text is registered when the filter STRING is built, but a filter string is not a run:
+    graphics.py builds the drawtext graph even on a job that is finally rendered through libass,
+    and every tool builds one under --dry-run. Writing here -- from run(), past the dry-run
+    return, against the command that is about to be executed -- is what keeps both of those from
+    leaving a file behind.
+    """
+    if not _DRAWTEXT_PENDING:
+        return []
+    joined = " ".join(str(a) for a in cmd)
+    written = []
+    for path, body in list(_DRAWTEXT_PENDING.items()):
+        if path not in joined or os.path.exists(path):
+            continue
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        written.append(path)
+    return written
 
 
 def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
@@ -2522,26 +2633,19 @@ def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
     done"` losing both characters. Control characters are still stripped: a one-line burnt-in
     label has no use for them.
 
-    The file is written UTF-8 into a shared temp directory (or `tmpdir`) under a name that is the
-    hash of its own contents, and registered as a side input through escape_filter_path(), so
-    `--dry-run`/`--plan` name it like any other. It is deliberately NOT deleted when the process
-    exits: the whole point of a plan is that the command it prints can be run afterwards, and a
-    command naming a file this process has since removed is not one. Same contents, same path, so
-    repeated runs never accumulate more than one file per distinct label.
+    The file is UTF-8, mode 0600, in a private per-run directory (see _drawtext_tmpdir) that is
+    removed when the process ends. It is *registered* here and written by run() only if the
+    command about to run actually names it, so --dry-run and the ASS route write nothing; a
+    printed plan therefore names a path that no longer exists once the run is over, which is the
+    same promise every other temp file in this skill makes.
     """
-    global _DRAWTEXT_TMPDIR
-    import tempfile
-    if tmpdir is None:
-        if _DRAWTEXT_TMPDIR is None or not os.path.isdir(_DRAWTEXT_TMPDIR):
-            _DRAWTEXT_TMPDIR = os.path.join(tempfile.gettempdir(), "ffmpeg-skill-text")
-            os.makedirs(_DRAWTEXT_TMPDIR, exist_ok=True)
-        tmpdir = _DRAWTEXT_TMPDIR
     cleaned = re.sub(r"[\x00-\x1f\x7f]", "", text or "")
     import hashlib
     name = "t_" + hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16] + ".txt"
+    if tmpdir is None:
+        tmpdir = _drawtext_tmpdir(create=not STATE.dry_run)
     path = os.path.join(tmpdir, name)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(cleaned)
+    _DRAWTEXT_PENDING[path] = cleaned
     return f"textfile={escape_filter_path(path)}:expansion=none"
 
 

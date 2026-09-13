@@ -384,7 +384,7 @@ Color Emoji"|null, "color_font_file": "..."|null, "libass_color": true|false|nul
 "/path"|null, "detail": "...", "fix": "..."}`. `libass_color` comes from a **render probe** — one
 64x64 frame with an emoji cue through `subtitles=`, chroma-tested — because an installed colour
 emoji family proves nothing: Noto Color Emoji installs cleanly on builds whose libass still draws a
-monochrome outline. `null` means the probe was not run: `doctor --static` (and every other
+monochrome outline. `null` means the probe was not run: `contract --json --static` (and every other
 static/JSON-only path) skips it, exactly as it skips the rest of the environment detection. `mode`
 is `color` when the probe says colour, else `png` when an emoji assets directory resolves, else
 `mono` when some installed face has a glyph, else `none`. Informational like the rest of `fonts`:

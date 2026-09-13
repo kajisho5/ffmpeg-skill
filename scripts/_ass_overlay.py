@@ -66,10 +66,43 @@ def ass_field(name: str) -> str:
     return out or "Sans"
 
 
+# After a literal backslash, these characters would start an ASS sequence libass acts on
+# (\N, \n, \h) or an override block (\{ is an escape, so \\{ is ambiguous). A zero-width space
+# between the two breaks the sequence without changing what the reader sees.
+_ASS_AFTER_BACKSLASH = frozenset("Nnh{}")
+
+
+def ass_escape(text: str) -> str:
+    """Element text for a Dialogue, with every character the user typed still in it.
+
+    `{` and `}` would open and close an override block -- real style and animation commands
+    (\\pos, \\t, \\fscx), so caller-supplied text containing them could reposition, rescale or
+    recolour itself and everything after it. libass has escapes for exactly this (`\\{`, `\\}`),
+    so 1.15.0 escapes them instead of deleting them: `A {b} c \\ d` now reaches the picture
+    verbatim through the ASS route, the way it already did through drawtext. A literal backslash
+    needs no escape of its own in libass (`\\\\` renders as TWO backslashes, it is not an escape);
+    only a backslash immediately before one of _ASS_AFTER_BACKSLASH is ambiguous, and a
+    zero-width space parts them.
+    """
+    s = str(text or "")
+    out = []
+    for i, ch in enumerate(s):
+        if ch == "{":
+            out.append("\\{")
+        elif ch == "}":
+            out.append("\\}")
+        elif ch == "\n":
+            out.append("\\N")
+        elif ch == "\\":
+            out.append("\\\u200b" if (i + 1 < len(s) and s[i + 1] in _ASS_AFTER_BACKSLASH) else "\\")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def ass_text(text: str) -> str:
-    """Element text for a Dialogue: newlines become \\N, braces are dropped so caller-supplied
-    text can never inject an override block of its own."""
-    return str(text or "").replace("\\", "").replace("{", "").replace("}", "").replace("\n", "\\N")
+    """Back-compatible name for ass_escape()."""
+    return ass_escape(text)
 
 
 def text_overlay_ass(elements: Sequence[Dict[str, Any]], *, play_w: int, play_h: int,

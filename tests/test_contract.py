@@ -2716,12 +2716,14 @@ class DoctorDetectionTests(unittest.TestCase):
                     self.assertNotIn("emoji", cap)
         self.assertNotIn("emoji", " ".join(d["available"] + d["missing"] + d["missing_optional"] + d["unknown"]))
 
-    def test_doctor_static_skips_the_emoji_render_probe(self):
-        """The probe is a real ffmpeg render (~80 ms). Every static/JSON-only path must skip it the
-        way it skips the rest of the environment detection, and say `null` rather than `false`."""
-        static = _contract.doctor(detect=False)
-        self.assertIsNone(static["fonts"]["emoji"]["libass_color"])
-        self.assertNotEqual(static["fonts"]["emoji"]["mode"], "color",
+    def test_static_skips_the_environment_detection_including_the_emoji_probe(self):
+        """`--static` is the only user-reachable way to ask for the contract without detection:
+        doctor() itself always probes (there is no `doctor --static`, and the dead `detect=`
+        parameter that pretended otherwise was removed in 1.15.0). What must hold is that
+        `--json --static` runs no detection at all -- including the ~80 ms emoji render probe."""
+        unprobed = _contract._fonts_capability(probe=False)
+        self.assertIsNone(unprobed["emoji"]["libass_color"])
+        self.assertNotEqual(unprobed["emoji"]["mode"], "color",
                             "an unprobed machine must never be reported as colour-capable")
         out = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static", check=False).stdout
         doc = json.loads(out)

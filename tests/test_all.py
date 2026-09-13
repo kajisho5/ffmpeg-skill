@@ -2956,7 +2956,9 @@ class FFmpegSkillTests(unittest.TestCase):
         # --animate fade legitimately prepends its own "{\fad(200,200)}" override block; only the
         # cue-text-derived braces from the hostile payload must be gone.
         self.assertNotIn("{\\pos(0,0)\\fscx500}", dialogue, "cue text must not be able to open a real ASS override block")
-        self.assertIn("\\pos(0,0)\\fscx500INJECTED", dialogue, "the rest of the cue text still renders, just as literal (now brace-free) text")
+        self.assertIn("\\{\\pos(0,0)\\fscx500\\}INJECTED", dialogue,
+                      "the braces the user typed are ESCAPED (libass \\{ / \\}), not deleted: the cue "
+                      "reads out exactly what was written and still cannot open an override block")
 
     def test_caption_srt_blank_line_in_cue_text_does_not_split_the_block(self):
         """parse_text_cues() turns a bare '|' into a newline (a documented way to write a two-line
@@ -3005,8 +3007,13 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertTrue(m, "drawn text must go through textfile=, not inline: " + graph)
         self.assertIn("expansion=none", graph)
         self.assertNotIn("a\\;c", graph, "no inline escaped copy of the text may remain in the graph")
-        self.assertEqual(Path(m.group(1)).read_text(encoding="utf-8"), "a'b;c",
-                         "both the quote and the semicolon must reach drawtext verbatim")
+        # The textfile lives in a private 0700 per-run directory and is removed when the run
+        # ends -- assert both, since a world-shared, never-cleaned /tmp directory was the 1.15.0
+        # shape. The frame ink below is what proves the characters reached the picture.
+        self.assertTrue(Path(m.group(1)).parent.name.startswith("ffmpeg-skill-text-"),
+                        "drawn text must go in a private per-run directory: " + m.group(1))
+        self.assertFalse(Path(m.group(1)).exists(),
+                         "the drawn-text temp file must not outlive the run")
         self.assertEqual(doc["status"], "completed")
         frame = OUT / "semicolon_quote_frame.png"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out, "-vframes", "1", frame)
@@ -4007,7 +4014,11 @@ class FFmpegSkillTests(unittest.TestCase):
 
         def commands(tool, *argv):
             doc = json.loads(script(tool, target, *argv, "--dry-run", "--json").stdout)
-            return [c for c in doc["commands"] if "ffmpeg" in c or "drawtext" in c]
+            # drawn text goes through a private PER-RUN temp directory (1.15: mkdtemp, 0700,
+            # removed at exit), so its random name differs between two processes by design and
+            # is not part of what "the same destination" means.
+            return [re.sub(r"ffmpeg-skill-text-[^/]+/", "ffmpeg-skill-text/", c)
+                    for c in doc["commands"] if "ffmpeg" in c or "drawtext" in c]
 
         # the alias is the point here, not compliance: a 3 s crop can miss the fps row on some
         # ffmpeg builds (7.1 reports the speed-changed rate differently), and check.py names
@@ -5098,6 +5109,223 @@ class EmojiTests(unittest.TestCase):
         self.assertIn("graphics.py", doc["error"]["message"])
 
 
+    # ---------------------------------------------------------------- 1.15.0 fix pass
+    def test_emoji_cluster_never_starts_at_a_joiner_a_selector_or_a_plain_letter(self):
+        """U+200D ZWJ and U+200C ZWNJ are ordinary Indic/Persian orthography, not emoji: क्‍ष is
+        ka + virama + ZWJ + ssa. Treating a joiner (or a VS16, or a skin-tone modifier) as a
+        cluster TAIL that glues itself to whatever stands before it turned a Hindi conjunct into
+        "an emoji" -- reported as such, warned about as monochrome, and on the PNG route replaced
+        by an invisible gap, i.e. a different word. A cluster may only START at an emoji base."""
+        from _common import emoji_clusters, emoji_codepoint_name, has_emoji
+
+        def names(text):
+            return [emoji_codepoint_name(cl) for _i, cl in emoji_clusters(text)]
+
+        self.assertEqual(names("\u0915\u094d\u200d\u0937"), [], "a Hindi conjunct is not an emoji")
+        self.assertFalse(has_emoji("\u0905\u200c\u092c"), "a ZWNJ is not an emoji either")
+        self.assertEqual(names("abc\u200ddef"), [])
+        self.assertEqual(names("A\ufe0f"), [], "a VS16 after a letter does not make it an emoji")
+        self.assertEqual(names("\u00a9 \u2122 0123456789"), [], "(c), (tm) and digits are not emoji")
+        # ... and every real cluster still survives whole
+        self.assertEqual(names("\U0001F468\u200d\U0001F469\u200d\U0001F467"),
+                         ["1f468-200d-1f469-200d-1f467"])
+        self.assertEqual(names("\U0001F3F3\ufe0f\u200d\U0001F308"), ["1f3f3-fe0f-200d-1f308"])
+        self.assertEqual(names("1\ufe0f\u20e3"), ["31-fe0f-20e3"])
+        self.assertEqual(names("\U0001F1EF\U0001F1F5"), ["1f1ef-1f1f5"])
+
+    def test_vs15_asks_for_the_character_not_the_picture(self):
+        """U+FE0E is the TEXT presentation selector: the author explicitly asked for the glyph,
+        so the cluster must not be routed to the PNG overlay."""
+        from _common import emoji_clusters
+        self.assertEqual(emoji_clusters("\u2764\ufe0e"), [], "VS15 means: draw the character")
+        self.assertTrue(emoji_clusters("\u2764\ufe0f"), "VS16 still means: draw the emoji")
+
+    def test_caption_emoji_png_is_on_screen_for_the_whole_cue_and_only_that_cue(self):
+        """The one assertion the 1.15.0 emoji tests were all missing: a rendered frame from the
+        MIDDLE of the cue. A PNG input is a single frame at pts 0, so `eof_action=pass` (which
+        switches off overlay's "hold the last frame of the secondary input") composited every
+        emoji on frame 0 and nowhere else -- the demo GIF shipped an empty reserved gap."""
+        cues = OUT / "cues_one_emoji.txt"
+        cues.write_text("0:00-0:02 Hello \U0001F389 world\n", encoding="utf-8")
+        out = OUT / "emoji_midcue.mp4"
+        doc = json.loads(script("caption.py", self.src, "--text", cues, "-o", out, "--json",
+                                "--dry-run", "--emoji-assets", _emoji_assets()).stdout)
+        graph = [c for c in doc["commands"] if "overlay=" in c][-1]
+        m = re.search(r"overlay=x=(\d+):y=(\d+)", graph)
+        self.assertTrue(m, graph)
+        x, y = int(m.group(1)) + 4, int(m.group(2)) + 4
+        script("caption.py", self.src, "--text", cues, "-o", out,
+               "--emoji-assets", _emoji_assets())
+        orange = (255, 165, 0)   # _emoji_assets() draws 1f389 as a plain orange square
+
+        def near(pix):
+            return sum(abs(a - b) for a, b in zip(pix, orange)) < 60
+
+        self.assertTrue(near(_pixel_at(out, 1.0, x, y)),
+                        "the emoji is gone by the middle of its own cue: %r" % (_pixel_at(out, 1.0, x, y),))
+        self.assertTrue(near(_pixel_at(out, 1.8, x, y)), "the emoji left before its cue ended")
+        self.assertFalse(near(_pixel_at(out, 3.0, x, y)),
+                         "the emoji is still on screen a second after its cue ended")
+
+    def test_caption_rtl_emoji_is_placed_by_the_rendered_order_not_the_logical_prefix(self):
+        """libass lays an RTL line out right-to-left, so the LOGICAL prefix of a cluster occupies
+        the RIGHT end of the rendered line. Measuring from the left put the PNG on top of the
+        Arabic text, a prefix-width away from the gap libass actually reserved."""
+        from _common import script_font_status
+        cues = OUT / "cues_rtl.txt"
+        # the emoji is FIRST in logical order, so it must be drawn at the RIGHT end of the line
+        cues.write_text("0:00-0:02 \U0001F389 \u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645\n",
+                        encoding="utf-8")
+        out = OUT / "emoji_rtl.mp4"
+        doc = json.loads(script("caption.py", self.src, "--text", cues, "-o", out, "--json",
+                                "--dry-run", "--emoji-assets", _emoji_assets()).stdout)
+        graph = [c for c in doc["commands"] if "overlay=" in c][-1]
+        m = re.search(r"overlay=x=(\d+):y=(\d+)", graph)
+        self.assertTrue(m, graph)
+        x, y = int(m.group(1)), int(m.group(2))
+        self.assertGreater(x, 320, "a logically-first cluster in an RTL line belongs on the right "
+                                   "half of a centred line, not the left: x=%d" % x)
+        if script_font_status("ar") != "available":
+            self.skipTest("no font on this machine covers Arabic; tests never install fonts")
+        # and the box must land where libass drew nothing -- the reserved gap, not over a glyph
+        script("caption.py", self.src, "--text", cues, "-o", out, "--emoji-assets", _emoji_assets())
+        box = doc["emoji"].get("box_px") or 24
+        ink = _ass_ink_columns(OUT / "emoji_rtl.ass", 640, 360)
+        self.assertTrue(ink, "the ASS render produced no ink at all")
+        covered = [c for c in range(x + 2, x + box - 2) if c in ink]
+        self.assertEqual(covered, [], "the PNG would be composited over drawn text at columns %r" % covered)
+
+    def test_caption_emoji_max_zero_means_no_overlays_at_all(self):
+        """`int(args.emoji_max or 60)` swallowed the one value a caller would use to say 'none'."""
+        out = OUT / "emoji_max0.mp4"
+        doc = json.loads(script("caption.py", self.src, "--text", self.cues, "-o", out, "--json",
+                                "--dry-run", "--emoji-assets", _emoji_assets(), "--emoji-max", "0",
+                                expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("limit 0", doc["error"]["message"])
+
+    def test_caption_animate_fades_the_emoji_with_the_text(self):
+        """--animate fade gives the TEXT a \\fad; the PNG used to pop in against a fading line."""
+        cues = OUT / "cues_fade_emoji.txt"
+        cues.write_text("0:00-0:02 Hello \U0001F389 world\n", encoding="utf-8")
+        out = OUT / "emoji_fade.mp4"
+        doc = json.loads(script("caption.py", self.src, "--text", cues, "-o", out, "--json",
+                                "--dry-run", "--animate", "fade",
+                                "--emoji-assets", _emoji_assets()).stdout)
+        graph = [c for c in doc["commands"] if "overlay=" in c][-1]
+        self.assertIn("fade=t=in", graph)
+        self.assertIn("fade=t=out", graph)
+        self.assertIn("alpha=1", graph)
+        m = re.search(r"overlay=x=(\d+):y=(\d+)", graph)
+        x, y = int(m.group(1)) + 4, int(m.group(2)) + 4
+        script("caption.py", self.src, "--text", cues, "-o", out, "--animate", "fade",
+               "--emoji-assets", _emoji_assets())
+        orange = (255, 165, 0)
+
+        def dist(t):
+            return sum(abs(a - b) for a, b in zip(_pixel_at(out, t, x, y), orange))
+
+        self.assertLess(dist(1.0), 60, "the emoji never reached full opacity")
+        self.assertGreater(dist(0.02), dist(1.0), "the emoji did not fade in with the text")
+
+    def test_graphics_drawtext_route_never_reports_monochrome_emoji(self):
+        """drawtext loads ONE font file and has no fallback chain, so "whatever glyph the text
+        font has" is an empty box. Reporting `mode: mono` from that route is a claim the frame
+        does not keep: the run must route to libass (which does have a fallback chain) or strip."""
+        out = OUT / "emoji_gfx_mono.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "title",
+                                "--title", "Ship it \U0001F389 now", "--start", "0", "--end", "2",
+                                "-o", out, "--json", "--dry-run").stdout)
+        if doc.get("emoji", {}).get("mode") == "mono":
+            self.assertEqual(doc["text_renderer"], "ass",
+                             "mode mono on the drawtext route draws tofu, not a glyph")
+        pinned = json.loads(script("graphics.py", self.src, "--template", "title",
+                                   "--title", "Ship it \U0001F389 now", "--start", "0", "--end", "2",
+                                   "--text-render", "drawtext", "-o", out, "--json", "--dry-run").stdout)
+        self.assertEqual(pinned["text_renderer"], "drawtext")
+        self.assertNotEqual(pinned.get("emoji", {}).get("mode"), "mono",
+                            "a pinned drawtext run must not claim monochrome either")
+
+    def test_graphics_emoji_none_actually_strips_the_cluster(self):
+        """`--emoji none` only guarded the all-emoji case: the cluster stayed in the drawn text
+        and drawtext drew the same empty box it would have drawn anyway."""
+        with_emoji = OUT / "emoji_gfx_none.mp4"
+        without = OUT / "emoji_gfx_plain.mp4"
+        script("graphics.py", self.src, "--template", "title", "--title", "Ship it \U0001F389 now",
+               "--start", "0", "--end", "3", "--emoji", "none", "-o", with_emoji)
+        script("graphics.py", self.src, "--template", "title", "--title", "Ship it now",
+               "--start", "0", "--end", "3", "-o", without)
+        self.assertAlmostEqual(_frame_ink(with_emoji), _frame_ink(without),
+                               delta=max(1, _frame_ink(without) // 500),
+                               msg="--emoji none must draw the same frame as text with no emoji in it")
+
+    def test_drawn_text_temp_files_are_private_and_never_outlive_the_run(self):
+        """1.15.0 wrote every drawn label into a world-shared, predictable, never-cleaned
+        /tmp/ffmpeg-skill-text -- including under --dry-run and on the ASS route, which never
+        reads them."""
+        import glob
+        import tempfile as _tf
+        out = OUT / "textfile_life.mp4"
+        doc = json.loads(script("overlay.py", self.src, "--text", "Label", "-o", out,
+                                "--json", "--dry-run").stdout)
+        m = re.search(r"textfile=(\S+?\.txt)", " ".join(doc["commands"]).replace("\\", ""))
+        self.assertTrue(m, "the plan must still name the path it would use")
+        self.assertFalse(os.path.exists(m.group(1)), "a dry run wrote a file")
+        self.assertFalse(os.path.isdir(os.path.dirname(m.group(1))), "a dry run created a directory")
+        self.assertEqual(glob.glob(os.path.join(_tf.gettempdir(), "ffmpeg-skill-text-*")), [],
+                         "a drawn-text directory was left behind")
+        self.assertFalse(os.path.exists(os.path.join(_tf.gettempdir(), "ffmpeg-skill-text")),
+                         "the shared world-writable directory must not be created at all")
+
+    def test_the_ass_route_writes_no_drawtext_textfile(self):
+        from _common import script_font_status
+        if script_font_status("hi") != "available":
+            self.skipTest("no font on this machine covers Devanagari; tests never install fonts")
+        import glob
+        import tempfile as _tf
+        out = OUT / "textfile_ass_route.mp4"
+        script("graphics.py", self.src, "--template", "title", "--title", "\u0915\u093f\u0924\u093e\u092c",
+               "--start", "0", "--end", "2", "-o", out)
+        self.assertEqual(glob.glob(os.path.join(_tf.gettempdir(), "ffmpeg-skill-text-*")), [],
+                         "the ASS route wrote (and kept) a drawtext textfile it never reads")
+
+    def test_the_ass_route_keeps_braces_and_backslashes(self):
+        """The same title through drawtext and through libass must produce the same characters:
+        1.15.0 deleted `{`, `}` and `\\` on the ASS route while drawtext kept them."""
+        from _ass_overlay import ass_escape
+        self.assertEqual(ass_escape("A {b} c \\ d"), "A \\{b\\} c \\ d")
+        out = OUT / "ass_braces.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "title",
+                                "--title", "A {b} c \\ d", "--start", "0", "--end", "2",
+                                "--text-render", "ass", "-o", out, "--json").stdout)
+        ass = Path(doc["ass"]).read_text(encoding="utf-8-sig")
+        dialogue = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
+        self.assertIn("A \\{b\\} c \\ d", dialogue)
+
+
+def _pixel_at(video, t, x, y):
+    """The RGB triple at (x, y) of the frame at `t` seconds of `video`."""
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(video), "-frames:v", "1",
+                           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    w = int(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=width", "-of", "csv=p=0", str(video)],
+                           stdout=subprocess.PIPE, text=True).stdout.strip())
+    off = (y * w + x) * 3
+    return tuple(proc.stdout[off:off + 3])
+
+
+def _ass_ink_columns(ass_path, w, h, threshold=60):
+    """The set of x columns that carry ink when `ass_path` is rendered over black at w x h."""
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=%dx%d:d=0.04" % (w, h),
+         "-vf", "ass=%s" % str(ass_path).replace("\\", "/"), "-frames:v", "1",
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE)
+    data = proc.stdout
+    if len(data) < w * h:
+        return set()
+    return {x for x in range(w) if any(data[y * w + x] > threshold for y in range(h))}
+
+
 def _family_installed(family):
     if not shutil.which("fc-list"):
         return False
@@ -5246,7 +5474,9 @@ class ApostropheAndPercentTests(unittest.TestCase):
         m = re.search(r"textfile=(\S+?\.txt)", graph.replace("\\", ""))
         self.assertTrue(m, graph)
         self.assertIn("expansion=none", graph)
-        self.assertEqual(Path(m.group(1)).read_text(encoding="utf-8"), "it's 100% done")
+        self.assertTrue(Path(m.group(1)).parent.name.startswith("ffmpeg-skill-text-"),
+                        "drawn text must go in a private per-run directory: " + m.group(1))
+        self.assertFalse(Path(m.group(1)).exists(), "the drawn-text temp file must not outlive the run")
         self.assertEqual(doc["status"], "completed")
         # the drawn ink differs from the same render with the two characters stripped
         stripped = OUT / "pct_overlay_stripped.mp4"

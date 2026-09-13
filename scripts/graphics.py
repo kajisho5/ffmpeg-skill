@@ -27,6 +27,7 @@ Examples:
 """
 import argparse
 import os
+import re
 import sys
 from typing import List, Optional
 
@@ -35,7 +36,7 @@ from _common import (aac_args, add_common, brand_caption_style, script_font_for_
                      color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path,
                      ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
-                     LANGUAGE_NAMES, needs_shaping, font_family_of_file, font_family_for_script, has_emoji,
+                     LANGUAGE_NAMES, needs_shaping, detect_script, BIDI_SCRIPTS, font_family_of_file, font_family_for_script, has_emoji,
                      emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
                      EMOJI_ASSET_HINT, text_width_em, drawtext_shaping)
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
@@ -93,8 +94,9 @@ def main() -> int:
     ap.add_argument("--text-render", choices=["auto", "ass", "drawtext"], default="auto",
                     help="which renderer draws the template's text: 'auto' (default) uses libass for "
                          "scripts drawtext cannot shape (Devanagari, Bengali, Tamil, Thai, Lao ...) and for "
-                         "emoji overlays, and drawtext for everything else -- Latin/CJK/Arabic output is "
-                         "unchanged; 'ass' always uses libass; 'drawtext' forces the old renderer and is "
+                         "emoji overlays, and drawtext for everything else -- Latin/CJK/Arabic frames are "
+                         "pixel-identical to 1.14 (the drawtext command itself changed: the label is "
+                         "passed as textfile=, not text=); 'ass' always uses libass; 'drawtext' forces the old renderer and is "
                          "refused for a script it cannot shape")
     ap.add_argument("--write-ass", metavar="PATH",
                     help="where to save the generated ASS when the libass route is used (default: <output stem>_gfx.ass)")
@@ -186,14 +188,6 @@ def main() -> int:
                 f"({support['detail']}) -- pass --emoji-assets DIR for colour, or --emoji mono", kind="input")
         if args.emoji == "png" and not emoji_assets:
             die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
-        if emoji_mode == "none" and not "".join(
-                ch for ch in all_text if char_script(ch) != "emoji").strip():
-            die("the template's text is nothing but emoji and this machine can draw none of them "
-                "(no glyph, no --emoji-assets DIR): that frame would be blank, which is not a "
-                "delivery -- " + EMOJI_ASSET_HINT, kind="input")
-        if emoji_mode == "mono":
-            info("warning: emoji rendered monochrome (no colour path on this ffmpeg; "
-                 "--emoji-assets DIR for colour). " + support["detail"])
     if args.text_render == "drawtext" and shaping:
         die(f"{LANGUAGE_NAMES.get(_script, _script)} text cannot be shaped by drawtext on any ffmpeg "
             "build (the marks are reordered by harfbuzz, which drawtext does not use): drop "
@@ -201,6 +195,40 @@ def main() -> int:
             kind="input")
     route = "ass" if (args.text_render == "ass" or
                       (args.text_render == "auto" and (shaping or emoji_mode == "png"))) else "drawtext"
+    # drawtext loads exactly ONE font file and has no fallback chain, so "whatever glyph the text
+    # font has" for an emoji is an empty box on DejaVu Sans and on every script font: reporting
+    # mode "mono" from the drawtext route is a claim the frame does not keep. libass DOES have a
+    # fallback chain, so an auto run routes there instead; a run that pinned --text-render
+    # drawtext degrades to "none" (strip) and says so rather than drawing tofu.
+    if emoji_mode == "mono" and route == "drawtext":
+        if args.text_render == "auto":
+            route = "ass"
+        else:
+            emoji_mode = "none"
+            info("emoji: --text-render drawtext has no font fallback chain, so the cluster would "
+                 "be drawn as an empty box -- stripped from the text instead "
+                 "(--text-render auto renders it monochrome through libass)")
+    if emoji_mode == "mono":
+        info("warning: emoji rendered monochrome (no colour path on this ffmpeg; "
+             "--emoji-assets DIR for colour). " + support["detail"])
+    if emoji_mode == "none":
+        if not "".join(ch for ch in all_text if char_script(ch) != "emoji").strip():
+            die("the template's text is nothing but emoji and this machine can draw none of them "
+                "(no glyph, no --emoji-assets DIR): that frame would be blank, which is not a "
+                "delivery -- " + EMOJI_ASSET_HINT, kind="input")
+
+        def _strip_emoji(text):
+            if not text:
+                return text
+            for _i, cl in emoji_clusters(text):
+                text = text.replace(cl, "")
+            return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+        for _attr in ("name", "title", "subtitle", "text", "top", "bottom"):
+            setattr(args, _attr, _strip_emoji(getattr(args, _attr, None)))
+        all_text = " ".join(t for t in (args.name, args.title, args.subtitle, args.text,
+                                        args.top, args.bottom) if t)
+        info("emoji: stripped from the drawn text (--emoji none)")
     elements: List[dict] = []
 
     def ass_font_family() -> "Optional[str]":
@@ -424,6 +452,8 @@ def main() -> int:
             line_h = el["size"] * 1.2
             y_top = el["y"] if align in (7, 8, 9) else (
                 el["y"] - line_h / 2.0 if align in (4, 5, 6) else el["y"] - line_h)
+            # An RTL line is rendered right-to-left: measure the suffix, not the logical prefix.
+            rtl = detect_script(line) in BIDI_SCRIPTS
             rebuilt, cursor = "", 0
             for idx, cluster in clusters:
                 name = emoji_codepoint_name(cluster)
@@ -436,7 +466,10 @@ def main() -> int:
                     rebuilt += line[cursor:idx + len(cluster)]
                     cursor = idx + len(cluster)
                     continue
-                prefix_px = text_width_em(line[:idx], scale_em) * el["size"]
+                if rtl:
+                    prefix_px = line_w - text_width_em(line[:idx] + cluster, scale_em) * el["size"]
+                else:
+                    prefix_px = text_width_em(line[:idx], scale_em) * el["size"]
                 if el.get("x_expr"):
                     # the lower-third slides: the emoji rides the same expression the bar does
                     x = f"({el['x_expr']})+{prefix_px:.0f}"
@@ -446,13 +479,19 @@ def main() -> int:
                                        "y": int(round(max(0.0, min(y_top + (line_h - el["box_px"]) / 2.0,
                                                                    H - el["box_px"])))),
                                        "start": round(el["start"], 3), "end": round(el["end"], 3),
-                                       "box": el["box_px"]})
+                                       "box": el["box_px"],
+                                       # every template fades its text in and out over 0.3 s
+                                       # (fade_a above); the PNG rides the same envelope.
+                                       "fade_in": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3),
+                                       "fade_out": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3)})
                 rebuilt += line[cursor:idx] + EMOJI_SENTINEL
                 cursor = idx + len(cluster)
             el["text"] = rebuilt + line[cursor:]
-        if len(emoji_overlays) > int(args.emoji_max or 60):
+        # `or 60` would swallow --emoji-max 0, the one value meaning "none at all".
+        _max = 60 if args.emoji_max is None else int(args.emoji_max)
+        if len(emoji_overlays) > _max:
             die(f"{len(emoji_overlays)} emoji overlays would be built for this job "
-                f"(limit {args.emoji_max}, --emoji-max raises it); ffmpeg's filter graph and the "
+                f"(limit {_max}, --emoji-max raises it); ffmpeg's filter graph and the "
                 "per-frame cost both grow linearly -- split the job, or use --emoji none", kind="input")
         if missing:
             info("warning: no PNG in the assets directory for " + ", ".join(missing))
@@ -483,9 +522,10 @@ def main() -> int:
                 vf += f":fontsdir={escape_filter_path(fdir)}"
             chains.append(f"[{last}]{vf}[vtxt]")
             last = "vtxt"
-        eo, assets = emoji_filter_chain({"overlays": emoji_overlays}, last, "vfinal", first_input=1)
-        for asset in assets:
-            cmd += ["-i", asset]
+        eo, emoji_inputs = emoji_filter_chain({"overlays": emoji_overlays}, last, "vfinal", first_input=1)
+        for spec in emoji_inputs:
+            cmd += spec
+            asset = spec[-1]
             if asset not in STATE.plan_inputs:
                 STATE.plan_inputs.append(asset)
         if eo:

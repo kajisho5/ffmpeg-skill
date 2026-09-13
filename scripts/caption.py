@@ -41,8 +41,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, ass_units, resolve as resolve_platform
-from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder
-from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, LEADING_VOWELS, NO_SPACE_SCRIPTS, _char_em, _is_mark, text_width_em, emoji_clusters, has_emoji, STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
+from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
+from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, LEADING_VOWELS, NO_SPACE_SCRIPTS, _char_em, _is_mark, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -526,6 +526,10 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
     if not play_w or not play_h:
         return cues, plan
     scale = float(getattr(args, "emoji_scale", 1.0) or 1.0)
+    # --animate moves the TEXT (\fad/\fscx in the ASS); the PNG has to move with it, or the emoji
+    # pops in against a line that is still fading up. These match the \fad values below.
+    fade_in, fade_out = {"fade": (0.2, 0.2), "pop": (0.08, 0.12),
+                         "slide": (0.15, 0.15)}.get(getattr(args, "animate", None) or "none", (0.0, 0.0))
     size_px = args.size * play_h / 288.0
     margin_px = args.margin * play_h / 288.0
     line_h = size_px * 1.2
@@ -550,6 +554,10 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
                 x0 = play_w - margin_px - line_w
             else:
                 x0 = (play_w - line_w) / 2.0
+            # libass lays an RTL line out right-to-left, so the LOGICAL prefix of a cluster
+            # occupies the RIGHT end of the rendered line. Measuring the prefix from the left
+            # edge put the PNG on top of the text, mirrored, on every Arabic/Hebrew cue (1.15.0).
+            rtl = detect_script(line) in BIDI_SCRIPTS
             rebuilt = ""
             cursor = 0
             for idx, cluster in emoji_clusters(line):
@@ -562,19 +570,26 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
                     rebuilt += line[cursor:idx + len(cluster)]
                     cursor = idx + len(cluster)
                     continue
-                x = x0 + text_width_em(prefix, scale) * size_px
+                if rtl:
+                    x = x0 + line_w - text_width_em(prefix + cluster, scale) * size_px
+                else:
+                    x = x0 + text_width_em(prefix, scale) * size_px
                 y = y_top + (line_h - box_px) / 2.0
                 plan["overlays"].append({
                     "asset": asset, "cluster": name,
                     "x": int(round(max(0.0, min(x, play_w - box_px)))),
                     "y": int(round(max(0.0, min(y, play_h - box_px)))),
-                    "start": round(start, 3), "end": round(end, 3), "box": int(round(box_px))})
+                    "start": round(start, 3), "end": round(end, 3), "box": int(round(box_px)),
+                    "fade_in": round(min(fade_in, max(0.0, (end - start) / 2.0)), 3),
+                    "fade_out": round(min(fade_out, max(0.0, (end - start) / 2.0)), 3)})
                 rebuilt += line[cursor:idx] + EMOJI_SENTINEL
                 cursor = idx + len(cluster)
             rebuilt += line[cursor:]
             new_lines.append(rebuilt)
         out_cues.append((start, end, "\n".join(new_lines)))
-    limit = int(getattr(args, "emoji_max", 60) or 60)
+    # `or 60` would swallow the one value that means "no overlays at all".
+    _max = getattr(args, "emoji_max", None)
+    limit = 60 if _max is None else int(_max)
     if len(plan["overlays"]) > limit:
         die(f"{len(plan['overlays'])} emoji overlays would be built for this job (limit {limit}, "
             "--emoji-max raises it); ffmpeg's filter graph and the per-frame cost both grow "
@@ -779,15 +794,15 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
     ]
     lines = []
     for start, end, text in cues:
-        text = text.replace("\n", "\\N")
         # ASS Dialogue text treats a literal `{...}` as an override block -- real style/animation
         # commands, not literal characters. Cue text (from --text, an SRT, or ASR transcription --
         # all effectively user-controlled) that happens to contain braces would otherwise be
         # interpreted as those commands (\pos, \t, \fscx, ...), letting caption content reposition,
-        # rescale, or recolor itself or later text instead of just being read out. No caption needs
-        # a literal curly brace, so they're dropped outright, matching the "unneeded delimiter
-        # character -> drop it" call already made for font names (see ass_font_name()).
-        text = text.replace("{", "").replace("}", "")
+        # rescale, or recolor itself or later text instead of just being read out. libass has real
+        # escapes for the braces, so 1.15 escapes them (ass_escape) rather than deleting them:
+        # a cue that says "use {curly} braces" is read out with its braces, and still cannot open
+        # an override block. Newlines become \N in the same pass.
+        text = ass_escape(text)
         fx = ""
         if args.animate == "fade":
             fx = "{\\fad(200,200)}"
@@ -1235,10 +1250,11 @@ def main() -> int:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
 
     cmd = ffmpeg_base() + ["-i", args.input]
-    chains, assets = emoji_filter_chain(emoji_plan or {}, "vsub", "vout") if emoji_plan else ([], [])
+    chains, emoji_inputs = emoji_filter_chain(emoji_plan or {}, "vsub", "vout") if emoji_plan else ([], [])
     if chains:
-        for asset in assets:
-            cmd += ["-i", asset]
+        for spec in emoji_inputs:
+            cmd += spec
+            asset = spec[-1]
             if asset not in STATE.plan_inputs:
                 STATE.plan_inputs.append(asset)
         graph = ";".join([f"[0:v]{vf}[vsub]"] + chains)

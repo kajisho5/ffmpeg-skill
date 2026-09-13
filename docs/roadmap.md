@@ -215,7 +215,8 @@ keys, one new private module, one new doctor row.
   therefore renders those scripts through libass (a generated `<output>_gfx.ass`, private helper
   `scripts/_ass_overlay.py`) and reports `text_renderer: "ass"`; `--text-render drawtext` with
   such a script is a refusal naming the script, never a wrongly shaped frame. Latin, CJK and
-  Arabic output is unchanged. `overlay.py --text` gets the refusal, and the route in 1.16.0.
+  Arabic frames are pixel-identical to 1.14.0 (the drawtext command line changed: the label moved
+  into `textfile=…:expansion=none`). `overlay.py --text` gets the refusal, and the route in 1.16.0.
 - **Emoji in captions and titles.** Colour emoji through drawtext is not available at all (a
   CBDT/sbix face fails filter initialisation and writes no file), and an installed colour emoji
   font proves nothing — Noto Color Emoji is present on the dev box and libass still renders
