@@ -1,0 +1,477 @@
+{
+ "iteration": 16,
+ "skill_version": "1.15.0",
+ "runs_graded_in_full": 28,
+ "runs_language_and_format_checked": 54,
+ "summary": {
+  "runs": 82,
+  "runs_graded_fully": 28,
+  "routing": "28/28 - correct script for every request (caption.py for burn-in, caption.py --emoji-assets / overlay.py --image for emoji, graphics.py for lower-thirds, render.py --template for delivery, loudness.py+metadata.py for the podcast, audio.py --replace for the track swap, redact.py --help to prove the refusal). No raw ffmpeg or ffprobe invoked by any agent in any of the 82 run.md files.",
+  "honest": "28/28 - every written file re-probes exactly as reported, every platform claim re-runs clean, and the three refusals are accurate. No Done: is contradicted by disk.",
+  "language": "81/82 - every final report is in the prompt's language except dl4 (es), whose Done:/Steps:/Check: lines are English and only Look:/Notes: Spanish - the identical defect iteration 15 flagged on dl4. id1 (id) has a milder version (English Done:/Steps:, Indonesian body). d01 IS German: Check:/Look:/Notes: are German prose and only the Done: line is a language-neutral filename+spec string, so the regex grader's 'German not detected' is a grader artefact, not a run defect.",
+  "format": "82/82 carry the five labels exactly once each, each refusal under a single Failed:. The three label-rule prompts are all correct now: dl8 emits ONE 'Failed: cannot actually post/upload to TikTok ... I prepared the file instead', he2 and k02 emit a single Failed: (iteration 15 had dl8 as Done: and he2 as a Done:+Failed: double). Only cosmetic deviation: d02 titles its section '# Final report' instead of '## Final report'.",
+  "look_when_picture_changed": "25/25 - every run that changed the picture wrote and read a still or contact sheet; dl7, x05-replace-audio and the two refusals (he2, k02) correctly say 'Look: not needed'. e11-ready changed only audio and still produced a sheet, which is harmless.",
+  "visual_check_non_latin": "11/11 non-Latin text runs now render real, correctly shaped glyphs: Devanagari (sh1, hi1) with correct matra reordering, conjuncts, reph and word spaces; Thai (sh2 in both the lower third and the captions, th1) with correct vowel/tone stacking; Arabic (a01) joined and RTL; Chinese (c01, em3); Japanese (dl2, dl3, j03-lower, em2); Vietnamese (vi1). Iteration 15's single failure - hi1's garbled Devanagari - is fixed.",
+  "platform_checked_delivery": "13/13 delivery-shaped outputs pass check.py --platform X with 0 FAIL and 0 WARN when the grader re-runs it (same as iteration 15).",
+  "encodes_delivery": "12 of 13 delivery runs took exactly one encoding pass; e11-ready took ZERO video encodes (loudness stream-copies video); j06-report again took TWO (export.py without --normalize, then rm and re-export). Identical to iteration 15.",
+  "emoji": "3 of 3 runs that were given PNG assets used them (em1 and em3 via caption.py --emoji-assets, em2 via overlay.py --image) and the emoji is visibly composited in colour inside its own time window in all three, verified on stills I extracted at 4.5s / 1.5s rather than frame 0. em4, which ships no assets, rendered monochrome and said so.",
+  "quality_mean": 4.68,
+  "quality_min": 3
+ },
+ "iteration_16_specific": {
+  "a_emoji_runs": {
+   "question": "did em1-em4 use the shipped PNG assets, is the emoji visible in the output picture inside its time window, and was a monochrome result reported honestly",
+   "per_run": {
+    "em1": {
+     "assets_used": "yes - caption.py --emoji-assets OUTDIR/emoji",
+     "visible": "yes - I opened the agent's 1.0s frame and extracted my own at 4.5s; the 1f389 asset shows beside 'Shipping day' and the 1f44d asset inside 'Nice work _ everyone'",
+     "colour_claim": "claims colour and it IS colour, but the assets are plain orange/yellow squares and the report describes them as emoji glyphs rendering in colour without saying what it actually saw"
+    },
+    "em2": {
+     "assets_used": "yes - overlay.py --image emoji/1f389.png --position center --start 0 --end 3 --fade 0.3 --scale 200",
+     "visible": "yes - still at 1.5s, inside the 0-3s window, shows the asset centred",
+     "colour_claim": "MODEL ANSWER: states explicitly that 1f389.png is itself a monochrome orange rectangle and not an emoji graphic, and that the fault is in the asset, not in overlay.py"
+    },
+    "em3": {
+     "assets_used": "yes - caption.py --emoji-assets --lang zh",
+     "visible": "yes - the sheet plus my own 4.5s still show both assets composited inline in the Chinese captions",
+     "colour_claim": "says '彩色 PNG' which is literally true; does not mention that the assets are plain squares, and mis-describes their position as to the right of the text when they are inline"
+    },
+    "em4": {
+     "assets_used": "n/a - no emoji/ directory is shipped for em4",
+     "visible": "yes, but monochrome - the sheet shows outline 🎉/👍 glyphs",
+     "colour_claim": "fully honest: 'emoji glyphs render but in monochrome, not colour', with --emoji-assets DIR named as the fix. Did not invent assets."
+    }
+   },
+   "summary": "4/4 correct routing, 3/3 used the shipped assets, 4/4 emoji visible in the intended window, 4/4 honest about colour vs monochrome. The remaining gap is descriptive: em1 and em3 report 'colour emoji' where what is on screen is a plain coloured square; only em2 said what it saw."
+  },
+  "b_complex_script_shaping": {
+   "question": "are Devanagari and Thai correctly shaped at 1.15.0 (matra reordering, combining marks, word spaces), compared with iteration 15",
+   "sh1": "PASS - graphics.py lower-third renders 'प्रिया शर्मा' / 'निर्देशक' with the प्र conjunct formed, the i-matra reordered before its consonant, reph on निर्देशक and the word space kept.",
+   "hi1": "FIXED - iteration 15 showed 'प्रयाशर्म' and 'नरि्देशक' from the drawtext path; at 1.15.0 the same prompt produces correctly shaped Devanagari through the libass path, and the agent no longer has to disclose a garble (and no longer ends by asking the user a question).",
+   "sh2": "PASS in BOTH layers - the graphics.py lower third 'สมชาย ใจดี / ผู้กำกับ' and the burned caption 'สวัสดีชาวโลก' both show correct Thai vowel and tone-mark stacking, no tofu, word spaces intact.",
+   "th1": "PASS on shaping - 'สวัสดีชาวโลก เสียงน้ำไหล' is correctly composed; the only blemish is the line wrap (see e).",
+   "verdict": "The complex-script shaping fix is the clearest win of 1.15.0: 4/4 correct, against 1 confirmed garble at 1.14.0."
+  },
+  "c_label_rule": {
+   "question": "do the refuse-the-verb prompts carry a single Failed: with the artefact described",
+   "dl8": "FIXED - one 'Failed: cannot actually post/upload to TikTok ... I prepared the file for TikTok instead', the artefact named and the remaining manual step spelled out. No Done:. (Iteration 15: Done:.)",
+   "he2": "FIXED - a single Failed:, no paired Done:. (Iteration 15: both labels emitted.)",
+   "k02": "PASS - a single Failed:, with audio.py --replace and captions offered as concrete alternatives.",
+   "verdict": "3/3. The SKILL.md label rule landed cleanly and nothing over-corrected into refusing to deliver the artefact."
+  },
+  "d_delivery_template_and_encodes": {
+   "question": "template used, encodes counted, check.py --platform X re-run by the grader",
+   "per_run": {
+    "dl1": {
+     "template": "yes (--template tiktok)",
+     "encodes": 1,
+     "check": "tiktok 12 checks, 0 FAIL / 0 WARN"
+    },
+    "dl2": {
+     "template": "yes (--template reels)",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    },
+    "dl3": {
+     "template": "yes (--template youtube-shorts)",
+     "encodes": 1,
+     "check": "shorts 0 FAIL / 0 WARN"
+    },
+    "dl4": {
+     "template": "yes (--template youtube-shorts)",
+     "encodes": 1,
+     "check": "shorts 0 FAIL / 0 WARN"
+    },
+    "dl5": {
+     "template": "yes (--template tiktok)",
+     "encodes": 1,
+     "check": "tiktok 0 FAIL / 0 WARN"
+    },
+    "dl6": {
+     "template": "yes (--template linkedin)",
+     "encodes": 1,
+     "check": "linkedin 0 FAIL / 0 WARN"
+    },
+    "dl7": {
+     "template": "no (audio-only: loudness.py + metadata.py)",
+     "encodes": 1,
+     "check": "podcast 0 FAIL / 0 WARN"
+    },
+    "dl8": {
+     "template": "yes (--template tiktok)",
+     "encodes": 1,
+     "check": "tiktok 0 FAIL / 0 WARN"
+    },
+    "e01-reel": {
+     "template": "yes (cut.py lossless, then --template reels)",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    },
+    "e11-ready": {
+     "template": "no (diagnose + loudness.py; video stream-copied)",
+     "encodes": 0,
+     "check": "tiktok 0 FAIL / 0 WARN"
+    },
+    "j01-reel": {
+     "template": "YES now (--template reels --write-project, project edited, one render) - iteration 15 hand-wrote the project",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    },
+    "j06-report": {
+     "template": "NO - export.py used directly, as in iteration 15",
+     "encodes": 2,
+     "check": "x 0 FAIL / 0 WARN"
+    },
+    "j08-project": {
+     "template": "yes (--template reels --write-project, in/out edited, one render)",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    }
+   },
+   "summary": "12 of 13 delivery-shaped runs reached for render.py --template (j06-report is the sole holdout and the sole two-encode run; iteration 15 had two holdouts). 12 of 13 took exactly one encoding pass, e11-ready took zero video encodes. All 13 pass their platform check with 0 FAIL and 0 WARN on my own re-run."
+  },
+  "e_caption_splitter": {
+   "question": "did the 1.15.0 wrap rebalance remove the orphaned fragments iteration 15 found in dl1/dl3/dl4/th1",
+   "dl1": "NOT FIXED - cue 3 is still broken mid-phrase into 'A third line the tool' / 'times for me', exactly as in iteration 15.",
+   "dl3": "PARTLY FIXED - the lone '行' orphan is gone, but the sheet still shows a one-character line '2' stacked above '行目の字幕' / 'です', and cue 3 still breaks mid-word: '自動でタイミングが決ま' / 'る行'.",
+   "dl4": "NOT FIXED - cue 2 still collapses to a lone 'subtítulos' and cue 3 still splits 'Una tercera línea con' / 'tiempos automáticos'.",
+   "th1": "IMPROVED - iteration 15's lone 'ล' is gone; the wrap now leaves a whole 3-character word 'ไหล' on the second line, which is acceptable but still a short trailing line.",
+   "verdict": "The one-character-orphan ban is only partly effective (th1 fixed, dl3's '行' fixed) and the underlying mid-phrase/mid-word cue splitting is unchanged in dl1, dl3 and dl4. In every case the agent's Look: line calls the captions readable or legible without flagging the break - agents look at the sheet but still do not read it critically."
+  },
+  "f_writes_outside_outdir": {
+   "verdict": "NONE for files; THREE graded runs used the wrong scripts path",
+   "note": "git -C /home/user/ffmpeg-skill status --short is empty, and every graded run's files sit inside its own with_skill/outputs directory (sh2 leaves a harmless run.md.tmp there). Eleven runs - a02, d01, dl2, e11-ready, el1, fr1, id1, j03-lower, j05-ma, p01, tr2 - executed /root/.claude/skills/ffmpeg-skill/scripts rather than the /home/user/ffmpeg-skill/scripts path their prompt named; of these dl2, e11-ready and j03-lower are graded in full, so those three grades are not strictly against the repo copy under test."
+  },
+  "g_done_contradicted_by_disk": {
+   "verdict": "NONE",
+   "note": "I re-probed all 26 written media outputs with probe.py --json-brief and re-ran check.py --platform on all 13 delivery outputs. Every duration, resolution, fps, codec, channel layout, LUFS and chapter count in a Done: line matches the file on disk, and every 'all checks pass' claim reproduces at 0 FAIL and 0 WARN."
+  }
+ },
+ "findings": [
+  "Three of the four things 1.15.0 set out to fix are fixed. Complex-script shaping is the standout: sh1, hi1 and sh2 render Devanagari and Thai correctly through the libass path, where 1.14.0's hi1 produced 'प्रयाशर्म' for 'प्रिया शर्मा'. All 11 non-Latin runs now pass a visual read.",
+  "The emoji feature works end to end. Every run given PNG assets used them (--emoji-assets on caption.py, --image on overlay.py), and I confirmed the composite is visible in colour inside its own cue window, not just at frame 0. em4, which was given no assets, rendered monochrome and reported that plainly instead of claiming colour.",
+  "The label rule landed on all three refuse-the-verb prompts: dl8, he2 and k02 each carry exactly one Failed: with the artefact described. This closes both iteration 15 defects (dl8's Done: and he2's double label) with no over-correction.",
+  "The caption splitter is the defect that did NOT get fixed. dl1 still splits 'A third line the tool' / 'times for me' and dl4 still produces a lone 'subtítulos' plus 'Una tercera línea con' / 'tiempos automáticos' - byte-for-byte the iteration 15 failures. dl3's one-character '行' orphan is gone but a lone '2' line and a mid-word 'る行' remain; only th1 is genuinely better. The one-character ban treats a symptom; the splitter still breaks phrases and words at arbitrary points.",
+  "dl4 repeats iteration 15's language failure exactly: a Spanish prompt answered with English Done:/Steps:/Check: and Spanish Look:/Notes:. id1 shows a milder version. Nothing in the skill tells the agent the LABEL LINES are part of the user's language, only the report.",
+  "d01's report IS German - Check:, Look: and Notes: are German prose and only the Done: line is a language-neutral 'filename - 12.01 s, 1280x720, ...' string. The regex language grader flagging it is a grader artefact; the detector should ignore the Done: spec line or look at the whole report.",
+  "Delivery discipline is stable at a high level: 12 of 13 runs used render.py --template (j01-reel converted from iteration 15's hand-written project), 12 of 13 took one encode, and all 13 pass their platform check at 0 FAIL and 0 WARN on my re-run. j06-report remains the single holdout on both counts - it goes straight to export.py and pays for it with a second encode after forgetting --normalize."
+ ],
+ "harness_or_model_issues": [
+  "Only rep1 exists, so per-run variance cannot be separated from real improvement between iterations 15 and 16.",
+  "Eleven runs (a02, d01, dl2, e11-ready, el1, fr1, id1, j03-lower, j05-ma, p01, tr2) executed /root/.claude/skills/ffmpeg-skill/scripts instead of the /home/user/ffmpeg-skill/scripts path their prompt named. Three of them are graded in full, so those grades are not strictly against the repo copy under test.",
+  "em2's assets are deliberately plain coloured squares, and em1's and em3's are too - but only em2's prompt makes the mismatch conspicuous enough that the agent commented. If the intent is to test 'say what you saw', em1 and em3 need the same framing or the assets need to be recognisable emoji.",
+  "d02 writes '# Final report' instead of '## Final report'. Every label is present and correct, but a strict section-header grader would miss the report entirely.",
+  "The caption sheets' tile timestamps do not always line up with the cue in view (em3/em4 show cue 2 text under a 00:00:01.999 label). I verified the actual frames with my own look.py extractions and the burn-in timing is correct, so this is a contact-sheet labelling artefact worth a look in look.py."
+ ],
+ "rows": [
+  {
+   "id": "em1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "caption.py --emoji-assets emoji/ -> check -> look. I re-probed (12.01s 1280x720 30fps h264/aac mono) and opened stills at 1.0s and 4.5s: BOTH emoji windows show the PNG asset composited in colour inline with real Latin text. Ding: the shipped assets are plain orange/yellow squares, and the report calls them 'colour emoji' that 'render in colour as asked' without saying what is actually on screen (em2 did say it)."
+  },
+  {
+   "id": "em2",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "overlay.py --image emoji/1f389.png --position center --start 0 --end 3; still at 1.5s (inside the window) shows the asset centred. Best honesty of the four: the report states outright that 1f389.png is itself a plain orange rectangle rather than an emoji graphic, and that overlay.py composited the asset faithfully. Assumption (first 3s = the 'title card') is stated. Re-probe 12.00s 1280x720 matches."
+  },
+  {
+   "id": "em3",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "caption.py --emoji-assets --lang zh. Sheet plus my own 4.5s still: both emoji assets composited in colour inline, Chinese glyphs real and correctly formed. Ding: Look says the emoji sit '字幕文字右侧' when they are inline between words, and like em1 it reports 'colour emoji' without noting the assets are plain coloured squares."
+  },
+  {
+   "id": "em4",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "No emoji/ directory is shipped for em4 and the agent did not invent one: captions burned without --emoji-assets, and the sheet confirms monochrome outline glyphs for both emoji. The report says exactly that ('emoji glyphs render but in monochrome, not colour') and names --emoji-assets DIR as the fix. Re-probe matches."
+  },
+  {
+   "id": "sh1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py --template lower-third with Devanagari. The 4s PNG shows correctly shaped 'प्रिया शर्मा' and 'निर्देशक' - conjunct प्र formed, i-matra reordered before its consonant, reph on निर्देशक, word space preserved. This is the 1.14.0 garble fixed. Hindi report, five labels, honest WARN handling."
+  },
+  {
+   "id": "sh2",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py lower-third then caption.py, both Thai. The 2.5s still shows correct Thai in BOTH layers: 'สมชาย ใจดี / ผู้กำกับ' in the lower third and 'สวัสดีชาวโลก' as a caption, vowels and tone marks stacked correctly, no tofu. Re-probe 12.01s matches. Thai report. (A stray run.md.tmp is left in OUTDIR - harmless.)"
+  },
+  {
+   "id": "hi1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "The iteration-15 defect is gone. graphics.py lower-third at 0-4s; the 2s PNG shows 'प्रिया शर्मा' and 'निर्देशक' correctly shaped, where 1.14.0 produced 'प्रयाशर्म'/'नरि्देशक'. Re-probe matches the Done: line; Hindi report; no question asked of the user this time."
+  },
+  {
+   "id": "th1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "caption.py --lang th, correct Thai shaping at 2s. Splitter improved over iteration 15 (the lone 'ล' orphan is gone) but the wrap still drops a 3-character trailing line: 'สวัสดีชาวโลก เสียงน้ำ' / 'ไหล'. The Look line calls the caption correct and does not mention the wrap. Check: 'not needed' is defensible (no platform named)."
+  },
+  {
+   "id": "he2",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Refusal-only run, and the iteration-15 double-label defect is fixed: ONE 'Failed:' label, nothing written, redact.py --help cited to prove there is no face detector, and the exact command the user could run if they supply coordinates. Hebrew report, five labels once each."
+  },
+  {
+   "id": "k02",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Single 'Failed:' for the TTS request, correct (no script synthesises speech), with audio.py --replace offered as the concrete path and captions as an alternative. Nothing written, Look: not needed. Korean report. Iteration 14's double-label defect stays fixed."
+  },
+  {
+   "id": "dl1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "render.py --template tiktok, ONE encode; my check.py --platform tiktok re-run: 12 checks, 0 failed, 0 warnings; re-probe 12.01s 1080x1920 mono -14.0 LUFS matches. Defect: the caption splitter STILL breaks cue 3 mid-phrase into 'A third line the tool' / 'times for me' - identical to iteration 15 - and the Look line calls the captions readable without noticing."
+  },
+  {
+   "id": "dl2",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --template reels, one encode, my re-run of check --platform reels: 12/0/0. Re-probe exact. Japanese report, crop-vs-pad trade-off quantified ('約30%失われる'). Only note: it ran the /root/.claude/skills copy of the scripts rather than the /home/user/ffmpeg-skill path the prompt named."
+  },
+  {
+   "id": "dl3",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "render.py --template youtube-shorts, one encode, shorts 11/0/0 on my re-run. Japanese report, and it discloses the splitter counts (3 wrapped, 1 rebalanced, 1 split, 1 extended). Splitter partly improved - iteration 15's lone '行' is gone - but the sheet still shows a one-character line '2' above '行目の字幕/です' and a mid-word break '自動でタイミングが決ま' / 'る行'."
+  },
+  {
+   "id": "dl4",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "render.py --template youtube-shorts, one encode, shorts 11/0/0 on re-run, probe matches. Two defects, both repeats of iteration 15: the report is half English (Done:/Steps:/Check:) and half Spanish (Look:/Notes:) on a Spanish prompt; and the splitter reduces cue 2 to a lone 'subtítulos' and breaks cue 3 into 'Una tercera línea con' / 'tiempos automáticos', while Look calls them 'legibles'."
+  },
+  {
+   "id": "dl5",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --template tiktok, one encode, tiktok 12/0/0 on my re-run, probe matches. Chinese report; centre-crop loss quantified and the synthetic nature of the source acknowledged in the Look line rather than claimed as good framing."
+  },
+  {
+   "id": "dl6",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --template linkedin, one encode, linkedin 12/0/0 on re-run, 1080x1080 confirmed by my probe and the sheet. Japanese report; the 16:9 -> 1:1 side loss is stated."
+  },
+  {
+   "id": "dl7",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Audio-only route chosen correctly: loudness.py -I -16 --tp -1.5 then metadata.py --chapters. My re-probe shows 9.51s AAC mono 48k with 3 chapters, and check --platform podcast re-runs 6/0/0. 'Look: not needed (audio-only)' is right."
+  },
+  {
+   "id": "dl8",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "THE LABEL RULE LANDED. A single 'Failed:' saying the upload is impossible and naming the artefact prepared instead - no second Done:. render.py --template tiktok, one encode, tiktok 12/0/0 on my re-run, probe matches. Honest about the synthetic source giving nothing to judge framing against."
+  },
+  {
+   "id": "e01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "cut.py 0-6 lossless then render.py --template reels (one encode). reels 12/0/0 on my re-run; probe 6.10s 1080x1920 -14.0 LUFS. Sheet shows 'Hello world' / 'Second line' correctly wrapped inside the safe area, and the report explains why the untimed third cue is not visible in a 6s cut."
+  },
+  {
+   "id": "e11-ready",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Diagnosed with check --platform tiktok, fixed only what failed (loudness.py, video stream-copied: ZERO video encodes), re-checked. My re-run: tiktok 12/0/0. The sheet shows the source's letterbox bars and the report says so plainly instead of claiming a reframe. Ran the /root/.claude copy of the scripts."
+  },
+  {
+   "id": "j01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Improved over iteration 15, which hand-wrote a project: this run used render.py --template reels --write-project, edited in/out, and rendered once. reels 12/0/0 on my re-run; probe 6.037s 1080x1920 -14.0 LUFS. Japanese report; the trim-vs-speed decision is justified against the 1.5x threshold."
+  },
+  {
+   "id": "j06-report",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "x 12/0/0 on my re-run and report.html written; but this is the one run that still takes TWO encodes - export.py --preset x first, then rm and re-export with --normalize - and it is the one delivery run that never touches render.py --template. Same shape as iteration 15."
+  },
+  {
+   "id": "j08-project",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --template reels --write-project, in/out edited to 2/8, one render from the project; reels 12/0/0 on my re-run, probe 6.037s 1080x1920. The Notes line tells the user exactly which field to change to re-cut, which is what the prompt asked for. Sheet is clean."
+  },
+  {
+   "id": "a01",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py burn-in; the 3x2 sheet shows Arabic with correct joining forms and right-to-left order, no tofu. Re-probe matches. Arabic report, five labels, auto-timing of the untimed third cue disclosed with the actual window."
+  },
+  {
+   "id": "j03-lower",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py --template lower-third 0-4s; the 2s frame shows '山田 太郎 / プロデューサー' correctly rendered bottom-left. Re-probe matches; Japanese report; the two loudness WARNs are reported as unrequested judgement rows. Ran the /root/.claude copy of the scripts."
+  },
+  {
+   "id": "c01",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py --lang zh burn-in; sheet shows all three Chinese cues clean and correctly placed, font selection (WenQuanYi Zen Hei) reported. Re-probe matches. Chinese report; no platform named so check.py correctly skipped and said so."
+  },
+  {
+   "id": "vi1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py burn-in; the 1s frame shows Vietnamese with every diacritic and tone mark correct on one line. Re-probe matches. Vietnamese report; auto-timing of the third cue disclosed and the .srt pointed at for the exact window."
+  },
+  {
+   "id": "x05-replace-audio",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "audio.py --replace, video stream-copied. My re-probe: 6.00s 640x360 h264 + AAC mono, matching the Done: line. 'Look: not needed (audio-only change)' is correct. Best detail: it noticed the mic track is only 4.516s and reported the ~1.48s silence pad rather than letting it pass silently."
+  }
+ ]
+}

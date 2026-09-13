@@ -17,9 +17,9 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.15.0** (shipped, eval pending: eval 16 will grade it on the
-82-prompt set, the 76 plus the six emoji/shaping prompts). The last evaluated version is **1.14.0**,
-closed by **eval 15** (`evals/results/iteration-15.json`). Everything after 1.15.0 is planned.
+The released version today is **1.15.0**, shipped and evaluated: **eval 16**
+(`evals/results/iteration-16.json`) graded it on the 82-prompt set, the 76 plus the six
+emoji/shaping prompts. Everything after 1.15.0 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -30,7 +30,7 @@ closed by **eval 15** (`evals/results/iteration-15.json`). Everything after 1.15
 | 1.12.0 | shipped + evaluated | eval 13 at 1.12.0 (`iteration-13.json`) |
 | 1.13.0 | shipped + evaluated | eval 14 at 1.13.0 (`iteration-14.json`) |
 | 1.14.0 | shipped + evaluated | eval 15 at 1.14.0 (`iteration-15.json`) |
-| 1.15.0 | shipped, eval pending | eval 16 (planned) |
+| 1.15.0 | shipped + evaluated | eval 16 at 1.15.0 (`iteration-16.json`) |
 | 1.16.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -202,7 +202,7 @@ encode because `export.py` ran without `--normalize` first.
 - Eval 15 on the delivery prompts (`dl1`–`dl8`), three repeats, measuring the encode count per
   delivery rather than pass/fail alone.
 
-## 1.15.0 — text people can see (shipped, eval pending)
+## 1.15.0 — text people can see (shipped + evaluated, eval 16)
 
 The defects eval 14 found in the text path. Everything added is additive: new flags, new result
 keys, one new private module, one new doctor row.
@@ -229,8 +229,14 @@ keys, one new private module, one new doctor row.
 - **No one-character orphan lines**, and a balanced break for spaced scripts: the measured wrap
   never leaves a single character alone on a line (`th1`, `dl3`) and prefers the break that
   minimises the widest line (`dl1`).
-- Eval 16 re-runs the caption and graphics prompts in every script the set covers, plus six new
-  emoji/shaping prompts (`em1`–`em4`, `sh1`–`sh2`).
+- Eval 16 re-ran the caption and graphics prompts in every script the set covers, plus six new
+  emoji/shaping prompts (`em1`–`em4`, `sh1`–`sh2`). Three of the four targets landed: Devanagari
+  and Thai correctly shaped in 4/4 runs (hi1's garble is gone), emoji visible in colour in every
+  run given PNG assets and reported monochrome in the one that was not, and the `Failed:` label
+  rule on all three refuse-the-verb prompts. The one that did not: the caption breaker still
+  splits phrases (`dl1` "A third line the tool / times for me", `dl4` a lone "subtítulos"); the
+  one-character ban removed the `th1`/`dl3` orphans but not the cause. A phrase-aware breaker is
+  the first item of 1.16.0.
 
 ## Refactor release after 1.15.0 — no behaviour change (planned)
 
@@ -250,6 +256,10 @@ must come out byte-identical.
 
 ## 1.16.0 — long-form delivery (planned)
 
+- **Phrase-aware caption breaking** (eval 16 follow-up): the wrap never splits inside a word or
+  between a determiner and its noun, and balances lines by measured width; the `dl1`/`dl3`/`dl4`
+  cues become the regression lock. The label lines (`Done:`/`Steps:`/`Check:`) are stated in
+  SKILL.md to be part of the user's-language report (`dl4`, `id1`).
 - **Audiogram**: a `waveform.py` / `render.py` template that turns an audio episode into a
   shareable video (waveform or spectrum over a still or brand background, captions burned in).
 - **Auto chapters**: chapter markers proposed from measured structure (silence spans and scene

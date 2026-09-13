@@ -658,7 +658,7 @@
   "lang": "ja",
   "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 のタイトルカードに 🎉 を入れてください。絵文字の PNG は OUTDIR/emoji にあります。確認用に静止画も一枚ください。OUTDIR に保存してください。",
   "expect": [
-   "graphics|render",
+   "graphics|render|overlay",
    "look"
   ],
   "refuse": false,
