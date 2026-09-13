@@ -4841,8 +4841,8 @@ class DemoGalleryTests(unittest.TestCase):
     demos/build.py stops rendering, the README's pictures quietly describe an older tool.
 
     One cheap demo is enough to prove the whole path -- fixtures, a real script invocation, the
-    side-by-side, the preview and the size budget -- without spending two minutes of CI on all
-    23 of them (the `demos` job in demos/CI.md runs the full set)."""
+    side-by-side, the preview and the size budget -- without spending several minutes of CI on all
+    of them (the `demos` job in demos/CI.md runs the full set)."""
 
     def test_build_one_demo_and_stay_under_the_preview_budget(self):
         if not shutil.which("ffmpeg"):
@@ -4884,6 +4884,33 @@ class DemoGalleryTests(unittest.TestCase):
             self.assertIn(f"demos/{name}.gif", page,
                           f"{name} is built but has no section in docs/demos.md "
                           f"(run: python3 demos/build.py --docs)")
+
+    def test_every_script_is_shown_working_by_a_demo(self):
+        """A tool nobody can see working is hard to review and harder to trust. Every script
+        under scripts/ either appears in a demo's command line (so the gallery renders it end to
+        end on every build) or is on the builder's INSPECTION list -- the tools whose entire
+        output is a table or an HTML file, which get a command and a sentence in docs/demos.md
+        instead of a picture. Nothing is allowed to be in neither list."""
+        sys.path.insert(0, str(ROOT / "demos"))
+        try:
+            import build as demo_build
+        finally:
+            sys.path.pop(0)
+        commands = " ".join(cmd for name in demo_build.BY_NAME
+                            for cmd in demo_build._commands_for(name))
+        inspection = {tool for tool, _cmd, _what in demo_build.INSPECTION}
+        page = (ROOT / "docs" / "demos.md").read_text(encoding="utf-8")
+        for script in sorted(p.name for p in (ROOT / "scripts").glob("*.py")):
+            if script.startswith("_"):
+                continue
+            if script in inspection:
+                self.assertIn(script, page,
+                              f"{script} is on demos/build.py's INSPECTION list but is not in "
+                              f"docs/demos.md (run: python3 demos/build.py --docs)")
+                continue
+            self.assertIn(f"scripts/{script} ", commands + " ",
+                          f"no demo in demos/build.py runs {script}: add one (a before/after "
+                          f"demo) or, if it only ever prints a table, add it to INSPECTION")
 
 
 def _families_for(script):

@@ -14,7 +14,12 @@ The full-resolution `<name>_before.mp4`, `<name>_after.mp4` and side-by-side `<n
 in `demos/out/` (gitignored). Only the small previews below are committed, and the build fails
 if any of them exceeds 500 KB.
 
-In every preview the left half is the input and the right half is what the command produced.
+In every preview the left half is the input and the right half is what the command produced --
+except where the burnt-in labels say otherwise, for a demo comparing two settings (a lossless
+cut against an accurate one) rather than a before against an after.
+
+The tools at the bottom, under **Inspection**, have no picture: they answer a question instead
+of changing one, so the command is the demo.
 
 
 ## Captions & text
@@ -192,6 +197,222 @@ python3 scripts/fit.py demos/out/fixtures/mandel.mp4 --aspect 9:16 --fit blur --
 
 **Look for:** Nothing is cropped and there are no black bars: the whole wide frame sits centred on a blurred, dimmed copy of itself.
 
+### Lossless cut vs. accurate cut
+
+![Lossless cut vs. accurate cut](demos/cut_accurate.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 --tolerance 5 --json -o demos/out/cut_accurate_before.mp4
+python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 --accurate --preset veryfast -o demos/out/cut_accurate_after.mp4
+```
+
+**Look for:** Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.
+
+### Crop to an exact rectangle
+
+![Crop to an exact rectangle](demos/crop_rect.gif)
+
+```bash
+python3 scripts/crop.py demos/out/fixtures/mandel.mp4 --x 320 --y 120 --width 640 --height 480 --preset veryfast -o demos/out/crop_rect_after.mp4
+```
+
+**Look for:** A literal 640x480 window at x=320, y=120 in the source frame -- no aspect maths, no auto-centring; the rectangle is the caller's and is refused rather than rounded if it does not fit.
+
+### Detect letterbox bars, then remove them
+
+![Detect letterbox bars, then remove them](demos/cropdetect_crop.gif)
+
+```bash
+python3 scripts/cropdetect.py demos/out/fixtures/letterbox.mp4 --seconds 4 --json
+python3 scripts/crop.py demos/out/fixtures/letterbox.mp4 --x 0 --y 160 --width 1280 --height 400 --preset veryfast -o demos/out/cropdetect_crop_after.mp4
+```
+
+**Look for:** cropdetect.py measures the bars and prints the rectangle; crop.py is what actually cuts them off. Measuring and deciding stay two commands.
+
+### Pad the timeline with black
+
+![Pad the timeline with black](demos/pad_timeline.gif)
+
+```bash
+python3 scripts/pad.py demos/out/fixtures/mandel.mp4 --start 1 --end 1 --color 0x101014 --preset veryfast -o demos/out/pad_timeline_after.mp4
+```
+
+**Look for:** A second of black and silence before and after the clip -- the TIMELINE grows, the frame does not (that is fit.py --fit pad).
+
+### Freeze frame under a title
+
+![Freeze frame under a title](demos/freeze_hold.gif)
+
+```bash
+python3 scripts/graphics.py demos/out/fixtures/mandel.mp4 --template title --title 'Hold this frame' --subtitle 'freeze.py --at 2 --hold 1.5' --start 1.6 --end 4 -o demos/out/freeze_hold_titled.mp4
+python3 scripts/freeze.py demos/out/freeze_hold_titled.mp4 --at 2 --hold 1.5 --preset veryfast -o demos/out/freeze_hold_after.mp4
+```
+
+**Look for:** The clip stops dead at 2 s for a beat and a half while the title card sits over it, then carries on -- everything after the freeze is pushed later, nothing is lost.
+
+### Loop a short clip
+
+![Loop a short clip](demos/loop_times.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/life.mp4 --start 0 --duration 1.5 --accurate --preset veryfast -o demos/out/loop_times_before.mp4
+python3 scripts/loop.py demos/out/loop_times_before.mp4 --times 4 --preset veryfast -o demos/out/loop_times_after.mp4
+```
+
+**Look for:** A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut, which is a judgement about the material, not a flag.
+
+### A still card dropped into the timeline
+
+![A still card dropped into the timeline](demos/insert_still.gif)
+
+```bash
+python3 scripts/insert.py demos/out/fixtures/slate.png --duration 2 --width 960 --height 540 --fps 25 --zoom in --pan right --preset veryfast -o demos/out/insert_still_card.mp4
+python3 scripts/join.py demos/out/fixtures/motion.mp4 demos/out/insert_still_card.mp4 demos/out/fixtures/mandel.mp4 --transition fade --duration 0.5 --width 960 --height 540 --fps 25 --preset veryfast -o demos/out/insert_still_after.mp4
+```
+
+**Look for:** insert.py turns one PNG into a 2 s clip with a slow zoom and pan, and join.py cross-fades it in between the two shots.
+
+### Numbered stills into a clip
+
+![Numbered stills into a clip](demos/sequence_frames.gif)
+
+```bash
+python3 scripts/sequence.py --dir demos/out/fixtures/frames --pattern frame_%04d.png --start-number 1 --fps 8 --preset veryfast -o demos/out/sequence_frames_after.mp4
+```
+
+**Look for:** Twenty-four PNGs named frame_0001.png onwards become one 8 fps clip; the frame list is resolved and checked on disk before ffmpeg is asked to read it.
+
+### Speed ramp
+
+![Speed ramp](demos/speedramp.gif)
+
+```bash
+python3 scripts/speedramp.py demos/out/fixtures/mandel.mp4 --segment 0-2:2.0 --segment 2-3:0.35 --segment 3-6:1.5 --preset veryfast -o demos/out/speedramp_after.mp4
+```
+
+**Look for:** Three constant-speed segments in one pass: 2x, then a 0.35x slam for the beat, then 1.5x out. Audio is pitch-corrected through all three.
+
+### Denoise
+
+![Denoise](demos/denoise.gif)
+
+```bash
+python3 scripts/denoise.py demos/out/fixtures/noisy.mp4 --strength high --preset veryfast -o demos/out/denoise_after.mp4
+```
+
+**Look for:** hqdn3d at --strength high takes the grain out; look closely and the fine detail softens with it, which is the trade the flag is making.
+
+### Deinterlace
+
+![Deinterlace](demos/deinterlace.gif)
+
+```bash
+python3 scripts/deinterlace.py demos/out/fixtures/interlaced.mp4 --mode frame --parity tff --preset veryfast -o demos/out/deinterlace_after.mp4
+```
+
+**Look for:** The combing on moving edges -- alternate lines from two different moments -- is woven back into whole progressive frames by yadif.
+
+### Stabilize shaky footage
+
+![Stabilize shaky footage](demos/stabilize.gif)
+
+```bash
+python3 scripts/stabilize.py demos/out/fixtures/shaky.mp4 --shakiness 8 --smoothing 20 --zoom 5 --preset veryfast -o demos/out/stabilize_after.mp4
+```
+
+**Look for:** vidstab's two passes cancel the handheld jitter and crop in 5% to hide the edges that smoothing exposes; the frame stops wandering.
+
+### Straighten a tilted horizon
+
+![Straighten a tilted horizon](demos/straighten.gif)
+
+```bash
+python3 scripts/straighten.py demos/out/fixtures/tilted.mp4 --degrees -5 --fit crop --preset veryfast -o demos/out/straighten_after.mp4
+```
+
+**Look for:** A 5 degree tilt taken back out. --fit crop scales up just enough that the rotated corners leave no gap, costing a thin border of picture.
+
+### Redact a rectangle
+
+![Redact a rectangle](demos/redact_blur.gif)
+
+```bash
+python3 scripts/redact.py demos/out/fixtures/motion.mp4 --x 420 --y 180 --width 440 --height 360 --mode blur --blur-strength 24 --preset veryfast -o demos/out/redact_blur_after.mp4
+```
+
+**Look for:** One region blurred for the whole clip and the rest of the frame untouched. The rectangle has to be given: this tool finds no faces and no plates.
+
+### 360 panorama to a flat view
+
+![360 panorama to a flat view](demos/sphere_flat.gif)
+
+```bash
+python3 scripts/sphere.py demos/out/fixtures/equirect.mp4 --input-projection equirect --yaw 40 --pitch -10 --h-fov 100 --v-fov 70 --width 960 --height 540 --preset veryfast -o demos/out/sphere_flat_after.mp4
+```
+
+**Look for:** v360 maps the 2:1 equirectangular source onto a rectilinear camera pointed 40 degrees right and 10 degrees down -- the same viewport a headset would show, baked into a file.
+
+### Green screen onto a generated background
+
+![Green screen onto a generated background](demos/greenscreen.gif)
+
+```bash
+python3 scripts/background.py --duration 4 --width 960 --height 540 --gradient 0xff6a00:0x0057ff --angle 45 --fps 25 --preset veryfast -o demos/out/greenscreen_plate.mp4
+python3 scripts/overlay.py demos/out/greenscreen_plate.mp4 --video demos/out/fixtures/green.mp4 --chromakey 0x00b140 --chromakey-similarity 0.18 --chromakey-blend 0.05 --position center --scale 960 --preset veryfast -o demos/out/greenscreen_after.mp4
+```
+
+**Look for:** background.py draws the gradient plate from nothing (there is no input file), then overlay.py keys the chroma green out of the subject and composites it on top.
+
+### Apply a .cube LUT
+
+![Apply a .cube LUT](demos/color_lut.gif)
+
+```bash
+python3 scripts/color.py demos/out/fixtures/motion.mp4 --lut demos/out/fixtures/look.cube --lut-strength 1.0 --preset veryfast -o demos/out/color_lut_after.mp4
+```
+
+**Look for:** A 3D LUT applied at full strength: highlights warm, shadows cool. The same flag takes a camera vendor's Log-to-709 transform or a creative look -- the file decides, the tool does not.
+
+### Primary colour correction
+
+![Primary colour correction](demos/color_correct.gif)
+
+```bash
+python3 scripts/color.py demos/out/fixtures/motion.mp4 --correct --exposure 0.25 --contrast 1.25 --saturation 1.3 --temperature 7000 --gamma 1.1 --preset veryfast -o demos/out/color_correct_after.mp4
+```
+
+**Look for:** Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.
+
+### 2x2 comparison grid
+
+![2x2 comparison grid](demos/grid_2x2.gif)
+
+```bash
+python3 scripts/grid.py demos/out/fixtures/motion.mp4 demos/out/fixtures/mandel.mp4 demos/out/fixtures/life.mp4 demos/out/fixtures/camb.mp4 --cols 2 --rows 2 --cell-width 480 --cell-height 270 --fps 25 --audio-from 0 --gap 4 --preset veryfast -o demos/out/grid_2x2_after.mp4
+```
+
+**Look for:** Four clips of different content in one frame, each letterboxed into its cell rather than stretched, with the source name burnt into the corner and only input 0's audio carried through.
+
+### B-roll cutaway
+
+![B-roll cutaway](demos/broll_cutaway.gif)
+
+```bash
+python3 scripts/broll.py demos/out/fixtures/motion.mp4 --insert demos/out/fixtures/mandel.mp4 --at 2 --duration 3 --audio a --preset veryfast -o demos/out/broll_cutaway_after.mp4
+```
+
+**Look for:** From 2 s to 5 s the picture cuts away to the insert while the interview audio keeps running underneath, then comes back at its own time -- the output is exactly as long as the A-roll.
+
+### Two cameras, one cut list
+
+![Two cameras, one cut list](demos/multicam_switch.gif)
+
+```bash
+python3 scripts/multicam.py demos/out/fixtures/motion.mp4 demos/out/fixtures/camb.mp4 --switch 0-2:0,2-4:1,4-6:0 --width 960 --height 540 --fps 25 --preset veryfast -o demos/out/multicam_switch_after.mp4
+```
+
+**Look for:** Camera B's audio is the same event 0.6 s offset; multicam.py measures that by cross-correlation, aligns both, then cuts between them on the ranges it was given.
+
 
 ## Audio
 
@@ -235,6 +456,26 @@ python3 scripts/audio.py demos/out/fixtures/motion.mp4 --music demos/out/fixture
 
 **Look for:** The bed drops by 12 dB whenever the speech-like track is active and comes back up in the pauses.
 
+### External mic aligned to the camera
+
+![External mic aligned to the camera](demos/sync_mic.gif)
+
+```bash
+python3 scripts/sync.py demos/out/fixtures/motion.mp4 demos/out/fixtures/mic.wav --replace-audio --json -o demos/out/sync_mic_after.mp4
+```
+
+**Look for:** The mic was started after the camera, so its envelope begins late in its own file; after the sync the same speech sits where the camera's does. Left is the mic as recorded, right is the track that ends up on the picture -- the measured offset and its confidence are printed by the command.
+
+### Audio rendered as a waveform video
+
+![Audio rendered as a waveform video](demos/waveform_render.gif)
+
+```bash
+python3 scripts/waveform.py demos/out/fixtures/music.m4a --style waveform --width 960 --height 540 --color 0x39ff88 --background 0x101014 --waveform-mode cline --preset veryfast -o demos/out/waveform_render_after.mp4
+```
+
+**Look for:** An audio-only file has nothing to show; showwaves draws the amplitude as it plays, and the rendered clip carries the same audio it is drawing.
+
 
 ## Delivery & checks
 
@@ -259,6 +500,16 @@ python3 scripts/render.py demos/out/fixtures/motion.mp4 --template tiktok --cues
 
 **Look for:** One command turns the master into the 1080x1920 deliverable: reframe, burned-in captions kept clear of TikTok's own UI, loudness to -14 LUFS, the tiktok export preset and check.py's platform rows.
 
+### Proxy vs. master, shown at the same size
+
+![Proxy vs. master, shown at the same size](demos/proxy.gif)
+
+```bash
+python3 scripts/proxy.py demos/out/fixtures/mandel.mp4 --width 320 --crf 34 --fps 12 -o demos/out/proxy_after.mp4
+```
+
+**Look for:** Both halves are scaled to the same cell, which is the honest comparison: the proxy is smaller on disk and cheaper to decode, not smaller on screen. The softness is the point of it.
+
 
 ## Projects & inspection
 
@@ -281,6 +532,66 @@ python3 scripts/look.py demos/out/fixtures/mandel.mp4 --tiles 4x3 --width 960 -o
 ```
 
 **Look for:** Twelve timecoded frames in one PNG: the fastest way to confirm an edit landed where it should.
+
+### Scene detection into a highlight reel
+
+![Scene detection into a highlight reel](demos/scenes_highlights.gif)
+
+```bash
+python3 scripts/scenes.py demos/out/fixtures/shots.mp4 --highlights 2 --min-scene 1 --edl demos/out/scenes_highlights_picks.txt
+python3 scripts/cut.py demos/out/fixtures/shots.mp4 --segments 0.00-2.00,2.00-4.00 --accurate --preset veryfast -o demos/out/scenes_highlights_after.mp4
+```
+
+**Look for:** scdet finds the hard cuts, scenes.py ranks the scenes and writes the ranges as an EDL, and cut.py --segments is what turns that proposal into a reel. The ranking is a proxy for interest, not a judgement of it.
+
+### Chapter marks written into the container
+
+![Chapter marks written into the container](demos/metadata_chapters.gif)
+
+```bash
+python3 scripts/metadata.py demos/out/fixtures/mandel.mp4 --chapters demos/out/fixtures/chapters.txt --title 'Demo episode' -o demos/out/metadata_chapters_tagged.mp4
+```
+
+**Look for:** Nothing in the picture changes -- every stream is copied bit for bit. The right half is the chapter list read back out of the file with ffprobe and drawn as the timeline strip a player would show.
+
+
+## Inspection
+
+These tools answer a question instead of changing a picture, so there is
+nothing to put a before and an after next to. Each one prints a table, a JSON document or writes
+an HTML file; the command is the demo.
+
+### probe.py
+
+```bash
+python3 scripts/probe.py demos/out/render_project_after.mp4 --compact
+```
+
+**No picture:** duration, fps and VFR suspicion, frame size, codecs, pixel format and colour tags, audio channels and sample rate -- one JSON document, or one line per file with --compact.
+
+### verify.py
+
+```bash
+python3 scripts/verify.py ~/Footage --quick --report verify.md
+```
+
+**No picture:** runs the whole toolchain over your own files and prints a PASS/FAIL table, one row per tool per file. Synthetic fixtures cannot show what a real phone container does; this can.
+
+### batch.py
+
+```bash
+python3 scripts/batch.py ~/Footage --recipe batch.json --dry-run
+```
+
+**No picture:** applies one recipe to a folder with a content-hash cache, printing what it would run, what it skipped as unchanged, and where each output lands.
+
+### report.py
+
+```bash
+python3 scripts/report.py --before raw.mov --after final.mp4 -o report.html
+```
+
+**No picture:** a single self-contained HTML page: before/after contact sheets, loudness, the platform check table and the exact commands. It is a file to open, not a picture to embed here.
 
 
 ---

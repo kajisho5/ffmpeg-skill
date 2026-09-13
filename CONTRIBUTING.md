@@ -77,6 +77,10 @@ would have caught the original bug isn't done yet.
   `demos/build.py`, then run `python3 demos/build.py --docs`). A feature nobody
   can see working is hard to review and harder to trust; the demo also runs the
   new tool end to end, so a broken flag fails the build instead of the reader.
+  Every script under `scripts/` must appear in some demo's command line — a test
+  asserts it. The only exception is a tool whose entire output is a table, a JSON
+  document or an HTML file: add it to `INSPECTION` in `demos/build.py` instead and
+  it gets a command and a sentence in the gallery's Inspection section.
 
 ## Reporting issues
 
