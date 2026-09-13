@@ -74,6 +74,14 @@ clip measured at -40 LUFS or below is room tone, wind or nothing; raising it
 25 dB raises the noise, not the content. Leave the level, say so, and offer music
 or narration.
 
+Do not add a speech gate in front of the measurement either: `loudnorm`'s EBU
+R128 integrated loudness already applies the −70 LUFS absolute and −10 LU
+relative gates, which drop the same quiet blocks a `silencedetect` pass would.
+A speech-span gate was measured against the whole-file measurement on every
+fixture in the repo, including one that is half digital silence, and moved the
+result by at most 0.6 LU — inside `check.py`'s own ±1 LU tolerance — for the
+cost of a second full decode. That is why `loudness.py` has no speech-gate flag.
+
 ## Text and framing
 
 ### Captions, fonts and text order

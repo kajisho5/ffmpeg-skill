@@ -136,8 +136,12 @@ def validate_project(proj: Dict[str, Any]) -> None:
         check_keys(proj.get(name), name, name)
     check_keys((proj.get("audio") or {}).get("stems"), "audio.stems", "audio.stems")
     if isinstance(proj.get("chapters"), list):
+        # Every other project error is raised here, before the first ffmpeg call; a chapter typo
+        # found inside the last stage costs a whole render and leaves an unchaptered file behind.
         for i, item in enumerate(proj["chapters"]):
             check_keys(item, "chapters[]", f"chapters[{i}]")
+            if not isinstance(item, dict) or item.get("at") is None or not str(item.get("title") or "").strip():
+                die(f'chapters[{i}]: needs {{"at": TIME, "title": STR}}')
     for name in ("clips", "graphics", "overlays"):
         items = proj.get(name)
         if isinstance(items, list):
@@ -298,6 +302,9 @@ def main() -> int:
     def rel(p: Any) -> str:
         p = str(p)
         return p if os.path.isabs(p) else str(base / p)
+
+    if isinstance(proj.get("chapters"), str) and not os.path.exists(rel(proj["chapters"])):
+        die(f"chapters file not found: {rel(proj['chapters'])}")
 
     clips = proj.get("clips") or []
     if not clips:
@@ -497,6 +504,8 @@ def main() -> int:
         stems = au.pop("stems", None) or {}
         if stems.get("effects") is not None and not au.get("effects"):
             die('audio.stems.effects sets the level of "audio": {"effects": "sfx.wav"}, which this project does not have')
+        if stems.get("music") is not None and not au.get("music"):
+            die('audio.stems.music sets the level of "audio": {"music": "bed.mp3"}, which this project does not have')
         for stem, key in (("dialogue", "gain"), ("music", "music_volume"), ("effects", "effects_volume")):
             if stems.get(stem) is not None:
                 au.setdefault(key, stems[stem])
@@ -565,23 +574,20 @@ def main() -> int:
     # ---- chapters (metadata.py on the delivered file: streams copied, markers written)
     ch = proj.get("chapters")
     if ch:
-        if STATE.dry_run:
-            info("[dry-run] would write chapter markers with metadata.py (the delivered file does not exist yet)")
+        # Planned exactly like the audio stage: the metadata.py command names the export's output,
+        # which a dry run has not written either. The plan is the run, so --dry-run shows the
+        # command and lists the stage (the child's own --dry-run prints rather than writes).
+        if isinstance(ch, list):
+            chapter_file = str(work / "chapters.txt")
+            lines = [f"{entry['at']} {entry['title']}" for entry in ch]
+            Path(chapter_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
         else:
-            if isinstance(ch, list):
-                chapter_file = str(work / "chapters.txt")
-                lines = []
-                for i, entry in enumerate(ch):
-                    if not isinstance(entry, dict) or entry.get("at") is None:
-                        die(f'chapters[{i}]: needs {{"at": TIME, "title": STR}}')
-                    lines.append(f"{entry['at']} {entry.get('title') or f'Chapter {i + 1}'}")
-                Path(chapter_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
-            else:
-                chapter_file = rel(ch)
-            tagged = str(work / ("chapters" + Path(output).suffix))
-            sh("metadata.py", output, "--chapters", chapter_file, "-o", tagged)
+            chapter_file = rel(ch)
+        tagged = str(work / ("chapters" + Path(output).suffix))
+        sh("metadata.py", output, "--chapters", chapter_file, "-o", tagged)
+        if not STATE.dry_run:
             place_output(tagged, output)
-            stages_done.append("chapters")
+        stages_done.append("chapters")
 
     # ---- check
     ck = proj.get("check")

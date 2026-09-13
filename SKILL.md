@@ -98,7 +98,7 @@ Timestamp flags — `--start`, `--end`, `--at`, `--from`, `--duration`, `--offse
 | "webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |
 | "remove the green screen" | `overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00` |
 | "sync the lav mic", "line up two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` / `sync.py camA.mp4 camB.mp4 --trim-second` |
-| "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` podcast, `-I -23` broadcast; `--dialogue` measures the speech, not the ambience between lines; `--lra N` for the range) |
+| "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` podcast, `-I -23` broadcast; `--lra N` for the range) |
 | "cut this and make it HEVC / AV1 / ProRes" (output codec named) | `cut.py input.mp4 --start 0:10 --end 0:40 --codec hevc` (`--codec`/`--quality` on any re-encoding tool; ProRes needs `-o NAME.mov`) |
 | "export for YouTube / Reels / X", "a ProRes master" | `export.py input.mp4 --preset youtube\|reels\|x\|prores\|h265` (`--normalize` hits the loudness spec in the same call) |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
@@ -109,7 +109,7 @@ Timestamp flags — `--start`, `--end`, `--at`, `--from`, `--duration`, `--offse
 | "what would you run?", "don't render yet" | any script with `--dry-run` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` → `cut.py --segments` |
 | "is this OK to upload?" | `check.py final.mp4 --platform reels` |
-| "a podcast episode with chapters" | `loudness.py ep.wav -I -16 --tp -1.5 --dialogue` → `metadata.py ep.m4a --chapters chapters.txt` → `check.py ep.m4a --platform podcast` (chapters and channels rows) |
+| "a podcast episode with chapters" | `loudness.py ep.wav -I -16 --tp -1.5` → `metadata.py ep.m4a --chapters chapters.txt` → `check.py ep.m4a --platform podcast` (chapters and channels rows) |
 | "several changes to the same edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
 | "a lower third with my name", "countdown intro", "progress bar" | `graphics.py input.mp4 --template lower-third --name "..." --title "..." --start 2 --end 8` |
 | "use our brand fonts/colours/logo" | `--brand brand.json` on caption/overlay/graphics, or `"brand"` in project.json |
@@ -126,9 +126,9 @@ Timestamp flags — `--start`, `--end`, `--at`, `--from`, `--duration`, `--offse
 | "the colours are tagged wrong" | `color.py input.mp4 --retag bt709` (stream copy; re-encodes only if the copy can't carry it — see `reencoded`) |
 | "brighten it / punch up contrast / fix white balance" | `color.py input.mp4 --correct --exposure 0.3 --contrast 1.1 --saturation 1.05 --temperature 5600 --tint -0.05` |
 | "clean up the audio", "remove the hiss" | `audio.py input.mp4 --voice` (speech; `--voice light\|medium\|strong`) or `--denoise` |
-| "add background music under the talking" | `audio.py input.mp4 --music bed.mp3 --duck --fade-out 3` |
+| "add background music under the talking" | `audio.py input.mp4 --music bed.mp3 --duck --fade-out 3` (`--effects sfx.wav` adds a third bed, never ducked; project levels: `audio.stems`) |
 | "make the music duck harder / come back faster" | add `--duck-amount 18 --duck-threshold -30 --duck-release 250` (`--duck-attack` too) |
-| "the mix sounds narrow", "wider stereo" | `audio.py band.wav --stereo-widen 0.5` (a mono track needs `--stereo` as well) |
+| "the mix sounds narrow", "wider stereo" | `audio.py band.wav --stereo-widen 0.5` (needs a real stereo source; 5.1 needs `--downmix`) |
 | "convert the 5.1 to stereo" | `audio.py input.mov --downmix` |
 | "swap in the narration track" | `audio.py input.mp4 --replace narration.wav` |
 | "pull the audio out", "give me the sound as WAV" | `audio.py input.mp4 -o input.wav` (an audio extension drops the picture; `--audio-stream 1` picks a track) |

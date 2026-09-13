@@ -165,8 +165,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                         {"capability": AAC, "when": "output extension isn't .mp3/.opus/.ogg/.flac (audio_codec_for()'s default)"}] + AUDIO_OUT,
                   video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video stream-copied)"],
-                     required=FF + ["filter:loudnorm"], optional=[{"capability": "filter:silencedetect", "when": "--dialogue"}, {"capability": "filter:aselect", "when": "--dialogue"},
-                                                                  {"capability": AAC, "when": "output extension isn't .mp3/.opus/.ogg/.flac (audio_codec_for()'s default)"}] + AUDIO_OUT,
+                     required=FF + ["filter:loudnorm"], optional=[{"capability": AAC, "when": "output extension isn't .mp3/.opus/.ogg/.flac (audio_codec_for()'s default)"}] + AUDIO_OUT,
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": X264, "when": "removing silences from a video"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"}] + AUDIO_OUT,
@@ -224,7 +223,7 @@ DRY_RUN_ANALYSIS = {
     "report": "probe, loudness and contact-sheet measurements run; the HTML is not written",
     "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
     "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written",
-    "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real (with --dialogue the silencedetect pass runs too); the normalised output is not written",
+    "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
     "check": "read-only tool; the loudness measurement runs under --dry-run too, so every row is present",
     "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
 }
@@ -416,8 +415,7 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     elif name == "loudness":
         extra = {"measured": {"type": "object", "description": "the loudnorm measurement of the input (input_i, input_tp, input_lra, input_thresh, target_offset); with --measure-only it is the whole result"},
                  "targets": {"type": "object", "description": "the requested lufs / tp / lra"},
-                 "result": {"type": "object", "description": "the written file measured again (input_i, input_tp, input_lra, ...), plus tp_ceiling_used, audio_bitrate_used and encodes"},
-                 "dialogue_gate": {"type": "object", "description": "--dialogue only: {speech_fraction, used, spans, noise_db, min_silence} -- used is false when under 20% of the file is speech and the whole file was measured instead"}}
+                 "result": {"type": "object", "description": "the written file measured again (input_i, input_tp, input_lra, ...), plus tp_ceiling_used, audio_bitrate_used and encodes"}}
     elif name == "cut":
         extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},

@@ -12,7 +12,7 @@ Examples:
   python3 audio.py talk.mp4 --music bed.mp3 --music-volume -18 --music-fade-out 3   # bed fades, voice does not
   python3 audio.py clip.mp4 --fade-in 0.5 --fade-out 1 --stereo
   python3 audio.py talk.mp4 --music bed.mp3 --duck --duck-threshold -30 --duck-release 250   # ducks earlier and recovers faster
-  python3 audio.py band.wav --stereo-widen 0.5 -o wide.wav      # wider stereo image (mono needs --stereo too)
+  python3 audio.py band.wav --stereo-widen 0.5 -o wide.wav      # wider stereo image (a real stereo source; mono is refused)
   python3 audio.py surround.mov --downmix                       # 5.1 -> stereo with proper centre/LFE weights
   python3 audio.py clip.mp4 --replace narration.wav             # swap the audio track entirely
   python3 audio.py interview.mp4 -o interview.wav               # extract the audio (no video in the output)
@@ -102,7 +102,8 @@ def main() -> int:
     clean.add_argument("--voice", nargs="?", const="medium", choices=["light", "medium", "strong"], default=None,
                        help="speech preset (default medium when the flag is given bare): light = highpass 80 Hz + gentle compression; "
                             "medium = highpass, de-esser, denoise, gentle compression; strong = medium plus a harder de-esser, a second "
-                            "compressor and a soft limiter at -1 dBFS")
+                            "compressor and a soft limiter at -1 dBFS. MCP/JSON callers may still send the 1.12 boolean true, "
+                            "which is the bare flag and so means medium")
     clean.add_argument("--gain", type=float, help="gain in dB applied to the main track")
     music = ap.add_argument_group("music")
     music.add_argument("--music", help="music file to mix underneath")
@@ -124,8 +125,9 @@ def main() -> int:
     channels.add_argument("--stereo", action="store_true", help="force 2-channel output (mono is duplicated to both sides)")
     channels.add_argument("--mono", action="store_true", help="force 1-channel output")
     fades.add_argument("--stereo-widen", type=float, default=None, metavar="AMOUNT",
-                       help="widen the stereo image, 0..1 (0 = untouched, 1 = maximum); a mono input is refused unless --stereo is also given, "
-                            "in which case it is duplicated to two channels first and widened after")
+                       help="widen the stereo image, 0..1 (0 = untouched, 1 = maximum); needs a real stereo source: a mono input is "
+                            "refused (duplicating it leaves both channels identical, so there is nothing to widen) and more than two "
+                            "channels are refused unless --downmix folds them to stereo first")
     fades.add_argument("--downmix", action="store_true", help="downmix 5.1/7.1 to stereo using standard weights")
     fades.add_argument("--replace", help="replace the audio with this file (trimmed/padded to the video)")
     dyn = ap.add_argument_group("dynamics (typed; each flag is one option of ffmpeg's acompressor / alimiter / agate)")
@@ -156,6 +158,17 @@ def main() -> int:
         if not getattr(args, switch) and any(getattr(args, f) is not None for f in DYNAMICS[flag_group]):
             die(f"--{switch} is off but one of its parameters was given; add --{switch}")
 
+    # Same rule as the typed dynamics above, for the ducking knobs: a parameter for a switch that
+    # is off does nothing, and a caller who says --duck-release 250 and gets the default 400 ms has
+    # no way to notice. --duck itself needs a bed to duck.
+    duck_params = [f"--duck-{name}" for name in ("threshold", "attack", "release")
+                   if getattr(args, f"duck_{name}") != ap.get_default(f"duck_{name}")] + \
+                  (["--duck-amount"] if args.duck_amount != ap.get_default("duck_amount") else [])
+    if not args.duck and duck_params:
+        die(f"--duck is off but {duck_params[0]} was given; add --duck")
+    if args.duck and not args.music:
+        die("--duck ducks the music bed under the main track, but no --music was given; add --music FILE")
+
     for flag, value, lo, hi in (("--duck-amount", args.duck_amount, 0.0, 60.0),
                                 ("--duck-threshold", args.duck_threshold, -60.0, 0.0),
                                 ("--duck-attack", args.duck_attack, 0.01, 2000.0),
@@ -181,9 +194,15 @@ def main() -> int:
     if args.stereo_widen is not None:
         if args.mono:
             die("--stereo-widen and --mono contradict each other: there is no stereo image in a 1-channel output")
-        if in_channels == 1 and not args.stereo:
-            die("--stereo-widen needs a stereo track; this input is mono. Add --stereo to duplicate it to two channels first "
-                "(the widening then happens after the duplication), or leave the track mono.")
+        # Widening scales the side signal (L-R). Duplicating a mono track to two channels leaves
+        # L == R, so the side signal is exactly zero and scaling it changes nothing: --stereo is
+        # not a way in, it is a way to a file that measures mono no matter the amount asked for.
+        if in_channels == 1:
+            die("--stereo-widen needs a real stereo source: mono has no stereo image to widen; keep it mono or "
+                "use --stereo to duplicate it, but widening needs a real stereo source")
+        if in_channels > 2 and not args.downmix:
+            die(f"--stereo-widen needs a stereo track; this input has {in_channels} channels. Add --downmix to fold it "
+                "to stereo first (the widening then happens after the downmix), or leave the channels alone.")
 
     inputs: List[str] = ["-i", args.input]
     main_src = f"0:a:{args.audio_stream}"
@@ -222,8 +241,8 @@ def main() -> int:
         fx.append("aformat=channel_layouts=stereo")
     if args.stereo_widen is not None:
         # extrastereo widens by scaling the side (L-R) signal: m=1 is the input, m=3 is as wide
-        # as it goes before the centre collapses. It runs after the channel layout is settled so
-        # a --stereo mono source is widened on two real channels, not on one.
+        # as it goes before the centre collapses. It runs after the channel layout is settled, so
+        # a --downmix 5.1 source is widened on the stereo fold-down rather than on six channels.
         fx.append(f"extrastereo=m={1 + 2 * args.stereo_widen:g}")
 
     graph: List[str] = []

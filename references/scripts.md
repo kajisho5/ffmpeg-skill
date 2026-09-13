@@ -409,13 +409,17 @@ level per element of the mix: `dialogue` is the main track's gain, `music` the
 bed's level, `effects` the level of the third file `"audio": {"effects":
 "sfx.wav"}` adds (never ducked). Each maps to the flag of the same meaning
 (`--gain`, `--music-volume`, `--effects-volume`); an explicit flag next to a
-stem wins, and a stems `effects` level with no `effects` file is refused.
+stem wins, and a stems level with no file to apply it to (`effects` without
+`"effects"`, `music` without `"music"`) is refused, `kind: input`.
 `"audio": {"voice": "light"|"medium"|"strong"}` picks the voice strength
 (`true` is `medium`).
 
 `"chapters"` is a chapters file path, or an inline list of `{"at": TIME,
 "title": STR}`; it runs `metadata.py` on the delivered file as the last stage
-before `check`, so the markers are in the file that ships (streams copied).
+before `check`, so the markers are in the file that ships (streams copied). The
+entries and the file path are validated before the first stage runs, and the
+stage plans its `metadata.py` command under `--dry-run`/`--plan` like every
+other stage, so the plan lists `chapters` and the run does the same work.
 
 Stages: clips (cut, optional speed) → join (transition) → silence → fit →
 captions → graphics → overlays → audio → loudness → export → chapters → check. Keys mirror the
@@ -719,6 +723,10 @@ produced. The exact filter chains:
 
 `light` for a good room (rumble and level only, noise floor and sibilance left
 alone), `medium` for a normal talking head, `strong` for phone/laptop audio.
+`strong` is the only level with a limiter, so it is the only one whose peaks
+stop at −1 dBFS: `medium` (the default, and the chain a bare `--voice` gets) can
+clip a hot source, since its make-up gain has nothing above it — normalise
+afterwards with `loudness.py`, or use `strong`, which measures quieter and safer.
 `--duck` uses a sidechain compressor keyed by the speech so music dips under
 dialogue and swells in pauses:
 `sidechaincompress=threshold=0.05:ratio=<amount/3, min 2>:attack=20:release=400:makeup=1`
@@ -728,10 +736,12 @@ threshold ducks on quieter speech, a shorter release brings the bed back faster.
 `--json`'s `audio` block reports the settings the run actually used.
 `--effects FILE` mixes a third track (sound effects, atmos) at
 `--effects-volume` and is never ducked — effects are cut to the picture.
-`--stereo-widen 0..1` widens the stereo image (`extrastereo=m=1+2*amount`),
-applied after the channel layout is settled; a mono input is refused (`kind:
-input`) unless `--stereo` is given too, which duplicates it to two channels
-first and widens after. `--downmix` uses the
+`--stereo-widen 0..1` widens the stereo image (`extrastereo=m=1+2*amount`) and
+needs a real stereo source: it scales the side signal (L−R), so a mono track
+duplicated to two channels has nothing to scale. A 1-channel input is refused
+(`kind: input`) — `--stereo` duplicates it but does not widen it — and more than
+two channels are refused unless `--downmix` is given too, in which case the
+widening runs on the stereo fold-down. `--downmix` uses the
 ITU centre/LFE weights for 5.1/7.1 → stereo. `--mono` averages a stereo pair,
 leaves a 1-channel input untouched and downmixes >2 channels through
 swresample. Video is always stream-copied, and so is a subtitle/data track
@@ -740,23 +750,13 @@ Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation
 ```
-loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--dialogue] [--measure-only] [-o OUT]
+loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--measure-only] [-o OUT]
 ```
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the
 input, `result.input_lra` for the written file, with `targets` echoing the
 requested lufs / tp / lra.
-
-`--dialogue` gates the measurement on speech: `silencedetect` (noise −35 dB,
-0.5 s) finds the gaps, the pass-1 loudnorm measurement runs over the spans
-between them (`aselect`), and the gain that measurement produces is applied to
-the whole file — so an ambience-heavy edit is normalised on what is being said,
-not on the room tone between the lines, and the room tone is not lifted with it.
-The written file is re-measured over the same spans. When under 20 % of the file
-is above the noise floor the gate is not trustworthy: one info line says so and
-the whole-file measurement is used. `--json` carries
-`dialogue_gate: {"speech_fraction", "used", "spans", "noise_db", "min_silence"}`.
 
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
 the true-peak ceiling allows). Video and any subtitle/data track are

@@ -112,18 +112,24 @@ and the default MCP `tools/list` are unchanged except for additions.
 ## 1.13.0 — the audio bed (done)
 
 - `audio.py` (done): `--voice [light|medium|strong]` (bare `--voice` is `medium`, the chain it
-  always produced), `--stereo-widen 0..1` (a mono input is refused unless `--stereo` duplicates
-  it first), the sidechain ducking parameters exposed (`--duck-threshold`, `--duck-attack`,
+  always produced), `--stereo-widen 0..1` (refused on a mono input, and on more than two
+  channels unless `--downmix` folds them to stereo first), the sidechain ducking parameters exposed (`--duck-threshold`, `--duck-attack`,
   `--duck-release`, next to the existing `--duck-amount`), and `--effects FILE` /
   `--effects-volume`: a third bed that is deliberately never ducked. `--json` gains an `audio`
   block naming the duck settings the run used. `render.py` spells the levels as
   `audio.stems: {dialogue, music, effects}`, mapping to `--gain` / `--music-volume` /
   `--effects-volume`.
 - `loudness.py` (done): `--lra N` documented and the measured input/output ranges reported in
-  `--json` (`measured.input_lra`, `result.input_lra`, `targets`); `--dialogue` runs
-  `silencedetect` (noise −35 dB, 0.5 s) and measures loudness over the non-silent spans only
-  (`aselect`), applying that gain to the whole file, with a whole-file fallback and one info
-  line when under 20 % of the file is speech. `dialogue_gate` in `--json`.
+  `--json` (`measured.input_lra`, `result.input_lra`, `targets`).
+- `loudness.py --dialogue` was **not** shipped. It was built (silencedetect → aselect → a gated
+  loudnorm measurement) and then measured against the whole-file measurement it was meant to
+  correct: `loudnorm`'s EBU R128 integrated loudness already applies the −70 LUFS absolute and
+  −10 LU relative gates, which drop the same blocks the speech gate dropped. On every fixture in
+  the repo — including one that is half digital silence — the gated result moved by at most
+  0.6 LU, inside `check.py`'s own ±1 LU tolerance, and cost a second full decode of the input.
+  A flag that cannot change the delivered file by more than the tolerance it is checked against
+  is not worth the pass; `references/gotchas.md#loudness-and-ambience` records it so it is not
+  re-proposed.
 - `check.py --platform podcast` (done) gains `chapters` (PASS with ≥ 1 marker, WARN `none`) and
   `channels` (PASS mono/stereo, WARN above — players downmix 5.1 unpredictably); both are
   informational and absent for other platforms.

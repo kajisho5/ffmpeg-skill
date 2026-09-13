@@ -649,7 +649,6 @@
   "properties": [
    "argv",
    "audio_bitrate",
-   "dialogue",
    "dry_run",
    "fast",
    "input",
