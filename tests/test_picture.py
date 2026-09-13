@@ -762,6 +762,88 @@ class PictureTests(MediaFixtures):
         self.assertEqual(m["video"]["codec"], "h264", "video must stay copied through both chained calls")
         self.assertEqual(m["audio"]["codec"], "aac", "audio must stay copied through both chained calls")
 
+    def test_srt_lang_suffix_parsing(self):
+        """`FILE:lang` splits on the last colon, and only when the suffix is a language code and
+        the whole token is not itself a file on disk -- so a Windows path and a file genuinely
+        named `a:b.srt` survive."""
+        import caption  # noqa: E402
+        self.assertEqual(caption.split_srt_lang("en.srt:en"), ("en.srt", "en"))
+        self.assertEqual(caption.split_srt_lang("subs/file.srt:pt-BR"), ("subs/file.srt", "pt-BR"))
+        self.assertEqual(caption.split_srt_lang("plain.srt"), ("plain.srt", None))
+        self.assertEqual(caption.split_srt_lang("C:\\subs\\en.srt"), ("C:\\subs\\en.srt", None))
+        odd = OUT / "a:b.srt"
+        odd.write_text("1\n00:00:00,000 --> 00:00:01,000\nx\n", encoding="utf-8")
+        self.assertEqual(caption.split_srt_lang(str(odd)), (str(odd), None))
+        # MPEG-4 needs the ISO-639-2 spelling (verified empirically: ffmpeg silently writes NO
+        # language tag for a two-letter code in .mp4); Matroska stores what it is given.
+        self.assertEqual(caption.container_language("ja", "x.mp4"), "jpn")
+        self.assertEqual(caption.container_language("ja", "x.mkv"), "ja")
+
+    def test_duplicate_language_and_bad_code_are_refused(self):
+        srt = OUT / "mux_dup.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
+        script("caption.py", self.src, "--mode", "mux", "--srt", f"{srt}:en", "--srt", f"{srt}:en",
+               "-o", OUT / "dup.mkv", expect_fail=True)
+        script("caption.py", self.src, "--mode", "mux", "--srt", f"{srt}:en",
+               "--default-track", "ja", "-o", OUT / "dup2.mkv", expect_fail=True)
+
+    def test_burn_with_two_srts_refused(self):
+        srt = OUT / "mux_burn2.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
+        script("caption.py", self.src, "--srt", f"{srt}:en", "--srt", f"{srt}:ja",
+               "-o", OUT / "burn2.mp4", expect_fail=True)
+
+    def test_mux_three_languages_into_mkv(self):
+        """Three tracks in one call: nothing re-encoded, every stream tagged, and check.py's new
+        informational `subtitles` row lists all three."""
+        files = {}
+        for lang, text in (("en", "Hello"), ("ja", "\u3053\u3093\u306b\u3061\u306f"), ("es", "Hola")):
+            f = OUT / f"mux3_{lang}.srt"
+            f.write_text(f"1\n00:00:00,000 --> 00:00:02,000\n{text}\n", encoding="utf-8")
+            files[lang] = f
+        out = OUT / "cap_mux3.mkv"
+        res = json.loads(script("caption.py", self.src, "--mode", "mux",
+                                "--srt", f"{files['en']}:en", "--srt", f"{files['ja']}:ja",
+                                "--srt", f"{files['es']}:es", "--default-track", "en",
+                                "--json", "-o", out).stdout)
+        self.assertEqual(res["subtitle_tracks"], 3)
+        self.assertEqual([t["language"] for t in res["tracks"]], ["en", "ja", "es"])
+        self.assertEqual([t["default"] for t in res["tracks"]], [True, False, False])
+        self.assertEqual(res["tracks"][1]["title"], "\u65e5\u672c\u8a9e")
+        src_m, m = probe(str(self.src)), probe(str(out))
+        self.assertEqual(m["subtitle_streams"], 3)
+        # ffprobe reports Matroska's codes verbatim (empirically: `en`, not `eng`)
+        langs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+                   "stream_tags=language", "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual(langs, ["en", "ja", "es"])
+        self.assertEqual(m["video"]["codec"], src_m["video"]["codec"], "video was re-encoded")
+        self.assertEqual(m["audio"]["codec"], src_m["audio"]["codec"], "audio was re-encoded")
+        chk = json.loads(script("check.py", out, "--platform", "youtube", "--no-loudness",
+                                "--json").stdout)
+        subs_row = [r for r in chk["checks"] if r["check"] == "subtitles"]
+        self.assertEqual(len(subs_row), 1)
+        self.assertEqual(subs_row[0]["status"], "PASS")
+        for code in ("en", "ja", "es"):
+            self.assertIn(code, subs_row[0]["value"])
+
+    def test_mux_into_mp4_converts_to_iso639_2_and_warns_about_players(self):
+        """Empirically, an .mp4 keeps three mov_text tracks but drops a two-letter language code
+        outright -- so the code is converted and the caller is told the container is the wrong
+        one for a switchable deliverable."""
+        files = []
+        for lang in ("en", "ja", "es"):
+            f = OUT / f"mux3mp4_{lang}.srt"
+            f.write_text("1\n00:00:00,000 --> 00:00:02,000\nx\n", encoding="utf-8")
+            files.append(f"{f}:{lang}")
+        out = OUT / "cap_mux3.mp4"
+        res = json.loads(script("caption.py", self.src, "--mode", "mux", *[a for f in files for a in ("--srt", f)],
+                                "--json", "-o", out).stdout)
+        self.assertEqual([t["language"] for t in res["tracks"]], ["eng", "jpn", "spa"])
+        langs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+                   "stream_tags=language", "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual(langs, ["eng", "jpn", "spa"])
+        self.assertTrue(any(".mkv" in n for n in res.get("notes") or []), res.get("notes"))
+
     def test_caption_mux_picks_the_subtitle_codec_from_the_container(self):
         srt = OUT / "mux_container_cues.srt"
         script("caption.py", "--text", self.cues, "--write-srt", srt)

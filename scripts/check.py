@@ -173,6 +173,25 @@ def main() -> int:
         row("chapters", "PASS" if chapters else "WARN", f"{len(chapters)}" if chapters else "none", ">= 1 chapter marker",
             "metadata.py episode.m4a --chapters chapters.txt (`TIME TITLE` per line; streams copied)",
             reason="chapter markers are optional, but a podcast app shows them as the episode's seekable table of contents")
+    # Subtitles, informational and on every platform: a soft subtitle track that carries no
+    # language tag is the defect caption.py --mode mux's multi-track form exists to prevent -- a
+    # player lists it as "Track 2" and a viewer cannot tell which language it is. Never counted in
+    # `failed`: no platform refuses a delivery over it.
+    subs = meta.get("subtitle_stream_details") or []
+    if not subs:
+        row("subtitles", "WARN", "none", ">= 1 language-tagged subtitle track",
+            "caption.py video.mp4 --mode mux --srt subs.srt:en -o video_subs.mkv (streams are copied)",
+            reason="subtitles are optional, but they are the cheapest accessibility win a delivery has")
+    else:
+        untagged = [str(s["index"]) for s in subs if not s.get("language")]
+        listed = ", ".join((s.get("language") or "untagged") for s in subs)
+        row("subtitles", "WARN" if untagged else "PASS", f"{len(subs)} ({listed})",
+            "every track tagged with its language",
+            "caption.py video.mp4 --mode mux --srt subs.srt:en -o video_subs.mkv, or re-mux with `--srt file:lang` per track"
+            if untagged else "",
+            reason=("stream(s) " + ", ".join(untagged) + " carry no language tag: a player lists them "
+                    "by number and the viewer has to guess") if untagged else "")
+
     if a:
         if a.get("sample_rate") and a["sample_rate"] not in (44100, 48000):
             row("sample rate", "WARN", a["sample_rate"], "44100 or 48000", "loudness.py --sample-rate 48000")

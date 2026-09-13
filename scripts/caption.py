@@ -38,7 +38,7 @@ import re
 import sys
 import unicodedata
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, ass_units, resolve as resolve_platform
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
@@ -676,6 +676,69 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         fh.write("\n".join(header + lines) + "\n")
 
 
+# ------------------------------------------------------- multi-language subtitle tracks (1.16)
+# BCP-47-ish: a 2-3 letter primary subtag, optionally followed by script/region/variant subtags.
+LANG_TOKEN_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
+
+# The name a player lists a track under, when the caller gives no --track-title. Data, not a
+# translation: a code that is not in the table gets the code itself, never an invented name.
+LANG_TITLES = {
+    "en": "English", "es": "Espanol", "pt": "Portugues", "fr": "Francais", "de": "Deutsch",
+    "it": "Italiano", "nl": "Nederlands", "pl": "Polski", "ru": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439",
+    "ja": "\u65e5\u672c\u8a9e", "zh": "\u4e2d\u6587", "ko": "\ud55c\uad6d\uc5b4",
+    "ar": "\u0627\u0644\u0639\u0631\u0628\u064a\u0629", "he": "\u05e2\u05d1\u05e8\u05d9\u05ea",
+    "hi": "\u0939\u093f\u0928\u094d\u0926\u0940", "th": "\u0e44\u0e17\u0e22",
+    "tr": "Turkce", "id": "Bahasa Indonesia", "vi": "Tieng Viet", "sv": "Svenska",
+    "da": "Dansk", "no": "Norsk", "fi": "Suomi", "cs": "Cestina", "uk": "\u0423\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430",
+}
+
+# MP4/MOV store the language in an ISO-639-2/T box and silently drop anything that is not three
+# letters -- verified against ffmpeg 6.1: `-metadata:s:s:0 language=en` on an .mp4 writes NO
+# language tag at all, while `language=eng` writes one ffprobe reads back. Matroska stores the
+# code verbatim, so `en` survives there. Only the codes this table knows are converted; an
+# unknown one is passed through with a note rather than guessed at.
+ISO639_1_TO_2 = {
+    "en": "eng", "es": "spa", "pt": "por", "fr": "fra", "de": "deu", "it": "ita", "nl": "nld",
+    "pl": "pol", "ru": "rus", "ja": "jpn", "zh": "zho", "ko": "kor", "ar": "ara", "he": "heb",
+    "hi": "hin", "th": "tha", "tr": "tur", "id": "ind", "vi": "vie", "sv": "swe", "da": "dan",
+    "no": "nor", "fi": "fin", "cs": "ces", "uk": "ukr", "el": "ell", "hu": "hun", "ro": "ron",
+    "bg": "bul", "ca": "cat", "fa": "fas", "ta": "tam", "bn": "ben", "ms": "msa", "fil": "fil",
+}
+
+
+def split_srt_lang(token: str) -> Tuple[str, Optional[str]]:
+    """`file.srt:ja` -> ("file.srt", "ja"); anything else -> (token, None).
+
+    The split is on the LAST colon and only when the suffix is BCP-47-shaped AND the whole token
+    is not itself a readable file -- so `C:\\subs\\en.srt` (a Windows path) and a file genuinely
+    named `a:b.srt` are never mangled.
+    """
+    token = str(token)
+    if ":" not in token or os.path.exists(token):
+        return token, None
+    head, _, tail = token.rpartition(":")
+    if head and LANG_TOKEN_RE.match(tail):
+        return head, tail
+    return token, None
+
+
+def container_language(code: str, output: str) -> str:
+    """The spelling of `code` this container actually stores (see ISO639_1_TO_2)."""
+    ext = Path(output).suffix.lower()
+    if ext not in (".mp4", ".m4v", ".mov"):
+        return code
+    primary = code.split("-")[0].lower()
+    return ISO639_1_TO_2.get(primary, code)
+
+
+def track_title_for(code: Optional[str], given: Optional[str]) -> Optional[str]:
+    if given:
+        return given
+    if not code:
+        return None
+    return LANG_TITLES.get(code.split("-")[0].lower(), code)
+
+
 def mux_subtitle_codec(output: str) -> str:
     ext = Path(output).suffix.lower()
     if ext in (".mp4", ".m4v", ".mov"):
@@ -739,13 +802,26 @@ def main() -> int:
                           "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
                           "the first track, same as leaving it unset always did")
     src = ap.add_argument_group("subtitle source")
-    src.add_argument("--srt", help="SRT file to burn")
+    src.add_argument("--srt", action="append", metavar="FILE[:LANG]",
+                     help="SRT file to burn, or (with --mode mux) to add as a soft subtitle track. Repeat it once "
+                          "per language to build a multi-track deliverable, each with an optional `:lang` suffix: "
+                          "`--srt en.srt:en --srt ja.srt:ja`. A single --srt with no suffix takes --language, as "
+                          "it always did. NOTE: .mp4/.mov hold several mov_text tracks but many players show only "
+                          "the first, and the format needs ISO-639-2 codes (`eng`, not `en`) -- this tool converts "
+                          "them; .mkv is the honest multi-track container and stores the code you give verbatim")
     src.add_argument("--ass", help="ASS file to burn (styles inside the file are used)")
     src.add_argument("--text", help="plain text cue file to convert into SRT (see format above)")
     src.add_argument("--transcribe", action="store_true", help="generate the SRT from the audio with a local speech-to-text engine if one is installed (whisper-cli / whisper / faster-whisper); never required")
     src.add_argument("--language", "--lang", help="language code (e.g. en, ja, zh, ko): the language for --transcribe (default auto), "
                                                   "the tag on the subtitle stream with --mode mux, and the hint that says whether Han-only "
                                                   "text is Chinese, Japanese or Korean when a font is picked by script")
+    src.add_argument("--track-title", action="append", metavar="TITLE",
+                     help="--mode mux: the name a player lists a track under, repeated in the same order as --srt "
+                          "(default: the language's display name from a frozen table, else the code itself -- the "
+                          "table is data, never a guessed or translated name)")
+    src.add_argument("--default-track", metavar="LANG",
+                     help="--mode mux: mark this language's track `default` so a player selects it by itself "
+                          "(default: none, so no player burns in a language the viewer did not ask for)")
     src.add_argument("--offset", default="0", help="shift every cue by TIME (seconds, mm:ss, hh:mm:ss.ms or "
                                                     "hh:mm:ss:ff; a leading - shifts earlier); works for --text, --srt and --ass")
     src.add_argument("--model", default="base", help="whisper model name/path for --transcribe (default base)")
@@ -895,6 +971,31 @@ def main() -> int:
         caption_stats.update(stats)
         return out, any(v for k, v in stats.items() if k != "wrap")
 
+    # --srt is repeatable since 1.16 (one per language, each with an optional `:lang` suffix).
+    # Every path below that burns, adjusts or transcribes works on the FIRST one, which is what
+    # `--srt x.srt` has always meant; the extra tracks only exist for --mode mux.
+    srt_tracks: List[Tuple[str, Optional[str]]] = []
+    for token in (args.srt or []):
+        path_part, lang_part = split_srt_lang(token)
+        srt_tracks.append((path_part, lang_part))
+    if len(srt_tracks) == 1 and srt_tracks[0][1] is None and args.language:
+        srt_tracks[0] = (srt_tracks[0][0], args.language)
+    if srt_tracks and args.mode != "mux" and len(srt_tracks) > 1:
+        die("burning renders pixels; only one language can be in the picture -- burn one and mux "
+            "the rest (caption.py OUT --mode mux --srt en.srt:en --srt ja.srt:ja)", kind="input")
+    seen_langs = [lang for _p, lang in srt_tracks if lang]
+    for lang in seen_langs:
+        if not LANG_TOKEN_RE.match(lang):
+            die(f"--srt: '{lang}' is not a language code (two or three letters, optionally with a "
+                "region, e.g. en, ja, pt-BR)", kind="input")
+    if len(set(seen_langs)) != len(seen_langs):
+        dup = sorted({l for l in seen_langs if seen_langs.count(l) > 1})
+        die(f"--srt: two tracks tagged '{', '.join(dup)}' -- a player cannot tell them apart; give "
+            "each track its own code (and --track-title to name them)", kind="input")
+    if args.track_title and len(args.track_title) > max(1, len(srt_tracks)):
+        die(f"--track-title given {len(args.track_title)} times for {len(srt_tracks)} --srt file(s)",
+            kind="input")
+    args.srt = srt_tracks[0][0] if srt_tracks else None
     srt_path = args.srt
     if args.transcribe:
         if not args.input:
@@ -985,26 +1086,78 @@ def main() -> int:
         codec = mux_subtitle_codec(output)
         # Keep any subtitle track(s) the input already has (e.g. chaining --mode mux once per
         # language to build a multi-language set) -- copied byte-identical, distinct from the
-        # newly-added SRT's own codec below.
+        # newly-added SRTs' own codec below.
         existing_subs = meta.get("subtitle_streams") or 0
+        # the first entry's path is srt_path, which --offset/--max-lines may have repointed at an
+        # adjusted copy; the rest are taken as written
+        added = [(srt_path, srt_tracks[0][1] if srt_tracks else args.language)] + \
+                [(p, lang) for p, lang in srt_tracks[1:]]
+        for path, _lang in added[1:]:
+            if not os.path.exists(path) and not STATE.dry_run:
+                die(f"SRT file not found: {path}")
+        titles = list(args.track_title or [])
         maps = ["-map", "0:v:0"]
-        cmd = ffmpeg_base() + ["-i", args.input, "-i", srt_path]
+        cmd = ffmpeg_base() + ["-i", args.input]
+        for path, _lang in added:
+            cmd += ["-i", path]
         if meta.get("audio"):
             maps += ["-map", f"0:a:{args.audio_stream}"]
         if existing_subs:
             maps += ["-map", "0:s?"]
-        maps += ["-map", "1:0"]
+        for n in range(len(added)):
+            maps += ["-map", f"{n + 1}:0"]
         cmd += maps + ["-c:v", "copy"] + (["-c:a", "copy"] if meta.get("audio") else [])
         for i in range(existing_subs):
             cmd += [f"-c:s:{i}", "copy"]
-        cmd += [f"-c:s:{existing_subs}", codec]
-        if args.language:
-            cmd += [f"-metadata:s:s:{existing_subs}", f"language={args.language}"]
+        tracks: List[Dict[str, Any]] = []
+        for i in range(existing_subs):
+            kept = (meta.get("subtitle_stream_details") or [])
+            detail = kept[i] if i < len(kept) else {}
+            tracks.append({"index": i, "file": None, "language": detail.get("language"),
+                           "title": detail.get("title"), "codec": detail.get("codec"),
+                           "default": False, "cues": None, "kept_from_input": True})
+        for n, (path, lang) in enumerate(added):
+            idx = existing_subs + n
+            cmd += [f"-c:s:{idx}", codec]
+            stored = container_language(lang, output) if lang else None
+            if stored:
+                cmd += [f"-metadata:s:s:{idx}", f"language={stored}"]
+            title = track_title_for(lang, titles[n] if n < len(titles) else None)
+            if title:
+                cmd += [f"-metadata:s:s:{idx}", f"title={title}"]
+            is_default = bool(args.default_track and lang
+                              and lang.lower() == args.default_track.lower())
+            if is_default:
+                cmd += [f"-disposition:s:{idx}", "default"]
+            cues_n = None
+            if os.path.exists(path):
+                try:
+                    cues_n = len(parse_srt(path))
+                except SystemExit:
+                    cues_n = None
+            tracks.append({"index": idx, "file": path, "language": stored, "title": title,
+                           "codec": codec, "default": is_default, "cues": cues_n,
+                           "kept_from_input": False})
+        if args.default_track and not any(t["default"] for t in tracks):
+            die(f"--default-track {args.default_track}: no --srt was tagged with that language",
+                kind="input")
         cmd += [output]
         run(cmd)
         result = probe(output, role="output")
-        info(f"wrote {output} ({fmt_secs(result.get('duration'))}, mux, subtitle codec {codec})")
-        emit(output)
+        notes = list(side_notes)
+        total = existing_subs + len(added)
+        if total > 2 and Path(output).suffix.lower() in (".mp4", ".m4v", ".mov"):
+            notes.append(f"{total} subtitle tracks in an MPEG-4 container: the tracks are all there, "
+                         "but many players only ever show the first -- write to .mkv for a "
+                         "deliverable a viewer can actually switch")
+        if Path(output).suffix.lower() in (".mp4", ".m4v", ".mov") and any(
+                t["language"] and len(t["language"]) != 3 for t in tracks if not t["kept_from_input"]):
+            notes.append("MPEG-4 stores the language as a three-letter ISO-639-2 code and drops "
+                         "anything else; a code this tool has no conversion for was passed through "
+                         "as given and may not survive")
+        info(f"wrote {output} ({fmt_secs(result.get('duration'))}, mux, {len(added)} "
+             f"subtitle track(s) added, codec {codec})")
+        emit(output, tracks=tracks, subtitle_tracks=total, **({"notes": notes} if notes else {}))
         return 0
 
     # A font that covers the text, before anything is rendered: non-Latin cues in a Latin-only
