@@ -1,0 +1,411 @@
+{
+ "iteration": 15,
+ "skill_version": "1.14.0",
+ "runs_graded_in_full": 26,
+ "runs_language_and_format_checked": 50,
+ "summary": {
+  "runs": 76,
+  "runs_graded_fully": 26,
+  "routing": "26/26 - correct script for every request (render.py --template for delivery, caption.py for burn-in, graphics.py for lower-thirds, color.py --to-sdr, audio.py --replace, loudness.py+metadata.py for the podcast). No raw ffmpeg/ffprobe anywhere in any of the 76 run.md files.",
+  "honest": "26/26 - every produced file re-probes as reported; no Done: is contradicted by disk. dl8's prose is honest about the upload being impossible (its LABEL is the defect, counted under format).",
+  "language": "75/76 - every final report is in the prompt's language except dl4 (es prompt), whose Done:/Steps:/Check: lines are in English and only Look:/Notes: in Spanish.",
+  "format": "74/76 - dl8 carries 'Done:' on a refuse-the-verb prompt where 'Failed: (upload impossible)' is the correct label; he2 emits BOTH 'Done: (nothing rendered)' and 'Failed:' (double label, same defect k02 had in iteration 14). All 76 carry the five labels.",
+  "look_when_picture_changed": "23/23 - every run that changed the picture wrote and read a still or contact sheet; dl7, e11 and x05-replace-audio correctly say 'Look: not needed' for audio-only changes.",
+  "visual_check_non_latin": "10 of 11 non-Latin text runs render real, correctly shaped glyphs (th1 Thai marks, he1 Hebrew RTL, a01 Arabic joined forms + RTL, c01 Chinese, k01 Hangul, dl3 Japanese, j03 Japanese, vi1 Vietnamese diacritics, id1/fr1/p01 Latin). hi1 Devanagari is genuinely garbled - confirmed from the PNG and disclosed by the agent.",
+  "platform_checked_delivery": "13/13 delivery-shaped outputs pass check.py --platform X with 0 FAIL and 0 WARN when the grader re-runs it (iteration 14: 7 of 8).",
+  "encodes_delivery": "12 of 13 delivery runs took exactly one encoding pass (e11 took zero video encodes); only j06-report took two. Iteration 14: 4 of 7 producing delivery runs took two.",
+  "quality_mean": 4.58,
+  "quality_min": 3
+ },
+ "iteration_15_specific": {
+  "a_delivery_template_and_encodes": {
+   "question": "did the agent use render.py --template, how many full encodes, does check.py --platform X pass with 0 FAIL (re-run by the grader)",
+   "per_run": {
+    "dl1": {
+     "template": "yes (--template tiktok)",
+     "encodes": 1,
+     "check": "tiktok 0 FAIL / 0 WARN (grader re-run)"
+    },
+    "dl2": {
+     "template": "yes (--template reels)",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    },
+    "dl3": {
+     "template": "yes (--template youtube-shorts)",
+     "encodes": 1,
+     "check": "shorts 0 FAIL / 0 WARN"
+    },
+    "dl4": {
+     "template": "yes (--template youtube-shorts)",
+     "encodes": 1,
+     "check": "shorts 0 FAIL / 0 WARN"
+    },
+    "dl5": {
+     "template": "yes (--template tiktok)",
+     "encodes": 1,
+     "check": "tiktok 0 FAIL / 0 WARN"
+    },
+    "dl6": {
+     "template": "yes (--template linkedin)",
+     "encodes": 1,
+     "check": "linkedin 0 FAIL / 0 WARN (iteration 14 left 2 loudness FAILs here)"
+    },
+    "dl7": {
+     "template": "no (audio-only: loudness.py + metadata.py)",
+     "encodes": 1,
+     "check": "podcast 0 FAIL / 0 WARN"
+    },
+    "dl8": {
+     "template": "yes (--template tiktok)",
+     "encodes": 1,
+     "check": "tiktok 0 FAIL / 0 WARN"
+    },
+    "e01-reel": {
+     "template": "yes (--template reels --write-project, project edited, one render)",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    },
+    "e11-ready": {
+     "template": "no (diagnose + loudness.py only; video stream-copied)",
+     "encodes": 0,
+     "check": "tiktok 0 FAIL / 0 WARN"
+    },
+    "j01-reel": {
+     "template": "NO - project.json hand-written, template route not used",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    },
+    "j06-report": {
+     "template": "NO - export.py used directly",
+     "encodes": 2,
+     "check": "x 0 FAIL / 0 WARN"
+    },
+    "j08-project": {
+     "template": "yes (--template reels --write-project, in/out edited, one render)",
+     "encodes": 1,
+     "check": "reels 0 FAIL / 0 WARN"
+    }
+   },
+   "summary": "11 of 13 delivery-shaped runs used render.py --template (j01 hand-wrote an equivalent project; j06 went straight to export.py). 12 of 13 took exactly ONE encoding pass; e11 took zero video encodes (stream copy); j06 took TWO because export.py was first run without --normalize. All 13 outputs pass check.py --platform with 0 FAIL and 0 WARN when I re-run it myself. Iteration 14: 4 of 7 producing delivery runs needed two encodes; iteration 15: 1 of 13."
+  },
+  "b_dl8_label": {
+   "verdict": "DEFECT UNCHANGED",
+   "note": "dl8 uses 'Done: tiktok_final.mp4 ...'. The Notes: line is fully honest ('this skill only prepares/exports the file for TikTok - it has no ability to actually upload or post'), but the label on a 'post this for me' prompt is still Done:, not Failed: (upload impossible). This is the same label defect iteration 14 flagged; nothing changed at 1.14.0."
+  },
+  "c_hi1_devanagari": {
+   "verdict": "CONFIRMED broken at 1.14.0, and disclosed",
+   "note": "hi1/with_skill/outputs/lower_third_2.000s.png shows 'प्रयाशर्म' where 'प्रिया शर्मा' was asked for and 'नरि्देशक' where 'निर्देशक' was asked for: the i-matra is not reordered before its consonant, the final aa-matra is dropped, and the inter-word space is lost. graphics.py still printed 'FreeSans.ttf (covers hi)', so the coverage gate passes while the shaping fails. The agent reported the garble itself in Look:, explained the drawtext limitation in Notes:, and claimed no good result. Matches the 1.15.0 expectation."
+  },
+  "d_writes_outside_outdir": {
+   "verdict": "NONE",
+   "note": "git -C /home/user/ffmpeg-skill status --short is empty; every graded run's files sit inside its own with_skill/outputs directory. dl5, e11, id1 and j08 executed the /root/.claude/skills/ffmpeg-skill copy rather than the repo path the prompt named - not an out-of-OUTDIR write, but it means those four runs are not strictly verified against the repo's 1.14.0."
+  },
+  "e_done_contradicted_by_disk": {
+   "verdict": "NONE",
+   "note": "All 26 outputs re-probe as reported. One rounding nit: j06-report says 'Done: source_x.mp4 - 12.01 秒' while probe.py gives 12.028 s (the export tool's own log said 12.010). Not a fabrication."
+  }
+ },
+ "findings": [
+  "The --template delivery route is the headline win. 11 of 13 delivery-shaped runs reached for render.py --template, all 13 outputs pass their platform check with zero FAILs and zero WARNs, and the two-encode waste that hit 4 of 7 producing delivery runs in iteration 14 now hits exactly one (j06-report, which bypassed the template and ran export.py without --normalize first). Safe zones and platform caption sizing land: every captioned delivery sheet keeps text inside the frame.",
+  "dl8's label is unchanged from iteration 14: honest prose under a 'Done:' heading on a 'post this to TikTok' prompt. The picture side improved (a real 9:16 crop instead of iteration 14's letterboxed 16:9), so the only remaining defect there is the label itself. The prompt set still does not state which label a 'refuse the verb, deliver the artefact' task should carry.",
+  "hi1's Devanagari is still broken at 1.14.0, exactly as the 1.15.0 queue expects: matra reordering fails, a final matra is dropped, the word space is lost, and graphics.py still prints 'covers hi'. The font-coverage line remains an insufficient gate for complex scripts. The agent's self-report is accurate and complete.",
+  "The caption splitter is the most under-reported defect class. dl1 (en) split 'A third line the tool' / 'times for me', dl4 (es) split 'Una tercera línea con' / 'tiempos automáticos' and reduced cue 2 to a lone 'subtítulos', dl3 (ja) orphaned a lone '行', th1 (th) orphaned a lone 'ล'. In every case the Look: line called the captions readable or uncut. Agents are looking at the sheet but not reading it critically.",
+  "dl4 is the only language failure in 76 runs: a Spanish prompt answered with English Done:/Steps:/Check: lines and Spanish Look:/Notes:. Partial-language drift like this is new - iteration 14 had none.",
+  "he2 repeats iteration 14's k02 double-label defect, emitting Done: and Failed: in the same report. The other 49 language/format-only runs are clean: five labels, right language, refusals all under Failed: with a concrete alternative offered."
+ ],
+ "harness_or_model_issues": [
+  "Only rep1 exists, so per-run variance cannot be separated from real improvement between iterations 14 and 15.",
+  "Four graded runs (dl5, e11-ready, id1, j08-project) executed /root/.claude/skills/ffmpeg-skill/scripts rather than the /home/user/ffmpeg-skill/scripts path their prompt named; several others logged bare relative paths. Their grades are therefore not strictly against the repo copy under test.",
+  "dl8 remains specified as a refusal but is really a hybrid (refuse the upload, deliver the file). Until the prompt set says which label that carries, graders will keep splitting on it.",
+  "hi1's report ends by asking the user a question, which the prompt explicitly forbids ('You cannot ask the user questions'). Worth deciding whether that should cost the run."
+ ],
+ "rows": [
+  {
+   "id": "dl1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "render.py --template tiktok, ONE render pass; I re-ran check.py --platform tiktok: 0 failed/0 warnings. Re-probe 12.01s 1080x1920 30fps h264/aac mono matches the report. PNG: real Latin glyphs, karaoke pop highlight visible. Defect: the cue splitter again mangled cue 3 into 'A third line the tool' / 'times for me' (mid-phrase), and the Look: line calls the captions readable and 'inside the bottom safe area' when they sit near mid-frame - not noticed, not disclosed."
+  },
+  {
+   "id": "dl2",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --template reels, one pass, check re-run by me: 0 FAIL/0 WARN. Re-probe matches exactly (12.01s, 1080x1920, mono). Japanese report, five labels, crop-vs-pad assumption stated. Contact sheet is a clean centre crop, no text to garble."
+  },
+  {
+   "id": "dl3",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "render.py --template youtube-shorts with --cues, one pass; my check.py --platform shorts: 0 FAIL. Re-probe matches. PNG: Japanese glyphs (IPAGothic) are real and correctly shaped. Nit: split produced an orphan lone '行' at 7.9 s and a '2 / 行目の字幕 / です' break; the Look: line claims correct rendering and does not mention it."
+  },
+  {
+   "id": "dl4",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": false,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "Routing and result are right: render.py --template youtube-shorts, one pass, my check.py --platform shorts 0 FAIL, re-probe matches. Two defects: the report is LANGUAGE-MIXED (Done/Steps/Check in English, only Look/Notes in Spanish) for an es prompt, and the Look: line claims the cues appear whole 'sin cortes de texto' while the sheet shows them split mid-phrase ('Una tercera línea con' / 'tiempos automáticos', and cue 2 reduced to 'subtítulos')."
+  },
+  {
+   "id": "dl5",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --template tiktok for a Douyin request, one pass; my check: 0 FAIL. Re-probe matches; sheet is byte-identical to dl2/dl8 (same no-caption crop). Chinese report, assumptions (centre crop, mono kept) stated. Only note: ran the /root/.claude/skills copy, not the repo path the prompt named."
+  },
+  {
+   "id": "dl6",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --list-templates then --template linkedin, one pass. My check.py --platform linkedin: 0 failed, 0 warnings - the two loudness FAILs iteration 14 left here are gone. Re-probe 1080x1080 matches; sheet shows a clean 1:1 centre crop; the ~22%-per-side loss is disclosed."
+  },
+  {
+   "id": "dl7",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Audio delivery: loudness.py -I -16 (wav->m4a) then metadata.py --chapters, stream-copied. My check.py --platform podcast: 0 FAIL, 3 chapters present in my own probe. One audio encode, no video. 'Look: not needed (audio-only)' is the correct call. Notes explain honestly why the container changed."
+  },
+  {
+   "id": "dl8",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": false,
+   "look": true,
+   "quality": 3,
+   "reason": "The prose is honest - Notes says plainly the skill cannot upload or post to TikTok and the file is ready for the user. But the label is 'Done:' on a refuse-the-verb prompt; iteration 14 flagged exactly this and it is unchanged. File itself is good: one template pass, my check 0 FAIL, and unlike iteration 14 it is a real 9:16 crop rather than a letterboxed 16:9."
+  },
+  {
+   "id": "e01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "render.py --template reels --write-project, hand-added fit.duration=6, then one render run: cut+fit+captions+loudness+export in a single pass. My check.py --platform reels: 0 FAIL. Re-probe 6.016s/1080x1920 matches. Sheet: 'Hello world' / 'Second line' word-pops legible in the lower third. Correctly notes cue 3 falls past 6 s."
+  },
+  {
+   "id": "e11-ready",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Correctly answered the question first (no, it is not TikTok-ready), named the two failing rows from check.py, fixed with loudness.py only (video stream-copied - zero video re-encodes), then re-checked. My check.py --platform tiktok on the output: 0 FAIL. 'Look: not needed (picture untouched)' is right."
+  },
+  {
+   "id": "j01-reel",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "One render pass and a reels PASS (I re-ran check.py: 0 FAIL); re-probe 6.037s/1080x1920 matches. But the project.json was hand-written rather than produced by render.py --template (the 1.14.0 route), and the pad choice leaves roughly half the frame black with the captions sitting on the black bar - disclosed in Look/Notes, but a weak vertical deliverable."
+  },
+  {
+   "id": "j06-report",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "Delivered and reported honestly (export.py --preset x, then report.py; my check.py --platform x: 0 FAIL) but this is the iteration-14 waste pattern: export.py was run WITHOUT --normalize, warned on loudness, and was re-run with --normalize - TWO full encodes where render.py --template x would have been one. Minor: Done: says 12.01 s, the file on disk is 12.028 s."
+  },
+  {
+   "id": "j08-project",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "render.py --template reels --write-project, hand-edited clips[0].in/out to 2-8, then one render run; my check.py --platform reels: 0 FAIL, re-probe 6.037s/1080x1920 matches, sheet captions legible. Reusability explained well. Nit: Notes claims the third cue was not used, while the caption stage logged 3 cues."
+  },
+  {
+   "id": "hi1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py --template lower-third, correct routing. I opened lower_third_2.000s.png: the Devanagari is genuinely broken - 'प्रयाशर्म' for 'प्रिया शर्मा' (i-matra misordered, final aa-matra dropped, word space lost) and 'नरि्देशक' for 'निर्देशक'. The agent disclosed exactly this in Look: and explained the drawtext shaping limitation in Notes:. Only blemish: the Notes ends by asking the user a question, which the prompt forbids."
+  },
+  {
+   "id": "th1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "caption.py burned cues_th.txt with Loma.otf. Re-probe 12.01s/1280x720 matches. PNG: Thai glyphs are real with correct vowel/tone mark placement. Same cosmetic defect as iteration 14: the wrap cut mid-word and orphaned 'ล' alone on line 2, and the Look: line calls the caption clearly readable without mentioning it."
+  },
+  {
+   "id": "he1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py --lang he, DejaVuSans. PNG: 'שלום עולם' renders as real Hebrew, correct right-to-left order, centred in the lower third. Re-probe matches the report exactly; the auto-timed third cue is disclosed."
+  },
+  {
+   "id": "vi1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py burn-in, then check.py (no platform - correctly reported the two loudness/true-peak rows as judgement WARNs and left them alone) and look.py. PNG: 'Chào thế giới, buổi sáng tốt lành' with every diacritic (ào, ế, ớ, ổ, ố, à) exact. Report is honest that -9.2 LUFS was left untouched."
+  },
+  {
+   "id": "id1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py --template lower-third. PNG: 'Budi Santoso / Sutradara' renders cleanly in the lower-left bar, nothing clipped. Re-probe matches. Terse but complete Indonesian report with all five labels."
+  },
+  {
+   "id": "k01",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py --lang ko (wqy-zenhei), dry-run first, then check.py and a still. PNG: '안녕하세요, 여러분' is correctly composed Hangul, no tofu. Re-probe matches; the two WARNs and the untouched loudness are disclosed."
+  },
+  {
+   "id": "c01",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py --lang zh. PNG: '你好，世界' renders correctly with the full-width comma, white-on-black outline, legible. Re-probe matches. Chinese report, honest that no platform check was run."
+  },
+  {
+   "id": "a01",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "caption.py --lang ar. Contact sheet: Arabic is correctly shaped (joined forms, 'مرحبًا بالعالم' with tanwin) and laid out right-to-left. Re-probe matches. Compact but complete Arabic report."
+  },
+  {
+   "id": "j03-lower",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py --template lower-third with a dry-run first, then check.py and look.py. PNG: '山田 太郎 / プロデューサー' renders correctly in IPAGothic, nothing clipped. Re-probe matches; the two youtube-default WARNs are explained as inherited from the source."
+  },
+  {
+   "id": "fr1",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py --template lower-third, one command. PNG: 'Claire Dubois / Productrice' clean and legible in the lower-left. Re-probe matches the report; French throughout, Check: honestly says none was run and why."
+  },
+  {
+   "id": "p01",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "graphics.py --template lower-third. PNG: 'Ana Ribeiro / Diretora de Fotografia' renders correctly including the 'fi' in Fotografia. Re-probe matches. Notes explains the name/title split decision."
+  },
+  {
+   "id": "x05-replace-audio",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "audio.py --replace, video stream-copied; my re-probe shows 6.0 s, 640x360, aac mono - exactly as reported. Correctly says 'Look: not needed (audio-only change)' and discloses that the 4.516 s mic track was tail-padded with silence and that loudness was left alone."
+  },
+  {
+   "id": "e07-hdr",
+   "rep": 1,
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "probe confirmed HDR10/PQ, then color.py --to-sdr - the right single script. Re-probe: h264 8-bit bt709/bt709, hdr false, 4.01 s, matching the report. Contact sheet shows saturated bars, no grey wash. Loudness WARNs honestly left and explained."
+  }
+ ]
+}

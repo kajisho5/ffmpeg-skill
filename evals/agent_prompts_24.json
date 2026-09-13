@@ -7,7 +7,7 @@
    "fit|render",
    "caption|render",
    "export|render",
-   "check",
+   "check|render",
    "look"
   ],
   "refuse": false
@@ -123,7 +123,7 @@
    "fit|render",
    "caption|render",
    "export|render",
-   "check",
+   "check|render",
    "look"
   ],
   "refuse": false
@@ -543,7 +543,7 @@
   "prompt": "Make /home/user/ffmpeg-skill/tests/out/source.mp4 a TikTok with these captions: OUTDIR/cues_dl1.txt. Save to OUTDIR.",
   "expect": [
    "render|fit|export",
-   "check"
+   "check|render"
   ],
   "refuse": false,
   "note": "delivery/template request: vertical 9:16 + captions + platform export + check. Runnable today as a manual fit/caption/export/check chain; from 1.14.0 also as render.py --template tiktok",
@@ -557,7 +557,7 @@
   "prompt": "この動画 /home/user/ffmpeg-skill/tests/out/source.mp4 をリールにして。OUTDIR に保存。",
   "expect": [
    "render|fit|export",
-   "check"
+   "check|render"
   ],
   "refuse": false,
   "note": "delivery/template request in Japanese: Reels means 9:16 + Reels export + check"
@@ -568,7 +568,7 @@
   "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を YouTube ショートにして、OUTDIR/cues_dl3.txt の字幕付きで。OUTDIR に保存。",
   "expect": [
    "render|fit|export",
-   "check"
+   "check|render"
   ],
   "refuse": false,
   "note": "delivery/template request in Japanese: Shorts = 9:16 + captions + export + check",
@@ -582,7 +582,7 @@
   "prompt": "Haz un Short de YouTube de /home/user/ffmpeg-skill/tests/out/source.mp4 con estos subtítulos: OUTDIR/cues_dl4.txt. Guarda el resultado en OUTDIR.",
   "expect": [
    "render|fit|export",
-   "check"
+   "check|render"
   ],
   "refuse": false,
   "note": "delivery/template request in Spanish: Shorts = 9:16 + captions + export + check",
@@ -596,7 +596,7 @@
   "prompt": "把 /home/user/ffmpeg-skill/tests/out/source.mp4 做成抖音竖屏视频，结果保存到 OUTDIR。",
   "expect": [
    "render|fit|export",
-   "check"
+   "check|render"
   ],
   "refuse": false,
   "note": "delivery/template request in Chinese: Douyin/TikTok = 9:16 + export + check"
@@ -607,7 +607,7 @@
   "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を LinkedIn 用に 1:1 で書き出して。OUTDIR に保存。",
   "expect": [
    "render|fit|export",
-   "check"
+   "check|render"
   ],
   "refuse": false,
   "note": "delivery/template request in Japanese: square 1:1 reframe + export + check"
@@ -618,7 +618,7 @@
   "prompt": "Turn /home/user/ffmpeg-skill/tests/out/lavmic.wav into a podcast episode with chapters from OUTDIR/chapters.txt. Save to OUTDIR.",
   "expect": [
    "render|loudness|export",
-   "check"
+   "check|render"
   ],
   "refuse": false,
   "audio_only": true,
