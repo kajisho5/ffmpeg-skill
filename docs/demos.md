@@ -560,7 +560,7 @@ python3 scripts/look.py demos/out/fixtures/mandel.mp4 --tiles 4x3 --width 960 -o
 
 ```bash
 python3 scripts/scenes.py demos/out/fixtures/shots.mp4 --highlights 2 --min-scene 1 --edl demos/out/scenes_highlights_picks.txt
-python3 scripts/cut.py demos/out/fixtures/shots.mp4 --segments 0.00-2.00,2.00-4.00 --accurate --preset veryfast -o demos/out/scenes_highlights_after.mp4
+python3 scripts/cut.py demos/out/fixtures/shots.mp4 --segments 0.00-1.50,4.00-5.50 --accurate --preset veryfast -o demos/out/scenes_highlights_after.mp4
 ```
 
 **Look for:** scdet finds the hard cuts, scenes.py ranks the scenes and writes the ranges as an EDL, and cut.py --segments is what turns that proposal into a reel. The ranking is a proxy for interest, not a judgement of it.
