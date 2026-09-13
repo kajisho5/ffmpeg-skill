@@ -1390,7 +1390,7 @@ class FFmpegSkillTests(unittest.TestCase):
                       "--fast", "-o", out, "--json")
         self.assertTrue(adjusted.exists(), real.stderr)
         burned = [c for c in json.loads(real.stdout)["commands"] if "-vf" in c]
-        self.assertIn(str(adjusted), burned[0], "the real run burns the file the plan named")
+        self.assertIn(adjusted.name, burned[0], "the real run burns the file the plan named")
 
     def test_a_brand_file_without_a_font_does_not_switch_font_by_script_off(self):
         """BRAND_DEFAULTS always supplies a font, so the merged brand document cannot say whether
