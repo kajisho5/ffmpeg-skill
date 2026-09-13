@@ -10,7 +10,7 @@ import json
 import os
 import argparse
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from _common.color import bt709_tag_args, _sdr_bt709
 from _common.emit import die
 from _common.runner import CODECS, STATE, ffmpeg_encoders
@@ -413,3 +413,108 @@ def brand_caption_style(brand: Dict[str, Any]) -> Dict[str, Any]:
         style["color"] = style.pop("colour")
     style.pop("colour", None)
     return style
+
+
+# ------------------------------------------------------------------- chapter proposal (1.16)
+
+def fmt_chapter_time(t: float) -> str:
+    """The YouTube description convention: `00:00`, `03:12`, `1:02:03` past the hour, always
+    rounded DOWN to the second so the timestamp never lands after the moment it names."""
+    total = max(0, int(t))
+    h, rem = divmod(total, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{sec:02d}"
+    return f"{m:02d}:{sec:02d}"
+
+
+def _evidence_rank(ev: Dict[str, Any]) -> tuple:
+    """How strong a candidate is, for the drop order: both detectors beat a silence, a silence
+    beats a scene cut, and within a kind the longer pause / higher score wins."""
+    kind = ev.get("kind")
+    tier = {"start": 3, "silence+scene": 2, "silence": 1, "scene": 0}.get(kind, 0)
+    within = float(ev.get("silence_length") or ev.get("score") or 0.0)
+    return (tier, within)
+
+
+def propose_chapters(duration: float, silences: "Sequence", scene_cuts: "Sequence", *,
+                     min_chapter: float = 60.0, max_chapters: int = 0,
+                     source: str = "both") -> "List[Dict[str, Any]]":
+    """Chapter markers proposed from measured structure. Pure: the detectors' outputs go in,
+    a list of `{"at", "title", "evidence"}` comes out, and nothing is decoded here.
+
+    A chapter starts where speech RESUMES, so a silence contributes its `end`, not its midpoint.
+    A scene cut within 1 s of such a point is the same event seen twice and is merged into one
+    candidate with `kind: "silence+scene"`, which the `--max-chapters` cap never drops before a
+    single-evidence one. Candidates closer than `min_chapter` to the one already kept are dropped,
+    stronger evidence winning; so is anything inside `min_chapter` of the end of the file.
+
+    Every title is `Chapter N`. The function never looks at, and never invents, content: naming a
+    chapter needs knowing what is said in it, which is the calling agent's job, not this skill's.
+    """
+    duration = float(duration or 0.0)
+    min_chapter = max(0.0, float(min_chapter))
+    candidates: "List[Dict[str, Any]]" = []
+    if source in ("silence", "both"):
+        for span in silences or []:
+            start, end = float(span[0]), span[1]
+            if end is None or end == float("inf"):
+                continue
+            end = float(end)
+            candidates.append({"at": end, "evidence": {
+                "kind": "silence", "silence": [round(start, 3), round(end, 3)],
+                "silence_length": round(end - start, 3)}})
+    if source in ("scenes", "both"):
+        for cut in scene_cuts or []:
+            cut = float(cut)
+            if cut <= 0.0:
+                continue     # scenes.py always reports 0.0 as the first cut; that is the start
+            candidates.append({"at": cut, "evidence": {"kind": "scene", "scene_at": round(cut, 3)}})
+
+    # merge a scene cut that stands within 1 s of a silence end: one event, two witnesses
+    candidates.sort(key=lambda c: c["at"])
+    merged: "List[Dict[str, Any]]" = []
+    for cand in candidates:
+        prior = merged[-1] if merged else None
+        if prior and abs(cand["at"] - prior["at"]) <= 1.0 and \
+                {prior["evidence"]["kind"], cand["evidence"]["kind"]} == {"silence", "scene"}:
+            ev = dict(prior["evidence"])
+            ev.update(cand["evidence"])
+            ev["kind"] = "silence+scene"
+            silence_first = prior["evidence"]["kind"] == "silence"
+            prior["at"] = prior["at"] if silence_first else cand["at"]
+            prior["evidence"] = ev
+            continue
+        merged.append(dict(cand))
+
+    kept: "List[Dict[str, Any]]" = [{"at": 0.0, "evidence": {"kind": "start"}}]
+    for cand in merged:
+        if duration and cand["at"] >= duration - min_chapter:
+            continue
+        last = kept[-1]
+        if cand["at"] - last["at"] < min_chapter:
+            # too close to the marker already kept: keep whichever the evidence supports better,
+            # never replacing the 0.0 start
+            if last["evidence"]["kind"] != "start" and \
+                    _evidence_rank(cand["evidence"]) > _evidence_rank(last["evidence"]) and \
+                    (len(kept) < 2 or cand["at"] - kept[-2]["at"] >= min_chapter):
+                kept[-1] = dict(cand)
+            continue
+        kept.append(dict(cand))
+
+    if max_chapters and len(kept) > max_chapters:
+        # drop the weakest evidence first, never index 0, then put the survivors back in order
+        order = sorted(range(1, len(kept)),
+                       key=lambda i: (_evidence_rank(kept[i]["evidence"]), -kept[i]["at"]))
+        drop = set(order[:len(kept) - max_chapters])
+        kept = [c for i, c in enumerate(kept) if i not in drop]
+
+    for n, chapter in enumerate(kept, start=1):
+        chapter["at"] = round(chapter["at"], 3)
+        chapter["title"] = f"Chapter {n}"
+    return kept
+
+
+def description_block(chapters: "Sequence") -> str:
+    """The YouTube description form of a chapter list: `00:00 Chapter 1` per line."""
+    return "\n".join(f"{fmt_chapter_time(c['at'])} {c['title']}" for c in chapters)

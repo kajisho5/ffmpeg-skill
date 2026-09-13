@@ -231,6 +231,20 @@ class MediaFixtures(unittest.TestCase):
                "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
                "-pix_fmt", "yuv420p", "-c:a", "aac", small)
         return small
+    def _gappy(self):
+        """A 12 s clip whose audio is speech-and-pause: tone for 2 s, silence for 2 s, six times
+        over. The structure detectors (silence.py, metadata.py --auto-chapters) have something
+        real to find, and the pauses sit at known seconds so an assertion can name them."""
+        gappy = OUT / "gappy.mp4"
+        if not gappy.exists():
+            gate = "gt(mod(t\\,4)\\,2)"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "lavfi", "-i", f"aevalsrc='0.5*sin(2*PI*440*t)*{gate}':s=48000",
+               "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=30",
+               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", gappy)
+        return gappy
+
     @staticmethod
     def _srt_cues(path):
         blocks = [b for b in Path(path).read_text(encoding="utf-8").strip().split("\n\n") if b.strip()]

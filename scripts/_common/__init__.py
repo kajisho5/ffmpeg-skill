@@ -66,11 +66,13 @@ from _common.emit import (
     PLAN_VERSION, print_json, _result_v2, _set_current_ctx, _V2_HANDLED, write_plan
 )
 from _common.probe import (
-    analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, fingerprint, _fraction, keyframes_near,
+    analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
+    _fraction, keyframes_near, SCORE_RE, SIL_RE,
     measured_level_dbfs, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output
 )
 from _common.decision import (
     aac_args, add_pad_fill_args, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
+    description_block, _evidence_rank, fmt_chapter_time, propose_chapters,
     brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
     fmt_secs, fmt_smpte_time, fmt_srt_time, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
     signed_time_arg, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
@@ -159,12 +161,12 @@ sys.modules[__name__].__class__ = _Facade
 __all__ = [
     "Any", "Dict", "Fraction", "List", "Optional", "Path", "Sequence", "Tuple", "argparse", "json", "math", "os",
     "platform", "re", "shutil", "subprocess", "sys", "unicodedata",
-    "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "apply_common", "_aspect_string",
+    "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "apply_common", "detect_scenes", "detect_silences", "SCORE_RE", "SIL_RE", "_aspect_string",
     "audio_codec_for", "AUDIO_CODECS", "BIDI_SCRIPTS", "_bit_depth", "brand_caption_style", "BRAND_DEFAULTS",
     "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_tag_args", "cfr_args", "_char_em",
     "char_script", "_check_existing_output", "_check_no_overwrite_input", "_check_output_path", "child_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",
-    "concat_list_line", "Context", "_CRF_DEFAULT", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono",
+    "concat_list_line", "Context", "_CRF_DEFAULT", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",
     "default_font_file", "default_output", "DEFAULT_TIMEOUT", "detect_script", "die", "drawtext_boxborderw",
     "_DRAWTEXT_PENDING", "drawtext_shaping", "drawtext_text_opts", "_DRAWTEXT_TMPDIR", "_drawtext_tmpdir",
     "dry_run_input_pending", "emit", "emoji_asset_for", "EMOJI_ASSET_HINT", "emoji_clusters",

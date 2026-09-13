@@ -10,9 +10,9 @@ import math
 import os
 import re
 from fractions import Fraction
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die
-from _common.runner import STATE, require_tool, run, run_analysis
+from _common.runner import STATE, dry_run_input_pending, require_tool, run, run_analysis
 
 
 def fingerprint(path: str) -> Dict[str, Any]:
@@ -380,3 +380,93 @@ def _aspect_string(w: Optional[int], h: Optional[int]) -> Optional[str]:
         return None
     f = Fraction(w, h)
     return f"{f.numerator}:{f.denominator}"
+
+
+# --------------------------------------------------------------- structure detectors (1.16)
+# silencedetect and scdet, lifted out of silence.py and scenes.py byte-for-byte in 1.16.0 so that
+# metadata.py --auto-chapters can measure structure without importing another tool (no script in
+# scripts/ imports a sibling tool; only the _-prefixed modules are shared). silence.py and
+# scenes.py import them back from here, so their behaviour is unchanged.
+
+SIL_RE = re.compile(r"silence_(start|end): ([0-9.]+)")
+
+
+def detect_silences(path: str, threshold: float, min_silence: float) -> "List[Tuple[float, float]]":
+    if dry_run_input_pending(path):
+        return []
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af",
+           f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
+    proc = run_analysis(cmd, check=False, record=True)
+    if proc.returncode != 0:
+        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+    silences: "List[Tuple[float, float]]" = []
+    start = None
+    for kind, val in SIL_RE.findall(proc.stderr):
+        if kind == "start":
+            start = float(val)
+        elif start is not None:
+            silences.append((start, float(val)))
+            start = None
+    if start is not None:  # silence runs to the end
+        silences.append((start, float("inf")))
+    return silences
+
+
+SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
+
+
+def detect_scenes(path: str, threshold: float, min_len: float, duration: float, ratio: float = 3.0) -> "List[float]":
+    """Scene cuts = frames whose scdet score is above `threshold` AND stands out from its
+    neighbourhood (score > ratio x median of the surrounding +-12 frames). Sustained motion,
+    flashes and fast pans raise the score on many consecutive frames and are rejected;
+    a real cut is a one-frame spike. On real footage this roughly doubles precision at
+    equal recall compared with the raw scdet threshold."""
+    ffmpeg = require_tool("ffmpeg")
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-an", "-vf",
+                         "scale=320:-2,scdet=threshold=0,metadata=print:file=-", "-f", "null", "-"])
+    # No `sc_pass=1` on scdet: on FFmpeg 5.x that option means "pass only the frames whose
+    # score exceeds the threshold", so every truly static frame (score exactly 0 -- a title
+    # card, colour bars) is dropped before metadata=print and the frame numbers are re-counted
+    # without them. The +-12-frame neighbourhood around a real cut then fills with the moving
+    # segment's scores instead of the still one's zeros, the cut fails the ratio test, and a
+    # 4 s smptebars scene made the cuts on both sides of it disappear (found by the 5.1.1 CI
+    # job, #146). 6.1+ passes every frame either way. Scores are still indexed by frame number
+    # and any frame the filter did not report counts as 0, so a build that drops frames again
+    # cannot shift the neighbourhood.
+    by_frame: "Dict[int, Tuple[float, float]]" = {}
+    cur = None
+    for line in proc.stdout.splitlines():
+        m = SCORE_RE.match(line)
+        if m:
+            cur = (int(m.group(1)), float(m.group(2)))
+            continue
+        if line.startswith("lavfi.scd.score=") and cur is not None:
+            try:
+                by_frame[cur[0]] = (cur[1], float(line.split("=", 1)[1]))
+            except ValueError:
+                pass
+    cuts = [0.0]
+    if not by_frame:
+        return cuts
+    n_frames = max(by_frame) + 1
+    times: "List[float]" = [by_frame[i][0] if i in by_frame else -1.0 for i in range(n_frames)]
+    scores: "List[float]" = [by_frame[i][1] if i in by_frame else 0.0 for i in range(n_frames)]
+    w = 12
+    for i, sc in enumerate(scores):
+        if sc < threshold:
+            continue
+        lo, hi = max(0, i - w), min(len(scores), i + w + 1)
+        neigh = sorted(scores[lo:i] + scores[i + 1:hi])
+        med = neigh[len(neigh) // 2] if neigh else 0.0
+        if sc < ratio * max(med, 0.5):
+            continue
+        # keep only the local maximum inside +-2 frames
+        if any(scores[j] > sc for j in range(max(0, i - 2), min(len(scores), i + 3)) if j != i):
+            continue
+        t = times[i]
+        if t - cuts[-1] >= min_len:
+            cuts.append(t)
+    if duration - cuts[-1] < min_len and len(cuts) > 1:
+        cuts.pop()
+    return cuts

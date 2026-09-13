@@ -13,35 +13,13 @@ Examples:
 """
 import argparse
 import os
-import re
 import sys
 from typing import List, Tuple
 
-from _common import STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, require_tool, run, x264_args, X264_PRESETS, measured_level_dbfs, run_analysis, dry_run_input_pending, fmt_secs
+# `detect` moved into _common/probe.py in 1.16.0 so metadata.py --auto-chapters can measure the
+# same silences without importing this tool; the body is unchanged and the name still lives here.
+from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
-SIL_RE = re.compile(r"silence_(start|end): ([0-9.]+)")
-
-
-def detect(path: str, threshold: float, min_silence: float) -> List[Tuple[float, float]]:
-    if dry_run_input_pending(path):
-        return []
-    ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af",
-           f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
-    proc = run_analysis(cmd, check=False, record=True)
-    if proc.returncode != 0:
-        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
-    silences: List[Tuple[float, float]] = []
-    start = None
-    for kind, val in SIL_RE.findall(proc.stderr):
-        if kind == "start":
-            start = float(val)
-        elif start is not None:
-            silences.append((start, float(val)))
-            start = None
-    if start is not None:  # silence runs to the end
-        silences.append((start, float("inf")))
-    return silences
 
 
 def keep_ranges(silences: List[Tuple[float, float]], duration: float, margin: float, min_keep: float) -> List[Tuple[float, float]]:

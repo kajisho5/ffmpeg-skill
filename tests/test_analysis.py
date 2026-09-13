@@ -531,5 +531,98 @@ class AnalysisTests(MediaFixtures):
         self.assertGreater(data["confidence"], 0.3)
 
 
+class ProposeChaptersTests(unittest.TestCase):
+    """1.16: the pure half of metadata.py --auto-chapters. No media, no subprocess."""
+
+    def setUp(self):
+        from _common import description_block, propose_chapters, fmt_chapter_time
+        self.propose = propose_chapters
+        self.block = description_block
+        self.fmt = fmt_chapter_time
+
+    def test_propose_chapters_always_starts_at_zero(self):
+        got = self.propose(600, [(190.1, 192.4)], [], min_chapter=60)
+        self.assertEqual(got[0]["at"], 0.0)
+        self.assertEqual(got[0]["evidence"]["kind"], "start")
+        self.assertEqual(self.propose(600, [], [], min_chapter=60),
+                         [{"at": 0.0, "evidence": {"kind": "start"}, "title": "Chapter 1"}])
+
+    def test_propose_chapters_merges_silence_and_scene_evidence(self):
+        got = self.propose(600, [(190.1, 192.4)], [192.6], min_chapter=60)
+        self.assertEqual(len(got), 2)
+        ev = got[1]["evidence"]
+        self.assertEqual(ev["kind"], "silence+scene")
+        self.assertEqual(ev["silence"], [190.1, 192.4])
+        self.assertEqual(ev["silence_length"], 2.3)
+        self.assertEqual(ev["scene_at"], 192.6)
+        self.assertEqual(got[1]["at"], 192.4, "a chapter starts where speech resumes")
+
+    def test_propose_chapters_respects_min_chapter(self):
+        silences = [(50, 51), (70, 71), (200, 202), (210, 211)]
+        got = self.propose(600, silences, [], min_chapter=60)
+        ats = [c["at"] for c in got]
+        for a, b in zip(ats, ats[1:]):
+            self.assertGreaterEqual(b - a, 60.0, ats)
+        # and nothing within min_chapter of the end
+        self.assertTrue(all(a < 600 - 60 for a in ats), ats)
+
+    def test_propose_chapters_never_invents_a_title(self):
+        got = self.propose(1200, [(100, 102), (300, 303), (700, 702)], [500.0], min_chapter=60)
+        self.assertGreater(len(got), 2)
+        for n, c in enumerate(got, start=1):
+            self.assertEqual(c["title"], "Chapter %d" % n)
+            self.assertRegex(c["title"], r"^Chapter \d+$")
+
+    def test_max_chapters_drops_weakest_evidence_first(self):
+        got = self.propose(1200, [(100, 100.5), (300, 305)], [700.0],
+                           min_chapter=60, max_chapters=3)
+        self.assertEqual(len(got), 3)
+        kinds = [c["evidence"]["kind"] for c in got]
+        self.assertEqual(kinds[0], "start")
+        self.assertIn("silence", kinds)
+        self.assertNotIn("scene", kinds, "a bare scene cut outranked a measured pause")
+        self.assertEqual([c["at"] for c in got], sorted(c["at"] for c in got))
+
+    def test_description_block_format(self):
+        self.assertEqual(self.fmt(0), "00:00")
+        self.assertEqual(self.fmt(192.9), "03:12", "the timestamp rounds DOWN to the second")
+        self.assertEqual(self.fmt(3723.4), "1:02:03")
+        chapters = [{"at": 0.0, "title": "Chapter 1"}, {"at": 192.4, "title": "Chapter 2"}]
+        self.assertEqual(self.block(chapters), "00:00 Chapter 1\n03:12 Chapter 2")
+
+
+class AutoChaptersTests(MediaFixtures):
+    """1.16 end to end, on the fixture that has real silences."""
+
+    def test_auto_chapters_writes_markers_and_description(self):
+        gappy = self._gappy()
+        out = OUT / "auto_chapters.mp4"
+        chapters_txt = OUT / "auto_chapters.txt"
+        desc = OUT / "auto_chapters_desc.txt"
+        res = json.loads(script("metadata.py", gappy, "--auto-chapters", "--min-chapter", "1",
+                                "--chapters-out", chapters_txt, "--description-out", desc,
+                                "--json", "-o", out).stdout)
+        auto = res["auto_chapters"]
+        self.assertEqual(auto["titles"], "placeholder")
+        self.assertTrue(res["streams_copied"], "nothing may be re-encoded")
+        written = sh("ffprobe", "-v", "error", "-show_chapters", "-of", "json", out).stdout
+        self.assertEqual(len(json.loads(written)["chapters"]), auto["kept"])
+        for n, c in enumerate(auto["chapters"], start=1):
+            self.assertEqual(c["title"], "Chapter %d" % n)
+        self.assertTrue(desc.read_text(encoding="utf-8").startswith("00:00 "))
+        # the chapters file round-trips through this tool's own --chapters reader
+        again = OUT / "auto_chapters_again.mp4"
+        script("metadata.py", gappy, "--chapters", chapters_txt, "-o", again)
+        self.assertEqual(len(json.loads(sh("ffprobe", "-v", "error", "-show_chapters",
+                                           "-of", "json", again).stdout)["chapters"]),
+                         auto["kept"])
+
+    def test_auto_chapters_excludes_the_manual_forms(self):
+        script("metadata.py", self._gappy(), "--auto-chapters", "--chapters", "/nope.txt",
+               "-o", OUT / "x_auto.mp4", expect_fail=True)
+        script("metadata.py", self._gappy(), "--auto-chapters", "--clear-chapters",
+               "-o", OUT / "x_auto2.mp4", expect_fail=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
