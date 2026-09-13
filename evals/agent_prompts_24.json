@@ -617,12 +617,12 @@
   "lang": "en",
   "prompt": "Turn /home/user/ffmpeg-skill/tests/out/lavmic.wav into a podcast episode with chapters from OUTDIR/chapters.txt. Save to OUTDIR.",
   "expect": [
-   "render|fit|export",
+   "render|loudness|export",
    "check"
   ],
   "refuse": false,
   "audio_only": true,
-  "note": "delivery/template request: podcast loudness + chapter metadata + check; audio only",
+  "note": "delivery/template request: podcast loudness + chapter metadata + check; audio only (loudness+metadata is the expected route; render/export also accepted)",
   "fixtures": {
    "chapters.txt": "0:00 Intro\n0:03 Main\n0:06 Outro\n"
   }
