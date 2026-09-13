@@ -98,10 +98,11 @@ and the default MCP `tools/list` are unchanged except for additions.
   does not cover the text.
 - **`doctor` per language** (done): `fonts.scripts` reports available/missing/unknown plus the
   file per writing system; the plain-text `doctor` keeps it to one line.
-- **Readable cues** (done): `caption.py` wraps by measured width (a per-script average advance,
-  not character count) so CJK and long Latin lines stop overflowing the safe area; `--max-lines`
-  (default 2) splits a cue that needs more, `--min-duration` (default 1.0) holds a flashed cue,
-  `--offset SECONDS` shifts SRT, ASS and cue files. Word-level timings from a whisper JSON drive
+- **Readable cues** (done): `caption.py` wraps by measured width (a per-character table for
+  Latin, a per-script advance elsewhere, zero for combining marks, which stay with their base) so
+  CJK, Thai and all-caps Latin lines stop overflowing the safe area; `--max-lines` (default 2)
+  splits a cue that needs more, `--min-duration` (default 1.0) holds a flashed cue, `--offset
+  TIME` shifts SRT, ASS and cue files in the skill's timestamp grammar. Word-level timings from a whisper JSON drive
   `--karaoke` when the transcript has them, instead of an even split.
 - **brand.json caption styles** (done): `styles.caption.{font,size,colour,box,position}` gives
   every project the same look; `graphics.py` reads `font` and `colour` from the same block.

@@ -1604,6 +1604,20 @@ def time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
     return 0.0  # unreachable
 
 
+def signed_time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
+    """time_arg() for a flag that may also be negative (an offset, not a point in time): a single
+    leading '-'/'+' is taken as the sign and the rest goes through the ordinary time grammar, so
+    `--offset -00:00:02`, `--offset -1.5` and `--offset 0:02` all mean what they read as."""
+    text = (value or "").strip()
+    sign = 1.0
+    if text[:1] in "+-":
+        sign = -1.0 if text[0] == "-" else 1.0
+        text = text[1:].strip()
+    if not text:
+        die(f"{flag} {value!r}: not a time (use seconds, mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff)")
+    return sign * time_arg(text, flag, fps)
+
+
 def fmt_srt_time(seconds: float) -> str:
     if seconds < 0:
         seconds = 0.0
@@ -1817,18 +1831,23 @@ def detect_script(text: str, lang: "Optional[str]" = None) -> str:
 _SCRIPT_FONT_CACHE: "Dict[Tuple[str, Optional[str]], Optional[Tuple[str, str]]]" = {}
 
 
-def _fc_list_fonts(fc_lang: str) -> "List[Tuple[str, List[str]]]":
-    """(file, families) for every font fontconfig says covers `fc_lang`; [] when fc-list is absent."""
+def _fc_list_fonts(fc_lang: str) -> "Optional[List[Tuple[str, List[str]]]]":
+    """(file, families) for every font fontconfig says covers `fc_lang`.
+
+    `[]` means fontconfig answered and nothing covers the language; `None` means it could not be
+    asked at all (no `fc-list` on PATH, or it failed/timed out) -- the difference between
+    "missing" and "unknown", which the caller must not collapse: unknown is not a refusal.
+    """
     exe = shutil.which("fc-list")
     if not exe:
-        return []
+        return None
     try:
         proc = subprocess.run([exe, f":lang={fc_lang}", "file", "family"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
     except (subprocess.TimeoutExpired, OSError):
-        return []
+        return None
     if proc.returncode != 0:
-        return []
+        return None
     out = []
     for line in proc.stdout.splitlines():
         if ": " not in line:
@@ -1858,7 +1877,11 @@ def _script_font_entry(script: str, family_hint: "Optional[str]" = None) -> "Opt
     return result
 
 
-def _script_font_uncached(script: str, family_hint: "Optional[str]" = None) -> "Optional[Tuple[str, str]]":
+FC_UNKNOWN = "unknown"  # sentinel: fontconfig could not be asked (absent or failing), not "no font"
+
+
+def _script_font_uncached(script: str, family_hint: "Optional[str]" = None):
+    """(file, family), None when nothing covers `script`, or FC_UNKNOWN when it cannot be asked."""
     if script not in FC_LANG:
         return None
     if platform.system() == "Windows":
@@ -1871,6 +1894,8 @@ def _script_font_uncached(script: str, family_hint: "Optional[str]" = None) -> "
     if family_hint:
         preferred.insert(0, family_hint)
     candidates = _fc_list_fonts(FC_LANG[script])
+    if candidates is None:
+        return FC_UNKNOWN
     if not candidates:
         return None
     scored = []
@@ -1899,13 +1924,22 @@ def font_for_script(script: str, family_hint: "Optional[str]" = None) -> "Option
     name. Cached per process: a caption job resolves the same script for every cue.
     """
     entry = _script_font_entry(script, family_hint)
-    return entry[0] if entry else None
+    return entry[0] if entry and entry is not FC_UNKNOWN else None
 
 
 def font_family_for_script(script: str, family_hint: "Optional[str]" = None) -> "Optional[str]":
     """The family NAME of font_for_script()'s file -- what libass wants in an ASS Fontname."""
     entry = _script_font_entry(script, family_hint)
-    return entry[1] if entry else None
+    return entry[1] if entry and entry is not FC_UNKNOWN else None
+
+
+def script_font_status(script: str) -> str:
+    """"available" (a font file covers `script`), "missing" (fontconfig answered, none does) or
+    "unknown" (there is no working fontconfig to ask). Only "missing" is a refusal."""
+    entry = _script_font_entry(script)
+    if entry is FC_UNKNOWN:
+        return "unknown"
+    return "available" if entry else "missing"
 
 
 def font_covers_script(font_name: str, script: str) -> bool:
@@ -1932,21 +1966,59 @@ def font_covers_script(font_name: str, script: str) -> bool:
     return bool(proc.stdout.strip())
 
 
+# Named flags differ per tool: overlay.py and graphics.py take a font FILE, caption.py takes a
+# directory of faces plus the family name -- naming a flag the tool does not have is worse than
+# naming none, so the hint says both (review 10).
+FONT_FLAG_HINT = "pass a font file (--font-file on overlay.py/graphics.py, --fonts-dir with --font on caption.py)"
 FONT_INSTALL_HINT = ("install fonts-noto-cjk / fonts-noto-core (apt), "
-                     "brew install --cask font-noto-sans-cjk / font-noto-sans-arabic (mac), or pass --font-file")
+                     "brew install --cask font-noto-sans-cjk / font-noto-sans-arabic (mac), or "
+                     + FONT_FLAG_HINT)
+
+
+def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
+    """Does any font under `fonts_dir` cover `script`? None when it cannot be checked.
+
+    `--fonts-dir` says "also look here", not "this exact face", so it must not switch the
+    coverage guarantee off. fontconfig's `fc-scan` reads the files directly (no cache, no
+    installed-font database), which is exactly the question: `%{lang}` lists the languages each
+    face claims.
+    """
+    if script not in FC_LANG or not fonts_dir or not os.path.isdir(fonts_dir):
+        return None
+    exe = shutil.which("fc-scan")
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "--format", "%{lang}\n", fonts_dir],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    want = FC_LANG[script].lower()
+    for line in proc.stdout.splitlines():
+        if want in [tag.strip().lower() for tag in line.split("|")]:
+            return True
+    return False
 
 
 def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Optional[str]" = None,
-                         font_explicit: bool = False, font_file: "Optional[str]" = None
+                         font_explicit: bool = False, font_file: "Optional[str]" = None,
+                         fonts_dir: "Optional[str]" = None
                          ) -> "Tuple[str, Optional[str], Optional[str]]":
     """(script, font file, family) to draw `text` with, resolving by script when nothing explicit
     was asked for.
 
     Returns (script, None, None) when the caller's own choice stands: Latin text, an explicit
-    --font-file, or an explicit --font (which is kept even when fontconfig says it does not cover
+    --font-file, an explicit --font (which is kept even when fontconfig says it does not cover
     the script -- with one info line saying so, because overriding a user's stated font silently
-    is worse than a warning). Otherwise the resolved file is returned with ONE info line naming
-    it, and a script no installed font covers is a failed job (tofu is not a delivery).
+    is worse than a warning), or a --fonts-dir that does carry the script. Otherwise the resolved
+    file is returned with ONE info line naming it.
+
+    A script fontconfig says nothing covers is a failed job (tofu is not a delivery). A machine
+    with no working fontconfig at all answers "unknown", not "missing": the job continues with
+    the caller's font -- libass and drawtext still have their own font backends -- and one info
+    line says the coverage could not be verified.
     """
     script = detect_script(text or "", lang)
     if script == "latin":
@@ -1956,9 +2028,24 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
     if font_explicit and font:
         if not font_covers_script(font, script):
             info(f"font: '{font}' does not cover {LANGUAGE_NAMES[script]} text on this machine; keeping it as asked "
-                 "(drop --font, or pass --font-file, to pick one by script automatically)")
+                 f"(drop --font, or {FONT_FLAG_HINT}, to pick one by script automatically)")
         return script, None, None
+    if fonts_dir:
+        covered = fonts_dir_covers_script(fonts_dir, script)
+        if covered:
+            return script, None, None
+        if covered is None:
+            info(f"font: could not verify that {fonts_dir} covers {LANGUAGE_NAMES[script]} text "
+                 "(no fc-scan on this machine); using it as given")
+            return script, None, None
+        info(f"font: no face in {fonts_dir} covers {LANGUAGE_NAMES[script]} text; "
+             "picking one by script instead (the directory is still searched first)")
     entry = _script_font_entry(script)
+    if entry is FC_UNKNOWN:
+        info(f"font: could not verify that this machine can render {LANGUAGE_NAMES[script]} text "
+             "(no working fontconfig); rendering with the font as given -- "
+             "doctor --json .fonts.scripts reports what is known")
+        return script, None, None
     if not entry:
         die(f"no installed font covers {LANGUAGE_NAMES[script]} text on this machine — {FONT_INSTALL_HINT}", kind="input")
     info(f"font: {entry[0]} (covers {script})")
@@ -2312,6 +2399,7 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
     """Load brand.json (fonts, colours, logo, safe margins, caption defaults); missing keys fall back to defaults."""
     import copy
     brand = copy.deepcopy(BRAND_DEFAULTS)
+    brand["_stated"] = {}
     if not path:
         return brand
     if not os.path.exists(path):
@@ -2330,8 +2418,25 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
         if brand.get(key) and not os.path.isabs(brand[key]):
             brand[key] = str(base / brand[key])
     brand["_path"] = str(path)
+    # What the FILE said, separate from BRAND_DEFAULTS' filler: a brand.json that never mentions
+    # a font must not read as "the caller chose a font" (which would switch font-by-script off).
+    brand["_stated"] = data
     return brand
 
+
+
+def brand_states_font(brand: Dict[str, Any]) -> bool:
+    """Did the brand FILE actually name a font (top-level `font`, `caption.font` or
+    `styles.caption.font`)? BRAND_DEFAULTS always supplies one, so the merged document can never
+    answer this -- and treating the default filler as the caller's choice switched font-by-script
+    off for every branded job (review 10)."""
+    stated = brand.get("_stated") or {}
+    if stated.get("font"):
+        return True
+    for block in (stated.get("caption"), (stated.get("styles") or {}).get("caption")):
+        if isinstance(block, dict) and block.get("font"):
+            return True
+    return False
 
 
 def brand_caption_style(brand: Dict[str, Any]) -> Dict[str, Any]:

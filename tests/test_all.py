@@ -3,6 +3,8 @@
 
     python3 tests/test_all.py            # or: python3 -m unittest tests/test_all.py
 """
+import contextlib
+import io
 import json
 import platform
 import re
@@ -1246,7 +1248,7 @@ class FFmpegSkillTests(unittest.TestCase):
                               "--fast", "-o", out)
                 m = probe(str(out))
                 self.assertEqual(m["video"]["width"], 640)
-                chosen = re.search(r"^font: (\S+) \(covers (\w+)\)", proc.stderr, re.M)
+                chosen = re.search(r"^font: (.+?) \(covers (\w+)\)", proc.stderr, re.M)
                 self.assertIsNotNone(chosen, proc.stderr)
                 self.assertTrue(os.path.exists(chosen.group(1)), chosen.group(1))
                 self.assertEqual(chosen.group(2), lang)
@@ -1273,12 +1275,12 @@ class FFmpegSkillTests(unittest.TestCase):
         gfx = OUT / "gfx_ko.mp4"
         proc = script("graphics.py", self._small(), "--template", "lower-third", "--name", "김민준",
                       "--title", "감독", "--lang", "ko", "--preset", "veryfast", "-o", gfx, "--json")
-        chosen = re.search(r"^font: (\S+) \(covers ko\)", proc.stderr, re.M)
+        chosen = re.search(r"^font: (.+?) \(covers ko\)", proc.stderr, re.M)
         self.assertIsNotNone(chosen, proc.stderr)
         self.assertIn(f"fontfile={escape_filter_path(chosen.group(1))}", json.loads(proc.stdout)["commands"][0])
         ov = OUT / "overlay_ja.mp4"
         proc2 = script("overlay.py", self._small(), "--text", "こんにちは世界", "--preset", "veryfast", "-o", ov, "--json")
-        chosen2 = re.search(r"^font: (\S+) \(covers ja\)", proc2.stderr, re.M)
+        chosen2 = re.search(r"^font: (.+?) \(covers ja\)", proc2.stderr, re.M)
         self.assertIsNotNone(chosen2, proc2.stderr)
         self.assertIn("fontfile=", json.loads(proc2.stdout)["commands"][0])
 
@@ -1292,17 +1294,23 @@ class FFmpegSkillTests(unittest.TestCase):
                       "--fast", "-o", OUT / "explicit_font.mp4")
         self.assertIn("FontName=DejaVu Sans", " ".join(proc.stderr.splitlines()))
         self.assertNotIn("(covers zh)", proc.stderr, "an explicit font is never replaced")
-        self.assertIn("does not cover", proc.stderr, "but the caller is told it will not render")
+        if shutil.which("fc-list"):
+            self.assertIn("does not cover", proc.stderr, "but the caller is told it will not render")
+        else:
+            # Windows resolves fonts by file name and has no fontconfig to ask: coverage is
+            # unknown, so keeping the font silently (no "does not cover" claim) is correct.
+            self.assertNotIn("does not cover", proc.stderr)
 
     def test_no_font_for_the_script_is_a_failed_job_not_tofu(self):
         """The whole point: a machine that cannot render the text refuses the job instead of
-        writing a video of empty boxes that ffmpeg reports as a success. Forced by hiding
-        fontconfig, which is exactly what a bare container looks like."""
+        writing a video of empty boxes that ffmpeg reports as a success. Forced with an fc-list
+        that answers normally (exit 0) and lists nothing -- fontconfig saying "no font covers
+        this", which is what a bare container with fontconfig but no font files looks like."""
         if platform.system() == "Windows":
             self.skipTest("the shim below is a #!/bin/sh script; Windows resolves fonts by file name, not fontconfig")
         shim = OUT / "nofc"
         shim.mkdir(exist_ok=True)
-        (shim / "fc-list").write_text("#!/bin/sh\nexit 1\n")
+        (shim / "fc-list").write_text("#!/bin/sh\nexit 0\n")
         (shim / "fc-list").chmod(0o755)
         env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}")
         cues = OUT / "no_font.txt"
@@ -1313,8 +1321,221 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertEqual(doc["status"], "failed")
         self.assertEqual(doc["error"]["kind"], "input")
         self.assertIn("Korean", doc["error"]["message"])
-        self.assertIn("--font-file", doc["error"]["message"], "the message says how to fix it")
+        self.assertIn("--fonts-dir", doc["error"]["message"], "the message names a flag caption.py has")
+        self.assertNotIn("or pass --font-file", doc["error"]["message"], "caption.py has no --font-file")
         self.assertFalse((OUT / "no_font.mp4").exists(), "nothing is written for a job that cannot be read")
+
+    def test_a_broken_or_absent_fontconfig_is_unknown_not_missing(self):
+        """`unknown` is not `missing` (the rule every other capability in this repo follows):
+        with no fc-list on PATH -- or one that fails -- coverage cannot be verified, so the job
+        runs with the caller's font (libass has its own font backend) behind one info line,
+        instead of refusing work that 1.11.1 rendered."""
+        if platform.system() == "Windows":
+            self.skipTest("the shim below is a #!/bin/sh script; Windows resolves fonts by file name, not fontconfig")
+        cues = OUT / "unknown_fc.txt"
+        cues.write_text("0:00-0:03 안녕하세요\n", encoding="utf-8")
+        broken = OUT / "brokenfc"
+        broken.mkdir(exist_ok=True)
+        (broken / "fc-list").write_text("#!/bin/sh\nexit 1\n")
+        (broken / "fc-list").chmod(0o755)
+        empty = OUT / "nobin"
+        empty.mkdir(exist_ok=True)
+        for tool in ("ffmpeg", "ffprobe"):
+            link = empty / tool
+            if not link.exists():
+                link.symlink_to(shutil.which(tool))
+        cases = {
+            "fc-list fails": dict(os.environ, PATH=f"{broken}{os.pathsep}{os.environ['PATH']}"),
+            "no fc-list at all": dict(os.environ, PATH=str(empty)),
+        }
+        for label, env in cases.items():
+            with self.subTest(case=label):
+                out = OUT / "unknown_fc.mp4"
+                proc = script("caption.py", self._small(), "--text", cues, "--json", "--fast",
+                              "-o", out, env=env)
+                doc = json.loads(proc.stdout)
+                self.assertEqual(doc["status"], "completed", proc.stderr)
+                self.assertIn("could not verify", proc.stderr)
+                self.assertNotIn("no installed font covers", proc.stderr)
+                self.assertIn("FontName=DejaVu Sans", " ".join(doc["commands"]),
+                              "the caller's font stands when coverage is unknown")
+
+    def test_caption_dry_run_plans_the_same_file_the_real_run_burns(self):
+        """--dry-run/--plan must describe the job the real run executes: when --offset/--max-lines/
+        --min-duration adjust a hand-written SRT, the planned command names the adjusted copy (the
+        file the real run burns), the plan document says where it comes from, and no side file is
+        written under a dry run."""
+        src_srt = OUT / "plan_parity.srt"
+        src_srt.write_text("1\n00:00:01,000 --> 00:00:01,300\nflash\n\n"
+                           "2\n00:00:02,000 --> 00:00:04,000\n"
+                           "this is a very long caption line that certainly needs wrapping here\n\n",
+                           encoding="utf-8")
+        out = OUT / "plan_parity.mp4"
+        adjusted = OUT / "plan_parity_adjusted.srt"
+        if adjusted.exists():
+            adjusted.unlink()
+        plan = OUT / "plan_parity.json"
+        proc = script("caption.py", self._small(), "--srt", src_srt, "--size", "48",
+                      "-o", out, "--plan", plan)
+        doc = json.loads(plan.read_text(encoding="utf-8"))
+        planned = [c for c in doc["commands"] if "-vf" in c]
+        self.assertTrue(planned, doc["commands"])
+        self.assertIn(str(adjusted), planned[0], "the plan burns the adjusted copy, not the caller's file")
+        self.assertNotIn(f"subtitles={src_srt}", planned[0])
+        self.assertTrue(any(str(adjusted) in n for n in doc.get("notes") or []),
+                        f"the plan records the side file: {doc.get('notes')}")
+        self.assertFalse(adjusted.exists(), "a dry run writes no side file")
+        real = script("caption.py", self._small(), "--srt", src_srt, "--size", "48",
+                      "--fast", "-o", out, "--json")
+        self.assertTrue(adjusted.exists(), real.stderr)
+        burned = [c for c in json.loads(real.stdout)["commands"] if "-vf" in c]
+        self.assertIn(str(adjusted), burned[0], "the real run burns the file the plan named")
+
+    def test_a_brand_file_without_a_font_does_not_switch_font_by_script_off(self):
+        """BRAND_DEFAULTS always supplies a font, so the merged brand document cannot say whether
+        the CALLER chose one: a brand.json that only sets colours must still resolve a font by
+        script (and still refuse when nothing covers it)."""
+        if _no_fontconfig():
+            self.skipTest("no fc-list on this machine")
+        if font_for_script("ko") is None:
+            self.skipTest("this machine has no font covering ko")
+        brand = OUT / "brand_no_font.json"
+        brand.write_text(json.dumps({"colors": {"text": "FFFFFF"}}), encoding="utf-8")
+        cues = OUT / "brand_ko.txt"
+        cues.write_text("0:00-0:03 안녕하세요\n", encoding="utf-8")
+        proc = script("caption.py", self._small(), "--text", cues, "--brand", brand,
+                      "--animate", "none", "--fast", "-o", OUT / "brand_ko.mp4")
+        self.assertRegex(proc.stderr, r"(?m)^font: .+? \(covers ko\)")
+        self.assertNotIn("does not cover", proc.stderr)
+        stated = OUT / "brand_with_font.json"
+        stated.write_text(json.dumps({"font": "DejaVu Sans"}), encoding="utf-8")
+        proc2 = script("caption.py", self._small(), "--text", cues, "--brand", stated,
+                       "--animate", "none", "--fast", "-o", OUT / "brand_ko2.mp4")
+        self.assertIn("does not cover", proc2.stderr, "a font the brand file itself states is kept")
+        self.assertNotIn("(covers ko)", proc2.stderr)
+
+    def test_caption_never_breaks_before_a_combining_mark(self):
+        """Thai tone marks and vowel signs, Devanagari matras, Arabic and Hebrew points are their
+        own code points: a line may never start with one, and they advance the pen by nothing."""
+        import caption  # noqa: E402
+        import unicodedata
+        for text in ("กิ้น" * 6, "मैंने" * 6, "مَرْحَبًا " * 4, "שָׁלוֹם " * 4):
+            with self.subTest(text=text[:8]):
+                for width in (1.5, 3.0, 6.0):
+                    for line in caption.wrap_text(text, width):
+                        first = line[0]
+                        self.assertEqual(unicodedata.combining(first), 0, f"line starts with a mark: {line!r}")
+                        self.assertNotIn(unicodedata.category(first), ("Mn", "Mc"), f"line starts with a mark: {line!r}")
+                self.assertEqual("".join(caption.wrap_text(text, 3.0)).replace(" ", ""),
+                                 text.replace(" ", ""), "no character is lost")
+        self.assertEqual(caption.text_width_em("\u0e01\u0e34\u0e49"), caption.text_width_em("\u0e01"),
+                         "a combining mark is charged no width")
+        self.assertEqual(caption.wrap_text("เก", 10.0), ["เก"], "a leading Thai vowel stays with its consonant")
+
+    def test_caption_offset_takes_the_skills_time_grammar(self):
+        """SKILL.md lists --offset among the timestamp flags: mm:ss and hh:mm:ss(.fff) work,
+        signed, and a bad value is a `kind: input` refusal document, not an argparse dump."""
+        cues = OUT / "offset_grammar.txt"
+        cues.write_text("0:05-0:07 one\n", encoding="utf-8")
+        for value, expected in (("0:02", "00:00:07,000 --> 00:00:09,000"),
+                                ("-0:00:02.500", "00:00:02,500 --> 00:00:04,500"),
+                                ("00:00:01:15@30", "00:00:06,500 --> 00:00:08,500")):
+            with self.subTest(offset=value):
+                srt = OUT / "offset_grammar.srt"
+                script("caption.py", "--text", cues, "--write-srt", srt, "--offset", value)
+                self.assertIn(expected, srt.read_text(encoding="utf-8"))
+        proc = script("caption.py", "--text", cues, "--write-srt", OUT / "offset_bad.srt",
+                      "--offset", "half past two", "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed")
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("--offset", doc["error"]["message"])
+
+    def test_caption_max_lines_holds_for_all_caps_text(self):
+        """Uppercase is far wider than the mixed-case average: an all-caps cue must be measured
+        with a per-character table, or libass re-wraps each line the wrapper produced and four
+        lines are drawn where --max-lines 2 was asked for."""
+        import caption  # noqa: E402
+        text = "WE MEASURE EVERY CAPITAL LETTER BECAUSE UPPERCASE RUNS WIDE"
+        cues = OUT / "caps_cue.txt"
+        cues.write_text(f"0:01-0:05 {text}\n", encoding="utf-8")
+        srt = OUT / "caps_cue.srt"
+        script("caption.py", self._small(), "--text", cues, "--size", "48", "--max-lines", "2",
+               "--write-srt", srt, "--fast", "-o", OUT / "caps_cue.mp4")
+        max_em = 640 * caption.SAFE_WIDTH_FRACTION / (48 * 360 / 288.0)
+        blocks = self._srt_cues(srt)
+        for _, lines in blocks:
+            self.assertLessEqual(len(lines), 2, f"--max-lines 2 exceeded: {lines}")
+        # The real DejaVu Sans advances (hmtx/unitsPerEm, unrounded), not caption.py's own table:
+        # what libass will actually draw has to fit, or it re-wraps the line and --max-lines 2
+        # becomes four lines in the picture.
+        real = {"A": .684, "B": .686, "C": .698, "D": .770, "E": .632, "F": .575, "G": .775,
+                "H": .752, "I": .295, "J": .295, "K": .656, "L": .557, "M": .863, "N": .748,
+                "O": .787, "P": .603, "Q": .787, "R": .695, "S": .635, "T": .611, "U": .732,
+                "V": .684, "W": .989, "X": .685, "Y": .611, "Z": .685, " ": .318}
+        for _, lines in blocks:
+            for line in lines:
+                drawn = sum(real[ch] for ch in line)
+                self.assertLessEqual(drawn, max_em, f"libass would re-wrap this line: {line!r}")
+        self.assertEqual(" ".join(l for _, lines in blocks for l in lines), text)
+        self.assertGreater(caption.text_width_em("CAPITALS"), caption.text_width_em("capitals"))
+
+    def test_fonts_dir_does_not_bypass_the_coverage_check(self):
+        """--fonts-dir says "also look here", not "this exact face": a directory that does not
+        cover the script must not silently switch the guarantee off."""
+        if _no_fontconfig() or not shutil.which("fc-scan"):
+            self.skipTest("no fontconfig tools on this machine")
+        if font_for_script("ko") is None:
+            self.skipTest("this machine has no font covering ko")
+        latin_only = Path(default_font_file("DejaVu Sans") or "")
+        if not latin_only.exists():
+            self.skipTest("no DejaVu Sans file to point --fonts-dir at")
+        cues = OUT / "fontsdir_ko.txt"
+        cues.write_text("0:00-0:03 안녕하세요\n", encoding="utf-8")
+        proc = script("caption.py", self._small(), "--text", cues, "--fonts-dir", latin_only.parent,
+                      "--fast", "-o", OUT / "fontsdir_ko.mp4", "--json")
+        self.assertIn("covers ko", proc.stderr, proc.stderr)
+        self.assertIn("no face in", proc.stderr, "the caller is told the directory does not cover the script")
+        self.assertNotIn("FontName=DejaVu Sans", " ".join(json.loads(proc.stdout)["commands"]))
+
+    def test_a_resolved_font_path_with_spaces_survives_into_the_command(self):
+        """macOS resolves "/Library/Fonts/Arial Unicode.ttf": a space in the font path must not
+        split the info line, the drawtext `fontfile=`, or the libass `fontsdir=`."""
+        import _common  # noqa: E402
+        spaced_dir = OUT / "font dir"
+        spaced_dir.mkdir(exist_ok=True)
+        source = default_font_file("DejaVu Sans")
+        if not source or not os.path.exists(source):
+            self.skipTest("no concrete font file on this machine to copy")
+        spaced = spaced_dir / "My Font.ttf"
+        shutil.copyfile(source, spaced)
+
+        # the resolver's own answer and the line it prints keep the path whole
+        entry = (str(spaced), "My Font")
+        saved = dict(_common._SCRIPT_FONT_CACHE)
+        try:
+            _common._SCRIPT_FONT_CACHE[("ko", None)] = entry
+            with contextlib.redirect_stderr(io.StringIO()):  # the resolver's own info line
+                _script, resolved, family = _common.script_font_for_text("안녕하세요")
+        finally:
+            _common._SCRIPT_FONT_CACHE.clear()
+            _common._SCRIPT_FONT_CACHE.update(saved)
+        self.assertEqual(resolved, str(spaced))
+        self.assertEqual(family, "My Font")
+        line = f"font: {resolved} (covers ko)"
+        self.assertEqual(re.search(r"^font: (.+?) \(covers (\w+)\)", line, re.M).group(1), str(spaced),
+                         "the info line's path is read whole, not up to the first space")
+
+        # and the same path reaches ffmpeg as one argument in both draw paths
+        proc = script("overlay.py", self._small(), "--text", "spaced", "--font-file", spaced,
+                      "--preset", "veryfast", "-o", OUT / "spaced_overlay.mp4", "--json")
+        cmd = json.loads(proc.stdout)["commands"][0]
+        self.assertIn(f"fontfile={escape_filter_path(str(spaced))}", cmd)
+        cues = OUT / "spaced_cue.txt"
+        cues.write_text("0:00-0:02 spaced\n", encoding="utf-8")
+        proc2 = script("caption.py", self._small(), "--text", cues, "--fonts-dir", spaced_dir,
+                       "--fast", "-o", OUT / "spaced_caption.mp4", "--json")
+        self.assertIn(f"fontsdir={escape_filter_path(str(spaced_dir))}", json.loads(proc2.stdout)["commands"][0])
 
     def test_caption_srt_only(self):
         srt = OUT / "only.srt"
@@ -3905,7 +4126,12 @@ class ScriptFontTests(unittest.TestCase):
 
 
 def _families_for(script):
+    """Families fontconfig lists for `script`, or [] where there is no fontconfig to ask (Windows
+    resolves fonts by file name, so font_for_script() answers there without an fc-list on PATH --
+    shelling out unconditionally raised FileNotFoundError in CI)."""
     from _common import FC_LANG
+    if not shutil.which("fc-list"):
+        return []
     proc = subprocess.run(["fc-list", f":lang={FC_LANG[script]}", "family"], stdout=subprocess.PIPE, text=True)
     return [f for line in proc.stdout.splitlines() for f in line.split(",")]
 

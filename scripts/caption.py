@@ -36,10 +36,11 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _common import STATE, char_script, script_font_for_text, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
+from _common import STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -302,6 +303,7 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
 # Devanagari sit in between. These are deliberately averages, not per-glyph metrics: measuring the
 # real advance needs a font parser (no stdlib one) and would still be wrong for libass's own
 # shaping, while a cue wrapped from an average is right to within a character on every line.
+# (Latin is measured per character from LATIN_EM below, not from this average.)
 ADVANCE_EM = {"ja": 1.0, "zh": 1.0, "ko": 1.0, "th": 1.0, "hi": 0.7, "ar": 0.6, "he": 0.6,
               "ru": 0.55, "el": 0.55, "latin": 0.55}
 # How much of the frame width a caption line may use. libass's own default SRT margins are 10 of a
@@ -309,6 +311,36 @@ ADVANCE_EM = {"ja": 1.0, "zh": 1.0, "ko": 1.0, "th": 1.0, "hi": 0.7, "ar": 0.6, 
 SAFE_WIDTH_FRACTION = 0.9
 # Scripts written without spaces: a line breaks between any two characters.
 NO_SPACE_SCRIPTS = ("ja", "zh", "ko", "th")
+# Per-character Latin advances in em, read off DejaVu Sans (the default caption family, and close
+# enough to any other proportional sans for a wrap) and rounded UP: a capital runs 0.56-0.99 em
+# against the single 0.55 average that used to stand for all of Latin, so an all-caps caption --
+# the style most burn-ins use -- overflowed the safe area and was silently re-wrapped by libass
+# past --max-lines. Rounding up is the safe direction: libass re-wraps a too-long line, it never
+# un-wraps a short one. Characters outside the table fall back by class (0.7 uppercase/digit,
+# 0.57 lowercase and anything else Latin-ish).
+LATIN_EM = {
+    ' ': 0.32, '!': 0.41, '"': 0.46, '#': 0.84, '$': 0.64, '%': 0.96, '&': 0.78, "'": 0.28,
+    '(': 0.4, ')': 0.4, '*': 0.5, '+': 0.84, ',': 0.32, '-': 0.37, '.': 0.32, '/': 0.34, '0': 0.64,
+    '1': 0.64, '2': 0.64, '3': 0.64, '4': 0.64, '5': 0.64, '6': 0.64, '7': 0.64, '8': 0.64,
+    '9': 0.64, ':': 0.34, ';': 0.34, '<': 0.84, '=': 0.84, '>': 0.84, '?': 0.54, '@': 1.0,
+    'A': 0.69, 'B': 0.69, 'C': 0.7, 'D': 0.78, 'E': 0.64, 'F': 0.58, 'G': 0.78, 'H': 0.76,
+    'I': 0.3, 'J': 0.3, 'K': 0.66, 'L': 0.56, 'M': 0.87, 'N': 0.75, 'O': 0.79, 'P': 0.61,
+    'Q': 0.79, 'R': 0.7, 'S': 0.64, 'T': 0.62, 'U': 0.74, 'V': 0.69, 'W': 0.99, 'X': 0.69,
+    'Y': 0.62, 'Z': 0.69, '[': 0.4, '\\': 0.34, ']': 0.4, '^': 0.84, '_': 0.5, '`': 0.5, 'a': 0.62,
+    'b': 0.64, 'c': 0.55, 'd': 0.64, 'e': 0.62, 'f': 0.36, 'g': 0.64, 'h': 0.64, 'i': 0.28,
+    'j': 0.28, 'k': 0.58, 'l': 0.28, 'm': 0.98, 'n': 0.64, 'o': 0.62, 'p': 0.64, 'q': 0.64,
+    'r': 0.42, 's': 0.53, 't': 0.4, 'u': 0.64, 'v': 0.6, 'w': 0.82, 'x': 0.6, 'y': 0.6, 'z': 0.53,
+    '{': 0.64, '|': 0.34, '}': 0.64, '~': 0.84
+}
+# Thai and Lao write some vowels BEFORE the consonant they belong to: the break must not land
+# between them and the base that follows.
+LEADING_VOWELS = set(range(0x0E40, 0x0E45)) | set(range(0x0EC0, 0x0EC5))
+
+
+def _is_mark(ch: str) -> bool:
+    """A character that hangs off the one before it: a combining mark (any script) or one of the
+    Thai/Lao vowel signs and tone marks, which are Mn/Mc but carry no combining class."""
+    return unicodedata.combining(ch) != 0 or unicodedata.category(ch) in ("Mn", "Mc")
 
 
 def _char_em(ch: str) -> float:
@@ -316,9 +348,20 @@ def _char_em(ch: str) -> float:
     # full-width grid as the ideographs they sit between, even though they are not "Han" to a
     # script detector -- measuring them as Latin under-counts a wrapped CJK line by a character.
     cp = ord(ch)
+    # A combining mark is drawn on top of (or under) its base and advances the pen by nothing:
+    # charging it a full em wrapped Thai and Devanagari lines far shorter than they needed to be.
+    if unicodedata.combining(ch) != 0 or unicodedata.category(ch) == "Mn":
+        return 0.0
     if 0x3000 <= cp <= 0x303F or 0xFF01 <= cp <= 0xFF60 or 0xFFE0 <= cp <= 0xFFE6:
         return 1.0
-    return ADVANCE_EM.get(char_script(ch), 0.55)
+    script = char_script(ch)
+    if script == "latin":
+        if ch in LATIN_EM:
+            return LATIN_EM[ch]
+        if ch.isupper() or ch.isdigit():
+            return 0.7
+        return 0.57
+    return ADVANCE_EM.get(script, 0.55)
 
 
 def text_width_em(text: str) -> float:
@@ -335,13 +378,20 @@ def _atoms(line: str) -> List[Tuple[str, bool]]:
     word = ""
     spaced = False        # a space stands before the atom being built
     pending = False       # a space stands before the NEXT atom
+    attach_next = False   # a leading Thai/Lao vowel is waiting for its base consonant
     for ch in line:
         if char_script(ch) in NO_SPACE_SCRIPTS:
             if word:
                 out.append((word, spaced))
                 word = ""
-            out.append((ch, pending))
-            pending = False
+            if out and (attach_next or _is_mark(ch)):
+                # never break between a base and the mark (or the leading vowel) that belongs to
+                # it: the line would start with an orphaned tone mark or vowel sign
+                out[-1] = (out[-1][0] + ch, out[-1][1])
+            else:
+                out.append((ch, pending))
+                pending = False
+            attach_next = ord(ch) in LEADING_VOWELS
         elif ch.isspace():
             if word:
                 out.append((word, spaced))
@@ -653,6 +703,23 @@ def ass_font_name(name: str) -> str:
     return name
 
 
+def _glue_negative_offset(argv: List[str]) -> List[str]:
+    """`--offset -0:00:02` reads as a flag to argparse, not a value: only bare negative NUMBERS
+    are exempt from the "starts with -" rule, and a negative timecode is not one. Join the pair
+    into `--offset=-0:00:02` so the documented grammar works in the shape people type it."""
+    out: List[str] = []
+    i = 0
+    while i < len(argv):
+        nxt = argv[i + 1] if i + 1 < len(argv) else ""
+        if argv[i] == "--offset" and nxt.startswith("-") and not nxt.startswith("--"):
+            out.append(f"--offset={nxt}")
+            i += 2
+            continue
+        out.append(argv[i])
+        i += 1
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", nargs="?", help="video to burn captions into (omit with --write-srt to only generate)")
@@ -672,7 +739,8 @@ def main() -> int:
     src.add_argument("--language", "--lang", help="language code (e.g. en, ja, zh, ko): the language for --transcribe (default auto), "
                                                   "the tag on the subtitle stream with --mode mux, and the hint that says whether Han-only "
                                                   "text is Chinese, Japanese or Korean when a font is picked by script")
-    src.add_argument("--offset", type=float, default=0.0, help="shift every cue by SECONDS (negative = earlier); works for --text, --srt and --ass")
+    src.add_argument("--offset", default="0", help="shift every cue by TIME (seconds, mm:ss, hh:mm:ss.ms or "
+                                                    "hh:mm:ss:ff; a leading - shifts earlier); works for --text, --srt and --ass")
     src.add_argument("--model", default="base", help="whisper model name/path for --transcribe (default base)")
     src.add_argument("--write-srt", help="where to save the generated SRT (default: <text>.srt)")
     src.add_argument("--auto-seconds", type=float, default=3.0, help="duration for cues without timing (default 3)")
@@ -706,12 +774,15 @@ def main() -> int:
     enc.add_argument("--crf", type=int, default=18)
     enc.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
-    args = ap.parse_args()
+    args = ap.parse_args(_glue_negative_offset(sys.argv[1:]))
     apply_common(args)
 
     brand = load_brand(args.brand)
     bc, bcap = brand["colors"], brand_caption_style(brand)
-    font_explicit = bool(args.font) or bool(args.brand and (bcap.get("font") or brand.get("font")))
+    # A brand file that never names a font is not an explicit font: BRAND_DEFAULTS always
+    # supplies one, so asking the merged document would turn font-by-script off for every job
+    # that passes --brand at all.
+    font_explicit = bool(args.font) or bool(args.brand and brand_states_font(brand))
     args.language = args.language or (brand.get("lang") if args.brand else None)
     if args.brand and bcap.get("box") and not args.box:
         args.box = True
@@ -740,6 +811,7 @@ def main() -> int:
         if args.animate != "none" or args.karaoke:
             die("--animate/--karaoke render pixels into the picture and require --mode burn")
 
+    args.offset = signed_time_arg(str(args.offset), "--offset")
     if args.max_lines < 1:
         die("--max-lines must be at least 1")
     if args.min_duration < 0:
@@ -821,21 +893,46 @@ def main() -> int:
 
     # An SRT or ASS the caller wrote is never edited in place: when --offset/--max-lines/
     # --min-duration change it, the adjusted copy is written next to the output and burned instead.
+    # The path is repointed in BOTH modes: --dry-run/--plan must describe the job the real run
+    # executes, so the planned command names the adjusted copy the real run burns. Only the
+    # WRITING waits for a real run (the rule every side file in this tool follows), which is why
+    # the cues are kept in hand below for the font sample and the ASS generator.
+    planned_cues: Optional[List[Tuple[float, float, str]]] = None
+    side_notes: List[str] = []
+    ass_sample_path = args.ass
     if args.srt and not (args.text or args.transcribe) and os.path.exists(srt_path or ""):
         adjusted, changed = lay_out(parse_srt(srt_path))
-        if changed and not STATE.dry_run:
+        if changed:
             new_srt = os.path.splitext(output)[0] + "_adjusted.srt"
-            write_srt(adjusted, new_srt)
-            info(f"wrote {new_srt} ({len(adjusted)} cues, adjusted from {os.path.basename(srt_path)})")
+            if STATE.dry_run:
+                info(f"[dry-run] would write {new_srt} ({len(adjusted)} cues, adjusted from {os.path.basename(srt_path)})")
+            else:
+                write_srt(adjusted, new_srt)
+                info(f"wrote {new_srt} ({len(adjusted)} cues, adjusted from {os.path.basename(srt_path)})")
             srt_path = new_srt
-    if args.ass and args.offset and os.path.exists(args.ass) and not STATE.dry_run:
+            planned_cues = adjusted
+            side_notes.append(f"the burned subtitles are {new_srt}, the adjusted copy of "
+                              f"{os.path.basename(args.srt)} this run writes (--offset/--max-lines/--min-duration); "
+                              "re-run this command without --dry-run to produce it")
+    if args.ass and args.offset and os.path.exists(args.ass):
         shifted = os.path.splitext(output)[0] + "_offset.ass"
-        n = shift_ass_file(args.ass, shifted, args.offset)
-        info(f"wrote {shifted} ({n} cues shifted by {args.offset:+g} s)")
+        if STATE.dry_run:
+            info(f"[dry-run] would write {shifted} (cues shifted by {args.offset:+g} s)")
+        else:
+            n = shift_ass_file(args.ass, shifted, args.offset)
+            info(f"wrote {shifted} ({n} cues shifted by {args.offset:+g} s)")
         args.ass = shifted
+        side_notes.append(f"the burned subtitles are {shifted}, the offset copy of "
+                          f"{os.path.basename(ass_sample_path)} this run writes; re-run this command "
+                          "without --dry-run to produce it")
+    # a side file this run has planned but (under --dry-run) not written is still the file the
+    # command names, so its absence must not be reported as a missing input
+    planned_only = STATE.dry_run and planned_cues is not None
+    planned_ass = STATE.dry_run and bool(args.ass) and args.ass != ass_sample_path
 
     if args.mode == "mux":
-        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and (args.text or args.transcribe))):
+        if not srt_path or (not os.path.exists(srt_path) and not planned_only
+                            and not (STATE.dry_run and (args.text or args.transcribe))):
             die(f"SRT file not found: {srt_path}")
         codec = mux_subtitle_codec(output)
         # Keep any subtitle track(s) the input already has (e.g. chaining --mode mux once per
@@ -865,14 +962,16 @@ def main() -> int:
     # A font that covers the text, before anything is rendered: non-Latin cues in a Latin-only
     # family come out as empty boxes, and ffmpeg exits 0 all the same (see references/gotchas.md).
     if args.ass:
-        sample = parse_ass_dialogue(args.ass) if os.path.exists(args.ass) else ""
+        sample = parse_ass_dialogue(ass_sample_path) if ass_sample_path and os.path.exists(ass_sample_path) else ""
     elif args.text or args.transcribe:
         sample = "\n".join(t for _, _, t in cues)
+    elif planned_cues is not None:
+        sample = "\n".join(t for _, _, t in planned_cues)
     else:
         sample = "\n".join(t for _, _, t in parse_srt(srt_path)) if os.path.exists(srt_path or "") else ""
     _script, font_file, font_family = script_font_for_text(
         sample, lang=args.language, font=args.font, font_explicit=font_explicit,
-        font_file=args.fonts_dir)
+        fonts_dir=args.fonts_dir)
     if font_file:
         args.font = font_family or args.font
         if not args.fonts_dir:
@@ -881,7 +980,8 @@ def main() -> int:
     if (args.animate != "none" or args.karaoke) and not args.ass:
         # both sources are already laid out: `cues` above, and srt_path was rewritten in place of
         # the caller's file when --offset/--max-lines/--min-duration changed anything
-        cues_for_ass = cues if (args.text or args.transcribe) else parse_srt(srt_path)
+        cues_for_ass = cues if (args.text or args.transcribe) else (
+            planned_cues if planned_cues is not None else parse_srt(srt_path))
         if args.karaoke and not getattr(args, "_word_timings", None):
             args._word_timings = whisper_word_timings(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
@@ -897,13 +997,14 @@ def main() -> int:
         generated_ass = False
 
     if args.ass:
-        if not generated_ass and not os.path.exists(args.ass):
+        if not generated_ass and not os.path.exists(args.ass) and not planned_ass:
             die(f"ASS file not found: {args.ass}")
         vf = f"ass={escape_filter_path(args.ass)}"
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
     else:
-        if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and (args.text or args.transcribe))):
+        if not srt_path or (not os.path.exists(srt_path) and not planned_only
+                            and not (STATE.dry_run and (args.text or args.transcribe))):
             die(f"SRT file not found: {srt_path}")
         style = [
             f"FontName={ass_font_name(args.font)}",
@@ -931,7 +1032,7 @@ def main() -> int:
     run(cmd)
     result = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
-    emit(output)
+    emit(output, **({"notes": side_notes} if side_notes else {}))
     return 0
 
 

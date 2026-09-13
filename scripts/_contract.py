@@ -773,20 +773,19 @@ def _fonts_capability() -> Dict[str, Any]:
     here follows). Informational like the default font and gpu_encoders: a machine with no Thai
     font is not a broken install, it is a machine that must not be asked to burn Thai captions.
     """
-    from _common import SCRIPTS, font_for_script
+    from _common import SCRIPTS, font_for_script, script_font_status
 
     font = _default_font()
     result = _font_available(font)
-    known = shutil.which("fc-list") is not None or platform.system() == "Windows"
     scripts: Dict[str, Any] = {}
     for script in SCRIPTS:
         if script == "latin":
             continue
-        if not known:
-            scripts[script] = {"status": "unknown", "file": None}
-            continue
-        path = font_for_script(script)
-        scripts[script] = {"status": "available" if path else "missing", "file": path}
+        # script_font_status() is the one place that tells "fontconfig answered, nothing covers
+        # this" (missing) apart from "there is no working fontconfig to ask" (unknown) -- the same
+        # distinction the tools refuse or continue on.
+        status = script_font_status(script)
+        scripts[script] = {"status": status, "file": font_for_script(script) if status == "available" else None}
     return {"default_font": font, "status": result["status"], "detail": result["detail"], "scripts": scripts}
 
 
@@ -796,7 +795,16 @@ def _fonts_summary_line(fonts: Dict[str, Any]) -> str:
     by_state: Dict[str, List[str]] = {"available": [], "missing": [], "unknown": []}
     for name, entry in scripts.items():
         by_state.setdefault(entry["status"], []).append(name)
-    parts = [f"fonts: '{fonts['default_font']}' {fonts['status']}"]
+    # the default font's `detail` (which family fontconfig substituted, or why it is unknown) is
+    # the actionable half of a non-available status, and the line has room for it
+    head = f"fonts: '{fonts['default_font']}' {fonts['status']}"
+    detail = fonts.get("detail") or ""
+    # The substituted family is the actionable half of a non-available status, so it goes on the
+    # plain line -- but only while it stays short enough to keep doctor's one-line-per-capability
+    # shape (the longest other line is ~85 chars). A long explanation is --json only.
+    if detail and fonts["status"] != "available" and len(detail) <= 60:
+        head += f" ({detail})"
+    parts = [head]
     if by_state["available"]:
         parts.append("renders " + " ".join(by_state["available"]))
     if by_state["missing"]:

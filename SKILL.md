@@ -34,7 +34,7 @@ Ask one short question only when the answer changes the output materially and th
 - **Duration** ("make it 60 s") without a method: speed up for ≤1.5× changes, trim otherwise, and say which you chose. Ask when the content is a talk (trimming loses words) and the change is large.
 - **Captions** without a text source: `--transcribe` if a local whisper exists, otherwise ask for the text or a timed file; never invent dialogue.
 - **Fonts and brand**: if the user mentions a brand, colours or "our font", ask for or create `brand.json` once and reuse it.
-- **CJK / non-Latin text**: check a font exists before rendering (`fc-list :lang=ja file` / `:lang=ko` / `:lang=zh`) and pass it with `--font "Name"` or `--font-file /path.ttf`. Tofu boxes are a failed job, not a style.
+- **CJK / non-Latin text**: let the tool pick the font by script (`--font` turns that off); `--lang ja|ko` for Han-only text. `doctor --json` `.fonts.scripts` says what renders here. Tofu is a failed job, not a style.
 - **Crop position** for `--fit crop`: centre by default, but when the request or the source names an off-centre subject ("keep the product on the right", "don't cut off my hands", someone visibly off-centre in the sheet) use `--crop-x`/`--crop-y` (0=left/top, 1=right/bottom) instead of a silent centre guess. Ask which edge to keep when the sheet shows the subject near an edge and the request doesn't say.
 - Anything else (transition type, caption style): pick the conventional default, say what you picked, offer the alternative in one line.
 

@@ -117,14 +117,25 @@ printing one line — `font: /usr/share/fonts/.../wqy-zenhei.ttc (covers ko)`.
 - Han characters alone (no kana, no hangul) are read as Chinese. Japanese or
   Korean hanja text with no kana needs `--lang ja` / `--lang ko`
   (`caption.py --language` is the same flag), or `"lang"` in brand.json.
-- An explicit `--font` / `--font-file` / brand font is always kept, even when
-  fontconfig says it does not cover the script: you get one info line saying so,
-  not a silent substitution.
+- An explicit `--font`, an explicit `--font-file`, or a font your brand file
+  itself names is always kept, even when fontconfig says it does not cover the script: you get one info
+  line saying so, not a silent substitution. A brand file that never names a
+  font is not a choice — the script still picks one.
+- `--fonts-dir` (`caption.py`) adds faces to the search, it does not switch the
+  check off: if nothing in the directory covers the script, one line says so and
+  a covering font is resolved as usual.
+- **No fontconfig is `unknown`, not `missing`.** With no `fc-list` on PATH (or
+  one that fails) coverage cannot be verified: the job runs with the font as
+  given behind one info line, because libass and drawtext have font backends of
+  their own. Only fontconfig answering "nothing covers this" fails the job.
 - **RTL:** libass shapes and reorders Arabic and Hebrew correctly, so
-  `caption.py` (which renders every subtitle through libass) is the right tool
-  for them. `drawtext` does neither — `overlay.py --text` and `graphics.py` draw
-  RTL text in logical order with unjoined letterforms, so put Arabic/Hebrew in a
-  caption, not a lower-third.
+  `caption.py` — which renders every subtitle through libass, `subtitles=` and
+  `ass=` alike — is right for them by construction. `drawtext` (`overlay.py
+  --text`, `graphics.py`) depends on the build: `ffmpeg -version` showing
+  `--enable-libfribidi` (and `--enable-libharfbuzz`) shapes and reorders RTL
+  correctly too; a build without them draws logical order with unjoined
+  letterforms. Nothing in the tools checks this, so on an unknown machine a
+  caption is the safe place for Arabic/Hebrew.
 
 ### Reframing, fps and duration
 `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot

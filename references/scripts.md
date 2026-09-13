@@ -472,8 +472,10 @@ the frame's short side; colours, font and safe margin come from `--brand`.
 Lower-third slides in over 0.4 s and out over 0.3 s; title/chapter/bug fade.
 Non-Latin `--name`/`--title`/`--subtitle` text picks a font file by script the
 same way `caption.py` does (`--lang XX` disambiguates Han-only text; no font for
-the script fails the job). drawtext does not shape RTL — put Arabic or Hebrew in
-a caption instead: `references/gotchas.md#fonts-by-script`.
+the script fails the job). RTL shaping in drawtext depends on the ffmpeg build
+(`--enable-libfribidi`/`--enable-libharfbuzz` shape it correctly, a build without
+them does not); `caption.py` always shapes, because it renders through libass:
+`references/gotchas.md#fonts-by-script`.
 
 ### brand.json — one file for fonts, colours, logo, margins
 ```json
@@ -538,7 +540,7 @@ frame like an editor would. Use `--compare` to show before/after to the user.
 ### caption.py — subtitles (static, animated, karaoke)
 ```
 caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
-           [--mode burn|mux] [--audio-stream N] [--fps N] [--lang XX] [--offset SECONDS]
+           [--mode burn|mux] [--audio-stream N] [--fps N] [--lang XX] [--offset TIME]
            [--max-lines N] [--min-duration S]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
            [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
@@ -558,27 +560,35 @@ cue equally (word timing is derived, not transcribed). The ASS is kept next to t
 user can hand-tune timings and re-run with `--ass`.
 Readable by default (1.12): every cue is wrapped to the safe area (90 % of the
 frame width) at the chosen `--size`, measured per script — CJK and Thai count a
-full em per character, Latin/Cyrillic/Greek about 0.55, Arabic/Hebrew 0.6,
-Devanagari 0.7 — breaking between characters for CJK/Thai and at spaces
-otherwise. A cue that would need more than `--max-lines` (default 2) is split
+full em per character, Latin per character from a table read off DejaVu Sans (so
+an all-caps line measures as wide as it draws), Cyrillic/Greek about 0.55,
+Arabic/Hebrew 0.6, Devanagari 0.7, and a combining mark nothing at all —
+breaking between characters for CJK/Thai and at spaces otherwise, but never
+between a character and the combining marks that belong to it (Thai tone marks
+and vowel signs, Devanagari matras, Arabic and Hebrew points). A cue that would need more than `--max-lines` (default 2) is split
 into consecutive cues sharing its time; a cue shorter than `--min-duration`
 (default 1.0 s) is held longer, never past the next cue's start; `--offset
-SECONDS` shifts every cue (negative = earlier) for `--text`, `--srt` and
-`--ass`. One `cues:` info line reports what changed. A file you passed in is
+TIME` shifts every cue (seconds, `mm:ss`, `hh:mm:ss.ms` or `hh:mm:ss:ff`, a
+leading `-` for earlier) for `--text`, `--srt` and `--ass`. One `cues:` info line reports what changed. A file you passed in is
 never edited: the adjusted copy is written next to the output
-(`<out>_adjusted.srt`, `<out>_offset.ass`). `--max-lines`/`--min-duration`/
-`--offset` also work with `--write-srt` alone; wrapping needs the input video,
-since the line width comes from its real frame size.
+(`<out>_adjusted.srt`, `<out>_offset.ass`) and burned instead — under `--dry-run`
+/`--plan` the planned command names that same copy and the plan says where it
+comes from, but nothing is written until the real run. `--min-duration` and
+`--offset` also work with `--write-srt` alone; `--max-lines` does not, because
+wrapping needs the input video's real frame size.
 
-Fonts by script (1.12): with no `--font`, `--fonts-dir` or brand font, the
+Fonts by script (1.12): with no `--font` and no font named in your brand file, the
 script of the cue text (Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari,
 Thai, Cyrillic, Greek) picks a font file that covers it, logged as `font: <file>
 (covers ko)`. Han-only text is read as Chinese unless `--lang ja|ko` (or
 brand.json `"lang"`) says otherwise; `--language` is the same flag, and still
 tags the subtitle stream under `--mode mux` and sets `--transcribe`'s language.
-No font for the script fails the job (`kind: input`) instead of rendering boxes;
-an explicit font is always kept, with an info line when it does not cover the
-text. `doctor --json` `fonts.scripts` lists what this machine can render. See
+No font for the script fails the job (`kind: input`) instead of rendering boxes
+— but only when fontconfig answered: with no working `fc-list` the coverage is
+`unknown`, and the job runs with the font as given behind one info line. An
+explicit font is always kept, with an info line when it does not cover the text;
+`--fonts-dir` is searched first and checked with `fc-scan`, and a directory that
+does not cover the script gets one line and a font resolved by script anyway. `doctor --json` `fonts.scripts` lists what this machine can render. See
 `references/gotchas.md#fonts-by-script` (RTL: use captions, not drawtext).
 
 `--karaoke` uses real per-word timings when the transcript has them (a whisper
