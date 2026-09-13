@@ -281,15 +281,23 @@ with no opinion on which asset should be proxied or what for.
 | `check` | the `check.py` platform a delivery is verified against |
 
 It is an internal module (leading underscore), not a tool: the public tool count is unchanged.
-`check.py`'s `SPECS` and `export.py`'s `PRESETS` / `PLATFORM_OF` are derived from it, so the
-loudness `export.py --normalize` targets and the loudness `check.py` enforces are one value.
+`check.py`'s `SPECS`, `export.py`'s `PRESETS` (each platform preset's frame and duration cap)
+and `export.py`'s `PLATFORM_OF` are all built from it, so the loudness `export.py --normalize`
+targets, the frame it writes, the cap it trims at and the spec `check.py` enforces are one
+value. Two presets deliberately differ from their destination's row and say so in the code:
+`youtube4k` delivers to YouTube at 2160p, and no `youtube*` preset trims at YouTube's 12-hour
+limit (`check.py` reports it instead). `_platforms.resolve()` is the one alias map -- 
+`youtube-shorts`/`yt-shorts` = `shorts`, `yt` = `youtube`, `instagram`/`ig` = `reels`,
+`twitter` = `x`, `fb` = `facebook` -- and `check.py --platform`, `export.py --preset`,
+`caption.py`/`graphics.py`/`overlay.py --platform`, `look.py --safe` and
+`render.py --template` all accept those spellings.
 
 New in the same release, all additive: `export.py --preset tiktok|shorts|linkedin|facebook`
 (real presets, not aliases of `reels`/`youtube`), `--preset youtube-hdr` (HEVC Main10 keeping
 the source's HDR tags; `kind: input` on an SDR source) and `--preset youtube-av1`
 (`kind: missing_tool` when the build has neither SVT-AV1 nor libaom); `caption.py --platform`
-and `graphics.py --platform` / `--margin` (margins from the safe zone, an explicit
-`--margin`/`--position` wins); `look.py --safe NAME`; `fit.py --fit blur`; `report.py --pack`;
+and `graphics.py --platform` / `--margin` and `overlay.py --platform` (margins from the safe
+zone, an explicit `--margin`/`--position` wins); `look.py --safe NAME`; `fit.py --fit blur`; `report.py --pack`;
 `graphics.py --template sticker|hook|meme`; and `render.py --template NAME INPUT`
 (`--cues/--srt/--logo/--title/--brand/--chapters/--fit/-o/--write-project/--list-templates`),
 which fills a `templates/<name>.json` project shipped with the skill. `--template all` or a

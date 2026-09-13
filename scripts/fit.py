@@ -93,7 +93,9 @@ def main() -> int:
     a.add_argument("--aspect", help="target aspect ratio, e.g. 16:9, 9:16, 1:1, 4:5")
     a.add_argument("--fit", choices=["pad", "crop", "blur"], default="pad",
                    help="how to reach the aspect: pad (letterbox), crop, or blur -- the whole picture centred on a "
-                        "blurred, darkened copy of itself filling the rest (the phone-editor vertical, 1.14)")
+                        "blurred, darkened copy of itself filling the rest (the phone-editor vertical, 1.14). "
+                        "The darkening is applied to SDR sources only: on an HDR source the background is blurred "
+                        "but left at its own levels, since an eq on PQ/HLG code values is not a -15%% perceptual dim")
     a.add_argument("--width", type=int, help="output width in px (default: keep source width or the width implied by the aspect); with --height also given, both are used directly")
     a.add_argument("--height", type=int, help="output height in px (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
@@ -220,8 +222,17 @@ def main() -> int:
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")
         elif args.fit == "blur":
             # nothing is cropped and nothing is a black bar: the picture keeps its own aspect in
-            # the middle of a blurred, dimmed copy of itself (BLUR_DARKEN) filling the frame
-            vf.append(pad_filters(out_w, out_h, "blur", args.pad_color, args.pad_blur, BLUR_DARKEN))
+            # the middle of a blurred, dimmed copy of itself (BLUR_DARKEN) filling the frame.
+            # The dimming is an eq on the code values, which is a -15 % perceptual dim on an SDR
+            # (gamma-encoded) signal and something else entirely on a PQ/HLG one -- so an HDR
+            # source keeps its blurred background undimmed rather than being silently altered
+            # (review 12). The blur itself is neutral either way, and no tone mapping happens.
+            darken = 0.0 if meta["video"].get("hdr") else BLUR_DARKEN
+            if not darken:
+                info("--fit blur: HDR source, so the blurred background is not dimmed "
+                     "(an eq on PQ/HLG code values is not the -15%% dim it is on SDR); "
+                     "run color.py --to-sdr first for the SDR look")
+            vf.append(pad_filters(out_w, out_h, "blur", args.pad_color, args.pad_blur, darken))
         else:
             vf.append(pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur))
         vf.append("setsar=1")

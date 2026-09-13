@@ -26,7 +26,7 @@ import sys
 from fractions import Fraction
 from typing import Any, Dict, List
 
-from _platforms import PLATFORMS, spec_of
+from _platforms import PLATFORMS, PLATFORM_CHOICES, spec_of, resolve as resolve_platform
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -63,7 +63,7 @@ def aspect_name(w: int, h: int) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
-    ap.add_argument("--platform", choices=sorted(SPECS), default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
+    ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
     ap.add_argument("--max-duration", type=float, help="override max duration in seconds")
     ap.add_argument("--aspect", help="override allowed aspect (e.g. 9:16 or 16:9,1:1)")
     ap.add_argument("--lufs", type=float, help="override loudness target")
@@ -78,7 +78,7 @@ def main() -> int:
     # spent a paragraph explaining why they left them alone. Without a named platform the
     # judgement rows are advisory: WARN, not FAIL, and not counted as failed.
     named = args.platform is not None
-    args.platform = args.platform or "youtube"
+    args.platform = resolve_platform(args.platform) or "youtube"
     spec = dict(SPECS[args.platform])
     if args.max_duration is not None:
         spec["max_duration"] = args.max_duration

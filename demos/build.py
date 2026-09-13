@@ -496,6 +496,27 @@ def demo_export_reels(ctx):
     return before, after
 
 
+def demo_fit_blur(ctx):
+    """16:9 to 9:16 with nothing cropped: the picture sits on a blurred, dimmed copy of itself."""
+    before = FIX / "mandel.mp4"
+    after = ctx.path("after.mp4")
+    ctx.script("fit.py", before, "--aspect", "9:16", "--fit", "blur", "--width", "540",
+               "--preset", "veryfast", "-o", after)
+    return before, after
+
+
+def demo_template_tiktok(ctx):
+    """One command per destination: the delivery template does the whole chain and checks it."""
+    before = FIX / "motion.mp4"
+    after = ctx.path("after.mp4")
+    ctx.script("render.py", before, "--template", "tiktok", "--cues", FIX / "cues_en.txt",
+               "--fast", "-o", after)
+    if not after.exists():
+        raise BuildError("render.py --template tiktok did not write %s" % after)
+    ctx.note("1080x1920, captions clear of TikTok's description bar, check.py --platform tiktok passes")
+    return before, after
+
+
 def demo_render_project(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
@@ -589,6 +610,14 @@ DEMOS = [
     ("export_reels", DELIVERY, "Reels export, then checked",
      "One command produces the 1080x1920 deliverable; check.py then reports the spec row by row and exits non-zero on a FAIL.",
      demo_export_reels, "video", None),
+
+    ("fit_blur", PICTURE, "16:9 to 9:16 on a blurred background",
+     "Nothing is cropped and there are no black bars: the whole wide frame sits centred on a blurred, dimmed copy of itself.",
+     demo_fit_blur, "video", None),
+
+    ("template_tiktok", DELIVERY, "TikTok delivery template",
+     "One command turns the master into the 1080x1920 deliverable: reframe, burned-in captions kept clear of TikTok's own UI, loudness to -14 LUFS, the tiktok export preset and check.py's platform rows.",
+     demo_template_tiktok, "video", "latin"),
 
     ("render_project", PROJECTS, "Whole edit from one project file",
      "Clips, a transition, captions and a title card described as JSON and rendered in one pass.",

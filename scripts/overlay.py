@@ -24,24 +24,30 @@ import argparse
 import sys
 from typing import List, Optional
 
+from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import STATE, script_font_for_text, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 
+# Per-edge margins: a platform's UI does not cover the same fraction of every edge (TikTok's
+# like column is 14 % of the width, its description block 22 % of the height), so a position
+# names the edges it is measured from rather than one --margin for all four.
 POS = {
-    "top-left": ("{m}", "{m}"),
-    "top": ("(W-w)/2", "{m}"),
-    "top-right": ("W-w-{m}", "{m}"),
-    "left": ("{m}", "(H-h)/2"),
+    "top-left": ("{left}", "{top}"),
+    "top": ("(W-w)/2", "{top}"),
+    "top-right": ("W-w-{right}", "{top}"),
+    "left": ("{left}", "(H-h)/2"),
     "center": ("(W-w)/2", "(H-h)/2"),
-    "right": ("W-w-{m}", "(H-h)/2"),
-    "bottom-left": ("{m}", "H-h-{m}"),
-    "bottom": ("(W-w)/2", "H-h-{m}"),
-    "bottom-right": ("W-w-{m}", "H-h-{m}"),
+    "right": ("W-w-{right}", "(H-h)/2"),
+    "bottom-left": ("{left}", "H-h-{bottom}"),
+    "bottom": ("(W-w)/2", "H-h-{bottom}"),
+    "bottom-right": ("W-w-{right}", "H-h-{bottom}"),
 }
 
 
-def position_exprs(pos: str, margin: int, text_mode: bool):
+def position_exprs(pos: str, margin: int, text_mode: bool, margins: Optional[dict] = None):
+    edges = margins or {}
+    m = {edge: int(edges.get(edge, margin)) for edge in ("top", "bottom", "left", "right")}
     if pos in POS:
-        x, y = (e.format(m=margin) for e in POS[pos])
+        x, y = (e.format(**m) for e in POS[pos])
     else:
         try:
             xs, ys = pos.split(",")
@@ -101,6 +107,10 @@ def main() -> int:
     ap.add_argument("--brand", help="brand.json (logo, font, colours, safe margin)")
     ap.add_argument("--position", default="top-right", help="named position or X,Y (default top-right)")
     ap.add_argument("--margin", type=int, default=24, help="margin from the edges in px (default 24)")
+    ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None,
+                    help="keep the overlay out of this destination's UI: each edge's margin becomes that "
+                         "platform's safe zone (scripts/_platforms.py), so a top-left logo clears TikTok's "
+                         "status bar and a right-hand one clears the like column. An explicit --margin wins")
     ap.add_argument("--start", help="show from this time (default: whole video)")
     ap.add_argument("--end", help="hide after this time")
     ap.add_argument("--fade", type=float, default=0.0, help="fade-in duration in seconds (at --start or 0); the fade-out happens only at --end")
@@ -163,6 +173,20 @@ def main() -> int:
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
     vw = meta["video"]["width"]
+    # --platform: the edges this destination's own UI covers, in pixels of this frame. An
+    # explicit --margin (or a brand safe_margin, applied above) is the more specific statement
+    # and wins; without either, the historical 24 px default is unchanged.
+    safe_margins = None
+    args.platform = resolve_platform(args.platform)
+    if args.platform and args.margin == ap.get_default("margin") and PLATFORMS[args.platform].get("frame"):
+        # a dry run has no real frame to measure (the probe is stubbed rather than guessed), so
+        # fall back to the destination's own delivery frame -- which is what the fitted
+        # intermediate this stage runs on will be anyway
+        frame = PLATFORMS[args.platform]["frame"]
+        pw, ph = vw or frame["w"], meta["video"].get("height") or frame["h"]
+        safe_margins = safe_margins_px(args.platform, pw, ph)
+        info(f"--platform {args.platform}: safe margins top {safe_margins['top']} / bottom {safe_margins['bottom']} / "
+             f"left {safe_margins['left']} / right {safe_margins['right']} px (clear of the app's own UI)")
     fps = meta["video"].get("fps")
     start = time_arg(args.start, "--start", fps) if args.start else None
     end = time_arg(args.end, "--end", fps) if args.end else None
@@ -203,7 +227,7 @@ def main() -> int:
             chain.append(f"fade=t=in:st={s:.3f}:d={args.fade:g}:alpha=1")
             if end is not None and end > args.fade:
                 chain.append(f"fade=t=out:st={end - args.fade:.3f}:d={args.fade:g}:alpha=1")
-        x, y = position_exprs(args.position, args.margin, text_mode=False)
+        x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
         ov = f"overlay={x}:{y}:format=auto"
         if enable:
             ov += f":enable='{enable}'"
@@ -237,7 +261,7 @@ def main() -> int:
             chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
         if args.opacity < 1:
             chain.append(f"colorchannelmixer=aa={args.opacity:g}")
-        x, y = position_exprs(args.position, args.margin, text_mode=False)
+        x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
         ov = f"overlay={x}:{y}:format=auto"
         if enable:
             ov += f":enable='{enable}'"
@@ -251,7 +275,7 @@ def main() -> int:
         else:
             cmd += ["-shortest"]
     else:
-        x, y = position_exprs(args.position, args.margin, text_mode=True)
+        x, y = position_exprs(args.position, args.margin, text_mode=True, margins=safe_margins)
         opts = [f"text='{escape_drawtext(args.text)}'", f"fontsize={args.font_size}", f"x={x}", f"y={y}",
                 f"borderw={args.border}", f"bordercolor={args.border_color}"]
         if args.font_file:

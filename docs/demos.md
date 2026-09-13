@@ -182,6 +182,16 @@ python3 scripts/join.py demos/out/fixtures/motion.mp4 demos/out/fixtures/mandel.
 
 **Look for:** The same join with fadeblack: the cut dips to black instead of blending the two pictures.
 
+### 16:9 to 9:16 on a blurred background
+
+![16:9 to 9:16 on a blurred background](demos/fit_blur.gif)
+
+```bash
+python3 scripts/fit.py demos/out/fixtures/mandel.mp4 --aspect 9:16 --fit blur --width 540 --preset veryfast -o demos/out/fit_blur_after.mp4
+```
+
+**Look for:** Nothing is cropped and there are no black bars: the whole wide frame sits centred on a blurred, dimmed copy of itself.
+
 
 ## Audio
 
@@ -238,6 +248,16 @@ python3 scripts/check.py demos/out/export_reels_after.mp4 --platform reels --jso
 ```
 
 **Look for:** One command produces the 1080x1920 deliverable; check.py then reports the spec row by row and exits non-zero on a FAIL.
+
+### TikTok delivery template
+
+![TikTok delivery template](demos/template_tiktok.gif)
+
+```bash
+python3 scripts/render.py demos/out/fixtures/motion.mp4 --template tiktok --cues demos/out/fixtures/cues_en.txt --fast -o demos/out/template_tiktok_after.mp4
+```
+
+**Look for:** One command turns the master into the 1080x1920 deliverable: reframe, burned-in captions kept clear of TikTok's own UI, loudness to -14 LUFS, the tiktok export preset and check.py's platform rows.
 
 
 ## Projects & inspection

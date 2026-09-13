@@ -3788,6 +3788,16 @@ class FFmpegSkillTests(unittest.TestCase):
         mid_avg, _ = self._region_stats(out, "iw:180:0:230")
         ref_avg, _ = self._region_stats(ref, "iw:180:0:10")
         self.assertClose(mid_avg, ref_avg, 12, "the centre of a blur fit is the scaled source")
+        # the darkening is an eq on code values: a -15 % perceptual dim on SDR, something else on
+        # PQ/HLG, so an HDR source keeps its background at its own levels (review 12)
+        sdr_plan = json.loads(script("fit.py", self.src, "--aspect", "9:16", "--fit", "blur",
+                                     "--dry-run", "--json", "-o", str(OUT / "blur_sdr.mp4")).stdout)
+        hdr_plan = json.loads(script("fit.py", self.hdr, "--aspect", "9:16", "--fit", "blur",
+                                     "--dry-run", "--json", "-o", str(OUT / "blur_hdr.mp4")).stdout)
+        self.assertTrue(any("eq=brightness" in c for c in sdr_plan["commands"]))
+        self.assertTrue(any("boxblur" in c for c in hdr_plan["commands"]))
+        self.assertFalse(any("eq=brightness" in c for c in hdr_plan["commands"]),
+                         "an HDR source must not be dimmed by an SDR-shaped eq")
 
     def test_look_safe_shades_only_the_platforms_occluded_zones(self):
         """`look.py --safe tiktok` is how "is the caption readable" gets answered about the app and
@@ -3852,6 +3862,166 @@ class FFmpegSkillTests(unittest.TestCase):
         self.assertNotAlmostEqual(meme_bottom, plain_bottom, delta=0.5, msg="meme --bottom draws nothing")
         script("graphics.py", vertical, "--template", "sticker", expect_fail=True)
         script("graphics.py", vertical, "--template", "meme", expect_fail=True)
+
+    def test_project_graphics_entry_renders_a_sticker_and_a_meme(self):
+        """The three social graphics templates are advertised as usable inside a render.py
+        graphics[] entry, and until review 12 the project validator refused their own keys
+        (text/top/bottom/duration), so sticker and meme could only be run from the CLI."""
+        out = OUT / "gproj_out.mp4"
+        proj = OUT / "gproj.json"
+        proj.write_text(json.dumps({
+            "output": str(out),
+            "clips": [{"src": str(self.src.resolve()), "in": 0, "out": 4}],
+            "graphics": [
+                {"template": "sticker", "text": "NEW", "position": "top-right", "platform": "tiktok"},
+                {"template": "meme", "top": "when the render", "bottom": "finally finishes"},
+                {"template": "hook", "title": "How I cut this", "duration": 2},
+            ]}), encoding="utf-8")
+        doc = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertIn("graphics", doc["stages"])
+        self.assertTrue(out.exists())
+        # ink where the meme layout puts it: the two edges of the frame change, and the sticker
+        # corner does too -- a validator that accepted the keys but dropped them would not show here
+        for crop, y in (("iw:100:0:20", "top"), ("iw:100:0:600", "bottom")):
+            before, _ = self._region_stats(self.src, crop, at=1.0)
+            after, _ = self._region_stats(out, crop, at=1.0)
+            self.assertNotAlmostEqual(before, after, delta=0.5, msg=f"nothing was drawn at the {y}")
+        # an unknown key is still a refusal, with the valid ones named
+        proj.write_text(json.dumps({"output": str(out), "clips": [{"src": str(self.src.resolve())}],
+                                    "graphics": [{"template": "sticker", "caption": "NEW"}]}), encoding="utf-8")
+        proc = script("render.py", proj, "--dry-run", "--json", expect_fail=True)
+        self.assertIn("unknown key", proc.stderr)
+
+    def test_template_logo_lands_inside_the_platform_safe_zone(self):
+        """A template's --logo used to be drawn 24 px from the corner -- i.e. under TikTok's own
+        status bar and next to its tab row. The overlay stage now hears the destination like the
+        caption and graphics stages do, so the planned overlay sits inside the safe zone."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _platforms import PLATFORMS
+        safe = PLATFORMS["tiktok"]["safe"]
+        W, H = PLATFORMS["tiktok"]["frame"]["w"], PLATFORMS["tiktok"]["frame"]["h"]
+        doc = json.loads(script("render.py", self.src, "--template", "tiktok", "--cues", self.cues,
+                                "--logo", self.logo, "--dry-run", "--json",
+                                "-o", str(OUT / "logo_safe.mp4")).stdout)
+        cmd = [c for c in doc["commands"] if "logo.png" in c and "overlay=" in c]
+        self.assertTrue(cmd, doc["commands"])
+        x, y = re.search(r"overlay=(-?\d+):(-?\d+)", cmd[0]).groups()
+        self.assertGreaterEqual(int(x), round(safe["left"] * W) - 1,
+                                "the logo must clear the left safe margin")
+        self.assertGreaterEqual(int(y), round(safe["top"] * H) - 1,
+                                "the logo must clear TikTok's status bar and tab row")
+        self.assertLess(int(y), H - round(safe["bottom"] * H))
+
+    def test_pack_dry_run_plans_every_command_and_reports_no_result(self):
+        """A pack is the one path that writes seven files, so --dry-run has to show all of them --
+        and must never report a check result or a file size for a run that encoded nothing (the
+        sizes used to be read off files left behind by an earlier real run)."""
+        packdir = OUT / "packdry"
+        packdir.mkdir(exist_ok=True)
+        stale = packdir / "source_tiktok.mp4"
+        stale.write_bytes(b"0" * 4096)  # a leftover from an earlier real run
+        doc = json.loads(script("render.py", self.src, "--template", "tiktok,podcast",
+                                "--cues", self.cues, "--dry-run", "--json",
+                                "-o", str(packdir / "ignored.mp4")).stdout)
+        self.assertTrue(any("ffmpeg" in c for c in doc["commands"]),
+                        "the pack's planned commands are the plan; --dry-run must show them")
+        self.assertTrue(any("loudnorm" in c or "libx264" in c for c in doc["commands"]))
+        for row in doc["pack"]:
+            self.assertEqual(row["check"], "planned", row)
+            self.assertIsNone(row["size_bytes"], row)
+            self.assertIsNone(row["duration"], row)
+        self.assertEqual(stale.stat().st_size, 4096, "a dry run must not touch the files it plans")
+        # the audio-only destination of a pack is named like the single-template form: .m4a
+        self.assertEqual([Path(r["file"]).suffix for r in doc["pack"]], [".mp4", ".m4a"])
+        self.assertFalse((packdir / "source_pack.md").exists(), "a dry run writes no table either")
+
+    def test_export_presets_are_the_platform_tables_frame_and_duration(self):
+        """docs/contract.md says export.py's PRESETS/PLATFORM_OF come from scripts/_platforms.py.
+        Until review 12 only check.py's SPECS did, and the facebook preset had already drifted
+        (no duration cap against the table's 14400 s). Every platform preset is the table now,
+        except the two deliberate, documented exceptions."""
+        sys.path.insert(0, str(SCRIPTS))
+        import export as export_mod
+        from _platforms import PLATFORMS, loudness_of
+        from check import SPECS
+        # youtube4k delivers to youtube at 2160p; neither youtube preset trims at the 12-hour cap
+        exceptions = {"youtube": {"max"}, "youtube4k": {"w", "h", "max"},
+                      "youtube-hdr": {"w", "h", "max"}, "youtube-av1": {"max"}}
+        for preset, platform in sorted(export_mod.PLATFORM_OF.items()):
+            with self.subTest(preset=preset):
+                p = export_mod.PRESETS[preset]
+                frame = PLATFORMS[platform]["frame"]
+                spec = PLATFORMS[platform]["spec"]
+                skip = exceptions.get(preset, set())
+                if "w" not in skip:
+                    self.assertEqual((p["w"], p["h"]), (frame["w"], frame["h"]),
+                                     f"{preset} frame must be {platform}'s frame")
+                if "max" not in skip:
+                    self.assertEqual(p["max"], float(spec["max_duration"]) if spec["max_duration"] else None,
+                                     f"{preset} duration cap must be {platform}'s")
+                table = loudness_of(platform)
+                self.assertEqual((SPECS[platform]["lufs"], SPECS[platform]["lufs_tol"], SPECS[platform]["tp"]),
+                                 (table["lufs"], table["lufs_tol"], table["tp"]))
+        self.assertEqual(export_mod.PRESETS["facebook"]["max"], 14400.0,
+                         "the drift review 12 found: facebook had no duration cap at all")
+
+    def test_every_template_caption_block_is_the_tables_safe_zone(self):
+        """The templates must not restate the numbers the table exists to own: change a
+        destination's safe zone and every shipped template follows, rather than keeping an old
+        margin silently."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _platforms import PLATFORMS, caption_defaults
+        import render as render_mod
+        for path in sorted((ROOT / "templates").glob("*.json")):
+            tpl = json.loads(path.read_text(encoding="utf-8"))
+            cap = tpl.get("captions")
+            if not cap:
+                continue
+            dest = tpl["check"]["platform"]
+            with self.subTest(template=path.stem):
+                want = caption_defaults(dest)
+                self.assertEqual((cap["size"], cap["margin"]), (want["size"], want["margin"]),
+                                 f"{path.name} restates {dest}'s caption size/margin")
+                self.assertTrue(PLATFORMS[dest]["frame"])
+        # and the filled project takes them from the table, not from the file's literals
+        proj = OUT / "tplcap_project.json"
+        script("render.py", self.src, "--template", "reels", "--cues", self.cues,
+               "--write-project", proj, "-o", str(OUT / "tplcap.mp4"))
+        filled = json.loads(proj.read_text())["captions"]
+        want = caption_defaults("reels")
+        self.assertEqual((filled["size"], filled["margin"]), (want["size"], want["margin"]))
+
+    def test_platform_aliases_resolve_the_same_on_every_tool(self):
+        """One resolve(): 'youtube-shorts' is 'shorts' for check, export, caption, graphics, look
+        and render alike. Before review 12 the alias map was written, advertised in the docs and
+        called from nowhere, so no tool accepted a single one of them."""
+        sys.path.insert(0, str(SCRIPTS))
+        import render as render_mod
+        self.assertEqual(render_mod.expand_templates("ig"), ["reels"])
+        self.assertEqual(render_mod.expand_templates("twitter,yt"), ["x", "youtube"])
+        self.assertEqual(render_mod.expand_templates("youtube-shorts"), ["youtube-shorts"],
+                         "a template that ships under its own name stays itself")
+        target = OUT / "alias_src.mp4"
+        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "crop",
+               "--width", "360", "--fast", "-o", target)
+
+        def commands(tool, *argv):
+            doc = json.loads(script(tool, target, *argv, "--dry-run", "--json").stdout)
+            return [c for c in doc["commands"] if "ffmpeg" in c or "drawtext" in c]
+
+        doc_a = json.loads(script("check.py", target, "--platform", "youtube-shorts",
+                                  "--no-loudness", "--json").stdout)
+        self.assertEqual(doc_a["platform"], "shorts")
+        for tool, argv in (
+                ("export.py", ("--preset", "youtube-shorts", "-o", str(OUT / "alias_exp.mp4"))),
+                ("caption.py", ("--text", self.cues, "-o", str(OUT / "alias_cap.mp4"), "--platform", "youtube-shorts")),
+                ("graphics.py", ("--template", "bug", "--title", "@x", "-o", str(OUT / "alias_gfx.mp4"), "--platform", "youtube-shorts")),
+                ("look.py", ("--at", "1", "-o", str(OUT / "alias_look.png"), "--safe", "youtube-shorts"))):
+            with self.subTest(tool=tool):
+                canonical = tuple("shorts" if a == "youtube-shorts" else a for a in argv)
+                self.assertEqual(commands(tool, *argv), commands(tool, *canonical),
+                                 f"{tool} must treat youtube-shorts and shorts as one destination")
 
     def test_graphics_audio_stream_selects_the_requested_track_not_always_the_first(self):
         two = OUT / "gfx_two_streams.mkv"

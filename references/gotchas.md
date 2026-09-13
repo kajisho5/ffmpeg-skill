@@ -158,6 +158,21 @@ visibly choppy for sports, gaming, drone pans. Keep 60 when the platform allows.
 trim it drops two thirds of the words. Ask which, or propose a highlight cut with
 `scenes.py`.
 
+### Platform safe zones
+Every vertical app draws its own UI over the delivery: TikTok covers roughly the
+bottom 22 % (description and caption block), the right 14 % (like/comment/share
+column) and the top 10 % (status bar and tabs); Reels 20/12/8 %; Shorts 18/12/6 %.
+The feed destinations (YouTube, X, LinkedIn, Facebook) have no persistent overlay
+and use the conventional 5 % title-safe border instead. A file can pass every
+`check.py` row and still be unreadable because the caption sits under the
+description.
+
+The fractions live in one table (`scripts/_platforms.py`). `caption.py --platform
+NAME`, `graphics.py --platform NAME` and `overlay.py --platform NAME` take their
+margins from it, `render.py --template NAME` passes it to all three, and
+`look.py --safe tiktok` shades the zones on a frame or contact sheet so you can
+see what the app covers. An explicit `--margin` always wins.
+
 ### Dimensions and rotation
 `yuv420p` needs even width/height; `fit.py` and `export.py` round to even values
 automatically. Phone footage often carries a `rotation` tag; `probe.py` reports

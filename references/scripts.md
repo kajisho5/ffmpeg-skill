@@ -99,7 +99,9 @@ takes the same two flags. `--fit blur` (1.14) is the same fill named in one word
 background dimmed (`eq brightness=-0.15`) so the picture in front reads as the subject: the
 whole frame is kept (nothing cropped), the borders are a blurred copy of it rather than black.
 A delivery template asks for it as `"frame": {"aspect": "9:16", "fit": "blur"}`, or
-`render.py --template tiktok clip.mp4 --fit blur`.
+`render.py --template tiktok clip.mp4 --fit blur`. The dimming is applied to SDR sources only:
+an `eq` on PQ/HLG code values is not the −15 % perceptual dim it is on SDR, so an HDR source
+keeps a blurred but undimmed background (and is never silently tone-mapped); `info` says so.
 
 ### crop.py — crop to an exact pixel rectangle
 ```
@@ -449,12 +451,22 @@ what the run was given and **drops any block whose placeholder has no value** �
 no overlay stage at all, not an overlay of nothing. The filled project then renders through the
 normal stages, so `--dry-run --json`, `--stop-after` and the work directory behave as always. An
 unknown name is refused (`kind: input`) with the list. Output defaults to
-`<input>_<template>.mp4` (`.m4a` for `podcast`).
+`<input>_<template>.mp4` **next to the input** (`.m4a` for an audio-only destination such as
+`podcast`) — the same rule for one template and for a pack, whose `-o` names the directory.
+Alias spellings are accepted everywhere one name is: `youtube-shorts`/`yt-shorts` = `shorts`,
+`yt` = `youtube`, `instagram`/`ig` = `reels`, `twitter` = `x`, `fb` = `facebook`
+(`check.py --platform`, `export.py --preset`, `caption.py`/`graphics.py`/`overlay.py
+--platform`, `look.py --safe`, `render.py --template`).
+
+Under `--dry-run` a pack prints every child's planned commands and its table reads `planned`
+with no size or duration: nothing was encoded, so nothing is reported as verified. `--chapters`
+reaches a pack's audio destination like it does the single-template form.
 
 Each template's frame, duration limit, loudness target and safe zones come from the one delivery
 table (`scripts/_platforms.py`). Safe zones are the fraction of the frame the app's own UI covers;
-the template places captions clear of them, and `caption.py --platform` / `graphics.py --platform`
-apply them to a hand-built step:
+the template places captions, graphics **and the `--logo` overlay** clear of them, and
+`caption.py --platform`, `graphics.py --platform` and `overlay.py --platform` apply them to a
+hand-built step:
 
 | template | frame | max duration | loudness | safe top | safe bottom | safe left | safe right |
 |---|---|---|---|---|---|---|---|
@@ -550,6 +562,8 @@ the script fails the job). RTL shaping in drawtext depends on the ffmpeg build
 them does not); `caption.py` always shapes, because it renders through libass:
 `references/gotchas.md#fonts-by-script`.
 
+All three are usable from a `render.py` project too: a `graphics[]` entry takes `text`, `top`,
+`bottom`, `duration`, `margin` and `platform` alongside the older keys.
 1.14 adds three social templates: `sticker` (`--text`, a filled chip that pops in at
 `--position`), `hook` (`--title --duration 3`, the full-width opening card with a thin progress
 bar along the top that empties as the card's time runs out) and `meme` (`--top` / `--bottom`,
@@ -697,8 +711,11 @@ stream selection would have picked.
 ```
 overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--font-file F.ttf] [--font-size N] [--box]
                   | --video CLIP [--chromakey COLOR [--chromakey-similarity 0-1] [--chromakey-blend 0-1]]
-           [--position top-right|bottom-left|center|X,Y] [--margin N] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
+           [--position top-right|bottom-left|center|X,Y] [--margin N] [--platform NAME] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
 ```
+`--platform NAME` (1.14) takes each edge's margin from that destination's safe zone
+(`scripts/_platforms.py`), so a template's top-left logo clears TikTok's status bar instead of
+sitting 24 px into it; an explicit `--margin` (or a brand `safe_margin`) wins.
 Alpha in PNGs is respected. Fades apply to the overlay only; the video keeps
 playing. `--video` composites a second video as a picture-in-picture layer
 (same position/scale/opacity/time-range knobs as `--image`); only the main

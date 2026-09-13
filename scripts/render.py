@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from export import PRESETS, PLATFORM_OF
-from _platforms import PLATFORMS
+from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION
 
 HERE = Path(__file__).resolve().parent
@@ -105,10 +105,14 @@ OBJECT_KEYS: Dict[str, frozenset] = {
     "captions": frozenset({"text", "srt", "ass", "font", "size", "color", "position", "margin",
                            "animate", "highlight_color", "outline", "karaoke", "bold", "box",
                            "lang", "offset", "max_lines", "min_duration"}),
+    # the 1.14 social templates (sticker/hook/meme) take their own text and timing, so a
+    # graphics[] entry can carry them too -- a template that only works from the CLI is not
+    # "usable inside a render.py graphics[] entry" (review 12)
     "graphics[]": frozenset({"template", "name", "title", "subtitle", "start", "end", "position",
-                             "from", "scale", "primary", "text_color", "lang"}),
+                             "from", "scale", "primary", "text_color", "lang",
+                             "text", "top", "bottom", "duration", "margin", "platform"}),
     "overlays[]": frozenset({"logo", "image", "text", "position", "start", "end", "fade", "opacity",
-                             "scale", "font_size", "font", "font_file", "margin", "box"}),
+                             "scale", "font_size", "font", "font_file", "margin", "box", "platform"}),
     "audio": frozenset({"music", "replace", "music_volume", "fade_in", "fade_out", "music_fade_out",
                         "gain", "duck_amount", "duck_threshold", "duck_attack", "duck_release",
                         "voice", "denoise", "duck", "music_loop", "stereo", "mono", "downmix",
@@ -180,8 +184,15 @@ def template_project(name: str, args) -> Dict[str, Any]:
     if args.srt and isinstance(tpl.get("captions"), dict) and "text" in tpl["captions"]:
         cap = {("srt" if k == "text" else k): ("$SRT" if k == "text" else v) for k, v in tpl["captions"].items()}
         tpl["captions"] = cap
-    ext = ".m4a" if not (PLATFORMS.get(dest) or {}).get("frame") else ".mp4"
-    output = args.output or f"{Path(args.input).with_suffix('').name}_{name}{ext}"
+    # The caption block's size and margin are the table's, not a literal restated in the JSON:
+    # change a destination's safe zone in scripts/_platforms.py and every template follows.
+    if isinstance(tpl.get("captions"), dict) and dest in PLATFORMS and PLATFORMS[dest].get("frame"):
+        defaults = caption_defaults(dest)
+        tpl["captions"]["size"] = defaults["size"]
+        tpl["captions"]["margin"] = defaults["margin"]
+        for key in ("position", "animate", "outline"):
+            tpl["captions"].setdefault(key, defaults[key])
+    output = args.output or str(template_output(args.input, name, dest))
     values = {
         "$INPUT": os.path.abspath(args.input),
         "$OUTPUT": os.path.abspath(output),
@@ -200,6 +211,19 @@ def template_project(name: str, args) -> Dict[str, Any]:
     if args.fit:
         proj.setdefault("frame", {})["fit"] = args.fit
     return proj
+
+
+def template_ext(dest: str) -> str:
+    """A destination with no frame delivers audio: the podcast template writes .m4a, not .mp4."""
+    return ".mp4" if (PLATFORMS.get(dest) or {}).get("frame") else ".m4a"
+
+
+def template_output(input_path: str, name: str, dest: str) -> Path:
+    """Where a template writes when no -o was given: next to the input, named after it and the
+    template. One rule for a single template and for a pack, so `--template tiktok` and
+    `--template tiktok,x` put their files in the same place (review 12)."""
+    stem = Path(input_path).with_suffix("").name
+    return Path(input_path).resolve().parent / f"{stem}_{name}{template_ext(dest)}"
 
 
 def list_templates() -> None:
@@ -232,11 +256,14 @@ def expand_templates(value: str) -> List[str]:
     if not names:
         die("--template needs a name, a comma-separated list, or 'all'")
     known = template_names()
-    for name in names:
-        if name not in known:
-            die(f"unknown template {name!r}", hint="templates: " + ", ".join(known) + " (or 'all')")
     seen: List[str] = []
     for name in names:
+        # the spellings people write resolve to the destination they mean, the same way
+        # check.py --platform and export.py --preset take them (scripts/_platforms.py)
+        if name not in known:
+            name = resolve_platform(name) or name
+        if name not in known:
+            die(f"unknown template {name!r}", hint="templates: " + ", ".join(known) + " (or 'all')")
         if name not in seen:
             seen.append(name)
     return seen
@@ -248,14 +275,18 @@ def render_pack(names: List[str], args) -> int:
     and platform check), so the pack reports per-platform results rather than one verdict."""
     stem = Path(args.input).with_suffix("").name
     outdir = Path(args.output).parent if args.output else Path(args.input).resolve().parent
+    dests = {name: str((load_template(name).get("check") or {}).get("platform") or name) for name in names}
     rows: List[Dict[str, Any]] = []
     outputs: List[str] = []
     failed: List[str] = []
     for name in names:
-        argv = [str(HERE / "render.py"), args.input, "--template", name,
-                "-o", str(outdir / f"{stem}_{name}.mp4")]
+        # the destination decides the container: an audio-only destination in a pack must not be
+        # handed a .mp4 name the single-template form would never have written (review 12)
+        dest_out = str(outdir / (stem + "_" + name + template_ext(dests[name])))
+        argv = [str(HERE / "render.py"), args.input, "--template", name, "-o", dest_out]
         for flag, value in (("--cues", args.cues), ("--srt", args.srt), ("--logo", args.logo),
-                            ("--title", args.title), ("--brand", args.brand), ("--fit", args.fit)):
+                            ("--title", args.title), ("--brand", args.brand), ("--fit", args.fit),
+                            ("--chapters", args.chapters)):
             if value:
                 argv += [flag, str(value)]
         info(f"→ pack: {name}")
@@ -264,13 +295,23 @@ def render_pack(names: List[str], args) -> int:
             doc = json.loads(proc.stdout.strip() or "{}")
         except ValueError:
             doc = {}
+        # the child ran with --json, so its planned commands come back in the document: the pack
+        # is the one path that writes seven files, and --dry-run has to show all of them
         for line in proc.stderr.splitlines():
             if line.startswith("$ ") or line.startswith("[dry-run]"):
                 STATE.commands.append(line[2:] if line.startswith("$ ") else line)
-        out = doc.get("output") or str(outdir / f"{stem}_{name}.mp4")
+        STATE.commands.extend(str(c) for c in (doc.get("commands") or []))
+        out = doc.get("output") or dest_out
         chk = doc.get("check") or {}
         ok = proc.returncode == 0 and doc.get("status") == "completed"
         probe_doc = doc.get("probe") or {}
+        if STATE.dry_run:
+            # A dry run encoded nothing and verified nothing. Reading a size off a file left over
+            # from an earlier real run, or calling an unrun check "pass", reports a verification
+            # result for a run that never happened (review 12).
+            rows.append({"platform": name, "file": os.path.basename(out), "path": out,
+                         "size_bytes": None, "duration": None, "check": "planned", "ok": bool(ok)})
+            continue
         size = os.path.getsize(out) if os.path.exists(out) else 0
         rows.append({"platform": name, "file": os.path.basename(out), "path": out,
                      "size_bytes": size, "duration": probe_doc.get("duration"),
@@ -284,7 +325,7 @@ def render_pack(names: List[str], args) -> int:
              "| platform | file | size | duration | check |", "|---|---|---|---|---|"]
     for r in rows:
         dur = f"{r['duration']:.2f} s" if r.get("duration") else "-"
-        mb = f"{r['size_bytes'] / 1024 / 1024:.1f} MB" if r["size_bytes"] else "-"
+        mb = f"{r['size_bytes'] / 1024 / 1024:.1f} MB" if r.get("size_bytes") else "-"
         lines.append(f"| {r['platform']} | {r['file']} | {mb} | {dur} | {r['check']} |")
     lines += ["", f"{len(rows)} destinations from one edit ({os.path.basename(args.input)}).",
               "Rendered by ffmpeg-skill; `report.py --pack` turns this table into an HTML report."]
@@ -468,7 +509,9 @@ def main() -> int:
     tpl.add_argument("--brand", help="brand.json the template's captions, graphics and overlays use")
     tpl.add_argument("--chapters", help="chapter file (podcast template)")
     tpl.add_argument("--fit", choices=["crop", "pad", "blur"], help="override how the template reaches its aspect")
-    tpl.add_argument("-o", "--output", help="output file (default: <input>_<template>.mp4)")
+    tpl.add_argument("-o", "--output", help="output file (default: next to the input, <input>_<template>.mp4, "
+                                            "or .m4a for an audio-only destination); for a list of templates "
+                                            "or 'all' its directory is where the pack is written")
     tpl.add_argument("--write-project", metavar="FILE", help="write the filled project.json for editing and stop (no render)")
     add_common(ap)
     args = ap.parse_args()
@@ -694,10 +737,12 @@ def main() -> int:
         if not g.get("template"):
             die(f"graphics[{i}] needs a template")
         argv = [current, "-o", nxt, "--template", g["template"]]
-        for k, flag in (("name", "--name"), ("title", "--title"), ("subtitle", "--subtitle"), ("start", "--start"), ("end", "--end"), ("position", "--position"), ("from", "--from"), ("scale", "--scale"), ("primary", "--primary"), ("text_color", "--text-color"), ("lang", "--lang")):
+        for k, flag in (("name", "--name"), ("title", "--title"), ("subtitle", "--subtitle"), ("start", "--start"), ("end", "--end"), ("position", "--position"), ("from", "--from"), ("scale", "--scale"), ("primary", "--primary"), ("text_color", "--text-color"), ("lang", "--lang"),
+                        ("text", "--text"), ("top", "--top"), ("bottom", "--bottom"), ("duration", "--duration"), ("margin", "--margin"), ("platform", "--platform")):
             if g.get(k) is not None:
                 argv += [flag, str(g[k])]
-        sh("graphics.py", *(argv + brand_args + platform_args))
+        # the entry's own "platform" is the more specific statement than the template's destination
+        sh("graphics.py", *(argv + brand_args + ([] if g.get("platform") else platform_args)))
         current = nxt
         if "graphics" not in stages_done:
             stages_done.append("graphics")
@@ -717,12 +762,14 @@ def main() -> int:
             argv += ["--text", ov["text"]]
         else:
             die(f"overlays[{i}] needs image or text")
-        for k, flag in (("position", "--position"), ("start", "--start"), ("end", "--end"), ("fade", "--fade"), ("opacity", "--opacity"), ("scale", "--scale"), ("font_size", "--font-size"), ("font", "--font"), ("font_file", "--font-file"), ("margin", "--margin")):
+        for k, flag in (("position", "--position"), ("start", "--start"), ("end", "--end"), ("fade", "--fade"), ("opacity", "--opacity"), ("scale", "--scale"), ("font_size", "--font-size"), ("font", "--font"), ("font_file", "--font-file"), ("margin", "--margin"), ("platform", "--platform")):
             if ov.get(k) is not None:
                 argv += [flag, str(ov[k])]
         if ov.get("box"):
             argv.append("--box")
-        sh("overlay.py", *(argv + brand_args))
+        # review 12: the overlay stage was the one stage that never heard which destination this
+        # is, so a template's top-left logo landed 24 px in -- under TikTok's own status bar.
+        sh("overlay.py", *(argv + brand_args + ([] if ov.get("platform") else platform_args)))
         current = nxt
         if "overlays" not in stages_done:
             stages_done.append("overlays")

@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-from _platforms import PLATFORMS, SAFE_NAMES
+from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, time_arg
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
@@ -41,7 +41,7 @@ def main() -> int:
     ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image (default 1280)")
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
     ap.add_argument("--no-timecode", action="store_true")
-    ap.add_argument("--safe", choices=SAFE_NAMES, help="shade the zones this platform's UI covers (its description bar, "
+    ap.add_argument("--safe", choices=PLATFORM_CHOICES, help="shade the zones this platform's UI covers (its description bar, "
                                                        "like column, status bar) so you can see whether anything readable is under them")
     add_common(ap)
     args = ap.parse_args()
@@ -62,8 +62,18 @@ def main() -> int:
     # --safe: the platform's occluded zones, drawn as shaded boxes in fractions of the frame so
     # the same filter is right at any scale (a tile of a contact sheet as much as a full frame).
     safe_filter = ""
+    args.safe = resolve_platform(args.safe)
+    if args.safe and not PLATFORMS[args.safe].get("frame"):
+        info(f"--safe {args.safe}: this destination has no frame and no app chrome; nothing to shade")
+        args.safe = None
     if args.safe:
         z = PLATFORMS[args.safe]["safe"]
+        frame = PLATFORMS[args.safe]["frame"]
+        src = meta["video"]
+        if src.get("width") and src.get("height") and abs(src["width"] / src["height"] - frame["w"] / frame["h"]) > 0.02:
+            info(f"--safe {args.safe}: this source is {src['width']}x{src['height']}, not {args.safe}'s "
+                 f"{frame['w']}x{frame['h']} -- the zones are drawn as fractions of the frame you gave, "
+                 f"so reframe first (fit.py --aspect) to see what the app really covers")
         boxes = []
         for edge, frac in (("top", z["top"]), ("bottom", z["bottom"]), ("left", z["left"]), ("right", z["right"])):
             if frac <= 0:

@@ -193,12 +193,23 @@ PLATFORMS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# Names that may be given to --platform / --safe: every destination that has a safe zone
-# worth drawing or a margin worth setting.
+# The canonical destination names.
 PLATFORM_NAMES: List[str] = sorted(PLATFORMS)
-# Destinations that have a frame and therefore a safe zone to place text inside: what
-# caption.py --platform, graphics.py --platform and look.py --safe accept.
-SAFE_NAMES: List[str] = sorted(n for n in PLATFORMS if PLATFORMS[n]["frame"])
+# The spellings people actually write for those destinations. resolve() maps them onto the
+# canonical name, and every tool's --platform/--safe/--preset accepts both, so
+# `--platform youtube-shorts` and `--platform shorts` are the same request everywhere.
+ALIASES: Dict[str, str] = {"youtube-shorts": "shorts", "yt-shorts": "shorts", "yt": "youtube",
+                           "instagram": "reels", "ig": "reels", "twitter": "x", "fb": "facebook"}
+# One vocabulary for the word "platform": check.py, caption.py, graphics.py and look.py all
+# offer this list (review 12 found three different ones). It is the compliance targets -- the
+# destinations a delivery is checked against -- plus every alias; youtube-hdr and youtube-av1
+# are export presets of the youtube target, not separate destinations, so they are not in it.
+PLATFORM_CHOICES: List[str] = sorted({n for n in PLATFORMS if PLATFORMS[n]["check"] == n} | set(ALIASES))
+
+
+def has_frame(name: str) -> bool:
+    """True when this destination has a frame, and therefore a safe zone to place text inside."""
+    return bool(PLATFORMS.get(resolve(name) or "", {}).get("frame"))
 
 
 def spec_of(name: str) -> Dict[str, Any]:
@@ -236,7 +247,5 @@ def resolve(name: Optional[str]) -> Optional[str]:
     """Accept the spellings people write for a destination ('youtube-shorts', 'ig')."""
     if not name:
         return None
-    alias = {"youtube-shorts": "shorts", "yt-shorts": "shorts", "yt": "youtube",
-             "instagram": "reels", "ig": "reels", "twitter": "x", "fb": "facebook"}
     key = str(name).strip().lower()
-    return alias.get(key, key)
+    return ALIASES.get(key, key)

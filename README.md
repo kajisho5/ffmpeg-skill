@@ -120,8 +120,11 @@ TikTok's description bar and clear of its like column, −14 LUFS, the `tiktok` 
 a `check.py --platform tiktok` on the file it wrote. Templates ship for `tiktok`, `reels`,
 `shorts`, `youtube-shorts`, `youtube`, `x`, `linkedin`, `facebook` and `podcast`;
 `--template all` (or a comma-separated list) renders every destination from the same edit and
-writes a `<name>_pack.md` table of what each one produced. `render.py --list-templates` prints
-them with their frames, limits and safe zones.
+writes a `<name>_pack.md` table of what each one produced. Files land next to the input unless
+`-o` says otherwise, and `--dry-run` shows every planned command rather than a result.
+`render.py --list-templates` prints them with their frames, limits and safe zones. Alias
+spellings work everywhere a platform is named (`youtube-shorts` = `shorts`, `ig` = `reels`,
+`twitter` = `x`, `fb` = `facebook`).
 
 The tools also work on their own, from any shell:
 
@@ -232,7 +235,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | Tool | What it does |
 |---|---|
 | `caption.py` | Burn SRT/ASS with font, size, colour, outline, position; build SRT from timed plain text; wraps to the safe area by measured width with `--max-lines`/`--min-duration`/`--offset`; picks a font by script for non-Latin text (`--lang`); animated and word-by-word karaoke timed to the speech energy or real word timings; optional local transcription |
-| `overlay.py` | Logos, watermarks and titles with position, time range, opacity, fades; `--video` for picture-in-picture, `--chromakey` for green-screen compositing |
+| `overlay.py` | Logos, watermarks and titles with position, time range, opacity, fades; `--platform NAME` keeps them clear of that destination's UI; `--video` for picture-in-picture, `--chromakey` for green-screen compositing |
 | `graphics.py` | Lower-thirds, title cards, chapter chips, progress bars, countdowns, corner bugs, social stickers, opening hook cards and meme captions drawn by FFmpeg from a brand kit; `--platform NAME` keeps them inside that destination's safe zone |
 | `color.py` | HDR10 / HLG / Dolby Vision → SDR BT.709 tone mapping, DV layer stripping, 3D LUT (.cube), colour-tag rewriting, typed primary correction (exposure/contrast/saturation/gamma/white balance/lift-gain/levels/curves) |
 
@@ -249,7 +252,7 @@ These are the rules the skill file gives the agent and the code enforces.
 
 | Tool | What it does |
 |---|---|
-| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after`; `--template NAME INPUT` renders a shipped delivery template (`--template all` writes the whole social pack plus its table) |
+| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays including the social sticker/hook/meme graphics, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after`; `--template NAME INPUT` renders a shipped delivery template (`--template all` writes the whole social pack plus its table) |
 | `batch.py` | Apply a step recipe or a project to a folder with a content-hash cache; `--watch` |
 | `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list |
 | `verify.py` | Run the toolchain on real device files and report PASS / FAIL per step |

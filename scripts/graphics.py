@@ -29,7 +29,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _platforms import SAFE_NAMES, safe_margins_px
+from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug", "sticker", "hook", "meme"]
@@ -72,7 +72,7 @@ def main() -> int:
     ap.add_argument("--end", help="hide after (default end of clip)")
     ap.add_argument("--position", choices=["top-left", "top-right", "bottom-left", "bottom-right"], default=None, help="corner for chapter/bug/sticker (default bottom-left / top-right / top-right)")
     ap.add_argument("--margin", type=int, default=None, help="distance from the frame edge in px (default: brand safe_margin, or the --platform safe zone)")
-    ap.add_argument("--platform", choices=SAFE_NAMES, default=None,
+    ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None,
                     help="keep the graphic out of this destination's UI: margins become the platform's safe zone "
                          "(TikTok's description bar and like column, the Reels/Shorts chrome). An explicit --margin wins")
     ap.add_argument("--primary", help="override brand primary colour RRGGBB")
@@ -88,6 +88,10 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
+    args.platform = resolve_platform(args.platform)
+    if args.platform and not PLATFORMS[args.platform].get("frame"):
+        info(f"--platform {args.platform}: this destination has no frame and no app chrome; margins unchanged")
+        args.platform = None
     brand = load_brand(args.brand)
     primary = color_hex(args.primary or brand["colors"]["primary"])
     text_c = color_hex(args.text_color or brand["colors"]["text"])

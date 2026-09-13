@@ -40,7 +40,7 @@ import unicodedata
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _platforms import PLATFORMS, SAFE_NAMES, ass_units
+from _platforms import PLATFORMS, PLATFORM_CHOICES, ass_units, resolve as resolve_platform
 from _common import STATE, brand_states_font, char_script, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
@@ -761,7 +761,7 @@ def main() -> int:
     sty.add_argument("--bold", action="store_true")
     sty.add_argument("--position", choices=sorted(ALIGN), default=None, help="on-screen placement (default bottom)")
     sty.add_argument("--margin", type=int, default=None, help="vertical margin from the edge in ASS units (default 30, or the --platform safe zone)")
-    sty.add_argument("--platform", choices=SAFE_NAMES, default=None,
+    sty.add_argument("--platform", choices=PLATFORM_CHOICES, default=None,
                      help="keep the captions out of this destination's UI: the margin becomes the platform's safe "
                           "zone (TikTok's description bar, the Reels/Shorts chrome). An explicit --margin/--position wins")
     sty.add_argument("--box", action="store_true", help="draw an opaque box behind text instead of an outline")
@@ -799,7 +799,9 @@ def main() -> int:
     # --platform: the margin is the fraction of the frame that platform's own UI covers
     # (scripts/_platforms.py). An explicit --margin is the more specific statement and wins;
     # without either, the historical default 30 is unchanged.
-    if args.margin is None and args.platform:
+    # every tool resolves the spellings people write ('youtube-shorts' is 'shorts') in one place
+    args.platform = resolve_platform(args.platform)
+    if args.margin is None and args.platform and PLATFORMS[args.platform].get("frame"):
         edge = PLATFORMS[args.platform]["safe"]["top" if args.position.startswith("top") else "bottom"]
         args.margin = ass_units(edge)
         info(f"--platform {args.platform}: caption margin {args.margin} ASS units ({edge * 100:.0f}% of the frame height, "
