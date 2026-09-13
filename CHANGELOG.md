@@ -4,6 +4,20 @@
 
 ## Unreleased
 
+### Added
+
+- **Fonts by script.** `caption.py`, `graphics.py` and `overlay.py --text` detect the writing system of the text they are about to draw (Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari, Thai, Cyrillic, Greek) and resolve a font file that actually covers it — `fc-list :lang=xx` on Linux/macOS, the known system fonts on Windows — printing one line: `font: /usr/share/fonts/.../wqy-zenhei.ttc (covers ko)`. A machine with no font for the script now **fails the job** (`kind: input`, with per-OS install hints) instead of writing a video full of empty boxes that ffmpeg reports as a success. An explicit `--font` / `--font-file` / brand font is always kept; when fontconfig says it does not cover the text, one info line says so.
+- `--lang XX` on `caption.py` (an alias of the existing `--language`, which keeps tagging the subtitle stream under `--mode mux` and setting `--transcribe`'s language) and on `graphics.py`, plus `"lang"` in brand.json: the hint that says whether Han-only text is Chinese, Japanese or Korean. Everything else is read from the characters.
+- `doctor`'s `fonts` capability gains `scripts`: `available` / `missing` / `unknown` per writing system with the font file it would use, so "can this machine render Korean captions" is answered before the job. The plain-text `doctor` summarises it on one line and stays short.
+- **Captions people can read.** Every cue is wrapped to the safe area by measured width (a per-script average advance: a full em per CJK/Thai character, ~0.55 for Latin/Cyrillic/Greek, 0.6 for Arabic/Hebrew, 0.7 for Devanagari), breaking between characters for CJK/Thai and at spaces otherwise. `--max-lines N` (default 2) splits a cue that needs more lines into consecutive cues sharing its time; `--min-duration S` (default 1.0) holds a flashed cue longer, never past the next cue's start; `--offset SECONDS` shifts every cue for `--text`, `--srt` and `--ass`. One `cues:` line reports what changed, and a file you passed in is never edited in place — the adjusted copy is written next to the output.
+- `--karaoke` uses real per-word timings when the transcript has them (a whisper `<stem>.json` / `<stem>.words.json` next to the SRT), falling back to the existing energy or even split.
+- brand.json `styles.caption` (`{font, size, colour, box, position}`, either spelling of colour) — one caption look shared by `caption.py` and, for `font` and `colour`, `graphics.py`. The older top-level `caption` block still works and still carries the burn-in-only defaults.
+- `render.py` projects pass `lang`, `offset`, `max_lines` and `min_duration` through to the captions stage, and `lang` to a graphics entry.
+
+### Changed
+
+- `tests/fixtures/mcp_tools.json` regenerated: `caption` gains `language` (spelled `--lang` too), `offset`, `max_lines`, `min_duration`; `graphics` gains `lang`.
+
 ### Docs
 - Correction to the 1.11.1 entry: iteration 11's agents did not read `references/gotchas.md` or `references/scripts.md` (0 of 36 and 2 of 36 actual reads; the earlier counts matched the file names inside SKILL.md's own text). What 1.11.1 changed in practice, measured in iteration 12: `doctor` before a job 23 of 36 runs → 0, `--json-brief` on a writing step 4 of 36 → 23. Tokens per run are flat (72.2k → 71.8k) because about 64k of every run is the harness's own context, not the skill.
 

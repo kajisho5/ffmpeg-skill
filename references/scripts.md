@@ -465,21 +465,33 @@ Inside this skill, call the scripts directly; the server is for other hosts.
 ### graphics.py — motion-graphics templates
 ```
 graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug [--name] [--title] [--subtitle]
-            [--from N] [--start S] [--end E] [--position CORNER] [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [-o OUT]
+            [--from N] [--start S] [--end E] [--position CORNER] [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [--lang XX] [-o OUT]
 ```
 Drawn with drawbox/drawtext/overlay — no PNG assets needed. Sizes scale with
 the frame's short side; colours, font and safe margin come from `--brand`.
 Lower-third slides in over 0.4 s and out over 0.3 s; title/chapter/bug fade.
+Non-Latin `--name`/`--title`/`--subtitle` text picks a font file by script the
+same way `caption.py` does (`--lang XX` disambiguates Han-only text; no font for
+the script fails the job). drawtext does not shape RTL — put Arabic or Hebrew in
+a caption instead: `references/gotchas.md#fonts-by-script`.
 
 ### brand.json — one file for fonts, colours, logo, margins
 ```json
 {"font": "Noto Sans CJK JP", "font_file": "fonts/NotoSansCJK-Bold.ttc",
  "colors": {"primary": "FF6A00", "text": "FFFFFF", "outline": "000000", "background": "0B1D2A"},
  "logo": "logo.png", "logo_position": "top-right", "logo_scale": 160, "logo_opacity": 0.9,
- "safe_margin": 48, "caption": {"size": 28, "position": "bottom", "animate": "pop", "karaoke": true, "bold": true}}
+ "safe_margin": 48, "lang": "ja",
+ "styles": {"caption": {"font": "Noto Sans CJK JP", "size": 28, "colour": "FFFFFF", "box": false, "position": "bottom"}},
+ "caption": {"size": 28, "position": "bottom", "animate": "pop", "karaoke": true, "bold": true}}
 ```
 `caption.py --brand`, `overlay.py --brand --logo`, `graphics.py --brand`, and
-`"brand": "brand.json"` in a render project. Explicit flags still win. When a
+`"brand": "brand.json"` in a render project. Explicit flags still win.
+`styles.caption` (1.12) is the one caption look every project shares —
+`{font, size, colour, box, position}`, British or American spelling of colour —
+read by `caption.py` and, for `font` and `colour`, by `graphics.py`; it wins
+over the older top-level `caption` block where both set the same key, and that
+block still carries the burn-in-only defaults (`animate`, `karaoke`, `bold`,
+`outline`). `"lang"` is the script hint `--lang` would give. When a
 user mentions brand guidelines, colours, "our font" or a logo, ask for or
 write a brand.json once and reuse it across every output.
 
@@ -526,7 +538,8 @@ frame like an editor would. Use `--compare` to show before/after to the user.
 ### caption.py — subtitles (static, animated, karaoke)
 ```
 caption.py INPUT --srt FILE | --ass FILE | --text CUES.txt [--write-srt OUT.srt]
-           [--mode burn|mux] [--audio-stream N] [--fps N]
+           [--mode burn|mux] [--audio-stream N] [--fps N] [--lang XX] [--offset SECONDS]
+           [--max-lines N] [--min-duration S]
            [--font NAME] [--fonts-dir DIR] [--size N] [--color RRGGBB] [--outline N] [--outline-color RRGGBB]
            [--bold] [--box] [--position bottom|top|center|top-left|...] [--margin N]
            [--animate none|fade|pop|slide] [--karaoke [--highlight-color RRGGBB]] [--write-ass OUT.ass] [-o OUT]
@@ -543,6 +556,35 @@ word from `--color` to `--highlight-color` across the cue; `--karaoke-timing
 energy` (default) follows the speech loudness in the audio, `even` splits the
 cue equally (word timing is derived, not transcribed). The ASS is kept next to the
 user can hand-tune timings and re-run with `--ass`.
+Readable by default (1.12): every cue is wrapped to the safe area (90 % of the
+frame width) at the chosen `--size`, measured per script — CJK and Thai count a
+full em per character, Latin/Cyrillic/Greek about 0.55, Arabic/Hebrew 0.6,
+Devanagari 0.7 — breaking between characters for CJK/Thai and at spaces
+otherwise. A cue that would need more than `--max-lines` (default 2) is split
+into consecutive cues sharing its time; a cue shorter than `--min-duration`
+(default 1.0 s) is held longer, never past the next cue's start; `--offset
+SECONDS` shifts every cue (negative = earlier) for `--text`, `--srt` and
+`--ass`. One `cues:` info line reports what changed. A file you passed in is
+never edited: the adjusted copy is written next to the output
+(`<out>_adjusted.srt`, `<out>_offset.ass`). `--max-lines`/`--min-duration`/
+`--offset` also work with `--write-srt` alone; wrapping needs the input video,
+since the line width comes from its real frame size.
+
+Fonts by script (1.12): with no `--font`, `--fonts-dir` or brand font, the
+script of the cue text (Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari,
+Thai, Cyrillic, Greek) picks a font file that covers it, logged as `font: <file>
+(covers ko)`. Han-only text is read as Chinese unless `--lang ja|ko` (or
+brand.json `"lang"`) says otherwise; `--language` is the same flag, and still
+tags the subtitle stream under `--mode mux` and sets `--transcribe`'s language.
+No font for the script fails the job (`kind: input`) instead of rendering boxes;
+an explicit font is always kept, with an info line when it does not cover the
+text. `doctor --json` `fonts.scripts` lists what this machine can render. See
+`references/gotchas.md#fonts-by-script` (RTL: use captions, not drawtext).
+
+`--karaoke` uses real per-word timings when the transcript has them (a whisper
+`<stem>.json` or `<stem>.words.json` next to the SRT, `{"segments": [{"words":
+[{"word", "start", "end"}]}]}`); otherwise `--karaoke-timing` decides.
+
 `--mode burn` (default) renders subtitles into the picture and always
 re-encodes both streams. `--mode mux` copies video and audio untouched and
 adds the SRT as a separate, player-toggleable subtitle stream instead —

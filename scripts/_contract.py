@@ -765,9 +765,45 @@ def doctor() -> Dict[str, Any]:
 
 
 def _fonts_capability() -> Dict[str, Any]:
+    """The default drawtext family (issue #66) plus, since 1.12, one entry per script the tools
+    can detect: which languages this machine can actually RENDER, not just which filters exist.
+
+    Per script: available (a font file covers it, path in `file`), missing (fontconfig knows none),
+    unknown (no fontconfig to ask -- the same "unknown is not missing" rule every other capability
+    here follows). Informational like the default font and gpu_encoders: a machine with no Thai
+    font is not a broken install, it is a machine that must not be asked to burn Thai captions.
+    """
+    from _common import SCRIPTS, font_for_script
+
     font = _default_font()
     result = _font_available(font)
-    return {"default_font": font, "status": result["status"], "detail": result["detail"]}
+    known = shutil.which("fc-list") is not None or platform.system() == "Windows"
+    scripts: Dict[str, Any] = {}
+    for script in SCRIPTS:
+        if script == "latin":
+            continue
+        if not known:
+            scripts[script] = {"status": "unknown", "file": None}
+            continue
+        path = font_for_script(script)
+        scripts[script] = {"status": "available" if path else "missing", "file": path}
+    return {"default_font": font, "status": result["status"], "detail": result["detail"], "scripts": scripts}
+
+
+def _fonts_summary_line(fonts: Dict[str, Any]) -> str:
+    """One line for the plain-text doctor: which scripts render here, which do not."""
+    scripts = fonts.get("scripts") or {}
+    by_state: Dict[str, List[str]] = {"available": [], "missing": [], "unknown": []}
+    for name, entry in scripts.items():
+        by_state.setdefault(entry["status"], []).append(name)
+    parts = [f"fonts: '{fonts['default_font']}' {fonts['status']}"]
+    if by_state["available"]:
+        parts.append("renders " + " ".join(by_state["available"]))
+    if by_state["missing"]:
+        parts.append("no font for " + " ".join(by_state["missing"]))
+    if by_state["unknown"]:
+        parts.append("unknown (no fontconfig) " + " ".join(by_state["unknown"]))
+    return "; ".join(parts)
 
 
 def _capability_fix_hint(cap: str) -> str:
@@ -795,6 +831,11 @@ def _capability_fix_hint(cap: str) -> str:
         return f"this ffmpeg build has no {cap[7:]} filter; {full_hint}"
     if cap.startswith("bsf:"):
         return f"this ffmpeg build has no {cap[4:]} bitstream filter; {full_hint}"
+    if cap.startswith("font:"):
+        from _common import LANGUAGE_NAMES, FONT_INSTALL_HINT
+        script = cap[5:]
+        return (f"no installed font covers {LANGUAGE_NAMES.get(script, script)} text on this machine; "
+                f"{FONT_INSTALL_HINT} (doctor --json .fonts.scripts lists every script)")
     if cap == "external:whisper":
         return "install a local whisper (whisper-cli, whisper-cpp, faster-whisper or openai-whisper) for --transcribe"
     return f"'{cap}' is not available; see docs/contract.md"
@@ -1152,9 +1193,7 @@ def main() -> int:
             gpu = d["gpu_encoders"]
             if gpu["status"] == "parsed":
                 print(f"GPU-backed encoders in this build: {len(gpu['present'])} (no tool here uses one; names in doctor --json)")
-            fonts = d["fonts"]
-            print(f"default drawtext font '{fonts['default_font']}': {fonts['status']}"
-                  + (f" ({fonts['detail']})" if fonts["status"] != "available" else ""))
+            print(_fonts_summary_line(d["fonts"]))
             print("full detail: doctor --json (capability lists, per-tool `usable`, fix hints)")
             for err in d["errors"]:
                 print(f"detection error: {err}", file=sys.stderr)

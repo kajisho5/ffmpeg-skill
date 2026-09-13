@@ -319,6 +319,20 @@ when `fc-match` itself is not on PATH or fails. Like `gpu_encoders`, this is pur
 and never affects `ok` or any tool's `usable` — a substituted font is not a broken tool, just a
 typeface the caller didn't ask for.
 
+Since 1.12 the same field also carries `scripts`: one entry per writing system the tools detect,
+`{"ja": {"status": "available"|"missing"|"unknown", "file": "/path/to/font.ttc"|null}, "zh": ...,
+"ko": ..., "ar": ..., "he": ..., "hi": ..., "th": ..., "ru": ..., "el": ...}`. It answers "which
+languages can this machine actually render", which no filter or encoder capability asks:
+`available` means `fc-list :lang=<code>` (Linux/macOS) or a known system font file (Windows) covers
+the script, `missing` means fontconfig knows none, `unknown` means there is no fontconfig to ask.
+`caption.py`, `graphics.py` and `overlay.py --text` resolve a font by script automatically and fail
+with `kind: input` rather than render boxes, so a `missing` script here is a job that will not run
+until a font is installed — but, like the default font, it never affects `ok` or any tool's
+`usable` (the tool works, this machine just has no glyphs for that language). The plain-text
+`doctor` summarises the whole map on one `fonts:` line; the per-script files are `--json` only.
+`--lang`/`--language` (caption, graphics) is the hint that says whether Han-only text is Chinese,
+Japanese or Korean.
+
 ## Invocation
 
 Structured arguments are the canonical way to call a tool, on the CLI or through MCP.

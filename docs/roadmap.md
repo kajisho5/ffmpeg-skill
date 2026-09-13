@@ -87,15 +87,26 @@ and the default MCP `tools/list` are unchanged except for additions.
 - **Eval iteration 11** measures tokens per run and keeps only the changes that hold routing,
   honesty, language, report format and look behaviour at iteration-10 levels (pending).
 
-## 1.12.0 — captions people can read
+## 1.12.0 — captions people can read, in any script (shipped)
 
-- `caption.py` wraps by measured text width (fontconfig metrics, not character count) so
-  CJK and long Latin lines stop overflowing the safe area; `--max-lines` and `--min-duration`
-  per cue; `--offset SECONDS` shifts an SRT/cues file; word-level timings from whisper's own
-  word output drive `--karaoke` instead of even splitting.
-- `brand.json` caption styles (`styles.caption.{font,size,colour,box,position}`) so one brand
-  file gives every project the same look; `graphics.py` reads the same block.
-- Eval 11: the 8 caption prompts (JA/EN, CJK wrap, karaoke, SRT offset) run 3 times.
+- **Fonts by script** (done): `caption.py`, `graphics.py` and `overlay.py --text` detect the
+  writing system of the text (ja, zh, ko, ar, he, hi, th, ru, el) and resolve a font file that
+  covers it from `fc-list :lang=xx` (Windows: the known system fonts), logging the one it chose.
+  No font for the script is a failed job (`kind: input`) with per-OS install hints, never a
+  silent page of boxes. `--lang` on caption/graphics and `"lang"` in brand.json break the
+  Han-only Chinese/Japanese/Korean tie; an explicit font is always kept, with a warning when it
+  does not cover the text.
+- **`doctor` per language** (done): `fonts.scripts` reports available/missing/unknown plus the
+  file per writing system; the plain-text `doctor` keeps it to one line.
+- **Readable cues** (done): `caption.py` wraps by measured width (a per-script average advance,
+  not character count) so CJK and long Latin lines stop overflowing the safe area; `--max-lines`
+  (default 2) splits a cue that needs more, `--min-duration` (default 1.0) holds a flashed cue,
+  `--offset SECONDS` shifts SRT, ASS and cue files. Word-level timings from a whisper JSON drive
+  `--karaoke` when the transcript has them, instead of an even split.
+- **brand.json caption styles** (done): `styles.caption.{font,size,colour,box,position}` gives
+  every project the same look; `graphics.py` reads `font` and `colour` from the same block.
+- Eval 11: the 8 caption prompts (JA/EN, CJK wrap, karaoke, SRT offset) run 3 times, plus the
+  per-language act/refuse prompts added for zh, ko, es, pt, fr, de and ar (pending).
 
 ## 1.13.0 — the audio bed
 

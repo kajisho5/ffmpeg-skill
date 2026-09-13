@@ -91,9 +91,10 @@ OBJECT_KEYS: Dict[str, frozenset] = {
     "transition": frozenset({"type", "duration"}),
     "silence": frozenset({"threshold", "min_silence", "margin"}),
     "captions": frozenset({"text", "srt", "ass", "font", "size", "color", "position", "margin",
-                           "animate", "highlight_color", "outline", "karaoke", "bold", "box"}),
+                           "animate", "highlight_color", "outline", "karaoke", "bold", "box",
+                           "lang", "offset", "max_lines", "min_duration"}),
     "graphics[]": frozenset({"template", "name", "title", "subtitle", "start", "end", "position",
-                             "from", "scale", "primary", "text_color"}),
+                             "from", "scale", "primary", "text_color", "lang"}),
     "overlays[]": frozenset({"logo", "image", "text", "position", "start", "end", "fade", "opacity",
                              "scale", "font_size", "font", "font_file", "margin", "box"}),
     "audio": frozenset({"music", "replace", "music_volume", "fade_in", "fade_out", "music_fade_out",
@@ -418,7 +419,7 @@ def main() -> int:
             argv += ["--ass", rel(cap["ass"])]
         else:
             die("captions needs text, srt or ass")
-        for k, flag in (("font", "--font"), ("size", "--size"), ("color", "--color"), ("position", "--position"), ("margin", "--margin"), ("animate", "--animate"), ("highlight_color", "--highlight-color"), ("outline", "--outline")):
+        for k, flag in (("font", "--font"), ("size", "--size"), ("color", "--color"), ("position", "--position"), ("margin", "--margin"), ("animate", "--animate"), ("highlight_color", "--highlight-color"), ("outline", "--outline"), ("lang", "--lang"), ("offset", "--offset"), ("max_lines", "--max-lines"), ("min_duration", "--min-duration")):
             if cap.get(k) is not None:
                 argv += [flag, str(cap[k])]
         for k, flag in (("karaoke", "--karaoke"), ("bold", "--bold"), ("box", "--box")):
@@ -437,7 +438,7 @@ def main() -> int:
         if not g.get("template"):
             die(f"graphics[{i}] needs a template")
         argv = [current, "-o", nxt, "--template", g["template"]]
-        for k, flag in (("name", "--name"), ("title", "--title"), ("subtitle", "--subtitle"), ("start", "--start"), ("end", "--end"), ("position", "--position"), ("from", "--from"), ("scale", "--scale"), ("primary", "--primary"), ("text_color", "--text-color")):
+        for k, flag in (("name", "--name"), ("title", "--title"), ("subtitle", "--subtitle"), ("start", "--start"), ("end", "--end"), ("position", "--position"), ("from", "--from"), ("scale", "--scale"), ("primary", "--primary"), ("text_color", "--text-color"), ("lang", "--lang")):
             if g.get(k) is not None:
                 argv += [flag, str(g[k])]
         sh("graphics.py", *(argv + brand_args))

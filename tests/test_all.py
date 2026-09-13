@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 sys.path.insert(0, str(SCRIPTS))
-from _common import default_font_file, escape_drawtext, escape_filter_path, probe, shell_quote  # noqa: E402
+from _common import default_font_file, detect_script, font_for_script, font_family_for_script, escape_drawtext, escape_filter_path, probe, shell_quote  # noqa: E402
 
 TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
@@ -1070,6 +1070,248 @@ class FFmpegSkillTests(unittest.TestCase):
         m = probe(str(out))
         self.assertClose(m["duration"], 12.0, 0.15)
         self.assertEqual(m["video"]["width"], 1280)
+
+    # ------------------------------------------------- captions people can read (1.12)
+    def _small(self):
+        """A 640x360 clip: the wrap is computed from the real frame geometry, and a small frame
+        makes the safe-area limit bite at an ordinary caption size."""
+        small = OUT / "cap_small.mp4"
+        if not small.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=f=440",
+               "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", small)
+        return small
+
+    @staticmethod
+    def _srt_cues(path):
+        blocks = [b for b in Path(path).read_text(encoding="utf-8").strip().split("\n\n") if b.strip()]
+        out = []
+        for b in blocks:
+            lines = b.splitlines()
+            out.append((lines[1], lines[2:]))
+        return out
+
+    def test_caption_wraps_a_long_latin_cue_to_the_safe_area(self):
+        """A 60-character cue at size 48 on a 640-wide frame does not fit one line; it is wrapped
+        to the safe area and, past --max-lines, split into consecutive cues rather than running
+        off the frame or covering the picture."""
+        import caption  # noqa: E402  -- the wrap table under test
+        cues = OUT / "wrap_latin.txt"
+        text = "the quick brown fox jumps over the lazy dog and keeps runnin"
+        self.assertEqual(len(text), 60)
+        cues.write_text(f"0:00-0:04 {text}\n", encoding="utf-8")
+        srt = OUT / "wrap_latin.srt"
+        script("caption.py", self._small(), "--text", cues, "--size", "48", "--max-lines", "2",
+               "--write-srt", srt, "--fast", "-o", OUT / "wrap_latin.mp4")
+        blocks = self._srt_cues(srt)
+        self.assertGreater(len(blocks), 1, "60 characters at size 48 cannot fit 2 lines of a 640px frame")
+        max_em = 640 * caption.SAFE_WIDTH_FRACTION / (48 * 360 / 288.0)
+        for _, lines in blocks:
+            self.assertLessEqual(len(lines), 2, f"--max-lines 2 exceeded: {lines}")
+            for line in lines:
+                self.assertLessEqual(caption.text_width_em(line), max_em + 1e-6,
+                                      f"line wider than the safe area: {line!r}")
+        self.assertEqual(" ".join(l for _, lines in blocks for l in lines), text, "no word is lost or cut")
+
+    def test_caption_wraps_cjk_between_characters(self):
+        """Chinese has no spaces: the line breaks between any two characters, and every character
+        counts as a full em (Latin averages just over half)."""
+        import caption  # noqa: E402
+        text = "你好世界这是一个很长的中文字幕需要换行处理的测试"
+        self.assertEqual(len(text), 24)
+        cues = OUT / "wrap_cjk.txt"
+        cues.write_text(f"0:00-0:04 {text}\n", encoding="utf-8")
+        srt = OUT / "wrap_cjk.srt"
+        proc = script("caption.py", self._small(), "--text", cues, "--size", "48", "--write-srt", srt,
+                      "--fast", "-o", OUT / "wrap_cjk.mp4")
+        blocks = self._srt_cues(srt)
+        lines = [l for _, ls in blocks for l in ls]
+        self.assertGreater(len(lines), 1, "a 24-character CJK cue at size 48 must break")
+        max_em = 640 * caption.SAFE_WIDTH_FRACTION / (48 * 360 / 288.0)
+        for line in lines:
+            self.assertLessEqual(caption.text_width_em(line), max_em + 1e-6, line)
+        self.assertEqual("".join(lines), text, "no character is lost")
+        self.assertIn("font:", proc.stderr, "a Chinese cue resolves a font by script")
+        self.assertRegex(proc.stderr, r"cues: .*(wrapped|split)")
+
+    def test_caption_wrap_puts_mixed_script_text_back_exactly_as_written(self):
+        """A wrap must never change the text: CJK gains no spaces, and the author's own spaces
+        around a Latin word inside CJK survive."""
+        import caption  # noqa: E402
+        for text in ("Hello 世界 this is mixed 混合文本 wrapping",
+                     "你好世界这是一个很长的中文字幕",
+                     "one two three four five six"):
+            with self.subTest(text=text):
+                lines = caption.wrap_text(text, 8)
+                self.assertGreater(len(lines), 1)
+                rebuilt = ""
+                for line in lines:
+                    if not rebuilt:
+                        rebuilt = line
+                    elif text[len(rebuilt)] == " ":
+                        rebuilt += " " + line
+                    else:
+                        rebuilt += line
+                self.assertEqual(rebuilt, text)
+
+    def test_caption_offset_shifts_every_cue_in_both_directions(self):
+        cues = OUT / "offset_cues.txt"
+        cues.write_text("0:02-0:04 one\n0:05-0:07 two\n", encoding="utf-8")
+        late = OUT / "offset_late.srt"
+        script("caption.py", "--text", cues, "--write-srt", late, "--offset", "1.5")
+        self.assertIn("00:00:03,500 --> 00:00:05,500", late.read_text(encoding="utf-8"))
+        early = OUT / "offset_early.srt"
+        script("caption.py", "--text", cues, "--write-srt", early, "--offset", "-1.5")
+        self.assertIn("00:00:00,500 --> 00:00:02,500", early.read_text(encoding="utf-8"))
+
+    def test_caption_offset_rewrites_a_copy_never_the_callers_srt(self):
+        """--offset on a hand-written SRT must not edit the file the user passed in."""
+        src_srt = OUT / "offset_source.srt"
+        src_srt.write_text("1\n00:00:02,000 --> 00:00:04,000\nhello\n\n", encoding="utf-8")
+        before = src_srt.read_text(encoding="utf-8")
+        out = OUT / "offset_burn.mp4"
+        proc = script("caption.py", self._small(), "--srt", src_srt, "--offset", "1.0", "--fast", "-o", out)
+        self.assertEqual(src_srt.read_text(encoding="utf-8"), before, "the caller's SRT is never edited in place")
+        adjusted = OUT / "offset_burn_adjusted.srt"
+        self.assertTrue(adjusted.exists(), proc.stderr)
+        self.assertIn("00:00:03,000 --> 00:00:05,000", adjusted.read_text(encoding="utf-8"))
+        self.assertIn(str(adjusted), proc.stderr)
+
+    def test_caption_min_duration_extends_a_flashed_cue_but_never_past_the_next(self):
+        cues = OUT / "min_dur_cues.txt"
+        cues.write_text("0:00-0:00.3 flash\n0:01-0:03 next\n", encoding="utf-8")
+        srt = OUT / "min_dur.srt"
+        proc = script("caption.py", "--text", cues, "--write-srt", srt, "--min-duration", "1.5")
+        text = srt.read_text(encoding="utf-8")
+        self.assertIn("00:00:00,000 --> 00:00:01,000", text, "extended up to the next cue's start, not over it")
+        self.assertIn("extended", proc.stderr)
+        loose = OUT / "min_dur_loose.srt"
+        script("caption.py", "--text", cues, "--write-srt", loose, "--min-duration", "0")
+        self.assertIn("00:00:00,000 --> 00:00:00,300", loose.read_text(encoding="utf-8"), "--min-duration 0 leaves cues alone")
+
+    def test_caption_karaoke_uses_whisper_word_timings_when_the_transcript_has_them(self):
+        """A whisper JSON next to the SRT carries real per-word start/end times; --karaoke must
+        follow them instead of splitting the cue evenly or guessing from audio energy."""
+        srt = OUT / "words.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:04,000\nalpha beta gamma\n\n", encoding="utf-8")
+        (OUT / "words.json").write_text(json.dumps({"segments": [{"words": [
+            {"word": "alpha", "start": 0.0, "end": 0.5},
+            {"word": "beta", "start": 0.5, "end": 1.0},
+            {"word": "gamma", "start": 1.0, "end": 4.0}]}]}), encoding="utf-8")
+        ass = OUT / "words.ass"
+        proc = script("caption.py", self._small(), "--srt", srt, "--karaoke", "--write-ass", ass,
+                      "--fast", "-o", OUT / "words.mp4")
+        self.assertIn("word timings", proc.stderr)
+        body = ass.read_text(encoding="utf-8-sig")
+        self.assertIn(r"{\kf50}alpha", body)
+        self.assertIn(r"{\kf50}beta", body)
+        self.assertIn(r"{\kf300}gamma", body)
+
+    def test_caption_brand_styles_caption_block_sets_the_look(self):
+        """brand.json's `styles.caption` is the documented 1.12 spelling, shared with graphics.py;
+        an explicit flag still beats it."""
+        brand = OUT / "brand_styles.json"
+        brand.write_text(json.dumps({"styles": {"caption": {
+            "font": "DejaVu Serif", "size": 33, "colour": "00FF00", "position": "top", "box": True}}}), encoding="utf-8")
+        ass = OUT / "brand_styles.ass"
+        script("caption.py", self._small(), "--text", self.cues, "--brand", brand, "--animate", "fade",
+               "--write-ass", ass, "--fast", "-o", OUT / "brand_styles.mp4")
+        style = next(l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Style: Default"))
+        self.assertIn("DejaVu Serif", style)
+        self.assertIn("&H0000FF00", style, "colour (British spelling) is read")
+        self.assertEqual(style.split(",")[-5], "8", "position top -> ASS alignment 8")
+        self.assertEqual(style.split(",")[15], "3", "box -> BorderStyle 3")
+
+    def test_caption_non_latin_text_picks_a_font_that_covers_it(self):
+        """Korean, Chinese, Arabic and Thai cues burn with a font that has the glyphs: the run
+        exits 0, names the font file it chose, and the caption band actually gains ink (tofu
+        boxes would too, which is why the font file is asserted as well)."""
+        if _no_fontconfig():
+            self.skipTest("no fc-list on this machine: fonts cannot be resolved by script here")
+        small = self._small()
+        base = self._band_luma(small, OUT / "band_plain.png")
+        samples = {"ko": "안녕하세요 여러분", "zh": "你好世界大家好", "ar": "مرحبا بالعالم", "th": "สวัสดีชาวโลก"}
+        for lang, text in samples.items():
+            with self.subTest(lang=lang):
+                if font_for_script(lang) is None:
+                    self.skipTest(f"this machine has no font covering {lang}")
+                cues = OUT / f"nl_{lang}.txt"
+                cues.write_text(f"0:00-0:04 {text}\n", encoding="utf-8")
+                out = OUT / f"nl_{lang}.mp4"
+                proc = script("caption.py", small, "--text", cues, "--lang", lang, "--size", "40",
+                              "--fast", "-o", out)
+                m = probe(str(out))
+                self.assertEqual(m["video"]["width"], 640)
+                chosen = re.search(r"^font: (\S+) \(covers (\w+)\)", proc.stderr, re.M)
+                self.assertIsNotNone(chosen, proc.stderr)
+                self.assertTrue(os.path.exists(chosen.group(1)), chosen.group(1))
+                self.assertEqual(chosen.group(2), lang)
+                inked = self._band_luma(out, OUT / f"band_{lang}.png")
+                self.assertNotAlmostEqual(inked, base, delta=0.05,
+                                          msg=f"{lang}: the caption band is identical to the uncaptioned frame")
+
+    def _band_luma(self, video, png):
+        """Mean luminance of the bottom quarter of a frame -- the caption band."""
+        script("look.py", video, "--at", "1", "-o", png, "--no-timecode")
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(png),
+                              "-vf", "crop=iw:ih/4:0:ih*3/4", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                             stdout=subprocess.PIPE).stdout
+        self.assertTrue(raw)
+        return sum(raw) / len(raw)
+
+    def test_graphics_and_overlay_pick_a_font_by_script_for_non_latin_text(self):
+        """drawtext renders a box per missing glyph and still exits 0; graphics.py and overlay.py
+        resolve a font that covers the text instead, and say which file they chose."""
+        if _no_fontconfig():
+            self.skipTest("no fc-list on this machine: fonts cannot be resolved by script here")
+        if font_for_script("ko") is None:
+            self.skipTest("this machine has no font covering ko")
+        gfx = OUT / "gfx_ko.mp4"
+        proc = script("graphics.py", self._small(), "--template", "lower-third", "--name", "김민준",
+                      "--title", "감독", "--lang", "ko", "--preset", "veryfast", "-o", gfx, "--json")
+        chosen = re.search(r"^font: (\S+) \(covers ko\)", proc.stderr, re.M)
+        self.assertIsNotNone(chosen, proc.stderr)
+        self.assertIn(f"fontfile={escape_filter_path(chosen.group(1))}", json.loads(proc.stdout)["commands"][0])
+        ov = OUT / "overlay_ja.mp4"
+        proc2 = script("overlay.py", self._small(), "--text", "こんにちは世界", "--preset", "veryfast", "-o", ov, "--json")
+        chosen2 = re.search(r"^font: (\S+) \(covers ja\)", proc2.stderr, re.M)
+        self.assertIsNotNone(chosen2, proc2.stderr)
+        self.assertIn("fontfile=", json.loads(proc2.stdout)["commands"][0])
+
+    def test_an_explicit_font_is_kept_even_when_it_does_not_cover_the_script(self):
+        """A stated --font is the user's decision: it is warned about, never silently replaced."""
+        if _no_fontconfig():
+            self.skipTest("no fc-list on this machine")
+        cues = OUT / "explicit_font.txt"
+        cues.write_text("0:00-0:03 你好世界\n", encoding="utf-8")
+        proc = script("caption.py", self._small(), "--text", cues, "--font", "DejaVu Sans",
+                      "--fast", "-o", OUT / "explicit_font.mp4")
+        self.assertIn("FontName=DejaVu Sans", " ".join(proc.stderr.splitlines()))
+        self.assertNotIn("(covers zh)", proc.stderr, "an explicit font is never replaced")
+        self.assertIn("does not cover", proc.stderr, "but the caller is told it will not render")
+
+    def test_no_font_for_the_script_is_a_failed_job_not_tofu(self):
+        """The whole point: a machine that cannot render the text refuses the job instead of
+        writing a video of empty boxes that ffmpeg reports as a success. Forced by hiding
+        fontconfig, which is exactly what a bare container looks like."""
+        if platform.system() == "Windows":
+            self.skipTest("the shim below is a #!/bin/sh script; Windows resolves fonts by file name, not fontconfig")
+        shim = OUT / "nofc"
+        shim.mkdir(exist_ok=True)
+        (shim / "fc-list").write_text("#!/bin/sh\nexit 1\n")
+        (shim / "fc-list").chmod(0o755)
+        env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}")
+        cues = OUT / "no_font.txt"
+        cues.write_text("0:00-0:03 안녕하세요\n", encoding="utf-8")
+        proc = script("caption.py", self._small(), "--text", cues, "--json", "--fast",
+                      "-o", OUT / "no_font.mp4", env=env, expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed")
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("Korean", doc["error"]["message"])
+        self.assertIn("--font-file", doc["error"]["message"], "the message says how to fix it")
+        self.assertFalse((OUT / "no_font.mp4").exists(), "nothing is written for a job that cannot be read")
 
     def test_caption_srt_only(self):
         srt = OUT / "only.srt"
@@ -3586,6 +3828,83 @@ class FFmpegSkillTests(unittest.TestCase):
             with self.subTest(script=name):
                 out = script(name, "--help").stdout
                 self.assertIn("usage:", out)
+
+
+# ---------------------------------------------------------------------------- fonts by script (1.12)
+def _no_fontconfig():
+    """fc-list absent (a bare container, Windows) -- the script->font resolution cannot be
+    exercised, and skipping says so rather than failing on an environment gap."""
+    return shutil.which("fc-list") is None and platform.system() != "Windows"
+
+
+class ScriptFontTests(unittest.TestCase):
+    """1.12: which script text is written in, and a font file that actually covers it."""
+
+    def test_detect_script_reads_the_characters_not_the_locale(self):
+        cases = {
+            "こんにちは世界": "ja",          # kana + han -> Japanese
+            "カタカナ": "ja",
+            "你好世界": "zh",                # han alone -> Chinese
+            "안녕하세요": "ko",
+            "ㅎㅏㄴ": "ko",                  # jamo, not syllables
+            "مرحبا بالعالم": "ar",
+            "שלום עולם": "he",
+            "नमस्ते दुनिया": "hi",
+            "สวัสดีชาวโลก": "th",
+            "Привет мир": "ru",
+            "Γειά σου κόσμε": "el",
+            "Hello world": "latin",
+            "": "latin",
+            "1080p 30fps": "latin",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(detect_script(text), expected)
+
+    def test_detect_script_mixed_text_goes_by_character_count(self):
+        self.assertEqual(detect_script("Episode 12 — 日本語のテスト"), "ja")
+        self.assertEqual(detect_script("Part 2: 第二部分的内容说明"), "zh")
+        # kana anywhere makes the whole string Japanese, however few
+        self.assertEqual(detect_script("漢字漢字漢字の"), "ja")
+        # the non-Latin script with the most characters wins
+        self.assertEqual(detect_script("Привет 你好世界大家好"), "zh")
+
+    def test_lang_hint_only_breaks_the_han_only_tie(self):
+        """Han with no kana is Chinese by default; only the caller knows when it is Japanese or
+        Korean hanja. The hint never overrides what the characters already prove."""
+        self.assertEqual(detect_script("漢字表記"), "zh")
+        self.assertEqual(detect_script("漢字表記", lang="ja"), "ja")
+        self.assertEqual(detect_script("漢字表記", lang="ko"), "ko")
+        self.assertEqual(detect_script("漢字表記", lang="ja-JP"), "ja")
+        self.assertEqual(detect_script("こんにちは", lang="zh"), "ja", "kana is not ambiguous -- the hint must not win")
+        self.assertEqual(detect_script("안녕하세요", lang="ja"), "ko")
+
+    @unittest.skipIf(_no_fontconfig(), "no fc-list on this machine: fonts cannot be resolved by script here")
+    def test_font_for_script_finds_a_real_file_for_every_script(self):
+        for script in ("ja", "zh", "ko", "ar", "he", "hi", "th", "ru", "el"):
+            with self.subTest(script=script):
+                path = font_for_script(script)
+                if path is None:
+                    self.skipTest(f"this machine has no font covering {script}")
+                self.assertTrue(os.path.exists(path), path)
+                family = font_family_for_script(script)
+                self.assertTrue(family)
+                # "Unifont Sample" draws the code point in a box instead of the glyph -- the exact
+                # unreadable result this feature exists to avoid. It is only ever acceptable when
+                # nothing else on the machine covers the script at all.
+                if any(f for f in _families_for(script) if "unifont" not in f.lower()):
+                    self.assertNotIn("unifont", family.lower(),
+                                      f"{script}: picked {family} while a real font is installed")
+
+    @unittest.skipIf(_no_fontconfig(), "no fc-list on this machine")
+    def test_font_for_script_is_cached_and_stable(self):
+        self.assertEqual(font_for_script("ja"), font_for_script("ja"))
+
+
+def _families_for(script):
+    from _common import FC_LANG
+    proc = subprocess.run(["fc-list", f":lang={FC_LANG[script]}", "family"], stdout=subprocess.PIPE, text=True)
+    return [f for line in proc.stdout.splitlines() for f in line.split(",")]
 
 
 if __name__ == "__main__":

@@ -1710,6 +1710,261 @@ def default_font_file(font_name: str) -> Optional[str]:
     return path if path and os.path.exists(path) else None
 
 
+# --------------------------------------------------------------------------- script detection
+# 1.12: non-Latin caption/overlay text used to render as tofu (empty boxes) whenever the default
+# family carried no glyphs for it -- silently, because fontconfig substitutes SOMETHING for every
+# request and ffmpeg exits 0 either way. The tools now detect the script of the text they are about
+# to draw and resolve a font file that actually covers it; nothing found is a failed job, not a
+# warning (a video full of boxes is not a delivery).
+SCRIPTS = ("ja", "zh", "ko", "ar", "he", "hi", "th", "ru", "el", "latin")
+
+LANGUAGE_NAMES = {
+    "ja": "Japanese", "zh": "Chinese", "ko": "Korean", "ar": "Arabic", "he": "Hebrew",
+    "hi": "Devanagari (Hindi/Marathi/Nepali)", "th": "Thai", "ru": "Cyrillic (Russian and others)",
+    "el": "Greek", "latin": "Latin",
+}
+
+# fontconfig's own :lang= codes for each script we detect (zh uses zh-cn, the Simplified subset
+# every CJK font that claims zh carries; the rest are the plain two-letter codes).
+FC_LANG = {"ja": "ja", "zh": "zh-cn", "ko": "ko", "ar": "ar", "he": "he", "hi": "hi", "th": "th", "ru": "ru", "el": "el"}
+
+# Families tried in order, best first. The names are matched case-insensitively against the start
+# of any family fontconfig reports for a file, so "Noto Sans CJK JP" also matches
+# "Noto Sans CJK JP Black". Anything not listed still qualifies -- it just sorts after these.
+PREFERRED_FAMILIES = {
+    "ja": ["Noto Sans CJK JP", "Noto Serif CJK JP", "Noto Sans JP", "Source Han Sans", "IPAPGothic", "IPAGothic", "IPA", "VL Gothic", "TakaoGothic", "WenQuanYi Zen Hei"],
+    "zh": ["Noto Sans CJK SC", "Noto Serif CJK SC", "Noto Sans SC", "Source Han Sans", "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Droid Sans Fallback"],
+    "ko": ["Noto Sans CJK KR", "Noto Serif CJK KR", "Noto Sans KR", "Source Han Sans K", "NanumGothic", "Nanum Gothic", "Malgun Gothic", "WenQuanYi Zen Hei"],
+    "ar": ["Noto Sans Arabic", "Noto Naskh Arabic", "Amiri", "Scheherazade", "DejaVu Sans", "FreeSans", "FreeSerif"],
+    "he": ["Noto Sans Hebrew", "Noto Serif Hebrew", "DejaVu Sans", "FreeSans", "FreeSerif"],
+    "hi": ["Noto Sans Devanagari", "Noto Serif Devanagari", "Lohit Devanagari", "Mangal", "Nirmala UI", "Samyak Devanagari", "FreeSans", "FreeSerif"],
+    "th": ["Noto Sans Thai", "Noto Serif Thai", "Loma", "Garuda", "Waree", "Umpush", "Norasi", "Sarabun", "Leelawadee UI", "FreeSerif"],
+    "ru": ["Noto Sans", "DejaVu Sans", "Liberation Sans", "FreeSans", "FreeSerif"],
+    "el": ["Noto Sans", "DejaVu Sans", "Liberation Sans", "FreeSans", "FreeSerif"],
+}
+
+# Windows has no fontconfig: the system fonts are looked up by file name instead, best first.
+WINDOWS_FONTS = {
+    "ko": [("malgun.ttf", "Malgun Gothic"), ("gulim.ttc", "Gulim"), ("batang.ttc", "Batang")],
+    "zh": [("msyh.ttc", "Microsoft YaHei"), ("simhei.ttf", "SimHei"), ("simsun.ttc", "SimSun")],
+    "ja": [("meiryo.ttc", "Meiryo"), ("YuGothM.ttc", "Yu Gothic Medium"), ("YuGothR.ttc", "Yu Gothic"), ("msgothic.ttc", "MS Gothic")],
+    "ar": [("tahoma.ttf", "Tahoma"), ("arial.ttf", "Arial")],
+    "he": [("tahoma.ttf", "Tahoma"), ("arial.ttf", "Arial")],
+    "hi": [("mangal.ttf", "Mangal"), ("Nirmala.ttf", "Nirmala UI"), ("NirmalaB.ttf", "Nirmala UI")],
+    "th": [("leelawui.ttf", "Leelawadee UI"), ("leelawad.ttf", "Leelawadee"), ("tahoma.ttf", "Tahoma")],
+    "ru": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
+    "el": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
+}
+
+_SCRIPT_RANGES = (
+    ("ko", ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F), (0xAC00, 0xD7FF))),   # Hangul syllables + Jamo
+    ("kana", ((0x3040, 0x309F), (0x30A0, 0x30FF), (0x31F0, 0x31FF), (0xFF66, 0xFF9F))),  # hiragana/katakana
+    ("han", ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2A6DF))),
+    ("ar", ((0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF), (0xFB50, 0xFDFF), (0xFE70, 0xFEFF))),
+    ("he", ((0x0590, 0x05FF), (0xFB1D, 0xFB4F))),
+    ("hi", ((0x0900, 0x097F), (0xA8E0, 0xA8FF))),
+    ("th", ((0x0E00, 0x0E7F),)),
+    ("ru", ((0x0400, 0x04FF), (0x0500, 0x052F), (0x2DE0, 0x2DFF))),
+    ("el", ((0x0370, 0x03FF), (0x1F00, 0x1FFF))),
+)
+
+
+def char_script(ch: str) -> str:
+    """The script of one character: one of SCRIPTS, or "latin" for anything else (including
+    digits, punctuation and spaces -- they are measured and wrapped like Latin)."""
+    cp = ord(ch)
+    for name, ranges in _SCRIPT_RANGES:
+        for lo, hi in ranges:
+            if lo <= cp <= hi:
+                return "ja" if name == "kana" else ("zh" if name == "han" else name)
+    return "latin"
+
+
+def detect_script(text: str, lang: "Optional[str]" = None) -> str:
+    """Which script `text` is written in, as one of SCRIPTS.
+
+    Hangul wins for Korean, any kana makes the whole string Japanese (Japanese mixes kana and
+    Han), Han alone is Chinese. Mixed text is decided by character count: the non-Latin script
+    with the most characters wins, ties going to whichever appeared first, and text with no
+    non-Latin characters at all is "latin". `lang` (a --lang/--language hint, or brand.json's
+    `lang`) only resolves the one ambiguity the characters genuinely cannot: Han with no kana
+    is Chinese by default but Japanese (or Korean hanja) when the caller says so.
+    """
+    counts: "Dict[str, int]" = {}
+    order: "List[str]" = []
+    kana = 0
+    for ch in text or "":
+        s = char_script(ch)
+        if s == "latin":
+            continue
+        if ord(ch) in range(0x3040, 0x3100) or ord(ch) in range(0x31F0, 0x3200) or ord(ch) in range(0xFF66, 0xFFA0):
+            kana += 1
+        if s not in counts:
+            order.append(s)
+        counts[s] = counts.get(s, 0) + 1
+    if kana:  # Japanese: the Han characters in the same string are Japanese too
+        counts["ja"] = counts.pop("ja", 0) + counts.pop("zh", 0)
+        order = [s for s in order if s != "zh"]
+    if not counts:
+        return "latin"
+    best = max(counts, key=lambda s: (counts[s], -order.index(s)))
+    hint = (lang or "").strip().lower().replace("_", "-").split("-")[0]
+    if not kana and best == "zh" and hint in ("ja", "zh", "ko"):
+        return hint  # Han-only text: only the caller knows whether it is Chinese, Japanese or hanja
+    return best
+
+
+_SCRIPT_FONT_CACHE: "Dict[Tuple[str, Optional[str]], Optional[Tuple[str, str]]]" = {}
+
+
+def _fc_list_fonts(fc_lang: str) -> "List[Tuple[str, List[str]]]":
+    """(file, families) for every font fontconfig says covers `fc_lang`; [] when fc-list is absent."""
+    exe = shutil.which("fc-list")
+    if not exe:
+        return []
+    try:
+        proc = subprocess.run([exe, f":lang={fc_lang}", "file", "family"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    if proc.returncode != 0:
+        return []
+    out = []
+    for line in proc.stdout.splitlines():
+        if ": " not in line:
+            continue
+        path, _, families = line.partition(": ")
+        path = path.strip()
+        if not path or not os.path.exists(path):
+            continue
+        names = [f.replace("\\-", "-").strip() for f in families.split(",") if f.strip()]
+        out.append((path, names or [Path(path).stem]))
+    return out
+
+
+def _family_rank(families: "Sequence[str]", preferred: "Sequence[str]") -> int:
+    for i, want in enumerate(preferred):
+        w = want.lower()
+        if any(f.lower().startswith(w) for f in families):
+            return i
+    return len(preferred)
+
+
+def _script_font_entry(script: str, family_hint: "Optional[str]" = None) -> "Optional[Tuple[str, str]]":
+    key = (script, family_hint)
+    if key in _SCRIPT_FONT_CACHE:
+        return _SCRIPT_FONT_CACHE[key]
+    _SCRIPT_FONT_CACHE[key] = result = _script_font_uncached(script, family_hint)
+    return result
+
+
+def _script_font_uncached(script: str, family_hint: "Optional[str]" = None) -> "Optional[Tuple[str, str]]":
+    if script not in FC_LANG:
+        return None
+    if platform.system() == "Windows":
+        fonts = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
+        for name, family in WINDOWS_FONTS.get(script, []):
+            if (fonts / name).exists():
+                return str(fonts / name), family
+        return None
+    preferred = list(PREFERRED_FAMILIES.get(script, []))
+    if family_hint:
+        preferred.insert(0, family_hint)
+    candidates = _fc_list_fonts(FC_LANG[script])
+    if not candidates:
+        return None
+    scored = []
+    for path, families in candidates:
+        joined = " ".join(families).lower()
+        stem = Path(path).stem.lower()
+        # "Unifont Sample" is fontconfig's tofu-with-hex-digits fallback: it "covers" every script
+        # by drawing the code point, which is exactly the unreadable result this feature exists to
+        # avoid -- it is only ever chosen when nothing else covers the script at all. A *Mono* face
+        # is legible but wrong for a caption band, so it sorts after every proportional one.
+        last_resort = 1 if "unifont" in joined else 0
+        mono = 1 if "mono" in joined else 0
+        # regular weights before Bold/Italic/Oblique cuts, so a default caption is not bold by accident
+        styled = 1 if any(k in stem for k in ("bold", "italic", "oblique", "light", "thin", "black")) else 0
+        scored.append((last_resort, _family_rank(families, preferred), mono, styled, path, families[0]))
+    scored.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
+    best = scored[0]
+    return best[4], best[5]
+
+
+def font_for_script(script: str, family_hint: "Optional[str]" = None) -> "Optional[str]":
+    """A font FILE path that covers `script`, or None when this machine has none.
+
+    Linux/macOS ask fontconfig (`fc-list :lang=xx file family`) and rank what it reports by the
+    PREFERRED_FAMILIES table; Windows has no fontconfig, so the known system files are probed by
+    name. Cached per process: a caption job resolves the same script for every cue.
+    """
+    entry = _script_font_entry(script, family_hint)
+    return entry[0] if entry else None
+
+
+def font_family_for_script(script: str, family_hint: "Optional[str]" = None) -> "Optional[str]":
+    """The family NAME of font_for_script()'s file -- what libass wants in an ASS Fontname."""
+    entry = _script_font_entry(script, family_hint)
+    return entry[1] if entry else None
+
+
+def font_covers_script(font_name: str, script: str) -> bool:
+    """Whether the installed family `font_name` actually carries glyphs for `script`.
+
+    `fc-match` cannot answer this: given a family that IS installed it returns that family
+    whatever `:lang=` asks for (verified -- `fc-match "DejaVu Sans:lang=zh-cn"` answers
+    "DejaVu Sans", which has no Han glyphs at all). `fc-list :lang=xx:family=<name>` does: it
+    lists only files that satisfy BOTH, so an empty listing is the proof of no coverage. Unknown
+    (no fontconfig at all) counts as covering: a warning nobody can verify is worse than none.
+    """
+    if script not in FC_LANG or not font_name:
+        return True
+    exe = shutil.which("fc-list")
+    if not exe:
+        return True
+    try:
+        proc = subprocess.run([exe, f":lang={FC_LANG[script]}:family={font_name}", "file"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        return True
+    if proc.returncode != 0:
+        return True
+    return bool(proc.stdout.strip())
+
+
+FONT_INSTALL_HINT = ("install fonts-noto-cjk / fonts-noto-core (apt), "
+                     "brew install --cask font-noto-sans-cjk / font-noto-sans-arabic (mac), or pass --font-file")
+
+
+def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Optional[str]" = None,
+                         font_explicit: bool = False, font_file: "Optional[str]" = None
+                         ) -> "Tuple[str, Optional[str], Optional[str]]":
+    """(script, font file, family) to draw `text` with, resolving by script when nothing explicit
+    was asked for.
+
+    Returns (script, None, None) when the caller's own choice stands: Latin text, an explicit
+    --font-file, or an explicit --font (which is kept even when fontconfig says it does not cover
+    the script -- with one info line saying so, because overriding a user's stated font silently
+    is worse than a warning). Otherwise the resolved file is returned with ONE info line naming
+    it, and a script no installed font covers is a failed job (tofu is not a delivery).
+    """
+    script = detect_script(text or "", lang)
+    if script == "latin":
+        return script, None, None
+    if font_file:
+        return script, None, None
+    if font_explicit and font:
+        if not font_covers_script(font, script):
+            info(f"font: '{font}' does not cover {LANGUAGE_NAMES[script]} text on this machine; keeping it as asked "
+                 "(drop --font, or pass --font-file, to pick one by script automatically)")
+        return script, None, None
+    entry = _script_font_entry(script)
+    if not entry:
+        die(f"no installed font covers {LANGUAGE_NAMES[script]} text on this machine — {FONT_INSTALL_HINT}", kind="input")
+    info(f"font: {entry[0]} (covers {script})")
+    return script, entry[0], entry[1]
+
+
 def escape_drawtext(text: str) -> str:
     """Escape `text` for use as a single-quoted drawtext option value (`text='<this>'`).
 
@@ -2044,6 +2299,11 @@ BRAND_DEFAULTS: Dict[str, Any] = {
     "logo_opacity": 0.9,
     "safe_margin": 48,
     "caption": {"size": 26, "position": "bottom", "animate": "pop", "karaoke": False, "bold": True, "outline": 2},
+    # 1.12: one place for the caption look every project shares. `styles.caption` is the documented
+    # spelling (`{font, size, colour, box, position}`, British or American "colour"); the older
+    # top-level `caption` block still works and `styles.caption` wins where both name the same key.
+    "styles": {},
+    "lang": None,
     "loudness": {"lufs": -14, "tp": -1},
 }
 
@@ -2071,6 +2331,19 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
             brand[key] = str(base / brand[key])
     brand["_path"] = str(path)
     return brand
+
+
+
+def brand_caption_style(brand: Dict[str, Any]) -> Dict[str, Any]:
+    """The effective caption style of a brand file: the top-level `caption` block updated with
+    `styles.caption`, with `colour` normalised to `color`. Explicit flags still beat both."""
+    style: Dict[str, Any] = dict(brand.get("caption") or {})
+    extra = (brand.get("styles") or {}).get("caption") or {}
+    style.update(extra)
+    if "colour" in style and "color" not in style:
+        style["color"] = style.pop("colour")
+    style.pop("colour", None)
+    return style
 
 
 def color_hex(value: str) -> str:

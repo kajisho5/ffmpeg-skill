@@ -15,13 +15,14 @@ Examples:
   python3 graphics.py talk.mp4 --template title --title "Episode 12" --subtitle "The math of video" --start 0 --end 4
   python3 graphics.py talk.mp4 --template progress --brand brand.json
   python3 graphics.py intro.mp4 --template countdown --from 5 --start 1 --end 6
+  python3 graphics.py talk.mp4 --template lower-third --name "김민준" --title "감독" --lang ko
   python3 graphics.py clip.mp4 --template chapter --title "Part 2 — Setup" --position top-left --start 0 --end 5
 """
 import argparse
 import sys
 from typing import List, Optional
 
-from _common import aac_args, add_common, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs
+from _common import aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args, color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args, drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs
 
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug"]
 
@@ -30,9 +31,11 @@ def ff_color(hex_rgb: str, alpha: float = 1.0) -> str:
     return f"0x{color_hex(hex_rgb)}@{alpha:g}"
 
 
-def font_opts(brand: dict, font: Optional[str], font_file: Optional[str]) -> str:
+def font_opts(brand: dict, font: Optional[str], font_file: Optional[str], script_file: Optional[str] = None) -> str:
     if font_file or brand.get("font_file"):
         return f"fontfile={escape_filter_path(font_file or brand['font_file'])}"
+    if script_file:  # a font picked by the script of the text itself (1.12)
+        return f"fontfile={escape_filter_path(script_file)}"
     resolved = default_font_file(font or brand.get("font", "DejaVu Sans"))
     if resolved:
         return f"fontfile={escape_filter_path(resolved)}"
@@ -60,6 +63,8 @@ def main() -> int:
     ap.add_argument("--text-color", help="override text colour RRGGBB")
     ap.add_argument("--font")
     ap.add_argument("--font-file")
+    ap.add_argument("--lang", help="language code of the text (e.g. ja, zh, ko): the hint that says whether Han-only "
+                                   "text is Chinese, Japanese or Korean when a font is picked by script")
     ap.add_argument("--scale", type=float, default=1.0, help="size multiplier (default 1)")
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
@@ -72,7 +77,17 @@ def main() -> int:
     text_c = color_hex(args.text_color or brand["colors"]["text"])
     bg = color_hex(brand["colors"].get("background", "101418"))
     margin = int(brand.get("safe_margin", 48))
-    fo = font_opts(brand, args.font, args.font_file)
+    style = brand_caption_style(brand)  # styles.caption is shared with caption.py
+    if args.brand and style.get("font") and not args.font:
+        args.font = style["font"]
+    if args.brand and style.get("color") and not args.text_color:
+        text_c = color_hex(style["color"])
+    args.lang = args.lang or (brand.get("lang") if args.brand else None)
+    # a font that covers the text before drawtext renders boxes instead of glyphs (1.12)
+    _script, script_file, _family = script_font_for_text(
+        " ".join(t for t in (args.name, args.title, args.subtitle) if t),
+        lang=args.lang, font=args.font, font_explicit=bool(args.font), font_file=args.font_file or brand.get("font_file"))
+    fo = font_opts(brand, args.font, args.font_file, script_file)
 
     meta = probe(args.input)
     if not meta.get("video"):

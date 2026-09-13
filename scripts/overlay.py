@@ -24,7 +24,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from _common import STATE, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, script_font_for_text, load_brand, video_args, add_common, apply_common, default_font_file, emit, aac_args, cfr_args, default_output, die, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 
 POS = {
     "top-left": ("{m}", "{m}"),
@@ -144,6 +144,14 @@ def main() -> int:
             args.font = brand.get("font", args.font)
         if not args.font_file and brand.get("font_file"):
             args.font_file = brand["font_file"]
+    if args.text and not args.font_file:
+        # 1.12: non-Latin overlay text picks a font by script, so a title in Japanese, Korean,
+        # Arabic ... draws glyphs instead of boxes. drawtext does not shape or reorder RTL text --
+        # see references/gotchas.md#fonts-by-script.
+        _script, script_file, _family = script_font_for_text(
+            args.text, font=args.font, font_explicit=args.font != ap.get_default("font"), font_file=args.font_file)
+        if script_file:
+            args.font_file = script_file
     if not args.font_file:
         args.font_file = default_font_file(args.font)
     meta = probe(args.input)

@@ -2649,6 +2649,47 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertEqual(d2["fonts"]["status"], "unknown")
         self.assertIn("fc-match", d2["fonts"]["detail"])
 
+    def test_doctor_reports_a_font_status_for_every_script_it_can_detect(self):
+        """1.12: `fonts.scripts` answers "which languages can this machine actually render", the
+        question `filter:subtitles` never asked. Same three states as every other capability."""
+        from _common import SCRIPTS as DETECTED_SCRIPTS
+        proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", check=False)
+        d = json.loads(proc.stdout)
+        expected = {s for s in DETECTED_SCRIPTS if s != "latin"}
+        self.assertEqual(set(d["fonts"]["scripts"]), expected)
+        self.assertEqual(len(expected), 9, "ja zh ko ar he hi th ru el")
+        for name, entry in d["fonts"]["scripts"].items():
+            with self.subTest(script=name):
+                self.assertIn(entry["status"], ("available", "missing", "unknown"))
+                self.assertEqual(set(entry), {"status", "file"})
+                if entry["status"] == "available":
+                    self.assertTrue(os.path.exists(entry["file"]), entry)
+                else:
+                    self.assertIsNone(entry["file"])
+        self.assertTrue(d["ok"], "a script with no font is a machine fact, never a broken install")
+
+    def test_doctor_plain_text_keeps_fonts_to_one_short_line(self):
+        """The plain-text doctor was cut to ~520 bytes in 1.11.0; nine scripts must not undo that,
+        so they are summarised on the single `fonts:` line and detailed only in --json."""
+        out = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", check=False).stdout
+        font_lines = [l for l in out.splitlines() if l.startswith("fonts:")]
+        self.assertEqual(len(font_lines), 1, out)
+        self.assertLess(len(out.encode("utf-8")), 900, "the short doctor text must stay short")
+        d = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", check=False).stdout)
+        for name, entry in d["fonts"]["scripts"].items():
+            if entry["status"] == "available":
+                self.assertIn(name, font_lines[0])
+            if entry["status"] == "missing":
+                self.assertIn(name, font_lines[0])
+            self.assertNotIn(str(entry["file"]), font_lines[0], "file paths belong in --json, not the summary")
+
+    def test_font_fix_hint_names_the_language_and_how_to_install_one(self):
+        hint = _contract._capability_fix_hint("font:ko")
+        self.assertIn("Korean", hint)
+        self.assertIn("fonts-noto-cjk", hint)
+        self.assertIn("--font-file", hint)
+        self.assertIn("Thai", _contract._capability_fix_hint("font:th"))
+
     def test_font_capability_is_informational_like_gpu_encoders(self):
         """fonts, like gpu_encoders, is reported but never gates ok/usable -- it answers a question
         none of the required/optional capabilities ask."""

@@ -28,15 +28,18 @@ Examples:
   python3 caption.py input.mp4 --srt subs.srt --font "Noto Sans CJK JP" --size 28 --position top
   python3 caption.py --text cues.txt --write-srt cues.srt          # only produce the SRT
   python3 caption.py input.mp4 --text cues.txt                     # generate + burn in one go
+  python3 caption.py input.mp4 --text cues_ko.txt --lang ko        # a font that covers the script is picked automatically
+  python3 caption.py input.mp4 --srt subs.srt --offset -0.4 --max-lines 2 --min-duration 1.2
 """
 import argparse
+import json
 import os
 import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from _common import STATE, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
+from _common import STATE, char_script, script_font_for_text, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 
@@ -293,6 +296,261 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
     return out
 
 
+# --------------------------------------------------------------------------- readable cues (1.12)
+# Average advance width per character, in em (a fraction of the font size). Proportional Latin text
+# averages a bit over half an em; CJK and Thai are drawn on a full-width grid; Arabic/Hebrew and
+# Devanagari sit in between. These are deliberately averages, not per-glyph metrics: measuring the
+# real advance needs a font parser (no stdlib one) and would still be wrong for libass's own
+# shaping, while a cue wrapped from an average is right to within a character on every line.
+ADVANCE_EM = {"ja": 1.0, "zh": 1.0, "ko": 1.0, "th": 1.0, "hi": 0.7, "ar": 0.6, "he": 0.6,
+              "ru": 0.55, "el": 0.55, "latin": 0.55}
+# How much of the frame width a caption line may use. libass's own default SRT margins are 10 of a
+# 384-wide script (2.6 % a side); 5 % a side is the safe area every platform check in this repo uses.
+SAFE_WIDTH_FRACTION = 0.9
+# Scripts written without spaces: a line breaks between any two characters.
+NO_SPACE_SCRIPTS = ("ja", "zh", "ko", "th")
+
+
+def _char_em(ch: str) -> float:
+    # CJK punctuation and the fullwidth forms (、。，！？　and U+FF01-FF60) are drawn on the same
+    # full-width grid as the ideographs they sit between, even though they are not "Han" to a
+    # script detector -- measuring them as Latin under-counts a wrapped CJK line by a character.
+    cp = ord(ch)
+    if 0x3000 <= cp <= 0x303F or 0xFF01 <= cp <= 0xFF60 or 0xFFE0 <= cp <= 0xFFE6:
+        return 1.0
+    return ADVANCE_EM.get(char_script(ch), 0.55)
+
+
+def text_width_em(text: str) -> float:
+    """Width of `text` in em, from the per-script average advance table."""
+    return sum(_char_em(ch) for ch in text)
+
+
+def _atoms(line: str) -> List[Tuple[str, bool]]:
+    """Break a line into the smallest pieces a wrap may separate -- one atom per CJK/Thai
+    character, one per whitespace-delimited word otherwise -- each with whether a space stood
+    before it in the original. The flag is what puts the text back together exactly as written:
+    "Hello 世界" keeps its space, "世界です" gains none."""
+    out: List[Tuple[str, bool]] = []
+    word = ""
+    spaced = False        # a space stands before the atom being built
+    pending = False       # a space stands before the NEXT atom
+    for ch in line:
+        if char_script(ch) in NO_SPACE_SCRIPTS:
+            if word:
+                out.append((word, spaced))
+                word = ""
+            out.append((ch, pending))
+            pending = False
+        elif ch.isspace():
+            if word:
+                out.append((word, spaced))
+                word = ""
+            pending = True
+        else:
+            if not word:
+                spaced, pending = pending, False
+            word += ch
+    if word:
+        out.append((word, spaced))
+    return out
+
+
+def _join(left: str, atom: str, spaced: bool) -> str:
+    """Put an atom back on a line, restoring the space that stood before it."""
+    if not left:
+        return atom
+    return left + (" " if spaced else "") + atom
+
+
+def wrap_text(text: str, max_em: float) -> List[str]:
+    """Wrap `text` to lines no wider than `max_em` em, keeping the manual breaks it already has.
+
+    An atom wider than the whole line (one very long word) is left alone on its line rather than
+    cut mid-word: an over-long line is readable, a chopped word is not.
+    """
+    lines: List[str] = []
+    for raw in text.split("\n"):
+        if not raw.strip():
+            continue
+        current = ""
+        for atom, spaced in _atoms(raw):
+            candidate = _join(current, atom, spaced)
+            if current and text_width_em(candidate) > max_em:
+                lines.append(current)
+                current = atom
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+    return lines or [text]
+
+
+def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float], max_lines: int,
+                min_duration: float, offset: float) -> Tuple[List[Tuple[float, float, str]], dict]:
+    """Shift, wrap, split and lengthen cues so they can actually be read.
+
+    `offset` moves every cue (a transcript that runs early/late); `max_em` wraps each cue to the
+    safe area at the chosen size (None when no video geometry is known, e.g. --write-srt alone);
+    a cue needing more than `max_lines` lines is split into consecutive cues sharing its time in
+    proportion to their text; a cue shorter than `min_duration` is lengthened, never past the next
+    cue's start. Returns the new cues and a count of what changed.
+    """
+    stats = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0}
+    staged: List[Tuple[float, float, str]] = []
+    for start, end, text in cues:
+        if offset:
+            start, end = start + offset, end + offset
+            if end <= 0:
+                stats["dropped"] += 1
+                continue
+            start = max(0.0, start)
+            stats["shifted"] += 1
+        if max_em and max_em > 0:
+            lines = wrap_text(text, max_em)
+            if lines != [l for l in text.split("\n") if l.strip()]:
+                stats["wrapped"] += 1
+            if len(lines) > max_lines:
+                chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)]
+                weights = [max(1.0, sum(len(l) for l in c)) for c in chunks]
+                total_w = sum(weights)
+                t = start
+                for chunk, weight in zip(chunks, weights):
+                    seg = (end - start) * weight / total_w
+                    staged.append((t, min(end, t + seg), "\n".join(chunk)))
+                    t += seg
+                stats["split"] += len(chunks) - 1
+                continue
+            text = "\n".join(lines)
+        staged.append((start, end, text))
+    out: List[Tuple[float, float, str]] = []
+    for i, (start, end, text) in enumerate(staged):
+        if min_duration and end - start < min_duration:
+            limit = staged[i + 1][0] if i + 1 < len(staged) else None
+            new_end = start + min_duration if limit is None else min(start + min_duration, limit)
+            if new_end > end:
+                stats["extended"] += 1
+                end = new_end
+        out.append((start, end, text))
+    return out, stats
+
+
+def report_layout(stats: dict) -> None:
+    """One info line, only when a cue actually changed."""
+    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "split", "extended", "dropped") if stats.get(k)]
+    if parts:
+        info("cues: " + ", ".join(parts))
+
+
+def max_line_em(args, play_w: Optional[int], play_h: Optional[int]) -> Optional[float]:
+    """How many em fit on one caption line at the chosen size, or None without video geometry.
+
+    --size is in ASS points against a 288-line script (what libass's force_style uses), so the
+    rendered pixel size is size * play_h / 288.
+    """
+    if not play_w or not play_h or not args.size:
+        return None
+    size_px = args.size * play_h / 288.0
+    if size_px <= 0:
+        return None
+    return (play_w * SAFE_WIDTH_FRACTION) / size_px
+
+
+def parse_ass_dialogue(path: str) -> str:
+    """The spoken text of an ASS file, for script detection -- style/override blocks stripped."""
+    text = []
+    for line in read_text_or_die(path, "--ass").lstrip("\ufeff").splitlines():
+        if not line.startswith("Dialogue:"):
+            continue
+        fields = line.split(",", 9)
+        if len(fields) == 10:
+            text.append(re.sub(r"\{[^}]*\}", "", fields[9]))
+    return "\n".join(text)
+
+
+def shift_ass_file(src: str, dst: str, offset: float) -> int:
+    """Copy an ASS file with every Dialogue start/end moved by `offset` seconds."""
+    def shift(stamp: str) -> str:
+        h, m, rest = stamp.split(":")
+        secs = int(h) * 3600 + int(m) * 60 + float(rest) + offset
+        secs = max(0.0, secs)
+        cs = int(round(secs * 100))
+        hh, rem = divmod(cs, 360000)
+        mm, rem = divmod(rem, 6000)
+        ss, cc = divmod(rem, 100)
+        return f"{hh}:{mm:02d}:{ss:02d}.{cc:02d}"
+
+    n = 0
+    out = []
+    for line in Path(src).read_text(encoding="utf-8-sig").splitlines():
+        if line.startswith("Dialogue:"):
+            head, sep, rest = line.partition(":")
+            fields = rest.split(",")
+            if len(fields) >= 3:
+                try:
+                    fields[1], fields[2] = shift(fields[1].strip()), shift(fields[2].strip())
+                    line = head + sep + ",".join(fields)
+                    n += 1
+                except (ValueError, IndexError):
+                    pass
+        out.append(line)
+    Path(dst).write_text("\n".join(out) + "\n", encoding="utf-8-sig")
+    return n
+
+
+def whisper_word_timings(srt_path: Optional[str]) -> List[Tuple[float, float, str]]:
+    """Word timings from a whisper JSON transcript sitting next to the SRT, if there is one.
+
+    whisper (and faster-whisper, and whisper.cpp's --output-json) can emit per-word start/end
+    times; when they are there, --karaoke should follow the real speech instead of splitting the
+    cue evenly. Looked for as <stem>.json and <stem>.words.json next to the SRT, in either the
+    {"segments": [{"words": [{"word": ..., "start": ..., "end": ...}]}]} or a bare
+    {"words": [...]} shape. Anything unreadable is simply "no word timings".
+    """
+    if not srt_path:
+        return []
+    stem = os.path.splitext(srt_path)[0]
+    for cand in (stem + ".words.json", stem + ".json"):
+        if not os.path.exists(cand):
+            continue
+        try:
+            data = json.loads(Path(cand).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        raw = []
+        if isinstance(data, dict):
+            raw = list(data.get("words") or [])
+            for seg in data.get("segments") or []:
+                raw.extend((seg or {}).get("words") or [])
+        words = []
+        for w in raw:
+            try:
+                text = str(w.get("word") or w.get("text") or "").strip()
+                if text:
+                    words.append((float(w["start"]), float(w["end"]), text))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                continue
+        if words:
+            info(f"karaoke: word timings from {os.path.basename(cand)} ({len(words)} words)")
+            return sorted(words)
+    return []
+
+
+def word_durations_from_timings(words: List[Tuple[float, float, str]], start: float, end: float,
+                                n_words: int) -> Optional[List[int]]:
+    """Centiseconds per word for one cue, from real word timings; None when they don't cover it."""
+    inside = [w for w in words if w[1] > start + 0.01 and w[0] < end - 0.01]
+    if len(inside) != n_words or n_words <= 0:
+        return None
+    total_cs = max(1, int(round((end - start) * 100)))
+    bounds = [max(start, inside[0][0])] + [max(start, min(end, w[1])) for w in inside]
+    out = [max(1, int(round((bounds[i + 1] - bounds[i]) * 100))) for i in range(n_words)]
+    out[-1] += total_cs - sum(out)
+    if out[-1] < 1:
+        return None
+    return out
+
+
 def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int, play_h: int, video: str = None) -> None:
     """Write a styled ASS file with optional animation and word-by-word highlight."""
     def t(sec: float) -> str:
@@ -341,11 +599,15 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
             dur_cs = max(1, int(round((end - start) * 100)))
             segments = body.split("\\N")
             words = [w for seg in segments for w in seg.split(" ") if w]
-            if getattr(args, "karaoke_timing", "even") == "energy" and video:
-                durs = word_durations_from_audio(video, start, end, len(words), getattr(args, "audio_stream", 0))
-            else:
-                per = max(1, dur_cs // max(1, len(words)))
-                durs = [per] * len(words)
+            # real word timings from the transcript beat both the energy estimate and the even
+            # split -- they are what the speaker actually did, not a proxy for it
+            durs = word_durations_from_timings(getattr(args, "_word_timings", None) or [], start, end, len(words))
+            if durs is None:
+                if getattr(args, "karaoke_timing", "even") == "energy" and video:
+                    durs = word_durations_from_audio(video, start, end, len(words), getattr(args, "audio_stream", 0))
+                else:
+                    per = max(1, dur_cs // max(1, len(words)))
+                    durs = [per] * len(words)
             it = iter(durs)
             out_segments = []
             for seg in segments:
@@ -407,7 +669,10 @@ def main() -> int:
     src.add_argument("--ass", help="ASS file to burn (styles inside the file are used)")
     src.add_argument("--text", help="plain text cue file to convert into SRT (see format above)")
     src.add_argument("--transcribe", action="store_true", help="generate the SRT from the audio with a local speech-to-text engine if one is installed (whisper-cli / whisper / faster-whisper); never required")
-    src.add_argument("--language", help="language code for --transcribe (e.g. en, ja; default auto), also tagged on the subtitle stream with --mode mux")
+    src.add_argument("--language", "--lang", help="language code (e.g. en, ja, zh, ko): the language for --transcribe (default auto), "
+                                                  "the tag on the subtitle stream with --mode mux, and the hint that says whether Han-only "
+                                                  "text is Chinese, Japanese or Korean when a font is picked by script")
+    src.add_argument("--offset", type=float, default=0.0, help="shift every cue by SECONDS (negative = earlier); works for --text, --srt and --ass")
     src.add_argument("--model", default="base", help="whisper model name/path for --transcribe (default base)")
     src.add_argument("--write-srt", help="where to save the generated SRT (default: <text>.srt)")
     src.add_argument("--auto-seconds", type=float, default=3.0, help="duration for cues without timing (default 3)")
@@ -428,6 +693,8 @@ def main() -> int:
     sty.add_argument("--position", choices=sorted(ALIGN), default=None, help="on-screen placement (default bottom)")
     sty.add_argument("--margin", type=int, default=30, help="vertical margin from the edge (default 30)")
     sty.add_argument("--box", action="store_true", help="draw an opaque box behind text instead of an outline")
+    sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
+    sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue (default 1.0)")
     anim = ap.add_argument_group("animation (generates ASS; needs --text or --srt input)")
     anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default=None, help="per-cue entrance animation (default none, or brand caption.animate)")
     anim.add_argument("--karaoke", action="store_true", help="word-by-word highlight (fills from --color to --highlight-color across each cue)")
@@ -443,10 +710,14 @@ def main() -> int:
     apply_common(args)
 
     brand = load_brand(args.brand)
-    bc, bcap = brand["colors"], brand["caption"]
-    args.font = args.font or brand.get("font") or "DejaVu Sans"
+    bc, bcap = brand["colors"], brand_caption_style(brand)
+    font_explicit = bool(args.font) or bool(args.brand and (bcap.get("font") or brand.get("font")))
+    args.language = args.language or (brand.get("lang") if args.brand else None)
+    if args.brand and bcap.get("box") and not args.box:
+        args.box = True
+    args.font = args.font or (bcap.get("font") if args.brand else None) or brand.get("font") or "DejaVu Sans"
     args.size = args.size if args.size is not None else (bcap.get("size", 24) if args.brand else 24)
-    args.color = color_hex(args.color or bc.get("text", "FFFFFF"))
+    args.color = color_hex(args.color or (bcap.get("color") if args.brand else None) or bc.get("text", "FFFFFF"))
     args.outline_color = color_hex(args.outline_color or bc.get("outline", "000000"))
     args.outline = args.outline if args.outline is not None else (float(bcap.get("outline", 2)) if args.brand else 2.0)
     args.position = args.position or (bcap.get("position", "bottom") if args.brand else "bottom")
@@ -469,6 +740,11 @@ def main() -> int:
         if args.animate != "none" or args.karaoke:
             die("--animate/--karaoke render pixels into the picture and require --mode burn")
 
+    if args.max_lines < 1:
+        die("--max-lines must be at least 1")
+    if args.min_duration < 0:
+        die("--min-duration cannot be negative")
+
     meta = None
     if args.input:
         meta = probe(args.input)
@@ -482,6 +758,22 @@ def main() -> int:
     fps_for_tc = args.fps
     if fps_for_tc is None and meta is not None:
         fps_for_tc = meta.get("video", {}).get("fps")
+
+    play_w = play_h = None
+    if meta and meta.get("video"):
+        play_w, play_h = meta["video"]["width"], meta["video"]["height"]
+        if meta["video"].get("rotation") in (90, -90, 270, -270):
+            play_w, play_h = play_h, play_w
+
+    def lay_out(cue_list):
+        """Wrap to the safe area, split past --max-lines, lengthen to --min-duration, shift by
+        --offset -- the one place every cue source goes through, so an SRT, a cue file and a
+        transcript all come out equally readable."""
+        out, stats = layout_cues(cue_list, max_em=max_line_em(args, play_w, play_h),
+                                 max_lines=args.max_lines, min_duration=args.min_duration,
+                                 offset=args.offset)
+        report_layout(stats)
+        return out, any(stats.values())
 
     srt_path = args.srt
     if args.transcribe:
@@ -497,10 +789,15 @@ def main() -> int:
             if os.path.exists(srt_path) and not getattr(args, "overwrite", False):
                 info(f"warning: {srt_path} already exists and will be replaced by the transcript (pass --overwrite to confirm)")
             cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream)
+            args._word_timings = whisper_word_timings(srt_path)
+            cues, changed = lay_out(cues)
+            if changed:
+                write_srt(cues, srt_path)
             info(f"wrote {srt_path} ({len(cues)} cues)")
         args.text = None
     if args.text:
         cues = parse_text_cues(args.text, args.auto_seconds, args.gap, fps_for_tc)
+        cues, _ = lay_out(cues)
         if args.write_srt:
             srt_path = args.write_srt
         elif args.input:
@@ -521,6 +818,21 @@ def main() -> int:
         die("input video is required unless you only use --text/--write-srt")
 
     output = args.output or default_output(args.input, "captioned")
+
+    # An SRT or ASS the caller wrote is never edited in place: when --offset/--max-lines/
+    # --min-duration change it, the adjusted copy is written next to the output and burned instead.
+    if args.srt and not (args.text or args.transcribe) and os.path.exists(srt_path or ""):
+        adjusted, changed = lay_out(parse_srt(srt_path))
+        if changed and not STATE.dry_run:
+            new_srt = os.path.splitext(output)[0] + "_adjusted.srt"
+            write_srt(adjusted, new_srt)
+            info(f"wrote {new_srt} ({len(adjusted)} cues, adjusted from {os.path.basename(srt_path)})")
+            srt_path = new_srt
+    if args.ass and args.offset and os.path.exists(args.ass) and not STATE.dry_run:
+        shifted = os.path.splitext(output)[0] + "_offset.ass"
+        n = shift_ass_file(args.ass, shifted, args.offset)
+        info(f"wrote {shifted} ({n} cues shifted by {args.offset:+g} s)")
+        args.ass = shifted
 
     if args.mode == "mux":
         if not srt_path or (not os.path.exists(srt_path) and not (STATE.dry_run and (args.text or args.transcribe))):
@@ -550,8 +862,28 @@ def main() -> int:
         emit(output)
         return 0
 
+    # A font that covers the text, before anything is rendered: non-Latin cues in a Latin-only
+    # family come out as empty boxes, and ffmpeg exits 0 all the same (see references/gotchas.md).
+    if args.ass:
+        sample = parse_ass_dialogue(args.ass) if os.path.exists(args.ass) else ""
+    elif args.text or args.transcribe:
+        sample = "\n".join(t for _, _, t in cues)
+    else:
+        sample = "\n".join(t for _, _, t in parse_srt(srt_path)) if os.path.exists(srt_path or "") else ""
+    _script, font_file, font_family = script_font_for_text(
+        sample, lang=args.language, font=args.font, font_explicit=font_explicit,
+        font_file=args.fonts_dir)
+    if font_file:
+        args.font = font_family or args.font
+        if not args.fonts_dir:
+            args.fonts_dir = os.path.dirname(font_file)
+
     if (args.animate != "none" or args.karaoke) and not args.ass:
+        # both sources are already laid out: `cues` above, and srt_path was rewritten in place of
+        # the caller's file when --offset/--max-lines/--min-duration changed anything
         cues_for_ass = cues if (args.text or args.transcribe) else parse_srt(srt_path)
+        if args.karaoke and not getattr(args, "_word_timings", None):
+            args._word_timings = whisper_word_timings(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
         w, h = meta["video"]["width"], meta["video"]["height"]
         if meta["video"].get("rotation") in (90, -90, 270, -270):
