@@ -78,11 +78,28 @@ A defect fix that changes behaviour is not a deprecation: it ships in a patch wi
 CHANGELOG line, and if the old behaviour was something a caller could reasonably have relied
 on, the line says so.
 
+## What 2.0 changes
+
+`contract --json` carries a top-level `deprecated` list, next to `contract_version`: one entry per
+thing 2.0.0 removes, `{"what", "since", "replacement", "removed_in", "where"}` with `where` naming
+the surface (`cli`, `json`, `mcp`, `behaviour`). It is the machine-readable half of the policy
+above, and this section is written from it. Nothing below changes behaviour in 1.x -- every old
+spelling keeps working until 2.0.
+
+| What 2.0 removes | Since | Replacement | To be ready today |
+|---|---|---|---|
+| The per-tool v1 success keys next to `result_v2` (`output`, `probe`, `commands`, `verified`, `verification` and each tool's own keys at the top level) | 1.10.0 | `result_v2`, promoted to the top level in 2.0 | Run with `FFMPEG_SKILL_RESULT_V2=1` and read `result_v2` (`metrics`, `notes`, `details`) instead of the top-level keys |
+| `--crf` as an alias of `--quality` on every re-encoding tool that takes `--quality` (`export.py` keeps `--crf`: its preset chooses the encoder) | 1.10.0 | `--quality N` (the same CRF scale, codec-neutral) | Pass `--quality`; `--crf` warns on stderr and is marked in `--help` |
+| `json` and `progress` in the MCP `inputSchema` | 1.10.0 | nothing: the transport sets them itself | Stop sending them from an MCP client; run the server with `FFMPEG_SKILL_MCP_LEAN=1` to see the 2.0 schema |
+| `hdr` meaning "BT.2020 primaries *or* a PQ/HLG transfer" in `probe` | 1.10.0 | `hdr_signal` (true only for PQ / HLG / Dolby Vision); in 2.0 `hdr` takes that meaning | Key on `hdr_signal` for "is this a real HDR signal" and on `hdr_format` for the `BT.2020 SDR` case |
+| Overwriting an existing output with only a warning | 1.10.0 | `--overwrite` as explicit consent (refused without it from 2.0) | Set `FFMPEG_SKILL_NO_OVERWRITE=1` (the recommended agent setting) and pass `--overwrite` where a replacement is intended |
+
 ## Skill
 
 ```json
 {
   "contract_version": "1.0",
+  "deprecated": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
   "skill": {"id": "ffmpeg-skill", "version": "1.9.1", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
@@ -403,6 +420,14 @@ already applied when the ToolSpec is built.
 
 The `tools/list` document is deterministic (byte-identical across processes and
 identical to the translation of `contract --json`), which the tests check.
+
+`FFMPEG_SKILL_MCP_LEAN=1` (anything but "" or `0`) in the server's environment removes `json` and
+`progress` from every `inputSchema` (from `properties`, and from `required` if a tool ever made
+them required). They are transport flags `mcp/server.py` sets itself -- it appends `--json` for
+every tool but `look` and `probe` -- rather than arguments a caller chooses, and 2.0 drops them
+for good (see "What 2.0 changes"). The flag is opt-in and changes nothing else: without it
+`tools/list` is byte-identical to what it has always been, which is what the frozen 1.x snapshot
+pins, so a lean client and a default client see the same tools with the same names.
 
 ## Consuming the contract from an agent
 

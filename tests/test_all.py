@@ -3451,6 +3451,30 @@ class FFmpegSkillTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, f"{name}: {proc.stderr[-300:]}")
             self.assertIn("usage:", proc.stdout)
 
+    def test_run_records_commands_on_a_passed_context_not_the_global_state(self):
+        """1.10 threads an optional `ctx=` through run()/emit()/die() (issue #189 B; 2.0 makes it
+        required). A fresh Context() must collect that call's commands itself and leave the
+        process-global STATE untouched, which is the property the 2.0 signature change relies on."""
+        import _common
+        ctx = _common.Context()
+        ctx.dry_run = True
+        before = list(_common.STATE.commands)
+        proc = _common.run(["ffmpeg", "-i", "in.mp4", "out.mp4"], quiet=True, ctx=ctx)
+        self.assertEqual(proc.returncode, 0, "a dry run plans without executing ffmpeg")
+        self.assertEqual(ctx.commands, ["ffmpeg -i in.mp4 out.mp4"])
+        self.assertEqual(_common.STATE.commands, before, "the global STATE must not have seen this call")
+
+    def test_crf_warns_once_as_a_deprecated_alias_of_quality(self):
+        """docs/contract.md, "Deprecation policy" step 1: the old spelling keeps working and says
+        what replaces it. argparse's own default (18) must stay silent."""
+        quiet = script("cut.py", self.src, "--start", "0", "--end", "1", "--dry-run", "-o", str(OUT / "crf_default.mp4"))
+        self.assertNotIn("--crf is deprecated", quiet.stderr)
+        warned = script("cut.py", self.src, "--start", "0", "--end", "1", "--crf", "20", "--dry-run", "-o", str(OUT / "crf_explicit.mp4"))
+        self.assertIn("--crf is deprecated", warned.stderr)
+        self.assertIn("--quality", warned.stderr)
+        helptext = " ".join(script("cut.py", "--help").stdout.split())
+        self.assertIn("(deprecated: use --quality)", helptext)
+
     def test_every_script_has_help(self):
         for name in sorted(p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")):
             with self.subTest(script=name):

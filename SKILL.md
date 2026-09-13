@@ -65,9 +65,16 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
    failure, and the report says so with the script's error message.
 7. **Keep the user's originals.** Never overwrite the source file. Write new
    files next to the input or where the user asked.
+   Set `FFMPEG_SKILL_NO_OVERWRITE=1` in the environment you run these scripts
+   in: an output path that already exists is then refused (`kind: input`)
+   instead of warned about, and `--overwrite` stays the one way to say "yes,
+   replace it". It is the recommended agent setting because an agent picking
+   output names cannot see which files the user already cares about — and it
+   is what 2.0 does by default.
 8. **Look at the picture.** Whenever the picture changed (captions, overlays,
    graphics, crop/pad, resize, colour, transitions, a `join.py` that scaled or
-   padded a clip to the first clip's frame) run `look.py OUTPUT`
+   padded a clip to the first clip's frame, a `color.py --to-sdr` that tone-maps
+   an HDR source) run `look.py OUTPUT`
    (contact sheet) or `look.py OUTPUT --at T`, view the PNG. The job is not
    finished until the report's `Look:` line names that PNG; a probe alone
    cannot see a caption sitting on someone's face. Audio-only jobs (sync,
@@ -122,6 +129,10 @@ The line in general: if the same input and the same explicit parameters always p
 If a request needs an FFmpeg feature none of the 42 scripts expose, say so and name the closest built-in option (`--dry-run` to show what would run, or a documented limitation) — never fall back to guessing a raw `ffmpeg`/`ffprobe` invocation or a hand-built filter graph outside `scripts/*.py`. A raw command bypasses every guarantee this skill makes (no shell, typed arguments, verification afterwards); it is exactly the failure mode this skill exists to prevent, so it is never the fallback when a script's flag doesn't cover something.
 
 ## Request → script
+
+This table and `doctor`'s tool list are the source of truth for what exists: name only a script you have seen in one of them, never a plausible-sounding one (there is no `doctor.py`, no `trim.py`, no `subtitle.py`).
+
+Times take seconds, `mm:ss(.fff)`, `hh:mm:ss(.fff)` or four-part SMPTE `hh:mm:ss:ff` everywhere, with `@fps` naming the rate (`00:01:02:15@29.97`): use the timecode forms when the user pastes an editor's timecode list or an NLE cue sheet, so nothing is converted by hand on the way in.
 
 | User says | Do |
 |-----------|----|
@@ -243,7 +254,7 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 
 ## Report format
 
-Reply in the language the request itself is written in: the language of the user's own sentences, not a language the request talks about (an English request for Spanish subtitles gets an English report) and not the language of a tool's error text or of the file names. Keep the shape below and the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English (they read like log fields, not prose, and stay recognisable across languages); the sentences around them, any question asked, and any explanation of a judgement call are in the user's language. Never default to English because the tool names and flags happen to be English, and never drift into another language because the job is short or the report is a failure: a one-line "file does not exist" is written in the request's language too. A mid-conversation language switch follows the user's latest message, not the first one. This holds for a one-command job too: a three-second audio trim answered with English labels, numbers and one Japanese word in `Notes:` is an English report; the `Done:` line's own description (what was cut, from where) and `Steps:` are written in the user's language even when the values are technical.
+Reply in the language the request itself is written in: the language of the user's own sentences, not a language the request talks about (a request asking for subtitles in some other language is still answered in the language it was written in) and not the language of a tool's error text or of the file names. Keep the shape below and the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English (they read like log fields, not prose, and stay recognisable across languages); the sentences around them, any question asked, and any explanation of a judgement call are in the user's language. Never default to English because the tool names and flags happen to be English, and never drift into another language because the job is short or the report is a failure: a one-line "file does not exist" is written in the request's language too. A mid-conversation language switch follows the user's latest message, not the first one. This holds for a one-command job too: a three-second audio trim answered with English labels, numbers and one Japanese word in `Notes:` is an English report; the `Done:` line's own description (what was cut, from where) and `Steps:` are written in the user's language even when the values are technical.
 
 Finish every job with this shape (numbers from `probe.py`/`check.py`, not memory):
 
@@ -319,7 +330,10 @@ Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | out
   script keeps the output HDR (HEVC Main10, source colour tags) so nothing is
   silently flattened. Decide with the user: keep HDR (fine for YouTube/phones)
   or run `color.py --to-sdr` first for SDR-only destinations, LUT work or
-  H.264 deliverables. `export.py` platform presets are SDR and warn on HDR
+  H.264 deliverables. `hdr: true` counts BT.2020 primaries too, so it is also
+  true for a wide-gamut SDR file; `hdr_signal: true` is the narrower fact —
+  a real PQ / HLG / Dolby Vision transfer — and `hdr_format` names the
+  in-between case (`BT.2020 SDR`). `export.py` platform presets are SDR and warn on HDR
   input. iPhone `.mov` files also carry timecode/metadata tracks; scripts map
   only the first audio track, so extra tracks are dropped on re-encode.
   For Log footage (S-Log, V-Log, C-Log: looks grey and low-contrast but is

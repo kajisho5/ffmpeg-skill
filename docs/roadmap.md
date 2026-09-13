@@ -42,21 +42,23 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 
 ## 1.10.0 — 2.0 readiness
 
-- **Deprecation notices**, per the three-step policy in `docs/contract.md`: `--help` text,
+- **Deprecation notices** (done), per the three-step policy in `docs/contract.md`: `--help` text,
   CHANGELOG, and a `deprecated` list in `contract --json` for what 2.0 removes: the per-tool
-  v1 success keys superseded by `result_v2`, `--crf` / `--preset` as aliases of `--quality`,
+  v1 success keys superseded by `result_v2`, `--crf` as an alias of `--quality`,
   `json` / `progress` in the MCP `inputSchema`, the current `hdr` meaning, the overwrite default.
-- **`Context` threading** (2.0 B, internal): `STATE` becomes the default `Context` instance and
-  `run()` / `emit()` / `die()` accept an optional `ctx=`; no tool changes behaviour. 2.0 makes
+  (`--preset` is *not* deprecated: it is the x264 speed preset, not a quality alias.)
+- **`Context` threading** (done, 2.0 B, internal): `STATE` is the default `Context` instance and
+  `run()` / `emit()` / `die()` / `info()` accept an optional `ctx=`; no tool changes behaviour. 2.0 makes
   the argument required, which is the signature change the major is for.
-- **MCP lean schema, opt-in**: `FFMPEG_SKILL_MCP_LEAN=1` drops `json` / `progress` from
+- **MCP lean schema, opt-in** (done): `FFMPEG_SKILL_MCP_LEAN=1` drops `json` / `progress` from
   `tools/list` (2.0 A3 pre-shipped; the default stays byte-identical to the CLI, as the
   contract promises).
-- **`FFMPEG_SKILL_NO_OVERWRITE=1`** documented in SKILL.md as the recommended agent setting,
-  with a test, so 2.0's default flip has been exercised.
+- **`FFMPEG_SKILL_NO_OVERWRITE=1`** (done) documented in SKILL.md as the recommended agent setting;
+  the test is `test_contract.py`'s `test_existing_output_warns_today_refuses_on_request_and_never_for_its_own_files`,
+  so 2.0's default flip has been exercised.
 - **Eval iteration 10** and an eighth audit pass; the real-device corpus (92 verification
-  steps) re-run on the tree; `docs/contract.md` "What 2.0 changes" section written from the
-  `deprecated` list.
+  steps) re-run on the tree — eighth audit shipped as 1.9.1; eval 10 and corpus re-run pending.
+  `docs/contract.md` "What 2.0 changes" section written from the `deprecated` list (done).
 
 ## 1.11.0 — captions people can read
 

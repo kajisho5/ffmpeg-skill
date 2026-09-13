@@ -4,7 +4,27 @@
 
 ## Unreleased
 
-(nothing yet)
+### Deprecated
+
+Announced per docs/contract.md's three-step policy (also in `contract --json`'s new top-level
+`deprecated` list and in docs/contract.md's "What 2.0 changes"); everything below keeps working
+unchanged in 1.x and is removed in 2.0.0:
+
+- The per-tool v1 success keys next to `result_v2` (`output`, `probe`, `commands`, `verified`,
+  `verification` and each tool's own top-level keys) — use `result_v2` (`FFMPEG_SKILL_RESULT_V2=1`).
+- `--crf` as an alias of `--quality` on every re-encoding tool that takes `--quality` (`export.py`
+  keeps `--crf`: its preset chooses the encoder) — use `--quality N`; `--crf` now
+  prints a one-line stderr warning when it is passed explicitly and is marked in `--help`.
+- `json` and `progress` in the MCP `inputSchema` — the transport sets them itself;
+  `FFMPEG_SKILL_MCP_LEAN=1` drops them from `tools/list` today (opt-in, default unchanged).
+- `probe`'s `hdr` meaning "BT.2020 primaries or a PQ/HLG transfer" — use `hdr_signal`; 2.0 renames.
+- Overwriting an existing output with only a warning — pass `--overwrite`, or set
+  `FFMPEG_SKILL_NO_OVERWRITE=1` (the recommended agent setting) for the 2.0 behaviour today.
+
+### Other
+
+- `run()`, `emit()`, `die()` and `info()` accept an optional `ctx=` Context (issue #189 B); `STATE`
+  stays the default instance, so no tool changes behaviour. 2.0 makes the argument required.
 
 ## 1.9.1
 

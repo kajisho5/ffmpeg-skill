@@ -166,7 +166,7 @@ def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
     parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur (default 20)")
 
 
-def die(msg: str, code: int = 1, kind: str = "input", **extra: Any) -> "None":
+def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]" = None, **extra: Any) -> "None":
     """Exit with a message. Under --json also print a machine-readable failure document
     (status: failed) on stdout so callers get the same shape as a success; exit codes are unchanged.
 
@@ -176,9 +176,10 @@ def die(msg: str, code: int = 1, kind: str = "input", **extra: Any) -> "None":
     `status: "completed"` next to a non-zero exit code, so a caller keying on the status alone
     read a failed delivery as a success."""
     hint = extra.pop("hint", None)
-    STATE.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
+    ctx = ctx or STATE  # 1.10: the optional per-request Context (2.0 makes it required); STATE is the default instance
+    ctx.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
     sys.stderr.write(f"error: {msg}\n" + (f"hint: {hint}\n" if hint else ""))
-    if STATE.json:
+    if ctx.json:
         doc: Dict[str, Any] = {
             "status": "failed", "exit_code": code,
             "error": {
@@ -186,7 +187,7 @@ def die(msg: str, code: int = 1, kind: str = "input", **extra: Any) -> "None":
                 "code": ERROR_CODE.get(kind, "INTERNAL_ERROR"),
                 "retryable": ERROR_RETRYABLE,
             },
-            "commands": list(STATE.commands),
+            "commands": list(ctx.commands),
         }
         if hint:
             doc["error"]["hint"] = hint
@@ -195,9 +196,10 @@ def die(msg: str, code: int = 1, kind: str = "input", **extra: Any) -> "None":
     sys.exit(code)
 
 
-def info(msg: str) -> None:
+def info(msg: str, ctx: "Optional[Context]" = None) -> None:
     # under --dry-run nothing is written; do not let scripts claim otherwise
-    if msg.startswith("wrote ") and STATE.dry_run:
+    ctx = ctx or STATE
+    if msg.startswith("wrote ") and ctx.dry_run:
         msg = "[dry-run] would write " + msg[len("wrote "):]
     sys.stderr.write(f"{msg}\n")
 
@@ -274,12 +276,24 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
     g.add_argument("--plan", metavar="FILE",
                    help="write the dry run as a plan (inputs fingerprinted, commands, expected output, verify steps) that render.py FILE executes later; implies --dry-run")
     if codec and "--crf" in ap._option_string_actions:
+        # --crf became an alias of --quality in 1.8; 1.10 deprecates it (removed in 2.0, see the
+        # `deprecated` list in `contract --json` and docs/contract.md "What 2.0 changes"). Marked
+        # here, once, rather than in each re-encoding tool's own parser.
+        crf = ap._option_string_actions["--crf"]
+        if crf.help and "deprecated" not in crf.help:
+            crf.help += " (deprecated: use --quality)"
         # only the tools that re-encode (they declare --crf before add_common): one encoder choice
         # resolved in video_args(), the 2.0 encoder abstraction pre-shipped in 1.8 (docs/roadmap.md)
         g.add_argument("--codec", choices=CODECS, default=None,
                        help="video encoder for the re-encode: h264 (x264, the default for SDR), hevc (x265, the default for HDR), av1 (SVT-AV1 or libaom), prores (422 HQ, needs a .mov/.mkv output); HDR sources keep their colour on hevc/av1/prores")
         g.add_argument("--quality", type=int, default=None, metavar="N",
                        help="encoder quality on the CRF scale (lower = better; 18 visually lossless for x264/x265, up to 63 for av1); overrides --crf, ignored by prores")
+
+
+def _passed_explicitly(flag: str) -> bool:
+    """True when this process was given `flag` on the command line (`--flag` or `--flag=V`),
+    as opposed to argparse filling in its default. Used for the deprecation warnings."""
+    return any(a == flag or a.startswith(flag + "=") for a in sys.argv[1:])
 
 
 def apply_common(args: "argparse.Namespace") -> None:
@@ -316,6 +330,13 @@ def apply_common(args: "argparse.Namespace") -> None:
             die(f"--codec prores needs a .mov (or .mkv) output; {os.path.basename(str(out))} cannot hold ProRes",
                 hint="give -o NAME.mov")
     crf = getattr(args, "crf", None)
+    # The warning the deprecation policy asks for, only when the user typed the flag: argparse's
+    # own default for --crf is 18 on every re-encoding tool, so `args.crf is not None` cannot tell
+    # an explicit --crf from the default (sys.argv can).
+    # export.py has no --quality (its preset chooses the encoder), so its --crf is not an alias and
+    # is not deprecated: warn only where --quality exists.
+    if crf is not None and hasattr(args, "quality") and _passed_explicitly("--crf"):
+        info("warning: --crf is deprecated since 1.10.0; use --quality N (the same CRF scale, codec-neutral). --crf is removed in 2.0.")
     top = 63 if STATE.codec == "av1" else 51
     if crf is not None and not 0 <= int(crf) <= top:
         die(f"--crf must be between 0 and {top} ({'SVT-AV1' if STATE.codec == 'av1' else 'x264/x265'} scale; 18 is visually lossless), got {crf}")
@@ -381,13 +402,17 @@ def _unwatch(proc: subprocess.Popen) -> None:
     _CHILDREN[:] = [(p, c) for p, c in _CHILDREN if p is not proc]
 
 
-def emit(output: Optional[str], **extra: Any) -> None:
-    """Final stdout line: the output path, or a JSON document with --json."""
+def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:
+    """Final stdout line: the output path, or a JSON document with --json.
+
+    `ctx` is the optional per-request Context added in 1.10 (2.0 makes it required, issue #189 B);
+    omitted, every read falls back to the process-global STATE as before."""
+    ctx = ctx or STATE
     meta: Dict[str, Any] = {}
-    if output and not STATE.dry_run:
+    if output and not ctx.dry_run:
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
-    if STATE.json:
-        doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": STATE.dry_run, "commands": list(STATE.commands)}
+    if ctx.json:
+        doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         if meta:
             doc["probe"] = meta
         # What this tool itself verified about its artifact (issue #189 C, "verify as part of the
@@ -397,18 +422,18 @@ def emit(output: Optional[str], **extra: Any) -> None:
         # verified nothing. Spec failures the tool cannot fix on its own (export's loudness gap)
         # keep status completed and say verified: false, so a caller keys on one field.
         steps: List[Dict[str, Any]] = ([{"step": "probe", "ok": True}] if meta else []) + list(extra.pop("verification", None) or [])
-        if output and not STATE.dry_run and os.path.splitext(output)[1].lower() not in MEDIA_EXT:
+        if output and not ctx.dry_run and os.path.splitext(output)[1].lower() not in MEDIA_EXT:
             steps.insert(0, {"step": "exists", "ok": True})
-        doc["verified"] = not STATE.dry_run and bool(steps) and all(s.get("ok") for s in steps)
+        doc["verified"] = not ctx.dry_run and bool(steps) and all(s.get("ok") for s in steps)
         doc["verification"] = steps
         doc.update(extra)
         if os.environ.get("FFMPEG_SKILL_RESULT_V2", "") not in ("", "0"):
             doc["result_v2"] = _result_v2(output, meta, dict(extra, verified=doc["verified"], verification=steps))
-        if STATE.plan:
-            doc["plan"] = write_plan(STATE.plan, output, extra)
+        if ctx.plan:
+            doc["plan"] = write_plan(ctx.plan, output, extra)
         print_json(doc)
-    elif STATE.plan:
-        print(write_plan(STATE.plan, output, extra))
+    elif ctx.plan:
+        print(write_plan(ctx.plan, output, extra))
     elif output:
         print(output)
 
@@ -840,7 +865,7 @@ def _stage_existing_output(cmd: Sequence[str]) -> Tuple[List[str], Optional[str]
     return list(cmd[:-1]) + [tmp], output, tmp
 
 
-def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subprocess.CompletedProcess:
+def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
     ffmpeg invocations are recorded in STATE.commands (for --json), skipped under --dry-run
@@ -848,16 +873,20 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
     with a progress readout under --progress. ffprobe and other tools always run. An output
     path that already exists is written through a temp file and replaced only on success
     (see _stage_existing_output), so a failed run never costs the caller the file that was there.
+
+    `ctx` is the optional per-request Context added in 1.10 (2.0 makes it required, issue #189 B);
+    omitted, the commands and flags are read from the process-global STATE as before.
     """
+    ctx = ctx or STATE
     is_ffmpeg = _is_ffmpeg(cmd)
     if is_ffmpeg:
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
         _check_existing_output(cmd)
-        STATE.commands.append(_cmdline(cmd))
+        ctx.commands.append(_cmdline(cmd))
     if not quiet:
-        info(("[dry-run] $ " if STATE.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd))
-    if STATE.dry_run and is_ffmpeg:
+        info(("[dry-run] $ " if ctx.dry_run and is_ffmpeg else "$ ") + _cmdline(cmd), ctx=ctx)
+    if ctx.dry_run and is_ffmpeg:
         return subprocess.CompletedProcess(list(cmd), 0, "", "")
     with _OutputLock(cmd[-1] if is_ffmpeg else "-"):
         exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
@@ -866,7 +895,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True) -> subpr
             retry = _odd_dimension_retry(exec_cmd, proc.stderr or "")
             if retry is not None:
                 info("source has odd dimensions; scaling to even before encoding (yuv420p needs it)")
-                STATE.commands[-1] = _cmdline(retry[:-1] + [cmd[-1]])
+                ctx.commands[-1] = _cmdline(retry[:-1] + [cmd[-1]])
                 proc = _execute(retry)
             elif "not divisible by 2" in (proc.stderr or ""):
                 die("the source has odd dimensions (width or height not divisible by 2) and this tool's filter graph "

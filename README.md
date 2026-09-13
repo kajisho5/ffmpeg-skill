@@ -305,6 +305,8 @@ On Windows, `python3` is only on PATH if Python was installed from the Microsoft
 
 `mcp/server.py` is a stdio JSON-RPC transport with no tool table of its own. `tools/list` is derived from the contract at start-up: the same 42 names, the same order, and `inputSchema` translated from each tool's `input_schema`. `tools/call` maps structured arguments to argv and runs the named script; a raw `argv` form is accepted for compatibility and marked non-canonical. `python3 mcp/server.py --list` prints the tools; `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
 
+`FFMPEG_SKILL_MCP_LEAN=1` in the server's environment drops `json` and `progress` from every `inputSchema`: they are transport flags the server sets itself, not tool arguments, and 2.0 drops them unconditionally. It is opt-in, so the default `tools/list` stays byte-identical to the CLI surface the contract promises.
+
 ### Capability detection
 
 ```bash

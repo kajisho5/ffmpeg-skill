@@ -947,7 +947,35 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
 # ----------------------------------------------------------------------------- MCP derivation
 # tools that print JSON without --json (probe) or whose primary output is a file path (look): the transport
 # does not append --json for them (stated in invocation.structured.argument_mapping.json)
+# ----------------------------------------------------------------------------- deprecations
+# What 2.0.0 removes, announced here per docs/contract.md's three-step deprecation policy:
+# step 1 (this list, --help text and the CHANGELOG) in a minor, step 2 keeps it working, step 3
+# removes it in the major. `where` says which surface a caller sees it on. docs/contract.md's
+# "What 2.0 changes" section is written from this list.
+DEPRECATED: List[Dict[str, str]] = [
+    {"what": "top-level per-tool keys next to result_v2 in a success document (output, probe, commands, verified, verification and each tool's own keys)",
+     "since": "1.10.0", "replacement": "result_v2 (FFMPEG_SKILL_RESULT_V2=1 today; the only shape in 2.0)",
+     "removed_in": "2.0.0", "where": "json"},
+    {"what": "--crf as an alias of --quality on every re-encoding tool that takes --quality (export.py keeps --crf: its preset chooses the encoder)",
+     "since": "1.10.0", "replacement": "--quality N (same CRF scale, codec-neutral)",
+     "removed_in": "2.0.0", "where": "cli"},
+    {"what": "json and progress in the MCP inputSchema (they are CLI transport flags, not tool arguments)",
+     "since": "1.10.0", "replacement": "nothing: the MCP transport sets them itself (FFMPEG_SKILL_MCP_LEAN=1 drops them today)",
+     "removed_in": "2.0.0", "where": "mcp"},
+    {"what": "probe's hdr meaning BT.2020 primaries or a PQ/HLG transfer",
+     "since": "1.10.0", "replacement": "hdr_signal (true only for PQ / HLG / Dolby Vision); in 2.0 hdr takes that meaning and hdr_format keeps naming the BT.2020 SDR case",
+     "removed_in": "2.0.0", "where": "json"},
+    {"what": "overwriting an existing output without --overwrite (warned, not refused)",
+     "since": "1.10.0", "replacement": "--overwrite, or FFMPEG_SKILL_NO_OVERWRITE=1 to refuse today",
+     "removed_in": "2.0.0", "where": "behaviour"},
+]
+
+
 MCP_JSON_EXEMPT = ("look", "probe")
+# opt-in lean MCP schema (roadmap 1.10.0): json/progress are transport flags the server appends
+# itself, not tool arguments. Off by default so tools/list stays byte-identical to the CLI surface
+# the contract promises; 2.0 drops them unconditionally.
+MCP_LEAN_DROP = ("json", "progress")
 MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
                        "Media paths must be absolute.")
@@ -997,6 +1025,13 @@ def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
     one_of = [[{"required": [d]} for d in group] for group in src.get("one_of_required", [])]
     if one_of:
         structured["anyOf"] = one_of[0] if len(one_of) == 1 else [{"allOf": [{"anyOf": g} for g in one_of]}]
+    if os.environ.get("FFMPEG_SKILL_MCP_LEAN", "") not in ("", "0"):
+        for dest in MCP_LEAN_DROP:
+            props.pop(dest, None)
+        if structured.get("required"):
+            structured["required"] = [d for d in structured["required"] if d not in MCP_LEAN_DROP]
+            if not structured["required"]:
+                del structured["required"]
     schema: Dict[str, Any] = {"type": "object", "properties": props, "additionalProperties": False}
     if structured:
         schema["anyOf"] = [{"required": ["argv"]}, structured]
@@ -1023,6 +1058,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
                      "unknown": d["unknown"], "detection": d["detection"], "detected_by": "doctor"})
     return {
         "contract_version": CONTRACT_VERSION,
+        "deprecated": [dict(d) for d in DEPRECATED],
         "skill": {
             "id": SKILL_ID,
             "version": version,

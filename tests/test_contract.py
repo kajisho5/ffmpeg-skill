@@ -828,6 +828,50 @@ class ContractTests(unittest.TestCase):
                          "MCP surface grew (new tool or optional argument) -- regenerate the snapshot: "
                          "UPDATE_MCP_SNAPSHOT=1 python3 tests/test_contract.py")
 
+    def test_mcp_lean_schema_is_opt_in_and_drops_only_json_and_progress(self):
+        """roadmap 1.10.0: FFMPEG_SKILL_MCP_LEAN=1 drops the two transport flags the server sets
+        itself (`json`, `progress`) from every inputSchema, pre-shipping the 2.0 surface. Unset
+        (the default) the surface is byte-identical to today's, which the snapshot test above
+        pins -- so this checks both directions rather than only the new one."""
+        default = _contract.mcp_tools()
+        self.assertTrue(any("json" in t["inputSchema"]["properties"] for t in default),
+                        "without the env var json/progress stay in the schema")
+        saved = os.environ.get("FFMPEG_SKILL_MCP_LEAN")
+        os.environ["FFMPEG_SKILL_MCP_LEAN"] = "1"
+        try:
+            lean = _contract.mcp_tools()
+        finally:
+            os.environ.pop("FFMPEG_SKILL_MCP_LEAN", None)
+            if saved is not None:
+                os.environ["FFMPEG_SKILL_MCP_LEAN"] = saved
+        self.assertEqual([t["name"] for t in lean], [t["name"] for t in default], "no tool appears or disappears")
+        for was, now in zip(default, lean):
+            with self.subTest(tool=now["name"]):
+                for dest in ("json", "progress"):
+                    self.assertNotIn(dest, now["inputSchema"]["properties"])
+                self.assertEqual(sorted(set(was["inputSchema"]["properties"]) - set(now["inputSchema"]["properties"])),
+                                 sorted(set(("json", "progress")) & set(was["inputSchema"]["properties"])),
+                                 "nothing but json/progress is dropped")
+        # the server reads the same builder, so tools/list follows with no edit under mcp/
+        resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]
+        self.assertIn("json", resp["result"]["tools"][0]["inputSchema"]["properties"], "the default server surface is unchanged")
+
+    def test_contract_lists_what_2_0_removes(self):
+        """docs/contract.md, "Deprecation policy" step 1 and "What 2.0 changes": everything 2.0
+        removes is announced in the contract itself, one entry per surface, so a caller can diff
+        the list instead of reading a CHANGELOG."""
+        dep = self.contract["deprecated"]
+        self.assertTrue(dep)
+        for entry in dep:
+            with self.subTest(what=entry["what"]):
+                self.assertEqual(sorted(entry), ["removed_in", "replacement", "since", "what", "where"])
+                self.assertEqual(entry["removed_in"], "2.0.0")
+                self.assertIn(entry["where"], ("cli", "json", "mcp", "behaviour"))
+                self.assertTrue(entry["replacement"])
+        wheres = [e["where"] for e in dep]
+        for surface in ("cli", "json", "mcp", "behaviour"):
+            self.assertIn(surface, wheres)
+
     # ------------------------------------------------------------------ MCP inputSchema derived from the contract
     def _rpc(self, requests, root=ROOT):
         text = "".join(json.dumps(r) + "\n" for r in requests)
