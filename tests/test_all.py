@@ -4010,9 +4010,15 @@ class FFmpegSkillTests(unittest.TestCase):
             doc = json.loads(script(tool, target, *argv, "--dry-run", "--json").stdout)
             return [c for c in doc["commands"] if "ffmpeg" in c or "drawtext" in c]
 
-        doc_a = json.loads(script("check.py", target, "--platform", "youtube-shorts",
-                                  "--no-loudness", "--json").stdout)
+        # the alias is the point here, not compliance: a 3 s crop can miss the fps row on some
+        # ffmpeg builds (7.1 reports the speed-changed rate differently), and check.py names
+        # the resolved platform in its JSON on failure as well as on success
+        proc_a = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(target), "--platform",
+                                 "youtube-shorts", "--no-loudness", "--json"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        doc_a = json.loads(proc_a.stdout)
         self.assertEqual(doc_a["platform"], "shorts")
+        self.assertTrue(doc_a["checks"], "check.py must have run the shorts rows under the alias")
         for tool, argv in (
                 ("export.py", ("--preset", "youtube-shorts", "-o", str(OUT / "alias_exp.mp4"))),
                 ("caption.py", ("--text", self.cues, "-o", str(OUT / "alias_cap.mp4"), "--platform", "youtube-shorts")),
