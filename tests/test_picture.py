@@ -1756,6 +1756,16 @@ class PictureTests(MediaFixtures):
         pinned = Path(__file__).resolve().parent / "fixtures" / "caption_1_16_1_fitsize_off.ass"
         self.assertEqual(ass.read_bytes(), pinned.read_bytes())
 
+    def test_caption_says_when_the_text_is_unchanged(self):
+        """1.17.1: the report sentence "the text is yours, unchanged" should not be a judgement
+        the agent has to make -- the run states it (eval 18 cs2/cs3, where one run rewrote the
+        user's cue text)."""
+        vert, cues = self._vertical(), self._fit_cues()
+        proc = script("caption.py", vert, "--text", cues, "--platform", "tiktok", "--max-lines", "2",
+                      "--font", "DejaVu Sans", "-o", OUT / "cap_unchanged.mp4", "--json")
+        self.assertTrue(json.loads(proc.stdout)["caption"]["text_unchanged"])
+        self.assertIn("caption text unchanged", proc.stderr)
+
     def test_caption_fit_size_auto_leaves_an_explicit_size_alone(self):
         vert, cues = self._vertical(), self._fit_cues()
         data = json.loads(script("caption.py", vert, "--text", cues, "--platform", "tiktok",
