@@ -20,7 +20,7 @@ from typing import List, Tuple
 # `detect` moved into _common/probe.py in 1.16.0 so metadata.py --auto-chapters can measure the
 # same silences without importing this tool; the body is unchanged and the name still lives here.
 from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS,
-                     FILLER_PAD, die_no_engine, transcribe_words, read_text_or_die)
+                     FILLER_PAD, transcribe_words, read_text_or_die)
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
 
