@@ -784,12 +784,14 @@
  {
   "id": "ml2",
   "lang": "de",
-  "prompt": "Häng die deutschen Untertitel an /home/user/ffmpeg-skill/tests/out/source.mp4 dran — übersetz die englischen aus OUTDIR/en.srt einfach. Alles nach OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no translation engine (same rule as r04); the refusal is in German, labels included",
+  "prompt": "Häng die deutschen Untertitel aus OUTDIR/de.srt an /home/user/ffmpeg-skill/tests/out/source.mp4 dran, als umschaltbare Spur. Alles nach OUTDIR.",
+  "expect": [
+   "caption|render"
+  ],
+  "refuse": false,
+  "note": "the mux, not a translation: caption.py --mode mux --srt de.srt:de on the given video; the German subtitles are supplied, so nothing has to be translated (report in German)",
   "fixtures": {
-   "en.srt": "1\n00:00:00,000 --> 00:00:03,000\nHello world\n"
+   "de.srt": "1\n00:00:00,000 --> 00:00:03,000\nHallo Welt\n"
   }
  },
  {
