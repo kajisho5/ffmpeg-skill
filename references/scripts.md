@@ -775,11 +775,13 @@ after its hyphen (never after a non-breaking `‑`, nor a leading/trailing
 one); **R2** no line that is a lone digit, one or two punctuation characters, or
 a single kana, checked at every boundary rather than only the last; **R3** for
 Japanese and Chinese, a break is preferred after `。、！？」』）` and (Japanese
-only) before a particle, discouraged between a kanji stem and its okurigana, and
-forbidden before a small kana, `ー` or a closing bracket; **R4** for
-en/es/pt/fr/de/it, a line does not end on an article or preposition (a frozen
-table, matched case-folded; `--lang`, else the script detector, picks the set,
-and with no language the union of the six is used). `--wrap measured` is 1.15's
+only) after a particle — a particle attaches to the word before it, so kinsoku
+forbids opening a line with one — discouraged between a kanji stem and its
+okurigana, and forbidden before a small kana, `ー` or a closing bracket; **R4**
+for en/es/pt/fr/de/it, an article or preposition is kept with the phrase it
+governs: the break before it is preferred and the break after it penalised (a
+frozen table, matched case-folded; `--lang`, else the script detector, picks the
+set, and with no language the union of the six is used). `--wrap measured` is 1.15's
 width-only wrap exactly, kept so an older split can be reproduced. The result's
 `caption` object carries the layout counts plus `wrap` and `phrase_breaks`.
 graphics.py takes the same flag for the labels that can hold more than one line

@@ -995,13 +995,18 @@ ORPHAN_MIN_EM = 1.1
 
 WRAP_MODES = ("phrase", "measured")
 
-# R3's Japanese preference table. These are *preferences*, never hard rules: a preferred break is
-# only ever taken among positions that already fit the line, so the table can never make a line
-# too wide or change the line count. The particle list is the eight case/topic particles named in
-# the 1.16.0 task brief (は が を に で と の へ) plus も や から まで より, which a reader of
-# Japanese would add for the same reason -- a break *before* a particle keeps the particle with
-# the phrase it marks. It is a judgement call with no upstream source; treat it as tunable data.
-JA_PARTICLES = "はがをにでとのへもやから"          # a break BEFORE one of these is preferred
+# R3's Japanese preference table. These are *preferences* applied only among positions that
+# already fit the line, so the table can never make a line too wide or change the line count.
+#
+# JA_PARTICLES is a "do not strand at the start of a line" table, which is the direction kinsoku
+# practice actually goes: a particle is enclitic -- it attaches to the word BEFORE it and marks
+# that word's role -- so a line beginning with は or が reads as a fragment torn off its phrase.
+# A break AFTER a particle is therefore preferred (the particle stays with what it marks) and a
+# break BEFORE one is forbidden. The list is the eight case/topic particles named in the 1.16.0
+# task brief (は が を に で と の へ) plus も や から まで より, which a reader of Japanese would
+# add for the same reason. It is a judgement call with no upstream source; treat it as tunable
+# data, not as grammar.
+JA_PARTICLES = "はがをにでとのへもやから"          # a break AFTER one of these is preferred, BEFORE one forbidden
 JA_PARTICLE_WORDS = ("から", "まで", "より")        # the multi-character members of the same table
 JA_SENTENCE_END = "。、！？」』）"                  # a break AFTER one of these is preferred
 # Characters that may never start a line: small kana, the prolonged sound mark, closing brackets
@@ -1009,11 +1014,14 @@ JA_SENTENCE_END = "。、！？」』）"                  # a break AFTER one o
 JA_NO_LINE_START = "ぁぃぅぇぉっゃゅょァィゥェォッャュョーヽヾゝゞ、。！？）」』】〕》’”％"
 JA_NO_LINE_END = "（「『【〔《‘“"                   # ... and the ones that may never end a line
 
-# R4. Function words that should not be left at the end of a line: an article or preposition
-# stranded away from the word it governs reads as a stumble. Frozen data, matched case-folded on
-# the atom with its punctuation stripped; six languages because those are the Latin-script
-# languages the eval corpus covers. A word in several sets means the same thing structurally in
-# each, so the union is used when no --lang was given.
+# R4. Function words belong to the phrase that FOLLOWS them: an article or preposition begins the
+# noun phrase it governs, so a break before one is the good break (the word opens the next line
+# with its phrase) and a break after one is the bad break (it is stranded at the end of a line,
+# away from what it governs). Both directions are scored, which is what makes the rule decide
+# rather than merely veto. Frozen data, matched case-folded on the atom with its punctuation
+# stripped; six languages because those are the Latin-script languages the eval corpus covers. A
+# word in several sets means the same thing structurally in each, so the union is used when no
+# --lang was given.
 FUNCTION_WORDS = {
     "en": {"a", "an", "the", "of", "to", "in", "on", "at", "for", "with", "by", "from", "and",
            "or", "as", "is", "it", "its", "this", "that", "into", "than", "but", "so"},
@@ -1035,8 +1043,9 @@ PENALTY_FORBIDDEN = 1.0
 PENALTY_OKURIGANA = 0.9       # between a kanji stem and the hiragana that inflects it
 PENALTY_FUNCTION_WORD = 0.8   # R4: the line before the break ends in an article/preposition
 PENALTY_IDEOGRAPHS = 0.6      # between two kanji: no evidence either way, mildly discouraged
-PENALTY_NEUTRAL = 0.5
-PENALTY_PARTICLE = 0.2        # R3: before a particle, so the particle stays with its phrase
+PENALTY_NEUTRAL = 0.5         # between two content words, or two characters with nothing to say
+PENALTY_FUNCTION_WORD_START = 0.2  # R4: the next line opens with the article/preposition it governs
+PENALTY_PARTICLE = 0.2        # R3: after a particle, so the particle stays with the word it marks
 PENALTY_SENTENCE_END = 0.0    # R3: after 。、！？ -- the one break a reader expects
 
 _HYPHENS = ("-", "‐")    # ‑ (non-breaking hyphen) is deliberately NOT here
@@ -1191,15 +1200,23 @@ def break_penalty(prev_char: str, next_char: str, lang: "Optional[str]" = None) 
     """How bad a break between these two characters is, 0.0 (preferred) to 1.0 (forbidden).
 
     Only consulted among break positions that already fit `max_em`, so a preference can never
-    widen a line or change the line count. Japanese gets the particle half of the table; Chinese
-    gets only the sentence-end and forbidden halves, because particles are Japanese grammar."""
+    widen a line or change the line count. Japanese gets the particle half of the table -- a break
+    AFTER a particle is preferred and a break BEFORE one forbidden, because a particle attaches to
+    the word before it; Chinese gets only the sentence-end and forbidden halves, because particles
+    are Japanese grammar."""
     if not prev_char or not next_char:
         return PENALTY_NEUTRAL
     script = (lang or "").strip().lower().split("-")[0]
     if script not in ("ja", "zh"):
-        script = char_script(next_char)
-        if script not in ("ja", "zh"):
-            script = char_script(prev_char)
+        # A kana on either side settles it: only Japanese has them, and char_script() reads a bare
+        # Han character as Chinese, which used to switch the particle rules off for exactly the
+        # break they exist to judge (`...が|決まる` -- kana before, kanji after).
+        if _is_kana(prev_char) or _is_kana(next_char):
+            script = "ja"
+        else:
+            script = char_script(next_char)
+            if script not in ("ja", "zh"):
+                script = char_script(prev_char)
     if next_char in JA_NO_LINE_START or prev_char in JA_NO_LINE_END or _is_mark(next_char):
         return PENALTY_FORBIDDEN
     if script not in ("ja", "zh"):
@@ -1207,6 +1224,9 @@ def break_penalty(prev_char: str, next_char: str, lang: "Optional[str]" = None) 
     if prev_char in JA_SENTENCE_END:
         return PENALTY_SENTENCE_END
     if script == "ja" and next_char in JA_PARTICLES:
+        # a particle may not open a line: it belongs to the word before it (kinsoku)
+        return PENALTY_FORBIDDEN
+    if script == "ja" and prev_char in JA_PARTICLES:
         return PENALTY_PARTICLE
     if script == "ja" and _is_ideograph(prev_char) and _is_hiragana(next_char):
         # okurigana: 決|まる is inside a word even though neither half is a "word" on its own
@@ -1223,11 +1243,14 @@ def _cut_penalty(atoms: "Sequence[Tuple[str, bool]]", cut: int, lang: "Optional[
     if not prev_atom or not next_atom:
         return PENALTY_NEUTRAL
     if atoms[cut][1]:
-        # a space stood here: a spaced script, so R4 is the rule that applies
-        if _bare_word(prev_atom) in _function_words(lang):
-            return PENALTY_FUNCTION_WORD
+        # a space stood here: a spaced script, so R4 is the rule that applies, in both directions
         if all(not ch.isalnum() for ch in next_atom):
             return PENALTY_FORBIDDEN   # never strand punctuation at the start of a line
+        words = _function_words(lang)
+        if _bare_word(prev_atom) in words:
+            return PENALTY_FUNCTION_WORD        # stranded at the end of a line, away from its noun
+        if _bare_word(next_atom) in words:
+            return PENALTY_FUNCTION_WORD_START  # opens the next line with the phrase it governs
         return PENALTY_NEUTRAL
     if prev_atom.endswith(_HYPHENS):
         return PENALTY_NEUTRAL         # R1: a hyphen is a legitimate break point
@@ -1396,8 +1419,9 @@ def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "ph
 
     `mode="phrase"` (the default since 1.16) then applies the four phrase rules -- never inside a
     word or across a hyphen's wrong side (R1), no line that is a lone digit, punctuation or kana
-    (R2), Japanese/Chinese breaks preferred at sentence ends and before particles rather than
-    inside a word (R3), and no line ending in an article or preposition (R4). `mode="measured"` is
+    (R2), Japanese/Chinese breaks preferred at sentence ends and after particles, never before one
+    and never inside a word (R3), and an article or preposition kept with the phrase it governs by
+    preferring the break before it and avoiding the break after it (R4). `mode="measured"` is
     1.15's behaviour exactly: no one-character orphan line, and a break chosen only to minimise the
     widest line. Neither mode ever changes the number of lines the greedy fill produced.
     """

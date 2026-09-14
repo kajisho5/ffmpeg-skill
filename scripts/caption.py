@@ -46,14 +46,15 @@ from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_moved_breaks, best_break,
                      break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
-                     _split_hyphens, FUNCTION_WORDS, _fix_orphans, _rebalance)
+                     _split_hyphens, FUNCTION_WORDS, JA_PARTICLES, JA_SENTENCE_END, _fix_orphans, _rebalance)
 
 # The breaker's names are caption.py's public surface as much as _common's: every caller and test
 # that reached for `caption.wrap_text` before 1.16 still does.
 __all__ = ["SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_moved_breaks",
            "best_break", "break_penalty", "_is_weak_line", "_atoms", "_join", "_break_spaced",
-           "_bare_word", "_function_words", "_split_hyphens", "FUNCTION_WORDS", "_fix_orphans",
-           "_rebalance", "char_script", "NO_SPACE_SCRIPTS", "text_width_em"]
+           "_bare_word", "_function_words", "_split_hyphens", "FUNCTION_WORDS", "JA_PARTICLES",
+           "JA_SENTENCE_END", "_fix_orphans", "_rebalance", "char_script", "NO_SPACE_SCRIPTS",
+           "text_width_em"]
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
 

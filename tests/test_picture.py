@@ -307,7 +307,7 @@ class PictureTests(MediaFixtures):
         self.assertIn("phrase_breaks", res["caption"])
         self.assertTrue(out.exists())
         body = ass.read_text(encoding="utf-8")
-        self.assertIn("A third line the tool\\Ntimes for me", body)
+        self.assertIn("A third line\\Nthe tool times for me", body)
         self.assertIn("Una tercera l\u00ednea\\Ncon tiempos autom\u00e1ticos", body)
         # and --wrap measured still reproduces 1.15's split, byte for byte in the ASS
         ass2 = OUT / "wrap_measured.ass"
@@ -315,7 +315,7 @@ class PictureTests(MediaFixtures):
                "--wrap", "measured", "--animate", "fade", "--write-ass", ass2, "--fast", "-o", OUT / "wrap_measured.mp4")
         self.assertIn("A third line the\\Ntool times for me", ass2.read_text(encoding="utf-8"))
         self.assertEqual(caption.wrap_text("A third line the tool times for me", 12.96),
-                         ["A third line the tool", "times for me"])
+                         ["A third line", "the tool times for me"])
 
     def test_caption_wraps_cjk_between_characters(self):
         """Chinese has no spaces: the line breaks between any two characters, and every character
@@ -2307,17 +2307,26 @@ class PhraseWrapTests(unittest.TestCase):
             self.assertFalse(C._is_weak_line(fine), repr(fine))
 
     def test_dl3_cue_exact_split(self):
-        """dl3: no line that is a lone digit, and the break is not between a kanji stem and its
-        okurigana (`\u6c7a\u307e` | `\u308b`)."""
+        """dl3: no line that is a lone digit; the break is not between a kanji stem and its
+        okurigana (`\u6c7a\u307e` | `\u308b`); and no line OPENS with a particle -- a particle is
+        enclitic, so kinsoku keeps it with the word before it."""
         C = self.caption
+        jp = "\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c"
         for max_em in (self.NARROW, self.W, 10.0, 14.0):
             with self.subTest(max_em=max_em):
                 lines = C.wrap_text("2 \u884c\u76ee\u306e\u5b57\u5e55\u3067\u3059", max_em)
                 self.assertNotIn("2", lines, lines)
-                lines = C.wrap_text("\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c", max_em)
+                lines = C.wrap_text(jp, max_em)
                 for a, b in zip(lines, lines[1:]):
                     self.assertFalse(a.endswith("\u6c7a\u307e") and b.startswith("\u308b"),
                                      "broke inside \u6c7a\u307e\u308b: %r" % (lines,))
+                    self.assertNotIn(b[0], C.JA_PARTICLES,
+                                     "a line opens with a particle: %r" % (lines,))
+        # the break falls after \u304c, not before it
+        self.assertEqual(C.wrap_text(jp, 10.0),
+                         ["\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c", "\u6c7a\u307e\u308b\u884c"])
+        self.assertEqual(C.wrap_text(jp, self.W),
+                         ["\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c", "\u6c7a\u307e\u308b\u884c"])
 
     def test_th1_cue_exact_split(self):
         """th1: the trailing line is never the stranded `\u0e44\u0e2b\u0e25` alone."""
@@ -2347,6 +2356,10 @@ class PhraseWrapTests(unittest.TestCase):
                     last = C._bare_word(line.split(" ")[-1])
                     self.assertNotIn(last, C._function_words(lang),
                                      "%s: line ends on a function word: %r" % (lang, lines))
+                # and the rule works by preferring the break BEFORE the word, not only by
+                # vetoing the one after it
+                self.assertNotEqual(lines, C.wrap_text(text, self.W, mode="measured"),
+                                    "%s: the greedy break did not move" % lang)
 
     def test_dl4_cue_exact_split(self):
         """dl4, both cues, at the width that reproduced the eval-16 splits."""
@@ -2357,16 +2370,16 @@ class PhraseWrapTests(unittest.TestCase):
                          ["Una tercera l\u00ednea", "con tiempos autom\u00e1ticos"])
 
     def test_dl1_cue_exact_split(self):
-        """dl1. NOTE: the 1.16.0 spec pinned `["A third line the", "tool times for me"]` here --
-        1.15's balance-only output. R4 forbids a line ending on `the`, and the two cannot both
-        hold: the R4-clean break is the one below, and the spec's own
-        `test_function_word_never_ends_a_line` is what settles the tie. `--wrap measured` still
-        gives 1.15's split, which the next test pins."""
+        """dl1. R4 scores both directions: `the` opens the phrase it governs, so the break BEFORE
+        it is the preferred one and the break after it the penalised one. Both halves fit, so the
+        cue comes out as one whole phrase per line. `--wrap measured` still gives 1.15's split."""
         C = self.caption
-        self.assertEqual(C.wrap_text("A third line the tool times for me", self.W, lang="en"),
-                         ["A third line the tool", "times for me"])
-        self.assertEqual(C.wrap_text("A third line the tool times for me", self.W,
-                                     mode="measured"),
+        text = "A third line the tool times for me"
+        for max_em in (self.W, 14.0, 16.0):
+            with self.subTest(max_em=max_em):
+                self.assertEqual(C.wrap_text(text, max_em, lang="en"),
+                                 ["A third line", "the tool times for me"])
+        self.assertEqual(C.wrap_text(text, self.W, mode="measured"),
                          ["A third line the", "tool times for me"])
 
     # -------------------------------------------------------------- modes and invariants
@@ -2400,8 +2413,12 @@ class PhraseWrapTests(unittest.TestCase):
     def test_break_penalty_prefers_a_sentence_end_and_a_particle(self):
         C = self.caption
         self.assertEqual(C.break_penalty("\u3002", "\u6b21", "ja"), 0.0)
-        self.assertLess(C.break_penalty("\u754c", "\u306f", "ja"),      # before a particle
-                        C.break_penalty("\u6c7a", "\u307e", "ja"))      # inside a word
+        # a particle keeps company with the word BEFORE it: breaking after one is preferred,
+        # breaking before one is forbidden
+        self.assertEqual(C.break_penalty("\u306f", "\u4e16", "ja"), 0.2)   # after a particle
+        self.assertEqual(C.break_penalty("\u754c", "\u306f", "ja"), 1.0)   # before a particle
+        self.assertLess(C.break_penalty("\u306f", "\u4e16", "ja"),         # after a particle
+                        C.break_penalty("\u6c7a", "\u307e", "ja"))         # inside a word
         self.assertEqual(C.break_penalty("\u3042", "\u3063", "ja"), 1.0)  # small kana may not start a line
 
 

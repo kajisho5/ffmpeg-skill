@@ -285,7 +285,17 @@ does not decide" holds. A request to title them is a refusal with the placeholde
 argument is the thing the deprecation policy exists to avoid. A single `--srt` with no suffix
 still honours `--language`, so nothing that worked before changed.
 
-**The Japanese particle table is a preference, not grammar.** `は が を に で と の へ も や から
-まで より` come from the task brief plus the five a reader would add. There is no upstream source
-for it and no precedent in this repo; it is tunable data, applied as a *penalty* among break
-positions that already fit, so it can never widen a line or change the line count.
+**The Japanese particle table is a preference, not grammar — and it is a "do not strand at the
+start of a line" table.** `は が を に で と の へ も や から まで より` come from the task brief
+plus the five a reader would add. A particle is enclitic: it attaches to the word *before* it and
+marks that word's role, so kinsoku practice keeps the two together. The rule is therefore "prefer
+the break after a particle, forbid the break before one", not the other way round. There is no
+upstream source for the list and no precedent in this repo; it is tunable data, applied among
+break positions that already fit, so it can never widen a line or change the line count.
+
+**R4 scores both directions, which is what makes it decide.** An article or preposition opens the
+noun phrase it governs, so the break *before* it is the good break (0.2) and the break *after* it
+the bad one (0.8). Penalising only the bad direction leaves the greedy width rule to choose among
+everything else, which is how the first cut of this release still split eval 16's `dl1` cue
+mid-phrase. With both directions scored, `"A third line the tool times for me"` comes out as
+`A third line / the tool times for me` — one whole phrase per line — and `dl4` is unchanged.

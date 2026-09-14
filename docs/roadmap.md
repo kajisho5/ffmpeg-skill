@@ -269,11 +269,11 @@ came out byte-identical, as did `--help` for all 42 tools.
   phrase|measured`, default `phrase`. Four rules over the break positions that already fit, so
   no line is widened and the line count never changes — never inside a word or on the wrong side
   of a hyphen; no lone digit, punctuation pair or single kana on its own line, at every boundary
-  rather than only the last; Japanese/Chinese sentence ends and particles preferred over a
-  mid-word break; no line ending on an article or preposition in six Latin-script languages. The
-  `dl1`/`dl3`/`dl4`/`th1` cues are the regression lock. `--wrap measured` restores 1.15 exactly.
-  Where R4 and the spec's pinned `dl1` split disagreed the rule won, and the CHANGELOG says so.
-  The label lines (`Done:`/`Steps:`/`Check:`) are now stated in SKILL.md to carry the user's
+  rather than only the last; Japanese/Chinese sentence ends preferred, a particle kept with the
+  word before it (kinsoku: a line may not open with one), never a break inside a word; an article
+  or preposition kept with the phrase it governs in six Latin-script languages. The
+  `dl1`/`dl3`/`dl4`/`th1` cues are the regression lock, and each now breaks as one whole phrase
+  per line. `--wrap measured` restores 1.15 exactly. The label lines (`Done:`/`Steps:`/`Check:`) are now stated in SKILL.md to carry the user's
   language (`dl4`, `id1`).
 - **Audiogram**: `waveform.py --image` plus `templates/audiogram.json` and a `render.py`
   `audiogram` stage — an audio episode over a still or brand plate, with a title and captions.

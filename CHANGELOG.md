@@ -47,16 +47,17 @@
   widened and the line count never changes: never inside a word or on the wrong side of a hyphen;
   no line that is a lone digit, one or two punctuation characters or a single kana, checked at
   every boundary rather than only the last; Japanese/Chinese breaks preferred after `。、！？」』）`
-  and before a particle, discouraged between a kanji stem and its okurigana and forbidden before a
-  small kana; and no line ending on an article or preposition in en/es/pt/fr/de/it. **The
-  `rebalanced` count in the `cues:` line can differ for an unchanged input**, and a cue whose
-  break moves is the point of the release — the text itself is never rewritten, shortened or
-  translated. graphics.py's hook card, meme lines and sticker chip are now wrapped to the frame's
-  safe width instead of running off the edge; a label that already fits is untouched.
-  Note: eval 16's `dl1` cue (`"A third line the tool times for me"`) now breaks as
-  `A third line the tool / times for me` rather than 1.15's `A third line the / tool times for
-  me`, because the new rule forbids ending a line on `the`; `--wrap measured` reproduces the old
-  split.
+  and after a particle — a particle is enclitic, so kinsoku keeps it with the word before it and a
+  break *before* one is forbidden — discouraged between a kanji stem and its okurigana and
+  forbidden before a small kana; and an article or preposition kept with the phrase it governs, by
+  preferring the break before it and penalising the break after it. **The `rebalanced` count in
+  the `cues:` line can differ for an unchanged input**, and a cue whose break moves is the point
+  of the release — the text itself is never rewritten, shortened or translated. graphics.py's hook
+  card, meme lines and sticker chip are now wrapped to the frame's safe width instead of running
+  off the edge; a label that already fits is untouched.
+  Eval 16's two open cues come out whole: `dl1` breaks as `A third line / the tool times for me`
+  (1.15: `A third line the / tool times for me`) and `dl3` as `自動でタイミングが / 決まる行`
+  (1.15: `自動でタイミングが決ま / る行`). `--wrap measured` reproduces the old splits.
 - The caption breaker moved from `caption.py` into `_common/text.py`, and the two structure
   detectors (`silence.detect`, `scenes.detect_scenes`) into `_common/probe.py`, so
   `metadata.py --auto-chapters` measures without any tool in `scripts/` importing a sibling tool.
