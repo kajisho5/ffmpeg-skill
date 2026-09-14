@@ -432,7 +432,7 @@ class AudiogramTests(MediaFixtures):
         "-map", "0:a:0",
         "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
-        "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+        "{bt709}",   # bt709_tag_args(): three tag pairs up to FFmpeg 7.0, one -x264-params from 7.1
         "-c:a", "aac", "-b:a", "192k",
         "-t", "12.000", "-shortest", "{output}",
     ]
@@ -444,8 +444,17 @@ class AudiogramTests(MediaFixtures):
         tool" checkable instead of asserted."""
         out = OUT / "ag_identical.mp4"
         plan = self._plan(self.src, "--width", "640", "--height", "360", "-o", out)
-        expected = [part.format(ffmpeg=plan[0], input=str(self.src), output=str(out))
-                    for part in self.WAVEFORM_1_15_1]
+        # 1.15.1 called bt709_tag_args() too, so the tag spelling follows the ffmpeg on this
+        # machine (macOS CI runs 7.x, where the tags travel as -x264-params); the pin is the
+        # argv around it.
+        sys.path.insert(0, str(SCRIPTS))
+        from _common import bt709_tag_args
+        expected = []
+        for part in self.WAVEFORM_1_15_1:
+            if part == "{bt709}":
+                expected.extend(bt709_tag_args())
+            else:
+                expected.append(part.format(ffmpeg=plan[0], input=str(self.src), output=str(out)))
         self.assertEqual(plan, expected)
 
     def test_audiogram_graph_has_one_overlay_per_layer(self):
