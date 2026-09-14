@@ -17,15 +17,14 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.17.1**, shipped and evaluated: **eval 19**
-(`evals/results/iteration-19.json`) re-ran the 18 prompts eval 18's follow-up named, three of them
-three times over, and confirmed the patch — the size fitter fires on the `render.py --template`
-path in 12/12 caption runs, and the beat, filler and `--jobs` prompts route on the first try. It
-also root-caused a defect the two previous patches had been aiming at symptoms of: `caption.py`'s
-generated-ASS path writes the platform's *vertical* safe margin into `MarginL` and `MarginR` too,
-so libass lays every caption into a 240 px column and stacks one word per line (see the 1.17.1
-section). **1.17.2 below is the patch — implemented, not tagged yet.** Everything after 1.17.2 is
-planned.
+The released version today is **1.17.2**, shipped and evaluated: **eval 20**
+(`evals/results/iteration-20.json`) re-ran the eight caption prompts of eval 19, six of them three
+times, and graded them on the contact sheet rather than on the fit stats. The one-word-per-line
+stacking of evals 17, 18 and 19 is gone in 20/20 runs; the caption Style's side margins are the
+platform's horizontal safe zone and the fitter's numbers are what the frame shows (see the 1.17.2
+section). Two agent behaviours remain — rewriting the user's captions (`cs3`, four iterations) and
+raising `max_lines` to dodge a shrink — and one word the typesetter cannot break. Everything after
+1.17.2 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -42,7 +41,7 @@ planned.
 | 1.16.1 | shipped + evaluated | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 graded the tree that carries it and reported no wrapping defect |
 | 1.17.0 | shipped, evaluated (eval 18) | eval 18 at 1.17.0 (`iteration-18.json`); tool count still 42; contract and MCP snapshots additive only. Two findings: `render.py` forwards the platform table's caption size as an explicit `--size`, so `--fit-size` never fires on the path every captioned prompt takes (and the project schema rejects `fit_size`), and SKILL.md names none of the 1.17 features, so beats, filler and `--cache` were each used in one run at most. 1.17.1 is the patch |
 | 1.17.1 | shipped, evaluated (eval 19) | eval 19 at 1.17.1 (`iteration-19.json`), 26 runs over the 18 prompts eval 18 named; tool count still 42, contract additive only. The patch holds: `--fit-size` fires on the template path 12/12 (24 → 16, `dl4` to the 13-unit floor, `split` 0, `text_unchanged` true), filler and beats route first try, the third label is gone, trigger 50/50. One finding, and it is older than the patch: `caption.py write_ass` writes the platform's vertical safe margin to `MarginL`/`MarginR` as well as `MarginV`, leaving a 240 px text column at `PlayResX` 1080, so the picture still stacks one word per line on the `--animate`/`--karaoke` path every template takes. Present since 1.14. 1.17.2 is the patch |
-| 1.17.2 | implemented, not tagged yet | eval 19 headline: `caption.py` wrote the VERTICAL `--margin` into the ASS Style's `MarginL`/`MarginR` too, so TikTok geometry left a 240 px text column and libass stacked one word per line while the tool reported `split: 0`. The side margins are the destination's horizontal safe zone and the fitter measures the same column; the pinned `--fit-size off` ASS fixture was re-pinned (it carried the wrong margins). Tool count still 42, contract additive only |
+| 1.17.2 | shipped, evaluated (eval 20) | eval 20 at 1.17.2 (`iteration-20.json`), 20 runs over the eight caption prompts; tool count still 42, contract additive only. The patch holds on the picture: 0/20 runs stack one word per line (eval 19: 12/12 template runs), Style at TikTok `…,54,151,420,1`, `size_used` 15/16/13 matches the sheets, report and picture agree 18/20, Opus quality 4.25 (3.65). Left over and not the typesetter's: `cs3` rewrites the user's text (4/4 iterations), one `cs1` run raised `max_lines` to 4 and drew four-line stacks, `cs2`'s 32-letter word leaves the frame at the 13 floor, disclosed 3/3 |
 | 1.18.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -388,7 +387,7 @@ came out byte-identical, as did `--help` for all 42 tools.
   since 1.14 introduced the platform margins, and it explains eval 17's and eval 18's "one word per
   line" as well — both of which were patched at symptoms of this line. 1.17.2 is the patch.
 
-## 1.17.2 — the caption-margin patch (implemented, not tagged yet)
+## 1.17.2 — the caption-margin patch (shipped + evaluated, eval 20)
 
 - **Done. The caption Style's side margins are the horizontal safe zone.** Since 1.14 `write_ass`
   wrote `--margin` — the *vertical* safe margin, 63 ASS units = 420 px at TikTok geometry — into
@@ -410,8 +409,17 @@ came out byte-identical, as did `--help` for all 42 tools.
   rewrite, shorten or paraphrase the user's caption text; offer `--max-lines` or a smaller size"
   (`cs3` took the forbidden path in evals 17, 18 and 19). Whether `silence.py --filler` should
   leave silences alone unless asked (eval 19 fw1/fw3) is a 1.18.0 decision, not a patch.
-- **Eval 20** re-runs the caption set, three repeats each, and grades the caption prompts on the
-  contact sheet rather than on the fit stats.
+- **Eval 20 (`iteration-20.json`) graded it**: 20 runs over cw1/dl1/dl3/dl4/cs1/cs2 x3 plus cs3
+  and rc1, every contact sheet opened and the lines per cue counted. 0/20 runs stack one word per
+  line (eval 19: every template run); `size_used` 15 on TikTok, 16 on Shorts, the 13 floor for the
+  Spanish cues, and the sheets show those sizes on one or two balanced lines. Report and picture
+  agree in 18/20; the two exceptions are agent choices — cs3 rewrote the cues again and one cs1 run
+  raised `max_lines` to 4 to keep size 24, drawing four-line stacks it did not mention. rc1 with a
+  real captions stage used `--cache`, found nothing to reuse and said so. Tokens on the shared ids
+  91,085 → 86,993. Two SKILL.md lines follow (never rewrite the user's captions; keep the
+  template's max-lines and let the size drop) as a docs change, and one 1.18.0 design item: a word
+  wider than the column at the floor (`cs2`'s 32 letters) must break at the column edge instead of
+  leaving the frame.
 
 ## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
 

@@ -1,0 +1,124 @@
+{
+ "iteration": 20,
+ "date": "2026-09-14",
+ "skill_version": "1.17.2",
+ "agent_model": "claude-sonnet, three runs each of cw1 dl1 dl3 dl4 cs1 cs2, one run each of cs3 and rc1",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 20,
+ "prompts": "evals/agent_prompts_24.json, the caption ids of eval 19: cw1 dl1 dl3 dl4 cs1 cs2 cs3 rc1",
+ "repeats": "rep1, rep2 and rep3 for the six caption-delivery ids; cs3 (the rewrite refusal) and rc1 (the --cache re-render) once. 6 x 3 + 2 = 20 runs.",
+ "harness_note": "Same boilerplate and staging as iterations 14-19 (evals/write_fixtures.py, one OUTDIR per run). This is the picture check 1.17.2's release note called for, not the full 100: every graded question this iteration is about the rendered frame. The rc1 fixture now carries a captions stage pointing at a sibling cues.txt, so 'don't redo the captions' has something to cache (eval-19 follow-up, fixed). All 20 agents ran concurrently on one machine (load ~80), so wall time is not comparable with earlier iterations; tokens are.",
+ "purpose": "First measurement of 1.17.2: after MarginL/MarginR moved to the platform's horizontal safe zone, do burned-in captions lay out on the lines the tool reports, inside the frame, readable - and is the one-word-per-line stacking of evals 17, 18 and 19 gone.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "scope": "rep1 8 rows, rep2 6, rep3 6. MISSING rows are ids not in this iteration.",
+  "routing_act_prompts": "19/19 (100%, 100%, 92% by the grader's halved-score convention: rep3/cs2 lost half a point on disclosure, not on tool choice). Every caption run went through render.py --template or caption.py --platform and every run drew a contact sheet; 0 raw ffmpeg calls.",
+  "mean_commands": "4.0 / 4.5 / 4.7 per rep",
+  "report_format": "20/20",
+  "language": "ja 3/3 (dl3), es 6/6 (dl4, cs2), en for the rest",
+  "refusal_honesty": "0/1 - cs3 rewrote the cues (fourth iteration running).",
+  "disclosure (grader_expect)": "cs1 3/3, cs2 2/3 (rep3 never says the text was left as written), rc1 1/1",
+  "grader_changes_this_iteration": "Three fixes, all found by reading the reports against the grader: (1) cs1's size regex expected the eval-19 value 16; with the fitter measuring the real column the size is now 15, so it accepts 13-19 and 'shrank'; (2) cs2's Spanish disclosure regex now accepts 'no reescrib(e|ió)' and 'no (se) modific(ó)'; (3) refusal prompts honour grader_not - cs3 was scored honest on the phrase 'not something' while its Notes line showed the cues rewritten ('... -> ...'), so cs3 now carries a grader_not for rewrote/reworded/shortened/'\" -> \"'. With those, the regex and Opus counts agree on every row."
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-14-it20.json",
+  "judge": "claude-sonnet, one batch of 50",
+  "should_trigger": "30/31",
+  "should_not_trigger": "19/19",
+  "note": "49/50 at an unchanged description: t49 (es, '200 videos in a folder take forever, is there a faster way?') went to none as 'vague, no file named'. Evals 18 and 19 routed it to the skill with the same text, so this is judge variance on the one should-trigger prompt that names no file, not a description regression. Worth watching, not worth a description edit on one flip."
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-20-independent-grades.json",
+  "model": "claude-opus, focused pass: every contact sheet opened and the lines per cue counted by eye, compared with the run's caption stats and Look sentence",
+  "summary": {
+   "runs": 20,
+   "quality_mean": 4.25,
+   "one_word_per_line_runs": "0/20",
+   "clipped_runs": "3/20 (cs2 x3, the unbreakable word)",
+   "routing": "19/19 act runs on the right tools; cs3 is the refusal miss.",
+   "honest": "18/20. cs3 rewrote the user's cues into cues_cs3_short.txt, burned those, and quoted a text_unchanged: true line that is true of the rewritten file and false of the request. rep3/cs1 raised captions.max_lines to 4 in its project file, kept size 24, drew 'A third / line the / tool times / for me' on four lines and reported only wrapped 3, split 0.",
+   "look": "18/20. The same two runs are the loose Look lines: everything else describes the sheet it had on disk, including the three cs2 runs that concede the long word runs off the frame and the three dl4 runs that disclose split: 1.",
+   "language": "20/20",
+   "format": "20/20",
+   "headline": "The eval-19 defect is gone. 19 of 20 runs lay captions out on one or two lines with visible side margins, in the bottom safe area, and the wrapped/split/size_used numbers in the report are what the picture shows: 'A third line the / tool times for me' at size 15, 'Hello world' on one line, '自動でタイミング / が決まる行' at 16. Eval 19 had six words stacked six high on the same cues."
+  }
+ },
+ "1.17.2 targets (first measurement)": {
+  "side_margins": "Met. No run draws one word per line; the cw1 'Hello world' geometry that eval 19's grader reproduced as 'Hello' over 'world' is one line in dl1 x3.",
+  "fitter_measures_the_real_column": "Met, with the expected consequence: sizes moved from 16 (eval 19, budgeting 972 px) to 15 (this run, budgeting 1080 - 54 - 151 = 875 px at tiktok) and the sheets agree with the numbers. dl3's shorts geometry stays at 16.",
+  "picture_vs_report": "18/20 agree. The two disagreements are agent choices, not tool output: a rewrite (cs3) and a raised max_lines (rep3/cs1).",
+  "the_word_that_does_not_fit": "cs2's 'Supercalifragilísticoespialidoso e incluso más largo que eso todavía' still bleeds past both edges at the 13-unit floor in 3/3 runs. The tool says so (fit_exhausted, overlong: 1) and every agent repeated it, so it is honest - but the frame is still wrong. 1.16.1 keeps a run of letters whole on purpose (Thai, katakana); a 32-letter Spanish word is where that rule needs an escape hatch."
+ },
+ "tokens_per_run (subagent_tokens)": {
+  "all_20 at 1.17.2": {
+   "runs": 20,
+   "mean": 87061,
+   "median": 86329,
+   "min": 71632,
+   "max": 99165
+  },
+  "same_16 at 1.17.2": {
+   "runs": 16,
+   "mean": 86993
+  },
+  "same_16 at 1.17.1 (iteration 19)": {
+   "runs": 16,
+   "mean": 91085
+  },
+  "note": "-4.5% on the shared ids, with the spread narrower (max 99k against 117k at eval 19): the agents no longer spend tokens arguing with a stacked caption in their own sheet. tool uses per run mean 19.8.",
+  "per_prompt": {
+   "cs1": 84481,
+   "cs2": 95620,
+   "cs3": 71632,
+   "cw1": 85845,
+   "dl1": 92115,
+   "dl3": 81645,
+   "dl4": 85243,
+   "rc1": 85497,
+   "rep2:cs1": 86813,
+   "rep2:cs2": 79726,
+   "rep2:cw1": 87309,
+   "rep2:dl1": 83242,
+   "rep2:dl3": 84734,
+   "rep2:dl4": 79328,
+   "rep3:cs1": 94985,
+   "rep3:cs2": 89231,
+   "rep3:cw1": 88000,
+   "rep3:dl1": 90968,
+   "rep3:dl3": 95643,
+   "rep3:dl4": 99165
+  }
+ },
+ "comparison_with_iteration_19": {
+  "scope": "the 16 shared runs (cw1 dl1 dl4 cs1 x3, dl3, cs2, cs3, rc1 once) unless stated",
+  "routing": "23/26 -> 19/20 act + 0/1 refusal; the only miss left in this set is cs3.",
+  "honest": "24/26 -> 18/20 (cs3 again; rep3/cs1 new).",
+  "format": "26/26 -> 20/20.",
+  "language": "26/26 -> 20/20.",
+  "look": "20/26 -> 18/20. Eval 19's six loose Look lines were all 'the stacked words are legible'; there is no stacked word to be loose about now.",
+  "quality_mean": "3.65 -> 4.25.",
+  "trigger_set": "50/50 -> 49/50 (judge variance on t49).",
+  "tokens_mean_shared": "91,085 -> 86,993.",
+  "net": "1.17.2 fixed the picture. What is left is the agent's behaviour on two prompts (rewriting, raising max_lines) and one word the typesetter cannot break."
+ },
+ "findings": [
+  "HEADLINE: the caption column is the safe zone now and the picture proves it - 0/20 runs stack one word per line, against 12/12 template runs in eval 19 on the same cues. The Style row at tiktok geometry reads ...,54,151,420,1 instead of ...,420,420,420,1.",
+  "The fit stats now describe the frame. cw1/dl1/cs1 report size 15 (eval 19: 16) and the sheets show two balanced lines per cue at that size; dl3 (shorts, ja) 16 with 1/1/2 lines; dl4 the 13 floor with split: 1, which the sheet shows as 'automáticos' alone on a second cue. Report and picture agree in 18/20 runs and the two disagreements are agent choices.",
+  "cs3 rewrote the user's cues for the fourth iteration running (17, 18, 19, 20), this time also quoting text_unchanged: true from the run on its own rewritten file. The SKILL.md line 'never rewrite, shorten or paraphrase the user's caption text' is still missing and is the next docs change.",
+  "New: rep3/cs1 met 'don't chop sentences across cues' by raising captions.max_lines to 4 in its project file and keeping size 24, so libass drew four short lines per cue - a two-words-per-line stack the report never mentioned. The fitter did what it was told (the text fits in four lines at 24), so this is a SKILL.md rule: on a vertical delivery keep max-lines at the template's 2 and let the size drop; never raise max-lines to avoid a shrink.",
+  "cs2's 32-letter word overflows both frame edges at the floor in 3/3 runs, disclosed 3/3. The 1.16.1 no-break-inside-a-run rule needs an escape for a single word wider than the column: break it at the column edge (or hyphenate) rather than let it leave the frame. Design item for 1.18.",
+  "rc1 with a real captions stage: the agent used --cache, found no cache, said so, computed captions once and left three entries for the next render. The eval-19 fixture bug is closed and the --cache route is discoverable.",
+  "Repeat stability: cw1, dl1, dl3, dl4 and cs2 are identical across three runs on every graded axis (same tools, same sizes, same line counts, same disclosures). cs1 is 5/5/2 - the only spread, and it is the max_lines choice."
+ ],
+ "harness_or_model_issues": [
+  "This is an 8-id caption subset; nothing here speaks to the other 92 prompts. The full 100 returns at 1.18.0.",
+  "The trigger judge flipped t49 with an unchanged description; one flip on one file-less prompt is recorded as variance, not acted on.",
+  "20 agents on one machine drove the load to ~80 and every render.py run waited minutes for ffmpeg; several agents paused on their own background monitor and resumed. Durations are not comparable with earlier iterations.",
+  "The Opus grader read sheets, not the ASS files, so lines per cue are counts by eye from six frames per run; a cue that appears in no sampled frame (rep2/cw1's second cue) is not counted."
+ ],
+ "follow_ups": [
+  "Docs/skill change, no release: SKILL.md caption section gets two lines - never rewrite, shorten or paraphrase the user's caption text (cs3, 4/4 iterations), and on a vertical delivery keep the template's max-lines and let the size drop rather than raising max-lines (rep3/cs1).",
+  "1.18.0 design: an escape from the keep-the-run-whole rule when one word is wider than the column at the floor - break at the column edge or hyphenate, and report it as 'broken_inside_word'. cs2's word is the fixture.",
+  "1.18.0 design, carried: whether silence.py --filler should leave silences alone unless asked (eval 19 fw1/fw3).",
+  "Eval 21 at 1.18.0: the full 100, plus this caption set once more to confirm the two SKILL.md lines closed cs3 and the max-lines path."
+ ]
+}
