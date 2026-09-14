@@ -137,6 +137,20 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         if role == "output":
             _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
         die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
+    if not (proc.stdout or "").strip():
+        # ffprobe exited 0 and printed nothing we could read. Before 1.17.1 that produced a
+        # SUCCESS document of nulls -- "?s | no video | no audio", exit 0 -- which is how #234
+        # showed up on a Windows cp932 machine: the capture decoded ffprobe's UTF-8 JSON with the
+        # locale code page, the reader thread raised UnicodeDecodeError and stdout came back
+        # empty. Every child capture is decoded as UTF-8 with errors="replace" now; if a document
+        # still does not arrive, refuse rather than report an unmeasured file as measured.
+        msg = (f"ffprobe printed no output for {path}: its JSON could not be read (a decoding or "
+               "pipe failure, not a measurement)")
+        if proc.stderr.strip():
+            msg += f"\n{proc.stderr.strip()}"
+        if role == "output":
+            _output_failed(path, msg)
+        die(msg, kind="input")
     try:
         raw = json.loads(proc.stdout or "{}")
     except ValueError as e:

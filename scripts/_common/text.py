@@ -72,7 +72,7 @@ def default_font_file(font_name: str) -> Optional[str]:
     if not exe:
         return None
     try:
-        proc = subprocess.run([exe, "--format=%{file}\n", font_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        proc = subprocess.run([exe, "--format=%{file}\n", font_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=5)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if proc.returncode != 0:
@@ -319,7 +319,7 @@ def _emoji_color_font() -> "Tuple[Optional[str], Optional[str], bool]":
     for family in _EMOJI_COLOR_FAMILIES:
         try:
             proc = subprocess.run([exe, f":family={family}", "file"], stdout=subprocess.PIPE,
-                                  stderr=subprocess.DEVNULL, text=True, timeout=10)
+                                  stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
         except (subprocess.TimeoutExpired, OSError):
             return None, None, False
         if proc.returncode != 0:
@@ -618,7 +618,7 @@ def drawtext_shaping() -> "Dict[str, bool]":
         for flag in ("-buildconf", "-version"):
             try:
                 proc = subprocess.run([exe, "-hide_banner", flag], stdout=subprocess.PIPE,
-                                      stderr=subprocess.STDOUT, text=True, timeout=10)
+                                      stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", timeout=10)
             except (subprocess.TimeoutExpired, OSError):
                 break
             if proc.returncode == 0 and proc.stdout.strip():
@@ -645,7 +645,7 @@ def font_family_of_file(path: str) -> "Optional[str]":
     if exe:
         try:
             proc = subprocess.run([exe, "--format", "%{family[0]}", path], stdout=subprocess.PIPE,
-                                  stderr=subprocess.DEVNULL, text=True, timeout=10)
+                                  stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
             if proc.returncode == 0 and proc.stdout.strip():
                 return proc.stdout.strip().splitlines()[0].strip()
         except (subprocess.TimeoutExpired, OSError):
@@ -717,7 +717,7 @@ def _fc_list_fonts(fc_lang: str) -> "Optional[List[Tuple[str, List[str]]]]":
         return None
     try:
         proc = subprocess.run([exe, f":lang={fc_lang}", "file", "family"],
-                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if proc.returncode != 0:
@@ -832,7 +832,7 @@ def font_covers_script(font_name: str, script: str) -> bool:
         return True
     try:
         proc = subprocess.run([exe, f":lang={FC_LANG[script]}:family={font_name}", "file"],
-                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         return True
     if proc.returncode != 0:
@@ -866,7 +866,7 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
         return None
     try:
         proc = subprocess.run([exe, "--format", "%{lang}\n", fonts_dir],
-                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if proc.returncode != 0:

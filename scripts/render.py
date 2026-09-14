@@ -520,7 +520,7 @@ def ffmpeg_banner() -> str:
     """
     try:
         out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, text=True, timeout=20).stdout
+                             stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=20).stdout
         first = (out or "").strip().splitlines()
         if first:
             return first[0].strip()

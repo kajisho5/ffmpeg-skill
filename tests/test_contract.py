@@ -2808,6 +2808,64 @@ class DoctorDetectionTests(unittest.TestCase):
                         f"SKILL.md is {size} bytes, {size - 30_000} over the 30,000-byte budget -- "
                         "trim a line rather than raising the limit (see CONTRIBUTING.md)")
 
+    # ------------------------------------------------- #234: child output is decoded as UTF-8
+    def test_every_child_text_capture_names_utf8(self):
+        """#234: `text=True` decodes with the machine's locale code page. On a Windows cp932 box
+        ffprobe's UTF-8 JSON then raises UnicodeDecodeError inside the reader thread,
+        communicate() hands back an empty stdout, and probe.py reported `?s | no video | no
+        audio` with exit 0. Every child capture in this repo states its encoding."""
+        offenders = []
+        for path in sorted((ROOT / "scripts").rglob("*.py")):
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if ("text=True" in line or "universal_newlines" in line) and 'encoding="utf-8"' not in line:
+                    offenders.append(f"{path.relative_to(ROOT)}:{i}")
+        self.assertEqual(offenders, [], "decode child output as UTF-8 (errors='replace'), never as the locale code page")
+
+    def _utf8_ffprobe_shim(self, body):
+        shim = OUT / "utf8_shim"
+        shim.mkdir(parents=True, exist_ok=True)
+        (shim / "ffprobe").write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        (shim / "ffprobe").chmod(0o755)
+        # LANG/LC_ALL=C with the UTF-8 modes off is this machine's stand-in for a cp932 Windows
+        # console: Python's preferred encoding becomes ASCII, so a locale-decoded capture of the
+        # UTF-8 JSON below fails exactly as it does there.
+        env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}", LANG="C", LC_ALL="C",
+                   PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+        env.pop("PYTHONIOENCODING", None)
+        return env
+
+    @unittest.skipIf(platform.system() == "Windows", "the fake ffprobe is a #!/bin/sh script")
+    def test_probe_reads_non_ascii_ffprobe_json_under_a_non_utf8_locale(self):
+        doc = ('{"format": {"filename": "\u65e5\u672c\u8a9e.mp4", "format_name": "mov,mp4", '
+               '"duration": "12.0", "size": "1000", "tags": {"title": "\u65e5\u672c\u8a9e"}}, '
+               '"streams": [{"codec_type": "video", "codec_name": "h264", "width": 1280, '
+               '"height": 720, "r_frame_rate": "30/1", "pix_fmt": "yuv420p"}]}')
+        env = self._utf8_ffprobe_shim("cat <<'JSON'\n" + doc + "\nJSON\n")
+        target = OUT / "utf8_probe.mp4"
+        target.write_bytes(b"not really a movie")   # ffprobe is the shim; only the path must exist
+        proc = sh(sys.executable, SCRIPTS / "probe.py", target, "--json", env=env, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        d = json.loads(proc.stdout)
+        self.assertEqual(d["duration"], 12.0)
+        self.assertEqual(d["video"]["width"], 1280)
+        # the non-ASCII text ffprobe printed survives the capture -- the #234 surface (the path
+        # on argv is the filesystem encoding, a different axis, so it is not what is asserted)
+        self.assertEqual(d["tags"]["title"], "\u65e5\u672c\u8a9e")
+
+    @unittest.skipIf(platform.system() == "Windows", "the fake ffprobe is a #!/bin/sh script")
+    def test_probe_refuses_when_ffprobe_prints_nothing(self):
+        """The half of #234 that made it a silent defect: an empty stdout with exit 0 must never
+        become a success document of nulls."""
+        env = self._utf8_ffprobe_shim("exit 0\n")
+        target = OUT / "empty_probe.mp4"
+        target.write_bytes(b"not really a movie")
+        proc = sh(sys.executable, SCRIPTS / "probe.py", target, "--json", env=env, check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        err = json.loads(proc.stdout)
+        self.assertEqual(err["status"], "failed")
+        self.assertEqual(err["error"]["kind"], "input")
+        self.assertIn("no output", err["error"]["message"])
+
     def test_skill_md_routes_the_1_17_features(self):
         """Eval 18: SKILL.md never mentioned filler, --snap beats, --jobs or --cache, so three
         runs rebuilt those features by hand and one asserted the skill has no beat detection.

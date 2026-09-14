@@ -100,7 +100,7 @@ def ffmpeg_version() -> "Tuple[int, int]":
     if _FFMPEG_VERSION is None:
         _FFMPEG_VERSION = (0, 0)
         try:
-            out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                                  timeout=PROBE_TIMEOUT).stdout
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
             if m:
@@ -744,7 +744,7 @@ def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None) -> subpro
     document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
     exactly as they would from the child itself."""
     limit = child_limit(per_call)
-    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     try:
         out, err = child.communicate(timeout=limit)
@@ -804,7 +804,7 @@ def _limit_for(cmd: Sequence[str]) -> Optional[float]:
 def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     limit = _limit_for(cmd)
-    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     _watch(child, cmd)
     try:
         out, err = child.communicate(timeout=limit)
@@ -854,7 +854,7 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
     t0 = time.time()
     limit = _limit_for(cmd)
-    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     _watch(proc, cmd)
     assert proc.stdout is not None and proc.stderr is not None
     lines: "queue.Queue[Optional[str]]" = queue.Queue()
@@ -1022,7 +1022,7 @@ def ffmpeg_encoders() -> set:
         _ENCODERS = set()
         try:
             out = subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
-                                 stderr=subprocess.DEVNULL, text=True, timeout=PROBE_TIMEOUT).stdout
+                                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=PROBE_TIMEOUT).stdout
             _ENCODERS = set(re.findall(r"^\s*[VAS][.\w]{5}\s+(\S+)", out, re.M))
         except (OSError, subprocess.SubprocessError):
             pass

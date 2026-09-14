@@ -84,7 +84,7 @@ def _asr_run(cmd: List[str], subprocess, name: str) -> "subprocess.CompletedProc
     from _common import STATE, die
     limit = STATE.timeout or None
     try:
-        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=limit)
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=limit)
     except subprocess.TimeoutExpired:
         die(f"{name} exceeded the {limit:.0f} s time limit and was killed; raise --timeout for a long recording",
             code=124, kind="timeout")

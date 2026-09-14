@@ -27,6 +27,14 @@
   shortfall in `Notes:`, never a third label like `Done (partially):`.
 - **`caption.py` says when the text is unchanged**: `caption text unchanged` in the summary and
   `text_unchanged: true` in the result when the cues were burned exactly as given.
+- **#234: child-process output is decoded as UTF-8, never as the machine's code page.** On a
+  Windows cp932 locale `text=True` decoded ffprobe's UTF-8 JSON with the console code page, the
+  reader thread raised `UnicodeDecodeError`, `communicate()` returned an empty stdout and
+  `probe.py` printed `?s | no video | no audio` and exited 0 — an unmeasured file reported as
+  measured. Every child capture in `scripts/` (ffmpeg, ffprobe, fc-list/fc-match, whisper, the
+  sibling tools render.py and batch.py run) now passes `encoding="utf-8", errors="replace"`, and
+  a probe whose ffprobe printed nothing refuses with `kind: input` naming the unreadable output
+  instead of returning a document of nulls.
 - **evals**: `write_fixtures.py` stages a batch recipe's `output_dir` absolute under the prompt's
   own directory — a relative `"out"` resolved against the caller's cwd, so the staged recipe wrote
   outside the prompt folder and had to be rewritten before the prompt could be answered.
