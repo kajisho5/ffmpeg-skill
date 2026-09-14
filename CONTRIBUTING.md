@@ -85,6 +85,9 @@ would have caught the original bug isn't done yet.
   asserts it. The only exception is a tool whose entire output is a table, a JSON
   document or an HTML file: add it to `INSPECTION` in `demos/build.py` instead and
   it gets a command and a sentence in the gallery's Inspection section.
+- A release PR moves `docs/roadmap.md`'s "the released version today is ..." line in the **same
+  PR as the version bump**, so the roadmap never describes a version that is already out as
+  planned.
 
 ## Reporting issues
 

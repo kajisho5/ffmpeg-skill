@@ -154,7 +154,7 @@ Audio is a first-class input: `probe.py`, `cut.py`, `silence.py`, `loudness.py`,
 
 ## Report format
 
-Reply in the language the request itself is written in — the user's own sentences, not a language the request merely talks about (subtitles in another language are still reported in the request's language). Keep the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English: they read like log fields across languages. Everything else is the user's language — the lines those labels head, any question, any explanation of a judgement call — so a Spanish prompt answered with English `Done:`/`Steps:` sentences is an English report. Never drift because the job was short or the report is a failure: a one-line "file does not exist" is in the request's language too. A mid-conversation switch follows the user's latest message.
+Reply in the language the request itself is written in — the user's own sentences, not a language the request merely talks about (subtitles in another language are still reported in the request's language). Keep the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English: they read like log fields across languages. Everything else is the user's language — the lines those labels head, any question, any explanation of a judgement call. Never drift because the job was short or the report is a failure: a one-line "file does not exist" is in the request's language too. A mid-conversation switch follows the user's latest message.
 
 Finish every job with this shape (numbers from `--json` or `probe.py`/`check.py`, not memory):
 
@@ -187,6 +187,9 @@ Check: nothing to verify
 Look: not needed
 Notes: send a valid .cube, or say if you want the clip left as is
 ```
+
+Those filler lines are sentences, not labels: the same report for a Japanese request ends
+`Check: 検証するものなし` / `Look: 不要`.
 
 A refusal (a judgement this skill does not make, or something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run, `Look: not needed`. The shortest failure still gets all five labels, never prose headings. A partial result is `Done:` with the shortfall in `Notes:`, and a refusal that still delivers something is `Failed:` — never a third label like `Done (partially):`. When a failure JSON carries `error.hint`, quote it in `Notes:`: it is the flag change that makes a retry meaningful.
 

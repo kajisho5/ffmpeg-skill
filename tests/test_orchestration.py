@@ -1038,6 +1038,25 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(sorted(p.name for p in cdir.iterdir()), [])
         self.assertIn("cache", data)
 
+    def test_render_failure_with_a_cache_leaves_no_work_dir_and_caches_nothing(self):
+        """The failure path of --cache, which the happy-path tests do not reach: a stage that
+        fails must not leave its work directory behind, and must never put the partial artifact
+        in the cache where a later run would be served it as a finished stage."""
+        cdir = OUT / "rcache_fail"
+        shutil.rmtree(cdir, ignore_errors=True)
+        proj = self._cache_project("cache_fail")
+        r = script("render.py", proj, "--cache", cdir, "--timeout", "0.05", "--json", expect_fail=True)
+        self.assertEqual(json.loads(r.stdout)["error"]["kind"], "timeout")
+        self.assertEqual(sorted(p.name for p in cdir.iterdir()), [],
+                         "a failed stage must not be cached")
+        self.assertEqual([p.name for p in OUT.glob("cache_fail_out*_work_*")], [],
+                         "the work directory is removed on the failure path too")
+        self.assertFalse((OUT / "cache_fail_out.mp4").exists())
+        # and the cache is still usable afterwards: the next (untimed) run fills it normally
+        ok = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
+        self.assertEqual(ok["cache"]["hits"], [])
+        self.assertTrue(list(cdir.glob("*.json")))
+
     def test_render_from_without_a_cache_refuses(self):
         r = script("render.py", self._cache_project("cache_from"), "--from", "captions",
                    "--json", expect_fail=True)

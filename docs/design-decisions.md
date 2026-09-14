@@ -162,6 +162,50 @@ exists. When a decision changes, edit the entry in the same PR.
   change, hence major); tools that only call those keep working with a one-line change. Rejected:
   thread-locals (hides the dependency the reviews keep asking about). Code: `_common.Context`.
 
+## External review, 2026-09-14 (1.17.0)
+
+An outside review of the repository at 1.17.0, alongside eval 18. What it raised, and what was
+decided. Recorded here so none of it is re-proposed from scratch.
+
+- **P0-1 — run eval 18 before any further feature work.** Accepted, and **done before this
+  patch**: eval 18 ran on 1.17.0 (100 prompts, independent grading) and its findings are what
+  1.17.1 fixes — the delivery templates never reached `--fit-size`, the project schema refused
+  the fit keys, and SKILL.md routed none of the 1.17 features.
+- **P0-2 — issue #234, `probe.py` reports `?s | no video | no audio` on a cp932 Windows box.**
+  Accepted and **fixed in 1.17.1**: every child capture in `scripts/` passes
+  `encoding="utf-8", errors="replace"` instead of decoding with the machine's code page, and a
+  probe whose ffprobe printed nothing refuses (`kind: input`) rather than returning a document of
+  nulls with exit 0. A source-level test keeps `text=True` without an encoding out of the tree.
+- **P0-3 — the roadmap's "released version today" line lagged the bump.** Accepted; **done in the
+  eval-18 docs PR**, and `CONTRIBUTING.md`'s release checklist now says to move that line in the
+  same PR as the version bump.
+- **P1-4 — `scripts/_common/text.py` is the next module too large to review in one pass.**
+  Accepted, and deliberately **not mixed into 1.17.1**: it is a behaviour-free split, so it gets
+  the same treatment `_common.py` got — its own no-change release after 1.17.1, with the contract
+  snapshot, the MCP surface and every `--help` byte-identical.
+- **P1-5 — reports copy the English boilerplate lines into non-English answers.** Accepted:
+  SKILL.md's failure example now shows the Japanese rendering of `Check:`/`Look:`'s filler lines,
+  so the rule ("these are sentences, not labels") has an example next to it.
+- **P1-6 — eval prompt `ml2` tested a refusal, not the mux.** Accepted: `ml2` now ships a German
+  SRT and a video and expects `caption|render`.
+- **P1-7 — the 42-tool MCP `tools/list` is paid for by every session.** Accepted, and moved
+  **ahead of the optical-flow work into 1.18.0**: the default listing becomes the core 12, the
+  rest stay reachable through the contract, which still describes all 42.
+- **P1-8 — at least one routing run on a non-Claude model.** Accepted as an `evals/run.py` task:
+  the harness reads transcripts and files and is not Claude-specific; the routing/refusal set is
+  what a Cursor or Codex run would publish.
+- **P2-9 — issue #143 (real-device corpus) has no acceptance criteria.** Accepted as written in
+  the issue: the corpus run is the criterion, one row per device family.
+- **P2-10 — `--cache` has no failure-path tests.** Accepted and **closed in this patch**: the
+  existing tests cover hit, miss, invalidation (stage args, ffmpeg build, skill and contract
+  version, `--fast`, container) and the atomic cache write; what was missing — a failed stage
+  must cache nothing and leave no work directory — is now a test.
+- **P2-11 — no accuracy numbers for the beat grid and filler removal.** Accepted: those wait for
+  eval-19 data rather than being asserted from the implementation.
+- **P2-12 — reorganise SKILL.md's table by intent.** Accepted, and it **stays 1.20.0**: 1.17.1
+  spends its byte budget on the missing routing rows, which is the same finding at a smaller
+  scale.
+
 ## External review, 2026-09-13
 
 An outside review of the repository at 1.13.0 (eval 14). What it raised, and what was decided.
