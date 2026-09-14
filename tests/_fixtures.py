@@ -231,6 +231,17 @@ class MediaFixtures(unittest.TestCase):
                "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
                "-pix_fmt", "yuv420p", "-c:a", "aac", small)
         return small
+    def _vertical(self):
+        """A 1080x1920 clip: the real TikTok/Reels geometry, where the default caption size is
+        wide enough that an ordinary sentence needs four lines (eval 17)."""
+        vert = OUT / "cap_vertical.mp4"
+        if not vert.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "testsrc2=size=1080x1920:rate=30", "-f", "lavfi", "-i", "sine=f=440",
+               "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", vert)
+        return vert
+
     def _gappy(self):
         """A 12 s clip whose audio is speech-and-pause: tone for 2 s, silence for 2 s, six times
         over. The structure detectors (silence.py, metadata.py --auto-chapters) have something

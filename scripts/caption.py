@@ -40,7 +40,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from _platforms import PLATFORMS, PLATFORM_CHOICES, ass_units, resolve as resolve_platform
+from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_units,
+                        resolve as resolve_platform)
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
 from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
@@ -637,6 +638,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
     ]
     lines = []
     for start, end, text in cues:
+        raw_text = text
         # ASS Dialogue text treats a literal `{...}` as an override block -- real style/animation
         # commands, not literal characters. Cue text (from --text, an SRT, or ASR transcription --
         # all effectively user-controlled) that happens to contain braces would otherwise be
@@ -654,6 +656,13 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         elif args.animate == "slide":
             fx = "{\\fad(150,150)\\move(%d,%d,%d,%d,0,250)}" % (play_w // 2, play_h - margin + int(30 * scale), play_w // 2, play_h - margin)
         body = text
+        # --fit-size-scope cue: one size per cue, as a leading {\fsN} override. Opt-in only --
+        # see fit_size()'s docstring for why a size that changes cue to cue is not the default.
+        per_cue = getattr(args, "_fit_scope_params", None)
+        if per_cue:
+            own = fit_size([raw_text], **per_cue)["size"]
+            if own != args.size:
+                fx += "{\\fs%d}" % int(round(own * scale))
         if args.karaoke:
             # split each line into words and give every word an equal share of the cue (\k is in centiseconds)
             dur_cs = max(1, int(round((end - start) * 100)))
@@ -895,6 +904,15 @@ def main() -> int:
     emo.add_argument("--emoji-max", type=int, default=60,
                      help="most emoji overlays one run may build (default 60)")
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
+    sty.add_argument("--fit-size", choices=["auto", "on", "off"], default="auto",
+                     help="shrink the caption size until the cue fits --max-lines, BEFORE splitting it: "
+                          "'auto' (default) only when no --size was given, 'on' always, 'off' for 1.16 behaviour")
+    sty.add_argument("--min-size", type=int, default=None,
+                     help="smallest size --fit-size may use, in ASS points (default 13 = 4.5%% of the frame height, "
+                          "the legibility floor)")
+    sty.add_argument("--fit-size-scope", choices=["file", "cue"], default="file",
+                     help="one fitted size for the whole file (default) or one per cue (a size that changes "
+                          "cue to cue reads as a mistake, so it is opt-in)")
     sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue (default 1.0)")
     sty.add_argument("--wrap", choices=list(WRAP_MODES), default="phrase",
                      help="how a cue too wide for the safe area is broken into lines: 'phrase' (default, 1.16) never "
@@ -927,6 +945,10 @@ def main() -> int:
     if args.brand and bcap.get("box") and not args.box:
         args.box = True
     args.font = args.font or (bcap.get("font") if args.brand else None) or brand.get("font") or "DejaVu Sans"
+    # --fit-size auto shrinks only a size the skill itself chose. An explicit --size is a
+    # statement about the look and is never quietly overridden; a brand's caption size is the
+    # same kind of statement, so it counts as explicit too.
+    args._size_explicit = args.size is not None or bool(args.brand and bcap.get("size") is not None)
     args.size = args.size if args.size is not None else (bcap.get("size", 24) if args.brand else 24)
     args.color = color_hex(args.color or (bcap.get("color") if args.brand else None) or bc.get("text", "FFFFFF"))
     args.outline_color = color_hex(args.outline_color or bc.get("outline", "000000"))
@@ -966,6 +988,11 @@ def main() -> int:
     args.offset = signed_time_arg(str(args.offset), "--offset")
     if args.max_lines < 1:
         die("--max-lines must be at least 1")
+    if args.min_size is not None and args.min_size < 1:
+        die("--min-size must be at least 1", kind="input")
+    if args.min_size is not None and args.min_size > args.size:
+        die(f"--min-size {args.min_size} is larger than --size {args.size}: the floor cannot be "
+            "above the size it is a floor for", kind="input")
     if args.min_duration < 0:
         die("--min-duration cannot be negative")
 
@@ -989,19 +1016,64 @@ def main() -> int:
         if meta["video"].get("rotation") in (90, -90, 270, -270):
             play_w, play_h = play_h, play_w
 
+    args._fit_floor = args.min_size if args.min_size is not None else ass_units(MIN_CAPTION_FRACTION)
+    fit_stats: dict = {"fit_size": args.fit_size, "size_requested": args.size,
+                       "size_used": args.size, "size_floor": args._fit_floor,
+                       "size_pct_height": round(args.size * 100.0 / ASS_SCRIPT_HEIGHT, 2),
+                       "shrunk": 0, "fit_scope": args.fit_size_scope, "fit_exhausted": False}
     caption_stats: dict = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0,
                            "rebalanced": 0, "wrap": args.wrap, "phrase_breaks": 0}
+    caption_stats.update(fit_stats)
+
+    def fit_params():
+        return dict(size=fit_stats["size_requested"], min_size=args._fit_floor,
+                    max_lines=args.max_lines, play_w=play_w, play_h=play_h,
+                    mode=args.wrap, lang=args.language, scope=args.fit_size_scope)
+
+    def fit_the_size(cue_list):
+        """Shrink --size until every cue fits --max-lines, BEFORE the cue is split.
+
+        This is the whole point of the ordering: at a size the cue cannot fit, layout_cues splits
+        the sentence into consecutive cues and half of it arrives late (eval 17). The text is never
+        touched -- only the type size, and never below the legibility floor.
+        """
+        if args.fit_size == "off" or (args.fit_size == "auto" and args._size_explicit):
+            return
+        if args.mode == "mux":
+            # Soft subtitles carry no size: the player picks it. Shrinking would change nothing a
+            # viewer sees and would silently change the SRT this run writes, so the mux path is
+            # left exactly as 1.16 wrote it.
+            return
+        fit = fit_size(cue_list, **fit_params())
+        fit_stats["size_used"] = fit["size"]
+        fit_stats["shrunk"] = fit["shrunk"]
+        fit_stats["fit_exhausted"] = bool(fit["shrunk"]) and not fit["fits"]
+        fit_stats["size_pct_height"] = round(fit["size"] * 100.0 / ASS_SCRIPT_HEIGHT, 2)
+        args._fit_per_cue = fit["per_cue"] if args.fit_size_scope == "cue" else {}
+        if fit["size"] != args.size:
+            info(f"caption size {args.size} -> {fit['size']} ASS units "
+                 f"({fit_stats['size_pct_height']:.1f} % of frame height) so {fit['shrunk']} cue(s) "
+                 f"fit --max-lines {args.max_lines}; floor {args._fit_floor}")
+            args.size = fit["size"]
+        elif fit_stats["fit_exhausted"]:
+            info(f"caption size stays {args.size} ASS units: {fit['shrunk']} cue(s) still need more "
+                 f"than {args.max_lines} line(s) at the floor {args._fit_floor} and are split "
+                 "(--min-size goes smaller; `|` sets the break yourself)")
+        if args.fit_size_scope == "cue":
+            args._fit_scope_params = fit_params()
 
     def lay_out(cue_list):
         """Wrap to the safe area, split past --max-lines, lengthen to --min-duration, shift by
         --offset -- the one place every cue source goes through, so an SRT, a cue file and a
         transcript all come out equally readable."""
+        fit_the_size(cue_list)
         out, stats = layout_cues(cue_list, max_em=max_line_em(args, play_w, play_h),
                                  max_lines=args.max_lines, min_duration=args.min_duration,
                                  offset=args.offset, wrap=args.wrap, lang=args.language)
         report_layout(stats)
         caption_stats.clear()
         caption_stats.update(stats)
+        caption_stats.update(fit_stats)
         return out, any(v for k, v in stats.items() if k != "wrap")
 
     # --srt is repeatable since 1.16 (one per language, each with an optional `:lang` suffix).
