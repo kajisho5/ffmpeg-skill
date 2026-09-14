@@ -212,7 +212,7 @@ gives you:
 |---|---|
 | `bit_exact` | probe, check, scenes, look |
 | `content_equivalent` (same media, bytes may differ between encoder builds) | every encoding tool, cut, sync, report |
-| `cached` | batch (content-hash cache, re-runs skip unchanged inputs) |
+| `cached` | batch (content-hash cache, re-runs skip unchanged inputs); render **when `--cache DIR` is given** — the hint stays `content_equivalent` because that is what render is without the flag, and the cache is opt-in |
 | `environment_dependent` | verify |
 
 ## `provides`
@@ -313,6 +313,12 @@ Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
 `ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper. Pass `--static`
 to omit detection. Nothing from the environment other than those lists and the
 ffmpeg/ffprobe/python versions is printed; no environment variables, no paths.
+
+`external:whisper` is **optional** for two tools since 1.17: `caption.py`
+(`--transcribe`) and `silence.py` (`--filler --transcribe`). Neither requires
+it — both take a transcript the caller already has (`--srt`/`--words`), and
+both refuse with the same three install lines when asked to make one with no
+engine present. Whisper is never a dependency of this skill.
 
 `doctor` has three states per capability. `available` and `missing` come from a listing
 that was read; `unknown` means the listing that would prove the capability could not be
@@ -432,6 +438,18 @@ given a different type):
 | `tracks`, `subtitle_tracks` | `caption.py --mode mux` | one entry per subtitle stream in the output — `{index, file, language, title, codec, default, cues, kept_from_input}`; a stream the input already carried has `file: null` and `kept_from_input: true`. `subtitle_tracks` is the total. Every field describes the file as written, not as asked for: an MPEG-4 output reports `title: null` (the muxer stores none) and `default: true` on its first track (the muxer always enables it), each with a `notes` line |
 | `auto_chapters` | `metadata.py --auto-chapters` | `{source, min_chapter, max_chapters, proposed, kept, titles, chapters, description_block, files}`. `titles` is always `"placeholder"`: the machine-readable form of "the skill did not name these". Each chapter carries its `evidence` (`start`, `silence`, `scene`, or `silence+scene` with the span, its length and the cut time) |
 | `audiogram` | `waveform.py` (every run) | `{style, background, image, position, vis_height, platform, captions, title, stages, verified}`. `background` is `"image"` or `"color"`; `verified` is true when the render probes at the asked-for frame size, frame rate and within 0.05 s of the source audio, and is `false` under `--dry-run`, where nothing was rendered to verify |
+
+Per-tool keys added in 1.17, all additive:
+
+| key | tool | what it holds |
+|---|---|---|
+| `fit_size`, `size_requested`, `size_used`, `size_floor`, `size_pct_height`, `shrunk`, `fit_scope`, `fit_exhausted` | `caption.py` | siblings inside the same `caption` block: which mode fitted the size (`auto`/`on`/`off`), the size asked for and the size used in ASS units, the floor (13 = 4.5 % of the frame height), that size as a percentage of the frame, how many cues the shrink rescued, `file` or `cue` scope, and whether the floor was reached with cues still split |
+| `beats`, `beat_grid` | `scenes.py --beats` | the measured beat times, and `{tempo_bpm, interval, confidence, phase, onsets, supported, unsupported, method, step_s, range_bpm, usable}`. `usable` is `confidence >= --min-confidence`; a low confidence is reported, not refused — `scenes.py` measures, it does not act |
+| `snap` | `cut.py --snap beats`, `render.py` | `{mode, tolerance, confidence, tempo_bpm, moved, snapped, unchanged, source}`. `moved` has exactly one row per in/out point given (`from`, `to`, `delta`, `snapped`, `beat_index`) — a point is never added or dropped, and `to` is always either a measured beat or the caller's own value |
+| `filler`, `removed_seconds_total` | `silence.py --filler` | `{lang, source, engine, words, removed, removed_count, removed_seconds, removed_words, word_timings, list, warnings}`. The existing `removed_seconds` is unchanged in name and meaning; `removed_seconds_total` is the additive sibling |
+| `jobs`, `jobs_requested`, `wall_seconds`, `item_seconds_total`, `timed_out` | `batch.py` | the parallelism actually applied and the number asked for, the batch's wall clock, the sum of the per-item times (so the speed-up can be quoted), and whether the shared timeout budget ran out. A timed-out item carries `"skipped": "timeout"` in its result row |
+| `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. The ffmpeg version, the skill version and the contract version are part of every key, so a cache is never reused across any of them |
+
 
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one

@@ -299,3 +299,86 @@ the bad one (0.8). Penalising only the bad direction leaves the greedy width rul
 everything else, which is how the first cut of this release still split eval 16's `dl1` cue
 mid-phrase. With both directions scored, `"A third line the tool times for me"` comes out as
 `A third line / the tool times for me` — one whole phrase per line — and `dl4` is unchanged.
+
+## 1.17.0 — throughput
+
+**No new tool. The tool count stays 42.** Four candidates were considered and each landed as a
+flag on the tool that already owns the vocabulary: a `beats.py` analyser → `scenes.py --beats`
+(scenes already decodes the same PCM through `audio_envelope()`, and "where are the interesting
+times" must not be split across two scripts); a `filler.py` → `silence.py --filler` (filler
+removal *is* time-range removal — it reuses `keep_ranges()` and the identical `aselect`/`concat`
+graph, and a second tool would give the agent two ways to spell "tighten the talking"); a job
+runner → `batch.py --jobs` (batch already owns the item loop, the cache and the summary); a
+`cache.py` → `render.py --cache` (the cache key is a stage's own arguments, and only render knows
+them). Going to 43 is not a one-line change: it means `README.md` ×4, `SKILL.md` ×2 with single
+digits of headroom, `package.json`, `.claude-plugin/plugin.json`, `docs/contract.md`,
+`references/scripts.md|devices.md|gotchas.md|ci-platform-pitfalls.md`, `demos/CI.md`,
+`tests/corpus/report.md`, `tests/fixtures/mcp_tools.json`, `TOOL_META` + the reencode table +
+`provides`, and `test_docs_tool_count_matches_the_real_tool_list`. Do not re-propose any of the
+four.
+
+**The caption legibility floor is 4.5 % of the frame height, one number for every destination.**
+`ass_units(0.045) = 13` against the 288-line ASS script grid — 87 px of type on a 1920-tall
+frame. It was chosen as the smallest size that is still comfortably above the ~3.5 % where mobile
+legibility studies and the platforms' own caption UIs bottom out, *not* fitted to the eval cues;
+that every eval-17 cue happens to fit two lines at exactly 13 is stated in the code comment
+rather than hidden. There is no per-platform floor table, because nothing per-platform has been
+measured and a table of seven guesses reads as seven measurements. `_platforms.PLATFORMS[name]`
+can gain a `min_size` the day one is measured; until then one honest number.
+
+**One fitted size per file, not per cue.** A caption track whose type size changes from cue to
+cue is the single most visible "this was machine-made" artefact, and it defeats the 1.12
+readability work — one measured line width per file is also what makes the wrap regression lock
+mean anything. `--fit-size-scope cue` exists for the one outlier cue that would otherwise shrink
+a ten-minute file, and it is opt-in and named in the result.
+
+**`--fit-size auto`, not `on` and not `off`.** With `off` as the default the feature would ship
+dark: no agent passes a flag it has no reason to know about, and the defect eval 17 measured is
+precisely that the *default* path produces four-line cues — eval 18 would measure 1.16.0 again.
+With `on` as the default, a caller who deliberately set `--size 30` for a brand look would
+silently get 21, which breaks "the same behaviour for the same input and arguments" for a real,
+stated argument. `auto` changes only the path where the skill itself chose the number, and the
+CHANGELOG carries the behaviour line the stability guarantee requires. A `brand.json` caption
+size counts as stated for the same reason `--size` does: it is a decision about the look that
+somebody wrote down.
+
+**`like`, `tipo`, `cioè` and `なんか` are not ordinary filler words.** They are discourse markers:
+grammatical in most sentences, so removing them cuts meaning rather than noise — a judgement
+about content, which this skill does not make. The first three are out of the default lists and
+reachable with `--filler-extra`, which says what adding one costs. `なんか` is *in* the `ja` list,
+because it is the most common Japanese filler and leaving it out makes the flag useless for
+Japanese; it is orthographically identical to the pronoun use, so every run that removes one
+warns and `--filler-keep なんか` takes it back out. The asymmetry is deliberate: English has
+usable fillers without `like`, Japanese does not have usable fillers without `なんか`.
+
+**There is no heuristic filler fallback without word timings.** "Remove the 0.3 s blips that look
+like an 'um'" would cut real speech — short words, breaths, the start of a sentence — and it
+would do so silently, with no way for the caller to check. A filler word is removed only where a
+speech engine measured a `start < end` pair for it; without timings the tool refuses and names
+`--words` and `--transcribe`. This is the same rule as `--snap beats`: never act on a
+measurement that was not made.
+
+**The ffmpeg version is inside the render cache key.** A cached artifact is a file this skill did
+not produce in *this* run, and the only honest way to reuse one is to be certain the same code
+would have produced it. The ffmpeg version line, the skill version and the contract version are
+therefore part of the key, so a different build simply *misses* rather than being asked to trust
+a file it did not write — no "is this close enough" comparison, no staleness heuristic, and no
+way for a filter default that changed between builds to leak into a delivery. The cache is also
+opt-in with no default directory: a cache appearing on someone's disk unasked contradicts the
+"a plan leaves nothing behind" posture the whole tool holds.
+
+**`batch.py --jobs` is capped at `min(N, cpu_count, 8)`.** Every item is itself an ffmpeg process
+that already threads across cores; beyond a few concurrent x264 encodes the jobs contend and
+wall-clock stops improving while memory does not. A number above the cap is *clamped with a note*
+rather than refused — refusing a number that is merely optimistic is unhelpful, and the result
+reports both `jobs` and `jobs_requested` so a report claiming "64 jobs" is checkable. The
+`--timeout` stays the whole batch's budget, not each item's, which is why the pool is topped up
+to `jobs` in flight rather than submitted all at once: a deadline that every item has already
+passed cannot stop anything.
+
+**`--beats`, `--filler`, `--jobs` and `--cache` get no SKILL.md request row in 1.17.0.** The
+existing rows already route ("cut out the pauses" → `silence.py`, "do this to every file in the
+folder" → `batch.py`, "a 60 s highlight" → `scenes.py`), `references/scripts.md` carries the
+flags, and SKILL.md has single digits of headroom under its 30,000-byte budget. Only the caption
+size got a row, because that one is a *different answer to a request the table already claims to
+route*. If eval 18 shows agents missing `--filler` or `--snap beats`, 1.18.0 buys the rows.

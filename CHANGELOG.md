@@ -4,7 +4,64 @@
 
 ## Unreleased
 
+_1.17.0 — throughput, plus the caption-size half of the eval-17 finding. The release
+workflow turns this heading into the version number._
+
+### Added
+
+- **`caption.py --fit-size auto|on|off`, `--min-size N`, `--fit-size-scope file|cue`.** The caption
+  size is fitted to the cue *before* the cue is split. At a platform caption size (24 ASS units,
+  about six em per line at 1080x1920) an ordinary sentence needs four lines, so `--max-lines 2`
+  cut it into consecutive cues and half of it arrived late — the size, not the breaker, was what
+  did not fit. `--min-size` defaults to `ass_units(0.045) = 13`, the 4.5 %-of-frame-height
+  legibility floor, one floor for every destination. New keys inside the existing `caption` block:
+  `fit_size`, `size_requested`, `size_used`, `size_floor`, `size_pct_height`, `shrunk`,
+  `fit_scope`, `fit_exhausted`. The caption text is never rewritten, shortened or paraphrased to
+  make it fit; below the floor the cue is split exactly as before and `fit_exhausted` says so.
+- **`scenes.py --beats`, `--beat-step`, `--beat-range`, `--min-confidence`.** The measured beat
+  grid — onset flux, median+MAD peak picking, an autocorrelation tempo with octave
+  disambiguation, and a confidence that is half how far the winning lag stands above the others
+  and half the fraction of onsets that land on the grid. New keys `beats` and `beat_grid`. With
+  `--beats` the file is decoded once and both envelopes come from that pass.
+- **`cut.py --snap beats`, `--snap-tolerance`, `--snap-source`, `--min-confidence`.** In/out points
+  move to the nearest measured beat before the keyframe decision. Below the confidence threshold
+  the run refuses and names the measured number and `--snap none`: a cut point may move to a
+  measured grid point and may not appear from one. New key `snap`. `render.py` forwards a
+  project's `"snap": {"to": "beats", ...}` and reports what came back.
+- **`silence.py --filler`** and its family (`--filler-lang`, `--filler-words`, `--filler-extra`,
+  `--filler-keep`, `--filler-pad`, `--words`, `--transcribe`, `--filler-list`, `--max-cuts`).
+  Filler words are removed through the existing `keep_ranges()`/`aselect` graph — and only where a
+  speech engine measured a start/end pair for the word. Built-in lists for en, ja, es, de, fr, pt
+  and it; `like`, `tipo` and `cioè` are deliberately not in them (discourse markers are not
+  disfluencies) and are reachable with `--filler-extra`. New keys `filler` and
+  `removed_seconds_total`; `removed_seconds` is unchanged. Whisper stays optional for this tool
+  exactly as it is for `caption.py`.
+- **`batch.py --jobs N|auto`.** Parallel items under one shared `--timeout` budget, capped at
+  `min(N, cpu_count, 8)` with the applied value reported. The per-item table keeps its shape and
+  its order, and each item's log is flushed in file order. New keys `jobs`, `jobs_requested`,
+  `wall_seconds`, `item_seconds_total`, `timed_out`.
+- **`render.py --cache DIR` and `--from STAGE`.** An opt-in stage cache keyed on the stage, its
+  arguments, its inputs' content hashes and the ffmpeg, skill and contract versions, so a cache is
+  never reused across any of them. New key `cache`. There is no default cache directory.
+
+### Changed
+
+- `caption.py` now fits the caption size to the cue before splitting it when the size was not
+  stated (`--fit-size auto`, the default). A run that passed `--size` explicitly, or that took a
+  size from a `brand.json`, is unchanged; `--fit-size off` restores 1.16.1 byte-for-byte (a pinned
+  ASS fixture asserts it). This changes the rendered ASS for platform caption runs that took the
+  default size — the defect eval 17 measured.
+- The optional local speech-to-text bridge and the SRT reader/writer moved from `caption.py` into
+  `scripts/_common/asr.py` and are re-exported through the `_common` facade, so `silence.py
+  --filler --transcribe` shares one engine probe and one "no engine found" message.
+  `caption.parse_srt`, `caption.transcribe` and `caption.whisper_word_timings` are unchanged as
+  names; `caption.py --help` is byte-identical.
+
 ### Fixed
+
+- `render.py` left its auto-named work directory behind after a failed render: a function-local
+  `import shutil` shadowed the module-level one and the `atexit` cleanup raised `NameError`.
+
 
 - **Caption breaking, from eval 17.** A Thai run is no longer broken inside: Thai writes no space
   inside a phrase and the wrapper has no dictionary, so every character-level break it took landed

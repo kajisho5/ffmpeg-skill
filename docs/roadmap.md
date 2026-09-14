@@ -20,7 +20,9 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 The released version today is **1.16.0**, shipped and evaluated: **eval 17**
 (`evals/results/iteration-17.json`) graded it on the 90-prompt set, the 82 plus the eight
 long-form prompts. It found the caption breaker does not get to act at the platform caption
-sizes (see the 1.16.0 section); 1.16.1 below is the patch. Everything after that is planned.
+sizes (see the 1.16.0 section); 1.16.1 is the patch, and **1.17.0 below is shipped with its
+eval pending** — it carries the size fitter that is the rest of that answer. Everything after
+1.17.0 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -35,7 +37,8 @@ sizes (see the 1.16.0 section); 1.16.1 below is the patch. Everything after that
 | refactor after 1.15.0 | shipped, eval pending | contract + MCP snapshots and every `--help` byte-identical; 323/323 cases |
 | 1.16.0 | shipped + evaluated | eval 17 at 1.16.0 (`iteration-17.json`); contract and MCP snapshots additive only; tool count still 42 |
 | 1.16.1 | shipped, eval pending | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 |
-| 1.17.0 → 1.21.0, 2.0.0 | planned | — |
+| 1.17.0 | shipped, eval pending | tool count still 42; contract and MCP snapshots additive only; the eval-17 caption size answered by `caption.py --fit-size`; eval 18 |
+| 1.18.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
@@ -299,25 +302,39 @@ came out byte-identical, as did `--help` for all 42 tools.
   `overlong` and names the fix) and, in 1.17.0, a caption size that fits the cue before the
   cue is split.
 
-## 1.17.0 — throughput (planned)
+## 1.17.0 — throughput (shipped, eval pending)
 
-- `silence.py --filler` removes filler words when a transcript is available (whisper stays
-  optional: no transcript, no filler removal, and the tool says so).
-- **Beat-synced cuts**: measured onsets from the music bed as a cut grid `cut.py`/`render.py`
-  can snap to; the beat list is reported so the caller can see what it snapped to.
-- `batch.py --jobs N` runs independent items in parallel under one `--timeout` budget;
-  resumable (`--resume` skips items whose output verified); `--watch` folders.
-- `render.py` caches unchanged stages by content hash of inputs and stage arguments, so
-  changing the export preset re-runs export only; `--stop-after` and `--from STAGE`.
-- Eval 18 measures wall-clock and encode counts on the delivery and batch prompts (the number,
-  not just pass/fail).
+- **Done. `caption.py --fit-size`**: the caption size is fitted to the cue *before* the cue is
+  split. This is the rest of the eval-17 answer and belongs at the top of this section: the
+  breaker was never the problem at a platform caption size, the size was. `auto` (the default)
+  shrinks only a size the skill itself chose, `off` is 1.16.1 byte for byte, `--min-size` is the
+  4.5 %-of-frame-height floor, `--fit-size-scope cue` is the opt-in per-cue form. The text is
+  never rewritten to make it fit.
+- **Done. `silence.py --filler`** removes filler words when word timings are available (whisper
+  stays optional: no transcript, no filler removal, and the tool says so, with the install lines).
+- **Done. Beat-synced cuts**: `scenes.py --beats` measures the grid, `cut.py --snap beats` and
+  `render.py`'s project `"snap"` move in/out points onto it, and below `--min-confidence` the
+  cut refuses rather than snapping to a grid nothing in the audio supports. The beat list, the
+  tempo and the confidence are reported so the caller can see what it snapped to.
+- **Done. `batch.py --jobs N`** runs independent items in parallel under one `--timeout` budget.
+  `--watch` composes with it. (`--resume` was not built: the existing content-hash cache already
+  skips items whose output is there, so a second flag for it would be a second spelling.)
+- **Done. `render.py --cache DIR`** keys unchanged stages on the content hash of their inputs and
+  arguments plus the ffmpeg, skill and contract versions, so changing the export preset re-runs
+  export only; `--from STAGE` alongside the existing `--stop-after`. Opt-in: no default directory.
+- **Eval 18** measures wall-clock and encode counts on the delivery and batch prompts (the number,
+  not just pass/fail), and must also measure: `size_used` on the `cw`/`dl` cues at a platform
+  caption size, the beat-grid refusal on speech-only audio, the filler refusal when whisper is
+  absent, and that `Done (partially):` no longer appears as a report label.
 
 ## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
 
 - `scenes.py --shots` labels each shot static / pan / motion by measured optical flow;
   `--audio-peaks` and `--speech` (speech-vs-music energy ratio) as separate lists.
 - `silence.py --speech-aware` keeps breaths shorter than `--min-silence` inside a sentence and
-  cuts only between sentences (measured pauses), with the cut list as EDL.
+  cuts only between sentences (measured pauses), with the cut list as EDL. It composes with 1.17's
+  `--filler`: one removal list, one graph — sentence-boundary pauses and timed filler words go
+  through the same `keep_ranges()`.
 - `cropdetect.py --motion-centre` reports the motion centroid per second for a 9:16 reframe
   that the calling agent decides on (the skill reports the number; it does not pick the subject).
 - `sync.py` accepts 3+ sources (one reference, N seconds) and writes one offsets JSON;
