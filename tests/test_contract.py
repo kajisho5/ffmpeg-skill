@@ -2961,7 +2961,8 @@ class DoctorDetectionTests(unittest.TestCase):
                 "cues.txt": "0:00-0:03 hello\n"}})
             recipe = json.loads((outdir / "batch.json").read_text(encoding="utf-8"))
             self.assertTrue(Path(recipe["output_dir"]).is_absolute())
-            self.assertEqual(Path(recipe["output_dir"]), outdir / "out")
+            # the fixture resolves the path (macOS tempdirs live under a /var -> /private/var symlink)
+            self.assertEqual(Path(recipe["output_dir"]), (outdir / "out").resolve())
             self.assertEqual((outdir / "cues.txt").read_text(encoding="utf-8"), "0:00-0:03 hello\n",
                              "a non-JSON fixture is written exactly as the prompt states it")
             self.assertEqual(len(written), 2)
