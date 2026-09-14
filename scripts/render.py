@@ -65,6 +65,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION, ffmpeg_version
+import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
 
@@ -429,10 +430,14 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         # The destination is where this stage's answer goes, not part of the question: hashing it
         # would make a second run with the first run's output already on disk miss every time.
         key_args = ["<out>" if a == dest else a for a in full]
-        key = cache_key(stage, script, key_args, inputs)
+        key = cache_key(stage, script, key_args, inputs, dest)
         if cache_lookup(stage, key, dest):
             CACHE["hits"].append(stage)
             info(f"→ {script} {stage}: served from --cache")
+            # No child ran, so there is no document: say so rather than leaving the PREVIOUS
+            # child's document standing, which a caller reading _LAST_DOC would misattribute.
+            _LAST_DOC.clear()
+            _LAST_DOC["cached"] = True
             return dest
         CACHE["misses"].append(stage)
         _refuse_uncached_earlier_stage(stage)
@@ -475,8 +480,15 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
 STAGE_ORDER = ("clips", "audiogram", "join", "silence", "fit", "captions", "graphics",
                "overlays", "audio", "loudness", "export", "chapters")
 
-CACHE: Dict[str, Any] = {"dir": None, "ffmpeg": None, "hits": [], "misses": [],
-                         "saved_seconds": 0.0, "entries": 0, "would_hit": []}
+def _fresh_cache() -> "Dict[str, Any]":
+    return {"dir": None, "ffmpeg": None, "hits": [], "misses": [], "saved_seconds": 0.0,
+            "entries": 0, "would_hit": [], "from": None}
+
+
+# Module-level so sh() can reach it without threading a parameter through every stage. main()
+# resets it on entry, so two renders in one process (a test session, an embedding caller) do not
+# inherit each other's hit/miss lists.
+CACHE: Dict[str, Any] = _fresh_cache()
 
 
 def _content_hash(path: str) -> str:
@@ -488,17 +500,49 @@ def _content_hash(path: str) -> str:
         return "missing"
 
 
-def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[str]") -> str:
+def ffmpeg_banner() -> str:
+    """The whole `ffprobe -version` first line, not just major.minor.
+
+    Two 7.1.x builds with different libx264 produce different bytes from the same command, and
+    the cache exists to hand back bytes. major.minor cannot tell them apart, so the banner --
+    which carries the build string and the configuration's version suffix -- is what goes in the
+    key. Unreadable falls back to the parsed pair, which still separates the major releases.
+    """
+    try:
+        out = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, timeout=20).stdout
+        first = (out or "").strip().splitlines()
+        if first:
+            return first[0].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ".".join(str(n) for n in ffmpeg_version())
+
+
+def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[str]",
+              dest: "Optional[str]" = None) -> str:
     """sha1 of a canonical description of exactly what this stage is about to do.
 
-    The ffmpeg version line and the skill version are IN the key, deliberately: a different
-    build simply misses rather than being asked to trust an artifact it did not write, and a
-    stage whose implementation changed must not serve an old one back.
+    The ffmpeg build banner and the skill version are IN the key, deliberately: a different build
+    simply misses rather than being asked to trust an artifact it did not write, and a stage whose
+    implementation changed must not serve an old one back.
+
+    `child_args()` is in the key too, and that is not a detail. render.py appends it to every
+    stage command AFTER the arguments the stage itself built, and it carries `--fast` -- which
+    rewrites the child's preset to veryfast. Without it in the key, `render --cache C --fast`
+    stored a draft and the next `render --cache C` served that draft back as the delivery, with
+    `cache.hits` presenting it as a legitimate reuse.
+
+    The output's extension is in the key as well (#15): the artifact is stored as `<key><ext>`
+    while the sidecar is `<key>.json`, so two runs differing only in container would otherwise
+    share one sidecar and invalidate each other on every run.
     """
     payload = {
         "stage": stage, "tool": script,
         "args": [_content_hash(str(a)) if os.path.exists(str(a)) else str(a) for a in argv],
         "inputs": [{"hash": _content_hash(p)} for p in inputs],
+        "child": [a for a in child_args() if a != "--dry-run"],
+        "codec": STATE.codec, "ext": Path(dest).suffix if dest else None,
         "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -777,6 +821,8 @@ def main() -> int:
     platform_args: List[str] = ["--platform", dest] if dest in PLATFORMS and PLATFORMS[dest].get("frame") else []
     stages_done: List[str] = []
 
+    CACHE.clear()
+    CACHE.update(_fresh_cache())
     if args.cache:
         cdir = Path(args.cache)
         try:
@@ -787,7 +833,7 @@ def main() -> int:
         except OSError as exc:
             die(f"--cache {args.cache}: not a writable directory ({exc})", kind="output")
         CACHE["dir"] = str(cdir)
-        CACHE["ffmpeg"] = ".".join(str(n) for n in ffmpeg_version())
+        CACHE["ffmpeg"] = ffmpeg_banner()
         CACHE["entries"] = len(list(cdir.glob("*.json")))
     CACHE["from"] = args.from_stage
     if args.from_stage and not args.cache:
@@ -799,7 +845,7 @@ def main() -> int:
     # the refusal both live in cut.py -- render forwards the request and reports what came back,
     # so a project that does not name "snap" builds the command line 1.16 built.
     snap_spec = proj.get("snap") or {}
-    snap_report: Optional[Dict[str, Any]] = None
+    snap_reports: List[Dict[str, Any]] = []
     if snap_spec and str(snap_spec.get("to") or "") not in ("", "none", "beats"):
         die(f'snap.to: only "beats" (or "none") is a beat grid this skill can measure, got '
             f'{snap_spec.get("to")!r}', kind="input")
@@ -831,8 +877,15 @@ def main() -> int:
                 if clip_snap.get("source"):
                     argv += ["--snap-source", rel(clip_snap["source"])]
             sh("cut.py", *argv, stage="clips")
-            if _LAST_DOC.get("snap") and snap_report is None:
-                snap_report = _LAST_DOC["snap"]
+            if _LAST_DOC.get("snap"):
+                snap_reports.append({"clip": i, **_LAST_DOC["snap"]})
+            elif _LAST_DOC.get("cached") and str(clip_snap.get("to") or "none") == "beats":
+                # The cut is the one the cache holds, so it WAS snapped -- the moves are simply
+                # not re-measured. Saying `snap: null` here would report the opposite.
+                snap_reports.append({"clip": i, "mode": "beats", "source": "cache",
+                                     "note": "this clip came from --cache; it was snapped when "
+                                             "it was first rendered and the moves are in that "
+                                             "run's result"})
         else:
             part = src
         if c.get("speed"):
@@ -1142,6 +1195,12 @@ def main() -> int:
             cache_report["would_hit"] = CACHE["would_hit"]
         info(f"cache: {len(CACHE['hits'])} hit(s) ({', '.join(CACHE['hits']) or '-'}), "
              f"{len(CACHE['misses'])} miss(es) ({', '.join(CACHE['misses']) or '-'})")
+    # One entry per snapped clip, `clip` naming which. A single-clip project keeps the shape a
+    # caller reads today by also carrying the first entry's keys at the top level.
+    snap_report: Optional[Dict[str, Any]] = None
+    if snap_reports:
+        snap_report = dict(snap_reports[0])
+        snap_report["clips"] = snap_reports
     emit(output, stages=stages_done, check=check_result, snap=snap_report, cache=cache_report,
          verification=[{"step": "check", "ok": True, "platform": ck["platform"]}] if check_result else [])
     return 0

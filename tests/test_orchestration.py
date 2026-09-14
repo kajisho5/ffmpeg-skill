@@ -34,6 +34,31 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(data["snap"]["snapped"], 2)
         self.assertIn("clips", data["stages"])
 
+    def test_render_snap_covers_every_clip_and_survives_a_cache_hit(self):
+        """Only the first clip's moves were reported, and a cached clips stage reported
+        snap: null although the clips had been snapped."""
+        cdir = OUT / "rcache_snap"
+        shutil.rmtree(cdir, ignore_errors=True)
+        proj = OUT / "snap_multi.json"
+        proj.write_text(json.dumps({
+            "output": str(OUT / "snap_multi.mp4"),
+            "snap": {"to": "beats", "tolerance": 0.12},
+            "clips": [{"src": str(self._beats()), "in": "2.03", "out": "5.01"},
+                      {"src": str(self._beats()), "in": "6.03", "out": "9.01"}],
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
+        self.assertEqual(len(data["snap"]["clips"]), 2)
+        self.assertEqual([c["clip"] for c in data["snap"]["clips"]], [0, 1])
+        self.assertTrue(all(c["snapped"] for c in data["snap"]["clips"]))
+        self.assertEqual(data["snap"]["mode"], "beats")     # the shape a caller reads today
+        # second run: the clips come from the cache, and the report must not claim they were
+        # never snapped
+        again = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
+        self.assertIn("clips", again["cache"]["hits"])
+        self.assertIsNotNone(again["snap"])
+        self.assertEqual(len(again["snap"]["clips"]), 2)
+        self.assertEqual(again["snap"]["clips"][0]["source"], "cache")
+
     def test_render_without_snap_builds_the_same_command_as_before(self):
         proj = OUT / "nosnap_project.json"
         proj.write_text(json.dumps({
@@ -817,6 +842,44 @@ class OrchestrationTests(MediaFixtures):
         render.CACHE["ffmpeg"] = "7.1"
         self.assertEqual(render.cache_key("export", "export.py", argv, []), a)
         self.assertNotEqual(a, render.cache_key("export", "export.py", argv + ["--crf", "20"], []))
+
+    def test_render_cache_never_serves_a_fast_draft_as_the_delivery(self):
+        """--fast rewrites every child's preset to veryfast, and child_args() appends it AFTER
+        the arguments the stage built -- so it was outside the key. A cached draft was handed
+        back to a run that did not ask for a draft, with cache.hits calling it a legitimate
+        reuse."""
+        cdir = OUT / "rcache_fast"
+        shutil.rmtree(cdir, ignore_errors=True)
+        proj = self._cache_project("cache_fast")
+        draft = json.loads(script("render.py", proj, "--cache", cdir, "--fast",
+                                  "--json").stdout)
+        self.assertEqual(draft["cache"]["hits"], [])
+        final = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
+        self.assertEqual(final["cache"]["hits"], [],
+                         "a --fast draft must not be served to a run that did not ask for one")
+        self.assertGreater(len(final["commands"]), 0)
+        # ... and asking for the draft again does hit
+        again = json.loads(script("render.py", proj, "--cache", cdir, "--fast", "--json").stdout)
+        self.assertTrue(again["cache"]["hits"])
+
+    def test_render_cache_key_covers_the_ffmpeg_build_and_the_container(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        render = importlib.import_module("render")
+        argv = ["in.mp4", "-o", "<out>", "--preset", "x"]
+        base = render.cache_key("export", "export.py", argv, [], "out.mp4")
+        self.assertNotEqual(base, render.cache_key("export", "export.py", argv, [], "out.mkv"),
+                            "the container is part of what the stage produces")
+        # the banner, not major.minor: two 7.1.x builds differ in it
+        self.assertRegex(render.ffmpeg_banner(), r"version")
+        saved = render.CACHE.get("ffmpeg")
+        try:
+            render.CACHE["ffmpeg"] = "ffprobe version 7.1.1-0ubuntu1"
+            a = render.cache_key("export", "export.py", argv, [], "out.mp4")
+            render.CACHE["ffmpeg"] = "ffprobe version 7.1.2-0ubuntu1"
+            self.assertNotEqual(a, render.cache_key("export", "export.py", argv, [], "out.mp4"))
+        finally:
+            render.CACHE["ffmpeg"] = saved
 
     def test_render_cache_writes_nothing_under_dry_run(self):
         cdir = OUT / "rcache_dry"

@@ -42,8 +42,9 @@ workflow turns this heading into the version number._
   its order, and each item's log is flushed in file order. New keys `jobs`, `jobs_requested`,
   `wall_seconds`, `item_seconds_total`, `timed_out`.
 - **`render.py --cache DIR` and `--from STAGE`.** An opt-in stage cache keyed on the stage, its
-  arguments, its inputs' content hashes and the ffmpeg, skill and contract versions, so a cache is
-  never reused across any of them. New key `cache`. There is no default cache directory.
+  arguments, its inputs' content hashes, the flags render forwards to its children (`--fast`,
+  `--codec`, …), the output's extension and the ffmpeg build banner plus the skill and contract
+  versions, so a cache is never reused across any of them. New key `cache`. There is no default cache directory.
 
 ### Changed
 

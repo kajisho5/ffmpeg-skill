@@ -106,7 +106,12 @@ tolerance is returned unchanged, and no point is ever invented. Three
 Result: `snap.mode`, `snap.tolerance`, `snap.confidence`, `snap.tempo_bpm`,
 `snap.moved` (one row per point, with `from`/`to`/`delta`/`snapped`),
 `snap.snapped`, `snap.unchanged`, `snap.grid`, `snap.grid_points`, and
-`snap.source` (`"measured"` or the path). A `--snap-source` document that does
+`snap.source` (`"measured"` or the path). In a `render.py` result, `snap.clips`
+carries one entry per snapped clip with `clip` naming its index, and the first
+entry's keys are repeated at the top level for a single-clip project. A clip
+served from `--cache` was snapped when it was first rendered, and says so
+(`source: "cache"`) rather than reporting `snap: null`. A `--snap-source`
+document that does
 not carry `beat_grid.supported_beats` (one written before 1.17) is refused
 rather than treated as if every grid point were supported, as is one whose
 `tempo_bpm` is null while it lists beats.
@@ -574,8 +579,13 @@ exactly the same arguments and the same inputs. Opt-in only: **there is no
 default cache directory** — one appearing on someone's disk unasked would
 contradict this tool's "a plan leaves nothing behind" posture. The key is a
 sha1 over the stage name, the tool, its arguments (every existing path replaced
-by its content hash), the input hashes, **the ffmpeg version, the skill version
-and the contract version**. Those last three are in the key deliberately: a
+by its content hash), the input hashes, the **forwarded** flags (`--fast`,
+`--overwrite`, `--timeout`, `--codec`), the output's extension, and **the ffmpeg
+build banner, the skill version and the contract version**. `--fast` matters as
+much as any of them: it rewrites every child's preset to `veryfast`, so without
+it in the key a `--cache --fast` draft would be served back to a later run that
+asked for the delivery. The banner rather than `major.minor` because two 7.1.x
+builds with different libx264 produce different bytes from the same command. Those last three are in the key deliberately: a
 different build simply *misses* rather than being asked to trust a file it did
 not write, and a stage whose implementation changed cannot serve back an
 artifact the old one produced. Each entry is `DIR/<key><ext>` plus a

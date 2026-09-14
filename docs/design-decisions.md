@@ -360,7 +360,9 @@ measurement that was not made.
 
 **The ffmpeg version is inside the render cache key.** A cached artifact is a file this skill did
 not produce in *this* run, and the only honest way to reuse one is to be certain the same code
-would have produced it. The ffmpeg version line, the skill version and the contract version are
+would have produced it. The ffmpeg build banner (the whole `ffprobe -version` first line, not `major.minor`: two 7.1.x
+builds with different libx264 write different bytes), the skill version, the contract version and
+the flags render forwards to its children are
 therefore part of the key, so a different build simply *misses* rather than being asked to trust
 a file it did not write — no "is this close enough" comparison, no staleness heuristic, and no
 way for a filter default that changed between builds to leak into a delivery. The cache is also
