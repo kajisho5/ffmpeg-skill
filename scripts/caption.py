@@ -300,7 +300,8 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
 
 def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float], max_lines: int,
                 min_duration: float, offset: float, wrap: str = "phrase",
-                lang: Optional[str] = None) -> Tuple[List[Tuple[float, float, str]], dict]:
+                lang: Optional[str] = None, per_cue_em: Optional[List[Optional[float]]] = None,
+                per_cue_size: Optional[List[int]] = None) -> Tuple[List[Tuple[float, float, str]], dict]:
     """Shift, wrap, split and lengthen cues so they can actually be read.
 
     `offset` moves every cue (a transcript that runs early/late); `max_em` wraps each cue to the
@@ -308,11 +309,25 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
     a cue needing more than `max_lines` lines is split into consecutive cues sharing its time in
     proportion to their text; a cue shorter than `min_duration` is lengthened, never past the next
     cue's start. Returns the new cues and a count of what changed.
+
+    `per_cue_em` (--fit-size-scope cue) gives cue i its OWN line budget instead of the file's:
+    a cue drawn at a larger size has a narrower line in em, and wrapping it to the file-wide
+    budget -- which is the budget of the SMALLEST size -- produced lines that overflowed the
+    frame when they were then drawn large. `per_cue_size` rides along so the caller knows which
+    size each OUTPUT cue belongs to after splits have renumbered them; it comes back as
+    `stats["cue_sizes"]`, one entry per returned cue.
     """
     stats = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0, "rebalanced": 0,
              "wrap": wrap, "phrase_breaks": 0}
     staged: List[Tuple[float, float, str]] = []
-    for start, end, text in cues:
+    staged_sizes: List[Optional[int]] = []
+    for cue_index, (start, end, text) in enumerate(cues):
+        own_em = max_em
+        own_size = None
+        if per_cue_em is not None and cue_index < len(per_cue_em):
+            own_em = per_cue_em[cue_index]
+        if per_cue_size is not None and cue_index < len(per_cue_size):
+            own_size = per_cue_size[cue_index]
         if offset:
             start, end = start + offset, end + offset
             if end <= 0:
@@ -320,14 +335,14 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
                 continue
             start = max(0.0, start)
             stats["shifted"] += 1
-        if max_em and max_em > 0:
+        if own_em and own_em > 0:
             # one greedy fill per cue, three answers off it: what gets burnt in, what the
             # greedy wrap would have given (`rebalanced`) and what 1.15's wrap would have
             # given (`phrase_breaks`). Three wrap_text() calls re-ran the atomiser each time.
-            lines, greedy, measured = wrap_variants(text, max_em, mode=wrap, lang=lang)
+            lines, greedy, measured = wrap_variants(text, own_em, mode=wrap, lang=lang)
             if lines != [l for l in text.split("\n") if l.strip()]:
                 stats["wrapped"] += 1
-            if any(text_width_em(l) > max_em for l in lines):
+            if any(text_width_em(l) > own_em for l in lines):
                 # a run with no break point the wrapper may use (a long word, a Thai phrase
                 # without spaces) stays long rather than chopped: say so, and name the fix
                 stats["overlong"] = stats.get("overlong", 0) + 1
@@ -343,11 +358,13 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
                 for chunk, weight in zip(chunks, weights):
                     seg = (end - start) * weight / total_w
                     staged.append((t, min(end, t + seg), "\n".join(chunk)))
+                    staged_sizes.append(own_size)
                     t += seg
                 stats["split"] += len(chunks) - 1
                 continue
             text = "\n".join(lines)
         staged.append((start, end, text))
+        staged_sizes.append(own_size)
     out: List[Tuple[float, float, str]] = []
     for i, (start, end, text) in enumerate(staged):
         if min_duration and end - start < min_duration:
@@ -357,6 +374,8 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
                 stats["extended"] += 1
                 end = new_end
         out.append((start, end, text))
+    if per_cue_size is not None:
+        stats["cue_sizes"] = staged_sizes
     return out, stats
 
 
@@ -462,8 +481,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     lines = []
-    for start, end, text in cues:
-        raw_text = text
+    for cue_index, (start, end, text) in enumerate(cues):
         # ASS Dialogue text treats a literal `{...}` as an override block -- real style/animation
         # commands, not literal characters. Cue text (from --text, an SRT, or ASR transcription --
         # all effectively user-controlled) that happens to contain braces would otherwise be
@@ -483,11 +501,13 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         body = text
         # --fit-size-scope cue: one size per cue, as a leading {\fsN} override. Opt-in only --
         # see fit_size()'s docstring for why a size that changes cue to cue is not the default.
-        per_cue = getattr(args, "_fit_scope_params", None)
-        if per_cue:
-            own = fit_size([raw_text], **per_cue)["size"]
-            if own != args.size:
-                fx += "{\\fs%d}" % int(round(own * scale))
+        # The size is the one THIS cue was laid out at, carried through layout_cues; re-measuring
+        # here would measure the post-layout text (already carrying the wrap's newlines), which
+        # is a different string from the one the fit was computed on.
+        own_sizes = getattr(args, "_fit_sizes_out", None) or []
+        own = own_sizes[cue_index] if cue_index < len(own_sizes) else None
+        if own and own != args.size:
+            fx += "{\\fs%d}" % int(round(own * scale))
         if args.karaoke:
             # split each line into words and give every word an equal share of the cue (\k is in centiseconds)
             dur_cs = max(1, int(round((end - start) * 100)))
@@ -874,7 +894,6 @@ def main() -> int:
         fit_stats["shrunk"] = fit["shrunk"]
         fit_stats["fit_exhausted"] = bool(fit["shrunk"]) and not fit["fits"]
         fit_stats["size_pct_height"] = round(fit["size"] * 100.0 / ASS_SCRIPT_HEIGHT, 2)
-        args._fit_per_cue = fit["per_cue"] if args.fit_size_scope == "cue" else {}
         if fit["size"] != args.size:
             info(f"caption size {args.size} -> {fit['size']} ASS units "
                  f"({fit_stats['size_pct_height']:.1f} % of frame height) so {fit['shrunk']} cue(s) "
@@ -885,7 +904,13 @@ def main() -> int:
                  f"than {args.max_lines} line(s) at the floor {args._fit_floor} and are split "
                  "(--min-size goes smaller; `|` sets the break yourself)")
         if args.fit_size_scope == "cue":
-            args._fit_scope_params = fit_params()
+            # Each cue is laid out at ITS OWN size, not at the file minimum. A cue drawn larger
+            # has a NARROWER line in em, so wrapping everything to the minimum size's (widest)
+            # budget and then drawing some cues large put lines off the side of the frame.
+            args._fit_cue_em = [line_em_for_size(fit["per_cue"].get(i, fit["size"]),
+                                                 play_w, play_h)
+                                for i in range(len(cue_list))]
+            args._fit_cue_size = [fit["per_cue"].get(i, fit["size"]) for i in range(len(cue_list))]
 
     def lay_out(cue_list):
         """Wrap to the safe area, split past --max-lines, lengthen to --min-duration, shift by
@@ -894,7 +919,11 @@ def main() -> int:
         fit_the_size(cue_list)
         out, stats = layout_cues(cue_list, max_em=max_line_em(args, play_w, play_h),
                                  max_lines=args.max_lines, min_duration=args.min_duration,
-                                 offset=args.offset, wrap=args.wrap, lang=args.language)
+                                 offset=args.offset, wrap=args.wrap, lang=args.language,
+                                 per_cue_em=getattr(args, "_fit_cue_em", None),
+                                 per_cue_size=getattr(args, "_fit_cue_size", None))
+        # which size each OUTPUT cue belongs to, after splits have renumbered them
+        args._fit_sizes_out = stats.pop("cue_sizes", None)
         report_layout(stats)
         caption_stats.clear()
         caption_stats.update(stats)

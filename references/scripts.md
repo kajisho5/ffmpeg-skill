@@ -934,7 +934,10 @@ breaker. `--fit-size` walks the size down until every cue wraps within
 - `--fit-size-scope file` (default) uses one size for the whole file; `cue`
   writes a per-cue `{\fsN}` override. A size that changes from cue to cue reads
   as a mistake, so it is opt-in — it exists for the one outlier cue that would
-  otherwise shrink a ten-minute file.
+  otherwise shrink a ten-minute file. Each cue is laid out at the size it will
+  be **drawn** at: a cue drawn larger has a narrower line in em, so wrapping
+  everything to the file-wide budget and then drawing some cues large would put
+  lines off the side of the frame.
 
 The text is **never** touched: this skill does not rewrite, shorten or
 paraphrase a caption to make it fit. Below the floor the cue is split exactly as

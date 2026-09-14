@@ -1582,13 +1582,16 @@ def fit_size(cues, *, size: int, min_size: "Optional[int]" = None, max_lines: in
     whose type size changes from cue to cue reads as a mistake, and one measured line width per
     file is what makes the wrap behaviour reproducible.
     """
-    texts = []
+    # `texts` stays parallel to `cues`: a blank cue becomes None rather than being dropped, so
+    # per_cue[i] always refers to the caller's cue i. caption.py indexes layout by these keys.
+    texts: "List[Optional[str]]" = []
     for cue in cues or []:
         if isinstance(cue, (tuple, list)):
-            texts.append(cue[2] if len(cue) > 2 else cue[-1])
+            raw = cue[2] if len(cue) > 2 else cue[-1]
         else:
-            texts.append(cue)
-    texts = [t for t in texts if t and str(t).strip()]
+            raw = cue
+        texts.append(raw if raw and str(raw).strip() else None)
+    measurable = [t for t in texts if t is not None]
     requested = int(size)
     floor = int(min_size) if min_size is not None else ass_units_local(MIN_CAPTION_FRACTION,
                                                                       script_height)
@@ -1601,7 +1604,7 @@ def fit_size(cues, *, size: int, min_size: "Optional[int]" = None, max_lines: in
                                         script_height=script_height)
     base_em = em_at(requested)
     result["max_em"] = base_em
-    if not texts or base_em is None or max_lines < 1:
+    if not measurable or base_em is None or max_lines < 1:
         # No geometry means no measurable width: leave the size exactly as asked.
         return result
 
@@ -1611,7 +1614,7 @@ def fit_size(cues, *, size: int, min_size: "Optional[int]" = None, max_lines: in
             return 1
         return len(wrap_text(text, em, mode=mode, lang=lang))
 
-    over_at_requested = [t for t in texts if lines_at(t, requested) > max_lines]
+    over_at_requested = [t for t in measurable if lines_at(t, requested) > max_lines]
     result["shrunk"] = len(over_at_requested)
 
     def best_for(subset) -> "Tuple[int, bool]":
@@ -1628,14 +1631,18 @@ def fit_size(cues, *, size: int, min_size: "Optional[int]" = None, max_lines: in
         per_cue = {}
         fits_all = True
         for i, t in enumerate(texts):
+            if t is None:
+                per_cue[i] = requested    # a blank cue draws nothing; it constrains nothing
+                continue
             sz, ok = best_for([t])
             per_cue[i] = sz
             fits_all = fits_all and ok
         result["per_cue"] = per_cue
-        result["size"] = min(per_cue.values()) if per_cue else requested
+        sized = [v for i, v in per_cue.items() if texts[i] is not None]
+        result["size"] = min(sized) if sized else requested
         result["fits"] = fits_all
     else:
-        sz, ok = best_for(texts)
+        sz, ok = best_for(measurable)
         result["size"] = sz
         result["fits"] = ok
     result["max_em"] = em_at(result["size"])
