@@ -177,6 +177,25 @@ def build_fixtures(force=False):
                "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-b:a", "128k", str(path))
 
+    # 3b. A vertical 1080x1920 clip: the real TikTok/Reels geometry, where a caption line holds
+    #     about six em at the default size and an ordinary sentence needs four lines.
+    path = need("vertical.mp4")
+    if path:
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30",
+               "-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % SPEECH,
+               "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", str(path))
+
+    # 3c. A synthetic 120 BPM click over moving pictures: a 40 ms pulse at the top of every half
+    #     second, so the measured tempo is a fact of the fixture rather than of the machine.
+    path = need("clicks.mp4")
+    if path:
+        click = "0.8*sin(2*PI*880*t)*lt(mod(t\\,0.5)\\,0.04)"
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % click,
+               "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+               "-t", "10", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", str(path))
+
     # 4. A music bed on its own, for the ducking demo.
     path = need("music.m4a")
     if path:
@@ -1023,6 +1042,33 @@ def demo_captions_phrase(ctx):
     return before, after
 
 
+def demo_captions_fitsize(ctx):
+    """The same cue file at the same platform, with one flag different. Left is 1.16: at the
+    TikTok caption size the sentence needs four lines, so --max-lines 2 splits it into two
+    consecutive cues. Right is 1.17: the size drops until the whole sentence fits at once."""
+    src = FIX / "vertical.mp4"
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    for out, mode in ((before, "off"), (after, "on")):
+        ctx.script("caption.py", src, "--text", FIX / "cues_phrase.txt", "--platform", "tiktok",
+                   "--max-lines", "2", "--fit-size", mode, "--bold",
+                   "--preset", "veryfast", "-o", out)
+    return before, after
+
+
+def demo_beats_snap(ctx):
+    """Both cuts asked for the same second. The right one moved to the nearest measured onset;
+    the left one did not. The waveform is the evidence -- the cut edge sits on a click."""
+    src = FIX / "clicks.mp4"
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    ctx.script("cut.py", src, "--start", "2.03", "--end", "6.01", "--snap", "none",
+               "--accurate", "--preset", "veryfast", "-o", before)
+    ctx.script("cut.py", src, "--start", "2.03", "--end", "6.01", "--snap", "beats",
+               "--accurate", "--preset", "veryfast", "-o", after)
+    return before, after
+
+
 def demo_captions_multitrack(ctx):
     """Nothing is burnt in and nothing is re-encoded: the video and audio are copied bit for bit
     and three SRTs ride along as toggleable, language-tagged streams. The right half is the track
@@ -1206,6 +1252,9 @@ _ROWS = [
     ("captions_phrase", CAPTIONS, "Phrase-aware line breaks",
      "The same cue at the same size, with one flag different. Left is 1.15's wrap, which only minimised the widest line and left `the` and `con` stranded at the end of a line; right is 1.16's default, which never breaks inside a word and never ends a line on an article or a preposition. The text itself is untouched -- the skill never rewrites a caption to make it fit.",
      demo_captions_phrase, "video", "latin", ("GREEDY WRAP", "PHRASE WRAP")),
+    ("captions_fitsize", CAPTIONS, "Caption size fitted to the cue",
+     "The same cue file at the same destination, with one flag different. Left is 1.16: at the TikTok caption size the cue cannot fit two lines, so it is split into two consecutive cues and half the sentence arrives late. Right is 1.17's default: the size dropped until the whole sentence is on screen at once, and stopped well above the 4.5 %-of-frame-height floor. The text is untouched -- the skill never rewrites a caption to make it fit.",
+     demo_captions_fitsize, "video", "latin", ("--fit-size off (1.16)", "--fit-size on (1.17)")),
     ("captions_multitrack", CAPTIONS, "Three subtitle tracks in one file",
      "Nothing is burnt in and nothing is re-encoded: the video and audio are copied bit for bit and three SRTs ride along as toggleable, language-tagged streams. The right half is the track list ffprobe reads back.",
      demo_captions_multitrack, "video", "latin", ("ONE FILE, NO SUBTITLES", "3 TAGGED TRACKS")),
@@ -1297,6 +1346,9 @@ _ROWS = [
     ("cut_accurate", PICTURE, "Lossless cut vs. accurate cut",
      "Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.",
      demo_cut_accurate, "video", None, ("LOSSLESS", "--ACCURATE")),
+    ("beats_snap", PICTURE, "Cuts that land on the beat",
+     "Both cuts asked for 2.03 s. The right one moved 30 ms to the nearest measured onset, so its first frame lands on a click instead of just after one; the waveform is the evidence. The tempo, the beat list and the confidence are in the JSON -- nothing is snapped to a grid the audio does not support, and below --min-confidence the cut refuses rather than inventing one.",
+     demo_beats_snap, "wave", None, ("--snap none", "--snap beats")),
     ("crop_rect", PICTURE, "Crop to an exact rectangle",
      "A literal 640x480 window at x=320, y=120 in the source frame -- no aspect maths, no auto-centring; the rectangle is the caller's and is refused rather than rounded if it does not fit.",
      demo_crop_rect, "video", None),

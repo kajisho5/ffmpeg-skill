@@ -45,6 +45,17 @@ python3 scripts/caption.py demos/out/fixtures/motion.mp4 --text demos/out/fixtur
 
 **Look for:** The same cue at the same size, with one flag different. Left is 1.15's wrap, which only minimised the widest line and left `the` and `con` stranded at the end of a line; right is 1.16's default, which never breaks inside a word and never ends a line on an article or a preposition. The text itself is untouched -- the skill never rewrites a caption to make it fit.
 
+### Caption size fitted to the cue
+
+![Caption size fitted to the cue](demos/captions_fitsize.gif)
+
+```bash
+python3 scripts/caption.py demos/out/fixtures/vertical.mp4 --text demos/out/fixtures/cues_phrase.txt --platform tiktok --max-lines 2 --fit-size off --bold --preset veryfast -o demos/out/captions_fitsize_before.mp4
+python3 scripts/caption.py demos/out/fixtures/vertical.mp4 --text demos/out/fixtures/cues_phrase.txt --platform tiktok --max-lines 2 --fit-size on --bold --preset veryfast -o demos/out/captions_fitsize_after.mp4
+```
+
+**Look for:** The same cue file at the same destination, with one flag different. Left is 1.16: at the TikTok caption size the cue cannot fit two lines, so it is split into two consecutive cues and half the sentence arrives late. Right is 1.17's default: the size dropped until the whole sentence is on screen at once, and stopped well above the 4.5 %-of-frame-height floor. The text is untouched -- the skill never rewrites a caption to make it fit.
+
 ### Three subtitle tracks in one file
 
 ![Three subtitle tracks in one file](demos/captions_multitrack.gif)
@@ -249,6 +260,17 @@ python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 -
 ```
 
 **Look for:** Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.
+
+### Cuts that land on the beat
+
+![Cuts that land on the beat](demos/beats_snap.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/clicks.mp4 --start 2.03 --end 6.01 --snap none --accurate --preset veryfast -o demos/out/beats_snap_before.mp4
+python3 scripts/cut.py demos/out/fixtures/clicks.mp4 --start 2.03 --end 6.01 --snap beats --accurate --preset veryfast -o demos/out/beats_snap_after.mp4
+```
+
+**Look for:** Both cuts asked for 2.03 s. The right one moved 30 ms to the nearest measured onset, so its first frame lands on a click instead of just after one; the waveform is the evidence. The tempo, the beat list and the confidence are in the JSON -- nothing is snapped to a grid the audio does not support, and below --min-confidence the cut refuses rather than inventing one.
 
 ### Crop to an exact rectangle
 
