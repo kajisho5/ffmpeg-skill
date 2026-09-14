@@ -27,9 +27,10 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, read_text_or_die, MEDIA_EXT as _MEDIA_EXT
 
@@ -72,21 +73,42 @@ def recipe_key(recipe: Dict[str, Any]) -> str:
     return hashlib.sha1((json.dumps(recipe, sort_keys=True) + "\0" + project_content).encode()).hexdigest()[:12]
 
 
-def run_step(argv: List[str]) -> bool:
+JOBS_CAP = 8   # beyond this, concurrent encodes contend for the same cores and memory
+
+_LOG = threading.local()
+
+
+def log(message: str) -> None:
+    """info(), unless this thread is a --jobs worker -- then the line is buffered and flushed in
+    file order when the item finishes, so a parallel run's log reads exactly like a serial one."""
+    buf = getattr(_LOG, "buffer", None)
+    if buf is None:
+        info(message)
+    else:
+        buf.append(message)
+
+
+def run_step(argv: List[str], per_call: "Optional[float]" = None) -> bool:
     script = argv[0]
     if script not in ALLOWED_STEP_SCRIPTS:
         die(f"recipe step names a script that isn't one of this skill's own tools: {script!r} "
             f"(must be a bare filename like 'silence.py', found in scripts/)")
     cmd = [str(HERE / script)] + argv[1:] + child_args()
-    info("  → " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd)))
-    proc = run_tool(cmd)
+    log("  → " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd)))
+    proc = run_tool(cmd, per_call=per_call)
     if proc.returncode != 0:
-        info("    " + "\n    ".join(proc.stderr.strip().splitlines()[-4:]))
+        log("    " + "\n    ".join(proc.stderr.strip().splitlines()[-4:]))
         return False
     for line in proc.stderr.splitlines():
         if line.startswith("warning:"):  # a step's deprecation notice is not swallowed by a success (review 9)
-            info("    " + line)
+            log("    " + line)
     return True
+
+
+def _run_buffered(fn, *a):
+    """Run a worker and hand back (its result, the log lines it produced)."""
+    r = fn(*a)
+    return r, list(getattr(_LOG, "lines", None) or [])
 
 
 def final_path(src: Path, recipe: Dict[str, Any], outdir: Path) -> Path:
@@ -101,9 +123,17 @@ def final_path(src: Path, recipe: Dict[str, Any], outdir: Path) -> Path:
     return outdir / f"{src.stem}{suffix}.{final_ext}"
 
 
-def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path) -> Dict[str, Any]:
+def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
+            deadline: "Optional[float]" = None) -> Dict[str, Any]:
     final = final_path(src, recipe, outdir)
     t0 = time.time()
+
+    def budget() -> "Optional[float]":
+        """What is left of the BATCH's time limit -- not a fresh one per item. A --timeout is a
+        promise about the whole run, so a queue of 40 files cannot quietly take 40 timeouts."""
+        if deadline is None:
+            return None
+        return max(1.0, deadline - time.monotonic())
     if recipe.get("project"):
         try:
             proj = json.loads(read_text_or_die(str(recipe["project"]), "recipe.project"))
@@ -117,7 +147,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path) -> Dict
         proj["output"] = str(final.resolve())
         pj = work / f"{src.stem}_project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
-        ok = run_step(["render.py", str(pj)])
+        ok = run_step(["render.py", str(pj)], budget())
     else:
         steps = recipe.get("steps") or []
         if not steps:
@@ -128,7 +158,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path) -> Dict
             last = i == len(steps) - 1
             out = str(final) if last else str(work / f"{src.stem}_step{i}.{'mp4' if src.suffix.lower() not in ('.wav', '.mp3', '.m4a', '.flac') else src.suffix.lstrip('.')}")
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
-            if not run_step(argv):
+            if not run_step(argv, budget()):
                 ok = False
                 break
             cur = out
@@ -141,11 +171,17 @@ def main() -> int:
     ap.add_argument("--recipe", required=True, help="batch.json")
     ap.add_argument("--force", action="store_true", help="ignore the cache and redo everything")
     ap.add_argument("--watch", type=float, help="keep polling the folder every N seconds")
+    ap.add_argument("--jobs", default="1", metavar="N",
+                    help="process N files at once, or 'auto' for min(cpu_count, 4). Capped at "
+                         "min(N, cpu_count, 8): every item is already an ffmpeg that threads "
+                         "across cores, so more than a few contend rather than go faster. "
+                         "Default 1, which is 1.16's behaviour exactly.")
     ap.add_argument("--work", help="work directory for intermediates (default: <output_dir>/.work)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
 
+    started = time.time()
     folder = Path(args.folder).resolve()  # relative 'bdir' used to become bdir/bdir/out once joined with the default outdir
     if not folder.is_dir():
         die(f"not a folder: {folder}")
@@ -186,6 +222,28 @@ def main() -> int:
     rkey = recipe_key(recipe)
     glob = recipe.get("glob") or "*"
 
+    # --jobs: every item is itself an ffmpeg that already threads across cores, so beyond a few
+    # concurrent encodes the jobs contend and wall-clock stops improving while memory does not.
+    # A number above the cap is clamped with a note, not refused: an optimistic number is not an
+    # error, and refusing one helps nobody.
+    cpus = os.cpu_count() or 1
+    requested = min(cpus, 4) if str(args.jobs).lower() == "auto" else None
+    if requested is None:
+        try:
+            requested = int(args.jobs)
+        except ValueError:
+            die(f"--jobs {args.jobs!r}: a whole number, or 'auto'", kind="input")
+        if requested < 1:
+            die("--jobs must be at least 1", kind="input")
+    jobs = max(1, min(requested, cpus, JOBS_CAP))
+    if jobs != requested:
+        info(f"--jobs {requested} capped to {jobs} (min of the request, {cpus} CPU(s) and the "
+             f"{JOBS_CAP}-job ceiling): each item is already a multi-threaded encode")
+    # One budget for the whole batch, not one per item.
+    deadline = time.monotonic() + STATE.timeout if STATE.timeout else None
+    cache_lock = threading.Lock()
+    timed_out = {"hit": False}
+
     def one_pass() -> List[Dict[str, Any]]:
         results = []
         files = sorted(p for p in folder.glob(glob) if p.is_file() and p.suffix.lower() in MEDIA_EXT and outdir not in p.parents)
@@ -201,17 +259,23 @@ def main() -> int:
             detail = "; ".join(f"{dst.name} <- {', '.join(s.name for s in srcs)}" for dst, srcs in collisions.items())
             die(f"{len(collisions)} output filename collision(s) in this batch -- rename the sources, "
                 f"or add a distinguishing \"suffix\"/\"ext\" per run, or split into separate globs: {detail}")
-        for src in files:
-            key = f"{file_key(src)}:{rkey}"
-            hit = cache.get(key)
-            if hit and Path(hit.get("output", "")).exists() and not args.force:
-                info(f"skip (cached) {src.name}")
-                results.append({**hit, "cached": True})
-                continue
-            info(f"=== {src.name}")
-            r = process(src, recipe, outdir, work)
-            results.append(r)
-            if r["ok"] and not STATE.dry_run:
+        def item_work(i: int, src: Path) -> Path:
+            """Where this item's intermediates go. Parallel items must not share one work dir:
+            the step file names are stem-derived, so two globs holding the same stem would write
+            over each other. Serial runs keep the flat layout 1.16 used, byte for byte."""
+            if jobs == 1:
+                return work
+            sub = work / f"{i}-{src.stem}"
+            sub.mkdir(parents=True, exist_ok=True)
+            return sub
+
+        def store(key: str, r: Dict[str, Any]) -> None:
+            if not (r["ok"] and not STATE.dry_run):
+                return
+            # The read-modify-write of the in-memory dict needs the lock even though the file
+            # write is already atomic: two finishers could otherwise serialise from two different
+            # snapshots and lose an entry.
+            with cache_lock:
                 cache[key] = r
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above
@@ -219,9 +283,92 @@ def main() -> int:
                 # entry. Write to a sibling temp file and rename into place: same-directory
                 # renames are atomic on POSIX and os.replace() is atomic on Windows too, so a
                 # reader only ever sees the old complete file or the new complete file.
-                tmp = cache_path.parent / f"{cache_path.name}.tmp{os.getpid()}"
+                tmp = cache_path.parent / f"{cache_path.name}.tmp{os.getpid()}.{threading.get_ident()}"
                 tmp.write_text(json.dumps(cache, indent=2), encoding="utf-8")
                 os.replace(tmp, cache_path)
+
+        pending: List[tuple] = []
+        for i, src in enumerate(files):
+            key = f"{file_key(src)}:{rkey}"
+            hit = cache.get(key)
+            if hit and Path(hit.get("output", "")).exists() and not args.force:
+                info(f"skip (cached) {src.name}")
+                results.append({**hit, "cached": True})
+                continue
+            pending.append((i, src, key))
+
+        if jobs == 1 or len(pending) < 2:
+            for i, src, key in pending:
+                if deadline is not None and time.monotonic() >= deadline:
+                    timed_out["hit"] = True
+                    results.append({"file": str(src), "output": str(final_path(src, recipe, outdir)),
+                                    "ok": False, "seconds": 0.0, "skipped": "timeout"})
+                    continue
+                info(f"=== {src.name}")
+                r = process(src, recipe, outdir, item_work(i, src), deadline)
+                results.append(r)
+                store(key, r)
+            return results
+
+        import concurrent.futures
+
+        def work_one(i: int, src: Path, key: str) -> Dict[str, Any]:
+            _LOG.buffer = [f"=== {src.name}"]
+            try:
+                r = process(src, recipe, outdir, item_work(i, src), deadline)
+                store(key, r)
+                return r
+            finally:
+                r_lines, _LOG.buffer = _LOG.buffer, None
+                setattr(_LOG, "lines", r_lines)
+
+        # Submitted in the existing sorted order and collected into a list indexed by submission
+        # order, so the summary and the per-item table are identical to a serial run's whatever
+        # order the encodes actually finish in.
+        ordered: List[Optional[Dict[str, Any]]] = [None] * len(pending)
+        lines: List[List[str]] = [[] for _ in pending]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            futures: "Dict[Any, int]" = {}
+            queue = list(enumerate(pending))
+            in_flight: "set" = set()
+            try:
+                # The pool is topped up to `jobs` in flight and no further: submitting the whole
+                # list up front would put every item past the deadline check before the first one
+                # had finished, and the shared budget could then never stop anything.
+                while queue or in_flight:
+                    while queue and len(in_flight) < jobs:
+                        slot, (i, src, key) = queue[0]
+                        if deadline is not None and time.monotonic() >= deadline:
+                            break
+                        queue.pop(0)
+                        fut = pool.submit(_run_buffered, work_one, i, src, key)
+                        futures[fut] = slot
+                        in_flight.add(fut)
+                    if not in_flight:
+                        break
+                    done_now, in_flight = concurrent.futures.wait(
+                        in_flight, return_when=concurrent.futures.FIRST_COMPLETED)
+                    in_flight = set(in_flight)
+                    for fut in done_now:
+                        ordered[futures[fut]], lines[futures[fut]] = fut.result()
+                for slot, (i, src, key) in queue:
+                    timed_out["hit"] = True
+                    ordered[slot] = {"file": str(src),
+                                     "output": str(final_path(src, recipe, outdir)),
+                                     "ok": False, "seconds": 0.0, "skipped": "timeout"}
+            except KeyboardInterrupt:
+                for fut in futures:
+                    fut.cancel()
+                info("interrupted: finishing what had already started")
+                raise
+        for slot, (i, src, key) in enumerate(pending):
+            for line in lines[slot]:
+                info(line)
+            if ordered[slot] is None:
+                timed_out["hit"] = True
+                ordered[slot] = {"file": str(src), "output": str(final_path(src, recipe, outdir)),
+                                 "ok": False, "seconds": 0.0, "skipped": "timeout"}
+            results.append(ordered[slot])
         return results
 
     results = one_pass()
@@ -246,11 +393,23 @@ def main() -> int:
     if not args.json:
         for r in results:
             print(f"{'OK  ' if r['ok'] else 'FAIL'} {r['file']} -> {r['output']}" + (" (cached)" if r.get("cached") else ""))
+    if timed_out["hit"]:
+        skipped = [r["file"] for r in results if r.get("skipped") == "timeout"]
+        die(f"the batch's {STATE.timeout:.0f} s budget ran out with {len(skipped)} item(s) not "
+            f"started: {', '.join(os.path.basename(f) for f in skipped[:5])}"
+            + (" ..." if len(skipped) > 5 else "")
+            + ". --timeout is the whole run's limit, not each item's; raise it or split the folder.",
+            code=124, kind="timeout", output=None, dry_run=STATE.dry_run, results=results,
+            processed=done, total=len(results), jobs=jobs, jobs_requested=requested,
+            timed_out=True)
     if done != len(results):
         failed_files = [r["file"] for r in results if not r["ok"]]
         die(f"{len(results) - done} of {len(results)} items failed: {', '.join(failed_files[:5])}" + (" ..." if len(failed_files) > 5 else ""),
             kind="verification", output=None, dry_run=STATE.dry_run, results=results, processed=done, total=len(results))
-    emit(None, results=results, processed=done, total=len(results))
+    emit(None, results=results, processed=done, total=len(results),
+         jobs=jobs, jobs_requested=requested, wall_seconds=round(time.time() - started, 1),
+         item_seconds_total=round(sum(float(r.get("seconds") or 0) for r in results), 1),
+         timed_out=timed_out["hit"])
     return 0
 
 

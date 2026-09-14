@@ -685,6 +685,91 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(resp[0]["id"], 1)
         self.assertIn("tools", resp[0]["result"])
 
+    # ------------------------------------------------------------- 1.17: batch.py --jobs N
+    def _jobs_folder(self, name, count=4):
+        folder = OUT / name
+        folder.mkdir(exist_ok=True)
+        for i in range(count):
+            (folder / f"j{i}.mp4").write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({
+            "glob": "*.mp4", "output_dir": "out", "suffix": "_j",
+            "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+        return folder, recipe
+
+    def test_jobs_summary_is_identical_to_serial(self):
+        """The per-item table is the promise: same order, same keys, whatever order the encodes
+        actually finished in."""
+        folder, recipe = self._jobs_folder("batch_jobs_a")
+        serial = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                   "--force", "--jobs", "1", "--json").stdout)
+        parallel = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                     "--force", "--jobs", "4", "--json").stdout)
+        self.assertEqual(serial["jobs"], 1)
+        self.assertGreater(parallel["jobs"], 1)
+        self.assertEqual(len(serial["results"]), len(parallel["results"]))
+        for a, b in zip(serial["results"], parallel["results"]):
+            self.assertEqual({k: v for k, v in a.items() if k != "seconds"},
+                             {k: v for k, v in b.items() if k != "seconds"})
+        self.assertEqual(serial["processed"], parallel["processed"])
+        self.assertFalse(parallel["timed_out"])
+        self.assertGreater(parallel["item_seconds_total"], 0)
+
+    def test_jobs_is_capped_by_cpu_count(self):
+        folder, recipe = self._jobs_folder("batch_jobs_cap", count=2)
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                 "--jobs", "999", "--json").stdout)
+        self.assertEqual(data["jobs_requested"], 999)
+        self.assertLessEqual(data["jobs"], min(os.cpu_count() or 1, 8))
+        self.assertGreaterEqual(data["jobs"], 1)
+
+    def test_jobs_auto_resolves_to_a_number(self):
+        folder, recipe = self._jobs_folder("batch_jobs_auto", count=2)
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                 "--jobs", "auto", "--json").stdout)
+        self.assertLessEqual(data["jobs"], min(os.cpu_count() or 1, 4))
+
+    def test_jobs_rejects_a_non_number(self):
+        folder, recipe = self._jobs_folder("batch_jobs_bad", count=1)
+        r = script("batch.py", folder, "--recipe", recipe, "--fast", "--jobs", "lots",
+                   "--json", expect_fail=True)
+        self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
+
+    def test_jobs_share_one_timeout_budget(self):
+        """--timeout is the batch's limit, not each item's: a queue of files cannot quietly take
+        one timeout each."""
+        folder, recipe = self._jobs_folder("batch_jobs_timeout", count=6)
+        r = script("batch.py", folder, "--recipe", recipe, "--timeout", "1", "--force",
+                   "--jobs", "2", "--json", expect_fail=True)
+        data = json.loads(r.stdout)
+        self.assertEqual(data["error"]["kind"], "timeout")
+        self.assertEqual(data["exit_code"], 124)
+        self.assertTrue(any(x.get("skipped") == "timeout" for x in data["results"]))
+
+    def test_jobs_cache_entries_survive_concurrency(self):
+        folder, recipe = self._jobs_folder("batch_jobs_cache", count=6)
+        first = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--force",
+                                  "--jobs", "4", "--json").stdout)
+        self.assertEqual(first["processed"], 6)
+        again = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                  "--jobs", "4", "--json").stdout)
+        self.assertTrue(all(x.get("cached") for x in again["results"]),
+                        "every entry written under concurrency must be served back")
+
+    def test_jobs_gives_each_item_its_own_work_dir(self):
+        folder, recipe = self._jobs_folder("batch_jobs_work", count=3)
+        work = OUT / "batch_jobs_work_dir"
+        script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", "3",
+               "--work", work)
+        subdirs = sorted(p.name for p in work.iterdir() if p.is_dir())
+        self.assertEqual(len(subdirs), 3)
+        # ... and a serial run keeps the flat layout it always had
+        work2 = OUT / "batch_jobs_work_serial"
+        script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", "1",
+               "--work", work2)
+        self.assertEqual([p.name for p in work2.iterdir() if p.is_dir()], [])
+
+
     def test_batch_recipe_and_cache(self):
         folder = OUT / "batch_in"
         folder.mkdir(exist_ok=True)
