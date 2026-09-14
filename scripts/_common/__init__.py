@@ -7,8 +7,9 @@ error reporting, and provides a compact media probe used by every script.
 Since the refactor release after 1.15.0 the helpers live in one module per responsibility --
 runner (process execution and timeouts), probe (ffprobe and the measured facts), decision (the
 pure copy-vs-re-encode and capability choices), emit (result documents, die(), info()), color
-(colour tags and the HDR paths) and text (fonts, scripts, emoji, drawtext) -- and this file is a
-facade that re-exports every name they define. `import _common` and `from _common import x` mean
+(colour tags and the HDR paths) and, since the refactor after 1.17.3, fonts, emoji, drawtext and wrap
+(text.py is a re-export shim over those four) -- and this file is a facade that re-exports every name
+they define. `import _common` and `from _common import x` mean
 exactly what they meant when this was one 3072-line module; nothing else about the package is
 part of the contract.
 """
@@ -112,7 +113,7 @@ from _common.text import (
     SHAPING_SCRIPTS, text_width_em, _VS15, _VS16, WINDOWS_FONTS, _ZWJ
 )
 
-from _common import asr, color, decision, runner, text  # noqa: F401,E402
+from _common import asr, color, decision, drawtext, emoji, fonts, runner, text, wrap  # noqa: F401,E402
 
 # `_common.emit` and `_common.probe` are the FUNCTIONS, as they have always been -- the
 # from-imports above rebound the package attribute the submodule import had set. The two modules
@@ -123,7 +124,7 @@ from _common import asr, color, decision, runner, text  # noqa: F401,E402
 _emit_module = sys.modules["_common.emit"]
 _probe_module = sys.modules["_common.probe"]
 
-_MODULES = (runner, _emit_module, _probe_module, decision, color, text, asr)
+_MODULES = (runner, _emit_module, _probe_module, decision, color, text, fonts, emoji, drawtext, wrap, asr)
 
 
 class _Facade(_types.ModuleType):
