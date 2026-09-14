@@ -2879,7 +2879,7 @@ class DoctorDetectionTests(unittest.TestCase):
         env = self._utf8_ffprobe_shim("cat <<'JSON'\n" + doc + "\nJSON\n")
         target = OUT / "utf8_probe.mp4"
         target.write_bytes(b"not really a movie")   # ffprobe is the shim; only the path must exist
-        proc = sh(sys.executable, SCRIPTS / "probe.py", target, "--json", env=env, check=False)
+        proc = sh(sys.executable, SCRIPTS / "probe.py", target, "--json", env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         d = json.loads(proc.stdout)
         self.assertEqual(d["duration"], 12.0)
@@ -2895,6 +2895,8 @@ class DoctorDetectionTests(unittest.TestCase):
         env = self._utf8_ffprobe_shim("exit 0\n")
         target = OUT / "empty_probe.mp4"
         target.write_bytes(b"not really a movie")
+        # this module's own sh() (line 41), not tests/_fixtures.sh: check=False means "do not
+        # raise on a non-zero exit", which is the point of the refusal being asserted below.
         proc = sh(sys.executable, SCRIPTS / "probe.py", target, "--json", env=env, check=False)
         self.assertNotEqual(proc.returncode, 0)
         err = json.loads(proc.stdout)
