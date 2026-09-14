@@ -17,13 +17,15 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.17.0**, shipped and evaluated: **eval 18**
-(`evals/results/iteration-18.json`) graded it on the 100-prompt set, the 87 carried over plus
-thirteen written for the 1.17 features. It found the size fitter is unreachable on the template
-path and that SKILL.md routes none of the 1.17 features (see the 1.17.0 section); **1.17.1 below
-is the patch and is planned for release** — implemented, not tagged yet. **1.17.2**, the eval-19
-caption-margin patch, is implemented on top of it and is not tagged yet either. Everything after
-1.17.2 is planned.
+The released version today is **1.17.1**, shipped and evaluated: **eval 19**
+(`evals/results/iteration-19.json`) re-ran the 18 prompts eval 18's follow-up named, three of them
+three times over, and confirmed the patch — the size fitter fires on the `render.py --template`
+path in 12/12 caption runs, and the beat, filler and `--jobs` prompts route on the first try. It
+also root-caused a defect the two previous patches had been aiming at symptoms of: `caption.py`'s
+generated-ASS path writes the platform's *vertical* safe margin into `MarginL` and `MarginR` too,
+so libass lays every caption into a 240 px column and stacks one word per line (see the 1.17.1
+section). **1.17.2 below is the patch — implemented, not tagged yet.** Everything after 1.17.2 is
+planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -39,7 +41,7 @@ caption-margin patch, is implemented on top of it and is not tagged yet either. 
 | 1.16.0 | shipped + evaluated | eval 17 at 1.16.0 (`iteration-17.json`); contract and MCP snapshots additive only; tool count still 42 |
 | 1.16.1 | shipped + evaluated | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 graded the tree that carries it and reported no wrapping defect |
 | 1.17.0 | shipped, evaluated (eval 18) | eval 18 at 1.17.0 (`iteration-18.json`); tool count still 42; contract and MCP snapshots additive only. Two findings: `render.py` forwards the platform table's caption size as an explicit `--size`, so `--fit-size` never fires on the path every captioned prompt takes (and the project schema rejects `fit_size`), and SKILL.md names none of the 1.17 features, so beats, filler and `--cache` were each used in one run at most. 1.17.1 is the patch |
-| 1.17.1 | planned | patch from eval 18: the template path fits the caption size, project captions take the fit keys, SKILL.md routes filler/beats/`--jobs`/`--cache`; tool count still 42, contract additive only; not tagged yet, eval 19 after the release |
+| 1.17.1 | shipped, evaluated (eval 19) | eval 19 at 1.17.1 (`iteration-19.json`), 26 runs over the 18 prompts eval 18 named; tool count still 42, contract additive only. The patch holds: `--fit-size` fires on the template path 12/12 (24 → 16, `dl4` to the 13-unit floor, `split` 0, `text_unchanged` true), filler and beats route first try, the third label is gone, trigger 50/50. One finding, and it is older than the patch: `caption.py write_ass` writes the platform's vertical safe margin to `MarginL`/`MarginR` as well as `MarginV`, leaving a 240 px text column at `PlayResX` 1080, so the picture still stacks one word per line on the `--animate`/`--karaoke` path every template takes. Present since 1.14. 1.17.2 is the patch |
 | 1.17.2 | implemented, not tagged yet | eval 19 headline: `caption.py` wrote the VERTICAL `--margin` into the ASS Style's `MarginL`/`MarginR` too, so TikTok geometry left a 240 px text column and libass stacked one word per line while the tool reported `split: 0`. The side margins are the destination's horizontal safe zone and the fitter measures the same column; the pinned `--fit-size off` ASS fixture was re-pinned (it carried the wrong margins). Tool count still 42, contract additive only |
 | 1.18.0 → 1.21.0, 2.0.0 | planned | — |
 
@@ -344,7 +346,7 @@ came out byte-identical, as did `--help` for all 42 tools.
   skill has no beat detection and cut at the literal timestamps, and two rebuilt filler removal
   by hand with `cut.py --segments` (leaving the output VFR). 1.17.1 is the patch.
 
-## 1.17.1 — the eval-18 patch (implemented, not tagged yet, eval 19 pending)
+## 1.17.1 — the eval-18 patch (shipped + evaluated, eval 19)
 
 - **Done. The template path fits the caption size.** 1.17.0's fitter was unreachable from
   `render.py --template`: the template fills the caption size from the delivery table and
@@ -362,8 +364,29 @@ came out byte-identical, as did `--help` for all 42 tools.
 - **Done. `caption.py` reports `text_unchanged`** and says "caption text unchanged" in its summary
   when it burned the cues exactly as given.
 - **Done. Eval fixtures** stage a batch recipe's `output_dir` absolute (eval 18 bp1/bp2).
-- **Eval 19** reruns cw1/cw2, dl1/dl3/dl4, cs1-3, bt1-3, fw1-3, bp1-2 and rc1-2 plus the trigger
-  set; the full 100 waits for 1.18.0.
+- **Eval 19 (`iteration-19.json`) graded it**: 26 runs over cw1/cw2, dl1/dl3/dl4, cs1-3, bt1-3,
+  fw1-3, bp1-2 and rc1-2, with cw1/dl1/dl4/cs1 repeated three times each, plus the trigger set.
+  Every target above was met. `--fit-size` fires on the template path in 12/12 caption runs
+  (cw1/dl1/cs1 24 → 16, dl4 to the 13-unit floor, `split` 0, `text_unchanged` true, identical per
+  id across all three repeats, and the rendered media byte-identical between reps); no run met
+  `unknown key fit_size`; `fw1`/`fw3` route to `silence.py --filler --words` on the first try where
+  eval 18 rebuilt them by hand as `cut.py --segments`; `bt2` quotes its measured 0.184 confidence
+  against the 0.5 threshold instead of asserting the skill has no beat detection; `bp1`/`bp2` use
+  `--jobs` with the cap disclosed and no fixture rewrite; report format is 26/26 with no third
+  label anywhere. Language 26/26, routing 23/26, honesty 24/26, trigger 50/50, Opus quality mean
+  3.65 against 3.71, and tokens fell from 81.0k to 78.3k on the same 18 ids (cs1 alone −18%, now
+  that the template reaches the fitter and no hand-built chain is needed).
+- **And the finding that outlives the patch**: the picture is unchanged. `caption.py`'s
+  `write_ass` computes one `margin = round(args.margin * scale)` and writes it into `MarginL`,
+  `MarginR` *and* `MarginV`. `args.margin` is the platform's **vertical** safe margin in ASS units
+  (tiktok 63, shorts 52), which scales to 420 px, so at `PlayResX` 1080 the text column is 240 px
+  and libass wraps every word — "Hello world" renders as "Hello" over "world". The fitter budgets
+  `play_w × 0.9`, which is why `split: 0` and `text_unchanged: true` are true of the ASS text and
+  false of the frame, and why shrinking cannot rescue it (dl4 reaches the floor and still stacks).
+  It is the generated-ASS path only (`--animate`/`--karaoke`, which every delivery template uses);
+  the plain SRT path sets `MarginV` alone through `force_style` and is correctly typeset. Present
+  since 1.14 introduced the platform margins, and it explains eval 17's and eval 18's "one word per
+  line" as well — both of which were patched at symptoms of this line. 1.17.2 is the patch.
 
 ## 1.17.2 — the caption-margin patch (implemented, not tagged yet)
 
@@ -378,6 +401,17 @@ came out byte-identical, as did `--help` for all 42 tools.
 - The pinned `--fit-size off` fixture was re-pinned: it carried the wrong margins. A behaviour
   change to fix a defect, with the CHANGELOG line the stability paragraph of `docs/contract.md`
   asks for.
+
+- **Regression tests on the ASS path** (`tests/test_picture.py`): the Style row's `MarginL` and
+  `MarginR` equal the platform's safe zone at tiktok geometry, the generated ASS for "Hello world"
+  at `--platform tiktok` contains no `\N`, and the rasterised frame carries exactly `\N + 1` text
+  bands for the cw1 cues — the picture, not the fit stats.
+- **Not in this patch, carried to the next docs/skill change**: the SKILL.md refusal line "never
+  rewrite, shorten or paraphrase the user's caption text; offer `--max-lines` or a smaller size"
+  (`cs3` took the forbidden path in evals 17, 18 and 19). Whether `silence.py --filler` should
+  leave silences alone unless asked (eval 19 fw1/fw3) is a 1.18.0 decision, not a patch.
+- **Eval 20** re-runs the caption set, three repeats each, and grades the caption prompts on the
+  contact sheet rather than on the fit stats.
 
 ## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
 

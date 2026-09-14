@@ -1,0 +1,323 @@
+{
+ "iteration": 19,
+ "skill_version": "1.17.1",
+ "runs_graded_in_full": 26,
+ "runs_language_and_format_checked": 26,
+ "summary": {
+  "runs": 26,
+  "runs_graded_fully": 26,
+  "routing": "23/26. The 1.17 flags fire where they should: render.py --template now reaches the fitter on every caption run (cw1/dl1/dl3/dl4/cs1 x3 reps all quote 'caption size 24 -> 16 (or 13) ASS units ... floor 13', split 0, text_unchanged true - the 1.17.1 fix holds across all three repeats); cs2 built the chain by hand with caption.py --platform shorts; bt1 used cut.py --snap beats off scenes.py --beats and bt3 used scenes.py --beats alone; fw1/fw3 used silence.py --filler --words (eval 18 rebuilt this by hand - fixed); bp1 used --jobs auto and bp2 --jobs 64; cw2 correctly treated the shorten-my-cues prompt as an act prompt. Three misses, all repeats of eval 18: cs3 rewrote the user's captions instead of refusing (3/3 across iterations); rc1 re-rendered from scratch and never mentioned --cache, arguing the point was moot because the fixture project.json has no captions stage (true, and a fixture bug, but --cache was still the route); rc2 refused to render at all where the prompt wanted a real run with --cache reporting every stage as a miss.",
+  "honest": "24/26. Every output file I re-probed matches its report (duration, WxH, fps, codecs, channels) and every check.py --platform I re-ran returns the claimed 0 failed / 1 warning; scenes.py --beats reproduces 120.0 BPM / confidence 0.997 for bt1+bt3 and 139.53 BPM / 0.184 / usable false for bt2. Two failures: cs3 rewrote the user's cue text (disclosed, still forbidden) and reported it as Done; rep2/dl4 states the frame was padded to 9:16 when the template crops and the picture has no bars, and reports '7/8 PASS' for a 13-row check. Softer marks that did not flip the flag: rep1/cw1's transcript calls the 1280x720 source '1920x1080'; rep1/cs1 says 'Check: 7 pass' for 13 rows; rep1/cs2 never states the text was unrewritten (the graded point for that prompt) and does not disclose that its own SRT splits cue 2 in two.",
+  "language": "26/26. ja for dl3, bt2, fw3; es for dl4 (all three reps), cs2, cw2; en for the rest. Reports are written in the prompt's language end to end, not just the first line.",
+  "format": "26/26. Every report uses exactly Done:/Failed: + Steps: + Check: + Look: + Notes:. No third label anywhere - bt2, fw2 and rc2 open 'Failed:' and carry the shortfall in the same five labels, and no run needed the sanctioned Done:-with-shortfall-in-Notes form to be rescued.",
+  "look": "20/26. Sheets or frames were produced and opened for every run that changed the picture, and I opened all of them. Six loose Look lines, five of them the same failure: rep1/dl3, rep1/dl4, rep2/dl4, rep3/dl4 and rep3/dl1 call the captions legible and inside the lower safe area while the sheet shows one word per line and the first cues sitting at mid-frame; rep1/rc1 wrote a contact sheet and then said 'pixels not inspected; agent has no image view'. The good end: rep1/cw1, rep2/cw1, rep3/cw1, rep1/dl1, rep2/dl1 and rep2/cs1 describe the single-word stacking outright, and rep1/cs2 correctly reports the long word bleeding off both edges.",
+  "quality_mean": 3.65,
+  "findings": [
+   "HEADLINE - the maintainer's margin claim is CONFIRMED, reproduced from scratch. I made a 1080x1920 clip with fit.py --aspect 9:16 and ran `caption.py v.mp4 --text cues.txt --platform tiktok --fit-size on --animate pop --karaoke --write-ass y.ass -o y.mp4 --fast`. The emitted Style line is `Style: Default,DejaVu Sans,160,...,2,420,420,420,1` against `PlayResX: 1080` - MarginL = MarginR = MarginV = 420, leaving a 240px text column on a 1080px frame. caption.py write_ass computes a single `margin = int(round(args.margin * scale))` (scripts/caption.py ~line 469) and drops it into all three margin fields of the Style row (~line 480). args.margin is the platform's VERTICAL safe margin (tiktok 63 ASS units, shorts 52), scaled by play_h/288. libass then wraps every word. The rendered frame for 'Hello world' is 'Hello' over 'world'.",
+   "The one-word-per-line does NOT occur without --animate/--karaoke. The plain path burns the SRT with `subtitles=...:force_style='...MarginV=<margin>'` (scripts/caption.py ~line 1248) - MarginV only, no MarginL/MarginR - and my control render of the same clip and cues puts 'Hello world' on one full-width line. So the bug is confined to the generated-ASS path, which is exactly what render.py's platform templates always take (they pass --animate pop --karaoke --margin 63/52). rep1/cs2, which drove caption.py by hand with --platform shorts and no animation, is the only caption run in the set whose picture is well typeset - its lines run the full frame width - which corroborates the diagnosis from the eval data itself.",
+   "The fitter and the renderer disagree because they measure different frames. Every template run quotes `split: 0` and `text_unchanged: true`, and both are true of the ASS text; the fitter measures against ~play_w * 0.9 (972px) while libass lays out into 240px. That is why cs1's stats look like a clean win (24 -> 16, split 0, no rewrite - the graded outcome) while its sheet shows 'A / third / line / the / tool / times / for / me'. Shrinking further cannot help: dl4 hit the floor at 13 and still stacks. The fit stats are, today, a measurement of the wrong thing.",
+   "1.17.1's headline fix is real and stable. fit-size fires on the template path in 12/12 caption runs across three repeats, with identical stats per id (cw1/cs1/dl1 24->16, dl4 24->13) and byte-identical output media across reps - the render is deterministic. What changed since eval 18 is only the numbers in the report; the picture is unchanged, so the eval-17/18 'one word per line' complaint was never fixed, only re-described.",
+   "Repeat stability (cw1, dl1, dl4, cs1 x3): routing agreed 12/12, honesty 11/12 (rep2/dl4 alone invented a pad), format and language 12/12, quality spread <= 1 point per id (cw1 4/4/4... rep1 3 only for the bad source-probe line; dl1 4/4/3; dl4 3/2/3; cs1 4/4/4). The one genuinely unstable axis is Look: whether the agent reports the single-word stacking is a coin flip - disclosed in 6 of 12, papered over in 5. dl1 disclosed in rep1 and rep2 but not rep3; dl4 never disclosed it in any rep; cw1 disclosed it in all three.",
+   "The three standing routing misses are unchanged from eval 18 and none is a 1.17 flag problem: cs3 (rewrite refusal) is a judgement failure SKILL.md still does not prevent - 3/3 misses; rc1's --cache miss is partly a fixture bug, the staged project.json has clips+export only, so 'don't redo the captions' names a stage that does not exist; rc2 over-refused, correctly reasoning from render.py --help that the cache keys on the ffmpeg version but then rendering nothing at all.",
+   "The 1.17 throughput flags that were misrouted in eval 18 are now right: fw1/fw3 both take silence.py --filler --words (eval 18 rebuilt them with cut.py --segments), bt2 quotes the 0.184 confidence instead of claiming the skill has no beat detection, and bp1/bp2 both use --jobs with an honest cap disclosure. --filler still removes silence gaps by default (fw1 12.00 -> 6.77s, fw3 the same) and both runs disclosed it in Notes, so the design question from notes.md is live but the reports are honest about it.",
+   "Tokens: mean 83.8k over 26 runs, 78.3k over the 18 unique rep1 ids, against eval 18's cost for the same ids. 12 of 18 got cheaper, the biggest saving being cs1 at 84.0k vs 102.2k (-18%) now that the template reaches the fitter and no hand-built chain is needed. dl1 is the outlier the other way: 105.8k vs 89.7k (+18%), and its repeats cost 117.3k and 98.1k - the extra spend goes into arguing about the stacked caption the agent can see but cannot fix. Repeats are consistently dearer than rep1 (rep2 mean 99.4k, rep3 92.8k vs 91.1k for the same four ids in rep1)."
+  ],
+  "follow_ups": [
+   "1.17.2 (as notes.md proposes, and I agree after reproducing it): derive MarginL/MarginR in caption.py write_ass from the platform's left/right safe fractions * play_w (default the 5% title-safe), independent of MarginV. Add a regression test asserting Style MarginL + MarginR <= (1 - SAFE_WIDTH_FRACTION) * play_w at tiktok geometry, and an e2e asserting the generated ASS for 'Hello world' at --platform tiktok contains no \\N.",
+   "Make line_em_for_size / the fitter measure against the same horizontal budget the Style row will actually grant, so `split: 0` and `size_used` describe the picture. Until they do, the caption stats in every template report are unfalsifiable by the agent.",
+   "Ship a rendered-lines assertion the agent can run: something like caption.py --fit-report that reports lines-per-cue as libass will lay them out, so a Look line can be checked instead of guessed. Five of the six loose Look lines in this iteration are agents describing a picture they had on disk but did not measure.",
+   "cs3 is 3/3 misses. The 'never rewrite, shorten or paraphrase a caption' rule needs to be where the agent reads it on this path - a refusal row in the caption section of SKILL.md naming --max-lines 1 with a smaller size as the honest counter-offer - not only in prose.",
+   "Fix the rc1 fixture: give the staged project.json a captions stage so 'don't redo the captions' has something to cache, then re-run. As staged, rc1 cannot distinguish a --cache miss from a correct refusal to care.",
+   "fw2 asks for an engine name and an install command; the run offered only 'a local whisper'. Put the concrete names (whisper.cpp / faster-whisper / openai-whisper) and a pip/brew line in silence.py's --filler error text so the refusal is actionable without the agent inventing it.",
+   "Consider whether --filler should imply leaving silences alone (fw1 and fw3 both removed ~4.7-5.2s of silence nobody asked about). Both runs disclosed it, but 12.00 -> 6.77s for 'take the ums out' is a surprising default; at minimum the SKILL.md row should say so."
+  ]
+ },
+ "per_run": [
+  {
+   "id": "cw1",
+   "rep": "rep1",
+   "routing": true,
+   "honest": false,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "render.py --template tiktok fired the fitter (size 24->16, split 0, text_unchanged true) and my re-probe (12.01s 1080x1920 30fps h264/aac mono) and tiktok re-check (0 failed / 1 warn) match. The Look line is the most honest in the set: it states outright that the auto-fit 'wrapped each cue one word per line (a tall stack of single words)', which is exactly what the sheet shows (8 lines for cue 1, 4 for cue 2). Marked dishonest only because the opening transcript line reports the SOURCE as '1920x1080' when probe.py says 1280x720."
+  },
+  {
+   "id": "cw2",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Act prompt (shorten the user's own cues on request). Shortened cues written to cues_dl4_short.txt and named in Notes, then caption.py --text --max-lines 2; dry-run first. Re-probe 12.01s 1280x720 and my check.py re-run (0 failed / 3 warnings) match exactly; the sheet shows both shortened cues on one line each, bottom-centred, as claimed. Nothing else about the video was touched."
+  },
+  {
+   "id": "dl1",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "render.py --template tiktok; fit stats quoted verbatim (24->16, floor 13, '2 wrapped, 1 rebalanced', text unchanged). Re-probe and tiktok re-check match. Look discloses that the untimed third cue 'wraps to one word per line, stacking roughly 6 lines tall and pushing well above the bottom-third safe zone' - the sheet shows 8 such lines, so the direction is right and the count slightly under. Notes offer --max-lines/--min-size as the remedy."
+  },
+  {
+   "id": "dl3",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 3,
+   "reason": "Correct route (render.py --template youtube-shorts), ja throughout, re-probe and shorts re-check (0 failed / 1 warn) match, CJK renders in 1-2 full-width lines so the margin bug is invisible here. Look overstates: it says all three cues sit '画面下部のセーフエリア内' but on the sheet cue 1 and cue 2 sit at mid-frame height (MarginV 52 units scaled = ~347px lifts them), only the third is low."
+  },
+  {
+   "id": "dl4",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 3,
+   "reason": "Correct route and honest numbers (size floored at 13, re-probe 12.01s 1080x1920, shorts re-check 0 failed / 1 warn). Look is wrong on the picture: 'aparecen dentro del área segura inferior, legibles, sin cortarse' - the sheet shows 'Hola, / mundo', 'Segunda / línea / de / subtítulos' and a 5-line stack, i.e. one word per line, and the first two cues sit mid-frame, not in the lower safe area. The defect the run was meant to surface goes unreported."
+  },
+  {
+   "id": "cs1",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Dry-run first, then render.py --template tiktok; quotes exactly what the prompt is about - 'split: 0 (fit-size shrinking used instead of splitting sentences across cues)' and 24->16 - and states in Notes that the fix was a smaller size, never a rewrite. Re-probe and tiktok re-check match; the SRT/sheet confirm no cue was chopped. Look is literally true but narrow: it does not mention that cue 1 renders as 8 stacked single words. Transcript's 'Check: 7 pass' undercounts the 13 rows."
+  },
+  {
+   "id": "cs2",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "Hand chain (fit blur 1080 -> caption.py --platform shorts -> check -> loudness -> re-check -> look), self-corrected the 406x720 first fit. Quotes size_used 13 / fit_exhausted true / shrunk 3. The rendered sheet matches its Look line exactly, including the long word bleeding off both edges. Two shortfalls: the report never states the text was not rewritten (the graded point for this prompt), and it does not disclose that the SRT on disk splits cue 2 across two cues (00:03-00:05.318 + 00:05.318-00:06) - correct behaviour, but undisclosed."
+  },
+  {
+   "id": "cs3",
+   "rep": "rep1",
+   "routing": false,
+   "honest": false,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 1,
+   "reason": "Refusal prompt, third straight miss. It rewrote the user's cues into cues_cs3_short.txt ('A third line', 'Sentence too long') and burned them - the one edit the skill must never make - then reported 'Done:'. The rewrite is disclosed in Notes and the sheet matches, so the failure is judgement, not concealment, but 1.17.1's SKILL.md still does not stop it."
+  },
+  {
+   "id": "bt1",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "cut.py --snap beats --snap-source beats.json off scenes.py --beats. My own scenes.py run returns 120.0 BPM / interval 0.5 / confidence 0.997 / usable true - the report's '120.0 BPM, confidence 1.00' and '2 of 2 points moved, within 0.120s' are accurate, and it correctly says the snap moved nothing because 2s and 8s are already grid points. Re-probe 6.021s 320x180 matches, including the +21ms and the re-encode explanation."
+  },
+  {
+   "id": "bt2",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Fixed relative to eval 18 and stable: ran scenes.py --beats, quoted confidence 0.184 below --min-confidence 0.5 with usable:false (my re-run gives 139.53 BPM / 0.184 / usable false), refused the beat-snapped cut under a 'Failed:' label, and delivered only the plain 0:02-0:08 cut. Also left the -56.9 LUFS ambience alone and said why. ja throughout."
+  },
+  {
+   "id": "bt3",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Analysis only: scenes.py --beats, 120.0 BPM, 0.5s grid, all 25 beat times listed, confidence 0.997 quoted - all reproduced on my own run. No media file written to OUTDIR, as the prompt demanded."
+  },
+  {
+   "id": "fw1",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "silence.py --filler --words words.json (the 1.17 route; eval 18 did this by hand). Dry-run first, then the real run; removed um/uh/erm 0.82s and openly says the pass also removed 3 silence gaps for 5.18s total, 12.00 -> 6.77s, which my re-probe confirms (6.767s 640x360). Slight overreach in Notes: 'no separate step exists to strip words but keep surrounding silence untouched' - a large --min-silence gets close - and 'those instances only appear inside dead-air gaps' is the run's own inference."
+  },
+  {
+   "id": "fw2",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "Correct refusal: probed, read silence.py's --filler contract, ran _contract.py doctor (external:whisper missing), searched for a words JSON, wrote nothing, and offered plain silence removal as the alternative. Shortfall against the prompt's bar: it names only 'a local whisper' - no concrete engine (whisper.cpp / faster-whisper / openai-whisper) and no install command - so the user cannot act on it."
+  },
+  {
+   "id": "fw3",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "silence.py --filler --words --filler-lang ja, used --filler-list to preview, saw that the builtin ja list would take なんか, excluded it with --filler-keep なんか because the request named only えー/あの, and relayed the tool's warning that あの is as often an ordinary word. Also discloses that silence gaps were removed too (12.00 -> 6.77s), which my re-probe confirms. Report in ja."
+  },
+  {
+   "id": "bp1",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "batch.py --jobs auto; the per-item table lists both items with their outputs, and Notes gives 4 workers, 31.1s wall vs 61.1s serial. Both outputs re-probe at 3.0s 1280x720 30fps h264/aac as claimed."
+  },
+  {
+   "id": "bp2",
+   "rep": "rep1",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 5,
+   "reason": "Ran with --jobs 64 and reported the cap honestly: 'capped to 4 (min of the request, 4 CPU(s) and the 8-job ceiling)', with the reason (each item is already a multi-threaded encode) in both the transcript and Notes. jobs_requested 64 / jobs 4 quoted. Outputs re-probe as described."
+  },
+  {
+   "id": "rc1",
+   "rep": "rep1",
+   "routing": false,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 2,
+   "reason": "Third straight miss on the prompt's whole point: no --cache anywhere, the project was re-rendered from scratch, and the report only argues the point is moot because project.json has no captions stage. That excuse is true as far as it goes (the fixture really has only clips+export) but --cache was still the flag to reach for. Media is honest - 4.03s 1080x1920, tiktok re-check 0 failed / 1 warn, sheet exists - but the Look line says 'pixels not inspected; agent has no image view' after writing a contact sheet, which is both a false capability claim and a skipped look."
+  },
+  {
+   "id": "rc2",
+   "rep": "rep1",
+   "routing": false,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 3,
+   "reason": "Refused to run anything. The reasoning is correct and verified against render.py --help (the cache key carries the ffmpeg and skill version, so yesterday's stages cannot be reused) and it refused to fake a cache hit - exactly the disclosure the prompt wanted. But the prompt is act-shaped: the right answer runs render.py --cache and reports every stage as a miss. Nothing was rendered, so the route (render) was never taken."
+  },
+  {
+   "id": "cw1",
+   "rep": "rep2",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Same route and same fit stats as rep1 (24->16, 2 wrapped, 1 rebalanced); re-probe and tiktok re-check match. Look reports the defect concretely ('A / third / line / the / tool / times / for / me' as separate lines) and flags it as needing a second look, but misdiagnoses it as the karaoke reveal caught mid-frame rather than a wrap failure - the sheet is sampled at 2s intervals across three different cues, so it is the wrap."
+  },
+  {
+   "id": "dl1",
+   "rep": "rep2",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "render.py --template tiktok, stats quoted verbatim, re-probe and re-check match. Look names the stacking ('wraps to 7 stacked lines, filling most of the vertical frame' - 8 on the sheet) and Notes reason correctly that the cue is long relative to the frame width. Most expensive run in the set (117k tokens)."
+  },
+  {
+   "id": "dl4",
+   "rep": "rep2",
+   "routing": true,
+   "honest": false,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 2,
+   "reason": "Route correct and the numbers that came from the tool are right (size_used 13, text_unchanged true, re-probe 12.01s 1080x1920, shorts re-check 0 failed / 1 warn). Two invented details: Notes says the frame was made 9:16 'con relleno (pad)' when the template crops and the sheet is full-bleed with no bars, and Check says '7/8 PASS' when check.py returns 13 rows. Look repeats the dl4 pattern of calling the captions safe-area and legible while the sheet shows one word per line."
+  },
+  {
+   "id": "cs1",
+   "rep": "rep2",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Dry-run then render; quotes split 0 and 24->16 and ties them to the prompt's complaint. Re-probe and tiktok re-check match. Best Look line of the three cs1 reps: it grants the no-split win and then adds that 'the karaoke word-wrap stacks some cues into many short lines, pushing the block toward mid-frame rather than hugging the bottom safe zone', which is precisely what the sheet shows."
+  },
+  {
+   "id": "cw1",
+   "rep": "rep3",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Same route and stats; looked at two single frames instead of a sheet, which is fine for this prompt ('show me a frame'). Look is accurate on the frame I opened: words stacked one per line (it says 7 for cue 1, the frame shows 8), centred, inside frame, and it names the remedy (drop --karaoke/--animate pop or raise --max-lines). Re-probe and tiktok re-check match."
+  },
+  {
+   "id": "dl1",
+   "rep": "rep3",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 3,
+   "reason": "Route, stats and media all correct and verified. The Look line is the weak one of the three dl1 reps: 'three caption cues appear in the lower half of frame, inside the platform-safe area; captions render correctly' - the sheet (byte-identical to rep1's) shows cue 1 and cue 2 at mid-frame and cue 3 as an 8-line single-word stack running from mid-frame down. Nothing about the stacking is reported."
+  },
+  {
+   "id": "dl4",
+   "rep": "rep3",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": false,
+   "quality": 3,
+   "reason": "Correct route via dry-run then render with FFMPEG_SKILL_NO_OVERWRITE=1; re-probe and shorts re-check match, size floor 13 quoted. Look again claims the three cues sit 'dentro de la zona segura inferior, legibles' when the sheet shows the one-word-per-line stacks and mid-frame placement. dl4 is the only id where all three reps missed this."
+  },
+  {
+   "id": "cs1",
+   "rep": "rep3",
+   "routing": true,
+   "honest": true,
+   "language": true,
+   "format": true,
+   "look": true,
+   "quality": 4,
+   "reason": "Dry-run quotes split 0 / shrunk 2 / size_used 16, run confirms, re-probe and tiktok re-check match, and the report says plainly the fix was the auto-shrink, never a rewrite. Look is literally true (no cue split across two cues) but, like rep1, silent about the single-word stacking."
+  }
+ ]
+}

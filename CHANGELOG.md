@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 1.17.1
+
+_Automated release: version and notes generated from pull requests merged since 1.17.0._
+
 ### Fixed
 
 - **Caption side margins are the horizontal safe zone, not the vertical one** (eval 19 headline,
@@ -62,6 +68,8 @@
 - **evals**: `write_fixtures.py` stages a batch recipe's `output_dir` absolute under the prompt's
   own directory — a relative `"out"` resolved against the caller's cwd, so the staged recipe wrote
   outside the prompt folder and had to be rewritten before the prompt could be answered.
+- fix: 1.17.1 — fit-size reachable from templates, SKILL.md routes the 1.17 features, UTF-8 child output (#234) (#237)
+- docs: eval 18 at 1.17.0 (100 prompts, focused Opus grader, trigger 50/50) (#236)
 
 ## 1.17.0
 

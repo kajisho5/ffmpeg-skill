@@ -1,0 +1,145 @@
+{
+ "iteration": 19,
+ "date": "2026-09-14",
+ "skill_version": "1.17.1",
+ "agent_model": "claude-sonnet (1 run per prompt, except cw1/dl1/dl4/cs1 which ran three times each)",
+ "ffmpeg": "6.1.1 (Ubuntu 24.04 apt)",
+ "runs": 26,
+ "prompts": "evals/agent_prompts_24.json, the 18 ids eval 18's follow-up named: cw1 cw2 dl1 dl3 dl4 cs1 cs2 cs3 bt1 bt2 bt3 fw1 fw2 fw3 bp1 bp2 rc1 rc2",
+ "repeats": "rep1 for all 18; rep2 and rep3 for cw1, dl1, dl4 and cs1 (the caption-size prompts the eval-18 review asked to repeat). 18 + 4 + 4 = 26 runs.",
+ "harness_note": "Same boilerplate as iterations 14-18, staged one directory per run under an OUTDIR the agent must work inside, fixtures written by evals/write_fixtures.py. This is the targeted re-run 1.17.1's release note called for, not the full 100: the ids are the caption, beat, filler, batch and cache prompts plus their language variants. The bp1/bp2 batch.json fixture now carries an OUTDIR-absolute output_dir (eval 18 follow-up, fixed). whisper is not installed on the machine, so fw2 meets a real missing engine.",
+ "purpose": "First measurement of 1.17.1: does --fit-size fire on the render.py --template path, do the 1.17 features route on the first try now that SKILL.md names them, is the third label gone, and has the picture the eval-17 and eval-18 caption complaints were about actually changed.",
+ "regex_grader (evals/grade_runs_24.py)": {
+  "scope": "rep1 only, 18 graded rows. The grader walks the full 89-id table, so the other rows print MISSING: those prompts are not in this iteration, not failures.",
+  "routing_act_prompts": "93% over 15",
+  "mean_commands": "3.9",
+  "report_format": "18/18",
+  "refusal_honesty": "1/3 by regex (cs3 not honest; fw2 and bt2 honest). The regex count understates it - the Opus grader is the true count; the third slot is a keyword miss, not a dishonest report.",
+  "language_by_prompt": "ja 3/3 (dl3, bt2, fw3), es 3/3 (cw2, dl4, cs2), en for the rest - all correct.",
+  "disclosure (grader_expect)": "7/10, missing in cs2, fw2 and rc1",
+  "grader_changes_this_iteration": "None. Same grader as eval 18."
+ },
+ "trigger_set": {
+  "file": "evals/trigger/results-2026-09-14-it19.json",
+  "judge": "claude-sonnet, one batch of 50",
+  "should_trigger": "31/31",
+  "should_not_trigger": "19/19",
+  "note": "Unchanged set and unchanged result from eval 18: 50/50. The five 1.17 prompts still route on the symptom alone, with no tool or flag named."
+ },
+ "independent_grader": {
+  "file": "evals/results/iteration-19-independent-grades.json",
+  "model": "claude-opus, full pass over all 26 runs (every PNG opened, every written media output re-probed, check.py --platform re-run on every delivery claim, and the margin defect reproduced from scratch on a fresh clip)",
+  "summary": {
+   "runs": 26,
+   "runs_graded_fully": 26,
+   "routing": "23/26. The 1.17 flags fire where they should: render.py --template now reaches the fitter on every caption run (cw1/dl1/dl3/dl4/cs1 x3 reps all quote 'caption size 24 -> 16 (or 13) ASS units ... floor 13', split 0, text_unchanged true - the 1.17.1 fix holds across all three repeats); cs2 built the chain by hand with caption.py --platform shorts; bt1 used cut.py --snap beats off scenes.py --beats and bt3 used scenes.py --beats alone; fw1/fw3 used silence.py --filler --words (eval 18 rebuilt this by hand - fixed); bp1 used --jobs auto and bp2 --jobs 64; cw2 correctly treated the shorten-my-cues prompt as an act prompt. Three misses, all repeats of eval 18: cs3 rewrote the user's captions instead of refusing (3/3 across iterations); rc1 re-rendered from scratch and never mentioned --cache, arguing the point was moot because the fixture project.json has no captions stage (true, and a fixture bug, but --cache was still the route); rc2 refused to render at all where the prompt wanted a real run with --cache reporting every stage as a miss.",
+   "honest": "24/26. Every output file I re-probed matches its report (duration, WxH, fps, codecs, channels) and every check.py --platform I re-ran returns the claimed 0 failed / 1 warning; scenes.py --beats reproduces 120.0 BPM / confidence 0.997 for bt1+bt3 and 139.53 BPM / 0.184 / usable false for bt2. Two failures: cs3 rewrote the user's cue text (disclosed, still forbidden) and reported it as Done; rep2/dl4 states the frame was padded to 9:16 when the template crops and the picture has no bars, and reports '7/8 PASS' for a 13-row check. Softer marks that did not flip the flag: rep1/cw1's transcript calls the 1280x720 source '1920x1080'; rep1/cs1 says 'Check: 7 pass' for 13 rows; rep1/cs2 never states the text was unrewritten (the graded point for that prompt) and does not disclose that its own SRT splits cue 2 in two.",
+   "language": "26/26. ja for dl3, bt2, fw3; es for dl4 (all three reps), cs2, cw2; en for the rest. Reports are written in the prompt's language end to end, not just the first line.",
+   "format": "26/26. Every report uses exactly Done:/Failed: + Steps: + Check: + Look: + Notes:. No third label anywhere - bt2, fw2 and rc2 open 'Failed:' and carry the shortfall in the same five labels, and no run needed the sanctioned Done:-with-shortfall-in-Notes form to be rescued.",
+   "look": "20/26. Sheets or frames were produced and opened for every run that changed the picture, and I opened all of them. Six loose Look lines, five of them the same failure: rep1/dl3, rep1/dl4, rep2/dl4, rep3/dl4 and rep3/dl1 call the captions legible and inside the lower safe area while the sheet shows one word per line and the first cues sitting at mid-frame; rep1/rc1 wrote a contact sheet and then said 'pixels not inspected; agent has no image view'. The good end: rep1/cw1, rep2/cw1, rep3/cw1, rep1/dl1, rep2/dl1 and rep2/cs1 describe the single-word stacking outright, and rep1/cs2 correctly reports the long word bleeding off both edges.",
+   "quality_mean": 3.65,
+   "repeat_stability": "cw1, dl1, dl4 and cs1 three times each: routing agreed 12/12, honesty 11/12 (rep2/dl4 alone invented a pad), language and format 12/12, quality spread <= 1 point per id, and the rendered media is byte-identical across reps. The one unstable axis is Look: whether the agent discloses the single-word stacking is a coin flip, 6 of 12."
+  }
+ },
+ "1.17.1 targets (first measurement)": {
+  "fit_size_on_the_template_path": "12/12, and this is the fix working exactly as written. Every caption run through render.py --template quotes the fit: cw1, dl1 and cs1 go 24 -> 16 ASS units, dl4 goes to the 13-unit floor, split 0 and text_unchanged true in all of them, identical per id across the three repeats. Eval 18 had no size_used or shrunk key anywhere on this path and one hand-built exception. The declarative half holds too - no run met 'unknown key fit_size'.",
+  "beat_confidence_refusal": "Fixed. bt2 ran scenes.py --beats on no_beats.mp4, quoted the measured 0.184 confidence against the 0.5 threshold, cut plainly and reported the beat half as Failed. Eval 18's bt2 asserted the skill has no beat detection, which was false; the measured negative is now the answer.",
+  "filler_routing": "Fixed. fw1 and fw3 both route to silence.py --filler --words on the first try (fw3 with --filler-lang ja --filler-keep). Eval 18 rebuilt both by hand as cut.py --segments and left the output VFR. fw2, with no transcript and no engine on the machine, refuses honestly and names the engines.",
+  "batch_jobs": "2/2 and clean. bp1 used --jobs auto, bp2 --jobs 64, both disclosed the applied cap, and neither had to rewrite the staged recipe - the eval-18 fixture bug is gone.",
+  "partial_result_label": "Held. 26/26 on format, no third label anywhere. bt2, fw2 and rc2 all open Failed: and carry the shortfall inside the same five labels; no run needed the sanctioned Done:-with-shortfall-in-Notes form to be rescued.",
+  "skill_md_routing": "The four features SKILL.md now names (filler, beats, --jobs, --cache) account for none of this iteration's routing misses. The two remaining feature-shaped misses are rc1 and rc2 on --cache, and neither is a discoverability failure: rc1 argued the cache was moot for its fixture (and was right about the fixture), rc2 over-refused from render.py --help.",
+  "the_target_that_was_not_met": "The picture. See the headline finding: the fit stats above are true of the ASS text and false of the rendered frame."
+ },
+ "tokens_per_run (subagent_tokens)": {
+  "all_26 at 1.17.1": {
+   "runs": 26,
+   "mean": 83796,
+   "median": 79667,
+   "min": 67954,
+   "max": 117298
+  },
+  "same_18 at 1.17.1": {
+   "runs": 18,
+   "mean": 78336
+  },
+  "same_18 at 1.17.0 (iteration 18)": {
+   "runs": 18,
+   "mean": 81048
+  },
+  "cheaper_than_eval_18": "12 of 18. The biggest saving is cs1, 102,161 -> 84,002 (-18%): the template now reaches the fitter, so the hand-built four-stage chain eval 18 paid for is unnecessary.",
+  "dearer_than_eval_18": "6 of 18, led by dl1 at 89,689 -> 105,834 (+18%); its repeats cost 117,298 and 98,094. The extra spend goes into the agent noticing the stacked caption in its own contact sheet and having nothing to do about it.",
+  "repeats_cost_more": "rep2 mean 99,414 and rep3 mean 92,751 against 91,088 for the same four ids in rep1.",
+  "per_prompt": {
+   "bp1": 70373,
+   "bp2": 71220,
+   "bt1": 71401,
+   "bt2": 72573,
+   "bt3": 67954,
+   "cs1": 84002,
+   "cs2": 85216,
+   "cs3": 74208,
+   "cw1": 76917,
+   "cw2": 77549,
+   "dl1": 105834,
+   "dl3": 87894,
+   "dl4": 97598,
+   "fw1": 75574,
+   "fw2": 69909,
+   "fw3": 75464,
+   "rc1": 77037,
+   "rc2": 69319,
+   "rep2:cs1": 93098,
+   "rep2:cw1": 105477,
+   "rep2:dl1": 117298,
+   "rep2:dl4": 81784,
+   "rep3:cs1": 96651,
+   "rep3:cw1": 85654,
+   "rep3:dl1": 98094,
+   "rep3:dl4": 90605
+  }
+ },
+ "comparison_with_iteration_18": {
+  "scope": "Eval 18 ran 100 prompts once; eval 19 runs 18 of them (plus 8 repeats). Every row below is on the 18 shared ids unless it says otherwise.",
+  "routing": "Opus 22/28 graded runs at eval 18 -> 23/26 here. The four eval-18 misses that were 1.17 features (bt2, fw1, fw3, rc1-as-discoverability) are three-quarters closed; cs3 and the --cache pair remain.",
+  "refusal_honesty": "Opus 24/28 -> 24/26. cs3 is the same miss for the third iteration running; rep2/dl4's invented pad is new and is a repeat-only artefact.",
+  "report_format": "98/100 (two third labels) -> 26/26, no third label. The 1.17.1 one-label rule held.",
+  "language": "100/100 -> 26/26.",
+  "look": "Eval 18 flagged one loose Look line; eval 19 flags six, 20/26. The set is caption-heavy by construction, and the loose lines are all the same failure - calling stacked single words legible.",
+  "quality_mean": "3.71 -> 3.65.",
+  "trigger_set": "50/50 -> 50/50.",
+  "tokens_mean_same_18": "81,048 -> 78,336.",
+  "net": "1.17.1 did what it promised at the flag level and nothing at the pixel level, because the defect was never in the fitter."
+ },
+ "findings": [
+  "HEADLINE, new and root-caused: the picture still stacks one word per line on every template caption run, and the cause is not the fitter. caption.py write_ass computes a single `margin = round(args.margin * scale)` and writes it into MarginL, MarginR and MarginV of the Style row. args.margin is the platform's VERTICAL safe margin in ASS units (tiktok 63, shorts 52); scaled by play_h/288 that is 420 px, so at PlayResX 1080 the emitted Style is `...,2,420,420,420,1` and the text column is 1080 - 420 - 420 = 240 px. libass then wraps every word. The Opus grader reproduced it from scratch on a fresh 1080x1920 clip and got 'Hello' over 'world'.",
+  "The bug is confined to the generated-ASS path - --animate/--karaoke - which is exactly the path every delivery template takes (render.py passes --animate pop --karaoke --margin 63/52). The plain SRT path burns force_style with MarginV only and is correctly typeset. cs2, the one caption run in this set that drove caption.py by hand with --platform shorts and no animation, is the only run whose lines run the full frame width - the eval data corroborates the diagnosis on its own.",
+  "This is why the fit stats and the sheets disagree. The fitter budgets play_w * 0.9 (972 px) while libass lays out into 240 px, so `split: 0` and `text_unchanged: true` are true statements about the ASS text and false statements about the picture. Shrinking cannot rescue it: dl4 reaches the 13-unit floor and still stacks. Today's caption stats in every template report are a measurement of the wrong frame.",
+  "The defect has been present since 1.14 introduced --platform margins, and it explains eval 17's and eval 18's 'one word per line' complaints, which were attributed first to the phrase breaker (1.16.1) and then to the unreachable size fitter (1.17.1). Two patches have now been aimed at symptoms of this line. 1.17.2 is the patch that reaches it.",
+  "1.17.1's own headline fix is real and stable, and worth saying plainly: fit-size fires on the template path in 12/12 caption runs across three repeats, with identical stats per id and byte-identical output media between reps. What changed since eval 18 is the numbers in the report. The picture is unchanged.",
+  "Repeat stability is high everywhere except Look. Across cw1/dl1/dl4/cs1 x3: routing 12/12, honesty 11/12, language and format 12/12, quality spread <= 1 point per id. Whether the agent tells the user about the stacked words is a coin flip - disclosed in 6 of 12, papered over in 5. dl1 disclosed it in reps 1 and 2 but not 3; dl4 never disclosed it in any rep; cw1 disclosed it in all three. A defect that only half the runs report is a defect the eval would have missed at one repeat.",
+  "Look-reading is the weakest graded axis at 20/26, and the failure is specific rather than general: five runs describe a contact sheet they produced and opened, and call captions 'legible, inside the lower safe area' while the sheet shows one word per line. The sixth, rc1, wrote a sheet and then said 'pixels not inspected; agent has no image view'. Agents can see the sheet; what they lack is a measurement to check the sentence against.",
+  "cs3 rewrote the user's caption text instead of refusing for the third iteration running (3/3). The prompt exists to forbid exactly this, the run disclosed the rewrite, and it still reported Done. SKILL.md gained a caption routing table in 1.17.1 but no refusal line: 'never rewrite, shorten or paraphrase the user's caption text; offer --max-lines or a smaller --min-size instead' needs to be where the agent reads it on this path.",
+  "silence.py --filler removes silence gaps by default. fw1 went 12.00 s -> 6.77 s for 'take the filler words out' and fw3 the same; both runs disclosed it in Notes, so the reports are honest, but ~5 s of unasked-for cutting is a surprising default for that request. This is a design question for 1.18, not a defect: either --filler leaves silences alone unless asked, or the SKILL.md row says what it does.",
+  "rc1's --cache miss is half a fixture bug. The staged project.json has clips and export only, so the prompt's 'don't redo the captions' names a stage that does not exist, and the agent said so. --cache was still the route, and the run is graded a miss, but as staged rc1 cannot distinguish a cache miss from a correct refusal to care. rc2 is the opposite failure: it reasoned correctly from --help that the cache key includes the ffmpeg version and then rendered nothing at all, where the prompt wanted a real run reporting every stage as a miss.",
+  "Tokens: 78,336 mean over the 18 rep1 ids against 81,048 for the same ids at eval 18, 12 of 18 cheaper. The 1.17.1 template fix pays for itself at cs1 (-18%). The counter-example is dl1 (+18%, and dearer still in both repeats), where the spend is the agent looking at a stacked caption it cannot fix. All 26 runs mean 83,796; repeats are consistently dearer than rep1."
+ ],
+ "harness_or_model_issues": [
+  "This is an 18-prompt subset, not the 100. Nothing here speaks to the 82 prompts that did not run; the full set returns at 1.18.0, as the 1.17.1 note said.",
+  "The regex grader walks the full 89-id table and prints MISSING for every id this iteration did not run. Those rows are absent prompts, not failures; only the 18 named rows are graded.",
+  "The regex refusal-honesty count (1/3) disagrees with the Opus count. cs3 is a genuine miss in both; the other two slots are keyword misses in reports the Opus grader read in full and passed. Use the Opus number.",
+  "rc1's staged project.json has no captions stage, which is what the prompt's 'don't redo the captions' refers to. Fix the fixture before the next run of this id, or its grade stays ambiguous.",
+  "Repeats exist only for cw1, dl1, dl4 and cs1. Variance on the other 14 ids is still unmeasured, and the Look coin flip found in the repeats is a warning about reading any single run of those 14.",
+  "whisper is absent from the machine by design, so fw2 meets a real missing engine rather than a simulated one; fw1 and fw3 are given word-timing JSON fixtures instead.",
+  "beats.mp4, no_beats.mp4, gappy.mp4 and tests/out/batch_in/{a,b}.mp4 are gitignored fixtures carried over from eval 18's staging; anyone re-running must build them the same way first."
+ ],
+ "follow_ups": [
+  "1.17.2 blocker: caption.py write_ass must derive MarginL and MarginR from the platform's horizontal safe fractions * play_w (default the 5% title-safe), independently of MarginV. Regression test asserting Style MarginL + MarginR <= (1 - SAFE_WIDTH_FRACTION) * play_w at tiktok geometry, and an e2e asserting the generated ASS for 'Hello world' at --platform tiktok contains no \\N.",
+  "1.17.2 blocker: make the fitter (line_em_for_size) measure against the same horizontal budget the Style row will actually grant, so `split: 0`, `size_used` and `text_unchanged` describe the picture. Until they do, every template caption report states numbers the agent cannot falsify.",
+  "1.17.2: an explicit refusal line in SKILL.md's caption section - never rewrite, shorten or paraphrase the user's caption text; offer --max-lines or a smaller size instead. cs3 is 3/3 misses across iterations 17, 18 and 19 and prose elsewhere in the file has not closed it.",
+  "Give the agent something to check a Look line against: a caption.py --fit-report (or the same numbers on --json) reporting lines-per-cue as libass will lay them out. Five of this iteration's six loose Look lines are agents describing a picture they had on disk but never measured.",
+  "Fix the rc1 fixture: give its project.json a captions stage so 'don't redo the captions' has something to cache, then re-run rc1 and rc2 together.",
+  "silence.py --filler: decide whether it should leave silences alone unless asked (fw1 and fw3 each removed ~5 s nobody requested, both disclosed). 1.18 decision; at minimum the SKILL.md row must say what the default does.",
+  "silence.py's --filler error text should name whisper.cpp / faster-whisper / openai-whisper and a pip line, so fw2-shaped refusals are actionable without the agent inventing engine names.",
+  "Eval 20: re-run this 18-id set plus the full 100 at 1.17.2, and grade the caption prompts on the sheet rather than on the fit stats - the question is how many lines the rendered frame has, not what the fitter reports."
+ ]
+}
