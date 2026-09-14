@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -2517,6 +2518,121 @@ class PhraseWrapTests(unittest.TestCase):
         self.assertLess(C.break_penalty("\u306f", "\u4e16", "ja"),         # after a particle
                         C.break_penalty("\u6c7a", "\u307e", "ja"))         # inside a word
         self.assertEqual(C.break_penalty("\u3042", "\u3063", "ja"), 1.0)  # small kana may not start a line
+
+
+class FitSizeTests(unittest.TestCase):
+    """1.17: the caption size is fitted to the cue before the cue is split (eval 17).
+
+    Pure -- no fixtures, no ffmpeg. The geometry and the requested size come from the platform
+    table, never from a pinned float, so the lock moves if the platform's caption default moves.
+    """
+
+    # The eval-17 cues, verbatim. cw1 and dl1 carry the same English sentence.
+    CW1 = "A third line the tool times for me"
+    DL4 = "Una tercera l\u00ednea con tiempos autom\u00e1ticos"
+    DL4B = "Segunda l\u00ednea de subt\u00edtulos"
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        self.caption = importlib.import_module("caption")
+        self._platforms = importlib.import_module("_platforms")
+        frame = self._platforms.PLATFORMS["tiktok"]["frame"]
+        self.W, self.H = frame["w"], frame["h"]
+        self.SIZE = self._platforms.caption_defaults("tiktok")["size"]
+
+    def _fit(self, cues, **kw):
+        kw.setdefault("size", self.SIZE)
+        kw.setdefault("max_lines", 2)
+        return self.caption.fit_size(cues, play_w=self.W, play_h=self.H, **kw)
+
+    def _wrap(self, text, size):
+        em = self.caption.line_em_for_size(size, self.W, self.H)
+        return self.caption.wrap_text(text, em)
+
+    def test_the_floor_is_four_and_a_half_percent_of_the_frame(self):
+        C = self.caption
+        self.assertEqual(C.MIN_CAPTION_FRACTION, 0.045)
+        self.assertEqual(self._platforms.ass_units(C.MIN_CAPTION_FRACTION), 13)
+        self.assertEqual(self._fit([self.CW1])["floor"], 13)
+
+    def test_eval17_cues_fit_two_lines_at_the_shrunk_size(self):
+        """The regression lock. At the TikTok caption size every one of these needs three or
+        four lines, so --max-lines 2 split each into consecutive cues; shrinking fits them."""
+        # At the requested size, all three are over the line budget -- the defect.
+        for text in (self.CW1, self.DL4, self.DL4B):
+            self.assertGreater(len(self._wrap(text, self.SIZE)), 2)
+
+        cw1 = self._fit([self.CW1])
+        self.assertEqual(cw1["size"], 16)
+        self.assertEqual(self._wrap(self.CW1, 16), ["A third line the", "tool times for me"])
+
+        dl4 = self._fit([self.DL4])
+        self.assertEqual(dl4["size"], 13)
+        self.assertEqual(self._wrap(self.DL4, 13),
+                         ["Una tercera l\u00ednea con", "tiempos autom\u00e1ticos"])
+
+        # 19, not 18: 18 is simply the next size the spec's coarse table sampled. 19 is the
+        # largest size at which this cue fits two lines, and the fitter returns the largest.
+        dl4b = self._fit([self.DL4B])
+        self.assertEqual(dl4b["size"], 19)
+        self.assertEqual(self._wrap(self.DL4B, 19), ["Segunda l\u00ednea", "de subt\u00edtulos"])
+
+        whole = self._fit([self.CW1, self.DL4, self.DL4B])
+        self.assertEqual(whole["size"], 13)
+        self.assertEqual(whole["scope"], "file")
+        self.assertTrue(whole["fits"])
+        self.assertEqual(whole["shrunk"], 3)
+        for text in (self.CW1, self.DL4, self.DL4B):
+            self.assertLessEqual(len(self._wrap(text, whole["size"])), 2)
+
+    def test_fit_size_never_goes_below_the_floor(self):
+        # One unbreakable run far wider than the line at any size in range.
+        fit = self._fit(["Donaudampfschifffahrtsgesellschaftskapitaenspatentpruefung " * 3])
+        self.assertEqual(fit["size"], 13)
+        self.assertEqual(fit["floor"], 13)
+        self.assertFalse(fit["fits"])
+
+    def test_fit_size_leaves_a_cue_that_already_fits_alone(self):
+        fit = self._fit(["Short line"])
+        self.assertEqual(fit["size"], self.SIZE)
+        self.assertEqual(fit["shrunk"], 0)
+
+    def test_fit_size_honours_an_explicit_min_size(self):
+        fit = self._fit([self.DL4], min_size=16)
+        self.assertEqual(fit["floor"], 16)
+        self.assertEqual(fit["size"], 16)
+        self.assertFalse(fit["fits"])
+
+    def test_fit_size_without_geometry_changes_nothing(self):
+        fit = self.caption.fit_size([self.DL4], size=self.SIZE, max_lines=2,
+                                    play_w=None, play_h=None)
+        self.assertEqual(fit["size"], self.SIZE)
+        self.assertEqual(fit["shrunk"], 0)
+
+    def test_scope_cue_gives_per_cue_sizes(self):
+        fit = self._fit([self.CW1, self.DL4, "Short line"], scope="cue")
+        self.assertEqual(fit["scope"], "cue")
+        self.assertEqual(fit["per_cue"][0], 16)
+        self.assertEqual(fit["per_cue"][1], 13)
+        self.assertEqual(fit["per_cue"][2], self.SIZE)
+        self.assertEqual(fit["size"], min(fit["per_cue"].values()))
+
+    def test_fit_size_accepts_cue_tuples(self):
+        tuples = [(0.0, 1.0, self.CW1), (1.0, 2.0, self.DL4)]
+        self.assertEqual(self._fit(tuples)["size"], self._fit([self.CW1, self.DL4])["size"])
+
+    def test_fit_size_is_pure(self):
+        """No subprocess, no ffmpeg, no ffprobe: the size is a text measurement."""
+        import importlib
+        _common = importlib.import_module("_common")
+        def boom(*a, **k):
+            raise AssertionError("fit_size ran a subprocess")
+        with unittest.mock.patch.object(_common, "run", boom), \
+             unittest.mock.patch.object(_common, "run_analysis", boom), \
+             unittest.mock.patch.object(subprocess, "run", boom), \
+             unittest.mock.patch.object(subprocess, "Popen", boom):
+            self.assertEqual(self._fit([self.CW1])["size"], 16)
 
 
 if __name__ == "__main__":

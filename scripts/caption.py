@@ -45,12 +45,14 @@ from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
 from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
+                     fit_size, line_em_for_size, MIN_CAPTION_FRACTION,
                      break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
                      _split_hyphens, FUNCTION_WORDS, JA_PARTICLES, JA_SENTENCE_END, _fix_orphans, _rebalance)
 
 # The breaker's names are caption.py's public surface as much as _common's: every caller and test
 # that reached for `caption.wrap_text` before 1.16 still does.
 __all__ = ["SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_variants",
+           "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION",
            "best_break", "break_penalty", "_is_weak_line", "_atoms", "_join", "_break_spaced",
            "_bare_word", "_function_words", "_split_hyphens", "FUNCTION_WORDS", "JA_PARTICLES",
            "JA_SENTENCE_END", "_fix_orphans", "_rebalance", "char_script", "NO_SPACE_SCRIPTS",
@@ -511,12 +513,7 @@ def max_line_em(args, play_w: Optional[int], play_h: Optional[int]) -> Optional[
     --size is in ASS points against a 288-line script (what libass's force_style uses), so the
     rendered pixel size is size * play_h / 288.
     """
-    if not play_w or not play_h or not args.size:
-        return None
-    size_px = args.size * play_h / 288.0
-    if size_px <= 0:
-        return None
-    return (play_w * SAFE_WIDTH_FRACTION) / size_px
+    return line_em_for_size(args.size, play_w, play_h)
 
 
 def parse_ass_dialogue(path: str) -> str:

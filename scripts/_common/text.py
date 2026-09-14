@@ -1529,3 +1529,120 @@ def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
     if not greedy:
         greedy = [text]
     return (wrapped or [text], greedy, measured or [text])
+
+
+# --- caption size that fits the cue (1.17) -------------------------------------------------
+# The legibility floor: 4.5 % of the frame height, ass_units(0.045) = 13 against the 288-line
+# ASS script grid. One floor for every destination -- 87 px of type on a 1920-tall frame, above
+# the ~3.5 % where mobile legibility bottoms out and where the platforms' own caption UIs sit.
+# Nothing per-platform is measured, so nothing per-platform is claimed. (The eval-17 cues happen
+# to land exactly on it: 13 is the smallest size at which every one of them fits two lines.)
+MIN_CAPTION_FRACTION = 0.045
+ASS_SCRIPT_HEIGHT = 288  # caption.py's --size/--margin reference grid; mirrors _platforms
+
+
+def line_em_for_size(size: float, play_w: "Optional[int]", play_h: "Optional[int]", *,
+                     safe_fraction: float = SAFE_WIDTH_FRACTION,
+                     script_height: int = ASS_SCRIPT_HEIGHT) -> "Optional[float]":
+    """How many em fit on one caption line at `size`, or None without geometry.
+
+    `size` is in ASS points against a `script_height`-line script (what libass's force_style
+    uses), so the rendered pixel size is size * play_h / script_height. This is the one width
+    formula: caption.py::max_line_em and fit_size() both call it.
+    """
+    if not play_w or not play_h or not size:
+        return None
+    size_px = size * play_h / float(script_height)
+    if size_px <= 0:
+        return None
+    return (play_w * safe_fraction) / size_px
+
+
+def fit_size(cues, *, size: int, min_size: "Optional[int]" = None, max_lines: int = 2,
+             play_w: "Optional[int]" = None, play_h: "Optional[int]" = None,
+             safe_fraction: float = SAFE_WIDTH_FRACTION, mode: str = "phrase",
+             lang: "Optional[str]" = None, script_height: int = ASS_SCRIPT_HEIGHT,
+             step: int = 1, scope: str = "file") -> "Dict[str, Any]":
+    """The largest size in [min_size, size] at which every cue wraps to <= max_lines lines.
+
+    Pure: strings and integers in, a dict out. No ffmpeg, no ffprobe, no I/O -- the caption size
+    is a text-measurement decision, and measuring it must not need a subprocess.
+
+    `cues` is an iterable of cue texts (or of (start, end, text) tuples, as caption.py holds
+    them before layout). Returns
+    {"size", "floor", "requested", "scope", "shrunk", "fits", "per_cue", "max_em", "steps"}.
+
+    The search is a linear walk downwards, not a bisection, and deliberately so:
+    len(wrap_text(t, max_em)) is NOT guaranteed monotone in max_em under the phrase rules -- a
+    rebalance that is discarded at one width can be applied at the next -- and a non-monotone
+    predicate breaks bisection. 24 -> 13 is at most twelve iterations of pure string work.
+
+    `scope="cue"` returns one size per cue index in `per_cue`, with `size` the minimum of them;
+    the caller writes a per-cue {\\fsN} override. The default is `scope="file"`: a caption track
+    whose type size changes from cue to cue reads as a mistake, and one measured line width per
+    file is what makes the wrap behaviour reproducible.
+    """
+    texts = []
+    for cue in cues or []:
+        if isinstance(cue, (tuple, list)):
+            texts.append(cue[2] if len(cue) > 2 else cue[-1])
+        else:
+            texts.append(cue)
+    texts = [t for t in texts if t and str(t).strip()]
+    requested = int(size)
+    floor = int(min_size) if min_size is not None else ass_units_local(MIN_CAPTION_FRACTION,
+                                                                      script_height)
+    floor = max(1, min(floor, requested))
+    step = max(1, int(step))
+    result: "Dict[str, Any]" = {"size": requested, "floor": floor, "requested": requested,
+                                "scope": scope, "shrunk": 0, "fits": True, "per_cue": {},
+                                "max_em": None, "steps": 0}
+    em_at = lambda sz: line_em_for_size(sz, play_w, play_h, safe_fraction=safe_fraction,
+                                        script_height=script_height)
+    base_em = em_at(requested)
+    result["max_em"] = base_em
+    if not texts or base_em is None or max_lines < 1:
+        # No geometry means no measurable width: leave the size exactly as asked.
+        return result
+
+    def lines_at(text: str, sz: int) -> int:
+        em = em_at(sz)
+        if em is None:
+            return 1
+        return len(wrap_text(text, em, mode=mode, lang=lang))
+
+    over_at_requested = [t for t in texts if lines_at(t, requested) > max_lines]
+    result["shrunk"] = len(over_at_requested)
+
+    def best_for(subset) -> "Tuple[int, bool]":
+        """(largest size in [floor, requested] fitting every text in `subset`, did it fit)."""
+        sz = requested
+        while sz >= floor:
+            result["steps"] += 1
+            if all(lines_at(t, sz) <= max_lines for t in subset):
+                return sz, True
+            sz -= step
+        return floor, all(lines_at(t, floor) <= max_lines for t in subset)
+
+    if scope == "cue":
+        per_cue = {}
+        fits_all = True
+        for i, t in enumerate(texts):
+            sz, ok = best_for([t])
+            per_cue[i] = sz
+            fits_all = fits_all and ok
+        result["per_cue"] = per_cue
+        result["size"] = min(per_cue.values()) if per_cue else requested
+        result["fits"] = fits_all
+    else:
+        sz, ok = best_for(texts)
+        result["size"] = sz
+        result["fits"] = ok
+    result["max_em"] = em_at(result["size"])
+    return result
+
+
+def ass_units_local(fraction: float, script_height: int = ASS_SCRIPT_HEIGHT) -> int:
+    """`fraction` of the frame height in ASS units. Mirrors _platforms.ass_units, kept here so
+    _common.text stays importable without the scripts/ top level on sys.path."""
+    return int(round(fraction * script_height))
