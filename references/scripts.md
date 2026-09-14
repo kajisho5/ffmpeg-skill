@@ -731,7 +731,10 @@ above the cap is clamped with a note, not refused, and both `jobs` and
 - **One timeout budget for the whole batch**, not one per item: `--timeout` is
   computed into a deadline once, no new item starts after it, and the run exits
   124 `kind: timeout` with the items that never started marked
-  `"skipped": "timeout"`.
+  `"skipped": "timeout"`. That shared budget applies when a `--timeout` was
+  actually given, or when `--jobs > 1` asked for the batch to be treated as one
+  piece of work; the default sequential path with the default timeout is 1.16's
+  behaviour exactly, where a long folder was never cut off part-way.
 - **Determinism**: items are submitted in the existing sorted order and
   collected by submission order, and each item's log lines are buffered and
   flushed in file order, so the per-item table and the log read exactly as a

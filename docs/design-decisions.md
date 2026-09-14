@@ -372,9 +372,13 @@ that already threads across cores; beyond a few concurrent x264 encodes the jobs
 wall-clock stops improving while memory does not. A number above the cap is *clamped with a note*
 rather than refused — refusing a number that is merely optimistic is unhelpful, and the result
 reports both `jobs` and `jobs_requested` so a report claiming "64 jobs" is checkable. The
-`--timeout` stays the whole batch's budget, not each item's, which is why the pool is topped up
-to `jobs` in flight rather than submitted all at once: a deadline that every item has already
-passed cannot stop anything.
+`--timeout` becomes the whole batch's budget rather than each item's, which is why the pool is
+topped up to `jobs` in flight rather than submitted all at once: a deadline that every item has
+already passed cannot stop anything. That shared budget is scoped so it cannot change 1.16: it
+applies when a `--timeout` was actually stated, or when `--jobs > 1` asked for the batch to be
+treated as one piece of work. The default sequential run with the default 1800 s keeps the old
+per-item ceiling — otherwise a folder of forty files that used to finish would start exiting 124,
+for a flag nobody passed.
 
 **`--beats`, `--filler`, `--jobs` and `--cache` get no SKILL.md request row in 1.17.0.** The
 existing rows already route ("cut out the pauses" → `silence.py`, "do this to every file in the

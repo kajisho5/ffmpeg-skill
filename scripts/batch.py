@@ -239,8 +239,13 @@ def main() -> int:
     if jobs != requested:
         info(f"--jobs {requested} capped to {jobs} (min of the request, {cpus} CPU(s) and the "
              f"{JOBS_CAP}-job ceiling): each item is already a multi-threaded encode")
-    # One budget for the whole batch, not one per item.
-    deadline = time.monotonic() + STATE.timeout if STATE.timeout else None
+    # One budget for the whole batch, not one per item -- but only where that cannot change what
+    # 1.16 did. A stated --timeout is a statement about this run, and asking for --jobs > 1 is
+    # asking for the batch to be treated as one piece of work; the default sequential path with
+    # the default timeout keeps 1.16's behaviour exactly, where each item got its own ceiling and
+    # a long folder was never cut off part-way.
+    shared_budget = bool(args.timeout) or jobs > 1
+    deadline = time.monotonic() + STATE.timeout if (shared_budget and STATE.timeout) else None
     cache_lock = threading.Lock()
     timed_out = {"hit": False}
 

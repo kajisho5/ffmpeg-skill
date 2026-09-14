@@ -1196,9 +1196,15 @@ class EditingTests(MediaFixtures):
         shim.mkdir(exist_ok=True)
         for tool in ("ffmpeg", "ffprobe"):
             real = shutil.which(tool)
-            link = shim / tool
-            if real and not link.exists():
-                os.symlink(real, link)
+            if not real:
+                self.skipTest(f"{tool} not on PATH")
+            link = shim / Path(real).name          # keeps the .exe on Windows
+            if link.exists():
+                continue
+            try:
+                os.symlink(real, link)             # Windows needs a privilege for this ...
+            except (OSError, NotImplementedError, AttributeError):
+                shutil.copy2(real, link)           # ... so copy the binary there instead
         env = dict(os.environ, PATH=str(shim))
         out = OUT / "filler_nowhisper.mp4"
         if out.exists():
