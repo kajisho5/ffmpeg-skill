@@ -22,6 +22,7 @@ HERE = Path(__file__).resolve().parent
 OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HERE))
+from _common import escape_filter_path  # noqa: E402
 
 TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
@@ -91,7 +92,7 @@ def _ass_ink_columns(ass_path, w, h, threshold=60):
     """The set of x columns that carry ink when `ass_path` is rendered over black at w x h."""
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=%dx%d:d=0.04" % (w, h),
-         "-vf", "ass=%s" % str(ass_path).replace("\\", "/"), "-frames:v", "1",
+         "-vf", "ass=%s" % escape_filter_path(str(ass_path)), "-frames:v", "1",
          "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE)
     data = proc.stdout
     if len(data) < w * h:
@@ -108,7 +109,7 @@ def _ass_ink_rows(ass_path, w, h, threshold=60, gap=8, at=1.0):
     # `at` matters: --animate fade/pop start at zero alpha, so the frame at t=0 is blank.
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=%dx%d:d=%.2f" % (w, h, at + 0.5),
-         "-ss", "%.2f" % at, "-vf", "ass=%s" % str(ass_path).replace("\\", "/"), "-frames:v", "1",
+         "-ss", "%.2f" % at, "-vf", "ass=%s" % escape_filter_path(str(ass_path)), "-frames:v", "1",
          "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE)
     data = proc.stdout
     if len(data) < w * h:
