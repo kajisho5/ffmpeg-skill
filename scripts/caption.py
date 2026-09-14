@@ -402,11 +402,13 @@ def margins_x(args, play_w: Optional[int]) -> Tuple[int, int]:
     The left/right margins come from the destination's own horizontal safe zone (`safe.left` /
     `safe.right` in scripts/_platforms.py; TikTok reserves 14 % on the right for the like/share
     rail), and without a --platform from the conventional (1 - SAFE_WIDTH_FRACTION)/2 border --
-    the same 5 % per side the wrapper has always assumed.
+    the same 5 % per side the wrapper has always assumed. A run that writes no ASS of its own
+    (the SRT force_style burn) keeps that symmetric border, so its budget is unchanged at
+    SAFE_WIDTH_FRACTION and the fitter still agrees with what libass will do.
     """
     if not play_w:
         return 0, 0
-    if getattr(args, "platform", None) and PLATFORMS[args.platform].get("frame"):
+    if getattr(args, "platform", None) and PLATFORMS[args.platform].get("frame") and draws_own_ass(args):
         safe = PLATFORMS[args.platform]["safe"]
         left, right = float(safe["left"]), float(safe["right"])
     else:
@@ -429,11 +431,12 @@ def draws_own_ass(args) -> bool:
 def safe_width_fraction(args, play_w: Optional[int]) -> float:
     """The fraction of the frame width a caption line may use -- play_w minus the two margins.
 
-    The fitter and libass have to agree to the pixel, so on the generated-ASS path this is
-    derived from the SAME rounded MarginL/MarginR that go into the Style rather than from the
-    raw fractions.
+    The fitter and libass have to agree to the pixel, so this is derived from the SAME rounded
+    MarginL/MarginR that go into the ASS Style rather than from the raw fractions. On a run that
+    writes no ASS of its own the margins are the symmetric border, i.e. SAFE_WIDTH_FRACTION, so
+    the SRT force_style path keeps its historical budget.
     """
-    if not play_w or not draws_own_ass(args):
+    if not play_w:
         return SAFE_WIDTH_FRACTION
     left, right = margins_x(args, play_w)
     return max(0.05, (play_w - left - right) / float(play_w))

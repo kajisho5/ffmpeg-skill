@@ -1707,10 +1707,15 @@ class PictureTests(MediaFixtures):
         """The regression: with scope=cue every cue was wrapped to the FILE's budget -- the
         budget of the smallest size, which is the widest line in em -- and then drawn at its own
         larger size, so lines ran off the side of the frame. Each cue is now laid out at the size
-        it is drawn at, and no rendered line exceeds the safe width."""
+        it is drawn at, and no rendered line exceeds the safe width.
+
+        1.17.2: "the safe width" is now the ASS Style's real column (play_w minus the horizontal
+        safe margins), not play_w * SAFE_WIDTH_FRACTION, and the third cue genuinely needs three
+        lines at the floor in TikTok's narrower column -- it is split, and says so."""
         sys.path.insert(0, str(SCRIPTS))
         import importlib
         text_mod = importlib.import_module("_common.text")
+        caption_mod = importlib.import_module("caption")
         vert = self._vertical()
         cues = OUT / "cues_scope.txt"
         cues.write_text("0:00-0:03 A third line the tool times for me\n"
@@ -1724,15 +1729,25 @@ class PictureTests(MediaFixtures):
                                  "-o", OUT / "cap_scope.mp4", "--json").stdout)
         cap = data["caption"]
         self.assertEqual(cap["fit_scope"], "cue")
-        self.assertEqual(cap["split"], 0)
+        # a cue is split only when the floor really cannot hold it, and then it is reported
+        self.assertEqual(bool(cap["split"]), bool(cap["fit_exhausted"]),
+                         "a split without fit_exhausted means the budget, not the floor, gave way")
 
         body = ass.read_text(encoding="utf-8-sig")
-        style_px = int(next(l for l in body.splitlines() if l.startswith("Style:")).split(",")[2])
+        style_line = next(l for l in body.splitlines() if l.startswith("Style:"))
+        style_px = int(style_line.split(",")[2])
+        margin_l, margin_r = (int(style_line.split(",")[-4]), int(style_line.split(",")[-3]))
         dialogue = [l for l in body.splitlines() if l.startswith("Dialogue:")]
-        self.assertEqual(len(dialogue), 3)
+        self.assertGreaterEqual(len(dialogue), 3)
         # at least two different drawn sizes, which is the whole point of the flag
         drawn = set()
-        safe_px = 1080 * text_mod.SAFE_WIDTH_FRACTION
+        # the column libass actually draws into -- the same number the fitter measured
+        safe_px = 1080 - margin_l - margin_r
+        self.assertAlmostEqual(safe_px / 1080.0,
+                               caption_mod.safe_width_fraction(
+                                   type("A", (), {"platform": "tiktok", "animate": "fade",
+                                                  "karaoke": False, "ass": None})(), 1080),
+                               places=6)
         for line in dialogue:
             payload = line.split(",,0,0,0,,", 1)[1]
             override = re.search(r"\{\\fs(\d+)\}", payload)
