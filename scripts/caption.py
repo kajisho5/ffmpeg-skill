@@ -390,13 +390,63 @@ def report_layout(stats: dict) -> None:
              "space or `|` where the line may break, or use a smaller --size")
 
 
+def margins_x(args, play_w: Optional[int]) -> Tuple[int, int]:
+    """(MarginL, MarginR) in ASS script pixels -- the HORIZONTAL safe zone, never --margin.
+
+    1.17.2. --margin is the vertical distance from the edge (the platform's bottom UI: TikTok's
+    description bar is 22 % of the frame, 63 ASS units, 420 px on a 1920-tall frame). Writing it
+    into MarginL/MarginR as well, as 1.14-1.17.1 did, left a 1080-wide frame with a 240 px text
+    column and libass wrapped "Hello world" onto two lines while the fitter -- which measures
+    against the horizontal safe width -- reported no wrap at all.
+
+    The left/right margins come from the destination's own horizontal safe zone (`safe.left` /
+    `safe.right` in scripts/_platforms.py; TikTok reserves 14 % on the right for the like/share
+    rail), and without a --platform from the conventional (1 - SAFE_WIDTH_FRACTION)/2 border --
+    the same 5 % per side the wrapper has always assumed.
+    """
+    if not play_w:
+        return 0, 0
+    if getattr(args, "platform", None) and PLATFORMS[args.platform].get("frame"):
+        safe = PLATFORMS[args.platform]["safe"]
+        left, right = float(safe["left"]), float(safe["right"])
+    else:
+        left = right = (1.0 - SAFE_WIDTH_FRACTION) / 2.0
+    return int(round(left * play_w)), int(round(right * play_w))
+
+
+def draws_own_ass(args) -> bool:
+    """True when this run generates its own ASS, and so sets its own Style margins.
+
+    An SRT burn goes through libass's force_style instead, which states MarginV only and leaves
+    the side margins at libass's own defaults -- that path's budget stays the historical
+    play_w * SAFE_WIDTH_FRACTION, unchanged by 1.17.2.
+    """
+    if getattr(args, "ass", None):
+        return False          # the caller's own ASS: its Style is theirs, not ours
+    return (getattr(args, "animate", "none") or "none") != "none" or bool(getattr(args, "karaoke", False))
+
+
+def safe_width_fraction(args, play_w: Optional[int]) -> float:
+    """The fraction of the frame width a caption line may use -- play_w minus the two margins.
+
+    The fitter and libass have to agree to the pixel, so on the generated-ASS path this is
+    derived from the SAME rounded MarginL/MarginR that go into the Style rather than from the
+    raw fractions.
+    """
+    if not play_w or not draws_own_ass(args):
+        return SAFE_WIDTH_FRACTION
+    left, right = margins_x(args, play_w)
+    return max(0.05, (play_w - left - right) / float(play_w))
+
+
 def max_line_em(args, play_w: Optional[int], play_h: Optional[int]) -> Optional[float]:
     """How many em fit on one caption line at the chosen size, or None without video geometry.
 
     --size is in ASS points against a 288-line script (what libass's force_style uses), so the
     rendered pixel size is size * play_h / 288.
     """
-    return line_em_for_size(args.size, play_w, play_h)
+    return line_em_for_size(args.size, play_w, play_h,
+                            safe_fraction=safe_width_fraction(args, play_w))
 
 
 def parse_ass_dialogue(path: str) -> str:
@@ -467,7 +517,8 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
 
     scale = play_h / 288.0  # our --size is relative to a 288-line script like force_style
     size = int(round(args.size * scale))
-    margin = int(round(args.margin * scale))
+    margin = int(round(args.margin * scale))          # vertical: MarginV, and the slide origin
+    margin_l, margin_r = margins_x(args, play_w)      # horizontal: the frame's safe zone
     # karaoke: PrimaryColour is the "sung" colour, SecondaryColour the "not yet sung" one
     primary = ass_color(args.highlight_color if args.karaoke else args.color)
     secondary = ass_color(args.color)
@@ -477,7 +528,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {play_w}", f"PlayResY: {play_h}", "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Default,{ass_font_name(args.font)},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin},{margin},{margin},1",
+        f"Style: Default,{ass_font_name(args.font)},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin_l},{margin_r},{margin},1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     lines = []
@@ -888,7 +939,8 @@ def main() -> int:
     def fit_params():
         return dict(size=fit_stats["size_requested"], min_size=args._fit_floor,
                     max_lines=args.max_lines, play_w=play_w, play_h=play_h,
-                    mode=args.wrap, lang=args.language, scope=args.fit_size_scope)
+                    mode=args.wrap, lang=args.language, scope=args.fit_size_scope,
+                    safe_fraction=safe_width_fraction(args, play_w))
 
     def fit_the_size(cue_list):
         """Shrink --size until every cue fits --max-lines, BEFORE the cue is split.
@@ -929,7 +981,8 @@ def main() -> int:
             # has a NARROWER line in em, so wrapping everything to the minimum size's (widest)
             # budget and then drawing some cues large put lines off the side of the frame.
             args._fit_cue_em = [line_em_for_size(fit["per_cue"].get(i, fit["size"]),
-                                                 play_w, play_h)
+                                                 play_w, play_h,
+                                                 safe_fraction=safe_width_fraction(args, play_w))
                                 for i in range(len(cue_list))]
             args._fit_cue_size = [fit["per_cue"].get(i, fit["size"]) for i in range(len(cue_list))]
 

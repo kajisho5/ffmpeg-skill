@@ -6,6 +6,23 @@
 
 ### Fixed
 
+- **Caption side margins are the horizontal safe zone, not the vertical one** (eval 19 headline,
+  present since 1.14). `caption.py`'s generated ASS (`--animate`, `--karaoke`, the emoji overlay
+  route) wrote `--margin` into the Style's `MarginL` and `MarginR` as well as `MarginV`. But
+  `--margin` is the *vertical* safe margin: `--platform tiktok` makes it 22 % of the frame height
+  = 63 ASS units = **420 px** on a 1080x1920 frame, so libass was given a 1080 - 840 = **240 px**
+  text column and broke "Hello world" into "Hello" over "world", one word per line — while the
+  fitter and the wrapper measured against the horizontal safe width, reported `split: 0` and put
+  no `\N` in the file. `MarginL`/`MarginR` now come from the destination's own `safe.left` /
+  `safe.right` (TikTok: 54 px and 151 px on a 1080-wide frame, the like/share rail included), or
+  from the conventional `(1 - SAFE_WIDTH_FRACTION)/2` border with no `--platform`, and the
+  fitter's budget is exactly `play_w - MarginL - MarginR`, so the wrap the ASS states is the wrap
+  libass draws. The SRT `force_style` burn path never set side margins and is unchanged.
+  **Behaviour change, allowed by the stability paragraph of `docs/contract.md` because it fixes a
+  defect**: the pinned `--fit-size off` fixture (`tests/fixtures/caption_1_16_1_fitsize_off.ass`)
+  carried the wrong margins and has been re-pinned; `--fit-size off` still means "the size is
+  never shrunk".
+
 - **The caption size is fitted on the template path too.** `render.py --template NAME` fills the
   caption `size` from the delivery table and forwarded it as an explicit `--size`, which is how
   `caption.py` is told "a human chose this size" — so `--fit-size auto` never ran and a long cue

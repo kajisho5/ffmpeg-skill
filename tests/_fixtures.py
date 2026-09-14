@@ -99,6 +99,30 @@ def _ass_ink_columns(ass_path, w, h, threshold=60):
     return {x for x in range(w) if any(data[y * w + x] > threshold for y in range(h))}
 
 
+def _ass_ink_rows(ass_path, w, h, threshold=60, gap=8, at=1.0):
+    """Bands of y rows that carry ink when `ass_path` is rendered over black at w x h.
+
+    One band per drawn text line (a blank row taller than `gap` separates two lines), so a caption
+    that libass wrapped onto two lines is visible as two bands without measuring any font.
+    """
+    # `at` matters: --animate fade/pop start at zero alpha, so the frame at t=0 is blank.
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=%dx%d:d=%.2f" % (w, h, at + 0.5),
+         "-ss", "%.2f" % at, "-vf", "ass=%s" % str(ass_path).replace("\\", "/"), "-frames:v", "1",
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE)
+    data = proc.stdout
+    if len(data) < w * h:
+        return []
+    lit = [y for y in range(h) if sum(1 for v in data[y * w:(y + 1) * w] if v > threshold) > 2]
+    bands = []
+    for y in lit:
+        if bands and y - bands[-1][1] <= gap:
+            bands[-1][1] = y
+        else:
+            bands.append([y, y])
+    return [tuple(b) for b in bands]
+
+
 def _family_installed(family):
     if not shutil.which("fc-list"):
         return False

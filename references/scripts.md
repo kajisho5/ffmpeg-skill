@@ -952,6 +952,24 @@ caption.py INPUT --srt FILE[:LANG] | --ass FILE | --text CUES.txt [--write-srt O
            [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
 caption.py --text CUES.txt --write-srt OUT.srt        # generate the SRT only
 ```
+**Caption margins (1.17.2).** `--margin` is the **vertical** distance from the
+edge, in ASS units against the 288-line script grid (default 30; with
+`--platform` it becomes that destination's `safe.top`/`safe.bottom`, e.g. 22 %
+of the frame height = 63 units for TikTok's description bar). It is the ASS
+Style's `MarginV` and nothing else. The **side** margins come from the
+destination's horizontal safe zone — `safe.left` / `safe.right` in
+`scripts/_platforms.py`, 5 % and 14 % for TikTok, so a line stays off the
+like/share rail — and with no `--platform` from the conventional
+`(1 - SAFE_WIDTH_FRACTION)/2 = 5 %` border per side. The wrapper and `--fit-size`
+measure against exactly that column (`play_w - MarginL - MarginR`), so the line
+breaks the ASS states are the line breaks libass draws.
+
+Before 1.17.2 `--margin` was written into `MarginL` and `MarginR` too: at TikTok
+geometry that left a 240 px column on a 1080-wide frame and libass stacked one
+word per line while the tool reported no wrap at all. The `subtitles`/
+`force_style` burn path (no `--animate`/`--karaoke`) only ever set `MarginV` and
+is unchanged.
+
 **`--fit-size` (1.17): the size is fitted before a cue is split.** At the TikTok
 caption size (24 ASS units against the 288-line script grid) a line has about
 six em, so an ordinary sentence needs four lines — and `--max-lines 2` then cut
@@ -1033,8 +1051,9 @@ warning; `--emoji none` strips them; `--emoji color` insists on a colour-capable
 libass and refuses otherwise. Nothing is ever downloaded. What this machine can
 do: `doctor --json` → `.fonts.emoji`. Details: `references/gotchas.md#emoji`.
 
-Readable by default (1.12, rebalanced in 1.15): every cue is wrapped to the safe area (90 % of the
-frame width) at the chosen `--size`, measured per script — CJK and Thai count a
+Readable by default (1.12, rebalanced in 1.15): every cue is wrapped to the safe area — the
+frame width minus the two side margins below, 90 % of it without a `--platform` — at the chosen
+`--size`, measured per script — CJK and Thai count a
 full em per character, Latin per character from a table read off DejaVu Sans (so
 an all-caps line measures as wide as it draws), Cyrillic/Greek about 0.55,
 Arabic/Hebrew 0.6, Devanagari 0.7, and a combining mark nothing at all —

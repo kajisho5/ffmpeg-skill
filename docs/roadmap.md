@@ -21,7 +21,9 @@ The released version today is **1.17.0**, shipped and evaluated: **eval 18**
 (`evals/results/iteration-18.json`) graded it on the 100-prompt set, the 87 carried over plus
 thirteen written for the 1.17 features. It found the size fitter is unreachable on the template
 path and that SKILL.md routes none of the 1.17 features (see the 1.17.0 section); **1.17.1 below
-is the patch and is planned for release** — implemented, not tagged yet. Everything after 1.17.1 is planned.
+is the patch and is planned for release** — implemented, not tagged yet. **1.17.2**, the eval-19
+caption-margin patch, is implemented on top of it and is not tagged yet either. Everything after
+1.17.2 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -38,6 +40,7 @@ is the patch and is planned for release** — implemented, not tagged yet. Every
 | 1.16.1 | shipped + evaluated | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 graded the tree that carries it and reported no wrapping defect |
 | 1.17.0 | shipped, evaluated (eval 18) | eval 18 at 1.17.0 (`iteration-18.json`); tool count still 42; contract and MCP snapshots additive only. Two findings: `render.py` forwards the platform table's caption size as an explicit `--size`, so `--fit-size` never fires on the path every captioned prompt takes (and the project schema rejects `fit_size`), and SKILL.md names none of the 1.17 features, so beats, filler and `--cache` were each used in one run at most. 1.17.1 is the patch |
 | 1.17.1 | planned | patch from eval 18: the template path fits the caption size, project captions take the fit keys, SKILL.md routes filler/beats/`--jobs`/`--cache`; tool count still 42, contract additive only; not tagged yet, eval 19 after the release |
+| 1.17.2 | implemented, not tagged yet | eval 19 headline: `caption.py` wrote the VERTICAL `--margin` into the ASS Style's `MarginL`/`MarginR` too, so TikTok geometry left a 240 px text column and libass stacked one word per line while the tool reported `split: 0`. The side margins are the destination's horizontal safe zone and the fitter measures the same column; the pinned `--fit-size off` ASS fixture was re-pinned (it carried the wrong margins). Tool count still 42, contract additive only |
 | 1.18.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -361,6 +364,20 @@ came out byte-identical, as did `--help` for all 42 tools.
 - **Done. Eval fixtures** stage a batch recipe's `output_dir` absolute (eval 18 bp1/bp2).
 - **Eval 19** reruns cw1/cw2, dl1/dl3/dl4, cs1-3, bt1-3, fw1-3, bp1-2 and rc1-2 plus the trigger
   set; the full 100 waits for 1.18.0.
+
+## 1.17.2 — the caption-margin patch (implemented, not tagged yet)
+
+- **Done. The caption Style's side margins are the horizontal safe zone.** Since 1.14 `write_ass`
+  wrote `--margin` — the *vertical* safe margin, 63 ASS units = 420 px at TikTok geometry — into
+  `MarginL` and `MarginR` as well, leaving libass a 240 px column on a 1080-wide frame: "Hello
+  world" was drawn as "Hello" over "world" while the fitter and the wrapper measured the
+  horizontal safe width and reported no wrap at all (eval 19 headline; dl4's Spanish cues hit the
+  13-unit floor and still stacked). `MarginL`/`MarginR` now come from `safe.left`/`safe.right`,
+  or from the conventional 5 % border with no `--platform`, and `line_em_for_size`/`fit_size`
+  use exactly `play_w - MarginL - MarginR`. The SRT `force_style` path is unchanged.
+- The pinned `--fit-size off` fixture was re-pinned: it carried the wrong margins. A behaviour
+  change to fix a defect, with the CHANGELOG line the stability paragraph of `docs/contract.md`
+  asks for.
 
 ## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
 
