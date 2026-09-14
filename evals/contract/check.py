@@ -20,7 +20,7 @@ QUESTIONS = json.loads((HERE / "questions.json").read_text(encoding="utf-8"))
 
 
 def contract():
-    out = subprocess.run([sys.executable, str(ROOT / "scripts" / "_contract.py"), "--json", "--static"], stdout=subprocess.PIPE, text=True, check=True).stdout
+    out = subprocess.run([sys.executable, str(ROOT / "scripts" / "_contract.py"), "--json", "--static"], stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", check=True).stdout
     return json.loads(out)
 
 

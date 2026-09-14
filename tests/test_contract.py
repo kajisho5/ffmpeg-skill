@@ -2814,12 +2814,48 @@ class DoctorDetectionTests(unittest.TestCase):
         ffprobe's UTF-8 JSON then raises UnicodeDecodeError inside the reader thread,
         communicate() hands back an empty stdout, and probe.py reported `?s | no video | no
         audio` with exit 0. Every child capture in this repo states its encoding."""
+        import ast
+
+        def offending_calls(source, rel):
+            """Every subprocess.run/Popen call that asks for text mode without naming UTF-8.
+            The scan is over the parsed call, not over one line: review 17 finding 3 -- the
+            line-matching version could not see `text=text` in runner.run_analysis(), which is
+            exactly the capture that shipped undecorated."""
+            found = []
+            tree = ast.parse(source)
+            funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+                if name not in ("run", "Popen", "check_output", "call"):
+                    continue
+                kw = {k.arg: k.value for k in node.keywords if k.arg}
+                if "text" not in kw and "universal_newlines" not in kw:
+                    continue
+                flag = kw.get("text", kw.get("universal_newlines"))
+                if isinstance(flag, ast.Constant) and flag.value is False:
+                    continue                                  # bytes: encoding would be rejected
+                if "encoding" in kw:
+                    continue
+                if any(k.arg is None for k in node.keywords):
+                    # a **mapping of encoding kwargs, built in the enclosing function
+                    owner = [f for f in funcs if f.lineno <= node.lineno <= (f.end_lineno or node.lineno)]
+                    seg = "\n".join(ast.get_source_segment(source, f) or "" for f in owner)
+                    if '"encoding": "utf-8"' in seg or "'encoding': 'utf-8'" in seg:
+                        continue
+                found.append(f"{rel}:{node.lineno}")
+            return found
+
         offenders = []
-        for path in sorted((ROOT / "scripts").rglob("*.py")):
-            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if ("text=True" in line or "universal_newlines" in line) and 'encoding="utf-8"' not in line:
-                    offenders.append(f"{path.relative_to(ROOT)}:{i}")
+        for root in ("scripts", "evals"):
+            for path in sorted((ROOT / root).rglob("*.py")):
+                offenders += offending_calls(path.read_text(encoding="utf-8"), path.relative_to(ROOT))
         self.assertEqual(offenders, [], "decode child output as UTF-8 (errors='replace'), never as the locale code page")
+        # the scan must see the shapes the old line match missed
+        self.assertEqual(offending_calls("subprocess.run(cmd, text=text)", "x.py"), ["x.py:1"])
+        self.assertEqual(offending_calls("subprocess.run(cmd, universal_newlines=True)", "x.py"), ["x.py:1"])
+        self.assertEqual(offending_calls("subprocess.run(cmd, text=False)", "x.py"), [])
 
     def _utf8_ffprobe_shim(self, body):
         shim = OUT / "utf8_shim"

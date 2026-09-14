@@ -125,7 +125,7 @@ def emoji_mode_here():
     mode = None
     try:
         out = subprocess.run([sys.executable, str(W.parent / "scripts" / "_contract.py"), "doctor", "--json"],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=120)
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=120)
         mode = (json.loads(out.stdout).get("fonts") or {}).get("emoji", {}).get("mode")
     except Exception:
         mode = None
