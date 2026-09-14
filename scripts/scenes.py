@@ -20,17 +20,38 @@ Examples:
 import argparse
 import math
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # `detect_scenes` moved into _common/probe.py in 1.16.0 (see silence.py); the body is unchanged.
-from _common import detect_scenes, STATE, add_common, apply_common, default_font_file, die, emit, escape_filter_path, ffmpeg_base, info, print_json, probe, run, decode_pcm_mono, rms_envelope
+from _common import (detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
+                     escape_filter_path, ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
+                     rms_envelope, BEAT_MIN_CONFIDENCE)
 
 
 
-def audio_envelope(path: str, step_s: float) -> List[float]:
-    """RMS level per step_s window at 8 kHz, absolute (a loud scene scores higher); [] when the
-    audio cannot be decoded (the cut scoring then runs on the picture alone)."""
-    return rms_envelope(decode_pcm_mono(path, 8000, check=False), int(8000 * step_s))
+def audio_envelope(path: str, step_s: float, *, rate: int = 8000,
+                   samples: "Optional[List[float]]" = None) -> List[float]:
+    """RMS level per step_s window, absolute (a loud scene scores higher); [] when the audio
+    cannot be decoded (the cut scoring then runs on the picture alone).
+
+    `samples` reuses PCM a caller already decoded rather than decoding the same file twice --
+    --beats needs a 10 ms envelope and the scene scoring a 0.5 s one, and 0.5 s is an integer
+    multiple of 10 ms, so both come from one pass.
+    """
+    if samples is None:
+        samples = decode_pcm_mono(path, rate, check=False)
+    return rms_envelope(samples, int(rate * step_s))
+
+
+def parse_beat_range(text: str) -> "tuple":
+    """`--beat-range 60-200` as (lo, hi) BPM."""
+    try:
+        lo, hi = (float(p) for p in str(text).replace(" ", "").split("-", 1))
+    except ValueError:
+        die(f"--beat-range: expected LO-HI in BPM (e.g. 60-200), got {text!r}", kind="input")
+    if not (0 < lo < hi):
+        die(f"--beat-range {text}: LO must be above 0 and below HI", kind="input")
+    return (lo, hi)
 
 
 def main() -> int:
@@ -45,6 +66,16 @@ def main() -> int:
     ap.add_argument("--target", type=float, help="with --highlights: total seconds the picks should add up to (trims long scenes)")
     ap.add_argument("--max-scene", type=float, default=15.0, help="cap a highlight range at this many seconds (default 15)")
     ap.add_argument("--edl", help="write highlight ranges as START-END lines (cut.py --segments format)")
+    ap.add_argument("--beats", action="store_true",
+                    help="measure the music's beat grid (tempo, beat times, confidence) and report it; "
+                         "a measurement, not a proposal -- no cut is made and no beat is invented")
+    ap.add_argument("--beat-step", type=float, default=0.01,
+                    help="envelope resolution in seconds for the onset pass with --beats (default 0.01)")
+    ap.add_argument("--beat-range", default="60-200",
+                    help="tempo search range in BPM for --beats (default 60-200)")
+    ap.add_argument("--min-confidence", type=float, default=BEAT_MIN_CONFIDENCE,
+                    help="with --beats: below this confidence the grid is still reported, marked "
+                         f"usable: false (default {BEAT_MIN_CONFIDENCE})")
     ap.add_argument("--sheet", help="write a contact sheet PNG with the first frame of every scene")
     ap.add_argument("--no-timecode", action="store_true", help="--sheet without the burnt-in timecode stamp (a way out if drawtext itself is unusable, see doctor)")
     add_common(ap)
@@ -54,11 +85,24 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    beat_range = parse_beat_range(args.beat_range)
+    if args.beats:
+        if not meta.get("audio"):
+            die("--beats needs an audio stream; this file has none", kind="input")
+        if args.beat_step <= 0:
+            die("--beat-step must be greater than 0", kind="input")
     dur = meta.get("duration") or 0.0
     cuts = detect_scenes(args.input, args.threshold, args.min_scene, dur, args.ratio)
     bounds = cuts + [dur]
     step_s = 0.5
-    env = audio_envelope(args.input, step_s) if meta.get("audio") else []
+    # With --beats the file is decoded once, at the finer rate, and both envelopes come from that
+    # one pass: the 0.5 s scene blocks are an exact multiple of the 10 ms onset blocks.
+    beat_rate = 22050
+    fine_samples = decode_pcm_mono(args.input, beat_rate, check=False) if (args.beats and meta.get("audio")) else None
+    if fine_samples is not None:
+        env = audio_envelope(args.input, step_s, rate=beat_rate, samples=fine_samples)
+    else:
+        env = audio_envelope(args.input, step_s) if meta.get("audio") else []
 
     scenes = []
     for i in range(len(bounds) - 1):
@@ -81,6 +125,30 @@ def main() -> int:
 
     result: Dict = {"file": args.input, "duration": round(dur, 3), "scene_count": len(scenes), "scenes": scenes, "audio_peaks": peaks}
     info(f"{len(scenes)} scenes, {len(peaks)} audio peaks over {dur:.1f}s")
+
+    if args.beats:
+        # A beat grid is a measurement of the music's periodicity, not a statement about where a
+        # cut belongs. scenes.py reports what it measured, including a low confidence: reporting a
+        # weak measurement is honest, and only a tool that CHANGES a file refuses to act on one.
+        fine = rms_envelope(fine_samples or [], max(1, int(round(beat_rate * args.beat_step))))
+        grid = beat_grid(fine, args.beat_step, bpm_range=beat_range,
+                         min_confidence=args.min_confidence, duration=dur)
+        result["beats"] = grid["beats"]
+        result["beat_grid"] = {
+            "tempo_bpm": grid["tempo_bpm"], "interval": grid["interval"],
+            "confidence": grid["confidence"], "phase": grid["phase"],
+            "onsets": len(grid["onsets"]), "supported": grid["supported"],
+            "unsupported": grid["unsupported"], "method": grid["method"],
+            "step_s": grid["step_s"], "range_bpm": grid["range_bpm"], "usable": grid["usable"],
+        }
+        if grid["tempo_bpm"] is None:
+            info(f"--beats: no steady pulse in this audio (confidence {grid['confidence']:.2f}) -- "
+                 "speech, ambience or rubato has no tempo to measure")
+        else:
+            info(f"--beats: {grid['tempo_bpm']:.1f} BPM, {len(grid['beats'])} beats, confidence "
+                 f"{grid['confidence']:.2f} ({grid['supported']} of {len(grid['beats'])} grid points "
+                 f"have a measured onset)"
+                 + ("" if grid["usable"] else f" -- below --min-confidence {args.min_confidence}, usable: false"))
 
     if args.highlights:
         if args.rank_by == "duration":

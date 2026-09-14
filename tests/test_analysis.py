@@ -530,6 +530,47 @@ class AnalysisTests(MediaFixtures):
         self.assertClose(data["offset_seconds"], -28.0, 0.02)
         self.assertGreater(data["confidence"], 0.3)
 
+    # ------------------------------------------------------ 1.17: the beat grid (scenes --beats)
+    def test_scenes_beats_measures_the_tempo(self):
+        data = json.loads(script("scenes.py", self._beats(), "--beats", "--json").stdout)
+        grid = data["beat_grid"]
+        self.assertAlmostEqual(grid["tempo_bpm"], 120.0, delta=2.0)
+        self.assertTrue(grid["usable"])
+        self.assertGreater(grid["confidence"], 0.5)
+        self.assertEqual(grid["method"], "rms-flux-autocorrelation")
+        self.assertEqual(grid["range_bpm"], [60.0, 200.0])
+        self.assertEqual(grid["supported"] + grid["unsupported"], len(data["beats"]))
+        self.assertGreater(len(data["beats"]), 10)
+        # the existing document is untouched
+        self.assertIn("scenes", data)
+        self.assertIn("audio_peaks", data)
+
+    def test_scenes_without_beats_reports_no_grid(self):
+        data = json.loads(script("scenes.py", self._beats(), "--json").stdout)
+        self.assertNotIn("beat_grid", data)
+        self.assertNotIn("beats", data)
+
+    def test_scenes_beats_reports_a_weak_measurement_rather_than_refusing(self):
+        """scenes.py measures; it does not refuse. A low confidence is reported as usable: false
+        -- refusing belongs to the tools that would change a file on the strength of it."""
+        data = json.loads(script("scenes.py", self._silent_clip(), "--beats", "--json").stdout)
+        self.assertLess(data["beat_grid"]["confidence"], 0.5)
+        self.assertFalse(data["beat_grid"]["usable"])
+
+    def test_scenes_beats_refuses_without_an_audio_stream(self):
+        mute = OUT / "beats_mute.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self._beats(),
+           "-an", "-c:v", "copy", mute)
+        r = script("scenes.py", mute, "--beats", "--json", expect_fail=True)
+        data = json.loads(r.stdout)
+        self.assertEqual(data["error"]["kind"], "input")
+        self.assertIn("audio stream", data["error"]["message"])
+
+    def test_scenes_beat_range_is_validated(self):
+        r = script("scenes.py", self._beats(), "--beats", "--beat-range", "notarange",
+                   "--json", expect_fail=True)
+        self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
+
 
 class ProposeChaptersTests(unittest.TestCase):
     """1.16: the pure half of metadata.py --auto-chapters. No media, no subprocess."""
