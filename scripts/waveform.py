@@ -274,8 +274,7 @@ def _child(script_name: str, argv: "list") -> None:
     if STATE.dry_run:
         cmd.append("--dry-run")
     info("-> " + " ".join(os.path.basename(c) if c.endswith(".py") else str(c) for c in cmd[1:]))
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                          encoding="utf-8", errors="replace")
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         die(f"{script_name} failed:\n{(proc.stderr or proc.stdout).strip()[-800:]}", kind="ffmpeg")
 
