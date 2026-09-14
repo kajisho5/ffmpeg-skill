@@ -10,6 +10,9 @@ never committed, so the repo stays free of generated media and generated fixture
 are overwritten. Prompts without a "fixtures" key write nothing.
 """
 import json
+import ntpath
+import os
+import posixpath
 import sys
 from pathlib import Path
 
@@ -29,7 +32,10 @@ def absolute_output_dir(text: str, name: str, outdir: Path) -> str:
         return text
     if not isinstance(doc, dict) or not isinstance(doc.get("output_dir"), str):
         return text
-    if Path(doc["output_dir"]).is_absolute():
+    # ntpath/posixpath rather than Path: on Windows `Path("/srv/out").is_absolute()` is False, so
+    # a posix-absolute output_dir would be rewritten under OUTDIR there (review 17 finding 9).
+    stated = os.path.normpath(doc["output_dir"]).replace("\\", "/")
+    if posixpath.isabs(stated) or ntpath.isabs(doc["output_dir"]):
         return text
     doc["output_dir"] = str((outdir / doc["output_dir"]).resolve())
     return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"

@@ -2965,12 +2965,17 @@ class DoctorDetectionTests(unittest.TestCase):
             self.assertEqual((outdir / "cues.txt").read_text(encoding="utf-8"), "0:00-0:03 hello\n",
                              "a non-JSON fixture is written exactly as the prompt states it")
             self.assertEqual(len(written), 2)
-        # an absolute output_dir in the prompt is left alone
-        with tempfile.TemporaryDirectory() as tmp:
-            outdir = Path(tmp) / "bp2"
-            write_fixtures.write(outdir, {"fixtures": {"batch.json": json.dumps(
-                {"glob": "*.mp4", "output_dir": "/srv/out"})}})
-            self.assertEqual(json.loads((outdir / "batch.json").read_text(encoding="utf-8"))["output_dir"], "/srv/out")
+        # an absolute output_dir in the prompt is left alone -- on every OS. Path("/srv/out")
+        # .is_absolute() is False on Windows, which used to rewrite a posix-absolute dir under
+        # OUTDIR there (review 17 finding 9), so both spellings are asserted here.
+        for stated in ("/srv/out", "C:\\srv\\out"):
+            with tempfile.TemporaryDirectory() as tmp:
+                outdir = Path(tmp) / "bp2"
+                write_fixtures.write(outdir, {"fixtures": {"batch.json": json.dumps(
+                    {"glob": "*.mp4", "output_dir": stated})}})
+                self.assertEqual(
+                    json.loads((outdir / "batch.json").read_text(encoding="utf-8"))["output_dir"],
+                    stated)
 
     def test_font_fix_hint_names_the_language_and_how_to_install_one(self):
         hint = _contract._capability_fix_hint("font:ko")
