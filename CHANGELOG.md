@@ -61,6 +61,9 @@ workflow turns this heading into the version number._
   --filler --transcribe` shares one engine probe and one "no engine found" message.
   `caption.parse_srt`, `caption.transcribe` and `caption.whisper_word_timings` are unchanged as
   names; `caption.py --help` is byte-identical.
+## 1.16.1
+
+_Automated release: version and notes generated from pull requests merged since 1.16.0._
 
 ### Fixed
 
@@ -76,6 +79,8 @@ workflow turns this heading into the version number._
   count in its caption stats and an info line naming the fix (a space or `|` where the line may
   break, or a smaller `--size`) when a wrapped line is wider than the safe width. `--wrap measured`
   follows the same atom rules (it is the post-passes that differ, not the pieces).
+- fix: captions never break inside a Thai run or a katakana word; over-wide lines are reported (eval 17) (#233)
+- docs: eval 17 at 1.16.0 (90 prompts, focused Opus grader, trigger 45/45) (#232)
 
 ## 1.16.0
 
