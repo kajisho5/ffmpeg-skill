@@ -2244,9 +2244,10 @@ class WrapReadabilityTests(unittest.TestCase):
     def test_caption_wrap_never_leaves_a_one_character_orphan_line(self):
         C = self.caption
         cases = [
-            # th1's Thai cue and dl3's Japanese cue, at sizes where greedy wrapping stranded one character
-            ("\u0e1a\u0e23\u0e23\u0e17\u0e31\u0e14\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e02\u0e2d\u0e07\u0e04\u0e33\u0e1a\u0e23\u0e23\u0e22\u0e32\u0e22 "
-             "\u0e1a\u0e23\u0e23\u0e17\u0e31\u0e14\u0e19\u0e35\u0e49\u0e15\u0e31\u0e49\u0e07\u0e40\u0e27\u0e25\u0e32\u0e43\u0e2b\u0e49\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34", 8),
+            # dl3's Japanese cue at sizes where greedy wrapping stranded one character (the Thai
+            # case this test carried until 1.16.0 is gone: a Thai run is no longer broken inside,
+            # see test_th1_cue_exact_split); a Chinese run stands in for the per-character scripts
+            ("\u4eca\u5929\u5929\u6c14\u5f88\u597d\u6211\u4eec\u53bb\u516c\u56ed\u6563\u6b65\u5427\u597d", 7),
             ("\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c 2 \u884c\u76ee\u306e\u5b57\u5e55\u3067\u3059 "
              "\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c", 10),
             ("\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c 2 \u884c\u76ee\u306e\u5b57\u5e55\u3067\u3059 "
@@ -2382,14 +2383,39 @@ class PhraseWrapTests(unittest.TestCase):
                          ["\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c", "\u6c7a\u307e\u308b\u884c"])
 
     def test_th1_cue_exact_split(self):
-        """th1: the trailing line is never the stranded `\u0e44\u0e2b\u0e25` alone."""
+        """th1: the trailing line is never the stranded `\u0e44\u0e2b\u0e25` alone -- and since 1.16.1 a
+        Thai run is never broken inside at all. Thai writes no space inside a phrase and the
+        wrapper has no dictionary, so every character-level break eval 17 took landed inside a
+        word (`\u0e02|\u0e2d\u0e07`, `\u0e40\u0e27|\u0e25\u0e32`). The break goes where the writer put a space; a run
+        with none stays long on its own line, the rule long Latin words already follow."""
         C = self.caption
-        text = "\u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35\u0e0a\u0e32\u0e27\u0e42\u0e25\u0e01 \u0e40\u0e2a\u0e35\u0e22\u0e07\u0e19\u0e49\u0e33\u0e44\u0e2b\u0e25"
+        first, second = "\u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35\u0e0a\u0e32\u0e27\u0e42\u0e25\u0e01", "\u0e40\u0e2a\u0e35\u0e22\u0e07\u0e19\u0e49\u0e33\u0e44\u0e2b\u0e25"
+        text = first + " " + second
         for max_em in (self.NARROW, 8.0, self.W):
             with self.subTest(max_em=max_em):
                 lines = C.wrap_text(text, max_em)
-                self.assertNotEqual(lines[-1].strip(), "\u0e44\u0e2b\u0e25", lines)
+                self.assertEqual(lines, [first, second], lines)
                 self.assertFalse(C._is_weak_line(lines[-1]), lines)
+        # a Thai run with no space is one atom: never chopped, however narrow the line
+        run = "\u0e1a\u0e23\u0e23\u0e17\u0e31\u0e14\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e02\u0e2d\u0e07\u0e04\u0e33\u0e1a\u0e23\u0e23\u0e22\u0e32\u0e22"
+        self.assertEqual(C.wrap_text(run, self.NARROW), [run])
+        self.assertEqual(C.wrap_text(run, 8.0, mode="measured"), [run])
+
+    def test_katakana_run_is_one_atom(self):
+        """eval 17 dl3: `\u30bf\u30a4|\u30df\u30f3\u30b0` -- a katakana loan word was broken like a run of kanji.
+        Katakana plus the prolonged-sound mark are one atom; the break lands before or after
+        the word, and a word too wide for the line stays long rather than chopped."""
+        C = self.caption
+        jp = "\u81ea\u52d5\u3067\u30bf\u30a4\u30df\u30f3\u30b0\u304c\u6c7a\u307e\u308b\u884c"
+        for max_em in (self.NARROW, 8.0, 10.0):
+            with self.subTest(max_em=max_em):
+                joined = "".join(C.wrap_text(jp, max_em))
+                self.assertEqual(joined, jp)
+                for line in C.wrap_text(jp, max_em):
+                    self.assertFalse(line.endswith("\u30bf\u30a4") or line.startswith("\u30df\u30f3\u30b0"), line)
+        self.assertEqual(C.wrap_text(jp, self.NARROW), ["\u81ea\u52d5\u3067", "\u30bf\u30a4\u30df\u30f3\u30b0\u304c", "\u6c7a\u307e\u308b\u884c"])
+        self.assertEqual(C.wrap_text("\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf\u30fc\u3092\u8cb7\u3063\u305f", 7.0), ["\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf\u30fc", "\u3092\u8cb7\u3063\u305f"])
+        self.assertEqual([a for a, _ in C._atoms("\u30bf\u30a4\u30df\u30f3\u30b0\u304c")][0], "\u30bf\u30a4\u30df\u30f3\u30b0")
 
     # -------------------------------------------------------------- R4: function words
     def test_function_word_never_ends_a_line(self):

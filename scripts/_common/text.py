@@ -440,7 +440,14 @@ ADVANCE_EM = {"ja": 1.0, "zh": 1.0, "ko": 1.0, "th": 1.0, "hi": 0.7, "ar": 0.6, 
 
 
 # Scripts written without spaces: a line breaks between any two characters.
-NO_SPACE_SCRIPTS = ("ja", "zh", "ko", "th")
+# Scripts a line may break inside a run of, one character at a time. Thai is deliberately NOT
+# here since 1.16.1: it writes no space inside a phrase, and without a dictionary the wrapper
+# cannot see where one word ends -- every character-level break it took in eval 17 landed inside
+# a word. A Thai run is therefore one atom, broken only at the spaces (or the manual `|`) the
+# writer put there; an over-long run stays long on its own line, the rule long Latin words
+# already follow.
+NO_SPACE_SCRIPTS = ("ja", "zh", "ko")
+NO_BOUNDARY_SCRIPTS = ("th",)   # per-character breaking would chop words: keep the run whole
 
 
 # Per-character Latin advances in em, read off DejaVu Sans (the default caption family, and close
@@ -1085,7 +1092,10 @@ def _atoms(line: str) -> "List[Tuple[str, bool]]":
             if word:
                 out.append((word, spaced))
                 word = ""
-            if out and (attach_next or _is_mark(ch)):
+            if out and not pending and _is_katakana_run(ch) and _is_katakana_run(out[-1][0][-1]):
+                # a katakana word (タイミング, コンピューター) is one atom: eval 17 saw タイ|ミング
+                out[-1] = (out[-1][0] + ch, out[-1][1])
+            elif out and (attach_next or _is_mark(ch)):
                 # never break between a base and the mark (or the leading vowel) that belongs to
                 # it: the line would start with an orphaned tone mark or vowel sign
                 out[-1] = (out[-1][0] + ch, out[-1][1])
@@ -1151,6 +1161,12 @@ def _break_spaced(first: str, second: str) -> bool:
 
 def _is_kana(ch: str) -> bool:
     return 0x3040 <= ord(ch) <= 0x30FF
+
+
+def _is_katakana_run(ch: str) -> bool:
+    """Katakana proper plus the prolonged-sound mark: the characters one loan word is made of."""
+    cp = ord(ch)
+    return (0x30A1 <= cp <= 0x30FA) or cp == 0x30FC or (0x31F0 <= cp <= 0x31FF) or (0xFF66 <= cp <= 0xFF9F)
 
 
 def _is_hiragana(ch: str) -> bool:

@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **Caption breaking, from eval 17.** A Thai run is no longer broken inside: Thai writes no space
+  inside a phrase and the wrapper has no dictionary, so every character-level break it took landed
+  inside a word (`ข|อง`, `เว|ลา`); the break now goes where the writer put a space or a `|`, and a
+  run with none stays long on its own line, the rule long Latin words already follow. A katakana
+  word is one atom (`タイ|ミング` was split like a run of kanji). `caption.py` reports an `overlong`
+  count in its caption stats and an info line naming the fix (a space or `|` where the line may
+  break, or a smaller `--size`) when a wrapped line is wider than the safe width. `--wrap measured`
+  follows the same atom rules (it is the post-passes that differ, not the pieces).
 
 ## 1.16.0
 

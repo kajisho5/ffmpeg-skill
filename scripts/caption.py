@@ -461,6 +461,10 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
             lines, greedy, measured = wrap_variants(text, max_em, mode=wrap, lang=lang)
             if lines != [l for l in text.split("\n") if l.strip()]:
                 stats["wrapped"] += 1
+            if any(text_width_em(l) > max_em for l in lines):
+                # a run with no break point the wrapper may use (a long word, a Thai phrase
+                # without spaces) stays long rather than chopped: say so, and name the fix
+                stats["overlong"] = stats.get("overlong", 0) + 1
             if lines != greedy:
                 stats["rebalanced"] += 1
             if wrap != "measured" and lines != measured:
@@ -492,9 +496,13 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
 
 def report_layout(stats: dict) -> None:
     """One info line, only when a cue actually changed."""
-    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "rebalanced", "phrase_breaks", "split", "extended", "dropped") if stats.get(k)]
+    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "rebalanced", "phrase_breaks", "split", "extended", "dropped", "overlong") if stats.get(k)]
     if parts:
         info("cues: " + ", ".join(parts))
+    if stats.get("overlong"):
+        info(f"{stats['overlong']} cue line(s) wider than the safe width: a word or a run with no break "
+             "point (Thai writes none inside a phrase) was kept whole rather than chopped -- put a "
+             "space or `|` where the line may break, or use a smaller --size")
 
 
 def max_line_em(args, play_w: Optional[int], play_h: Optional[int]) -> Optional[float]:

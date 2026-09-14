@@ -758,9 +758,13 @@ frame width) at the chosen `--size`, measured per script — CJK and Thai count 
 full em per character, Latin per character from a table read off DejaVu Sans (so
 an all-caps line measures as wide as it draws), Cyrillic/Greek about 0.55,
 Arabic/Hebrew 0.6, Devanagari 0.7, and a combining mark nothing at all —
-breaking between characters for CJK/Thai and at spaces otherwise, but never
-between a character and the combining marks that belong to it (Thai tone marks
-and vowel signs, Devanagari matras, Arabic and Hebrew points). A cue that would need more than `--max-lines` (default 2) is split
+breaking between characters for CJK (a katakana word stays whole) and at spaces
+otherwise, but never between a character and the combining marks that belong
+to it (Devanagari matras, Arabic and Hebrew points). Thai (1.16.1) is never
+broken inside a run: it writes no space inside a phrase and the wrapper has no
+dictionary, so the break goes where you put a space or a `|`, and a run with
+none stays long on its own line — `caption.py` counts such lines as `overlong`
+and says so. A cue that would need more than `--max-lines` (default 2) is split
 into consecutive cues sharing its time; a cue shorter than `--min-duration`
 (default 1.0 s) is held longer, never past the next cue's start; `--offset
 TIME` shifts every cue (seconds, `mm:ss`, `hh:mm:ss.ms` or `hh:mm:ss:ff`, a
