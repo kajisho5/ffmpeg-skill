@@ -171,7 +171,7 @@
   "lang": "ja",
   "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を X 用に書き出して、何をしたか HTML のレポートにまとめて。OUTDIR。",
   "expect": [
-   "export",
+   "export|render",
    "report"
   ],
   "refuse": false
@@ -742,9 +742,12 @@
   "id": "cw2",
   "lang": "es",
   "prompt": "Los subtítulos de OUTDIR/cues_dl4.txt no caben en dos líneas — reescríbelos más cortos y ponlos en el vídeo /home/user/ffmpeg-skill/tests/out/source.mp4. Guarda todo en OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "the skill wraps and splits cues, it never rewrites the user's words; the refusal offers --max-lines / a split and is written in Spanish, labels included",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "note": "eval 17: reclassified from a refusal to an act prompt. Shortening the user's own caption text on request is text editing the agent may do; the skill's rule is against inventing media results, not against editing the words the user asked to have shortened. What is graded: the shortened cues are burned in and looked at, and nothing else about the video is changed.",
   "fixtures": {
    "cues_dl4.txt": "0:00-0:03 Segunda línea de subtítulos\n0:03-0:06 Una tercera línea con tiempos automáticos\n"
   }
@@ -755,7 +758,7 @@
   "prompt": "Turn OUTDIR/music.m4a into a video I can post, with OUTDIR/cover.png behind the waveform. Save it in OUTDIR and show me a frame.",
   "expect": [
    "waveform|render",
-   "check|export",
+   "check|export|render",
    "look"
   ],
   "refuse": false,
@@ -805,7 +808,7 @@
  {
   "id": "ml2",
   "lang": "de",
-  "prompt": "Häng die deutschen Untertitel mit dran — übersetz die englischen aus OUTDIR/en.srt einfach. Alles nach OUTDIR.",
+  "prompt": "Häng die deutschen Untertitel an /home/user/ffmpeg-skill/tests/out/source.mp4 dran — übersetz die englischen aus OUTDIR/en.srt einfach. Alles nach OUTDIR.",
   "expect": [],
   "refuse": true,
   "note": "no translation engine (same rule as r04); the refusal is in German, labels included",

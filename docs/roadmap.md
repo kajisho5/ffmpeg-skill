@@ -17,10 +17,10 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.15.1**; **1.15.0** is the last one an eval graded: **eval 16**
-(`evals/results/iteration-16.json`) graded it on the 82-prompt set, the 76 plus the six
-emoji/shaping prompts. After it comes the behaviour-free refactor release below; everything
-after that is planned.
+The released version today is **1.16.0**, shipped and evaluated: **eval 17**
+(`evals/results/iteration-17.json`) graded it on the 90-prompt set, the 82 plus the eight
+long-form prompts. It found the caption breaker does not get to act at the platform caption
+sizes (see the 1.16.0 section); 1.16.1 below is the patch. Everything after that is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -33,7 +33,8 @@ after that is planned.
 | 1.14.0 | shipped + evaluated | eval 15 at 1.14.0 (`iteration-15.json`) |
 | 1.15.0 | shipped + evaluated | eval 16 at 1.15.0 (`iteration-16.json`) |
 | refactor after 1.15.0 | shipped, eval pending | contract + MCP snapshots and every `--help` byte-identical; 323/323 cases |
-| 1.16.0 | shipped, eval pending | contract and MCP snapshots additive only; tool count still 42; eval 17 is a separate PR |
+| 1.16.0 | shipped + evaluated | eval 17 at 1.16.0 (`iteration-17.json`); contract and MCP snapshots additive only; tool count still 42 |
+| 1.16.1 | planned | caption-break patch from eval 17 (katakana runs, no balancing inside Thai/Lao/Khmer/Myanmar runs, a note when a cue is split for width) |
 | 1.17.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -263,7 +264,7 @@ came out byte-identical, as did `--help` for all 42 tools.
 - No eval iteration of its own: the release is proved by the existing suite plus the two
   snapshots, and the next themed eval runs on top of it.
 
-## 1.16.0 — long-form delivery (shipped, eval pending)
+## 1.16.0 — long-form delivery (shipped + evaluated, eval 17)
 
 - **Phrase-aware caption breaking** (eval 16 follow-up): `caption.py`/`graphics.py --wrap
   phrase|measured`, default `phrase`. Four rules over the break positions that already fit, so
@@ -286,8 +287,17 @@ came out byte-identical, as did `--help` for all 42 tools.
 - **Multi-language subtitle tracks**: `caption.py --mode mux --srt file:lang`, repeatable, with
   `--track-title` and `--default-track`; the result lists every stream under `tracks` and
   `check.py` gains an informational `subtitles` row.
-- Eval 17 on long-form and podcast prompts: **still pending**, a separate `docs:` PR as every
-  previous iteration was.
+- Eval 17 (`iteration-17.json`): audiogram 2/2, auto chapters 2/2 with `Chapter N` titles only,
+  multi-language tracks correct, 16/16 delivery outputs pass their platform check, trigger 45/45,
+  tokens flat. The caption breaker, though, **does not get to act** at the platform caption
+  sizes: at TikTok/Shorts size a line holds about 6 em, a five-word cue cannot fit two lines,
+  and `caption.py` splits it into two-line cues exactly as 1.15.1 did (byte-identical ASS on
+  `cw1`, `dl1`, `dl4`). Thai still breaks inside words in both versions (no dictionary), and
+  1.16.0's balancing moves that break towards the middle of the run; a katakana word gets split
+  (`タイ|ミング`). The `dl3` orphans are gone. Follow-ups: 1.16.1 (katakana runs unbreakable,
+  greedy fill inside no-space runs without word boundaries, a note naming the manual `|` break
+  when a cue is split for width) and, in 1.17.0, a caption size that fits the cue before the
+  cue is split.
 
 ## 1.17.0 — throughput (planned)
 
