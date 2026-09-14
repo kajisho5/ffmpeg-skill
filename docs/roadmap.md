@@ -17,12 +17,11 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.16.0**, shipped and evaluated: **eval 17**
-(`evals/results/iteration-17.json`) graded it on the 90-prompt set, the 82 plus the eight
-long-form prompts. It found the caption breaker does not get to act at the platform caption
-sizes (see the 1.16.0 section); 1.16.1 is the patch, and **1.17.0 below is shipped with its
-eval pending** — it carries the size fitter that is the rest of that answer. Everything after
-1.17.0 is planned.
+The released version today is **1.17.0**, shipped and evaluated: **eval 18**
+(`evals/results/iteration-18.json`) graded it on the 100-prompt set, the 87 carried over plus
+thirteen written for the 1.17 features. It found the size fitter is unreachable on the template
+path and that SKILL.md routes none of the 1.17 features (see the 1.17.0 section); **1.17.1 below
+is the patch and is planned**. Everything after 1.17.1 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -36,8 +35,9 @@ eval pending** — it carries the size fitter that is the rest of that answer. E
 | 1.15.0 | shipped + evaluated | eval 16 at 1.15.0 (`iteration-16.json`) |
 | refactor after 1.15.0 | shipped, eval pending | contract + MCP snapshots and every `--help` byte-identical; 323/323 cases |
 | 1.16.0 | shipped + evaluated | eval 17 at 1.16.0 (`iteration-17.json`); contract and MCP snapshots additive only; tool count still 42 |
-| 1.16.1 | shipped, eval pending | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 |
-| 1.17.0 | shipped, eval pending | tool count still 42; contract and MCP snapshots additive only; the eval-17 caption size answered by `caption.py --fit-size`; eval 18 |
+| 1.16.1 | shipped + evaluated | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 graded the tree that carries it and reported no wrapping defect |
+| 1.17.0 | shipped, evaluated (eval 18) | eval 18 at 1.17.0 (`iteration-18.json`); tool count still 42; contract and MCP snapshots additive only. Two findings: `render.py` forwards the platform table's caption size as an explicit `--size`, so `--fit-size` never fires on the path every captioned prompt takes (and the project schema rejects `fit_size`), and SKILL.md names none of the 1.17 features, so beats, filler and `--cache` were each used in one run at most. 1.17.1 is the patch |
+| 1.17.1 | planned | `render.py` forwards `--fit-size on` (or omits `--size`) when the size came from the platform table, and the project `captions` block accepts `fit_size`/`min_size`/`fit_size_scope`; SKILL.md routing lines for filler, beats, `batch.py --jobs` and `render.py --cache`; the cs2 disclosure line; eval 19 |
 | 1.18.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -302,7 +302,7 @@ came out byte-identical, as did `--help` for all 42 tools.
   `overlong` and names the fix) and, in 1.17.0, a caption size that fits the cue before the
   cue is split.
 
-## 1.17.0 — throughput (shipped, eval pending)
+## 1.17.0 — throughput (shipped + evaluated, eval 18)
 
 - **Done. `caption.py --fit-size`**: the caption size is fitted to the cue *before* the cue is
   split. This is the rest of the eval-17 answer and belongs at the top of this section: the
@@ -322,10 +322,47 @@ came out byte-identical, as did `--help` for all 42 tools.
 - **Done. `render.py --cache DIR`** keys unchanged stages on the content hash of their inputs and
   arguments plus the ffmpeg, skill and contract versions, so changing the export preset re-runs
   export only; `--from STAGE` alongside the existing `--stop-after`. Opt-in: no default directory.
-- **Eval 18** measures wall-clock and encode counts on the delivery and batch prompts (the number,
-  not just pass/fail), and must also measure: `size_used` on the `cw`/`dl` cues at a platform
-  caption size, the beat-grid refusal on speech-only audio, the filler refusal when whisper is
-  absent, and that `Done (partially):` no longer appears as a report label.
+- Eval 18 (`iteration-18.json`), 100 prompts: language 100/100, report format 98/100, trigger
+  50/50 including one new prompt per 1.17 feature, tokens flat (74.7k → 73.3k on the 87 prompts
+  both iterations ran), Opus quality mean 3.71 against 4.17. `batch.py --jobs` is 2/2 with the
+  cap reported, `render.py --cache` routed and then refused honestly when an ffmpeg upgrade
+  invalidated every key, `cut.py --snap beats` and `scenes.py --beats` are correct where they
+  were used. Two findings, and both are about reach rather than about the code:
+  **the size fitter never runs on the path the captioned prompts actually take** — `render.py`
+  fills the caption size from the platform table and forwards it as an explicit `--size 24`, so
+  `caption.py` treats the size as user-stated and `--fit-size auto` declines to shrink it; the
+  `cw1`/`dl1`/`dl3`/`dl4` splits are unchanged from eval 17, no `size_used` or `shrunk` key
+  appears in any of those reports, and the project schema rejects the key outright (`unknown key
+  fit_size`). The one run that called `caption.py --fit-size on` by hand got 24 → 16, `shrunk` 2,
+  `split` 0 and three intact cues, at 102k tokens and 28 tool calls. And **SKILL.md names none of
+  this**: zero occurrences of `filler`, `beat`, `BPM`, `--snap beats`, `--words`, `--jobs` or
+  `--cache` in 29,992 bytes, so `--snap beats`, `scenes.py --beats`, `silence.py --filler` and
+  `render.py --cache` were each used in exactly one run of the hundred, one agent wrote that the
+  skill has no beat detection and cut at the literal timestamps, and two rebuilt filler removal
+  by hand with `cut.py --segments` (leaving the output VFR). 1.17.1 is the patch.
+
+## 1.17.1 — make 1.17 reachable (planned)
+
+- **`render.py` forwards `--fit-size on`** — or simply omits `--size` — when the caption size came
+  from the platform table rather than from the user or the template author, with an e2e over the
+  `tiktok` template on the `cw1` cues asserting `split == 0` and `size_used < 24`.
+- **The project `captions` block accepts `fit_size`, `min_size` and `fit_size_scope`**, so the
+  fitter is reachable declaratively and not only from a hand-run `caption.py`.
+- **SKILL.md routing lines**, one each: filler / "ums and uhs" → `silence.py --filler --words`,
+  beat / "on the beat" → `cut.py --snap beats` and `scenes.py --beats`, a folder of files →
+  `batch.py --jobs`, "I only changed the preset" → `render.py --cache`. Paid for with cuts
+  elsewhere in the 30,000-byte budget; four of eval 18's six routing misses are pure
+  discoverability. With it, a line telling an agent to quote a measured low confidence rather
+  than deny the capability.
+- **One report line for the `cs2` shape**: when the skill declines to change the user's text, the
+  report must say the text is unchanged, not merely leave it unchanged.
+- **A sanctioned form for a partial result.** `Done (partially):` and `Failed (partially, …):`
+  are the only two format defects in eval 18's 100 runs and the only one in eval 17's 90; either
+  bless `Done:` with the shortfall named in `Notes:`, or the rule keeps losing to the truth.
+- **Eval 19** re-runs the `cw`/`dl`/`cs`/`bt`/`fw`/`rc` prompts and checks that `size_used` and
+  `shrunk` appear on the template path, that the beat, filler and cache prompts route on the
+  first try, and that no third label appears. The `bp1`/`bp2` `batch.json` fixture (its
+  `output_dir` escapes OUTDIR) is fixed first.
 
 ## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
 
