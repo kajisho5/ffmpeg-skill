@@ -42,6 +42,7 @@ raising `max_lines` to dodge a shrink — and one word the typesetter cannot bre
 | 1.17.0 | shipped, evaluated (eval 18) | eval 18 at 1.17.0 (`iteration-18.json`); tool count still 42; contract and MCP snapshots additive only. Two findings: `render.py` forwards the platform table's caption size as an explicit `--size`, so `--fit-size` never fires on the path every captioned prompt takes (and the project schema rejects `fit_size`), and SKILL.md names none of the 1.17 features, so beats, filler and `--cache` were each used in one run at most. 1.17.1 is the patch |
 | 1.17.1 | shipped, evaluated (eval 19) | eval 19 at 1.17.1 (`iteration-19.json`), 26 runs over the 18 prompts eval 18 named; tool count still 42, contract additive only. The patch holds: `--fit-size` fires on the template path 12/12 (24 → 16, `dl4` to the 13-unit floor, `split` 0, `text_unchanged` true), filler and beats route first try, the third label is gone, trigger 50/50. One finding, and it is older than the patch: `caption.py write_ass` writes the platform's vertical safe margin to `MarginL`/`MarginR` as well as `MarginV`, leaving a 240 px text column at `PlayResX` 1080, so the picture still stacks one word per line on the `--animate`/`--karaoke` path every template takes. Present since 1.14. 1.17.2 is the patch |
 | 1.17.2 | shipped, evaluated (eval 20) | eval 20 at 1.17.2 (`iteration-20.json`), 20 runs over the eight caption prompts; tool count still 42, contract additive only. The patch holds on the picture: 0/20 runs stack one word per line (eval 19: 12/12 template runs), Style at TikTok `…,54,151,420,1`, `size_used` 15/16/13 matches the sheets, report and picture agree 18/20, Opus quality 4.25 (3.65). Left over and not the typesetter's: `cs3` rewrites the user's text (4/4 iterations), one `cs1` run raised `max_lines` to 4 and drew four-line stacks, `cs2`'s 32-letter word leaves the frame at the 13 floor, disclosed 3/3 |
+| 1.17.3 | planned | two SKILL.md rules from eval 20, no code: the cue text is burned as written (never rewrite, shorten or paraphrase it, even when asked to "make it fit" — `cs3`, 4/4 iterations), and on a vertical delivery keep the template's `--max-lines` and let the size drop (rep3/cs1 raised it to 4 and drew four-line stacks). SKILL.md trimmed elsewhere to stay under 30,000 bytes; tool count still 42, contract unchanged |
 | 1.18.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -420,6 +421,18 @@ came out byte-identical, as did `--help` for all 42 tools.
   template's max-lines and let the size drop) as a docs change, and one 1.18.0 design item: a word
   wider than the column at the floor (`cs2`'s 32 letters) must break at the column edge instead of
   leaving the frame.
+
+## 1.17.3 — two caption rules in SKILL.md (planned)
+
+- **The words in a caption belong to the user.** A bullet in "what this skill does not decide":
+  cue text is burned as written; too long for the frame means a smaller size, `--max-lines`, or
+  the user's own edit, never a rewrite — even when the request asks for one (`cs3` rewrote in evals
+  17, 18, 19 and 20; the prose elsewhere in the file never said it in those words).
+- **Keep the template's `--max-lines` and let the size drop.** The caption routing row says so:
+  raising `max_lines` to dodge a shrink stacks two words per line (eval 20 rep3/cs1).
+- No script changes. SKILL.md lost one gotcha bullet (even dimensions and rotation tags, both
+  automatic) and a few parentheticals to stay under the 30,000-byte budget. Eval 21 at 1.18.0
+  re-runs cs1 and cs3 to check both lines land.
 
 ## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
 

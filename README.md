@@ -57,7 +57,7 @@ If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you wo
 
 **Standalone**, this is a local FFmpeg engine: probe → edit → verify, `npx ffmpeg-skill` and nothing else. No API key, no account, no other repo required. Everything above and below this section describes that standalone tool, and none of it changes if you never read the rest of this one.
 
-**In [kajisho5](https://github.com/kajisho5)'s wider video-production ecosystem**, this repo is the *hands*: it cuts, measures and exports files, and reports back in structured JSON. It does not decide what to cut, whether a deliverable is approvable, or what makes a highlight interesting — those are a *brain*'s job, sitting in front of this engine, not inside it.
+**In [kajisho5](https://github.com/kajisho5)'s wider video-production ecosystem**, this repo is the *hands*: it cuts, measures and exports files, and reports back in structured JSON. It does not decide what to cut, whether a deliverable is approvable, what makes a highlight interesting, or what a caption should say (the user's cue text is burned as written, never rewritten to fit) — those are a *brain*'s job, sitting in front of this engine, not inside it.
 
 | You want to... | Use |
 |---|---|
