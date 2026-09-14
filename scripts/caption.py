@@ -45,6 +45,11 @@ from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_unit
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
 from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
+# The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
+# shares them). They stay caption.py's public names -- every caller and test that reached for
+# caption.parse_srt / caption.transcribe / caption.whisper_word_timings before 1.17 still does.
+from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
+                     write_srt)
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
                      fit_size, line_em_for_size, MIN_CAPTION_FRACTION,
                      break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
@@ -52,7 +57,9 @@ from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, 
 
 # The breaker's names are caption.py's public surface as much as _common's: every caller and test
 # that reached for `caption.wrap_text` before 1.16 still does.
-__all__ = ["SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_variants",
+__all__ = ["parse_srt", "write_srt", "transcribe", "whisper_word_timings", "die_no_engine",
+           "ASR_INSTALL_HINT",
+           "SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_variants",
            "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION",
            "best_break", "break_penalty", "_is_weak_line", "_atoms", "_join", "_break_spaced",
            "_bare_word", "_function_words", "_split_hyphens", "FUNCTION_WORDS", "JA_PARTICLES",
@@ -98,150 +105,6 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[fl
     if not cues:
         die(f"no cues found in {path}")
     return cues
-
-
-def transcribe(video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int = 0) -> List[Tuple[float, float, str]]:
-    """Optional local ASR bridge. Tries, in order: whisper-cli / main (whisper.cpp), faster-whisper (python),
-    whisper (openai-whisper CLI). Produces an SRT with word timings where the engine supports it.
-    No engine installed -> clear error with install hints; the skill never depends on one."""
-    import shutil
-    import subprocess
-    import tempfile
-    from _common import require_tool, run_analysis, STATE
-    ffmpeg = require_tool("ffmpeg")
-    tmpdir = tempfile.mkdtemp(prefix="ffskill_asr_")
-    try:
-        return _transcribe_in(tmpdir, video, out_srt, language, model, audio_stream, ffmpeg, shutil, subprocess)
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-def _asr_run(cmd: List[str], subprocess, name: str) -> "subprocess.CompletedProcess":
-    """Run a speech-to-text engine under the same wall-clock limit as an ffmpeg call."""
-    from _common import STATE, die
-    limit = STATE.timeout or None
-    try:
-        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=limit)
-    except subprocess.TimeoutExpired:
-        die(f"{name} exceeded the {limit:.0f} s time limit and was killed; raise --timeout for a long recording",
-            code=124, kind="timeout")
-    return None  # unreachable
-
-
-def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int,
-                   ffmpeg: str, shutil, subprocess) -> List[Tuple[float, float, str]]:
-    from _common import run_analysis, STATE, die
-    wav = os.path.join(tmpdir, "audio.wav")
-    # A wav in our own temp dir: a measurement input for the engine, not a deliverable, so it
-    # is not a run() call (no --dry-run gate, not recorded), but it keeps the time limit and
-    # reports an unreadable input as kind ffmpeg instead of a CalledProcessError traceback.
-    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
-                  "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
-    # 1. whisper.cpp
-    cli = shutil.which("whisper-cli") or shutil.which("whisper-cpp")
-    if not cli:
-        # older whisper.cpp builds ship the binary as plain `main`; accept it only when it lives
-        # in a directory that names whisper, so an unrelated /usr/bin/main is never run
-        main_bin = shutil.which("main")
-        if main_bin and "whisper" in os.path.dirname(os.path.realpath(main_bin)).lower():
-            cli = main_bin
-    if cli:
-        model_path = model
-        if not os.path.exists(model_path):
-            for cand in (os.path.expanduser(f"~/.cache/whisper.cpp/ggml-{model}.bin"), f"models/ggml-{model}.bin", f"/usr/local/share/whisper/ggml-{model}.bin"):
-                if os.path.exists(cand):
-                    model_path = cand
-                    break
-        base = os.path.join(tmpdir, "out")
-        cmd = [cli, "-m", model_path, "-f", wav, "-osrt", "-of", base]
-        if language:
-            cmd += ["-l", language]
-        proc = _asr_run(cmd, subprocess, "whisper.cpp")
-        if proc.returncode == 0 and os.path.exists(base + ".srt"):
-            info(f"transcribed with whisper.cpp ({os.path.basename(cli)}, model {os.path.basename(model_path)})")
-            cues = parse_srt(base + ".srt")
-            write_srt(cues, out_srt)
-            return cues
-        info("whisper.cpp found but failed: " + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
-    # 2. faster-whisper (python package)
-    try:
-        from faster_whisper import WhisperModel  # type: ignore
-        import threading
-        result: list = []
-
-        def work() -> None:
-            m = WhisperModel(model, device="cpu", compute_type="int8")
-            segments, _ = m.transcribe(wav, language=language, word_timestamps=False)
-            result.extend((seg.start, seg.end, seg.text.strip()) for seg in segments if seg.text.strip())
-
-        # An in-process engine gets the same wall-clock limit as the CLI engines and ffmpeg.
-        t = threading.Thread(target=work, daemon=True)
-        t.start()
-        t.join(STATE.timeout or None)
-        if t.is_alive():
-            die(f"faster-whisper exceeded the {STATE.timeout:.0f} s time limit; raise --timeout for a long recording", code=124, kind="timeout")
-        cues = list(result)
-        if cues:
-            info("transcribed with faster-whisper")
-            write_srt(cues, out_srt)
-            return cues
-    except ImportError:
-        pass
-    # 3. openai-whisper CLI
-    if shutil.which("whisper"):
-        cmd = ["whisper", wav, "--model", model, "--output_format", "srt", "--output_dir", tmpdir]
-        if language:
-            cmd += ["--language", language]
-        proc = _asr_run(cmd, subprocess, "openai-whisper")
-        srt = os.path.join(tmpdir, "audio.srt")
-        if proc.returncode == 0 and os.path.exists(srt):
-            info("transcribed with openai-whisper")
-            cues = parse_srt(srt)
-            write_srt(cues, out_srt)
-            return cues
-    die("no local speech-to-text engine found for --transcribe.\n"
-        "Install one (all run offline):\n"
-        "  whisper.cpp:    brew install whisper-cpp   (then download a model: ggml-base.bin)\n"
-        "  faster-whisper: pip install faster-whisper\n"
-        "  openai-whisper: pip install openai-whisper\n"
-        "Or write the cues by hand with --text cues.txt (see format above).")
-    return []
-
-
-def parse_srt(path: str) -> List[Tuple[float, float, str]]:
-    cues: List[Tuple[float, float, str]] = []
-    block: List[str] = []
-    content = read_text_or_die(path, "--srt").lstrip("\ufeff").replace("\r\n", "\n") + "\n\n"
-    for line in content.split("\n"):
-        if line.strip():
-            block.append(line)
-            continue
-        if block:
-            times = next((b for b in block if "-->" in b), None)
-            if times:
-                a, b = times.split("-->")
-                text = "\n".join(block[block.index(times) + 1:]).strip()
-                try:
-                    cues.append((parse_time(a), parse_time(b), text))
-                except ValueError as e:  # includes MissingFpsError: SRT timings are hh:mm:ss,ms, never frames
-                    die(f"{path}: cannot read the timing line {times.strip()!r}: {e}")
-            block = []
-    if not cues:
-        die(f"no cues found in {path}")
-    return cues
-
-
-def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as fh:
-        for i, (s, e, t) in enumerate(cues, 1):
-            # A blank line is SRT's own block separator (index/timecode/text, blank, next block).
-            # Cue text can contain one -- parse_text_cues() turns a bare "|" into "\n", so a source
-            # line with two adjacent pipes ("a||b") becomes "a\n\nb" -- and writing that blank line
-            # raw would split one cue into two malformed half-blocks (the second missing its own
-            # index/timecode). Collapse any run of blank lines within the cue text to a single
-            # newline so the cue's own text can never fake the format's block boundary.
-            t = re.sub(r"\n{2,}", "\n", t).strip("\n")
-            fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
 
 
 def word_durations_from_audio(video: str, start: float, end: float, n_words: int, audio_stream: int = 0) -> List[int]:
@@ -557,44 +420,6 @@ def shift_ass_file(src: str, dst: str, offset: float) -> int:
         out.append(line)
     Path(dst).write_text("\n".join(out) + "\n", encoding="utf-8-sig")
     return n
-
-
-def whisper_word_timings(srt_path: Optional[str]) -> List[Tuple[float, float, str]]:
-    """Word timings from a whisper JSON transcript sitting next to the SRT, if there is one.
-
-    whisper (and faster-whisper, and whisper.cpp's --output-json) can emit per-word start/end
-    times; when they are there, --karaoke should follow the real speech instead of splitting the
-    cue evenly. Looked for as <stem>.json and <stem>.words.json next to the SRT, in either the
-    {"segments": [{"words": [{"word": ..., "start": ..., "end": ...}]}]} or a bare
-    {"words": [...]} shape. Anything unreadable is simply "no word timings".
-    """
-    if not srt_path:
-        return []
-    stem = os.path.splitext(srt_path)[0]
-    for cand in (stem + ".words.json", stem + ".json"):
-        if not os.path.exists(cand):
-            continue
-        try:
-            data = json.loads(Path(cand).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        raw = []
-        if isinstance(data, dict):
-            raw = list(data.get("words") or [])
-            for seg in data.get("segments") or []:
-                raw.extend((seg or {}).get("words") or [])
-        words = []
-        for w in raw:
-            try:
-                text = str(w.get("word") or w.get("text") or "").strip()
-                if text:
-                    words.append((float(w["start"]), float(w["end"]), text))
-            except (AttributeError, KeyError, TypeError, ValueError):
-                continue
-        if words:
-            info(f"karaoke: word timings from {os.path.basename(cand)} ({len(words)} words)")
-            return sorted(words)
-    return []
 
 
 def word_durations_from_timings(words: List[Tuple[float, float, str]], start: float, end: float,

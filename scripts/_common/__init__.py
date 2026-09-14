@@ -81,6 +81,10 @@ from _common.decision import (
     fmt_secs, fmt_smpte_time, fmt_srt_time, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
     signed_time_arg, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
+from _common.asr import (
+    ASR_ENGINES, ASR_INSTALL_HINT, _asr_run, die_no_engine, parse_srt, transcribe, _transcribe_in,
+    whisper_word_timings, write_srt
+)
 from _common.color import (
     bt709_tag_args, color_hex, _COLOR_TOKEN_RE, _sdr_bt709, validate_color
 )
@@ -105,7 +109,7 @@ from _common.text import (
     SHAPING_SCRIPTS, text_width_em, _VS15, _VS16, WINDOWS_FONTS, _ZWJ
 )
 
-from _common import color, decision, runner, text  # noqa: F401,E402
+from _common import asr, color, decision, runner, text  # noqa: F401,E402
 
 # `_common.emit` and `_common.probe` are the FUNCTIONS, as they have always been -- the
 # from-imports above rebound the package attribute the submodule import had set. The two modules
@@ -116,7 +120,7 @@ from _common import color, decision, runner, text  # noqa: F401,E402
 _emit_module = sys.modules["_common.emit"]
 _probe_module = sys.modules["_common.probe"]
 
-_MODULES = (runner, _emit_module, _probe_module, decision, color, text)
+_MODULES = (runner, _emit_module, _probe_module, decision, color, text, asr)
 
 
 class _Facade(_types.ModuleType):
@@ -202,6 +206,8 @@ __all__ = [
     "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "_V2_HANDLED", "validate_color", "verify_output",
     "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
     "_x264_raw", "_ZWJ",
+    "ASR_ENGINES", "ASR_INSTALL_HINT", "_asr_run", "die_no_engine", "parse_srt", "transcribe",
+    "_transcribe_in", "whisper_word_timings", "write_srt",
     "_atoms", "best_break", "_bare_word", "break_penalty", "_break_spaced", "_cut_penalty", "_fix_orphans",
     "_fix_weak_lines", "_function_words", "FUNCTION_WORDS", "_HYPHENS", "_is_hiragana", "_is_ideograph",
     "_is_kana", "_is_weak_line", "JA_NO_LINE_END", "JA_NO_LINE_START", "JA_PARTICLE_WORDS", "JA_PARTICLES",
