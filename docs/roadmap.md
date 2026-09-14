@@ -341,30 +341,7 @@ came out byte-identical, as did `--help` for all 42 tools.
   skill has no beat detection and cut at the literal timestamps, and two rebuilt filler removal
   by hand with `cut.py --segments` (leaving the output VFR). 1.17.1 is the patch.
 
-## 1.17.1 — make 1.17 reachable (planned)
-
-- **`render.py` forwards `--fit-size on`** — or simply omits `--size` — when the caption size came
-  from the platform table rather than from the user or the template author, with an e2e over the
-  `tiktok` template on the `cw1` cues asserting `split == 0` and `size_used < 24`.
-- **The project `captions` block accepts `fit_size`, `min_size` and `fit_size_scope`**, so the
-  fitter is reachable declaratively and not only from a hand-run `caption.py`.
-- **SKILL.md routing lines**, one each: filler / "ums and uhs" → `silence.py --filler --words`,
-  beat / "on the beat" → `cut.py --snap beats` and `scenes.py --beats`, a folder of files →
-  `batch.py --jobs`, "I only changed the preset" → `render.py --cache`. Paid for with cuts
-  elsewhere in the 30,000-byte budget; four of eval 18's six routing misses are pure
-  discoverability. With it, a line telling an agent to quote a measured low confidence rather
-  than deny the capability.
-- **One report line for the `cs2` shape**: when the skill declines to change the user's text, the
-  report must say the text is unchanged, not merely leave it unchanged.
-- **A sanctioned form for a partial result.** `Done (partially):` and `Failed (partially, …):`
-  are the only two format defects in eval 18's 100 runs and the only one in eval 17's 90; either
-  bless `Done:` with the shortfall named in `Notes:`, or the rule keeps losing to the truth.
-- **Eval 19** re-runs the `cw`/`dl`/`cs`/`bt`/`fw`/`rc` prompts and checks that `size_used` and
-  `shrunk` appear on the template path, that the beat, filler and cache prompts route on the
-  first try, and that no third label appears. The `bp1`/`bp2` `batch.json` fixture (its
-  `output_dir` escapes OUTDIR) is fixed first.
-
-## 1.17.1 — the eval-18 patch (shipped, eval pending)
+## 1.17.1 — the eval-18 patch (implemented, not tagged yet, eval 19 pending)
 
 - **Done. The template path fits the caption size.** 1.17.0's fitter was unreachable from
   `render.py --template`: the template fills the caption size from the delivery table and
