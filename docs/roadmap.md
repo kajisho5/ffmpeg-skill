@@ -17,13 +17,13 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.16.0**, shipped and evaluated: **eval 17**
-(`evals/results/iteration-17.json`) graded it on the 90-prompt set, the 82 plus the eight
-long-form prompts. It found the caption breaker does not get to act at the platform caption
-sizes (see the 1.16.0 section); 1.16.1 is the patch, and **1.17.0 below is shipped with its
-eval pending** — it carries the size fitter that is the rest of that answer, and **1.17.1** is
-the patch eval 18 asked for (the fitter was unreachable from the delivery templates). Everything
-after 1.17.1 is planned.
+The released version today is **1.17.0** (`package.json`), shipped with its eval pending. The
+last version graded is **1.16.0**: **eval 17** (`evals/results/iteration-17.json`) ran it on the
+90-prompt set, the 82 plus the eight long-form prompts, and found the caption breaker does not
+get to act at the platform caption sizes (see the 1.16.0 section); 1.16.1 is the patch and 1.17.0
+carries the size fitter that is the rest of that answer. **1.17.1 is planned for release** — the
+patch eval 18 asked for (the fitter was unreachable from the delivery templates); it is not
+tagged yet. Everything after 1.17.1 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -39,7 +39,7 @@ after 1.17.1 is planned.
 | 1.16.0 | shipped + evaluated | eval 17 at 1.16.0 (`iteration-17.json`); contract and MCP snapshots additive only; tool count still 42 |
 | 1.16.1 | shipped, eval pending | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 |
 | 1.17.0 | shipped, eval pending | tool count still 42; contract and MCP snapshots additive only; the eval-17 caption size answered by `caption.py --fit-size`; eval 18 |
-| 1.17.1 | shipped, eval pending | patch from eval 18: the template path fits the caption size, project captions take the fit keys, SKILL.md routes filler/beats/`--jobs`/`--cache`; tool count still 42, contract additive only; eval 19 |
+| 1.17.1 | planned | patch from eval 18: the template path fits the caption size, project captions take the fit keys, SKILL.md routes filler/beats/`--jobs`/`--cache`; tool count still 42, contract additive only; not tagged yet, eval 19 after the release |
 | 1.18.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)

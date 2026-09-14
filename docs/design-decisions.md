@@ -176,9 +176,10 @@ decided. Recorded here so none of it is re-proposed from scratch.
   `encoding="utf-8", errors="replace"` instead of decoding with the machine's code page, and a
   probe whose ffprobe printed nothing refuses (`kind: input`) rather than returning a document of
   nulls with exit 0. A source-level test keeps `text=True` without an encoding out of the tree.
-- **P0-3 — the roadmap's "released version today" line lagged the bump.** Accepted; **done in the
-  eval-18 docs PR**, and `CONTRIBUTING.md`'s release checklist now says to move that line in the
-  same PR as the version bump.
+- **P0-3 — the roadmap's "released version today" line lagged the bump.** Accepted; the checklist
+  half landed in the eval-18 docs PR (`CONTRIBUTING.md`'s release checklist now says to move that
+  line in the same PR as the version bump) but the line itself still read 1.16.0 against a
+  `package.json` of 1.17.0 until review 17 caught it; **done in 1.17.1**.
 - **P1-4 — `scripts/_common/text.py` is the next module too large to review in one pass.**
   Accepted, and deliberately **not mixed into 1.17.1**: it is a behaviour-free split, so it gets
   the same treatment `_common.py` got — its own no-change release after 1.17.1, with the contract
