@@ -34,7 +34,7 @@ sizes (see the 1.16.0 section); 1.16.1 below is the patch. Everything after that
 | 1.15.0 | shipped + evaluated | eval 16 at 1.15.0 (`iteration-16.json`) |
 | refactor after 1.15.0 | shipped, eval pending | contract + MCP snapshots and every `--help` byte-identical; 323/323 cases |
 | 1.16.0 | shipped + evaluated | eval 17 at 1.16.0 (`iteration-17.json`); contract and MCP snapshots additive only; tool count still 42 |
-| 1.16.1 | planned | caption-break patch from eval 17 (katakana runs, no balancing inside Thai/Lao/Khmer/Myanmar runs, a note when a cue is split for width) |
+| 1.16.1 | shipped, eval pending | caption-break patch from eval 17: a Thai run and a katakana word are never broken inside, `caption.py` reports `overlong` lines; eval 18 |
 | 1.17.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -294,9 +294,9 @@ came out byte-identical, as did `--help` for all 42 tools.
   and `caption.py` splits it into two-line cues exactly as 1.15.1 did (byte-identical ASS on
   `cw1`, `dl1`, `dl4`). Thai still breaks inside words in both versions (no dictionary), and
   1.16.0's balancing moves that break towards the middle of the run; a katakana word gets split
-  (`タイ|ミング`). The `dl3` orphans are gone. Follow-ups: 1.16.1 (katakana runs unbreakable,
-  greedy fill inside no-space runs without word boundaries, a note naming the manual `|` break
-  when a cue is split for width) and, in 1.17.0, a caption size that fits the cue before the
+  (`タイ|ミング`). The `dl3` orphans are gone. Follow-ups: 1.16.1 (shipped: a Thai run is one atom, broken only at a space
+  or `|`; a katakana word is one atom; `caption.py` counts lines wider than the safe width as
+  `overlong` and names the fix) and, in 1.17.0, a caption size that fits the cue before the
   cue is split.
 
 ## 1.17.0 — throughput (planned)
