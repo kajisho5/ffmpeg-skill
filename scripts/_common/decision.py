@@ -609,7 +609,7 @@ def _autocorrelation_peak(strength: "Sequence[float]", step_s: float,
 
 
 def _grid_score(onset_times: "Sequence[float]", strength_at: "Dict[int, float]",
-                interval: float, phase: float, duration: float) -> float:
+                interval: float, phase: float) -> float:
     """Total onset strength landing within interval/BEAT_ALIGN_DIVISOR of the grid."""
     if interval <= 0:
         return 0.0
@@ -697,7 +697,7 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
         best_ph, best_sc = 0.0, -1.0
         for k in range(steps):
             ph = k * iv / steps
-            sc = _grid_score(onset_times, strength_at, iv, ph, total_s)
+            sc = _grid_score(onset_times, strength_at, iv, ph)
             if sc > best_sc:
                 best_ph, best_sc = ph, sc
         return best_ph, best_sc

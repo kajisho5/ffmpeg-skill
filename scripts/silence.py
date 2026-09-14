@@ -217,6 +217,12 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
+    if args.filler_pad < 0:
+        die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "
+            "(end before start) and the span is then silently dropped, so nothing is removed",
+            kind="input")
+    if args.max_cuts < 1:
+        die("--max-cuts must be at least 1", kind="input")
     if args.filler_list and not args.filler:
         die("--filler-list reports what --filler would remove: pass --filler as well", kind="input")
     meta = probe(args.input)

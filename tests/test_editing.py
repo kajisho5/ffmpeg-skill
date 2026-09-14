@@ -5,6 +5,7 @@
     python3 tests/test_all.py            # every group
 """
 import os
+import platform
 import json
 import re
 import shutil
@@ -1333,6 +1334,14 @@ class EditingTests(MediaFixtures):
         self.assertIn("--words", err["message"])
         self.assertFalse(out.exists())
 
+    def test_filler_pad_must_not_be_negative(self):
+        """A negative pad turns each span inside out and filler_spans then drops them all, so the
+        run would report a successful removal of nothing."""
+        r = script("silence.py", self._gappy(), "--filler", "--filler-pad", "-0.5",
+                   "--words", self._words_json(), "-o", OUT / "filler_pad.mp4",
+                   "--json", expect_fail=True)
+        self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
+
     def test_filler_refuses_without_a_transcript(self):
         out = OUT / "filler_refuse.mp4"
         if out.exists():
@@ -1365,19 +1374,27 @@ class EditingTests(MediaFixtures):
             pass
         # A PATH with ffmpeg/ffprobe and nothing else: stripping PATH outright would make the
         # run fail on ffprobe long before it reached the engine probe.
+        if platform.system() == "Windows":
+            # A symlink needs a privilege here, and a COPIED ffmpeg.exe cannot find its sibling
+            # DLLs -- so neither branch of the shim works on Windows, and pretending one does
+            # would make this a test that passes without exercising anything. The refusal it
+            # covers is platform-independent (it is a PATH/import probe in _common/asr.py), and
+            # the mocked-bridge tests above cover the same message on every OS.
+            self.skipTest("no way to build a PATH shim on Windows: a copied ffmpeg.exe loses "
+                          "its DLLs and a symlink needs a privilege")
         shim = OUT / "no_whisper_path"
         shim.mkdir(exist_ok=True)
         for tool in ("ffmpeg", "ffprobe"):
             real = shutil.which(tool)
             if not real:
                 self.skipTest(f"{tool} not on PATH")
-            link = shim / Path(real).name          # keeps the .exe on Windows
+            link = shim / Path(real).name
             if link.exists():
                 continue
             try:
-                os.symlink(real, link)             # Windows needs a privilege for this ...
+                os.symlink(real, link)
             except (OSError, NotImplementedError, AttributeError):
-                shutil.copy2(real, link)           # ... so copy the binary there instead
+                self.skipTest("cannot symlink ffmpeg into a PATH shim on this machine")
         env = dict(os.environ, PATH=str(shim))
         out = OUT / "filler_nowhisper.mp4"
         if out.exists():

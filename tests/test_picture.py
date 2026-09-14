@@ -1764,6 +1764,31 @@ class PictureTests(MediaFixtures):
         self.assertEqual(data["caption"]["size_used"], 30)
         self.assertEqual(data["caption"]["size_requested"], 30)
 
+    def test_caption_plan_before_the_input_exists_uses_the_platform_frame(self):
+        """A plan that names a different FontSize from the run that executes it is not a plan.
+        With --platform there is a real frame to fit against; without one there is nothing, and
+        size_used says null rather than presenting the requested size as the fitted one."""
+        cues = self._fit_cues()
+        missing = OUT / "not_yet_recorded.mp4"
+        if missing.exists():
+            missing.unlink()
+        planned = json.loads(script("caption.py", missing, "--text", cues, "--platform", "tiktok",
+                                    "--dry-run", "-o", OUT / "plan_fit.mp4", "--json").stdout)
+        real = json.loads(script("caption.py", self._vertical(), "--text", cues,
+                                 "--platform", "tiktok", "--dry-run",
+                                 "-o", OUT / "plan_fit2.mp4", "--json").stdout)
+        self.assertEqual(planned["caption"]["size_used"], real["caption"]["size_used"])
+        self.assertLess(planned["caption"]["size_used"], planned["caption"]["size_requested"])
+        self.assertEqual(planned["caption"]["size_source"], "platform-frame")
+        burn = next(c for c in planned["commands"] if "FontSize" in c)
+        self.assertIn(f"FontSize={planned['caption']['size_used']}", burn)
+
+        # no platform and no input: nothing to measure against, so nothing is claimed
+        blind = json.loads(script("caption.py", missing, "--text", cues, "--dry-run",
+                                  "-o", OUT / "plan_fit3.mp4", "--json").stdout)
+        self.assertIsNone(blind["caption"]["size_used"])
+        self.assertEqual(blind["caption"]["size_requested"], 24)
+
     def test_caption_min_size_above_size_is_an_input_refusal(self):
         vert, cues = self._vertical(), self._fit_cues()
         out = OUT / "cap_fit_refuse.mp4"

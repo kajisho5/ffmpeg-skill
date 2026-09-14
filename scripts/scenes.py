@@ -85,7 +85,9 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    beat_range = parse_beat_range(args.beat_range)
+    # Only parsed when it is going to be used: --beat-range is a --beats flag, and a run that
+    # never asked for beats should not be able to die on one.
+    beat_range = parse_beat_range(args.beat_range) if args.beats else (60.0, 200.0)
     if args.beats:
         if not meta.get("audio"):
             die("--beats needs an audio stream; this file has none", kind="input")

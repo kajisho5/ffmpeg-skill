@@ -572,6 +572,13 @@ class AnalysisTests(MediaFixtures):
                    "--json", expect_fail=True)
         self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
 
+    def test_scenes_beat_range_is_ignored_without_beats(self):
+        """--beat-range is a --beats flag: a run that never asked for beats must not be able to
+        die on one."""
+        data = json.loads(script("scenes.py", self._beats(), "--beat-range", "notarange",
+                                 "--json").stdout)
+        self.assertNotIn("beat_grid", data)
+
 
 class ProposeChaptersTests(unittest.TestCase):
     """1.16: the pure half of metadata.py --auto-chapters. No media, no subprocess."""

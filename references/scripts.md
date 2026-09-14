@@ -970,7 +970,15 @@ size, so the SRT is the one 1.16 wrote.
 
 Results, alongside the existing caption stats:
 `fit_size`, `size_requested`, `size_used`, `size_floor`, `size_pct_height`,
-`shrunk`, `fit_scope`, `fit_exhausted`.
+`shrunk`, `fit_scope`, `fit_exhausted`, and `size_source` (`input` or
+`platform-frame`).
+
+Under `--dry-run`/`--plan` on an input that does not exist yet there is no
+geometry to measure. With `--platform` the destination's own frame is used —
+that frame *is* what the real run will have, so the planned `FontSize` is the
+one the run will burn. Without a platform nothing can stand in for the frame
+and `size_used` is `null`, rather than presenting the requested size as a
+fitted one.
 
 | ASS size | px on 1920 | % frame h | em per line |
 |---|---|---|---|

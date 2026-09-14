@@ -860,10 +860,25 @@ def main() -> int:
         play_w, play_h = meta["video"]["width"], meta["video"]["height"]
         if meta["video"].get("rotation") in (90, -90, 270, -270):
             play_w, play_h = play_h, play_w
+    # A --plan or --dry-run written before the input exists has no geometry to fit against, and a
+    # plan that describes a different FontSize from the run that executes it is not a plan. When
+    # --platform names a destination, that destination's frame IS the geometry the real run will
+    # have, so the fit is computed against it; with no platform there is nothing to stand in for
+    # the frame, and size_used is reported as null rather than presenting the requested size as
+    # the size that was used.
+    planned_frame = False
+    if not (play_w and play_h) and args.platform and PLATFORMS[args.platform].get("frame"):
+        frame = PLATFORMS[args.platform]["frame"]
+        play_w, play_h = frame["w"], frame["h"]
+        planned_frame = True
+        info(f"[plan] no geometry to measure yet; fitting the caption size against the "
+             f"--platform {args.platform} frame ({play_w}x{play_h})")
 
     args._fit_floor = args.min_size if args.min_size is not None else ass_units(MIN_CAPTION_FRACTION)
+    fit_unmeasurable = not (play_w and play_h)
     fit_stats: dict = {"fit_size": args.fit_size, "size_requested": args.size,
-                       "size_used": args.size, "size_floor": args._fit_floor,
+                       "size_used": None if fit_unmeasurable else args.size,
+                       "size_floor": args._fit_floor,
                        "size_pct_height": round(args.size * 100.0 / ASS_SCRIPT_HEIGHT, 2),
                        "shrunk": 0, "fit_scope": args.fit_size_scope, "fit_exhausted": False}
     caption_stats: dict = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0,
@@ -883,6 +898,11 @@ def main() -> int:
         touched -- only the type size, and never below the legibility floor.
         """
         if args.fit_size == "off" or (args.fit_size == "auto" and args._size_explicit):
+            fit_stats["size_used"] = args.size    # a stated size IS the size used
+            return
+        if fit_unmeasurable:
+            # Nothing to measure against: size_used stays null rather than presenting the
+            # requested size as one that was fitted.
             return
         if args.mode == "mux":
             # Soft subtitles carry no size: the player picks it. Shrinking would change nothing a
@@ -891,6 +911,7 @@ def main() -> int:
             return
         fit = fit_size(cue_list, **fit_params())
         fit_stats["size_used"] = fit["size"]
+        fit_stats["size_source"] = "platform-frame" if planned_frame else "input"
         fit_stats["shrunk"] = fit["shrunk"]
         fit_stats["fit_exhausted"] = bool(fit["shrunk"]) and not fit["fits"]
         fit_stats["size_pct_height"] = round(fit["size"] * 100.0 / ASS_SCRIPT_HEIGHT, 2)
