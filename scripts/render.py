@@ -1123,7 +1123,6 @@ def main() -> int:
         # default name carries this process's PID, nothing else will ever reuse -- and so
         # implicitly clean up -- a leftover dry-run directory the way a same-named real run used
         # to before the PID suffix was added.
-        import shutil
         shutil.rmtree(work, ignore_errors=True)
     if exit_code:
         # The deliverable is written and verified, but it does not meet the requested platform
