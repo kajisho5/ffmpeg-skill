@@ -5,7 +5,7 @@ description: 'Edit video and audio with local FFmpeg from natural-language reque
 
 # ffmpeg-skill
 
-Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`, and delivery templates in `templates/`. This file is enough to do a job: the table below routes the request and `--help` on the one script you are about to run is the cheapest full flag list. The reference files cost as much to read as this file does, so open one only when it answers a question you actually have: `references/scripts.md` (every flag of all 42 scripts), `references/devices.md` (iPhone HDR, GoPro, DJI, screen recordings, Zoom), `references/gotchas.md` (the long form of the one-line rules at the end).
+Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`, and delivery templates in `templates/`. This file is enough to do a job: the table below routes the request, and `--help` on the script you are about to run is the cheapest full flag list. A reference file costs as much to read as this file, so open one only when it answers a question you have: `references/scripts.md` (every flag of all 42 scripts), `references/devices.md` (iPhone HDR, GoPro, DJI, screen recordings, Zoom), `references/gotchas.md` (the long form of the one-line rules at the end).
 
 Shared flags, on every script: `--dry-run`; `--json` (output path, a probe of the output, the commands run); `--json-brief` (the same trimmed to status/output/verified plus a `summary` — prefer it on writing steps); `--fast` (preview quality); `--progress`; `--timeout SECONDS` (`kind: timeout`, default 1800); `--overwrite` (step 7); `--plan FILE` (the dry run as a plan `render.py FILE` runs later, refusing if an input changed). Every re-encoding tool also takes `--codec h264|hevc|av1|prores` and `--quality N` (CRF scale, replaces the deprecated `--crf`): unset, SDR is x264 and HDR is x265 Main10; `prores` needs an explicit `-o NAME.mov`, `h264` refuses an HDR source (`color.py --to-sdr` first).
 
@@ -13,7 +13,7 @@ Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `chec
 
 ## Workflow (always follow this order)
 
-0. **Environment, only on failure.** Never start a job with `doctor`: a broken machine fails on its own with `kind: missing_tool` or an ffmpeg error naming the filter/encoder (`No such filter: 'subtitles'`). Run `python3 <skill-dir>/scripts/_contract.py doctor` (or `npx ffmpeg-skill doctor`) after such a failure, or when the user asks what the machine can do: read `ok` and the tool's `usable`, and report the missing capability (usually `libass`, `zscale` or an encoder). `contract --json`'s tool schema is for a *planning* agent, not this workflow.
+0. **Environment, only on failure.** Never start a job with `doctor`: a broken machine fails on its own with `kind: missing_tool` or an ffmpeg error naming the filter/encoder (`No such filter: 'subtitles'`). Run `python3 <skill-dir>/scripts/_contract.py doctor` (or `npx ffmpeg-skill doctor`) after such a failure, or when asked what the machine can do: read `ok` and the tool's `usable`, and report the missing capability (usually `libass`, `zscale` or an encoder). `contract --json`'s tool schema is for a *planning* agent, not this workflow.
 1. **Probe what you must plan from.** Run `probe.py` on each input you plan the edit from — duration, fps, resolution, codecs, channels, `variable_frame_rate_suspected` — and whenever the user asks about a file. No separate probe before every edit: every writing tool's `--json` already carries its input and a probe of the output. Plan from real numbers, never assumptions.
 2. **Prefer lossless.** If the request can be met without re-encoding (plain cuts on keyframes, remuxing, audio-only changes), do not re-encode. `cut.py` and `loudness.py` stream-copy video by default; `--accurate` on `cut.py` only for frame-exact cuts.
 3. **Plan with `--dry-run --json`, then execute.** Trust `--json`, not a dry run's summary line, for any number in the plan (dimensions there can be a placeholder — `docs/contract.md`). Use it before long encodes and to report exact facts. `--fast` is preview quality (x264 veryfast), `--progress` prints percent/ETA on stderr. Never point `-o` at a file you did not create in this job unless the user asked for it to be replaced; pass `--overwrite` only then.
@@ -98,29 +98,29 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "a title for the first 4 seconds" | `overlay.py input.mp4 --text "Title" --position top --start 0 --end 4 --fade 0.4` |
 | "webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |
 | "remove the green screen" | `overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00` |
-| "turn this podcast into a video", "audiogram" | `render.py --template audiogram ep.m4a --image cover.png` — waveform over a still or colour plate; give an image or a colour, nothing is fetched |
+| "turn this podcast into a video", "audiogram" | `render.py --template audiogram ep.m4a --image cover.png` — waveform over a still or colour plate; give an image or colour, nothing is fetched |
 | "sync the lav mic", "line up two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` / `sync.py camA.mp4 camB.mp4 --trim-second` |
 | "fix the audio levels", "normalise to -14 LUFS" | `loudness.py input.mp4` (`-I -16 --tp -1.5` podcast, `-I -23` broadcast; `--lra N` for the range) |
 | "cut this and make it HEVC / AV1 / ProRes" (output codec named) | `cut.py input.mp4 --start 0:10 --end 0:40 --codec hevc` (`--codec`/`--quality` on any re-encoding tool; ProRes needs `-o NAME.mov`) |
-| "make this a TikTok / Reel / Short / YouTube / X / LinkedIn / podcast" | `render.py --template tiktok\|reels\|shorts\|youtube-shorts\|youtube\|x\|linkedin\|facebook\|podcast input.mp4 [--cues cues.txt\|--srt subs.srt] [--title "..."] [--logo logo.png] [--brand brand.json]` — frame, captions inside the safe area, loudness, export and that platform's check in one command (`--list-templates`, `--write-project` to edit first) |
+| "make this a TikTok / Reel / Short / YouTube / X / LinkedIn / podcast" | `render.py --template tiktok\|reels\|shorts\|youtube-shorts\|youtube\|x\|linkedin\|facebook\|podcast input.mp4 [--cues cues.txt\|--srt subs.srt] [--title "..."] [--logo logo.png] [--brand brand.json]` — frame, captions in the safe area, loudness, export and that platform's check in one command (`--list-templates`, `--write-project` to edit first) |
 | "post it everywhere", "one edit for every platform" | `render.py --template all input.mp4 --cues cues.txt` (or a comma list) → one file per destination plus `<name>_pack.md` (`report.py --pack` renders the HTML) |
 | "export for YouTube / Reels / X", "a ProRes master" | `export.py input.mp4 --preset youtube\|reels\|tiktok\|shorts\|linkedin\|facebook\|x\|prores\|h265` (`--normalize` hits the loudness spec in the same call; `youtube-hdr` keeps HDR, `youtube-av1` writes AV1) |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
-| "a small proxy / cheap preview file" | `proxy.py input.mp4 [--width 640 --no-audio]` — not a delivery preset (those are `export.py`) |
+| "a small proxy / cheap preview file" | `proxy.py input.mp4 [--width 640 --no-audio]` — not a delivery preset (that is `export.py`) |
 | "cut out the pauses", "jump cuts" | `silence.py input.mp4 [--threshold -40 --min-silence 0.8]` |
-| "cut the ums and uhs", "remove the filler words" | `silence.py input.mp4 --filler --words words.json` (measured word timings; `--transcribe` makes them locally) |
+| "cut the ums and uhs", "remove the filler words" | `silence.py input.mp4 --filler --words words.json` (measured word timings; `--transcribe` makes them) |
 | "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` |
-| "show me what it looks like", "are the captions readable" | `look.py output.mp4 --tiles 3x2` then view the PNG |
+| "show me what it looks like", "are the captions readable" | `look.py output.mp4 --tiles 3x2`, then view the PNG |
 | "what would you run?", "don't render yet" | any script with `--dry-run` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` → `cut.py --segments` |
-| "cut on the beat", "edit it to the music" | `scenes.py track.mp4 --beats` to measure the grid, then `cut.py input.mp4 --segments ... --snap beats` |
+| "cut on the beat", "edit it to the music" | `scenes.py track.mp4 --beats --json > beats.json`, then `cut.py input.mp4 --segments ... --snap beats --snap-source beats.json` (`--snap-source` carries the measured grid over) |
 | "is this OK to upload?" | `check.py final.mp4 --platform reels` |
 | "a podcast episode with chapters" | `loudness.py ep.wav -I -16 --tp -1.5` → `metadata.py ep.m4a --chapters chapters.txt` → `check.py ep.m4a --platform podcast` (chapters and channels rows) |
 | "several changes to the same edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
 | "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` — identical stages come from the cache (`--from STAGE` starts there) |
 | "a lower third with my name", "countdown intro", "progress bar" | `graphics.py input.mp4 --template lower-third --name "..." --title "..." --start 2 --end 8` |
 | "a sticker", "a hook card for the first 3 s", "meme text" | `graphics.py input.mp4 --template sticker --text "NEW" --platform tiktok` / `--template hook --title "..." --duration 3` / `--template meme --top "..." --bottom "..."` |
-| "blurred background instead of black bars" | `fit.py input.mp4 --aspect 9:16 --fit blur` (whole picture kept, borders are a blurred, darkened copy) |
+| "blurred background instead of black bars" | `fit.py input.mp4 --aspect 9:16 --fit blur` (whole picture kept, borders a blurred, darkened copy) |
 | "use our brand fonts/colours/logo" | `--brand brand.json` on caption/overlay/graphics, or `"brand"` in project.json |
 | "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 --platform youtube -o report.html` |
 | "do this to every file in the folder", "use all the cores" | `batch.py FOLDER --recipe batch.json --jobs auto` (steps or a render project; cached) |
@@ -149,12 +149,12 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 
 ## Audio-only files
 
-Audio is a first-class input: `probe.py`, `cut.py`, `silence.py`, `loudness.py`, `audio.py`, `sync.py`, `check.py --platform podcast` and `render.py --template podcast` take WAV, FLAC, MP3, M4A/AAC, OGG and Opus, and the output extension picks the format. `Check:` still applies. Scripts that need a picture (`fit`, `caption`, `overlay`, `graphics`, `color`, `export`, `scenes`, `look`) refuse an audio file with "input has no video stream" — say so, do not force a video wrapper. Audio recipes, packet vs sample precision, joining and extracting one track: `references/gotchas.md#audio-only-files`.
+Audio is a first-class input: `probe.py`, `cut.py`, `silence.py`, `loudness.py`, `audio.py`, `sync.py`, `check.py --platform podcast` and `render.py --template podcast` take WAV, FLAC, MP3, M4A/AAC, OGG and Opus; the output extension picks the format. `Check:` still applies. Scripts that need a picture (`fit`, `caption`, `overlay`, `graphics`, `color`, `export`, `scenes`, `look`) refuse an audio file with "input has no video stream" — say so, do not force a video wrapper. Audio recipes, packet vs sample precision, joining, extracting a track: `references/gotchas.md#audio-only-files`.
 
 
 ## Report format
 
-Reply in the language the request itself is written in — the user's own sentences, not a language the request merely talks about (subtitles in another language are still reported in the request's language). Keep the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English: they read like log fields across languages. Everything else is the user's language — the lines those labels head, any question, any explanation of a judgement call. Never drift because the job was short or the report is a failure: even a one-line "file does not exist". A mid-conversation switch follows the user's latest message.
+Reply in the language the request itself is written in — the user's own sentences, not a language the request merely talks about (subtitles in another language are still reported in the request's language). Keep the field labels (`Done:`, `Steps:`, `Check:`, `Look:`, `Notes:`) in English: they read as log fields in any language. Everything else is the user's language — the lines those labels head, any question, any judgement call explained. Never drift because the job was short or the report is a failure: even a one-line "file does not exist". A mid-conversation switch follows the user's latest message.
 
 Finish every job with this shape (numbers from `--json` or `probe.py`/`check.py`, not memory):
 
