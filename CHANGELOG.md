@@ -61,15 +61,18 @@ workflow turns this heading into the version number._
   --filler --transcribe` shares one engine probe and one "no engine found" message.
   `caption.parse_srt`, `caption.transcribe` and `caption.whisper_word_timings` are unchanged as
   names; `caption.py --help` is byte-identical.
-## 1.16.1
-
-_Automated release: version and notes generated from pull requests merged since 1.16.0._
 
 ### Fixed
 
 - `render.py` left its auto-named work directory behind after a failed render: a function-local
   `import shutil` shadowed the module-level one and the `atexit` cleanup raised `NameError`.
+  (Introduced by this release's own `--cache` work; 1.16.1 never had it.)
 
+## 1.16.1
+
+_Automated release: version and notes generated from pull requests merged since 1.16.0._
+
+### Fixed
 
 - **Caption breaking, from eval 17.** A Thai run is no longer broken inside: Thai writes no space
   inside a phrase and the wrapper has no dictionary, so every character-level break it took landed
