@@ -512,8 +512,12 @@ Three refusals, all `kind: input`, all before any encode:
 
 Results: `filler.removed_count`, `filler.removed_seconds`, `filler.removed`
 (one entry per span), `filler.lang`, `filler.list`, `filler.word_timings` and
-`filler.warnings`. The existing `removed_seconds` keeps its meaning;
-`removed_seconds_total` is its additive sibling.
+`filler.warnings`. The existing `removed_seconds` keeps exactly the meaning it
+has always had — the seconds of **silence** this run removed, the figure the
+same run would report without `--filler` — and `removed_seconds_total` is the
+additive sibling covering everything that went. A filler word quiet enough to
+sit inside a detected silence is merged into it rather than counted twice, so
+the two figures can be equal.
 
 ### join.py — concatenate with transitions
 ```

@@ -1196,6 +1196,60 @@ class EditingTests(MediaFixtures):
         m = probe(str(out))
         self.assertLess(m["duration"], data["input_duration"])
 
+    def _talk_with_a_gap(self):
+        """10 s: tone, 4 s of silence in the middle, tone. A filler word placed at 3.0 s sits
+        INSIDE that silence, which is where a mumbled "um" usually is."""
+        talk = OUT / "talk_gap.m4a"
+        if not talk.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+gt(t\\,6))':s=48000",
+               "-t", "10", talk)
+        return talk
+
+    def test_filler_inside_a_silence_still_removes_the_silence(self):
+        """The regression: filler spans were merged only among themselves, so a span nested
+        inside a detected silence rewound keep_ranges' cursor and handed the silence back.
+        Adding --filler made the tool remove LESS than it did without it."""
+        talk = self._talk_with_a_gap()
+        words = OUT / "words_inside.json"
+        words.write_text(json.dumps({"language": "en", "segments": [
+            {"words": [{"word": "um", "start": 3.0, "end": 3.2}]}]}), encoding="utf-8")
+        plain = json.loads(script("silence.py", talk, "--list", "--json").stdout)
+        withf = json.loads(script("silence.py", talk, "--filler", "--filler-list",
+                                  "--words", words, "--json").stdout)
+        self.assertEqual(plain["silences"], withf["silences"])
+        # --filler can only ever remove at least as much as the same run without it
+        self.assertGreaterEqual(withf["removed_seconds_total"], plain["removed_seconds"] - 0.01)
+        self.assertGreater(withf["removed_seconds_total"], 3.0)
+
+    def test_removed_seconds_keeps_its_silence_only_meaning(self):
+        """A caller reading `removed_seconds` since 1.0 asked how much dead air went. --filler
+        must not quietly make it mean something else; `removed_seconds_total` is the new figure."""
+        talk = self._talk_with_a_gap()
+        words = OUT / "words_outside.json"
+        # a filler word in the SPEECH, well away from the silence, so the two figures differ
+        words.write_text(json.dumps({"language": "en", "segments": [
+            {"words": [{"word": "um", "start": 0.5, "end": 0.9}]}]}), encoding="utf-8")
+        plain = json.loads(script("silence.py", talk, "--list", "--json").stdout)
+        withf = json.loads(script("silence.py", talk, "--filler", "--filler-list",
+                                  "--words", words, "--json").stdout)
+        self.assertAlmostEqual(withf["removed_seconds"], plain["removed_seconds"], delta=0.01)
+        self.assertGreater(withf["removed_seconds_total"], withf["removed_seconds"])
+
+    def test_keep_ranges_is_monotone_with_a_nested_span(self):
+        """keep_ranges walks one cursor forward; a nested span used to rewind it."""
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        silence = importlib.import_module("silence")
+        nested = silence.keep_ranges(sorted([(1.0, 3.0), (1.5, 1.8)]), 10, 0.05, 0.2)
+        plain = silence.keep_ranges([(1.0, 3.0)], 10, 0.05, 0.2)
+        self.assertEqual(nested, plain)
+        self.assertEqual(silence.merge_spans([(1.0, 3.0), (1.5, 1.8), (4.0, 4.5), (4.5, 5.0)]),
+                         [(1.0, 3.0), (4.0, 5.0)])
+        # an unsorted input is sorted on the way in
+        self.assertEqual(silence.keep_ranges([(4.0, 5.0), (1.0, 2.0)], 10, 0.05, 0.2),
+                         silence.keep_ranges([(1.0, 2.0), (4.0, 5.0)], 10, 0.05, 0.2))
+
     def test_filler_list_writes_nothing(self):
         out = OUT / "filler_nothing.mp4"
         if out.exists():

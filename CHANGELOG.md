@@ -34,7 +34,8 @@ workflow turns this heading into the version number._
   speech engine measured a start/end pair for the word. Built-in lists for en, ja, es, de, fr, pt
   and it; `like`, `tipo` and `cioè` are deliberately not in them (discourse markers are not
   disfluencies) and are reachable with `--filler-extra`. New keys `filler` and
-  `removed_seconds_total`; `removed_seconds` is unchanged. Whisper stays optional for this tool
+  `removed_seconds_total` (silence plus filler); `removed_seconds` is unchanged and still holds
+  the silence-only figure. Whisper stays optional for this tool
   exactly as it is for `caption.py`.
 - **`batch.py --jobs N|auto`.** Parallel items under one shared `--timeout` budget, capped at
   `min(N, cpu_count, 8)` with the applied value reported. The per-item table keeps its shape and

@@ -25,14 +25,35 @@ from _common import detect_silences as detect, STATE, video_args, add_common, ap
 
 
 
+def merge_spans(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """`spans` sorted and coalesced: any pair that touches or overlaps becomes one.
+
+    keep_ranges() walks a single cursor forward, so it needs a removal list in which no span
+    starts before the previous one ended. Silences and filler spans are each merged only among
+    themselves -- and a mumbled "um" is very often quiet enough to sit INSIDE a detected silence --
+    so the union has to be taken before the two lists are handed over as one.
+    """
+    out: List[Tuple[float, float]] = []
+    for s, e in sorted(spans):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
 def keep_ranges(silences: List[Tuple[float, float]], duration: float, margin: float, min_keep: float) -> List[Tuple[float, float]]:
     keeps: List[Tuple[float, float]] = []
     cursor = 0.0
-    for s, e in silences:
+    for s, e in sorted(silences):
         s_adj = max(cursor, s + margin)
         if s_adj - cursor >= min_keep:
             keeps.append((cursor, s_adj))
-        cursor = min(duration, e - margin) if e != float("inf") else duration
+        # max(cursor, ...) so the walk is monotone. A span nested inside the previous one used to
+        # rewind the cursor and hand back the very stretch that had just been removed: with a
+        # filler word inside a detected silence, adding --filler made the tool remove LESS.
+        # merge_spans() above is the caller-side fix; this keeps the function safe on its own.
+        cursor = max(cursor, min(duration, e - margin) if e != float("inf") else duration)
     if duration - cursor >= min_keep:
         keeps.append((cursor, duration))
     return keeps
@@ -210,20 +231,30 @@ def main() -> int:
     filler_info, filler_ranges = resolve_filler(args, meta) if args.filler else (None, [])
     # One sorted, merged removal list through the graph the tool already has: filler removal IS
     # time-range removal, so it reuses keep_ranges() and the same aselect/concat chain.
-    removals = sorted(silences + filler_ranges)
+    removals = merge_spans(list(silences) + list(filler_ranges))
     keeps = keep_ranges(removals, duration, args.margin, args.min_keep)
     kept = sum(e - s for s, e in keeps)
     removed = max(0.0, duration - kept)
+    # `removed_seconds` keeps the meaning it has had since this tool existed: the seconds of
+    # SILENCE this run removes. It must not quietly start counting filler time as well, because a
+    # caller that has been reading it since 1.0 asked how much dead air went. The silence-only
+    # figure is the one the same run would have reported without --filler, so it is computed from
+    # the silences alone; everything removed is `removed_seconds_total`.
+    silence_only = removed
+    if args.filler:
+        silence_keeps = keep_ranges(merge_spans(list(silences)), duration, args.margin, args.min_keep)
+        silence_only = max(0.0, duration - sum(e - s for s, e in silence_keeps))
     summary = {
         "silences": [[round(s, 3), None if e == float("inf") else round(e, 3)] for s, e in silences],
         "keep": [[round(s, 3), round(e, 3)] for s, e in keeps],
         "input_duration": round(duration, 3),
         "kept_duration": round(kept, 3),
-        "removed_seconds": round(removed, 3),
+        "removed_seconds": round(silence_only, 3),
     }
     if filler_info is not None:
-        # The existing removed_seconds keeps its meaning (everything this run removed); the filler
-        # share is reported inside `filler`, and removed_seconds_total is its additive sibling.
+        # removed_seconds above is the silence-only figure, unchanged in meaning; the filler share
+        # is reported inside `filler`, and removed_seconds_total is the additive sibling that
+        # covers everything this run took out.
         summary["filler"] = filler_info
         summary["removed_seconds_total"] = round(removed, 3)
         info(f"--filler: {filler_info['removed_count']} filler word(s), "
