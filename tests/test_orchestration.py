@@ -624,6 +624,33 @@ class OrchestrationTests(MediaFixtures):
         self.assertTrue(cap["text_unchanged"])
         self.assertTrue(Path(out).exists())
 
+    def test_template_captions_fit_under_a_brand_that_states_no_size(self):
+        """Review 17 finding 1: `--brand` alone is not a stated caption size. A brand file of
+        colours states nothing about type, so the platform table's 24 is still the skill's own
+        choice and must stay fittable; a brand that names caption.size does state one."""
+        brand = OUT / "brand_colours_only.json"
+        brand.write_text(json.dumps({"colors": {"text": "FFFFFF"}}), encoding="utf-8")
+        proj = OUT / "tpl_brand_colours.json"
+        script("render.py", self.src, "--template", "tiktok", "--cues", self._cw1_cues(),
+               "--brand", brand, "--write-project", proj, "-o", OUT / "tpl_brand_colours.mp4")
+        self.assertEqual(json.loads(proj.read_text(encoding="utf-8"))["captions"]["fit_size"], "on")
+        doc = json.loads(script("render.py", self.src, "--template", "tiktok", "--fast",
+                                "--cues", self._cw1_cues(), "--brand", brand,
+                                "-o", OUT / "tpl_brand_colours.mp4", "--json").stdout)
+        cap = doc["caption"]
+        self.assertEqual(cap["fit_size"], "on")
+        self.assertEqual(cap["split"], 0, "a colours-only brand must not stand the fitter down")
+        self.assertLess(cap["size_used"], 24)
+
+        sized = OUT / "brand_with_size.json"
+        sized.write_text(json.dumps({"colors": {"text": "FFFFFF"}, "caption": {"size": 22}}),
+                         encoding="utf-8")
+        proj2 = OUT / "tpl_brand_sized.json"
+        script("render.py", self.src, "--template", "tiktok", "--cues", self._cw1_cues(),
+               "--brand", sized, "--write-project", proj2, "-o", OUT / "tpl_brand_sized.mp4")
+        self.assertNotIn("fit_size", json.loads(proj2.read_text(encoding="utf-8"))["captions"],
+                         "a brand-stated caption size is an explicit size: leave it alone")
+
     def test_project_fit_size_off_renders_1_17_0s_captions(self):
         """The stability answer: a project that states "fit_size": "off" gets exactly the ASS
         1.17.0 wrote -- which is what a project written before 1.17.1 (no fit_size key at all,
