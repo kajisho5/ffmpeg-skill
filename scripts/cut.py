@@ -25,11 +25,13 @@ Examples:
   python3 cut.py talk.mp4 --start 1:00 --end 2:00 -o part.wav                   # audio extraction
 """
 import argparse
+import json
 import os
 import sys
 import tempfile
 from typing import List, Tuple
 
+from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -148,6 +150,76 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     return reencode
 
 
+BEAT_RATE = 22050  # the decode rate the onset pass uses, matching scenes.py --beats
+
+
+def _grid_from_source(path: str, min_confidence: float) -> "dict":
+    """The beat grid of `path`: a scenes.py --json document if that is what it is, otherwise a
+    media file to measure. Reading a document is how a caller avoids a second decode."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        doc = None
+    if isinstance(doc, dict) and doc.get("beat_grid"):
+        grid = dict(doc["beat_grid"])
+        grid["beats"] = doc.get("beats") or []
+        grid["usable"] = grid.get("confidence", 0.0) >= min_confidence
+        return grid
+    if isinstance(doc, dict):
+        die(f"--snap-source {path}: this JSON has no beat_grid -- produce one with "
+            "`scenes.py MUSIC --beats --json`", kind="input")
+    samples = decode_pcm_mono(path, BEAT_RATE, check=False)
+    env = rms_envelope(samples, max(1, int(round(BEAT_RATE * 0.01))))
+    return beat_grid(env, 0.01, min_confidence=min_confidence)
+
+
+def snap_segments(args, segments, meta, total):
+    """Move every in/out point to the nearest measured beat. Returns (result dict, segments).
+
+    A cut point may move to a measured, onset-supported grid point and may not appear from one:
+    the number of segments is unchanged, and nothing is ever proposed. The keyframe/tolerance
+    decision downstream then runs on the snapped values, which is the right order -- whether a cut
+    can be lossless depends on where it actually lands.
+    """
+    source = args.snap_source or args.input
+    if not args.snap_source and not meta.get("audio"):
+        die("--snap beats needs audio to measure a beat in; this file has none. Cut without it "
+            "(--snap none), or pass --snap-source with the music bed.", kind="input")
+    if not args.segments and args.end is None and args.duration is None and args.start in ("0", 0):
+        die("--snap beats has no in or out point to move: this run copies the whole file. Give "
+            "--start/--end (or --segments), or drop --snap.", kind="input")
+    grid = _grid_from_source(source, args.min_confidence)
+    confidence = float(grid.get("confidence") or 0.0)
+    tempo = grid.get("tempo_bpm")
+    if confidence < args.min_confidence or not grid.get("beats"):
+        die(f"no reliable beat grid in this audio (confidence {confidence:.2f}, needs "
+            f"{args.min_confidence:.2f}): cutting to invented beats would move your in/out points "
+            "to times nothing in the audio supports. Re-run with --snap none, or pass "
+            "--snap-source from a music bed.", kind="input")
+    points = [t for seg in segments for t in seg]
+    moved = snap_points(points, grid["beats"], args.snap_tolerance)
+    out_segments = []
+    for i in range(0, len(moved), 2):
+        s, e = moved[i]["to"], moved[i + 1]["to"]
+        if e <= s:   # a snap that would collapse the segment is not applied to it
+            s, e = moved[i]["from"], moved[i + 1]["from"]
+            moved[i].update({"to": s, "delta": 0.0, "snapped": False, "beat_index": None})
+            moved[i + 1].update({"to": e, "delta": 0.0, "snapped": False, "beat_index": None})
+        out_segments.append((s, e))
+    snapped = sum(1 for m in moved if m["snapped"])
+    for m in moved:
+        if m["snapped"]:
+            info(f"--snap beats: {m['from']:.3f}s -> {m['to']:.3f}s ({m['delta'] * 1000:+.0f} ms)")
+    info(f"--snap beats: {tempo:.1f} BPM, confidence {confidence:.2f}; {snapped} of {len(moved)} "
+         f"point(s) moved, within {args.snap_tolerance:.3f}s")
+    return ({"mode": "beats", "tolerance": args.snap_tolerance, "confidence": confidence,
+             "tempo_bpm": tempo, "moved": [dict(m) for m in moved], "snapped": snapped,
+             "unchanged": len(moved) - snapped,
+             "source": "measured" if not args.snap_source else args.snap_source},
+            out_segments)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -159,6 +231,17 @@ def main() -> int:
     ap.add_argument("--segments", help="comma separated START-END list, e.g. '0:05-0:12,1:00-1:20' (joined in order)")
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
+    snap = ap.add_argument_group("beat snapping")
+    snap.add_argument("--snap", choices=["none", "beats"], default="none",
+                      help="move each in/out point to the nearest measured beat (default none)")
+    snap.add_argument("--snap-tolerance", type=float, default=0.12,
+                      help="most seconds a point may move with --snap beats (default 0.12, about a "
+                           "quarter of a beat at 120 BPM)")
+    snap.add_argument("--snap-source", metavar="FILE",
+                      help="take the beat grid from this scenes.py --beats --json document (or from "
+                           "this media file) instead of measuring the input again")
+    snap.add_argument("--min-confidence", type=float, default=BEAT_MIN_CONFIDENCE,
+                      help=f"refuse to snap below this measured beat confidence (default {BEAT_MIN_CONFIDENCE})")
     ap.add_argument("--crf", type=int, default=18, help="x264 CRF when re-encoding (default 18)")
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset when re-encoding")
     add_common(ap)
@@ -195,6 +278,10 @@ def main() -> int:
         if end <= start:
             die("end must be after start")
         segments = [(start, end)]
+
+    snap_result = None
+    if args.snap == "beats":
+        snap_result, segments = snap_segments(args, segments, meta, total)
 
     for s, e in segments:
         if total and s >= total:
@@ -249,7 +336,8 @@ def main() -> int:
          # the trade the caller can offer instead of a re-encode (eval e02: "without losing quality")
          lossless_alternative=(f"--start {min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])):.3f} lands on a keyframe: "
                                f"stream copy with no re-encode, {abs(min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])) - segments[0][0]):.2f}s off the requested start")
-         if mode == "hybrid" and NEAREST_KEYFRAMES and len(segments) == 1 else None)
+         if mode == "hybrid" and NEAREST_KEYFRAMES and len(segments) == 1 else None,
+         snap=snap_result)
     return 0
 
 

@@ -1036,6 +1036,71 @@ class EditingTests(MediaFixtures):
         self.assertTrue(doc["error"]["message"])
         self.assertNotIn("summary", doc)
 
+    # --------------------------------------------------- 1.17: beat-snapped cuts (cut.py --snap)
+    def test_cut_snap_beats_moves_the_points_to_measured_beats(self):
+        out = OUT / "snap_cut.mp4"
+        data = json.loads(script("cut.py", self._beats(), "--start", "2.03", "--end", "6.01",
+                                 "--snap", "beats", "-o", out, "--json").stdout)
+        snap = data["snap"]
+        self.assertEqual(snap["mode"], "beats")
+        self.assertEqual(snap["source"], "measured")
+        self.assertEqual(snap["snapped"], 2)
+        self.assertEqual(len(snap["moved"]), 2)       # never more points than were asked for
+        self.assertAlmostEqual(snap["tempo_bpm"], 120.0, delta=2.0)
+        for row in snap["moved"]:
+            self.assertLessEqual(abs(row["delta"]), snap["tolerance"])
+        # the cut lands on a whole number of beats
+        span = snap["moved"][1]["to"] - snap["moved"][0]["to"]
+        beats = span / (60.0 / snap["tempo_bpm"])
+        self.assertLess(abs(beats - round(beats)), 0.05)
+        self.assertLess(abs(data["output_duration"] - span), 0.04)
+
+    def test_cut_snap_beats_refuses_a_grid_it_cannot_measure(self):
+        """Never fabricate: without a measurable pulse the points are not moved to invented
+        times -- the run refuses and names --snap none."""
+        out = OUT / "snap_refuse.mp4"
+        if out.exists():
+            out.unlink()
+        r = script("cut.py", self._silent_clip(), "--start", "2.03", "--end", "6.01",
+                   "--snap", "beats", "-o", out, "--json", expect_fail=True)
+        err = json.loads(r.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("--snap none", err["message"])
+        self.assertIn("confidence", err["message"])
+        self.assertFalse(out.exists())
+
+    def test_cut_snap_beats_refuses_without_audio(self):
+        mute = OUT / "snap_mute.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self._beats(),
+           "-an", "-c:v", "copy", mute)
+        r = script("cut.py", mute, "--start", "2.03", "--end", "6.01", "--snap", "beats",
+                   "-o", OUT / "snap_mute_cut.mp4", "--json", expect_fail=True)
+        err = json.loads(r.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("--snap none", err["message"])
+
+    def test_cut_snap_beats_refuses_a_whole_file_copy(self):
+        r = script("cut.py", self._beats(), "--snap", "beats",
+                   "-o", OUT / "snap_whole.mp4", "--json", expect_fail=True)
+        err = json.loads(r.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("--snap", err["message"])
+
+    def test_cut_snap_source_takes_the_grid_from_a_scenes_document(self):
+        doc = OUT / "snap_grid.json"
+        doc.write_text(script("scenes.py", self._beats(), "--beats", "--json").stdout,
+                       encoding="utf-8")
+        data = json.loads(script("cut.py", self._beats(), "--start", "2.03", "--end", "6.01",
+                                 "--snap", "beats", "--snap-source", doc,
+                                 "-o", OUT / "snap_src.mp4", "--json").stdout)
+        self.assertEqual(data["snap"]["source"], str(doc))
+        self.assertEqual(data["snap"]["snapped"], 2)
+
+    def test_cut_without_snap_reports_no_snap_key(self):
+        data = json.loads(script("cut.py", self._beats(), "--start", "2.03", "--end", "6.01",
+                                 "-o", OUT / "snap_off.mp4", "--json").stdout)
+        self.assertIsNone(data.get("snap"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -21,6 +21,30 @@ from _common import font_for_script, probe, shell_quote  # noqa: E402
 class OrchestrationTests(MediaFixtures):
     """Render, batch and multicam, plus the toolkit-wide invariants every script has to satisfy."""
 
+    # ------------------------------------------- 1.17: a project may ask for beat-snapped clips
+    def test_render_forwards_snap_to_the_clip_cut(self):
+        proj = OUT / "snap_project.json"
+        proj.write_text(json.dumps({
+            "output": str(OUT / "snap_render.mp4"),
+            "snap": {"to": "beats", "tolerance": 0.12, "min_confidence": 0.5},
+            "clips": [{"src": str(self._beats()), "in": "2.03", "out": "6.01"}],
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--json").stdout)
+        self.assertEqual(data["snap"]["mode"], "beats")
+        self.assertEqual(data["snap"]["snapped"], 2)
+        self.assertIn("clips", data["stages"])
+
+    def test_render_without_snap_builds_the_same_command_as_before(self):
+        proj = OUT / "nosnap_project.json"
+        proj.write_text(json.dumps({
+            "output": str(OUT / "nosnap_render.mp4"),
+            "clips": [{"src": str(self._beats()), "in": "2.03", "out": "6.01"}],
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        self.assertIsNone(data.get("snap"))
+        self.assertFalse(any("--snap" in c for c in data["commands"]))
+
+
     def test_zero_or_negative_fps_refused_across_every_cfr_script(self):
         """--fps flows straight into cfr_args(meta, args.fps) / a `fps or source_fps or 30.0`
         fallback in several scripts without ever being validated first. `0` is falsy in Python, so

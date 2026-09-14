@@ -97,8 +97,10 @@ TEMPLATE = {
 OBJECT_KEYS: Dict[str, frozenset] = {
     "project": frozenset({"output", "frame", "clips", "transition", "silence", "brand", "captions",
                           "graphics", "overlays", "audio", "loudness", "fit", "export", "check", "chapters",
-                          "audiogram", "template"}),
-    "clips[]": frozenset({"src", "in", "out", "speed"}),
+                          "audiogram", "template", "snap"}),
+    "clips[]": frozenset({"src", "in", "out", "speed", "snap"}),
+    # 1.17: beat snapping, forwarded to cut.py for any clip that has in/out
+    "snap": frozenset({"to", "tolerance", "min_confidence", "source"}),
     "frame": frozenset({"aspect", "width", "height", "fps", "fit"}),
     "transition": frozenset({"type", "duration"}),
     "silence": frozenset({"threshold", "min_silence", "margin"}),
@@ -359,7 +361,7 @@ def check_keys(obj: Any, schema: str, label: str) -> None:
 
 def validate_project(proj: Dict[str, Any]) -> None:
     check_keys(proj, "project", "project")
-    for name in ("frame", "transition", "silence", "audiogram", "captions", "audio", "loudness", "fit", "export", "check"):
+    for name in ("frame", "transition", "silence", "audiogram", "captions", "audio", "loudness", "fit", "export", "check", "snap"):
         check_keys(proj.get(name), name, name)
     check_keys((proj.get("audio") or {}).get("stems"), "audio.stems", "audio.stems")
     if isinstance(proj.get("chapters"), list):
@@ -374,6 +376,11 @@ def validate_project(proj: Dict[str, Any]) -> None:
         if isinstance(items, list):
             for i, item in enumerate(items):
                 check_keys(item, f"{name}[]", f"{name}[{i}]")
+                if name == "clips" and isinstance(item, dict) and item.get("snap") is not None:
+                    check_keys(item["snap"], "snap", f"clips[{i}].snap")
+
+
+_LAST_DOC: Dict[str, Any] = {}   # the JSON document the most recent sh() child printed
 
 
 def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
@@ -397,6 +404,8 @@ def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
         extra_fields = {"hint": err["hint"]} if err.get("hint") else {}
         die(f"{script} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, **extra_fields)
+    _LAST_DOC.clear()
+    _LAST_DOC.update(doc if isinstance(doc, dict) else {})
     return str(doc.get("output") or "")
 
 
@@ -619,6 +628,15 @@ def main() -> int:
     platform_args: List[str] = ["--platform", dest] if dest in PLATFORMS and PLATFORMS[dest].get("frame") else []
     stages_done: List[str] = []
 
+    # A project may ask for its clip boundaries to land on the music's beat. The measurement and
+    # the refusal both live in cut.py -- render forwards the request and reports what came back,
+    # so a project that does not name "snap" builds the command line 1.16 built.
+    snap_spec = proj.get("snap") or {}
+    snap_report: Optional[Dict[str, Any]] = None
+    if snap_spec and str(snap_spec.get("to") or "") not in ("", "none", "beats"):
+        die(f'snap.to: only "beats" (or "none") is a beat grid this skill can measure, got '
+            f'{snap_spec.get("to")!r}', kind="input")
+
     # ---- clips
     parts: List[str] = []
     for i, c in enumerate(clips):
@@ -635,7 +653,19 @@ def main() -> int:
                 argv += ["--start", c["in"]]
             if c.get("out") is not None:
                 argv += ["--end", c["out"]]
+            clip_snap = dict(snap_spec)
+            clip_snap.update(c.get("snap") or {})
+            if str(clip_snap.get("to") or "none") == "beats":
+                argv += ["--snap", "beats"]
+                if clip_snap.get("tolerance") is not None:
+                    argv += ["--snap-tolerance", str(clip_snap["tolerance"])]
+                if clip_snap.get("min_confidence") is not None:
+                    argv += ["--min-confidence", str(clip_snap["min_confidence"])]
+                if clip_snap.get("source"):
+                    argv += ["--snap-source", rel(clip_snap["source"])]
             sh("cut.py", *argv)
+            if _LAST_DOC.get("snap") and snap_report is None:
+                snap_report = _LAST_DOC["snap"]
         else:
             part = src
         if c.get("speed"):
@@ -936,7 +966,7 @@ def main() -> int:
             kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result,
             probe=probe(output, role="output"))
     info(f"rendered {output} via {' → '.join(stages_done)}")
-    emit(output, stages=stages_done, check=check_result,
+    emit(output, stages=stages_done, check=check_result, snap=snap_report,
          verification=[{"step": "check", "ok": True, "platform": ck["platform"]}] if check_result else [])
     return 0
 
