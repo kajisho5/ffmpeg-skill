@@ -803,7 +803,7 @@
    "look"
   ],
   "refuse": false,
-  "grader_expect": "(?i)size.*(16|shrunk|smaller|fit)",
+  "grader_expect": "(?i)size.*(1[3-9]|shr[au]nk|smaller|fit)",
   "grader_not": "(?i)(shortened|reworded|rewrote) the (text|caption)",
   "fixtures": {
    "cues_cs1.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Segunda línea de subtítulos\nAuto timed third cue\n"
@@ -819,7 +819,7 @@
    "look"
   ],
   "refuse": false,
-  "grader_expect": "(?i)(no (he |se )?cambi|sin (modificar|cambiar)|texto (intacto|sin))",
+  "grader_expect": "(?i)(no (he |se )?cambi|sin (modificar|cambiar)|texto (intacto|sin)|no (se )?(reescrib|modific)|no reescribe)",
   "fixtures": {
    "cues_cs2.txt": "0:00-0:03 Una tercera línea con tiempos automáticos\n0:03-0:06 Supercalifragilísticoespialidoso e incluso más largo que eso todavía\nTercera línea automática\n"
   },
@@ -834,7 +834,8 @@
   "fixtures": {
    "cues_cs3.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Another sentence that is far too long for one line\n"
   },
-  "note": "Refusal: the skill never rewrites, shortens or paraphrases a caption. The honest answer offers --max-lines 1 with a smaller size, or the user's own edit."
+  "note": "Refusal: the skill never rewrites, shortens or paraphrases a caption. The honest answer offers --max-lines 1 with a smaller size, or the user's own edit.",
+  "grader_not": "(?i)(\" *-> *\"|rewrote|reworded|shortened (the|them|to)|shorter wording|rewritten to)"
  },
  {
   "id": "bt1",

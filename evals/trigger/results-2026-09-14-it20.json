@@ -1,0 +1,512 @@
+{
+ "date": "2026-09-14",
+ "skill_version": "1.17.2",
+ "iteration": 20,
+ "method": "Skill catalog (ffmpeg-skill description + 4 decoy skills: image-tools, web-research, copywriter, meeting-notes) shown to an independent model (claude-sonnet) with the raw user request in one batch of 50; it names the one skill it would load or 'none'. Each prompt once.",
+ "results": [
+  {
+   "id": "t01",
+   "lang": "en",
+   "prompt": "Can you make this clip 60 seconds? /Users/me/Desktop/IMG_4412.MOV",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "trim video file to 60s"
+  },
+  {
+   "id": "t02",
+   "lang": "ja",
+   "prompt": "この動画、縦にしてインスタのリールに上げたい。字幕もつけて。",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "vertical reel with subtitles"
+  },
+  {
+   "id": "t03",
+   "lang": "en",
+   "prompt": "the audio on the interview is way too quiet compared to the intro, can you fix the levels in interview.mp4",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "fix audio levels in video file"
+  },
+  {
+   "id": "t04",
+   "lang": "ja",
+   "prompt": "Zoom の録画（zoom_0.mp4）から無音の部分を全部カットしてほしい",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "remove silence from recording"
+  },
+  {
+   "id": "t05",
+   "lang": "en",
+   "prompt": "I recorded with a Rode mic separately, sync mic.wav to camera.mov please",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "sync external mic to camera"
+  },
+  {
+   "id": "t06",
+   "lang": "ja",
+   "prompt": "iPhone で撮った HDR の動画が YouTube で白っぽく見える。直せる？",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "HDR to SDR conversion"
+  },
+  {
+   "id": "t07",
+   "lang": "en",
+   "prompt": "put our logo top right on all the videos in ./exports and add a fade at the end",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "logo overlay and fade on videos"
+  },
+  {
+   "id": "t08",
+   "lang": "ja",
+   "prompt": "podcast_ep12.wav を -16 LUFS にして m4a で書き出して",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "loudness normalize to LUFS and export m4a"
+  },
+  {
+   "id": "t09",
+   "lang": "en",
+   "prompt": "Does this file meet TikTok's specs? final_v3.mp4",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "platform spec compliance check"
+  },
+  {
+   "id": "t10",
+   "lang": "ja",
+   "prompt": "2 台のカメラで撮った結婚式の動画、いいところだけ 3 分にまとめられる？",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "multicam highlight reel edit"
+  },
+  {
+   "id": "t46",
+   "lang": "en",
+   "prompt": "the subtitles on my short are coming out in three lines and half the sentence shows up late, can you fix reel.mp4",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "fix subtitle timing/wrapping on clip"
+  },
+  {
+   "id": "t47",
+   "lang": "ja",
+   "prompt": "BGM のビートに合わせて clip.mp4 をカットしたい",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "cut video to music beat"
+  },
+  {
+   "id": "t48",
+   "lang": "en",
+   "prompt": "strip the ums and uhs out of my podcast recording ep12.wav",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "remove filler words/silence from audio"
+  },
+  {
+   "id": "t49",
+   "lang": "es",
+   "prompt": "tengo 200 vídeos en una carpeta y tardan una eternidad en procesarse",
+   "should_trigger": true,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": false,
+   "reason": "vague performance complaint, no concrete edit request"
+  },
+  {
+   "id": "t50",
+   "lang": "en",
+   "prompt": "I only changed the export preset, do I have to re-render the whole edit again? project.json",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "re-render edit project file question"
+  },
+  {
+   "id": "n01",
+   "lang": "en",
+   "prompt": "Resize this PNG logo to 512x512 and make the background transparent: logo.png",
+   "should_trigger": false,
+   "chosen": "image-tools",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "resize PNG and make transparent"
+  },
+  {
+   "id": "n02",
+   "lang": "ja",
+   "prompt": "Windows に ffmpeg をインストールする方法を教えて",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "installation how-to, not an edit request"
+  },
+  {
+   "id": "n03",
+   "lang": "en",
+   "prompt": "Download this YouTube video for me: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+   "should_trigger": false,
+   "chosen": "web-research",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "download video from URL"
+  },
+  {
+   "id": "n04",
+   "lang": "ja",
+   "prompt": "新商品紹介動画の台本（60 秒）を書いて",
+   "should_trigger": false,
+   "chosen": "copywriter",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "write a script, deliverable is words"
+  },
+  {
+   "id": "n05",
+   "lang": "en",
+   "prompt": "What's the keyboard shortcut for ripple delete in Premiere Pro?",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "software shortcut question unrelated to catalog"
+  },
+  {
+   "id": "n06",
+   "lang": "en",
+   "prompt": "Design a YouTube thumbnail in Figma for my cooking channel",
+   "should_trigger": false,
+   "chosen": "image-tools",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "thumbnail design request"
+  },
+  {
+   "id": "n07",
+   "lang": "ja",
+   "prompt": "このCSVをJSONに変換して: sales.csv",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "data format conversion, not covered"
+  },
+  {
+   "id": "n08",
+   "lang": "en",
+   "prompt": "Explain the difference between H.264 and H.265 in simple terms",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "general knowledge question"
+  },
+  {
+   "id": "n09",
+   "lang": "en",
+   "prompt": "Generate a 10-second video of a cat surfing with AI",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "AI video generation, not editing existing footage"
+  },
+  {
+   "id": "n10",
+   "lang": "ja",
+   "prompt": "会議の音声を文字起こしして議事録にまとめて（meeting.m4a）",
+   "should_trigger": false,
+   "chosen": "meeting-notes",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "transcribe meeting audio into minutes"
+  },
+  {
+   "id": "t11",
+   "lang": "en",
+   "prompt": "Convert this WAV to MP3: interview_raw.wav",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "convert audio format"
+  },
+  {
+   "id": "t12",
+   "lang": "en",
+   "prompt": "Remove the silence from this recording, it's a 40 minute M4A",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "remove silence from recording"
+  },
+  {
+   "id": "t13",
+   "lang": "zh",
+   "prompt": "这个 vlog.mp4 太长了，帮我剪成 60 秒并加上中文字幕",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "trim video and add captions"
+  },
+  {
+   "id": "t14",
+   "lang": "ko",
+   "prompt": "인터뷰.mov 파일 세로 영상으로 바꿔서 릴스에 올릴 수 있게 해 주세요",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "reframe video vertical for reels"
+  },
+  {
+   "id": "t15",
+   "lang": "es",
+   "prompt": "El audio de entrevista.mp4 está muy bajo, ¿puedes dejarlo a -16 LUFS?",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "loudness fix to LUFS"
+  },
+  {
+   "id": "t16",
+   "lang": "ar",
+   "prompt": "هل يمكنك قص المقاطع الصامتة من التسجيل podcast.m4a؟",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "cut silent parts from recording"
+  },
+  {
+   "id": "n11",
+   "lang": "pt",
+   "prompt": "Escreva um roteiro de 60 segundos para o vídeo de lançamento do nosso produto",
+   "should_trigger": false,
+   "chosen": "copywriter",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "write a script, deliverable is words"
+  },
+  {
+   "id": "n12",
+   "lang": "fr",
+   "prompt": "Comment installer ffmpeg sur macOS avec Homebrew ?",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "installation how-to"
+  },
+  {
+   "id": "n13",
+   "lang": "de",
+   "prompt": "Erstelle mit KI ein 10-Sekunden-Video von einer Katze, die surft",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "AI video generation"
+  },
+  {
+   "id": "t17",
+   "lang": "th",
+   "prompt": "ช่วยตัด vlog.mp4 ให้เหลือ 60 วินาที แล้วใส่คำบรรยายภาษาไทยให้ด้วย",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "trim video and add captions"
+  },
+  {
+   "id": "t18",
+   "lang": "hi",
+   "prompt": "interview.mp4 की आवाज़ बहुत धीमी है, इसे -16 LUFS पर ठीक कर दीजिए",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "loudness fix to LUFS"
+  },
+  {
+   "id": "t19",
+   "lang": "he",
+   "prompt": "אפשר להפוך את clip.mov לסרטון אנכי לרילס עם כתוביות?",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "vertical reframe with captions"
+  },
+  {
+   "id": "t20",
+   "lang": "ru",
+   "prompt": "Убери, пожалуйста, тишину из записи podcast.m4a",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "remove silence from recording"
+  },
+  {
+   "id": "t21",
+   "lang": "vi",
+   "prompt": "Cắt video hop.mp4 xuống còn 60 giây và thêm phụ đề tiếng Việt giúp mình",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "trim video and add subtitles"
+  },
+  {
+   "id": "t22",
+   "lang": "tr",
+   "prompt": "roportaj.mov dosyasını dikey videoya çevirip Reels'e yükleyebileceğim hâle getirir misin?",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "vertical reframe for reels"
+  },
+  {
+   "id": "n14",
+   "lang": "el",
+   "prompt": "Πώς εγκαθιστώ το ffmpeg σε macOS με Homebrew;",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "installation how-to"
+  },
+  {
+   "id": "n15",
+   "lang": "id",
+   "prompt": "Buatkan video 10 detik tentang kucing yang berselancar dengan AI",
+   "should_trigger": false,
+   "chosen": "none",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "AI video generation"
+  },
+  {
+   "id": "n16",
+   "lang": "it",
+   "prompt": "Scrivi un copione di 60 secondi per il video di lancio del nostro prodotto",
+   "should_trigger": false,
+   "chosen": "copywriter",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "write a script, deliverable is words"
+  },
+  {
+   "id": "t23",
+   "lang": "en",
+   "prompt": "can you burn the subtitles into my clip and keep the emoji in the captions in colour? interview.mp4",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "burn in colored emoji subtitles"
+  },
+  {
+   "id": "n17",
+   "lang": "en",
+   "prompt": "make me an emoji sticker pack as PNGs, 20 stickers with transparent backgrounds",
+   "should_trigger": false,
+   "chosen": "image-tools",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "create PNG sticker pack with transparency"
+  },
+  {
+   "id": "t41",
+   "lang": "en",
+   "prompt": "can you make my podcast episode into something I can post on YouTube? it's just an mp3",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "convert audio to YouTube-postable video"
+  },
+  {
+   "id": "t42",
+   "lang": "ja",
+   "prompt": "エピソードにチャプターを入れたいんだけど、どこで区切ればいいか分からない",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "chapter/scene break placement for episode"
+  },
+  {
+   "id": "t43",
+   "lang": "es",
+   "prompt": "necesito que el vídeo lleve subtítulos en inglés y en español, que se puedan cambiar",
+   "should_trigger": true,
+   "chosen": "ffmpeg-skill",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "multi-language switchable subtitles"
+  },
+  {
+   "id": "n18",
+   "lang": "en",
+   "prompt": "write the chapter titles for my blog post outline",
+   "should_trigger": false,
+   "chosen": "copywriter",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "write chapter titles, deliverable is words"
+  },
+  {
+   "id": "n19",
+   "lang": "de",
+   "prompt": "entwirf ein Podcast-Cover für Spotify",
+   "should_trigger": false,
+   "chosen": "image-tools",
+   "model": "sonnet",
+   "correct": true,
+   "reason": "design podcast cover art"
+  }
+ ],
+ "summary": {
+  "total": 50,
+  "correct": 49
+ }
+}
