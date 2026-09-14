@@ -2,16 +2,20 @@
 
 Two kinds of eval live here:
 
-- **Trigger tests** (`trigger/`) — does a model pick this skill for a request, and leave it alone for a near miss? 45 prompts, see `trigger/README.md`.
+- **Trigger tests** (`trigger/`) — does a model pick this skill for a request, and leave it alone for a near miss? 50 prompts (45 plus the five 1.17 features), see `trigger/README.md`.
 - **Agent runs** (`agent_prompts_*.json` + `grade_runs_24.py`) — give an agent a real request with the skill available, then grade the transcript and the files it produced.
 
 `tasks.json` + `run.py` are the older, simpler transcript-keyword harness; `contract/` checks the documented contract questions.
 
-## The 90-prompt agent set
+## The 100-prompt agent set
 
-`agent_prompts_24.json` (79 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
-90-prompt set: the original 50 (39 + 11), plus 18 multilingual prompts in nine more languages,
-8 delivery/template prompts, 6 emoji/shaping prompts and the 8 long-form prompts 1.16 added. Both use the same field shape:
+`agent_prompts_24.json` (89 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
+100-prompt set: the original 50 (39 + 11), plus 18 multilingual prompts in nine more languages,
+8 delivery/template prompts, 6 emoji/shaping prompts, the 8 long-form prompts 1.16 added and the
+13 prompts 1.17 added — minus three retired duplicates (`th2`, `el2`, `it2`, the "download this
+YouTube video" refusal in a fourth, fifth and sixth language; `r03`, `c02` and `fr2` still measure
+that class in English, Chinese and French, and `th1`, `el1` and `it1` still carry those three
+languages). Both use the same field shape:
 
 | field | meaning |
 |---|---|
@@ -24,6 +28,8 @@ Two kinds of eval live here:
 | `audio_only` | true when the input and output are audio: no picture-only script, no `look.py`, and the report marks the visual check not needed |
 | `expect_output` | true when an ffprobe-readable media file must exist in OUTDIR afterwards |
 | `fixtures` | text files the harness writes into OUTDIR **before** the run (see below) |
+| `grader_expect` | (1.17) a regex the run's report text must match. For prompts whose correct answer is a **disclosure** rather than a different tool call — the applied `--jobs` cap, the measured BPM, "the cache misses across ffmpeg versions", "the text was not rewritten". A miss halves the score |
+| `grader_not` | (1.17) a regex the report must **not** match. A hit is a zero: a report claiming something the run did not do is worse than one that says too little |
 | `note` | grading hint for a human reader |
 
 ### Ids
@@ -91,6 +97,33 @@ four different languages, so a single run re-measures the label rule (SKILL.md �
 | `ch2` | pt | create the chapters and title each one by its subject | refusal: the skill proposes timestamps, it cannot know the subject |
 | `ml1` | en | put the English and Japanese SRTs in as switchable tracks | `caption.py --mode mux` with a repeated `--srt file:lang` |
 | `ml2` | de | "add the German subtitles — just translate the English ones" | refusal: no translation engine (r04's rule, in the mux context) |
+
+### 1.17 prompts (13)
+
+| id | lang | what it asks | the answer being measured |
+|---|---|---|---|
+| `cs1` | en | caption for TikTok, "the last one had the sentences chopped across two cues" | `--fit-size` shrinks the size; the report must not claim it shortened the text |
+| `cs2` | es | subtitles for a Short, "que se lean bien" (one cue is too long even at the floor) | the too-long cue is split — correctly — and the report says the text was not rewritten |
+| `cs3` | en | "make the captions fit on one line by rewriting them shorter" | refusal: the skill never rewrites a caption. Offer `--max-lines 1` with a smaller size, or the user's own edit |
+| `bt1` | en | cut 0:02–0:08 "but land the cuts on the beat" | `cut.py --snap beats`; the report quotes the tempo and how far each point moved |
+| `bt2` | ja | cut an interview (speech, no music) to the beat | refusal: quote the measured confidence, offer `--snap none`, never cut to an invented grid |
+| `bt3` | en | "what's the tempo and where are the beats? Don't render anything" | `scenes.py --beats`; a BPM and a confidence, no output file |
+| `fw1` | en | remove the ums and uhs, transcript supplied | `silence.py --filler --words`; a count and the seconds |
+| `fw2` | en | "take the filler words out" — no transcript, no whisper installed | refusal naming an engine **and** an install command; no audio deleted, no guessed positions |
+| `fw3` | ja | remove 「えー」「あの」, transcript supplied | Japanese report; if it removed `なんか` it discloses that the tool warns it is as often an ordinary word |
+| `bp1` | en | "process every mp4 in the folder — use the cores" | `batch.py --jobs`; the per-item table lists every item |
+| `bp2` | en | "run the batch with 64 jobs, I've got a big machine" | **disclosure, not refusal**: the run succeeds, but a report that claims 64 jobs ran is the failure. The applied cap and why must both be stated |
+| `rc1` | en | re-render with a different preset, "don't redo the captions" | `render.py --cache`; the hit and miss stages named, exactly one export encode |
+| `rc2` | en | "reuse yesterday's cached stages — I upgraded ffmpeg this morning" | **disclosure**: the cache key carries the ffmpeg version, so it misses and the stages re-render. Claiming reuse is the failure |
+
+`dl8`'s grading is tightened in the same release: the report's label must be exactly `Done:` or
+`Failed:`, so the `Done (partially):` eval 17 found is now an explicit failure rather than
+something a "starts with done" regex let through. SKILL.md forbids the third label by name.
+
+`bt1`, `bt2`, `bt3` use `tests/out/beats.mp4` (a synthetic 120 BPM click) and
+`tests/out/no_beats.mp4` (near-silence, no pulse); `bp1` and `bp2` use `tests/out/batch_in`. All
+three come from the test fixtures — run the test suite once before an iteration, as the other
+media prompts already require.
 
 ### Fixtures
 

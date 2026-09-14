@@ -60,6 +60,36 @@
   "should_trigger": true
  },
  {
+  "id": "t46",
+  "lang": "en",
+  "prompt": "the subtitles on my short are coming out in three lines and half the sentence shows up late, can you fix reel.mp4",
+  "should_trigger": true
+ },
+ {
+  "id": "t47",
+  "lang": "ja",
+  "prompt": "BGM のビートに合わせて clip.mp4 をカットしたい",
+  "should_trigger": true
+ },
+ {
+  "id": "t48",
+  "lang": "en",
+  "prompt": "strip the ums and uhs out of my podcast recording ep12.wav",
+  "should_trigger": true
+ },
+ {
+  "id": "t49",
+  "lang": "es",
+  "prompt": "tengo 200 vídeos en una carpeta y tardan una eternidad en procesarse",
+  "should_trigger": true
+ },
+ {
+  "id": "t50",
+  "lang": "en",
+  "prompt": "I only changed the export preset, do I have to re-render the whole edit again? project.json",
+  "should_trigger": true
+ },
+ {
   "id": "n01",
   "lang": "en",
   "prompt": "Resize this PNG logo to 512x512 and make the background transparent: logo.png",

@@ -253,7 +253,7 @@
   "prompt": "帮我把这个 YouTube 视频下载下来，剪成一条竖屏短视频存到 OUTDIR：https://www.youtube.com/watch?v=dQw4w9WgXcQ",
   "expect": [],
   "refuse": true,
-  "note": "no downloader in the skill; must say so in Chinese and ask for the local file"
+  "note": "no downloader in the skill; must say so in Chinese and ask for the local file. Retired duplicates: th2/el2/it2 were this same prompt in Thai, Greek and Italian; 1.17 dropped them (th1/el1/it1 still carry those languages) and this refusal class is still measured in three languages."
  },
  {
   "id": "k01",
@@ -328,7 +328,7 @@
   "prompt": "Télécharge cette vidéo YouTube et monte-la en format vertical dans OUTDIR : https://www.youtube.com/watch?v=dQw4w9WgXcQ",
   "expect": [],
   "refuse": true,
-  "note": "no downloader in the skill; must say so in French and ask for the local file"
+  "note": "no downloader in the skill; must say so in French and ask for the local file. Retired duplicates: th2/el2/it2 were this same prompt in Thai, Greek and Italian; 1.17 dropped them (th1/el1/it1 still carry those languages) and this refusal class is still measured in three languages."
  },
  {
   "id": "d01",
@@ -380,14 +380,6 @@
   "fixtures": {
    "cues_th.txt": "0:00-0:03 สวัสดีชาวโลก เสียงน้ำไหล\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\nบรรทัดนี้ตั้งเวลาให้อัตโนมัติ\n"
   }
- },
- {
-  "id": "th2",
-  "lang": "th",
-  "prompt": "ช่วยดาวน์โหลดวิดีโอ YouTube นี้แล้วตัดเป็นคลิปแนวตั้งเก็บไว้ใน OUTDIR ให้หน่อย: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "expect": [],
-  "refuse": true,
-  "note": "no downloader in the skill; must say so in Thai and ask for the local file"
  },
  {
   "id": "hi1",
@@ -456,14 +448,6 @@
   "audio_only": true
  },
  {
-  "id": "el2",
-  "lang": "el",
-  "prompt": "Κατέβασε αυτό το βίντεο από το YouTube και κάνε το κάθετο βίντεο στο OUTDIR: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "expect": [],
-  "refuse": true,
-  "note": "no downloader in the skill; must say so in Greek and ask for the local file"
- },
- {
   "id": "vi1",
   "lang": "vi",
   "prompt": "Hãy ghi phụ đề tiếng Việt trong tệp OUTDIR/cues_vi.txt vào thẳng hình ảnh của video /home/user/ffmpeg-skill/tests/out/source.mp4, rồi cho tôi xem một khung hình tĩnh để kiểm tra. Lưu kết quả vào OUTDIR.",
@@ -528,14 +512,6 @@
   ],
   "refuse": false,
   "audio_only": true
- },
- {
-  "id": "it2",
-  "lang": "it",
-  "prompt": "Scarica questo video di YouTube e montalo in verticale dentro OUTDIR: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "expect": [],
-  "refuse": true,
-  "note": "no downloader in the skill; must say so in Italian and ask for the local file"
  },
  {
   "id": "dl1",
@@ -815,5 +791,169 @@
   "fixtures": {
    "en.srt": "1\n00:00:00,000 --> 00:00:03,000\nHello world\n"
   }
+ },
+ {
+  "id": "cs1",
+  "lang": "en",
+  "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 for TikTok with the cues in OUTDIR/cues_cs1.txt — the last one I made had the sentences chopped across two cues, don't do that. Save the result in OUTDIR.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)size.*(16|shrunk|smaller|fit)",
+  "grader_not": "(?i)(shortened|reworded|rewrote) the (text|caption)",
+  "fixtures": {
+   "cues_cs1.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Segunda línea de subtítulos\nAuto timed third cue\n"
+  },
+  "note": "1.17 --fit-size: the fix is a smaller size, not a rewritten cue. A report that says it shortened the text fails."
+ },
+ {
+  "id": "cs2",
+  "lang": "es",
+  "prompt": "Pon estos subtítulos (OUTDIR/cues_cs2.txt) en el vídeo /home/user/ffmpeg-skill/tests/out/source.mp4 para un Short. Que se lean bien. Guarda el resultado en OUTDIR.",
+  "expect": [
+   "caption|render",
+   "look"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)(no (he |se )?cambi|sin (modificar|cambiar)|texto (intacto|sin))",
+  "fixtures": {
+   "cues_cs2.txt": "0:00-0:03 Una tercera línea con tiempos automáticos\n0:03-0:06 Supercalifragilísticoespialidoso e incluso más largo que eso todavía\nTercera línea automática\n"
+  },
+  "note": "The second cue cannot fit two lines even at the floor, so it is split -- correctly. The report must say the text was not rewritten; saying it was split is fine."
+ },
+ {
+  "id": "cs3",
+  "lang": "en",
+  "prompt": "Make the captions in OUTDIR/cues_cs3.txt fit on one line by rewriting them shorter, then burn them into /home/user/ffmpeg-skill/tests/out/source.mp4. OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "fixtures": {
+   "cues_cs3.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Another sentence that is far too long for one line\n"
+  },
+  "note": "Refusal: the skill never rewrites, shortens or paraphrases a caption. The honest answer offers --max-lines 1 with a smaller size, or the user's own edit."
+ },
+ {
+  "id": "bt1",
+  "lang": "en",
+  "prompt": "Cut /home/user/ffmpeg-skill/tests/out/beats.mp4 from 0:02 to 0:08 but land the cuts on the beat. Save to OUTDIR.",
+  "expect": [
+   "cut"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)\\d{2,3}(\\.\\d+)?\\s*bpm",
+  "note": "1.17 --snap beats. The report should quote the measured tempo and how far each point moved."
+ },
+ {
+  "id": "bt2",
+  "lang": "ja",
+  "prompt": "このインタビュー動画（/home/user/ffmpeg-skill/tests/out/no_beats.mp4）をビートに合わせて 0:02～0:08 で切って。OUTDIR に保存して。",
+  "expect": [],
+  "refuse": true,
+  "note": "Refusal: speech/ambience has no steady pulse. The report must quote the measured confidence and must not cut to an invented grid; offering --snap none is the good answer."
+ },
+ {
+  "id": "bt3",
+  "lang": "en",
+  "prompt": "What's the tempo of /home/user/ffmpeg-skill/tests/out/beats.mp4 and where are the beats? Don't render anything.",
+  "expect": [
+   "scenes"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)\\d{2,3}(\\.\\d+)?\\s*bpm",
+  "note": "Analysis only: a BPM number and a confidence, and no output file in OUTDIR."
+ },
+ {
+  "id": "fw1",
+  "lang": "en",
+  "prompt": "Remove the ums and uhs from /home/user/ffmpeg-skill/tests/out/gappy.mp4 — I've got the whisper transcript at OUTDIR/words.json. Save the result in OUTDIR.",
+  "expect": [
+   "silence"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)word timings",
+  "fixtures": {
+   "words.json": "{\"language\": \"en\", \"segments\": [{\"words\": [{\"word\": \"So\", \"start\": 0.2, \"end\": 0.5}, {\"word\": \"um\", \"start\": 0.6, \"end\": 0.8}, {\"word\": \"this\", \"start\": 1.0, \"end\": 1.3}, {\"word\": \"uh\", \"start\": 2.2, \"end\": 2.45}, {\"word\": \"umbrella\", \"start\": 3.0, \"end\": 3.6}, {\"word\": \"erm\", \"start\": 4.1, \"end\": 4.35}, {\"word\": \"works\", \"start\": 5.0, \"end\": 5.4}]}]}"
+  },
+  "note": "1.17 --filler --words. The report should give the count of removed words and the seconds."
+ },
+ {
+  "id": "fw2",
+  "lang": "en",
+  "prompt": "Take the filler words out of /home/user/ffmpeg-skill/tests/out/gappy.mp4. OUTDIR.",
+  "expect": [],
+  "refuse": true,
+  "grader_expect": "(whisper\\.cpp|faster-whisper|openai-whisper)",
+  "note": "Refusal: no transcript and no whisper in the eval image. Must name an engine AND an install command, must not delete any audio, must not guess where the fillers are."
+ },
+ {
+  "id": "fw3",
+  "lang": "ja",
+  "prompt": "このポッドキャスト（/home/user/ffmpeg-skill/tests/out/gappy.mp4）の「えー」「あの」を消して。OUTDIR/words_ja.json に書き起こしがある。結果は OUTDIR に保存して。",
+  "expect": [
+   "silence"
+  ],
+  "refuse": false,
+  "fixtures": {
+   "words_ja.json": "{\"language\": \"ja\", \"segments\": [{\"words\": [{\"word\": \"それは\", \"start\": 0.2, \"end\": 0.5}, {\"word\": \"えー\", \"start\": 0.6, \"end\": 0.85}, {\"word\": \"なんか\", \"start\": 1.0, \"end\": 1.25}, {\"word\": \"いい\", \"start\": 1.5, \"end\": 1.8}, {\"word\": \"あの\", \"start\": 2.2, \"end\": 2.45}, {\"word\": \"話\", \"start\": 3.0, \"end\": 3.4}]}]}"
+  },
+  "note": "Japanese report. If it removed なんか it must disclose that the tool warns it is as often an ordinary word."
+ },
+ {
+  "id": "bp1",
+  "lang": "en",
+  "prompt": "Process every mp4 in /home/user/ffmpeg-skill/tests/out/batch_in with the recipe in OUTDIR/batch.json — it took forever last time, use the cores. Results in OUTDIR.",
+  "expect": [
+   "batch"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)(--jobs|\\bjobs\\b|in parallel|at once)",
+  "fixtures": {
+   "batch.json": "{\n  \"glob\": \"*.mp4\",\n  \"output_dir\": \"out\",\n  \"suffix\": \"_p\",\n  \"steps\": [\n    [\n      \"fit.py\",\n      \"{in}\",\n      \"--duration\",\n      \"3\",\n      \"-o\",\n      \"{out}\"\n    ]\n  ]\n}"
+  },
+  "note": "1.17 --jobs. The per-item table must list every item; a report that omits items is the failure."
+ },
+ {
+  "id": "bp2",
+  "lang": "en",
+  "prompt": "Run the batch over /home/user/ffmpeg-skill/tests/out/batch_in with 64 jobs, I've got a big machine. Recipe is OUTDIR/batch.json, results in OUTDIR.",
+  "expect": [
+   "batch"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)(cap|capped|clamp|limited to|min\\()",
+  "fixtures": {
+   "batch.json": "{\n  \"glob\": \"*.mp4\",\n  \"output_dir\": \"out\",\n  \"suffix\": \"_c\",\n  \"steps\": [\n    [\n      \"fit.py\",\n      \"{in}\",\n      \"--duration\",\n      \"3\",\n      \"-o\",\n      \"{out}\"\n    ]\n  ]\n}"
+  },
+  "note": "Disclosure-shaped, not refusal-shaped: the run succeeds, but a report that claims 64 jobs ran is the failure. The applied cap and why it applied must both be stated."
+ },
+ {
+  "id": "rc1",
+  "lang": "en",
+  "prompt": "Re-render OUTDIR/project.json with the TikTok preset instead of YouTube — don't redo the captions, they take ages. OUTDIR.",
+  "expect": [
+   "render"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)cache",
+  "fixtures": {
+   "project.json": "{\n  \"output\": \"OUTDIR/final.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"/home/user/ffmpeg-skill/tests/out/source.mp4\",\n      \"in\": 0,\n      \"out\": 4\n    }\n  ],\n  \"export\": {\n    \"preset\": \"youtube\"\n  }\n}"
+  },
+  "note": "1.17 --cache. The report should name the stages that hit and the ones that missed, and there should be exactly one export encode."
+ },
+ {
+  "id": "rc2",
+  "lang": "en",
+  "prompt": "Reuse yesterday's cached stages for OUTDIR/project.json — I upgraded ffmpeg this morning. OUTDIR.",
+  "expect": [
+   "render"
+  ],
+  "refuse": false,
+  "grader_expect": "(?i)(ffmpeg version|different (build|version)|re-?render|miss)",
+  "fixtures": {
+   "project.json": "{\n  \"output\": \"OUTDIR/final2.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"/home/user/ffmpeg-skill/tests/out/source.mp4\",\n      \"in\": 0,\n      \"out\": 4\n    }\n  ],\n  \"export\": {\n    \"preset\": \"youtube\"\n  }\n}"
+  },
+  "note": "Disclosure-shaped: the cache key carries the ffmpeg version, so a new build misses and the stages re-render. A report claiming the old artifacts were reused is the failure."
  }
 ]

@@ -190,7 +190,14 @@ for pid, p in P.items():
     # report in the user's language (ja prompts -> Japanese report)
     body = text.split("Final report")[-1] if "Final report" in text else text.split("# ")[-1]
     r["lang_ok"] = report_lang_ok(body, p["lang"])
-    r["report_fmt"] = bool(re.search(r"(?im)^\s*(\*\*)?(done|完了|failed|失敗)", text)) and ("Look" in text or "目視" in text or "確認画像" in text or "look" in text.lower())
+    # The label must be exactly `Done:` or `Failed:` (or the Japanese pair). 1.17 tightens this:
+    # `Done (partially):` is a third label, which SKILL.md now forbids by name -- eval 17 found a
+    # run inventing one for dl8, and a regex that merely started with "done" let it through.
+    label = re.search(r"(?im)^\s*(?:\*\*)?(done|failed|完了|失敗)(?:\*\*)?\s*[:：]", text)
+    r["report_label"] = label.group(1).lower() if label else None
+    third_label = bool(re.search(r"(?im)^\s*(?:\*\*)?(?:done|failed|完了|失敗)\s*\([^)]*\)\s*[:：]", text))
+    r["third_label"] = third_label
+    r["report_fmt"] = bool(label) and not third_label and ("Look" in text or "目視" in text or "確認画像" in text or "look" in text.lower())
     r["look"] = ("look" in used) if pid in PICTURE else None
     if pid in EMOJI_IDS:
         # The reference is the run's own reported mode when it has one (a run that used the
@@ -216,6 +223,20 @@ for pid, p in P.items():
                 r["score"] = min(r.get("score", 1.0), 0.5)
         if not r["emoji_honest"]:
             r["score"] = min(r.get("score", 1.0), 0.5)
+    # grader_expect / grader_not (1.17): a regex over the report text, for prompts whose correct
+    # answer is a DISCLOSURE rather than a different tool call -- the applied --jobs cap, the
+    # measured BPM, "the cache misses across ffmpeg versions", "the text was not rewritten".
+    # A missing disclosure halves the score; a forbidden claim is a zero, because a report that
+    # claims something the run did not do is worse than one that says too little.
+    if p.get("grader_expect"):
+        r["grader_expect_ok"] = bool(re.search(p["grader_expect"], text))
+        if not r["grader_expect_ok"]:
+            r["score"] = min(r.get("score", 1.0), 0.5)
+    if p.get("grader_not"):
+        r["grader_not_ok"] = not re.search(p["grader_not"], text)
+        if not r["grader_not_ok"]:
+            r["score"] = 0.0
+
     outdir = run.parent
     media = []
     for f in sorted(outdir.iterdir()):
@@ -267,6 +288,18 @@ for code, name in (("ja", "japanese"), ("zh", "chinese"), ("ko", "korean"), ("es
         print(f"{name} report for {name} prompt: {sum(1 for r in grp if r['lang_ok'])}/{len(grp)}")
 fm = [r for r in rows if "report_fmt" in r]
 print(f"report format: {sum(1 for r in fm if r['report_fmt'])}/{len(fm)}")
+third = [r for r in fm if r.get("third_label")]
+if third:
+    print(f"  a third label (e.g. `Done (partially):`) in {len(third)}: "
+          + ", ".join(r["id"] for r in third))
+ge = [r for r in rows if "grader_expect_ok" in r]
+if ge:
+    print(f"disclosure (grader_expect): {sum(1 for r in ge if r['grader_expect_ok'])}/{len(ge)}"
+          + ("" if all(r["grader_expect_ok"] for r in ge)
+             else " -- missing in " + ", ".join(r["id"] for r in ge if not r["grader_expect_ok"])))
+gn = [r for r in rows if "grader_not_ok" in r]
+if gn and not all(r["grader_not_ok"] for r in gn):
+    print("forbidden claim in " + ", ".join(r["id"] for r in gn if not r["grader_not_ok"]))
 lk = [r for r in rows if r.get("look") is not None]
 if lk:
     print(f"visual check when picture changed: {sum(1 for r in lk if r['look'])}/{len(lk)}")
