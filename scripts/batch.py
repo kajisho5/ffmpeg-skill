@@ -248,6 +248,7 @@ def main() -> int:
     deadline = time.monotonic() + STATE.timeout if (shared_budget and STATE.timeout) else None
     cache_lock = threading.Lock()
     timed_out = {"hit": False}
+    interrupted = {"hit": False}
 
     def one_pass() -> List[Dict[str, Any]]:
         results = []
@@ -292,28 +293,120 @@ def main() -> int:
                 tmp.write_text(json.dumps(cache, indent=2), encoding="utf-8")
                 os.replace(tmp, cache_path)
 
+        # ONE list, indexed by each file's position in the sorted `files`. A cached hit goes
+        # into its own slot rather than being appended ahead of the items that still have to run:
+        # appending in two passes reordered the per-item table whenever the cache was partially
+        # warm, which happens at --jobs 1 too and contradicts the order this tool promises.
+        slots: "List[Optional[Dict[str, Any]]]" = [None] * len(files)
         pending: List[tuple] = []
         for i, src in enumerate(files):
             key = f"{file_key(src)}:{rkey}"
             hit = cache.get(key)
             if hit and Path(hit.get("output", "")).exists() and not args.force:
                 info(f"skip (cached) {src.name}")
-                results.append({**hit, "cached": True})
+                slots[i] = {**hit, "cached": True}
                 continue
             pending.append((i, src, key))
+
+        def timed_out_row(src: Path) -> "Dict[str, Any]":
+            timed_out["hit"] = True
+            return {"file": str(src), "output": str(final_path(src, recipe, outdir)),
+                    "ok": False, "seconds": 0.0, "skipped": "timeout"}
+
+        def failed_row(src: Path, exc: BaseException) -> "Dict[str, Any]":
+            """A worker that raised is a failed item, not a dead run. A die() inside a thread
+            raises SystemExit through fut.result() and used to take the whole process down
+            before the summary and the per-item table were printed -- so the one thing the user
+            needed, which item failed and which succeeded, was the thing they did not get."""
+            reason = str(exc) or exc.__class__.__name__
+            return {"file": str(src), "output": str(final_path(src, recipe, outdir)),
+                    "ok": False, "seconds": 0.0, "error": reason[:300]}
 
         if jobs == 1 or len(pending) < 2:
             for i, src, key in pending:
                 if deadline is not None and time.monotonic() >= deadline:
-                    timed_out["hit"] = True
-                    results.append({"file": str(src), "output": str(final_path(src, recipe, outdir)),
-                                    "ok": False, "seconds": 0.0, "skipped": "timeout"})
+                    slots[i] = timed_out_row(src)
                     continue
                 info(f"=== {src.name}")
-                r = process(src, recipe, outdir, item_work(i, src), deadline)
-                results.append(r)
+                try:
+                    r = process(src, recipe, outdir, item_work(i, src), deadline)
+                except KeyboardInterrupt:
+                    interrupted["hit"] = True
+                    break
+                except BaseException as exc:            # noqa: BLE001 - reported, never swallowed
+                    if isinstance(exc, SystemExit) and not exc.code:
+                        raise
+                    slots[i] = failed_row(src, exc)
+                    continue
+                slots[i] = r
                 store(key, r)
-            return results
+            return [r for r in slots if r is not None]
+
+        import concurrent.futures
+
+        def work_one(i: int, src: Path, key: str) -> Dict[str, Any]:
+            _LOG.buffer = [f"=== {src.name}"]
+            try:
+                r = process(src, recipe, outdir, item_work(i, src), deadline)
+                store(key, r)
+                return r
+            finally:
+                r_lines, _LOG.buffer = _LOG.buffer, None
+                setattr(_LOG, "lines", r_lines)
+
+        # Submitted in the existing sorted order and written straight into each item's own slot,
+        # so the summary and the per-item table are identical to a serial run's whatever order
+        # the encodes actually finish in.
+        lines: "Dict[int, List[str]]" = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            futures: "Dict[Any, tuple]" = {}
+            queue = list(pending)
+            in_flight: "set" = set()
+            try:
+                # The pool is topped up to `jobs` in flight and no further: submitting the whole
+                # list up front would put every item past the deadline check before the first one
+                # had finished, and the shared budget could then never stop anything.
+                while queue or in_flight:
+                    while queue and len(in_flight) < jobs:
+                        if deadline is not None and time.monotonic() >= deadline:
+                            break
+                        i, src, key = queue.pop(0)
+                        fut = pool.submit(_run_buffered, work_one, i, src, key)
+                        futures[fut] = (i, src)
+                        in_flight.add(fut)
+                    if not in_flight:
+                        break
+                    done_now, in_flight = concurrent.futures.wait(
+                        in_flight, return_when=concurrent.futures.FIRST_COMPLETED)
+                    in_flight = set(in_flight)
+                    for fut in done_now:
+                        i, src = futures[fut]
+                        try:
+                            slots[i], lines[i] = fut.result()
+                        except BaseException as exc:    # noqa: BLE001 - reported, never swallowed
+                            slots[i] = failed_row(src, exc)
+                            lines[i] = [f"=== {src.name}", f"    failed: {exc}"]
+                for i, src, key in queue:
+                    slots[i] = timed_out_row(src)
+            except KeyboardInterrupt:
+                # Spec 4.1: cancel what has not started, let the running children be killed by
+                # the shared signal handling, and REPORT what completed -- exit 130 with the
+                # partial table, never a traceback.
+                interrupted["hit"] = True
+                for fut in futures:
+                    fut.cancel()
+                for fut, (i, src) in futures.items():
+                    if slots[i] is not None or not fut.done():
+                        continue
+                    try:
+                        slots[i], lines[i] = fut.result()
+                    except BaseException:               # noqa: BLE001
+                        pass
+                info("interrupted: reporting what had already finished")
+        for i, src in enumerate(files):
+            for line in lines.get(i, []):
+                info(line)
+        return [r for r in slots if r is not None]
 
         import concurrent.futures
 
@@ -398,6 +491,14 @@ def main() -> int:
     if not args.json:
         for r in results:
             print(f"{'OK  ' if r['ok'] else 'FAIL'} {r['file']} -> {r['output']}" + (" (cached)" if r.get("cached") else ""))
+    if interrupted["hit"]:
+        # Ctrl-C on a batch that already produced files: the user needs the partial table, not a
+        # traceback and not "nothing was written". Exit 130 with everything that completed.
+        die(f"interrupted after {done} of {len(results)} item(s); the finished outputs are kept "
+            "and the rest were not started",
+            code=130, kind="interrupted", output=None, dry_run=STATE.dry_run, results=results,
+            processed=done, total=len(results), jobs=jobs, jobs_requested=requested,
+            timed_out=timed_out["hit"])
     if timed_out["hit"]:
         skipped = [r["file"] for r in results if r.get("skipped") == "timeout"]
         die(f"the batch's {STATE.timeout:.0f} s budget ran out with {len(skipped)} item(s) not "

@@ -740,6 +740,58 @@ class OrchestrationTests(MediaFixtures):
         self.assertFalse(parallel["timed_out"])
         self.assertGreater(parallel["item_seconds_total"], 0)
 
+    def test_results_keep_file_order_with_a_partially_warm_cache(self):
+        """Cached hits were appended in one pass and freshly-processed items after them, so the
+        per-item table came back out of file order whenever the cache was partially warm -- at
+        --jobs 1, the default, not only in parallel."""
+        for jobs in ("1", "3"):
+            with self.subTest(jobs=jobs):
+                folder = OUT / f"batch_order_{jobs}"
+                shutil.rmtree(folder, ignore_errors=True)
+                folder.mkdir(parents=True)
+                for name in ("a.mp4", "b.mp4", "c.mp4"):
+                    (folder / name).write_bytes(Path(self.src).read_bytes())
+                recipe = folder / "batch.json"
+                recipe.write_text(json.dumps({
+                    "glob": "*.mp4", "output_dir": "out", "suffix": "_o",
+                    "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+                first = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                          "--jobs", jobs, "--json").stdout)
+                self.assertEqual([Path(r["file"]).name for r in first["results"]],
+                                 ["a.mp4", "b.mp4", "c.mp4"])
+                # warm the cache for a and c only: delete b's output so it must be redone
+                Path(first["results"][1]["output"]).unlink()
+                second = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                           "--jobs", jobs, "--json").stdout)
+                self.assertEqual([Path(r["file"]).name for r in second["results"]],
+                                 ["a.mp4", "b.mp4", "c.mp4"])
+                self.assertTrue(second["results"][0].get("cached"))
+                self.assertFalse(second["results"][1].get("cached"))
+                self.assertTrue(second["results"][2].get("cached"))
+
+    def test_a_worker_that_raises_becomes_a_failed_row_not_a_dead_run(self):
+        """A die() inside a worker thread raised SystemExit through fut.result() and took the
+        process down before the summary and the table were printed. The one thing the user needs
+        -- which item failed and which succeeded -- was the thing they did not get."""
+        folder = OUT / "batch_worker_raise"
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True)
+        for name in ("ok1.mp4", "ok2.mp4", "ok3.mp4", "ok4.mp4"):
+            (folder / name).write_bytes(Path(self.src).read_bytes())
+        # a step that fails on every item: the run must still report all four rows
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({
+            "glob": "*.mp4", "output_dir": "out", "suffix": "_w",
+            "steps": [["cut.py", "{in}", "--start", "99", "--end", "120", "-o", "{out}"]]}))
+        r = script("batch.py", folder, "--recipe", recipe, "--fast", "--jobs", "2",
+                   "--json", expect_fail=True)
+        data = json.loads(r.stdout)
+        self.assertEqual(len(data["results"]), 4)
+        self.assertEqual([Path(x["file"]).name for x in data["results"]],
+                         ["ok1.mp4", "ok2.mp4", "ok3.mp4", "ok4.mp4"])
+        self.assertTrue(all(not x["ok"] for x in data["results"]))
+        self.assertEqual(data["error"]["kind"], "verification")
+
     def test_jobs_is_capped_by_cpu_count(self):
         folder, recipe = self._jobs_folder("batch_jobs_cap", count=2)
         data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
@@ -762,14 +814,40 @@ class OrchestrationTests(MediaFixtures):
 
     def test_jobs_share_one_timeout_budget(self):
         """--timeout is the batch's limit, not each item's: a queue of files cannot quietly take
-        one timeout each."""
-        folder, recipe = self._jobs_folder("batch_jobs_timeout", count=6)
-        r = script("batch.py", folder, "--recipe", recipe, "--timeout", "1", "--force",
-                   "--jobs", "2", "--json", expect_fail=True)
-        data = json.loads(r.stdout)
-        self.assertEqual(data["error"]["kind"], "timeout")
-        self.assertEqual(data["exit_code"], 124)
-        self.assertTrue(any(x.get("skipped") == "timeout" for x in data["results"]))
+        one timeout each.
+
+        The budget is a few milliseconds, so it has certainly expired by the time the first item
+        would be submitted -- the probe, the silence/collision pre-flight and the cache read all
+        run before it. That makes the test a statement about the deadline logic rather than a
+        race between --timeout and however fast this machine encodes: the previous version gave
+        six real encodes one second and passed only when the machine was slow enough.
+        """
+        for jobs in ("1", "2"):
+            with self.subTest(jobs=jobs):
+                folder, recipe = self._jobs_folder(f"batch_jobs_timeout_{jobs}", count=6)
+                r = script("batch.py", folder, "--recipe", recipe, "--timeout", "0.005",
+                           "--force", "--jobs", jobs, "--json", expect_fail=True)
+                data = json.loads(r.stdout)
+                self.assertEqual(data["error"]["kind"], "timeout")
+                self.assertEqual(data["exit_code"], 124)
+                self.assertTrue(data["timed_out"])
+                skipped = [x for x in data["results"] if x.get("skipped") == "timeout"]
+                self.assertTrue(skipped)
+                # every item is still in the table, in file order, none of them claiming success
+                self.assertEqual(len(data["results"]), 6)
+                self.assertEqual([Path(x["file"]).name for x in data["results"]],
+                                 sorted(Path(x["file"]).name for x in data["results"]))
+                self.assertFalse(any(x["ok"] for x in skipped))
+
+    def test_a_stated_timeout_is_the_batchs_budget_but_the_default_is_not(self):
+        """The shared deadline applies when a --timeout was stated, or when --jobs > 1 asked for
+        the batch to be treated as one piece of work. The default sequential path keeps 1.16's
+        per-item ceiling, so a long folder is never cut off part-way by a flag nobody passed."""
+        folder, recipe = self._jobs_folder("batch_default_budget", count=2)
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
+                                 "--force", "--json").stdout)
+        self.assertEqual(data["processed"], 2)
+        self.assertFalse(data["timed_out"])
 
     def test_jobs_cache_entries_survive_concurrency(self):
         folder, recipe = self._jobs_folder("batch_jobs_cache", count=6)

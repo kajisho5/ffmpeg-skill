@@ -772,10 +772,15 @@ above the cap is clamped with a note, not refused, and both `jobs` and
   actually given, or when `--jobs > 1` asked for the batch to be treated as one
   piece of work; the default sequential path with the default timeout is 1.16's
   behaviour exactly, where a long folder was never cut off part-way.
-- **Determinism**: items are submitted in the existing sorted order and
-  collected by submission order, and each item's log lines are buffered and
-  flushed in file order, so the per-item table and the log read exactly as a
-  serial run's whatever order the encodes finish in.
+- **Determinism**: every item is written into its own slot in one list indexed
+  by position in the sorted file list — cached hits included, which is what keeps
+  the table in file order when the cache is only partially warm — and each item's
+  log lines are buffered and flushed in file order, so the per-item table and the
+  log read exactly as a serial run's whatever order the encodes finish in.
+- **A failed item is a row, not a dead run**: a worker that raises becomes
+  `ok: false` with its reason, and the summary and the table are still printed.
+  Ctrl-C cancels what has not started, keeps what finished, and exits 130
+  `kind: interrupted` with the partial table.
 - With `--jobs > 1` each item gets its own work subdirectory
   `<workdir>/<index>-<stem>/`, because step file names are stem-derived and two
   sources sharing a stem would otherwise write over each other. `--jobs 1` (the
