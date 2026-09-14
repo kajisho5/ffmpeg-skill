@@ -540,6 +540,7 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(grid["method"], "rms-flux-autocorrelation")
         self.assertEqual(grid["range_bpm"], [60.0, 200.0])
         self.assertEqual(grid["supported"] + grid["unsupported"], len(data["beats"]))
+        self.assertEqual(len(grid["supported_beats"]), grid["supported"])
         self.assertGreater(len(data["beats"]), 10)
         # the existing document is untouched
         self.assertIn("scenes", data)
@@ -753,6 +754,30 @@ class BeatGridTests(unittest.TestCase):
         g = beat_grid(env, self.STEP)
         self.assertGreater(g["unsupported"], 0)
         self.assertEqual(g["supported"] + g["unsupported"], len(g["beats"]))
+
+    def test_supported_beats_excludes_the_grid_over_a_silent_passage(self):
+        """The regular grid runs on through a passage with no music in it -- that is what a grid
+        is. `supported_beats` is the subset a measured onset marks, and it is the only list a tool
+        that moves a cut may snap to: 8.0 s here is fifteen seconds into dead silence."""
+        from _common import beat_grid, snap_points
+        env = [0.001] * 2000
+        for i in range(0, 500, 50):        # a 120 BPM click for the first 5 s
+            env[i] = 1.0
+        for i in range(500, 2000):         # then 15 s of near-silence
+            env[i] = 0.0005
+        g = beat_grid(env, self.STEP)
+        self.assertAlmostEqual(g["tempo_bpm"], 120.0, delta=2.0)
+        self.assertLess(len(g["supported_beats"]), len(g["beats"]))
+        self.assertEqual(len(g["supported_beats"]), g["supported"])
+        self.assertTrue(all(b in g["beats"] for b in g["supported_beats"]))
+        self.assertLess(max(g["supported_beats"]), 6.0)
+        # the full grid would move a cut into the silence; the supported subset does not
+        self.assertTrue(snap_points([8.02], g["beats"], 0.12)[0]["snapped"])
+        self.assertFalse(snap_points([8.02], g["supported_beats"], 0.12)[0]["snapped"])
+
+    def test_flat_envelope_has_no_supported_beats(self):
+        from _common import beat_grid
+        self.assertEqual(beat_grid([0.5] * 1000, self.STEP)["supported_beats"], [])
 
     def test_snap_points_never_adds_or_drops_a_point(self):
         from _common import snap_points

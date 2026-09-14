@@ -135,6 +135,10 @@ def main() -> int:
                          min_confidence=args.min_confidence, duration=dur)
         result["beats"] = grid["beats"]
         result["beat_grid"] = {
+            # The regular grid AND the subset a measured onset supports. A tool that MOVES
+            # something (cut.py --snap beats) may only use the subset; scenes.py reports both,
+            # because here the regular grid is the measurement being made.
+            "supported_beats": grid["supported_beats"],
             "tempo_bpm": grid["tempo_bpm"], "interval": grid["interval"],
             "confidence": grid["confidence"], "phase": grid["phase"],
             "onsets": len(grid["onsets"]), "supported": grid["supported"],

@@ -164,7 +164,25 @@ def _grid_from_source(path: str, min_confidence: float) -> "dict":
     if isinstance(doc, dict) and doc.get("beat_grid"):
         grid = dict(doc["beat_grid"])
         grid["beats"] = doc.get("beats") or []
-        grid["usable"] = grid.get("confidence", 0.0) >= min_confidence
+        # A scenes.py document carries the supported subset since 1.17; one written by an older
+        # build does not, and a grid whose supported points are unknown is not one this tool may
+        # move a cut onto -- an unknown subset is not an empty one, but it is not a measurement
+        # either, so it is refused rather than silently treated as "all of them".
+        grid["supported_beats"] = doc.get("beat_grid", {}).get("supported_beats")
+        if grid["supported_beats"] is None:
+            grid["supported_beats"] = doc.get("supported_beats")
+        try:
+            tempo = grid.get("tempo_bpm")
+            grid["tempo_bpm"] = float(tempo) if tempo is not None else None
+            grid["confidence"] = float(grid.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            die(f"--snap-source {path}: beat_grid.tempo_bpm and .confidence must be numbers "
+                "(regenerate it with `scenes.py MUSIC --beats --json`)", kind="input")
+        if grid["beats"] and grid["tempo_bpm"] is None:
+            die(f"--snap-source {path}: this document lists beats but no tempo_bpm, so no grid "
+                "was actually measured in it. Regenerate it with "
+                "`scenes.py MUSIC --beats --json`.", kind="input")
+        grid["usable"] = grid["confidence"] >= min_confidence
         return grid
     if isinstance(doc, dict):
         die(f"--snap-source {path}: this JSON has no beat_grid -- produce one with "
@@ -186,9 +204,21 @@ def snap_segments(args, segments, meta, total):
     if not args.snap_source and not meta.get("audio"):
         die("--snap beats needs audio to measure a beat in; this file has none. Cut without it "
             "(--snap none), or pass --snap-source with the music bed.", kind="input")
-    if not args.segments and args.end is None and args.duration is None and args.start in ("0", 0):
+    # Compare the PARSED segments against the whole file, not the raw --start string: "0:00",
+    # "0.0" and "00:00:00" are all a zero start that a string comparison lets through, and the
+    # run would then snap the implicit end point and silently shorten a whole-file copy.
+    whole_file = (len(segments) == 1 and abs(segments[0][0]) < 1e-6
+                  and (not total or abs(segments[0][1] - total) < 1e-6))
+    if whole_file:
         die("--snap beats has no in or out point to move: this run copies the whole file. Give "
             "--start/--end (or --segments), or drop --snap.", kind="input")
+    # A floor of zero would make the confidence check vacuous -- a grid measured from noise scores
+    # above 0.0 and would pass -- and the whole point of the flag is that a cut only moves onto a
+    # pulse somebody can hear. The number is a floor on belief, so it must be a positive one.
+    if args.min_confidence <= 0:
+        die("--min-confidence must be greater than 0: at 0 every grid is 'reliable', including "
+            "one measured from noise, which is exactly what --snap beats must not cut to. Use "
+            "--snap none if you do not want the points moved at all.", kind="input")
     grid = _grid_from_source(source, args.min_confidence)
     confidence = float(grid.get("confidence") or 0.0)
     tempo = grid.get("tempo_bpm")
@@ -197,8 +227,23 @@ def snap_segments(args, segments, meta, total):
             f"{args.min_confidence:.2f}): cutting to invented beats would move your in/out points "
             "to times nothing in the audio supports. Re-run with --snap none, or pass "
             "--snap-source from a music bed.", kind="input")
+    # THE grid a cut may move onto is the onset-supported subset, never the full regular grid.
+    # beat_grid() reports a regular grid over the whole duration by design -- a grid has to be
+    # regular -- so it runs on through a passage with no music in it. Snapping to one of those
+    # points moves a cut to a time nothing in the audio marks, which is the fabrication this
+    # release forbids and which this tool's own refusal text promises it does not do.
+    supported = grid.get("supported_beats")
+    if supported is None:
+        die(f"--snap-source {source}: this document does not say which grid points a measured "
+            "onset supports, so there is no way to tell a beat from a gap in it. Regenerate it "
+            "with `scenes.py MUSIC --beats --json`.", kind="input")
+    if not supported:
+        die(f"no measured onset supports any point of this beat grid (confidence "
+            f"{confidence:.2f}): the grid is regular but nothing in the audio marks it, so every "
+            "move would be to an invented time. Re-run with --snap none, or pass --snap-source "
+            "from a music bed.", kind="input")
     points = [t for seg in segments for t in seg]
-    moved = snap_points(points, grid["beats"], args.snap_tolerance)
+    moved = snap_points(points, supported, args.snap_tolerance)
     out_segments = []
     for i in range(0, len(moved), 2):
         s, e = moved[i]["to"], moved[i + 1]["to"]
@@ -212,9 +257,11 @@ def snap_segments(args, segments, meta, total):
         if m["snapped"]:
             info(f"--snap beats: {m['from']:.3f}s -> {m['to']:.3f}s ({m['delta'] * 1000:+.0f} ms)")
     info(f"--snap beats: {tempo:.1f} BPM, confidence {confidence:.2f}; {snapped} of {len(moved)} "
-         f"point(s) moved, within {args.snap_tolerance:.3f}s")
+         f"point(s) moved, within {args.snap_tolerance:.3f}s, onto {len(supported)} of "
+         f"{len(grid['beats'])} grid point(s) a measured onset supports")
     return ({"mode": "beats", "tolerance": args.snap_tolerance, "confidence": confidence,
-             "tempo_bpm": tempo, "moved": [dict(m) for m in moved], "snapped": snapped,
+             "tempo_bpm": tempo, "grid": "supported", "grid_points": len(supported),
+             "moved": [dict(m) for m in moved], "snapped": snapped,
              "unchanged": len(moved) - snapped,
              "source": "measured" if not args.snap_source else args.snap_source},
             out_segments)

@@ -1057,6 +1057,71 @@ class EditingTests(MediaFixtures):
         self.assertLess(abs(beats - round(beats)), 0.05)
         self.assertLess(abs(data["output_duration"] - span), 0.04)
 
+    def test_cut_snap_beats_moves_only_onto_onset_supported_points(self):
+        """The grid is regular by construction, so it runs on through a passage with no music.
+        A cut asked for inside that passage is NOT moved: the only points this tool may snap to
+        are the ones a measured onset marks."""
+        clip = OUT / "beats_half.mp4"
+        if not clip.exists():
+            # 12 s: a 120 BPM click for the first 5 s, then silence
+            click = "0.8*sin(2*PI*880*t)*lt(mod(t\\,0.5)\\,0.04)*lt(t\\,5)"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "lavfi", "-i", f"aevalsrc='{click}':s=48000",
+               "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", clip)
+        data = json.loads(script("cut.py", clip, "--start", "2.03", "--end", "9.01",
+                                 "--snap", "beats", "-o", OUT / "snap_half.mp4",
+                                 "--json").stdout)
+        snap = data["snap"]
+        self.assertEqual(snap["grid"], "supported")
+        self.assertLess(snap["grid_points"], 24)     # fewer than the full 12 s grid
+        # the in point sits in the music and moves; the out point sits in the silence and does not
+        self.assertTrue(snap["moved"][0]["snapped"])
+        self.assertFalse(snap["moved"][1]["snapped"])
+        self.assertEqual(snap["moved"][1]["to"], snap["moved"][1]["from"])
+        self.assertEqual(snap["snapped"], 1)
+
+    def test_cut_snap_beats_refuses_a_zero_confidence_floor(self):
+        r = script("cut.py", self._beats(), "--start", "2.03", "--end", "6.01", "--snap", "beats",
+                   "--min-confidence", "0", "-o", OUT / "snap_zero.mp4", "--json",
+                   expect_fail=True)
+        err = json.loads(r.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("--min-confidence", err["message"])
+
+    def test_cut_snap_source_without_a_supported_list_is_refused(self):
+        """A document from an older build lists beats but cannot say which of them an onset
+        supports. An unknown subset is not an empty one -- and it is not a measurement either."""
+        doc = OUT / "snap_old.json"
+        doc.write_text(json.dumps({"beats": [1.0, 2.0, 3.0],
+                                   "beat_grid": {"tempo_bpm": 120.0, "confidence": 0.9}}),
+                       encoding="utf-8")
+        r = script("cut.py", self._beats(), "--start", "2.03", "--end", "6.01", "--snap", "beats",
+                   "--snap-source", doc, "-o", OUT / "snap_old.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
+
+    def test_cut_snap_source_with_no_tempo_is_refused(self):
+        doc = OUT / "snap_notempo.json"
+        doc.write_text(json.dumps({"beats": [1.0, 2.0],
+                                   "beat_grid": {"tempo_bpm": None, "confidence": 0.9,
+                                                 "supported_beats": [1.0, 2.0]}}),
+                       encoding="utf-8")
+        r = script("cut.py", self._beats(), "--start", "2.03", "--end", "6.01", "--snap", "beats",
+                   "--snap-source", doc, "-o", OUT / "snap_nt.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
+
+    def test_cut_snap_beats_refuses_a_whole_file_copy_spelled_as_a_time(self):
+        """`--start 0:00` is the same whole-file copy as no --start at all; a string comparison
+        against "0" let it through and the run then shortened the file at the far end."""
+        for start in ("0:00", "0.0", "00:00:00"):
+            with self.subTest(start=start):
+                r = script("cut.py", self._beats(), "--start", start, "--snap", "beats",
+                           "-o", OUT / "snap_wholetime.mp4", "--json", expect_fail=True)
+                err = json.loads(r.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn("--snap", err["message"])
+
     def test_cut_snap_beats_refuses_a_grid_it_cannot_measure(self):
         """Never fabricate: without a measurable pulse the points are not moved to invented
         times -- the run refuses and names --snap none."""

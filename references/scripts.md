@@ -83,6 +83,14 @@ decode) or a separate music file. The snap happens *before* the
 keyframe/tolerance decision, so lossless-vs-accurate is judged on where the cut
 actually lands.
 
+"Measured" is exact: the only points a cut may move onto are the
+`supported_beats` — the grid points a measured onset actually marks — never the
+full regular grid, which by construction runs on through a passage with no music
+in it. A cut asked for inside that passage stays where it was asked for, and
+`snap.grid` is `"supported"` with `snap.grid_points` saying how many there were.
+`--min-confidence` must be greater than 0: at 0 every grid is "reliable",
+including one measured from noise.
+
 The number of in/out points never changes: a point with no beat inside the
 tolerance is returned unchanged, and no point is ever invented. Three
 `kind: input` refusals, nothing written:
@@ -97,7 +105,11 @@ tolerance is returned unchanged, and no point is ever invented. Three
 
 Result: `snap.mode`, `snap.tolerance`, `snap.confidence`, `snap.tempo_bpm`,
 `snap.moved` (one row per point, with `from`/`to`/`delta`/`snapped`),
-`snap.snapped`, `snap.unchanged`, `snap.source` (`"measured"` or the path).
+`snap.snapped`, `snap.unchanged`, `snap.grid`, `snap.grid_points`, and
+`snap.source` (`"measured"` or the path). A `--snap-source` document that does
+not carry `beat_grid.supported_beats` (one written before 1.17) is refused
+rather than treated as if every grid point were supported, as is one whose
+`tempo_bpm` is null while it lists beats.
 `render.py` forwards a project's `"snap": {"to": "beats", ...}` (project-wide
 or per clip) to this flag and reports what came back.
 
@@ -667,8 +679,9 @@ and why (energy, scene length).
 **`--beats` (1.17)** measures the music's beat grid and reports it:
 
 ```json
-"beats": [0.0, 0.5, 1.0, ...],
+"beats": [0.0, 0.5, 1.0, ...],            // 25 of them over a 12 s click track
 "beat_grid": {"tempo_bpm": 120.0, "interval": 0.5, "confidence": 0.997,
+              "supported_beats": [0.0, 0.5, 1.0, ...],   // the 24 an onset marks
               "phase": 0.0, "onsets": 24, "supported": 24, "unsupported": 1,
               "method": "rms-flux-autocorrelation", "step_s": 0.01,
               "range_bpm": [60, 200], "usable": true}
@@ -681,7 +694,17 @@ refractory gap, tempo from the autocorrelation of the onset signal inside
 onset strength. `confidence` is half how far the winning lag stands above the
 other lags (in standard deviations) and half the fraction of onsets that land
 on the grid. With `--beats` the file is decoded once, at 22050 Hz, and the
-scene envelope comes from that same pass.
+`supported + unsupported == len(beats)` always, and `supported_beats` is that
+supported subset — the list `cut.py --snap beats` moves onto.
+
+With `--beats` the file is decoded once, at 22050 Hz, and the 0.5 s scene
+envelope is derived from that same pass rather than from a second 8 kHz decode.
+One consequence worth knowing: `scenes.py X --json` and `scenes.py X --beats
+--json` report very slightly different `audio_rms`/`audio_peak` figures for the
+same file, because the two envelopes are built from PCM at different rates. The
+scene boundaries and their ranking are unaffected; only the fourth decimal of
+the level moves. `--beats` also holds ~2.75x the samples in memory, which is
+worth knowing on a feature-length input.
 
 **A beat grid is a measurement of the music's periodicity, not of where a cut
 belongs.** A low confidence means the audio has no steady pulse — speech,

@@ -642,7 +642,10 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
       4. phase = the offset in [0, interval) at which the grid catches the most onset strength;
       5. beats = phase + n * interval across the duration. A grid must be regular, so a grid
          point with no measured onset within interval/4 is still reported -- and counted in
-         `unsupported`, so a caller can see how much of the grid the audio actually supports;
+         `unsupported`, so a caller can see how much of the grid the audio actually supports.
+         `supported_beats` is the subset that a measured onset does support: it is what a tool
+         that MOVES something must snap to, because a regular grid runs on through a passage with
+         no music in it and a point moved there was moved to a time nothing in the audio marks;
       6. confidence = 0.5 * clip((z - 2) / 4, 0, 1)
                     + 0.5 * (fraction of onsets within interval/8 of a grid point),
          where z is how many standard deviations the winning autocorrelation lag stands above
@@ -657,7 +660,8 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
     env = list(envelope or [])
     lo_bpm, hi_bpm = float(min(bpm_range)), float(max(bpm_range))
     out: "Dict[str, Any]" = {
-        "beats": [], "tempo_bpm": None, "interval": None, "confidence": 0.0, "onsets": [],
+        "beats": [], "supported_beats": [], "tempo_bpm": None, "interval": None,
+        "confidence": 0.0, "onsets": [],
         "phase": 0.0, "supported": 0, "unsupported": 0, "usable": False,
         "method": "rms-flux-autocorrelation", "step_s": step_s, "range_bpm": [lo_bpm, hi_bpm],
     }
@@ -716,8 +720,9 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
         beats.append(round(t, 4))
         t += interval
     support_tol = interval / BEAT_SUPPORT_DIVISOR
-    supported = sum(1 for b in beats
-                    if any(abs(b - o) <= support_tol for o in onset_times))
+    supported_beats = [b for b in beats
+                       if any(abs(b - o) <= support_tol for o in onset_times)]
+    supported = len(supported_beats)
     align_tol = interval / BEAT_ALIGN_DIVISOR
     aligned = sum(1 for o in onset_times
                   if min((o - phase) % interval, interval - (o - phase) % interval) <= align_tol)
@@ -731,7 +736,8 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
     confidence = round(0.5 * periodicity + 0.5 * alignment, 3)
 
     out.update({
-        "beats": beats, "interval": round(interval, 6), "tempo_bpm": round(60.0 / interval, 2),
+        "beats": beats, "supported_beats": supported_beats,
+        "interval": round(interval, 6), "tempo_bpm": round(60.0 / interval, 2),
         "phase": round(phase, 4), "confidence": confidence, "supported": supported,
         "unsupported": len(beats) - supported,
         "usable": confidence >= float(min_confidence),
