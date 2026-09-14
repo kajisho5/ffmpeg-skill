@@ -113,9 +113,21 @@ def propose(args, meta: Dict[str, Any], duration: float,
     proposed = propose_chapters(duration, silences, cuts, min_chapter=args.min_chapter,
                                 max_chapters=args.max_chapters, source=source)
     if len(proposed) == 1:
+        # every suggestion has to be a value the caller is not already using, or the hint reads
+        # "try --min-chapter 1" to someone who passed --min-chapter 1
+        tries = []
+        shorter_silence = round(args.silence_min / 2.0, 2)
+        if shorter_silence >= 0.1 and shorter_silence < args.silence_min:
+            tries.append(f"--silence-min {shorter_silence:g}")
+        shorter_chapter = max(1.0, round(args.min_chapter / 2.0, 2))
+        if shorter_chapter < args.min_chapter:
+            tries.append(f"--min-chapter {shorter_chapter:g}")
+        if args.detect_from != "both" and meta.get("audio") and meta.get("video"):
+            tries.append("--from both")
         notes.append(f"no pause longer than {args.silence_min:g}s and no scene change far enough apart "
-                     f"to start a chapter: the file gets one marker at 0:00. Try --silence-min 1.0 or "
-                     f"--min-chapter {max(1, int(args.min_chapter // 2))}")
+                     "to start a chapter: the file gets one marker at 0:00"
+                     + (". Try " + " or ".join(tries) if tries else
+                        ", and the thresholds are already as low as this tool will suggest"))
     total = len([1 for _s in silences]) + len([c for c in cuts if c > 0])
     auto = {
         "source": {"silence": "silence", "scenes": "scenes", "both": "silence+scenes"}[source],

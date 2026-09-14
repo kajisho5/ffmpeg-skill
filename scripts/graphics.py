@@ -254,6 +254,12 @@ def main() -> int:
             return os.path.dirname(os.path.abspath(script_file))
         return None
 
+    def chip_frac(left, right, pad):
+        """The fraction of the frame a boxed label may use: the span between the margins, less
+        drawtext's own box padding on each side."""
+        usable = W - left - right - 2 * pad
+        return max(0.1, min(SAFE_WIDTH_FRACTION, usable / float(W))) if W else SAFE_WIDTH_FRACTION
+
     def wrapped(text, size_px, frac=SAFE_WIDTH_FRACTION):
         """A label broken to the frame's safe width (1.16).
 
@@ -393,7 +399,9 @@ def main() -> int:
         align = (7 if "left" in pos else 9) if "top" in pos else (1 if "left" in pos else 3)
         y_rest = m_top if "top" in pos else H - m_bottom
         y_start = y_rest + rise if "top" in pos else y_rest + rise
-        sticker_text = wrapped(args.text, fs)
+        # the chip is a box between the two side margins, not the whole frame: wrapping to the
+        # frame width let a long --text run off the plate even though it "fitted"
+        sticker_text = wrapped(args.text, fs, chip_frac(m_left, m_right, padx))
         add_text(sticker_text,
                  f"drawtext={drawtext_text_opts(sticker_text)}:{fo}:fontsize={fs}:fontcolor={ff_color(bg)}:"
                  f"x={xe}:y='{ye}':box=1:boxcolor={ff_color(primary, 0.95)}:boxborderw={drawtext_boxborderw(pady, padx)}:"

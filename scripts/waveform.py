@@ -101,6 +101,10 @@ def main() -> int:
                 "the image locally and pass its path", kind="input")
         if not os.path.exists(args.image):
             die(f"--image file not found: {args.image}", kind="input")
+        if not STATE.dry_run:
+            plate = probe(args.image, role="input")
+            if not (plate.get("video") or {}).get("width"):
+                die(f"--image is not an image ffmpeg can decode: {args.image}", kind="input")
         if args.background != "black":
             die("--image and a non-default --background exclude each other: the plate is either "
                 "the picture or the colour", kind="input")
@@ -173,7 +177,10 @@ def main() -> int:
         render = stem + "_vis" + ext
     cmd = ffmpeg_base() + ["-i", args.input]
     if args.image:
-        cmd += ["-loop", "1", "-i", args.image]
+        # -framerate before -loop: a looped still defaults to 25 fps, and overlay takes its rate
+        # from the FIRST input -- so without this the file came out 25 fps however loud --fps or
+        # --platform said otherwise (the colour-plate path never had the bug: `color=` carries r=).
+        cmd += ["-framerate", f"{args.fps:g}", "-loop", "1", "-i", args.image]
     cmd += ["-filter_complex", vf]
     if args.image:
         cmd += ["-map", "[v]"]
@@ -213,7 +220,7 @@ def main() -> int:
 
     result = probe(output, role="output")
     v = result["video"] or {}
-    notes = []
+    notes: "list" = []
     if args.image and args.platform and args.srt:
         safe_px = int(round(PLATFORMS[args.platform]["safe"]["bottom"] * args.height))
         overlap = (vis_h + safe_px) - args.height
@@ -228,6 +235,13 @@ def main() -> int:
             notes.append("the render is " + fmt_secs(result.get("duration")) + " against "
                          + fmt_secs(meta.get("duration")) + " of audio")
     size_ok = (v.get("width"), v.get("height")) == (args.width, args.height) or STATE.dry_run
+    # the rate the run announced is the rate the file must carry: the audiogram path builds the
+    # plate as a second input, so getting this wrong is silent (see the -framerate above)
+    fps_ok = True
+    if not STATE.dry_run and v.get("fps"):
+        fps_ok = abs(float(v["fps"]) - float(args.fps)) <= 0.01
+        if not fps_ok:
+            notes.append(f"the render is {float(v['fps']):g} fps against the {args.fps:g} fps asked for")
     # reported on every run, not only an audiogram one: a caller that keys on `audiogram.background`
     # should not have to guess whether the key exists (`"color"` is the plain-waveform answer).
     extra = {"audiogram": {
@@ -240,7 +254,9 @@ def main() -> int:
         "captions": (args.srt or args.text) if (args.srt or args.text) else None,
         "title": args.title,
         "stages": stages,
-        "verified": bool(duration_ok and size_ok),
+        # a dry run rendered nothing, so there is nothing to have verified -- the common
+        # top-level `verified` says false for the same run and these two must not disagree
+        "verified": False if STATE.dry_run else bool(duration_ok and size_ok and fps_ok),
     }}
     if notes:
         extra["notes"] = notes

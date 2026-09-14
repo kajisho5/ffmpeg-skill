@@ -277,7 +277,11 @@ places the band (`strip`, the default, is a band of `--vis-height` -- a
 fraction of the frame, default 0.35 -- along the bottom, the podcast
 convention); `--opacity` fades the visualisation over the plate. `--platform`
 takes the frame size and fps from the delivery table and refuses a destination
-with no frame (`podcast`). `--title` draws one label through graphics.py's
+with no frame (`podcast`) -- the still is fed at that rate, so the plate cannot
+quietly decide the output's frame rate, and the run verifies the rate it
+announced along with the frame size and the duration. `--image` must be a file
+ffmpeg can actually decode: one that is not is refused (`kind: input`) before
+any encode starts. `--title` draws one label through graphics.py's
 sticker template and `--srt`/`--text` burns captions by running caption.py
 afterwards -- both as second processes, so neither of those code paths is
 re-implemented here. `--image` must be a readable local file: a URL is refused
@@ -799,14 +803,20 @@ token is not itself a file on disk, so `C:\subs\en.srt` and a file named
 `--language`. `--track-title` names a track (repeated in `--srt` order;
 otherwise a frozen display-name table, and a code the table does not know gets
 the code itself — never a guessed or translated name), `--default-track LANG`
-marks one for auto-selection (default: none). Two tracks with the same code, a
+marks one for auto-selection. Every other new track is explicitly marked *not*
+default, because ffmpeg otherwise flags the first one itself -- so with no
+`--default-track` a Matroska file really does leave every track off. Two tracks with the same code, a
 code that is not BCP-47-shaped, a `--default-track` no track carries, and more
 than one `--srt` with `--mode burn` are all refused. **Container note:** `.mp4`
 and `.mov` accept several `mov_text` tracks but many players show only the
 first, and MPEG-4 stores an ISO-639-2 code — a two-letter one is silently
 dropped, so this tool converts it (`en` → `eng`); Matroska keeps the code you
 give. Past two tracks in an MPEG-4 container the result carries a note
-recommending `.mkv`. The result gains `tracks` and `subtitle_tracks`; check.py
+recommending `.mkv`. Two further MPEG-4 limits are reported rather than papered
+over: it has no per-track title the muxer writes back (so `tracks[].title` is
+`null` there, with a note) and it always enables its first subtitle track
+whatever disposition is asked for (so that track is reported `default: true`,
+again with a note). `.mkv` has neither limit. The result gains `tracks` and `subtitle_tracks`; check.py
 prints an informational `subtitles` row (WARN for an untagged stream, never
 counted in `failed`). The skill never translates and never generates a second
 language.

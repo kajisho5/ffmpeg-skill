@@ -40,10 +40,42 @@
   subtitle stream carries a language tag, `WARN` when one does not or when there are none. Like
   the podcast `channels`/`chapters` rows it is never counted in `failed`.
 
+### Fixed
+
+- **The audiogram ignored `--fps` / `--platform`.** A looped still is fed to ffmpeg at 25 fps
+  unless told otherwise, and `overlay` takes its rate from the first input, so
+  `--platform tiktok` announced 30 fps and wrote a 25 fps file (the colour-plate path was never
+  affected: `color=` carries its own `r=`). The still now gets `-framerate`, and the frame rate
+  joined the frame size and duration in what `audiogram.verified` actually checks.
+- **`--mode mux` marked a track `default` that nobody asked for.** With two or more new subtitle
+  streams and no `--default-track`, ffmpeg flags the first one itself — the opposite of what the
+  flag promises, and `tracks[].default` then described a file that did not exist. Every
+  disposition is stated explicitly now (`default` for the chosen track, `0` for the rest).
+  MPEG-4 cannot express "no default subtitle track" at all — it always enables its first one —
+  so there the track is *reported* `default: true` with a note, because the result document
+  describes the file, not the request.
+- **`audiogram.verified` was `true` under `--dry-run`**, where nothing had been rendered to
+  verify, while the common top-level `verified` said `false` for the same run.
+- **`--image` that ffmpeg cannot decode** is refused with `kind: input` naming the file, before
+  any encode starts, instead of surfacing as a raw ffmpeg failure.
+- **A malformed `:lang` suffix** (`--srt en.srt:zzzz`) is reported as a bad language code naming
+  the token, not as a missing file called `en.srt:zzzz`.
+- **`から`, `まで` and `より` are matched as whole words.** They had been left in the
+  *character* table of Japanese particles, which made `か`, `ら`, `ま`, `で`, `よ` and `り`
+  one-character particles of their own — none of them is — so a break before `か` was forbidden
+  and a break after it preferred.
+- **MPEG-4 subtitle track titles are no longer claimed.** `-metadata:s:s:N title=` is dropped by
+  the MPEG-4 muxer, so `tracks[].title` reported a name the file did not carry; it is `null`
+  there now, with a note saying `.mkv` keeps the names.
+- `metadata.py --auto-chapters`' "no chapters found" hint no longer suggests the value already
+  in use (`--min-chapter 1` was answered with "try `--min-chapter 1`").
+- `graphics.py --template sticker` wraps its label to the chip's own width rather than the
+  frame's, so a long `--text` cannot overflow the plate it is drawn on.
+
 ### Changed
 
 - **`caption.py` and `graphics.py` wrap phrase-aware by default (`--wrap measured` restores
-  1.15.0).** Four rules, all penalties over break positions that already fit, so no line is
+  1.15.1).** Four rules, all penalties over break positions that already fit, so no line is
   widened and the line count never changes: never inside a word or on the wrong side of a hyphen;
   no line that is a lone digit, one or two punctuation characters or a single kana, checked at
   every boundary rather than only the last; Japanese/Chinese breaks preferred after `。、！？」』）`
@@ -58,6 +90,9 @@
   Eval 16's two open cues come out whole: `dl1` breaks as `A third line / the tool times for me`
   (1.15: `A third line the / tool times for me`) and `dl3` as `自動でタイミングが / 決まる行`
   (1.15: `自動でタイミングが決ま / る行`). `--wrap measured` reproduces the old splits.
+- `layout_cues` wraps each cue once instead of three times. The greedy fill is identical for
+  every mode, so `wrap_variants()` does it once and repeats only the post-passes, which is what
+  `rebalanced` and `phrase_breaks` need to be counted against.
 - The caption breaker moved from `caption.py` into `_common/text.py`, and the two structure
   detectors (`silence.detect`, `scenes.detect_scenes`) into `_common/probe.py`, so
   `metadata.py --auto-chapters` measures without any tool in `scripts/` importing a sibling tool.

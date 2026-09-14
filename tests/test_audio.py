@@ -420,20 +420,33 @@ class AudiogramTests(MediaFixtures):
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", mp4, "-frames:v", "1", png)
         return png
 
+    # The exact command line 1.15.1 built for `waveform.py IN --width 640 --height 360 -o OUT`,
+    # taken from a checkout of origin/main and pinned here. Only the ffmpeg binary, the input and
+    # the output are substituted; every other argument, and their order, is the pin.
+    WAVEFORM_1_15_1 = [
+        "{ffmpeg}", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-i", "{input}",
+        "-filter_complex",
+        "color=c=black:s=640x360:r=25[bg];[0:a:0]showwaves=s=640x360:mode=line:rate=25:"
+        "split_channels=0:colors=lime[vis];[bg][vis]overlay=format=auto",
+        "-map", "0:a:0",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+        "-c:a", "aac", "-b:a", "192k",
+        "-t", "12.000", "-shortest", "{output}",
+    ]
+
     def test_waveform_without_image_is_byte_identical_to_1_15(self):
-        """The 1.15 command line, argument for argument: no plate input, the colour source, no
-        [v] map. Anything else here would mean an existing caller's output changed."""
-        plan = self._plan(self.src, "--width", "640", "--height", "360",
-                          "-o", OUT / "ag_identical.mp4")
-        joined = " ".join(plan)
-        self.assertIn("color=c=black:s=640x360:r=25[bg];", joined)
-        self.assertIn("[bg][vis]overlay=format=auto", joined)
-        self.assertNotIn("-loop", plan)
-        self.assertNotIn("[v]", plan)
-        self.assertNotIn("[plate]", joined)
-        self.assertEqual(plan.count("-i"), 1, "an unflagged run reads one input, as it always did")
-        # and the visualisation still fills the frame
-        self.assertIn("showwaves=s=640x360:", joined)
+        """The whole argv, not a handful of substrings: a run with none of the audiogram flags
+        must build the command line 1.15.1 built, argument for argument and in the same order.
+        This is the assertion that makes "the audiogram is four flags on waveform.py, not a second
+        tool" checkable instead of asserted."""
+        out = OUT / "ag_identical.mp4"
+        plan = self._plan(self.src, "--width", "640", "--height", "360", "-o", out)
+        expected = [part.format(ffmpeg=plan[0], input=str(self.src), output=str(out))
+                    for part in self.WAVEFORM_1_15_1]
+        self.assertEqual(plan, expected)
 
     def test_audiogram_graph_has_one_overlay_per_layer(self):
         plate = self._plate(640, 360)
@@ -478,6 +491,50 @@ class AudiogramTests(MediaFixtures):
         # an image and a colour plate are two answers to the same question
         script("waveform.py", self.src, "--image", self._plate(), "--background", "white",
                "-o", OUT / "ag_both.mp4", expect_fail=True)
+
+    def test_audiogram_frame_rate_is_the_one_the_run_announced(self):
+        """A looped still defaults to 25 fps and overlay takes its rate from the first input, so
+        the plate silently decided the output's frame rate: `--platform tiktok` printed 30 fps and
+        wrote a 25 fps file. The rate is now part of what the run verifies."""
+        plate = self._plate()
+        out = OUT / "ag_fps.mp4"
+        res = json.loads(script("waveform.py", self.src, "--image", plate, "--platform", "tiktok",
+                                "--json", "-o", out).stdout)
+        rate = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                  "stream=r_frame_rate", "-of", "csv=p=0", out).stdout.strip()
+        self.assertEqual(rate, "30/1", "the plate decided the frame rate instead of --platform")
+        self.assertTrue(res["audiogram"]["verified"])
+        self.assertIn("-framerate", self._plan(self.src, "--image", plate, "--platform", "tiktok",
+                                               "-o", OUT / "ag_fps2.mp4"))
+        # the colour-plate path never had the bug and must keep its own rate
+        rate2 = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                   "stream=r_frame_rate", "-of", "csv=p=0",
+                   script("waveform.py", self.src, "--platform", "tiktok", "--fast",
+                          "-o", OUT / "ag_fps_color.mp4") and OUT / "ag_fps_color.mp4").stdout.strip()
+        self.assertEqual(rate2, "30/1")
+
+    def test_audiogram_verified_is_false_under_dry_run(self):
+        """Nothing was rendered, so there is nothing to have verified -- and the common top-level
+        `verified` says so for the same run. The two keys must not disagree."""
+        doc = json.loads(script("waveform.py", self.src, "--image", self._plate(640, 360),
+                                "--width", "640", "--height", "360", "--dry-run", "--json",
+                                "-o", OUT / "ag_dry.mp4").stdout)
+        self.assertFalse(doc["verified"])
+        self.assertFalse(doc["audiogram"]["verified"])
+
+    def test_audiogram_refuses_an_image_ffmpeg_cannot_decode(self):
+        """Spec 2.6: a file that is not a decodable image is an input refusal naming it, before
+        ffmpeg is ever started -- not a raw ffmpeg failure."""
+        notpic = OUT / "ag_not_a_picture.m4a"
+        if not notpic.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "sine=d=1", notpic)
+        proc = script("waveform.py", self.src, "--image", notpic, "-o", OUT / "ag_nope.mp4",
+                      "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn(str(notpic), doc["error"]["message"])
+        self.assertFalse((OUT / "ag_nope.mp4").exists())
 
     def test_audiogram_renders_with_image_and_captions(self):
         plate = self._plate()

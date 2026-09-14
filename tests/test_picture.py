@@ -770,10 +770,21 @@ class PictureTests(MediaFixtures):
         self.assertEqual(caption.split_srt_lang("en.srt:en"), ("en.srt", "en"))
         self.assertEqual(caption.split_srt_lang("subs/file.srt:pt-BR"), ("subs/file.srt", "pt-BR"))
         self.assertEqual(caption.split_srt_lang("plain.srt"), ("plain.srt", None))
+        # A Windows drive path is handled by the parser alone, with no file on disk: the drive
+        # letter is a one-character head that is not a language tag, in either slash style.
         self.assertEqual(caption.split_srt_lang("C:\\subs\\en.srt"), ("C:\\subs\\en.srt", None))
-        odd = OUT / "a:b.srt"
-        odd.write_text("1\n00:00:00,000 --> 00:00:01,000\nx\n", encoding="utf-8")
-        self.assertEqual(caption.split_srt_lang(str(odd)), (str(odd), None))
+        self.assertEqual(caption.split_srt_lang("C:/subs/en.srt"), ("C:/subs/en.srt", None))
+        self.assertEqual(caption.split_srt_lang("D:\\media\\ja.srt"), ("D:\\media\\ja.srt", None))
+        # "the whole token is a file on disk, so do not split it" -- exercised with a colon-free
+        # name, which every OS can create.
+        plain = OUT / "suffix_plain.srt"
+        plain.write_text("1\n00:00:00,000 --> 00:00:01,000\nx\n", encoding="utf-8")
+        self.assertEqual(caption.split_srt_lang(str(plain)), (str(plain), None))
+        if platform.system() != "Windows":
+            # ... and, where the filesystem allows it, with a name that really contains a colon
+            odd = OUT / "a:b.srt"
+            odd.write_text("1\n00:00:00,000 --> 00:00:01,000\nx\n", encoding="utf-8")
+            self.assertEqual(caption.split_srt_lang(str(odd)), (str(odd), None))
         # MPEG-4 needs the ISO-639-2 spelling (verified empirically: ffmpeg silently writes NO
         # language tag for a two-letter code in .mp4); Matroska stores what it is given.
         self.assertEqual(caption.container_language("ja", "x.mp4"), "jpn")
@@ -786,6 +797,19 @@ class PictureTests(MediaFixtures):
                "-o", OUT / "dup.mkv", expect_fail=True)
         script("caption.py", self.src, "--mode", "mux", "--srt", f"{srt}:en",
                "--default-track", "ja", "-o", OUT / "dup2.mkv", expect_fail=True)
+        # a suffix meant as a language code but shaped wrong is a language error naming the
+        # token, not "SRT file not found: en.srt:zzzz"
+        proc = script("caption.py", self.src, "--mode", "mux", "--srt", f"{srt}:zzzzzzzzzzz",
+                      "-o", OUT / "dup3.mkv", "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("zzzzzzzzzzz", doc["error"]["message"])
+        self.assertIn("not a language code", doc["error"]["message"])
+        # a genuinely missing file still says so
+        missing = script("caption.py", self.src, "--mode", "mux",
+                         "--srt", str(OUT / "no_such_file.srt") + ":en",
+                         "-o", OUT / "dup4.mkv", expect_fail=True)
+        self.assertIn("not found", missing.stderr)
 
     def test_burn_with_two_srts_refused(self):
         srt = OUT / "mux_burn2.srt"
@@ -809,6 +833,9 @@ class PictureTests(MediaFixtures):
         self.assertEqual(res["subtitle_tracks"], 3)
         self.assertEqual([t["language"] for t in res["tracks"]], ["en", "ja", "es"])
         self.assertEqual([t["default"] for t in res["tracks"]], [True, False, False])
+        disp = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+                  "stream_disposition=default", "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual(disp, ["1", "0", "0"], "the file disagrees with tracks[].default")
         self.assertEqual(res["tracks"][1]["title"], "\u65e5\u672c\u8a9e")
         src_m, m = probe(str(self.src)), probe(str(out))
         self.assertEqual(m["subtitle_streams"], 3)
@@ -825,6 +852,24 @@ class PictureTests(MediaFixtures):
         self.assertEqual(subs_row[0]["status"], "PASS")
         for code in ("en", "ja", "es"):
             self.assertIn(code, subs_row[0]["value"])
+
+    def test_mux_without_default_track_leaves_every_matroska_track_off(self):
+        """Given two or more new subtitle streams and no --default-track, ffmpeg flags the first
+        one `default` by itself -- the opposite of what the flag promises, and `tracks[].default`
+        then described a file that did not exist. Every disposition is stated explicitly now."""
+        files = []
+        for lang in ("en", "ja"):
+            f = OUT / f"mux_nodef_{lang}.srt"
+            f.write_text("1\n00:00:00,000 --> 00:00:02,000\nx\n", encoding="utf-8")
+            files.append(f"{f}:{lang}")
+        out = OUT / "cap_mux_nodef.mkv"
+        res = json.loads(script("caption.py", self.src, "--mode", "mux",
+                                *[a for f in files for a in ("--srt", f)],
+                                "--json", "-o", out).stdout)
+        disp = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+                  "stream_disposition=default", "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual(disp, ["0", "0"], "a track was marked default that nobody asked for")
+        self.assertEqual([t["default"] for t in res["tracks"]], [False, False])
 
     def test_mux_into_mp4_converts_to_iso639_2_and_warns_about_players(self):
         """Empirically, an .mp4 keeps three mov_text tracks but drops a two-letter language code
@@ -843,6 +888,14 @@ class PictureTests(MediaFixtures):
                    "stream_tags=language", "-of", "csv=p=0", out).stdout.split()
         self.assertEqual(langs, ["eng", "jpn", "spa"])
         self.assertTrue(any(".mkv" in n for n in res.get("notes") or []), res.get("notes"))
+        # MPEG-4 stores no per-track title ffprobe reads back, so none is claimed
+        self.assertEqual([t["title"] for t in res["tracks"]], [None, None, None])
+        self.assertEqual(sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+                            "stream_tags=title", "-of", "csv=p=0", out).stdout.split(), [])
+        # ... and it always enables its first subtitle track, which tracks[] must not deny
+        disp = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+                  "stream_disposition=default", "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual([("1" if t["default"] else "0") for t in res["tracks"]], disp)
 
     def test_caption_mux_picks_the_subtitle_codec_from_the_container(self):
         srt = OUT / "mux_container_cues.srt"
@@ -2409,6 +2462,24 @@ class PhraseWrapTests(unittest.TestCase):
                         self.assertEqual(len(C.wrap_text(text, float(max_em), mode=mode)),
                                          len(C.wrap_text(text, float(max_em), balance=False)),
                                          mode)
+
+    def test_multi_character_particles_are_matched_as_words_not_characters(self):
+        """から / まで / より are two-character particles. Keeping them in the CHARACTER table made
+        か, ら, ま, で, よ and り one-character particles of their own, which none of them is."""
+        C = self.caption
+        for ch in "\u304b\u3089\u307e\u3088\u308a":
+            self.assertNotIn(ch, C.JA_PARTICLES, "%r is not a particle on its own" % ch)
+        # \u304b after a kanji stem is okurigana, not a forbidden line start
+        self.assertEqual(C.break_penalty("\u6f22", "\u304b", "ja",
+                                         before="\u6f22", after="\u304b\u305f\u3061"), 0.9)
+        # the whole word is seen when the caller passes the surrounding text
+        self.assertEqual(C.break_penalty("\u305f", "\u304b", "ja",
+                                         before="\u898b\u305f", after="\u304b\u3089\u3067\u3059"), 1.0)
+        self.assertEqual(C.break_penalty("\u3089", "\u8a71", "ja",
+                                         before="\u898b\u305f\u304b\u3089", after="\u8a71\u3057\u305f"), 0.2)
+        # ... and a \u3089 that merely ends a word is not a particle
+        self.assertEqual(C.break_penalty("\u3089", "\u8a71", "ja",
+                                         before="\u3055\u304f\u3089", after="\u8a71\u3057\u305f"), 0.5)
 
     def test_break_penalty_prefers_a_sentence_end_and_a_particle(self):
         C = self.caption

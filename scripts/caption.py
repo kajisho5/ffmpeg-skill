@@ -44,13 +44,13 @@ from _platforms import PLATFORMS, PLATFORM_CHOICES, ass_units, resolve as resolv
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
 from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
-from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_moved_breaks, best_break,
+from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
                      break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
                      _split_hyphens, FUNCTION_WORDS, JA_PARTICLES, JA_SENTENCE_END, _fix_orphans, _rebalance)
 
 # The breaker's names are caption.py's public surface as much as _common's: every caller and test
 # that reached for `caption.wrap_text` before 1.16 still does.
-__all__ = ["SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_moved_breaks",
+__all__ = ["SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_variants",
            "best_break", "break_penalty", "_is_weak_line", "_atoms", "_join", "_break_spaced",
            "_bare_word", "_function_words", "_split_hyphens", "FUNCTION_WORDS", "JA_PARTICLES",
            "JA_SENTENCE_END", "_fix_orphans", "_rebalance", "char_script", "NO_SPACE_SCRIPTS",
@@ -455,12 +455,15 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
             start = max(0.0, start)
             stats["shifted"] += 1
         if max_em and max_em > 0:
-            lines = wrap_text(text, max_em, mode=wrap, lang=lang)
+            # one greedy fill per cue, three answers off it: what gets burnt in, what the
+            # greedy wrap would have given (`rebalanced`) and what 1.15's wrap would have
+            # given (`phrase_breaks`). Three wrap_text() calls re-ran the atomiser each time.
+            lines, greedy, measured = wrap_variants(text, max_em, mode=wrap, lang=lang)
             if lines != [l for l in text.split("\n") if l.strip()]:
                 stats["wrapped"] += 1
-            if lines != wrap_text(text, max_em, balance=False, mode=wrap):
+            if lines != greedy:
                 stats["rebalanced"] += 1
-            if wrap != "measured" and lines != wrap_text(text, max_em, mode="measured"):
+            if wrap != "measured" and lines != measured:
                 stats["phrase_breaks"] += 1
             if len(lines) > max_lines:
                 chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)]
@@ -738,6 +741,12 @@ def split_srt_lang(token: str) -> Tuple[str, Optional[str]]:
     head, _, tail = token.rpartition(":")
     if head and LANG_TOKEN_RE.match(tail):
         return head, tail
+    # A tail that is clearly meant as a language code but is not one is a language error, not a
+    # file called `en.srt:zzzz`: only say "file not found" when the whole token could be a path.
+    if head and tail and not os.path.exists(token) and os.path.exists(head) \
+            and re.match(r"^[A-Za-z][A-Za-z0-9-]*$", tail):
+        die(f"--srt {token}: '{tail}' is not a language code (two or three letters, optionally "
+            "with a region, e.g. en, ja, pt-BR)", kind="input")
     return token, None
 
 
@@ -1115,6 +1124,9 @@ def main() -> int:
             if not os.path.exists(path) and not STATE.dry_run:
                 die(f"SRT file not found: {path}")
         titles = list(args.track_title or [])
+        mp4_family = Path(output).suffix.lower() in (".mp4", ".m4v", ".mov")
+        dropped_titles: List[str] = []
+        notes = list(side_notes)
         maps = ["-map", "0:v:0"]
         cmd = ffmpeg_base() + ["-i", args.input]
         for path, _lang in added:
@@ -1142,12 +1154,21 @@ def main() -> int:
             if stored:
                 cmd += [f"-metadata:s:s:{idx}", f"language={stored}"]
             title = track_title_for(lang, titles[n] if n < len(titles) else None)
-            if title:
+            # `-metadata:s:s:N title=` is written for Matroska and silently dropped by the MPEG-4
+            # muxer (verified on ffmpeg 6.1: ffprobe reads no title back), so an MP4 track is
+            # reported with `title: null` rather than a name the file does not carry.
+            if title and not mp4_family:
                 cmd += [f"-metadata:s:s:{idx}", f"title={title}"]
+            elif title:
+                dropped_titles.append(title)
+                title = None
             is_default = bool(args.default_track and lang
                               and lang.lower() == args.default_track.lower())
-            if is_default:
-                cmd += [f"-disposition:s:{idx}", "default"]
+            # ALWAYS stated, never only when it is "default": given two or more new subtitle
+            # streams and nothing said, ffmpeg flags the first one `default` by itself -- which
+            # is the opposite of what --default-track promises and made tracks[].default
+            # disagree with the file it describes. An explicit 0 suppresses that.
+            cmd += [f"-disposition:s:{idx}", "default" if is_default else "0"]
             cues_n = None
             if os.path.exists(path):
                 try:
@@ -1160,20 +1181,32 @@ def main() -> int:
         if args.default_track and not any(t["default"] for t in tracks):
             die(f"--default-track {args.default_track}: no --srt was tagged with that language",
                 kind="input")
+        # MPEG-4 has no way to say "no default subtitle track": the muxer sets the track-header
+        # ENABLED flag on the first subtitle track whatever `-disposition:s:N 0` asks for
+        # (verified on ffmpeg 6.1; `-disposition:s:N default` does move it to another track).
+        # Matroska honours the explicit 0. Report what the file carries, not what was asked.
+        if mp4_family and tracks and not any(t["default"] for t in tracks):
+            tracks[0]["default"] = True
+            notes.append("an MPEG-4 container always enables its first subtitle track, so "
+                         f"{tracks[0]['language'] or 'track 0'} is marked default even though none "
+                         "was asked for; .mkv is the container that can leave every track off")
         cmd += [output]
-        run(cmd)
-        result = probe(output, role="output")
-        notes = list(side_notes)
         total = existing_subs + len(added)
-        if total > 2 and Path(output).suffix.lower() in (".mp4", ".m4v", ".mov"):
+        if total > 2 and mp4_family:
             notes.append(f"{total} subtitle tracks in an MPEG-4 container: the tracks are all there, "
                          "but many players only ever show the first -- write to .mkv for a "
                          "deliverable a viewer can actually switch")
-        if Path(output).suffix.lower() in (".mp4", ".m4v", ".mov") and any(
+        if dropped_titles:
+            notes.append("an MPEG-4 container has no per-track title this tool can write back "
+                         f"({', '.join(dropped_titles)} would be dropped), so the tracks are "
+                         "reported with no title; .mkv keeps the names")
+        if mp4_family and any(
                 t["language"] and len(t["language"]) != 3 for t in tracks if not t["kept_from_input"]):
             notes.append("MPEG-4 stores the language as a three-letter ISO-639-2 code and drops "
                          "anything else; a code this tool has no conversion for was passed through "
                          "as given and may not survive")
+        run(cmd)
+        result = probe(output, role="output")
         info(f"wrote {output} ({fmt_secs(result.get('duration'))}, mux, {len(added)} "
              f"subtitle track(s) added, codec {codec})")
         emit(output, tracks=tracks, subtitle_tracks=total, **({"notes": notes} if notes else {}))

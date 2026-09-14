@@ -1006,8 +1006,11 @@ WRAP_MODES = ("phrase", "measured")
 # task brief (は が を に で と の へ) plus も や から まで より, which a reader of Japanese would
 # add for the same reason. It is a judgement call with no upstream source; treat it as tunable
 # data, not as grammar.
-JA_PARTICLES = "はがをにでとのへもやから"          # a break AFTER one of these is preferred, BEFORE one forbidden
-JA_PARTICLE_WORDS = ("から", "まで", "より")        # the multi-character members of the same table
+JA_PARTICLES = "はがをにでとのへもや"              # a break AFTER one of these is preferred, BEFORE one forbidden
+# The multi-character members of the same table. They are matched as whole strings against the
+# text on each side of a candidate break -- putting them in the character string above turned
+# か, ら, ま, で, よ and り into one-character particles of their own, which none of them is.
+JA_PARTICLE_WORDS = ("から", "まで", "より")
 JA_SENTENCE_END = "。、！？」』）"                  # a break AFTER one of these is preferred
 # Characters that may never start a line: small kana, the prolonged sound mark, closing brackets
 # and the Japanese punctuation that hangs on the end of the line before it.
@@ -1196,14 +1199,33 @@ def _bare_word(atom: str) -> str:
     return "".join(c for c in (atom or "") if c.isalpha() or c == "'").strip("'").lower()
 
 
-def break_penalty(prev_char: str, next_char: str, lang: "Optional[str]" = None) -> float:
+def _particle_starts(text: str) -> bool:
+    """Does `text` begin with a particle -- one character, or one of the two-character ones?"""
+    if not text:
+        return False
+    return text[0] in JA_PARTICLES or text.startswith(JA_PARTICLE_WORDS)
+
+
+def _particle_ends(text: str) -> bool:
+    """Does `text` end with a particle? `から` counts, a bare `ら` does not."""
+    if not text:
+        return False
+    return text[-1] in JA_PARTICLES or text.endswith(JA_PARTICLE_WORDS)
+
+
+def break_penalty(prev_char: str, next_char: str, lang: "Optional[str]" = None,
+                  before: str = "", after: str = "") -> float:
     """How bad a break between these two characters is, 0.0 (preferred) to 1.0 (forbidden).
 
     Only consulted among break positions that already fit `max_em`, so a preference can never
     widen a line or change the line count. Japanese gets the particle half of the table -- a break
     AFTER a particle is preferred and a break BEFORE one forbidden, because a particle attaches to
     the word before it; Chinese gets only the sentence-end and forbidden halves, because particles
-    are Japanese grammar."""
+    are Japanese grammar.
+
+    `before`/`after` are the text on each side of the break when the caller has it, which is what
+    lets the two-character particles (から/まで/より) be matched as words. Without them only the
+    single-character table applies."""
     if not prev_char or not next_char:
         return PENALTY_NEUTRAL
     script = (lang or "").strip().lower().split("-")[0]
@@ -1223,10 +1245,10 @@ def break_penalty(prev_char: str, next_char: str, lang: "Optional[str]" = None) 
         return PENALTY_NEUTRAL
     if prev_char in JA_SENTENCE_END:
         return PENALTY_SENTENCE_END
-    if script == "ja" and next_char in JA_PARTICLES:
+    if script == "ja" and _particle_starts(after or next_char):
         # a particle may not open a line: it belongs to the word before it (kinsoku)
         return PENALTY_FORBIDDEN
-    if script == "ja" and prev_char in JA_PARTICLES:
+    if script == "ja" and _particle_ends(before or prev_char):
         return PENALTY_PARTICLE
     if script == "ja" and _is_ideograph(prev_char) and _is_hiragana(next_char):
         # okurigana: 決|まる is inside a word even though neither half is a "word" on its own
@@ -1254,7 +1276,10 @@ def _cut_penalty(atoms: "Sequence[Tuple[str, bool]]", cut: int, lang: "Optional[
         return PENALTY_NEUTRAL
     if prev_atom.endswith(_HYPHENS):
         return PENALTY_NEUTRAL         # R1: a hyphen is a legitimate break point
-    return break_penalty(prev_atom[-1], next_atom[0], lang)
+    # the text on each side, so a two-character particle (から/まで/より) is seen as one
+    before = "".join(a for a, _sp in atoms[:cut])
+    after = "".join(a for a, _sp in atoms[cut:])
+    return break_penalty(prev_atom[-1], next_atom[0], lang, before=before, after=after)
 
 
 def best_break(atoms: "Sequence[Tuple[str, bool]]", max_em: float,
@@ -1410,6 +1435,39 @@ def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]") 
     return out, moved
 
 
+def _greedy_chunks(raw: str, max_em: float) -> "List[str]":
+    """The greedy fill on its own: the line count every mode must keep."""
+    current = ""
+    chunk: "List[str]" = []
+    for atom, spaced in _atoms(raw):
+        candidate = _join(current, atom, spaced)
+        if current and text_width_em(candidate) > max_em:
+            chunk.append(current)
+            current = atom
+        else:
+            current = candidate
+    if current:
+        chunk.append(current)
+    return chunk
+
+
+def _balance(chunk: "List[str]", max_em: float, mode: str, lang: "Optional[str]") -> "List[str]":
+    """The post-passes for one greedy chunk, in the mode's own order. Never changes the count:
+    a pass that would is discarded, exactly as 1.15 did."""
+    if len(chunk) < 2:
+        return chunk
+    if mode == "measured":
+        fixed = _fix_orphans(chunk, max_em)
+        rebalanced = _rebalance(fixed, max_em)
+    else:
+        fixed = _fix_weak_lines(_fix_orphans(chunk, max_em), max_em)
+        rebalanced, _moved = _rebalance_phrase(fixed, max_em, lang)
+        rebalanced = _fix_weak_lines(rebalanced, max_em)
+    if len(rebalanced) == len(chunk):
+        return rebalanced
+    return fixed if len(fixed) == len(chunk) else chunk
+
+
 def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "phrase",
               lang: "Optional[str]" = None) -> "List[str]":
     """Wrap `text` to lines no wider than `max_em` em, keeping the manual breaks it already has.
@@ -1429,36 +1487,29 @@ def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "ph
     for raw in text.split("\n"):
         if not raw.strip():
             continue
-        current = ""
-        chunk: "List[str]" = []
-        for atom, spaced in _atoms(raw):
-            candidate = _join(current, atom, spaced)
-            if current and text_width_em(candidate) > max_em:
-                chunk.append(current)
-                current = atom
-            else:
-                current = candidate
-        if current:
-            chunk.append(current)
-        if balance and len(chunk) > 1:
-            if mode == "measured":
-                fixed = _fix_orphans(chunk, max_em)
-                rebalanced = _rebalance(fixed, max_em)
-            else:
-                fixed = _fix_weak_lines(_fix_orphans(chunk, max_em), max_em)
-                rebalanced, _moved = _rebalance_phrase(fixed, max_em, lang)
-                rebalanced = _fix_weak_lines(rebalanced, max_em)
-            if len(rebalanced) == len(chunk):
-                chunk = rebalanced
-            else:
-                chunk = fixed if len(fixed) == len(chunk) else chunk
-        lines.extend(chunk)
+        chunk = _greedy_chunks(raw, max_em)
+        lines.extend(_balance(chunk, max_em, mode, lang) if balance else chunk)
     return lines or [text]
+def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
+                  lang: "Optional[str]" = None) -> "Tuple[List[str], List[str], List[str]]":
+    """`(wrapped, greedy, measured)` for one cue from a single greedy fill.
 
-
-def wrap_moved_breaks(text: str, max_em: float, lang: "Optional[str]" = None) -> int:
-    """How many breaks `mode="phrase"` puts somewhere `mode="measured"` would not -- the
-    `phrase_breaks` statistic, computed by comparing the two wraps of the same text."""
-    phrase = wrap_text(text, max_em, mode="phrase", lang=lang)
-    measured = wrap_text(text, max_em, mode="measured")
-    return 0 if phrase == measured else 1
+    layout_cues needs all three -- `wrapped` is what is burnt in, `greedy` is what `rebalanced`
+    counts against and `measured` what `phrase_breaks` counts against -- and used to call
+    wrap_text() three times, re-running the atomiser and the greedy fill each time. The fill is
+    the same for every mode, so it is done once here and only the post-passes are repeated.
+    `measured` is the same list object as `wrapped` when that is already the mode.
+    """
+    wrapped: "List[str]" = []
+    greedy: "List[str]" = []
+    measured: "List[str]" = []
+    for raw in text.split("\n"):
+        if not raw.strip():
+            continue
+        chunk = _greedy_chunks(raw, max_em)
+        greedy.extend(chunk)
+        wrapped.extend(_balance(list(chunk), max_em, mode, lang))
+        measured.extend(chunk if mode == "measured" else _balance(list(chunk), max_em, "measured", None))
+    if not greedy:
+        greedy = [text]
+    return (wrapped or [text], greedy, measured or [text])
