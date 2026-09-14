@@ -16,6 +16,25 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
+def absolute_output_dir(text: str, name: str, outdir: Path) -> str:
+    """A batch recipe's "output_dir" is resolved against the CALLER's cwd, not against the folder
+    of inputs, so a relative "out" in a staged fixture wrote somewhere the run never looked and
+    the agent had to rewrite the recipe (eval 18 bp1/bp2). Stage it absolute, under OUTDIR.
+    """
+    if not name.endswith(".json"):
+        return text
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return text
+    if not isinstance(doc, dict) or not isinstance(doc.get("output_dir"), str):
+        return text
+    if Path(doc["output_dir"]).is_absolute():
+        return text
+    doc["output_dir"] = str((outdir / doc["output_dir"]).resolve())
+    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+
+
 def write(outdir: Path, prompt: dict) -> list:
     written = []
     for name, text in (prompt.get("fixtures") or {}).items():
@@ -23,6 +42,7 @@ def write(outdir: Path, prompt: dict) -> list:
             raise SystemExit(f"fixture name must be a plain file name: {name!r}")
         outdir.mkdir(parents=True, exist_ok=True)
         target = outdir / name
+        text = absolute_output_dir(text, name, outdir)
         target.write_text(text, encoding="utf-8")
         written.append(target)
     # 1.15: a prompt may ask for a directory of emoji PNGs. The repo ships NO emoji art -- Twemoji

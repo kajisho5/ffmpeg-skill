@@ -1272,6 +1272,13 @@ def main() -> int:
     result = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
     extra = {"notes": side_notes} if side_notes else {}
+    # 1.17.1: say so when the words on screen are the words that were handed in. This tool never
+    # rewrites, shortens or translates a cue -- only line breaks, timing and type size move -- so
+    # the honest sentence in a report ("the text is yours, unchanged") needs no extra judgement.
+    caption_stats["text_unchanged"] = bool(not args.transcribe and not caption_stats.get("dropped"))
+    if caption_stats["text_unchanged"]:
+        info("caption text unchanged: the cues were burned exactly as given (line breaks, timing "
+             "and type size only)")
     extra["caption"] = dict(caption_stats)
     if emoji_plan:
         notes = list(extra.get("notes") or [])
