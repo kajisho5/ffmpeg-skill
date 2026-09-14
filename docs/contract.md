@@ -450,6 +450,13 @@ Per-tool keys added in 1.17, all additive:
 | `jobs`, `jobs_requested`, `wall_seconds`, `item_seconds_total`, `timed_out` | `batch.py` | the parallelism actually applied and the number asked for, the batch's wall clock, the sum of the per-item times (so the speed-up can be quoted), and whether the shared timeout budget ran out. A timed-out item carries `"skipped": "timeout"` in its result row |
 | `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
 
+Per-tool keys added in 1.17.1, all additive:
+
+| key | tool | what it holds |
+|---|---|---|
+| `caption` | `render.py` | the caption stage's own block, forwarded verbatim from `caption.py` (the cue-layout counts plus the fit-size keys above), so a template run can be read for `split` and `size_used` without re-running the stage. `null` when the project has no captions stage |
+| `text_unchanged` | `caption.py` | a sibling inside the `caption` block: `true` when the words burned are the words that were handed in — no cue dropped and nothing transcribed. This tool never rewrites, shortens or translates a cue, so the key is a statement of what happened, not a judgement of the text |
+
 
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one

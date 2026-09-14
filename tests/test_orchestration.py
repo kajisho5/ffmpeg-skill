@@ -598,6 +598,77 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(plan["status"], "completed")
         self.assertIn("export", plan["stages"])
 
+    # --------------------------------------------- 1.17.1: the template path fits the caption size
+    def _cw1_cues(self):
+        cues = OUT / "cues_cw1.txt"
+        cues.write_text("0:00-0:03 A third line the tool times for me\n"
+                        "0:03-0:06 Segunda l\u00ednea de subt\u00edtulos\n", encoding="utf-8")
+        return cues
+
+    def test_template_captions_shrink_instead_of_splitting(self):
+        """1.17.0 filled the caption size from the platform table and forwarded it as an explicit
+        --size, which switched off caption.py's --fit-size auto: on the template path -- the path
+        every "make this a TikTok" request takes -- long cues were split across two consecutive
+        cues instead of shrinking (eval 18 cw1). The template now states fit_size "on"."""
+        out = OUT / "tpl_fit.mp4"
+        doc = json.loads(script("render.py", self.src, "--template", "tiktok", "--fast",
+                                "--cues", self._cw1_cues(), "-o", out, "--json").stdout)
+        cap = doc["caption"]
+        self.assertEqual(cap["split"], 0, "no cue may be chopped in two on the template path")
+        self.assertEqual(cap["fit_size"], "on")
+        self.assertEqual(cap["size_requested"], 24)         # the tiktok table's size
+        self.assertLess(cap["size_used"], 24, "the size must come down to fit the cue")
+        self.assertGreaterEqual(cap["size_used"], cap["size_floor"])
+        self.assertGreaterEqual(cap["shrunk"], 1)
+        self.assertFalse(cap["fit_exhausted"])
+        self.assertTrue(cap["text_unchanged"])
+        self.assertTrue(Path(out).exists())
+
+    def test_project_fit_size_off_renders_1_17_0s_captions(self):
+        """The stability answer: a project that states "fit_size": "off" gets exactly the ASS
+        1.17.0 wrote -- which is what a project written before 1.17.1 (no fit_size key at all,
+        so an explicit --size and no fit) still produces, byte for byte."""
+        proj = OUT / "fitoff_project.json"
+        script("render.py", self.src, "--template", "tiktok", "--cues", self._cw1_cues(),
+               "--write-project", proj, "-o", OUT / "fitoff.mp4")
+        loaded = json.loads(proj.read_text(encoding="utf-8"))
+        self.assertEqual(loaded["captions"]["fit_size"], "on",
+                         "a template-written project states the fit policy it renders with")
+
+        def render_ass(captions, tag):
+            work = OUT / f"fitoff_work_{tag}"
+            shutil.rmtree(work, ignore_errors=True)
+            doc = dict(loaded)
+            doc["captions"] = captions
+            doc["output"] = str(OUT / f"fitoff_{tag}.mp4")
+            path = OUT / f"fitoff_{tag}.json"
+            path.write_text(json.dumps(doc), encoding="utf-8")
+            script("render.py", path, "--fast", "--stop-after", "captions", "--work", work, "--keep")
+            return (work / "captioned.ass").read_bytes()
+
+        stated_off = dict(loaded["captions"], fit_size="off")
+        legacy = {k: v for k, v in loaded["captions"].items() if k != "fit_size"}
+        self.assertEqual(render_ass(stated_off, "off"), render_ass(legacy, "legacy"),
+                         '"fit_size": "off" must reproduce the pre-1.17.1 captions byte for byte')
+        self.assertNotEqual(render_ass(stated_off, "off2"), render_ass(loaded["captions"], "on"),
+                            "the new default has to actually change the ASS, or it fixes nothing")
+
+    def test_project_captions_accept_the_fit_keys(self):
+        """eval 18 cs1: a project could not state the fit policy at all ("unknown key
+        'fit_size'"), so the agent hand-ran the four stages instead of using render.py."""
+        proj = OUT / "fitkeys.json"
+        proj.write_text(json.dumps({
+            "output": str(OUT / "fitkeys.mp4"),
+            "clips": [{"src": str(self.src.resolve()), "in": 0, "out": 4}],
+            "captions": {"text": str(self._cw1_cues()), "size": 24, "max_lines": 2,
+                         "fit_size": "on", "min_size": 15, "fit_size_scope": "cue"},
+        }), encoding="utf-8")
+        doc = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        cap = doc["caption"]
+        self.assertEqual((cap["fit_size"], cap["size_floor"], cap["fit_scope"]), ("on", 15, "cue"))
+        self.assertGreaterEqual(cap["size_used"], 15)
+        self.assertEqual(cap["split"], 0)
+
     def test_project_graphics_entry_renders_a_sticker_and_a_meme(self):
         """The three social graphics templates are advertised as usable inside a render.py
         graphics[] entry, and until review 12 the project validator refused their own keys

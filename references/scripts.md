@@ -601,6 +601,10 @@ hardlinks the artifact into the work directory, or copies it where the
 filesystem will not link — never moves it, since the cache has to outlive the
 run's own cleanup. Any mismatch is a silent miss.
 
+A stage whose flags changed misses the cache, so editing the captions block (for
+example to `"fit_size": "off"`) re-runs captions and everything after it and
+serves the earlier stages from the cache.
+
 `stages_done` is unchanged: a cached stage is still a stage that happened.
 Nothing is written under `--dry-run`, which instead reports `cache.would_hit`.
 Result: `cache.dir`, `cache.ffmpeg`, `cache.hits`, `cache.misses`,
@@ -644,6 +648,17 @@ Alias spellings are accepted everywhere one name is: `youtube-shorts`/`yt-shorts
 `yt` = `youtube`, `instagram`/`ig` = `reels`, `twitter` = `x`, `fb` = `facebook`
 (`check.py --platform`, `export.py --preset`, `caption.py`/`graphics.py`/`overlay.py
 --platform`, `look.py --safe`, `render.py --template`).
+
+**Caption size on the template path (1.17.1).** A template's caption `size` and
+`margin` come from the delivery table, not from a literal in the JSON, so the
+filled project also states `"fit_size": "on"`: a size nobody asked for must not
+switch off the size fitter the way a stated `--size` does (before 1.17.1 a long
+cue was split across two consecutive cues on every `--template` run). A template
+file that states its own `fit_size`, and a `--brand` whose caption block states a
+size, both win. A project may state the policy itself — `"captions": {"fit_size":
+"auto"|"on"|"off", "min_size": N, "fit_size_scope": "file"|"cue"}` — and
+`"fit_size": "off"` renders the captions 1.17.0 rendered, byte for byte. The
+render result carries the caption stage's own block as `caption`.
 
 Under `--dry-run` a pack prints every child's planned commands and its table reads `planned`
 with no size or duration: nothing was encoded, so nothing is reported as verified. `--chapters`
@@ -972,6 +987,13 @@ Results, alongside the existing caption stats:
 `fit_size`, `size_requested`, `size_used`, `size_floor`, `size_pct_height`,
 `shrunk`, `fit_scope`, `fit_exhausted`, and `size_source` (`input` or
 `platform-frame`).
+
+**"caption text unchanged" (1.17.1).** When the words burned are the words that
+were handed in — nothing transcribed, no cue dropped — the summary says
+`caption text unchanged: the cues were burned exactly as given (line breaks,
+timing and type size only)` and the result carries `text_unchanged: true`. It is
+the honest sentence for a report, made automatic: only the line breaks, the
+timing and the type size ever move.
 
 Under `--dry-run`/`--plan` on an input that does not exist yet there is no
 geometry to measure. With `--platform` the destination's own frame is used —

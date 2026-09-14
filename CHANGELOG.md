@@ -4,7 +4,32 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **The caption size is fitted on the template path too.** `render.py --template NAME` fills the
+  caption `size` from the delivery table and forwarded it as an explicit `--size`, which is how
+  `caption.py` is told "a human chose this size" — so `--fit-size auto` never ran and a long cue
+  was split across two consecutive cues on every template run (eval 18 cw1/dl1/dl3/dl4), the one
+  path a "make this a TikTok" request takes. A template's filled project now states
+  `"fit_size": "on"`; a template file that states its own `fit_size`, and a `--brand` that states
+  a caption size, still win, and `"fit_size": "off"` reproduces 1.17.0's captions byte for byte.
+- **`render.py` project captions accept `fit_size`, `min_size` and `fit_size_scope`** (eval 18
+  cs1: the keys were refused as unknown, so the fit policy could not be stated in a project at
+  all and the four stages had to be run by hand). `render.py`'s result also carries the caption
+  stage's own block as `caption`.
+- **SKILL.md routes the 1.17 features.** Filler words → `silence.py --filler --words`, cutting to
+  the music → `scenes.py --beats` then `cut.py --snap beats`, a folder and the cores →
+  `batch.py --jobs auto`, one stage changed → `render.py --cache DIR`. None of them appeared in
+  the routing table, so runs rebuilt them by hand or reported the feature does not exist (eval 18
+  bt2/fw1/fw3/rc1). Paid for with duplicated wording elsewhere: the file is still under the
+  30,000-byte budget.
+- **One label for a partial result.** SKILL.md now states it: a partial result is `Done:` with the
+  shortfall in `Notes:`, never a third label like `Done (partially):`.
+- **`caption.py` says when the text is unchanged**: `caption text unchanged` in the summary and
+  `text_unchanged: true` in the result when the cues were burned exactly as given.
+- **evals**: `write_fixtures.py` stages a batch recipe's `output_dir` absolute under the prompt's
+  own directory — a relative `"out"` resolved against the caller's cwd, so the staged recipe wrote
+  outside the prompt folder and had to be rewritten before the prompt could be answered.
 
 ## 1.17.0
 

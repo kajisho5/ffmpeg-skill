@@ -2808,6 +2808,50 @@ class DoctorDetectionTests(unittest.TestCase):
                         f"SKILL.md is {size} bytes, {size - 30_000} over the 30,000-byte budget -- "
                         "trim a line rather than raising the limit (see CONTRIBUTING.md)")
 
+    def test_skill_md_routes_the_1_17_features(self):
+        """Eval 18: SKILL.md never mentioned filler, --snap beats, --jobs or --cache, so three
+        runs rebuilt those features by hand and one asserted the skill has no beat detection.
+        A feature nobody can find from the routing table does not exist."""
+        table = (ROOT / "SKILL.md").read_text(encoding="utf-8").split("## Request \u2192 script", 1)[1]
+        for feature, needles in (("filler words", ("silence.py", "--filler", "--words")),
+                                 ("beat-synced cuts", ("scenes.py", "--beats", "--snap beats")),
+                                 ("parallel batch", ("batch.py", "--jobs auto")),
+                                 ("the stage cache", ("render.py", "--cache"))):
+            for needle in needles:
+                self.assertIn(needle, table, f"{feature}: the routing table never names {needle}")
+
+    def test_skill_md_sanctions_one_label_for_a_partial_result(self):
+        """1.17.1: a partial result is `Done:` with the shortfall in `Notes:`. Agents were
+        inventing `Done (partially):` because the rule only said what not to write."""
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("A partial result is `Done:` with the shortfall in `Notes:`", text)
+        self.assertIn("Done (partially):", text, "the forbidden label is still named, as the counter-example")
+
+    def test_eval_fixtures_stage_a_batch_recipe_with_an_absolute_output_dir(self):
+        """eval 18 bp1/bp2: the staged batch.json said "output_dir": "out", which resolves
+        against the caller's cwd, so the run wrote outside the prompt's folder and the agent had
+        to rewrite the recipe before it could answer the prompt."""
+        sys.path.insert(0, str(ROOT / "evals"))
+        import importlib
+        write_fixtures = importlib.import_module("write_fixtures")
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp) / "bp1"
+            written = write_fixtures.write(outdir, {"fixtures": {
+                "batch.json": json.dumps({"glob": "*.mp4", "output_dir": "out", "steps": []}),
+                "cues.txt": "0:00-0:03 hello\n"}})
+            recipe = json.loads((outdir / "batch.json").read_text(encoding="utf-8"))
+            self.assertTrue(Path(recipe["output_dir"]).is_absolute())
+            self.assertEqual(Path(recipe["output_dir"]), outdir / "out")
+            self.assertEqual((outdir / "cues.txt").read_text(encoding="utf-8"), "0:00-0:03 hello\n",
+                             "a non-JSON fixture is written exactly as the prompt states it")
+            self.assertEqual(len(written), 2)
+        # an absolute output_dir in the prompt is left alone
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp) / "bp2"
+            write_fixtures.write(outdir, {"fixtures": {"batch.json": json.dumps(
+                {"glob": "*.mp4", "output_dir": "/srv/out"})}})
+            self.assertEqual(json.loads((outdir / "batch.json").read_text(encoding="utf-8"))["output_dir"], "/srv/out")
+
     def test_font_fix_hint_names_the_language_and_how_to_install_one(self):
         hint = _contract._capability_fix_hint("font:ko")
         self.assertIn("Korean", hint)
