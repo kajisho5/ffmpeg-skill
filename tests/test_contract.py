@@ -2866,6 +2866,30 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertEqual(err["error"]["kind"], "input")
         self.assertIn("no output", err["error"]["message"])
 
+    @unittest.skipIf(platform.system() == "Windows", "the fake ffmpeg is a #!/bin/sh script")
+    def test_run_analysis_survives_non_utf8_locale_on_the_loudness_path(self):
+        """Review 17 finding 2: run_analysis() is the capture every ffmpeg MEASUREMENT goes
+        through -- loudness.py parses the loudnorm JSON out of its stderr. With the locale's
+        codec it raised UnicodeDecodeError inside subprocess.run: an unhandled traceback, not a
+        `status: failed` document."""
+        shim = OUT / "utf8_ffmpeg_shim"
+        shim.mkdir(parents=True, exist_ok=True)
+        (shim / "ffmpeg").write_text(
+            "#!/bin/sh\n"
+            "printf 'Input #0, mov,mp4, from \\346\\227\\245\\346\\234\\254\\350\\252\\236.mp4:\\n' >&2\n"
+            "cat >&2 <<'JSON'\n"
+            '{ "input_i" : "-18.5", "input_tp" : "-2.0", "input_lra" : "7.0", '
+            '"input_thresh" : "-28.7", "target_offset" : "0.5" }\n'
+            "JSON\n", encoding="utf-8")
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}", LANG="C", LC_ALL="C",
+                   PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+        env.pop("PYTHONIOENCODING", None)
+        code = ("import json, sys; sys.path.insert(0, %r); import loudness; "
+                "print(json.dumps(loudness.measure('x.wav', -14.0, -1.0, 11.0)))" % str(SCRIPTS))
+        proc = sh(sys.executable, "-c", code, env=env)
+        self.assertEqual(json.loads(proc.stdout)["input_i"], "-18.5")
+
     def test_skill_md_routes_the_1_17_features(self):
         """Eval 18: SKILL.md never mentioned filler, --snap beats, --jobs or --cache, so three
         runs rebuilt those features by hand and one asserted the skill has no beat detection.

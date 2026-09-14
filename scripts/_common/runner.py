@@ -708,7 +708,11 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
         STATE.commands.append(_cmdline(cmd))
     limit = _limit_for(cmd)
     try:
-        proc = subprocess.run(list(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, timeout=limit)
+        # #234: decode as UTF-8, never as the machine's locale code page -- ffmpeg echoes the
+        # input filename on stderr, and loudness/check parse the loudnorm JSON out of it. The
+        # encoding kwargs are rejected with text=False, so they are only passed for text mode.
+        text_kw = {"encoding": "utf-8", "errors": "replace"} if text else {}
+        proc = subprocess.run(list(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, **text_kw, timeout=limit)
     except subprocess.TimeoutExpired:
         _timed_out(cmd, limit or 0)
     if check and proc.returncode != 0:
