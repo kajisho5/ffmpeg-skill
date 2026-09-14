@@ -12,12 +12,15 @@ Examples:
   python3 silence.py talk.mp4 --edl keep.txt                  # also save the kept ranges (START-END per line, cut.py --segments format)
 """
 import argparse
+import json
 import os
 import sys
 from typing import List, Tuple
 
 # `detect` moved into _common/probe.py in 1.16.0 so metadata.py --auto-chapters can measure the
 # same silences without importing this tool; the body is unchanged and the name still lives here.
+from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS,
+                     FILLER_PAD, die_no_engine, transcribe, whisper_word_timings, read_text_or_die)
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
 
@@ -35,6 +38,125 @@ def keep_ranges(silences: List[Tuple[float, float]], duration: float, margin: fl
     return keeps
 
 
+def _word_list(text: "str") -> "list":
+    return [w.strip() for w in str(text or "").replace(",", "\n").splitlines() if w.strip()]
+
+
+def resolve_filler(args, meta):
+    """(the `filler` result block, the spans to remove) for --filler. Refuses before any encode.
+
+    Never without measured word timings: no heuristic fallback, no guess from the filename. The
+    three refusals below are the whole safety story for this flag.
+    """
+    if not args.words and not args.transcribe:
+        die("--filler needs word timings: pass --words transcript.json (a whisper JSON with word "
+            "timestamps) or --transcribe. There is no way to find a filler word without them -- "
+            "cutting the short quiet blips instead would remove real speech.", kind="input")
+    source, engine, raw = None, None, None
+    if args.words:
+        try:
+            raw = json.loads(read_text_or_die(args.words, "--words"))
+        except ValueError as exc:
+            die(f"--words {args.words}: not readable JSON ({exc})", kind="input")
+        source = f"whisper-json:{args.words}"
+        words, had_segments = _words_from_transcript(raw)
+        if not words:
+            if had_segments:
+                die(f"the transcript in {args.words} has segment timings but no word timings; "
+                    "--filler removes words, and cutting on segment boundaries would remove whole "
+                    "sentences. Re-run whisper with word timestamps (whisper.cpp "
+                    "--output-json-full / faster-whisper word_timestamps=True), or use --list to "
+                    "see the pauses instead.", kind="input")
+            die(f"no word timings in {args.words}: --filler needs "
+                '{"words": [{"word": ..., "start": ..., "end": ...}]} (or the same inside '
+                '"segments").', kind="input")
+    else:
+        import shutil as _shutil
+        have_engine = bool(_shutil.which("whisper-cli") or _shutil.which("whisper-cpp")
+                           or _shutil.which("whisper"))
+        if not have_engine:
+            try:
+                import faster_whisper  # type: ignore  # noqa: F401
+                have_engine = True
+            except ImportError:
+                pass
+        if not have_engine:
+            die_no_engine("or pass --words with a transcript you already have.", flag="--filler --transcribe")
+        srt_path = os.path.splitext(args.output or default_output(args.input, "tight"))[0] + ".srt"
+        transcribe(args.input, srt_path, None, "base")
+        words = [{"word": w[2], "start": w[0], "end": w[1]} for w in whisper_word_timings(srt_path)]
+        source, engine = f"whisper-srt:{srt_path}", "whisper"
+        if not words:
+            die("the local engine produced no word-level timings for --filler; re-run whisper with "
+                "word timestamps, or pass --words with a transcript that has them.", kind="input")
+
+    lang = args.filler_lang
+    if lang == "auto":
+        lang = str((raw or {}).get("language") or "").lower()[:2] if isinstance(raw, dict) else ""
+        lang = lang if lang in FILLER_WORDS else "en"
+    listname = "builtin"
+    if args.filler_words:
+        wordlist = set(_word_list(read_text_or_die(args.filler_words, "--filler-words")))
+        listname = args.filler_words
+    else:
+        if lang not in FILLER_WORDS:
+            die(f"--filler-lang {lang}: no built-in filler list for that language. The languages "
+                f"with one are {', '.join(sorted(FILLER_WORDS))}; pass --filler-words FILE with "
+                "your own list for anything else.", kind="input")
+        wordlist = set(FILLER_WORDS[lang])
+    wordlist |= set(_word_list(args.filler_extra))
+    wordlist -= set(_word_list(args.filler_keep))
+
+    spans = filler_spans(words, wordlist, pad=args.filler_pad)
+    removed_words = sorted({s["word"] for s in spans})
+    warnings = []
+    ambiguous = sorted(set(FILLER_AMBIGUOUS.get(lang, ())) & set(
+        t for s in spans for t in s["word"].split()))
+    if ambiguous:
+        warnings.append(
+            f"removed {', '.join(ambiguous)} -- in {lang} these are as often ordinary words as "
+            f"fillers. Keep one with --filler-keep {ambiguous[0]} and re-run if a sentence lost "
+            "its meaning.")
+    if FILLER_DISCOURSE_MARKERS.get(lang):
+        extra_markers = sorted(set(_word_list(args.filler_extra))
+                               & set(FILLER_DISCOURSE_MARKERS[lang]))
+        if extra_markers:
+            warnings.append(f"--filler-extra {', '.join(extra_markers)}: a discourse marker, not a "
+                            "disfluency -- this will cut real sentences.")
+    block = {
+        "lang": lang, "source": source, "engine": engine,
+        "words": sorted(wordlist), "removed": [dict(s) for s in spans],
+        "removed_count": len(spans),
+        "removed_seconds": round(sum(s["end"] - s["start"] for s in spans), 3),
+        "word_timings": len(words), "list": listname, "removed_words": removed_words,
+        "warnings": warnings,
+    }
+    return block, [(s["start"], s["end"]) for s in spans]
+
+
+def _words_from_transcript(data):
+    """([{word,start,end}], whether the document had segments at all) from a whisper JSON."""
+    raw, had_segments = [], False
+    if isinstance(data, dict):
+        raw = list(data.get("words") or [])
+        segments = data.get("segments") or []
+        had_segments = bool(segments)
+        for seg in segments:
+            raw.extend((seg or {}).get("words") or [])
+    elif isinstance(data, list):
+        raw = list(data)
+    out = []
+    for w in raw:
+        if not isinstance(w, dict):
+            continue
+        try:
+            out.append({"word": str(w.get("word") or w.get("text") or ""),
+                        "start": float(w["start"]), "end": float(w["end"])})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out, had_segments
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -45,18 +167,51 @@ def main() -> int:
     ap.add_argument("--min-keep", type=float, default=0.2, help="drop kept pieces shorter than this (default 0.2)")
     ap.add_argument("--list", action="store_true", help="only print silences and the kept ranges")
     ap.add_argument("--edl", help="write the kept ranges to this file, one START-END per line")
+    fil = ap.add_argument_group("filler words (1.17)")
+    fil.add_argument("--filler", action="store_true",
+                     help="also remove filler words. Needs measured word timings: pass --words or "
+                          "--transcribe. There is no heuristic fallback -- a word is cut only where "
+                          "a speech engine timed it.")
+    fil.add_argument("--filler-lang", choices=["auto"] + sorted(FILLER_WORDS), default="auto",
+                     help="which built-in list to use (default auto: the transcript's language field)")
+    fil.add_argument("--filler-words", metavar="FILE",
+                     help="one word per line; replaces the built-in list for this run")
+    fil.add_argument("--filler-extra", metavar="W[,W...]",
+                     help="add words to the list. 'like', 'tipo' and 'cio\u00e8' live here rather than in "
+                          "the defaults: they are discourse markers, not disfluencies, and cutting "
+                          "them cuts real sentences.")
+    fil.add_argument("--filler-keep", metavar="W[,W...]",
+                     help="remove words from the built-in list (e.g. --filler-keep \u306a\u3093\u304b)")
+    fil.add_argument("--filler-pad", type=float, default=FILLER_PAD,
+                     help=f"seconds trimmed either side of a filler word (default {FILLER_PAD})")
+    fil.add_argument("--words", metavar="FILE",
+                     help="a whisper JSON with word-level timings, for --filler")
+    fil.add_argument("--transcribe", action="store_true",
+                     help="produce the word timings with a local whisper (never required; the same "
+                          "bridge caption.py uses)")
+    fil.add_argument("--filler-list", action="store_true",
+                     help="report what --filler would remove and write nothing")
+    fil.add_argument("--max-cuts", type=int, default=400,
+                     help="refuse above this many removal ranges: the filter graph grows with them "
+                          "(default 400)")
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
 
+    if args.filler_list and not args.filler:
+        die("--filler-list reports what --filler would remove: pass --filler as well", kind="input")
     meta = probe(args.input)
     if not meta.get("audio"):
         die("input has no audio stream to analyse")
     duration = meta.get("duration") or 0.0
     silences = detect(args.input, args.threshold, args.min_silence)
-    keeps = keep_ranges(silences, duration, args.margin, args.min_keep)
+    filler_info, filler_ranges = resolve_filler(args, meta) if args.filler else (None, [])
+    # One sorted, merged removal list through the graph the tool already has: filler removal IS
+    # time-range removal, so it reuses keep_ranges() and the same aselect/concat chain.
+    removals = sorted(silences + filler_ranges)
+    keeps = keep_ranges(removals, duration, args.margin, args.min_keep)
     kept = sum(e - s for s, e in keeps)
     removed = max(0.0, duration - kept)
     summary = {
@@ -66,6 +221,20 @@ def main() -> int:
         "kept_duration": round(kept, 3),
         "removed_seconds": round(removed, 3),
     }
+    if filler_info is not None:
+        # The existing removed_seconds keeps its meaning (everything this run removed); the filler
+        # share is reported inside `filler`, and removed_seconds_total is its additive sibling.
+        summary["filler"] = filler_info
+        summary["removed_seconds_total"] = round(removed, 3)
+        info(f"--filler: {filler_info['removed_count']} filler word(s), "
+             f"{filler_info['removed_seconds']:.2f}s, from {filler_info['word_timings']} word timings "
+             f"({filler_info['lang']}, list {filler_info['list']})")
+        for warning in filler_info.get("warnings") or []:
+            info("warning: " + warning)
+    if len(keeps) > args.max_cuts:
+        die(f"{len(keeps)} keep ranges is above --max-cuts {args.max_cuts}: the filter graph grows "
+            "with every range and a graph this size is slow and fragile. Raise --max-cuts if you "
+            "mean it, or use --min-silence/--filler-pad to merge the short ones.", kind="input")
     info(f"{len(silences)} silences, keeping {len(keeps)} ranges: {kept:.2f}s of {duration:.2f}s (removing {removed:.2f}s)")
     if not silences and not (STATE.dry_run and not os.path.exists(args.input)):
         # Nothing under the threshold is a valid result, not a failure -- but an agent that only
@@ -88,7 +257,7 @@ def main() -> int:
                     fh.write(f"{s:.3f}-{e:.3f}\n")
         info(f"wrote {args.edl}")
 
-    if args.list:
+    if args.list or args.filler_list:
         if args.json:
             emit(None, **summary)
         else:

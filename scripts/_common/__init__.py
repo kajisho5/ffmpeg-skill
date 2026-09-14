@@ -73,6 +73,8 @@ from _common.probe import (
 from _common.decision import (
     aac_args, add_pad_fill_args, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
     description_block, _evidence_rank, fmt_chapter_time, propose_chapters,
+    filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS, FILLER_MAX_WORD,
+    FILLER_MIN_GAP, FILLER_PAD, normalise_filler_token,
     beat_grid, snap_points, BEAT_MIN_CONFIDENCE, BEAT_ONSET_K, BEAT_OCTAVE_MARGIN,
     BEAT_REFRACTORY_S, BEAT_WINDOW_S, BEAT_SUPPORT_DIVISOR, BEAT_ALIGN_DIVISOR,
     BEAT_Z_FLOOR, BEAT_Z_SPAN,
@@ -177,6 +179,8 @@ __all__ = [
     "char_script", "_check_existing_output", "_check_no_overwrite_input", "_check_output_path", "child_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",
     "concat_list_line", "Context", "_CRF_DEFAULT", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",
+    "filler_spans", "FILLER_WORDS", "FILLER_AMBIGUOUS", "FILLER_DISCOURSE_MARKERS",
+    "FILLER_MAX_WORD", "FILLER_MIN_GAP", "FILLER_PAD", "normalise_filler_token",
     "beat_grid", "snap_points", "BEAT_MIN_CONFIDENCE", "BEAT_ONSET_K", "BEAT_OCTAVE_MARGIN",
     "BEAT_REFRACTORY_S", "BEAT_WINDOW_S", "BEAT_SUPPORT_DIVISOR", "BEAT_ALIGN_DIVISOR",
     "BEAT_Z_FLOOR", "BEAT_Z_SPAN",

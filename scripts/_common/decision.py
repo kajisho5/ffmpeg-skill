@@ -765,3 +765,96 @@ def snap_points(points: "Sequence[float]", beats: "Sequence[float]",
         else:
             out.append({"from": p, "to": p, "delta": 0.0, "snapped": False, "beat_index": None})
     return out
+
+
+# ------------------------------------------------------------- filler words (1.17)
+#
+# A filler word is removed only when a speech engine measured a start/end pair for it. There is no
+# heuristic fallback -- no "cut the 0.3 s blips that look like an 'um'", no language guess from the
+# filename. Without timings there is nothing to cut, and the tool says so.
+#
+# What is NOT in these lists is the substance of the decision. "like", "tipo" and "cioè" are
+# discourse markers, not disfluencies: they are grammatical words in most sentences, and removing
+# them cuts meaning rather than noise. That is a judgement about content, which this skill does not
+# make. They are reachable with --filler-extra, and documented as what they are.
+FILLER_WORDS = {
+    "en": frozenset({"um", "uh", "erm", "hmm", "mm", "mhm", "er", "ah"}),
+    # なんか is the most common Japanese filler AND a pronoun/adverb spelled identically. It is in the
+    # default list because leaving it out makes --filler useless for Japanese, and every run that
+    # removes one warns that it is often a content word (--filler-keep なんか takes it out).
+    "ja": frozenset({"えー", "えーと", "えっと", "あの", "あのー", "その", "そのー", "まあ", "なんか"}),
+    "es": frozenset({"eh", "este", "esto", "mmm"}),
+    "de": frozenset({"äh", "ähm", "hm"}),
+    "fr": frozenset({"euh", "hein"}),
+    "pt": frozenset({"é", "hum"}),
+    "it": frozenset({"ehm"}),
+}
+
+# Words in a default list that are also ordinary vocabulary: every run that removes one says so.
+FILLER_AMBIGUOUS = {
+    "ja": frozenset({"なんか", "あの", "その", "まあ"}),
+    "es": frozenset({"este", "esto"}),
+    "pt": frozenset({"é"}),
+}
+
+# Discourse markers people ask for by name. Not defaults; named here so --help and the docs can
+# say what adding one costs.
+FILLER_DISCOURSE_MARKERS = {
+    "en": ("like", "you know"),
+    "pt": ("tipo",),
+    "it": ("cioè",),
+}
+
+FILLER_MAX_WORD = 1.2   # a longer "uhhh" is a held vowel someone meant
+FILLER_MIN_GAP = 0.05   # spans closer than this become one span
+FILLER_PAD = 0.02       # trimmed either side of the word
+
+
+def normalise_filler_token(word: str) -> str:
+    """A spoken token stripped to what a word list can be compared against: case-folded, with
+    surrounding punctuation and whitespace removed. Never a substring match -- "umbrella" must
+    survive a list containing "um"."""
+    import unicodedata as _ud
+    text = str(word or "").strip()
+    text = "".join(ch for ch in text
+                   if not _ud.category(ch).startswith("P") or ch in "-'’")
+    return text.strip("-'’").casefold()
+
+
+def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = FILLER_MIN_GAP,
+                 max_word: float = FILLER_MAX_WORD) -> "List[Dict[str, Any]]":
+    """Time spans to remove, from measured word timings. Pure: no subprocess, no I/O.
+
+    `words` is [{"word", "start", "end"}] as whisper emits. A word is removed only when its
+    normalised form is in `wordlist` AND it carries a real start < end pair AND its length is
+    <= max_word. Adjacent spans closer than min_gap merge. Returns [{"start", "end", "word"}]
+    sorted and non-overlapping.
+    """
+    listed = {normalise_filler_token(w) for w in (wordlist or set())}
+    listed.discard("")
+    hits = []
+    for entry in words or []:
+        if not isinstance(entry, dict):
+            continue
+        token = normalise_filler_token(entry.get("word") or entry.get("text") or "")
+        if not token or token not in listed:
+            continue
+        try:
+            start, end = float(entry["start"]), float(entry["end"])
+        except (KeyError, TypeError, ValueError):
+            continue     # no measured timing: nothing to cut
+        if not (end > start) or (end - start) > max_word:
+            continue
+        hits.append({"start": max(0.0, start - pad), "end": end + pad, "word": token})
+    hits.sort(key=lambda h: (h["start"], h["end"]))
+    merged: "List[Dict[str, Any]]" = []
+    for h in hits:
+        if merged and h["start"] - merged[-1]["end"] <= min_gap:
+            merged[-1]["end"] = max(merged[-1]["end"], h["end"])
+            merged[-1]["word"] = merged[-1]["word"] + " " + h["word"]
+        else:
+            merged.append(dict(h))
+    for m in merged:
+        m["start"] = round(m["start"], 4)
+        m["end"] = round(m["end"], 4)
+    return merged
