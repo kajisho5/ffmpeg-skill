@@ -1275,7 +1275,15 @@ def main() -> int:
     # 1.17.1: say so when the words on screen are the words that were handed in. This tool never
     # rewrites, shortens or translates a cue -- only line breaks, timing and type size move -- so
     # the honest sentence in a report ("the text is yours, unchanged") needs no extra judgement.
-    caption_stats["text_unchanged"] = bool(not args.transcribe and not caption_stats.get("dropped"))
+    # Review 17 finding 5: a cue SPLIT across two consecutive cues, a dropped cue, transcription
+    # and `--emoji none` (which str.replace()s glyphs out of the drawn text) all change what the
+    # viewer reads, so none of them may be reported as unchanged. Wrapping, line breaks and
+    # timing do not count -- the words are the same.
+    caption_stats["text_unchanged"] = bool(
+        not args.transcribe
+        and not caption_stats.get("dropped")
+        and not caption_stats.get("split")
+        and (emoji_plan or {}).get("mode") != "none")
     if caption_stats["text_unchanged"]:
         info("caption text unchanged: the cues were burned exactly as given (line breaks, timing "
              "and type size only)")

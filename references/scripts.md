@@ -988,12 +988,14 @@ Results, alongside the existing caption stats:
 `shrunk`, `fit_scope`, `fit_exhausted`, and `size_source` (`input` or
 `platform-frame`).
 
-**"caption text unchanged" (1.17.1).** When the words burned are the words that
-were handed in — nothing transcribed, no cue dropped — the summary says
+**"caption text unchanged" (1.17.1).** When the drawn text equals the cues that
+were handed in — nothing transcribed, no cue dropped, no cue *split* across two
+consecutive cues and no glyph stripped by `--emoji none` — the summary says
 `caption text unchanged: the cues were burned exactly as given (line breaks,
 timing and type size only)` and the result carries `text_unchanged: true`. It is
 the honest sentence for a report, made automatic: only the line breaks, the
-timing and the type size ever move.
+timing and the type size ever move, and those do not count as a change. The key
+is burn mode only; `--mode mux` never touches the text and omits it.
 
 Under `--dry-run`/`--plan` on an input that does not exist yet there is no
 geometry to measure. With `--platform` the destination's own frame is used —

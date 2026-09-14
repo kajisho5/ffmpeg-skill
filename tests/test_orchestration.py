@@ -621,6 +621,7 @@ class OrchestrationTests(MediaFixtures):
         self.assertGreaterEqual(cap["size_used"], cap["size_floor"])
         self.assertGreaterEqual(cap["shrunk"], 1)
         self.assertFalse(cap["fit_exhausted"])
+        # honest BECAUSE nothing was split: a split cue now makes text_unchanged false
         self.assertTrue(cap["text_unchanged"])
         self.assertTrue(Path(out).exists())
 

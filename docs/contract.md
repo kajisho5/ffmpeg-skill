@@ -455,7 +455,7 @@ Per-tool keys added in 1.17.1, all additive:
 | key | tool | what it holds |
 |---|---|---|
 | `caption` | `render.py` | the caption stage's own block, forwarded verbatim from `caption.py` (the cue-layout counts plus the fit-size keys above), so a template run can be read for `split` and `size_used` without re-running the stage. `null` when the project has no captions stage |
-| `text_unchanged` | `caption.py` | a sibling inside the `caption` block: `true` when the words burned are the words that were handed in — no cue dropped and nothing transcribed. This tool never rewrites, shortens or translates a cue, so the key is a statement of what happened, not a judgement of the text |
+| `text_unchanged` | `caption.py` | a sibling inside the `caption` block, **burn mode only** (`--mode mux` never touches the text and omits the key): `true` when the drawn text equals the cues that were handed in — nothing transcribed, no cue dropped, no cue **split** across two consecutive cues and no glyph stripped (`--emoji none`). Wrapping, line breaks and timing do not count: the words are the same. This tool never rewrites, shortens or translates a cue, so the key is a statement of what happened, not a judgement of the text |
 
 
 `check.py` also gains an informational `subtitles` row on **every** platform:
