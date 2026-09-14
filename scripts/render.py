@@ -52,16 +52,34 @@ Examples:
 """
 import argparse
 import difflib
+import hashlib
 import re
 import json
 import os
+import shutil
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION
+from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION, ffmpeg_version
+from _contract import CONTRACT_VERSION
+from batch import file_key
+
+
+def _skill_version() -> str:
+    """The shipped version, from package.json -- in the cache key so a stage whose implementation
+    changed cannot serve back an artifact the old one wrote."""
+    try:
+        return str(json.loads((Path(__file__).resolve().parent.parent / "package.json")
+                              .read_text(encoding="utf-8")).get("version") or "?")
+    except (OSError, ValueError):
+        return "?"
+
+
+SKILL_VERSION = _skill_version()
 
 HERE = Path(__file__).resolve().parent
 TEMPLATE_DIR = HERE.parent / "templates"
@@ -383,8 +401,44 @@ def validate_project(proj: Dict[str, Any]) -> None:
 _LAST_DOC: Dict[str, Any] = {}   # the JSON document the most recent sh() child printed
 
 
-def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
-    """Run a sibling script, forwarding --fast / --dry-run, returning its printed output path."""
+def _refuse_uncached_earlier_stage(stage: str) -> None:
+    """--from STAGE promises the earlier stages come from the cache. When one does not, say so
+    rather than quietly re-encoding the thing the caller asked to skip."""
+    target = CACHE.get("from")
+    if not target or stage not in STAGE_ORDER or target not in STAGE_ORDER:
+        return
+    if STAGE_ORDER.index(stage) < STAGE_ORDER.index(target):
+        die(f"--from {target}: the {stage} stage is not in {CACHE['dir']} for this project and "
+            "these inputs, so there is nothing to start from. Render once without --from to fill "
+            "the cache (note that a different ffmpeg build or skill version never reuses one).",
+            kind="input")
+
+
+def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> str:
+    """Run a sibling script, forwarding --fast / --dry-run, returning its printed output path.
+
+    With --cache and a named `stage`, an identical stage that ran before is served from the
+    cache instead of re-encoded. `stages_done` is unchanged either way: a cached stage is still
+    a stage that happened.
+    """
+    full = [str(a) for a in argv] + (extra or [])
+    dest = full[full.index("-o") + 1] if "-o" in full[:-1] else None
+    key = None
+    if stage and CACHE.get("dir") and dest:
+        inputs = [a for a in full if os.path.exists(a) and a != dest]
+        # The destination is where this stage's answer goes, not part of the question: hashing it
+        # would make a second run with the first run's output already on disk miss every time.
+        key_args = ["<out>" if a == dest else a for a in full]
+        key = cache_key(stage, script, key_args, inputs)
+        if cache_lookup(stage, key, dest):
+            CACHE["hits"].append(stage)
+            info(f"→ {script} {stage}: served from --cache")
+            return dest
+        CACHE["misses"].append(stage)
+        _refuse_uncached_earlier_stage(stage)
+    elif stage and CACHE.get("dir"):
+        CACHE["misses"].append(stage)
+    started = time.time()
     cmd = [str(HERE / script)] + [str(a) for a in argv] + (extra or []) + child_args() + ["--json"]
     info("→ " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd[:-1])))
     proc = run_tool(cmd)
@@ -406,7 +460,95 @@ def sh(script: str, *argv: Any, extra: List[str] = None) -> str:
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, **extra_fields)
     _LAST_DOC.clear()
     _LAST_DOC.update(doc if isinstance(doc, dict) else {})
-    return str(doc.get("output") or "")
+    out_path = str(doc.get("output") or "")
+    if key:
+        cache_store(stage, key, out_path or (dest or ""), time.time() - started)
+    return out_path
+
+
+# ------------------------------------------------------------------ the stage cache (1.17)
+#
+# Opt-in only: --cache DIR. There is no default directory -- a cache that appears on someone's
+# disk without being asked for is a surprise, and this tool's posture is that a plan leaves
+# nothing behind.
+
+STAGE_ORDER = ("clips", "audiogram", "join", "silence", "fit", "captions", "graphics",
+               "overlays", "audio", "loudness", "export", "chapters")
+
+CACHE: Dict[str, Any] = {"dir": None, "ffmpeg": None, "hits": [], "misses": [],
+                         "saved_seconds": 0.0, "entries": 0, "would_hit": []}
+
+
+def _content_hash(path: str) -> str:
+    """The same cheap content fingerprint batch.py caches on: name, size, mtime, first and last
+    MB. Reused rather than reinvented so one file has one identity across the skill."""
+    try:
+        return file_key(Path(path))
+    except (OSError, ValueError):
+        return "missing"
+
+
+def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[str]") -> str:
+    """sha1 of a canonical description of exactly what this stage is about to do.
+
+    The ffmpeg version line and the skill version are IN the key, deliberately: a different
+    build simply misses rather than being asked to trust an artifact it did not write, and a
+    stage whose implementation changed must not serve an old one back.
+    """
+    payload = {
+        "stage": stage, "tool": script,
+        "args": [_content_hash(str(a)) if os.path.exists(str(a)) else str(a) for a in argv],
+        "inputs": [{"hash": _content_hash(p)} for p in inputs],
+        "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def cache_lookup(stage: str, key: str, dest: str) -> bool:
+    """Put the cached artifact for `key` at `dest` and return True, or return False on any
+    mismatch -- silently, because a miss is not an error, it is just work to do."""
+    cdir = CACHE.get("dir")
+    if not cdir:
+        return False
+    side = Path(cdir) / f"{key}.json"
+    art = Path(cdir) / f"{key}{Path(dest).suffix or '.bin'}"
+    if not (side.exists() and art.exists()):
+        return False
+    try:
+        meta = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if int(meta.get("size") or -1) != art.stat().st_size:
+        return False
+    if STATE.dry_run:
+        CACHE["would_hit"].append(stage)
+        return True
+    Path(dest).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if Path(dest).exists():
+            Path(dest).unlink()
+        os.link(art, dest)          # a hardlink where the filesystem allows it ...
+    except OSError:
+        shutil.copy2(art, dest)     # ... and a copy where it does not. Never a move: the cache
+    CACHE["saved_seconds"] += float(meta.get("seconds") or 0.0)
+    return True
+
+
+def cache_store(stage: str, key: str, produced: str, seconds: float) -> None:
+    """Keep `produced` for the next run. Never under --dry-run: a plan writes nothing."""
+    cdir = CACHE.get("dir")
+    if not cdir or STATE.dry_run or not produced or not os.path.exists(produced):
+        return
+    art = Path(cdir) / f"{key}{Path(produced).suffix or '.bin'}"
+    try:
+        shutil.copy2(produced, art)
+        Path(cdir, f"{key}.json").write_text(json.dumps({
+            "stage": stage, "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION,
+            "created": time.time(), "size": art.stat().st_size, "seconds": round(seconds, 2),
+            "artifact": art.name}, indent=2), encoding="utf-8")
+        CACHE["entries"] += 1
+    except OSError as exc:
+        info(f"cache: could not store the {stage} artifact ({exc}); the run is unaffected")
 
 
 def execute_plan(plan: Dict[str, Any], path: str) -> int:
@@ -510,6 +652,14 @@ def main() -> int:
     ap.add_argument("--init", metavar="FILE", help="write a starter project file and exit")
     ap.add_argument("--work", help="work directory for intermediates (default: <output>_work)")
     ap.add_argument("--keep", action="store_true", help="keep intermediates (default: kept only when --work is given)")
+    ap.add_argument("--cache", metavar="DIR",
+                    help="reuse the artifacts of identical stages from a previous run. Opt-in: "
+                         "there is no default directory. The ffmpeg version and the skill version "
+                         "are part of every key, so a cache never crosses either.")
+    ap.add_argument("--from", dest="from_stage", metavar="STAGE",
+                    choices=list(STAGE_ORDER),
+                    help="start at this stage, taking every earlier one from --cache; refuses if "
+                         "one of them is not there")
     ap.add_argument("--stop-after", choices=["clips", "join", "silence", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export"], help="stop after this stage (for iterating)")
     tpl = ap.add_argument_group("delivery templates (one command per destination)")
     tpl.add_argument("--template", metavar="NAME", help="render INPUT with a shipped template: " + ", ".join(template_names())
@@ -610,7 +760,6 @@ def main() -> int:
         # a failed or dry run used to leave <output>_work_<pid>/ behind (sweep F15): the
         # auto-named directory is ours alone, so remove it on every exit path
         import atexit
-        import shutil
         atexit.register(lambda: shutil.rmtree(work, ignore_errors=True))
     # Intermediates keep the delivery's media kind: a .mp4 project is unchanged (every stage file
     # is still clipNN.mp4 / fit.mp4 / loudnorm.mp4), while an audio-only delivery (the podcast
@@ -627,6 +776,24 @@ def main() -> int:
     dest = str(((proj.get("check") or {}).get("platform") or "")) if proj.get("template") else ""
     platform_args: List[str] = ["--platform", dest] if dest in PLATFORMS and PLATFORMS[dest].get("frame") else []
     stages_done: List[str] = []
+
+    if args.cache:
+        cdir = Path(args.cache)
+        try:
+            cdir.mkdir(parents=True, exist_ok=True)
+            probe_file = cdir / ".writable"
+            probe_file.write_text("", encoding="utf-8")
+            probe_file.unlink()
+        except OSError as exc:
+            die(f"--cache {args.cache}: not a writable directory ({exc})", kind="output")
+        CACHE["dir"] = str(cdir)
+        CACHE["ffmpeg"] = ".".join(str(n) for n in ffmpeg_version())
+        CACHE["entries"] = len(list(cdir.glob("*.json")))
+    CACHE["from"] = args.from_stage
+    if args.from_stage and not args.cache:
+        die(f"--from {args.from_stage} needs --cache DIR with a previous run's stages: without a "
+            "cache there is no earlier artifact to start from, so every stage would run anyway.",
+            kind="input")
 
     # A project may ask for its clip boundaries to land on the music's beat. The measurement and
     # the refusal both live in cut.py -- render forwards the request and reports what came back,
@@ -663,7 +830,7 @@ def main() -> int:
                     argv += ["--min-confidence", str(clip_snap["min_confidence"])]
                 if clip_snap.get("source"):
                     argv += ["--snap-source", rel(clip_snap["source"])]
-            sh("cut.py", *argv)
+            sh("cut.py", *argv, stage="clips")
             if _LAST_DOC.get("snap") and snap_report is None:
                 snap_report = _LAST_DOC["snap"]
         else:
@@ -675,7 +842,7 @@ def main() -> int:
             if abs(spd - 1.0) > 1e-6:  # speed 1.0 used to cost a full re-encode for nothing
                 dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else 10.0
                 fitted = str(work / f"clip{i:02d}_speed{mid}")
-                sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted)
+                sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted, stage="clips")
                 part = fitted
         parts.append(part)
     stages_done.append("clips")
@@ -697,7 +864,7 @@ def main() -> int:
             if ag.get(key) is not None:
                 argv += [flag, str(ag[key])]
         argv += brand_args
-        sh("waveform.py", *argv)
+        sh("waveform.py", *argv, stage="audiogram")
         current = nxt
         parts = [current]
         stages_done.append("audiogram")
@@ -716,7 +883,7 @@ def main() -> int:
             argv += ["--height", str(frame["height"])]
         if frame.get("fps"):
             argv += ["--fps", str(frame["fps"])]
-        sh("join.py", *argv)
+        sh("join.py", *argv, stage="join")
         stages_done.append("join")
     if args.stop_after == "join":
         emit(current, stages=stages_done)
@@ -730,7 +897,7 @@ def main() -> int:
         for k, flag in (("threshold", "--threshold"), ("min_silence", "--min-silence"), ("margin", "--margin")):
             if sil.get(k) is not None:
                 argv += [flag, str(sil[k])]
-        sh("silence.py", *argv)
+        sh("silence.py", *argv, stage="silence")
         current = nxt
         stages_done.append("silence")
     if args.stop_after == "silence":
@@ -755,7 +922,7 @@ def main() -> int:
         for k, flag in (("duration", "--duration"), ("method", "--method"), ("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("height", "--height"), ("fps", "--fps"), ("smooth", "--smooth")):
             if fit.get(k) is not None:
                 argv += [flag, str(fit[k])]
-        sh("fit.py", *argv)
+        sh("fit.py", *argv, stage="fit")
         current = nxt
         stages_done.append("fit")
     if args.stop_after == "fit":
@@ -781,7 +948,7 @@ def main() -> int:
         for k, flag in (("karaoke", "--karaoke"), ("bold", "--bold"), ("box", "--box")):
             if cap.get(k):
                 argv.append(flag)
-        sh("caption.py", *(argv + brand_args + platform_args))
+        sh("caption.py", *(argv + brand_args + platform_args), stage="captions")
         current = nxt
         stages_done.append("captions")
     if args.stop_after == "captions":
@@ -799,7 +966,7 @@ def main() -> int:
             if g.get(k) is not None:
                 argv += [flag, str(g[k])]
         # the entry's own "platform" is the more specific statement than the template's destination
-        sh("graphics.py", *(argv + brand_args + ([] if g.get("platform") else platform_args)))
+        sh("graphics.py", *(argv + brand_args + ([] if g.get("platform") else platform_args)), stage="graphics")
         current = nxt
         if "graphics" not in stages_done:
             stages_done.append("graphics")
@@ -826,7 +993,7 @@ def main() -> int:
             argv.append("--box")
         # review 12: the overlay stage was the one stage that never heard which destination this
         # is, so a template's top-left logo landed 24 px in -- under TikTok's own status bar.
-        sh("overlay.py", *(argv + brand_args + ([] if ov.get("platform") else platform_args)))
+        sh("overlay.py", *(argv + brand_args + ([] if ov.get("platform") else platform_args)), stage="overlays")
         current = nxt
         if "overlays" not in stages_done:
             stages_done.append("overlays")
@@ -864,7 +1031,7 @@ def main() -> int:
         for k, flag in (("denoise", "--denoise"), ("duck", "--duck"), ("music_loop", "--music-loop"), ("stereo", "--stereo"), ("mono", "--mono"), ("downmix", "--downmix")):
             if au.get(k):
                 argv.append(flag)
-        sh("audio.py", *argv)
+        sh("audio.py", *argv, stage="audio")
         current = nxt
         stages_done.append("audio")
     if args.stop_after == "audio":
@@ -880,7 +1047,7 @@ def main() -> int:
             argv += ["-I", str(ld["lufs"])]
         if ld.get("tp") is not None:
             argv += ["--tp", str(ld["tp"])]
-        sh("loudness.py", *argv)
+        sh("loudness.py", *argv, stage="loudness")
         current = nxt
         stages_done.append("loudness")
     if args.stop_after == "loudness":
@@ -904,7 +1071,7 @@ def main() -> int:
             info(f"export: --normalize on by default for the {ex['preset']} preset (set \"normalize\": false to skip)")
         if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
-        sh("export.py", *argv)
+        sh("export.py", *argv, stage="export")
         stages_done.append("export")
     else:
         if not STATE.dry_run:
@@ -925,7 +1092,7 @@ def main() -> int:
         else:
             chapter_file = rel(ch)
         tagged = str(work / ("chapters" + Path(output).suffix))
-        sh("metadata.py", output, "--chapters", chapter_file, "-o", tagged)
+        sh("metadata.py", output, "--chapters", chapter_file, "-o", tagged, stage="chapters")
         if not STATE.dry_run:
             place_output(tagged, output)
         stages_done.append("chapters")
@@ -966,7 +1133,17 @@ def main() -> int:
             kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result,
             probe=probe(output, role="output"))
     info(f"rendered {output} via {' → '.join(stages_done)}")
-    emit(output, stages=stages_done, check=check_result, snap=snap_report,
+    cache_report = None
+    if args.cache:
+        cache_report = {"dir": CACHE["dir"], "ffmpeg": CACHE["ffmpeg"],
+                        "hits": CACHE["hits"], "misses": CACHE["misses"],
+                        "saved_seconds": round(CACHE["saved_seconds"], 1),
+                        "entries": CACHE["entries"]}
+        if STATE.dry_run:
+            cache_report["would_hit"] = CACHE["would_hit"]
+        info(f"cache: {len(CACHE['hits'])} hit(s) ({', '.join(CACHE['hits']) or '-'}), "
+             f"{len(CACHE['misses'])} miss(es) ({', '.join(CACHE['misses']) or '-'})")
+    emit(output, stages=stages_done, check=check_result, snap=snap_report, cache=cache_report,
          verification=[{"step": "check", "ok": True, "platform": ck["platform"]}] if check_result else [])
     return 0
 

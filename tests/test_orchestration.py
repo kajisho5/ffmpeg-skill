@@ -770,6 +770,84 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual([p.name for p in work2.iterdir() if p.is_dir()], [])
 
 
+    # --------------------------------------------------- 1.17: render.py --cache DIR / --from
+    def _cache_project(self, name, preset="x"):
+        proj = OUT / f"{name}.json"
+        proj.write_text(json.dumps({
+            "output": str(OUT / f"{name}_out.mp4"),
+            "clips": [{"src": str(self.src), "in": 0, "out": 3}],
+            "export": {"preset": preset}}), encoding="utf-8")
+        return proj
+
+    def test_render_cache_hit_skips_the_encode(self):
+        cdir = OUT / "rcache_hit"
+        shutil.rmtree(cdir, ignore_errors=True)
+        proj = self._cache_project("cache_hit")
+        first = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
+        self.assertEqual(first["cache"]["hits"], [])
+        self.assertGreater(len(first["commands"]), 0)
+        second = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
+        self.assertIn("export", second["cache"]["hits"])
+        self.assertEqual(second["cache"]["misses"], [])
+        self.assertEqual(second["commands"], [])
+        self.assertEqual(second["stages"], first["stages"])   # a cached stage still happened
+        self.assertTrue(Path(second["output"]).exists())
+
+    def test_render_cache_misses_when_a_stage_arg_changes(self):
+        cdir = OUT / "rcache_arg"
+        shutil.rmtree(cdir, ignore_errors=True)
+        script("render.py", self._cache_project("cache_arg"), "--cache", cdir)
+        changed = json.loads(script("render.py", self._cache_project("cache_arg", preset="reels"),
+                                    "--cache", cdir, "--json").stdout)
+        self.assertIn("clips", changed["cache"]["hits"])      # earlier stage unchanged
+        self.assertIn("export", changed["cache"]["misses"])   # the one that changed re-runs
+
+    def test_render_cache_key_never_crosses_an_ffmpeg_or_skill_version(self):
+        """The version lines are IN the key: a different build misses rather than being asked to
+        trust an artifact it did not write."""
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        render = importlib.import_module("render")
+        argv = ["in.mp4", "-o", "out.mp4", "--preset", "x"]
+        render.CACHE["ffmpeg"] = "7.1"
+        a = render.cache_key("export", "export.py", argv, [])
+        render.CACHE["ffmpeg"] = "5.1"
+        b = render.cache_key("export", "export.py", argv, [])
+        self.assertNotEqual(a, b)
+        render.CACHE["ffmpeg"] = "7.1"
+        self.assertEqual(render.cache_key("export", "export.py", argv, []), a)
+        self.assertNotEqual(a, render.cache_key("export", "export.py", argv + ["--crf", "20"], []))
+
+    def test_render_cache_writes_nothing_under_dry_run(self):
+        cdir = OUT / "rcache_dry"
+        shutil.rmtree(cdir, ignore_errors=True)
+        data = json.loads(script("render.py", self._cache_project("cache_dry"), "--cache", cdir,
+                                 "--dry-run", "--json").stdout)
+        self.assertEqual(sorted(p.name for p in cdir.iterdir()), [])
+        self.assertIn("cache", data)
+
+    def test_render_from_without_a_cache_refuses(self):
+        r = script("render.py", self._cache_project("cache_from"), "--from", "captions",
+                   "--json", expect_fail=True)
+        err = json.loads(r.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("--cache", err["message"])
+
+    def test_render_from_refuses_when_an_earlier_stage_is_not_cached(self):
+        cdir = OUT / "rcache_from_empty"
+        shutil.rmtree(cdir, ignore_errors=True)
+        r = script("render.py", self._cache_project("cache_from2"), "--cache", cdir,
+                   "--from", "export", "--json", expect_fail=True)
+        err = json.loads(r.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("clips", err["message"])
+
+    def test_render_without_cache_is_unchanged(self):
+        data = json.loads(script("render.py", self._cache_project("cache_none"),
+                                 "--dry-run", "--json").stdout)
+        self.assertIsNone(data.get("cache"))
+
+
     def test_batch_recipe_and_cache(self):
         folder = OUT / "batch_in"
         folder.mkdir(exist_ok=True)
