@@ -122,6 +122,10 @@ printing one line — `font: /usr/share/fonts/.../wqy-zenhei.ttc (covers ko)`.
   `brew install --cask font-noto-sans-cjk font-noto-sans-arabic`, or point at a
   file with `--font-file` (`overlay.py`, `graphics.py`) / `--fonts-dir`
   (`caption.py`).
+- Windows drawtext crashes on some builds (#100) when it has to resolve a font by
+  family name: pass `--font-file` explicitly if one does. `default_font_file()`
+  already resolves a file for you on Windows, so this bites only a hand-built
+  drawtext call. More: `references/ci-platform-pitfalls.md`.
 - Han characters alone (no kana, no hangul) are read as Chinese. Japanese or
   Korean hanja text with no kana needs `--lang ja` / `--lang ko`
   (`caption.py --language` is the same flag), or `"lang"` in brand.json.

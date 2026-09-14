@@ -93,6 +93,7 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (text with times) | `caption.py input.mp4 --text cues.txt` |
 | "keep the subtitles toggleable", "mux in an SRT" | `caption.py input.mp4 --srt subs.srt --mode mux`; repeat `--srt file:lang` for several languages, `.mkv` for more than two |
+| "the captions are tiny / three lines on a Short" | `caption.py` shrinks the size until the cue fits `--max-lines` before splitting it (`--fit-size off` for 1.16 behaviour, `--min-size` sets the floor) |
 | "our logo top-right", "a watermark" | `overlay.py input.mp4 --image logo.png --position top-right --scale 200` |
 | "a title for the first 4 seconds" | `overlay.py input.mp4 --text "Title" --position top --start 0 --end 4 --fade 0.4` |
 | "webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |
@@ -180,17 +181,17 @@ When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
 Failed: color.py --lut grade.cube exited 1 — ffmpeg: "Unable to parse LUT file" (the .cube is not a valid LUT)
 Steps: probe -> color (failed); nothing written
 Check: nothing to verify
-Look: not needed (nothing written)
+Look: not needed
 Notes: send a valid .cube, or say if you want the clip left as is
 ```
 
-A refusal (a judgement this skill does not make, or something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run, `Look: not needed`. The shortest failure still gets all five labels, never prose headings. A refusal that still delivers something is `Failed:` — the label answers the request as asked; the alternative goes in `Notes:`. When a failure JSON carries `error.hint`, quote it in `Notes:`: it is the flag change that makes a retry meaningful.
+A refusal (a judgement this skill does not make, or something outside its scope) uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run, `Look: not needed`. The shortest failure still gets all five labels, never prose headings. A refusal that still delivers something is `Failed:`, never a third label like `Done (partially):` — the label answers the request as asked; the alternative goes in `Notes:`. When a failure JSON carries `error.hint`, quote it in `Notes:`: it is the flag change that makes a retry meaningful.
 
 Every script prints `{"status": "failed", "error": {"kind": input | ffmpeg | output | missing_tool | timeout | verification | interrupted, "message": ...}}` with `--json` and exits non-zero; quote the message, never paraphrase it.
 
 ## Things that look right but are wrong
 
-One line each, each enough to act on; open the linked `references/gotchas.md` section only when the job is in that area and the line leaves a question.
+One line each; open the linked `references/gotchas.md` section when the job is in that area.
 
 - HDR (iPhone, HDR10) re-encoded through an SDR path goes flat; the scripts keep HDR, and `hdr: true` is wider than `hdr_signal: true` (a real PQ/HLG/DV transfer). Details: [#hdr-and-colour](references/gotchas.md#hdr-and-colour)
 - Log footage (S-Log/V-Log/C-Log) is tagged SDR and looks grey: `probe.py --analyze`, then `color.py --lut` before anything else. Details: [#log-footage](references/gotchas.md#log-footage)
@@ -198,7 +199,7 @@ One line each, each enough to act on; open the linked `references/gotchas.md` se
 - VFR phone/screen recordings: re-encodes conform to CFR, `cut.py` switches to `--accurate`; pick the rate with `fit.py --fps` when the average is odd. Details: [#variable-frame-rate](references/gotchas.md#variable-frame-rate)
 - Sync/multicam `confidence` under 0.3 (or a huge offset) is probably wrong — check every camera; these align audio, never lip sync. Details: [#sync-multicam-and-drift](references/gotchas.md#sync-multicam-and-drift)
 - "Normalised" audio can still clip (check true peak), and ambience at -40 LUFS or below must never be raised to a speech target. Details: [#loudness-and-ambience](references/gotchas.md#loudness-and-ambience)
-- Captions burned before a crop/resize land off-frame; burned small then upscaled by `export.py` they come out soft — fit to the delivery size first. Details: [#captions-fonts-and-text-order](references/gotchas.md#captions-fonts-and-text-order)
+- Captions burned before a crop/resize land off-frame, and burned small then upscaled by `export.py` they come out soft. Details: [#captions-fonts-and-text-order](references/gotchas.md#captions-fonts-and-text-order)
 - Emoji need `--emoji-assets DIR` (a PNG per glyph) to render in colour; without it they come out monochrome and the run says so. Details: [#emoji](references/gotchas.md#emoji)
 - `graphics.py` renders Devanagari, Bengali, Tamil and Thai through libass automatically — drawtext cannot shape them.
 - Non-Latin text picks a font by script since 1.12; `doctor --json` `fonts.scripts` says which languages this machine renders; no font = failed job. Details: [#fonts-by-script](references/gotchas.md#fonts-by-script)
@@ -207,4 +208,3 @@ One line each, each enough to act on; open the linked `references/gotchas.md` se
 - `yuv420p` needs even dimensions and phone rotation tags are honoured, both automatically. Details: [#dimensions-and-rotation](references/gotchas.md#dimensions-and-rotation)
 - `scenes.py --highlights` ranks by loudness (or duration), never by meaning: check the sheet before treating picks as final. Details: [#highlights](references/gotchas.md#highlights)
 - Three hand-chained re-encodes should be one `render.py` project; re-encodes use x264 `medium`. Details: [#chaining-and-speed](references/gotchas.md#chaining-and-speed)
-- Windows drawtext crashes on some builds (#100): pass `--font-file` explicitly if one does. Details: `references/ci-platform-pitfalls.md`
