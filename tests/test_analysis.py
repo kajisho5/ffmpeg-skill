@@ -624,5 +624,141 @@ class AutoChaptersTests(MediaFixtures):
                "-o", OUT / "x_auto2.mp4", expect_fail=True)
 
 
+class BeatGridTests(unittest.TestCase):
+    """1.17: the beat grid and the snap, as pure arithmetic on an envelope.
+
+    Nothing here decodes anything -- that is the point: a beat is measured from numbers, and the
+    measurement can be tested without a media file.
+    """
+
+    STEP = 0.01
+
+    @staticmethod
+    def _clicks(interval, seconds=10.0, step=0.01, strengths=None, floor=0.01):
+        """An RMS envelope with an impulse every `interval` seconds -- a click track."""
+        n = int(round(seconds / step))
+        env = [floor] * n
+        k = 0
+        t = 0.0
+        while t < seconds:
+            i = int(round(t / step))
+            amp = 1.0 if strengths is None else strengths[k % len(strengths)]
+            if i < n - 1:
+                env[i] = amp
+                env[i + 1] = amp * 0.6
+            t += interval
+            k += 1
+        return env
+
+    def test_synthetic_120bpm_grid(self):
+        from _common import beat_grid
+        g = beat_grid(self._clicks(0.5), self.STEP)
+        self.assertAlmostEqual(g["tempo_bpm"], 120.0, delta=1.0)
+        self.assertAlmostEqual(g["interval"], 0.5, delta=0.01)
+        self.assertGreater(g["confidence"], 0.8)
+        self.assertTrue(g["usable"])
+        self.assertEqual(g["method"], "rms-flux-autocorrelation")
+        # every beat lands within 15 ms of a real impulse
+        for b in g["beats"][:10]:
+            self.assertLess(min(abs(b - k * 0.5) for k in range(25)), 0.015)
+
+    def test_half_and_double_tempo_disambiguation(self):
+        """Impulses every 0.5 s with alternating strength: the grid is 120, not 60 (only the
+        strong hits) and not 240 (twice as many points as there are onsets)."""
+        from _common import beat_grid
+        g = beat_grid(self._clicks(0.5, strengths=[1.0, 0.55]), self.STEP)
+        self.assertAlmostEqual(g["tempo_bpm"], 120.0, delta=1.0)
+
+    def test_a_different_tempo_is_measured_not_assumed(self):
+        from _common import beat_grid
+        g = beat_grid(self._clicks(0.4), self.STEP)   # 150 BPM
+        self.assertAlmostEqual(g["tempo_bpm"], 150.0, delta=2.0)
+
+    def test_flat_envelope_is_zero_confidence(self):
+        from _common import beat_grid
+        g = beat_grid([0.5] * 1000, self.STEP)
+        self.assertEqual(g["beats"], [])
+        self.assertIsNone(g["tempo_bpm"])
+        self.assertEqual(g["confidence"], 0.0)
+        self.assertFalse(g["usable"])
+
+    def test_empty_envelope_is_zero_confidence(self):
+        from _common import beat_grid
+        self.assertEqual(beat_grid([], self.STEP)["confidence"], 0.0)
+        self.assertEqual(beat_grid([0.1, 0.2], self.STEP)["beats"], [])
+
+    def test_noise_is_not_a_beat(self):
+        """Pseudo-random levels have no steady pulse; whatever grid comes out must not be sold
+        as usable at the default threshold."""
+        from _common import beat_grid
+        import random
+        rng = random.Random(7)
+        env = [rng.random() for _ in range(1000)]
+        g = beat_grid(env, self.STEP)
+        self.assertLess(g["confidence"], 0.5)
+        self.assertFalse(g["usable"])
+
+    def test_min_confidence_only_moves_the_usable_flag(self):
+        from _common import beat_grid
+        env = self._clicks(0.5)
+        self.assertTrue(beat_grid(env, self.STEP, min_confidence=0.5)["usable"])
+        self.assertFalse(beat_grid(env, self.STEP, min_confidence=1.01)["usable"])
+
+    def test_unsupported_grid_points_are_counted_not_hidden(self):
+        """A grid must be regular, so a gap in the music still gets grid points -- and they are
+        reported as unsupported rather than quietly presented as measured beats."""
+        from _common import beat_grid
+        env = self._clicks(0.5, seconds=5.0) + [0.01] * 500
+        g = beat_grid(env, self.STEP)
+        self.assertGreater(g["unsupported"], 0)
+        self.assertEqual(g["supported"] + g["unsupported"], len(g["beats"]))
+
+    def test_snap_points_never_adds_or_drops_a_point(self):
+        from _common import snap_points
+        import random
+        rng = random.Random(11)
+        for _ in range(50):
+            beats = sorted(round(rng.uniform(0, 30), 3) for _ in range(rng.randint(0, 20)))
+            points = [round(rng.uniform(0, 30), 3) for _ in range(rng.randint(1, 8))]
+            out = snap_points(points, beats, rng.uniform(0, 0.5))
+            self.assertEqual(len(out), len(points))
+            for row, p in zip(out, points):
+                self.assertEqual(row["from"], p)
+                self.assertTrue(row["to"] in beats or row["to"] == p)
+                if row["snapped"]:
+                    self.assertIn(row["to"], beats)
+
+    def test_snap_respects_tolerance(self):
+        from _common import snap_points
+        out = snap_points([2.3], [1.0, 2.0, 3.0], 0.12)
+        self.assertFalse(out[0]["snapped"])
+        self.assertEqual(out[0]["to"], 2.3)
+        self.assertEqual(out[0]["delta"], 0.0)
+        near = snap_points([2.03], [1.0, 2.0, 3.0], 0.12)
+        self.assertTrue(near[0]["snapped"])
+        self.assertEqual(near[0]["to"], 2.0)
+        self.assertAlmostEqual(near[0]["delta"], -0.03, places=6)
+
+    def test_snap_with_no_beats_changes_nothing(self):
+        from _common import snap_points
+        out = snap_points([1.0, 2.0], [], 1.0)
+        self.assertEqual([r["to"] for r in out], [1.0, 2.0])
+        self.assertFalse(any(r["snapped"] for r in out))
+
+    def test_beat_grid_is_pure(self):
+        import unittest.mock
+        import _common
+        from _common import beat_grid, snap_points
+        def boom(*a, **k):
+            raise AssertionError("beat_grid ran a subprocess")
+        with unittest.mock.patch.object(_common, "run", boom), \
+             unittest.mock.patch.object(_common, "run_analysis", boom), \
+             unittest.mock.patch.object(subprocess, "run", boom), \
+             unittest.mock.patch.object(subprocess, "Popen", boom):
+            g = beat_grid(self._clicks(0.5), self.STEP)
+            self.assertAlmostEqual(g["tempo_bpm"], 120.0, delta=1.0)
+            self.assertEqual(len(snap_points([1.0], g["beats"], 0.1)), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

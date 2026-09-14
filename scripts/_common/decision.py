@@ -7,6 +7,7 @@ and encoder-selection rules testable on their own.
 from __future__ import annotations
 
 import json
+import math
 import os
 import argparse
 from pathlib import Path
@@ -518,3 +519,249 @@ def propose_chapters(duration: float, silences: "Sequence", scene_cuts: "Sequenc
 def description_block(chapters: "Sequence") -> str:
     """The YouTube description form of a chapter list: `00:00 Chapter 1` per line."""
     return "\n".join(f"{fmt_chapter_time(c['at'])} {c['title']}" for c in chapters)
+
+
+# ------------------------------------------------------------------ the beat grid (1.17)
+#
+# A beat grid is a measurement of the music's periodicity -- not a statement about where a cut
+# belongs. Everything here is arithmetic on an RMS envelope somebody else decoded; nothing in this
+# module decides to cut anything, and nothing invents a beat the audio does not support.
+
+BEAT_ONSET_K = 1.5          # peak threshold: median + k * MAD over the local window
+BEAT_WINDOW_S = 1.0         # +/- this many seconds is "local" for the threshold
+BEAT_REFRACTORY_S = 0.06    # two onsets closer than this are one onset
+BEAT_SUPPORT_DIVISOR = 4    # a grid point with no onset within interval/4 is "unsupported"
+BEAT_ALIGN_DIVISOR = 8      # an onset within interval/8 of a grid point counts as aligned
+BEAT_MIN_CONFIDENCE = 0.5   # the default below which a tool that CHANGES a file refuses to snap
+BEAT_OCTAVE_MARGIN = 1.2    # a half/double-tempo grid must explain this much more onset strength
+BEAT_Z_FLOOR = 2.0          # autocorrelation z-score at which periodicity starts counting
+BEAT_Z_SPAN = 4.0           # ... and the span over which it reaches 1.0
+
+
+def _onset_strength(envelope: "Sequence[float]") -> "List[float]":
+    """Half-wave-rectified first difference of log(env), i.e. a compression-domain spectral-flux
+    analogue. The log matters: the level-domain difference over-weights the loud sections, so a
+    quiet verse contributes no onsets at all and the tempo is measured on the chorus alone."""
+    import math as _math
+    log_env = [_math.log(max(0.0, float(e)) + 1e-9) for e in envelope]
+    return [0.0] + [max(0.0, log_env[i] - log_env[i - 1]) for i in range(1, len(log_env))]
+
+
+def _pick_onsets(strength: "Sequence[float]", step_s: float) -> "List[int]":
+    """Indices of local maxima above median + k*MAD over a +/-BEAT_WINDOW_S window, with a
+    refractory gap. A median/MAD threshold rather than a mean/stdev one because a handful of very
+    strong hits would drag a mean-based threshold above every other onset in the piece."""
+    n = len(strength)
+    if n < 3:
+        return []
+    half = max(1, int(round(BEAT_WINDOW_S / max(step_s, 1e-9))))
+    refractory = max(1, int(round(BEAT_REFRACTORY_S / max(step_s, 1e-9))))
+    picked: "List[int]" = []
+    for i in range(1, n - 1):
+        s = strength[i]
+        if s <= 0 or s < strength[i - 1] or s < strength[i + 1]:
+            continue
+        window = sorted(strength[max(0, i - half):min(n, i + half + 1)])
+        if not window:
+            continue
+        med = window[len(window) // 2]
+        devs = sorted(abs(x - med) for x in window)
+        mad = devs[len(devs) // 2]
+        if s < med + BEAT_ONSET_K * mad or s <= med:
+            continue
+        if picked and i - picked[-1] < refractory:
+            if s > strength[picked[-1]]:
+                picked[-1] = i
+            continue
+        picked.append(i)
+    return picked
+
+
+def _autocorrelation_peak(strength: "Sequence[float]", step_s: float,
+                          bpm_range: "Sequence[float]") -> "tuple":
+    """(best lag in samples, peak, mean, standard deviation) of the onset signal's
+    autocorrelation over the lags `bpm_range` allows, or (None, 0.0, 0.0, 0.0).
+
+    The spread matters as much as the peak: every signal's autocorrelation has a maximum
+    somewhere, so "the peak is above the mean" says nothing. How far above it stands relative to
+    the spread of the other lags is what separates a pulse from noise.
+    """
+    n = len(strength)
+    hi_bpm, lo_bpm = max(bpm_range), min(bpm_range)
+    lag_min = max(1, int(round(60.0 / hi_bpm / max(step_s, 1e-9))))
+    lag_max = int(round(60.0 / lo_bpm / max(step_s, 1e-9)))
+    lag_max = min(lag_max, n - 1)
+    if lag_max < lag_min:
+        return (None, 0.0, 0.0, 0.0)
+    mean = sum(strength) / n if n else 0.0
+    centred = [s - mean for s in strength]
+    best_lag, best = None, 0.0
+    values = []
+    for lag in range(lag_min, lag_max + 1):
+        acc = sum(centred[i] * centred[i + lag] for i in range(n - lag))
+        acc /= (n - lag)
+        values.append(acc)
+        if best_lag is None or acc > best:
+            best_lag, best = lag, acc
+    mean_acc = sum(values) / len(values) if values else 0.0
+    var = sum((v - mean_acc) ** 2 for v in values) / len(values) if values else 0.0
+    return (best_lag, best, mean_acc, math.sqrt(var))
+
+
+def _grid_score(onset_times: "Sequence[float]", strength_at: "Dict[int, float]",
+                interval: float, phase: float, duration: float) -> float:
+    """Total onset strength landing within interval/BEAT_ALIGN_DIVISOR of the grid."""
+    if interval <= 0:
+        return 0.0
+    tol = interval / BEAT_ALIGN_DIVISOR
+    total = 0.0
+    for i, t in enumerate(onset_times):
+        off = (t - phase) % interval
+        if min(off, interval - off) <= tol:
+            total += strength_at.get(i, 1.0)
+    return total
+
+
+def beat_grid(envelope: "Sequence[float]", step_s: float, *,
+              bpm_range: "Sequence[float]" = (60, 200),
+              min_confidence: float = BEAT_MIN_CONFIDENCE,
+              duration: "Optional[float]" = None) -> "Dict[str, Any]":
+    """A beat grid from an RMS envelope. Pure: numbers in, a dict out -- no ffmpeg, no I/O.
+
+    Returns {"beats": [t, ...], "tempo_bpm": float|None, "interval": float|None,
+             "confidence": 0..1, "onsets": [t, ...], "phase": float,
+             "supported": int, "unsupported": int, "usable": bool,
+             "method": "rms-flux-autocorrelation", "step_s": step_s, "range_bpm": [lo, hi]}
+
+    The method, in full, so a report can quote it:
+      1. onset strength = half-wave-rectified first difference of log(env + 1e-9);
+      2. onsets = local maxima above median + 1.5 * MAD over a +/-1 s window, 60 ms refractory;
+      3. tempo = the best autocorrelation lag of the onset signal inside `bpm_range`, with its
+         half and double checked and the one whose onsets align better preferred (octave
+         disambiguation: 60, 120 and 240 BPM all autocorrelate on a 120 BPM track);
+      4. phase = the offset in [0, interval) at which the grid catches the most onset strength;
+      5. beats = phase + n * interval across the duration. A grid must be regular, so a grid
+         point with no measured onset within interval/4 is still reported -- and counted in
+         `unsupported`, so a caller can see how much of the grid the audio actually supports;
+      6. confidence = 0.5 * clip((z - 2) / 4, 0, 1)
+                    + 0.5 * (fraction of onsets within interval/8 of a grid point),
+         where z is how many standard deviations the winning autocorrelation lag stands above
+         the mean of the others. The plain peak/mean ratio is not used: every signal's
+         autocorrelation has a maximum somewhere, so a peak above the mean says nothing -- noise
+         scores 2.9 on it, which would read as full confidence.
+
+    A flat or empty envelope has no pulse: confidence 0.0, tempo None, beats []. That is a
+    measurement, not a failure -- the caller decides whether 0.0 is enough to act on.
+    """
+    step_s = float(step_s)
+    env = list(envelope or [])
+    lo_bpm, hi_bpm = float(min(bpm_range)), float(max(bpm_range))
+    out: "Dict[str, Any]" = {
+        "beats": [], "tempo_bpm": None, "interval": None, "confidence": 0.0, "onsets": [],
+        "phase": 0.0, "supported": 0, "unsupported": 0, "usable": False,
+        "method": "rms-flux-autocorrelation", "step_s": step_s, "range_bpm": [lo_bpm, hi_bpm],
+    }
+    if len(env) < 4 or step_s <= 0:
+        return out
+    total_s = float(duration) if duration else len(env) * step_s
+
+    strength = _onset_strength(env)
+    if not any(strength):
+        return out
+    idx = _pick_onsets(strength, step_s)
+    onset_times = [i * step_s for i in idx]
+    out["onsets"] = [round(t, 4) for t in onset_times]
+    if len(idx) < 2:
+        return out
+
+    best_lag, peak, mean_acc, sd_acc = _autocorrelation_peak(strength, step_s, (lo_bpm, hi_bpm))
+    if not best_lag or peak <= 0:
+        return out
+    interval = best_lag * step_s
+    strength_at = {i: strength[j] for i, j in enumerate(idx)}
+
+    # Octave disambiguation: try half and double the candidate interval and keep the one whose
+    # grid catches the most onset strength per grid point (per point, or a denser grid always wins).
+    candidates = [interval]
+    for factor in (0.5, 2.0):
+        alt = interval * factor
+        if 60.0 / hi_bpm <= alt <= 60.0 / lo_bpm:
+            candidates.append(alt)
+
+    def best_phase(iv: float) -> "tuple":
+        steps = max(4, int(round(iv / step_s)))
+        best_ph, best_sc = 0.0, -1.0
+        for k in range(steps):
+            ph = k * iv / steps
+            sc = _grid_score(onset_times, strength_at, iv, ph, total_s)
+            if sc > best_sc:
+                best_ph, best_sc = ph, sc
+        return best_ph, best_sc
+
+    # The winner is the grid that explains the most measured onset strength -- "more onsets fall
+    # on it", the standard octave rule. An alternative must explain appreciably more (a fifth
+    # again) to displace the autocorrelation's own answer: a half-tempo grid catches a subset of
+    # the same onsets and a double-tempo grid catches the same set plus empty points, so a bare
+    # ">" would flip the answer on noise.
+    base_phase, base_score = best_phase(interval)
+    interval, phase = interval, base_phase
+    for alt in candidates[1:]:
+        alt_phase, alt_score = best_phase(alt)
+        if alt_score > base_score * BEAT_OCTAVE_MARGIN:
+            interval, phase, base_score = alt, alt_phase, alt_score
+
+    beats = []
+    t = phase
+    while t <= total_s + 1e-9:
+        beats.append(round(t, 4))
+        t += interval
+    support_tol = interval / BEAT_SUPPORT_DIVISOR
+    supported = sum(1 for b in beats
+                    if any(abs(b - o) <= support_tol for o in onset_times))
+    align_tol = interval / BEAT_ALIGN_DIVISOR
+    aligned = sum(1 for o in onset_times
+                  if min((o - phase) % interval, interval - (o - phase) % interval) <= align_tol)
+
+    # How many spreads the best lag stands above the rest of them, mapped onto [0, 1]: a click
+    # track measures z ~= 6, a jittery human performance ~= 5, pseudo-random levels ~= 2.4, so
+    # the band [BEAT_Z_FLOOR, BEAT_Z_FLOOR + BEAT_Z_SPAN] = [2, 6] is where the answer changes.
+    z = ((peak - mean_acc) / sd_acc) if sd_acc > 0 else 0.0
+    periodicity = max(0.0, min(1.0, (z - BEAT_Z_FLOOR) / BEAT_Z_SPAN))
+    alignment = aligned / len(onset_times) if onset_times else 0.0
+    confidence = round(0.5 * periodicity + 0.5 * alignment, 3)
+
+    out.update({
+        "beats": beats, "interval": round(interval, 6), "tempo_bpm": round(60.0 / interval, 2),
+        "phase": round(phase, 4), "confidence": confidence, "supported": supported,
+        "unsupported": len(beats) - supported,
+        "usable": confidence >= float(min_confidence),
+    })
+    return out
+
+
+def snap_points(points: "Sequence[float]", beats: "Sequence[float]",
+                tolerance: float) -> "List[Dict[str, Any]]":
+    """Move each given point to the nearest beat within `tolerance` seconds.
+
+    Pure. Returns [{"from": t, "to": t2, "delta": d, "snapped": bool, "beat_index": i|None}].
+    A point with no beat inside `tolerance` is returned unchanged with snapped=False.
+
+    NEVER invents a point: len(out) == len(points), always, and every `to` is either a value that
+    was in `beats` or the caller's own `from`. This is the whole no-fabrication rule for beat
+    snapping -- a cut point may move to a measured grid point, and may not appear from one.
+    """
+    grid = sorted(float(b) for b in (beats or []))
+    out: "List[Dict[str, Any]]" = []
+    for p in points:
+        p = float(p)
+        best_i, best_d = None, None
+        for i, b in enumerate(grid):
+            d = abs(b - p)
+            if best_d is None or d < best_d:
+                best_i, best_d = i, d
+        if best_i is not None and best_d is not None and best_d <= float(tolerance):
+            out.append({"from": p, "to": grid[best_i], "delta": round(grid[best_i] - p, 6),
+                        "snapped": True, "beat_index": best_i})
+        else:
+            out.append({"from": p, "to": p, "delta": 0.0, "snapped": False, "beat_index": None})
+    return out

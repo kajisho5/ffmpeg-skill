@@ -73,6 +73,10 @@ from _common.probe import (
 from _common.decision import (
     aac_args, add_pad_fill_args, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
     description_block, _evidence_rank, fmt_chapter_time, propose_chapters,
+    beat_grid, snap_points, BEAT_MIN_CONFIDENCE, BEAT_ONSET_K, BEAT_OCTAVE_MARGIN,
+    BEAT_REFRACTORY_S, BEAT_WINDOW_S, BEAT_SUPPORT_DIVISOR, BEAT_ALIGN_DIVISOR,
+    BEAT_Z_FLOOR, BEAT_Z_SPAN,
+    _onset_strength, _pick_onsets, _autocorrelation_peak, _grid_score,
     brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
     fmt_secs, fmt_smpte_time, fmt_srt_time, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
     signed_time_arg, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
@@ -169,6 +173,10 @@ __all__ = [
     "char_script", "_check_existing_output", "_check_no_overwrite_input", "_check_output_path", "child_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",
     "concat_list_line", "Context", "_CRF_DEFAULT", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",
+    "beat_grid", "snap_points", "BEAT_MIN_CONFIDENCE", "BEAT_ONSET_K", "BEAT_OCTAVE_MARGIN",
+    "BEAT_REFRACTORY_S", "BEAT_WINDOW_S", "BEAT_SUPPORT_DIVISOR", "BEAT_ALIGN_DIVISOR",
+    "BEAT_Z_FLOOR", "BEAT_Z_SPAN",
+    "_onset_strength", "_pick_onsets", "_autocorrelation_peak", "_grid_score",
     "default_font_file", "default_output", "DEFAULT_TIMEOUT", "detect_script", "die", "drawtext_boxborderw",
     "_DRAWTEXT_PENDING", "drawtext_shaping", "drawtext_text_opts", "_DRAWTEXT_TMPDIR", "_drawtext_tmpdir",
     "dry_run_input_pending", "emit", "emoji_asset_for", "EMOJI_ASSET_HINT", "emoji_clusters",
