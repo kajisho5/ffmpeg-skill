@@ -11,7 +11,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from _common.decision import fmt_srt_time, parse_time
 from _common.emit import die, info
@@ -214,3 +214,156 @@ def whisper_word_timings(srt_path: Optional[str]) -> List[Tuple[float, float, st
     return []
 
 
+# ------------------------------------------------------- word-level timings (1.17)
+#
+# transcribe() above produces an SRT, which is all --transcribe on caption.py ever needed: a cue
+# has a start and an end and that is what gets burnt in. silence.py --filler needs something
+# stricter -- a start and an end PER WORD -- and no amount of reading an SRT back produces one.
+# Each engine has its own flag for it, and each writes a different shape, so each is driven and
+# parsed here rather than in the tool.
+
+
+def _words_from_whisper_cpp_json(path: str) -> "List[Dict[str, Any]]":
+    """whisper.cpp --output-json-full: transcription[].tokens[] with offsets in MILLISECONDS.
+
+    Token text carries leading spaces and the model's special tokens ([_BEG_], [_TT_123]); those
+    are dropped, and a token that is a word continuation (no leading space) is glued onto the
+    previous word so "un" + "believable" is one word with one span, not two.
+    """
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out: "List[Dict[str, Any]]" = []
+    for seg in (doc.get("transcription") or []):
+        for tok in (seg.get("tokens") or []):
+            text = str(tok.get("text") or "")
+            if not text.strip() or text.strip().startswith("[_"):
+                continue
+            offsets = tok.get("offsets") or {}
+            try:
+                start, end = float(offsets["from"]) / 1000.0, float(offsets["to"]) / 1000.0
+            except (KeyError, TypeError, ValueError):
+                continue
+            if out and not text.startswith(" "):
+                out[-1]["word"] += text
+                out[-1]["end"] = end
+            else:
+                out.append({"word": text.strip(), "start": start, "end": end})
+    return [w for w in out if w["word"].strip()]
+
+
+def _words_from_openai_whisper_json(path: str) -> "List[Dict[str, Any]]":
+    """openai-whisper --word_timestamps True --output_format json: segments[].words[]."""
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out: "List[Dict[str, Any]]" = []
+    for seg in (doc.get("segments") or []):
+        for w in (seg.get("words") or []):
+            try:
+                out.append({"word": str(w.get("word") or w.get("text") or "").strip(),
+                            "start": float(w["start"]), "end": float(w["end"])})
+            except (KeyError, TypeError, ValueError):
+                continue
+    return [w for w in out if w["word"]]
+
+
+def transcribe_words(video: str, language: "Optional[str]" = None, model: str = "base",
+                     audio_stream: int = 0) -> "Tuple[List[Dict[str, Any]], Optional[str]]":
+    """([{word, start, end}, ...], the engine that produced them) from a local whisper.
+
+    Drives whichever engine is installed with ITS word-timestamp option -- whisper.cpp
+    `--output-json-full`, faster-whisper `word_timestamps=True`, openai-whisper
+    `--word_timestamps True` -- and returns the words it measured. ([], engine) when the engine
+    ran but its build produced no word-level timings, so the caller can refuse naming that engine
+    instead of pretending the audio had no words in it. No engine at all raises through
+    die_no_engine(), the same refusal caption.py gives.
+    """
+    import shutil as _shutil
+    import subprocess as _subprocess
+    import tempfile as _tempfile
+    from _common import require_tool, run_analysis, STATE
+    ffmpeg = require_tool("ffmpeg")
+    tmpdir = _tempfile.mkdtemp(prefix="ffskill_asrw_")
+    try:
+        wav = os.path.join(tmpdir, "audio.wav")
+        run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
+                      "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000",
+                      "-c:a", "pcm_s16le", wav])
+
+        # 1. whisper.cpp
+        cli = _shutil.which("whisper-cli") or _shutil.which("whisper-cpp")
+        if not cli:
+            main_bin = _shutil.which("main")
+            if main_bin and "whisper" in os.path.dirname(os.path.realpath(main_bin)).lower():
+                cli = main_bin
+        if cli:
+            model_path = model
+            if not os.path.exists(model_path):
+                for cand in (os.path.expanduser(f"~/.cache/whisper.cpp/ggml-{model}.bin"),
+                             f"models/ggml-{model}.bin",
+                             f"/usr/local/share/whisper/ggml-{model}.bin"):
+                    if os.path.exists(cand):
+                        model_path = cand
+                        break
+            base = os.path.join(tmpdir, "out")
+            cmd = [cli, "-m", model_path, "-f", wav, "--output-json-full", "-of", base]
+            if language:
+                cmd += ["-l", language]
+            proc = _asr_run(cmd, _subprocess, "whisper.cpp")
+            if proc.returncode == 0 and os.path.exists(base + ".json"):
+                words = _words_from_whisper_cpp_json(base + ".json")
+                info(f"word timings from whisper.cpp ({len(words)} words)")
+                return words, "whisper.cpp"
+            info("whisper.cpp found but produced no word-timing JSON: "
+                 + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
+            return [], "whisper.cpp"
+
+        # 2. faster-whisper
+        try:
+            from faster_whisper import WhisperModel  # type: ignore
+            import threading
+            collected: list = []
+
+            def work() -> None:
+                m = WhisperModel(model, device="cpu", compute_type="int8")
+                segments, _ = m.transcribe(wav, language=language, word_timestamps=True)
+                for seg in segments:
+                    for w in (getattr(seg, "words", None) or []):
+                        collected.append({"word": str(w.word).strip(),
+                                          "start": float(w.start), "end": float(w.end)})
+
+            t = threading.Thread(target=work, daemon=True)
+            t.start()
+            t.join(STATE.timeout or None)
+            if t.is_alive():
+                die(f"faster-whisper exceeded the {STATE.timeout:.0f} s time limit; raise "
+                    "--timeout for a long recording", code=124, kind="timeout")
+            info(f"word timings from faster-whisper ({len(collected)} words)")
+            return [w for w in collected if w["word"]], "faster-whisper"
+        except ImportError:
+            pass
+
+        # 3. openai-whisper CLI
+        if _shutil.which("whisper"):
+            cmd = ["whisper", wav, "--model", model, "--word_timestamps", "True",
+                   "--output_format", "json", "--output_dir", tmpdir]
+            if language:
+                cmd += ["--language", language]
+            proc = _asr_run(cmd, _subprocess, "openai-whisper")
+            doc = os.path.join(tmpdir, "audio.json")
+            if proc.returncode == 0 and os.path.exists(doc):
+                words = _words_from_openai_whisper_json(doc)
+                info(f"word timings from openai-whisper ({len(words)} words)")
+                return words, "openai-whisper"
+            info("openai-whisper found but produced no word-timing JSON: "
+                 + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
+            return [], "openai-whisper"
+
+        die_no_engine("or pass --words with a transcript you already have.",
+                      flag="--filler --transcribe")
+        return [], None
+    finally:
+        _shutil.rmtree(tmpdir, ignore_errors=True)

@@ -20,7 +20,7 @@ from typing import List, Tuple
 # `detect` moved into _common/probe.py in 1.16.0 so metadata.py --auto-chapters can measure the
 # same silences without importing this tool; the body is unchanged and the name still lives here.
 from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS,
-                     FILLER_PAD, die_no_engine, transcribe, whisper_word_timings, read_text_or_die)
+                     FILLER_PAD, die_no_engine, transcribe_words, read_text_or_die)
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
 
@@ -92,24 +92,20 @@ def resolve_filler(args, meta):
                 '{"words": [{"word": ..., "start": ..., "end": ...}]} (or the same inside '
                 '"segments").', kind="input")
     else:
-        import shutil as _shutil
-        have_engine = bool(_shutil.which("whisper-cli") or _shutil.which("whisper-cpp")
-                           or _shutil.which("whisper"))
-        if not have_engine:
-            try:
-                import faster_whisper  # type: ignore  # noqa: F401
-                have_engine = True
-            except ImportError:
-                pass
-        if not have_engine:
-            die_no_engine("or pass --words with a transcript you already have.", flag="--filler --transcribe")
-        srt_path = os.path.splitext(args.output or default_output(args.input, "tight"))[0] + ".srt"
-        transcribe(args.input, srt_path, None, "base")
-        words = [{"word": w[2], "start": w[0], "end": w[1]} for w in whisper_word_timings(srt_path)]
-        source, engine = f"whisper-srt:{srt_path}", "whisper"
+        # No pre-check for an installed engine here: transcribe_words() probes for one and
+        # raises the same die_no_engine() refusal when there is none. Two places deciding "is
+        # whisper here" is two places to disagree.
+        # The engine is driven with ITS word-timestamp option (whisper.cpp --output-json-full,
+        # faster-whisper word_timestamps=True, openai-whisper --word_timestamps True). An SRT
+        # cannot answer this question: a cue has a start and an end, a word does not.
+        words, engine = transcribe_words(args.input, args.filler_lang if args.filler_lang != "auto" else None)
+        source = f"whisper:{engine}" if engine else "whisper"
         if not words:
-            die("the local engine produced no word-level timings for --filler; re-run whisper with "
-                "word timestamps, or pass --words with a transcript that has them.", kind="input")
+            die(f"{engine or 'the local engine'} ran but produced no word-level timings, so there "
+                "is nothing for --filler to cut on. Some builds do not support word timestamps. "
+                "Re-run that engine yourself with them (whisper.cpp --output-json-full / "
+                "faster-whisper word_timestamps=True / openai-whisper --word_timestamps True) and "
+                "pass the result with --words.", kind="input")
 
     lang = args.filler_lang
     if lang == "auto":

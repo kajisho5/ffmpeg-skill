@@ -36,7 +36,10 @@ workflow turns this heading into the version number._
   disfluencies) and are reachable with `--filler-extra`. New keys `filler` and
   `removed_seconds_total` (silence plus filler); `removed_seconds` is unchanged and still holds
   the silence-only figure. Whisper stays optional for this tool
-  exactly as it is for `caption.py`.
+  exactly as it is for `caption.py`. `--transcribe` drives whichever engine is installed with
+  its own word-timestamp option (whisper.cpp `--output-json-full`, faster-whisper
+  `word_timestamps=True`, openai-whisper `--word_timestamps True`); an engine whose build
+  produces none refuses by name rather than reporting an empty removal as a success.
 - **`batch.py --jobs N|auto`.** Parallel items under one shared `--timeout` budget, capped at
   `min(N, cpu_count, 8)` with the applied value reported. The per-item table keeps its shape and
   its order, and each item's log is flushed in file order. New keys `jobs`, `jobs_requested`,

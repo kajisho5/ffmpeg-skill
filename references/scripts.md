@@ -512,6 +512,13 @@ Three refusals, all `kind: input`, all before any encode:
 - `--filler` with neither `--words` nor `--transcribe` → names both flags.
 - `--transcribe` with no engine on PATH → the same message `caption.py` gives,
   with the three install lines.
+- `--transcribe` where the engine runs but its build produces no word-level
+  timings → names that engine, says some builds do not support word timestamps,
+  and points at `--words`. (`--transcribe` drives whichever engine is installed
+  with *its* word-timestamp option — whisper.cpp `--output-json-full`,
+  faster-whisper `word_timestamps=True`, openai-whisper `--word_timestamps
+  True` — because an SRT cannot answer this: a cue has a start and an end, a
+  word does not. `--words` is the tested path and the one to prefer.)
 - a transcript with segments but no word-level timings → says that cutting on
   segment boundaries would remove whole sentences, and how to re-run whisper.
 

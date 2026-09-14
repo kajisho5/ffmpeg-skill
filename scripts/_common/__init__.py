@@ -85,6 +85,7 @@ from _common.decision import (
 )
 from _common.asr import (
     ASR_ENGINES, ASR_INSTALL_HINT, _asr_run, die_no_engine, parse_srt, transcribe, _transcribe_in,
+    transcribe_words, _words_from_openai_whisper_json, _words_from_whisper_cpp_json,
     whisper_word_timings, write_srt
 )
 from _common.color import (
@@ -211,7 +212,8 @@ __all__ = [
     "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
     "_x264_raw", "_ZWJ",
     "ASR_ENGINES", "ASR_INSTALL_HINT", "_asr_run", "die_no_engine", "parse_srt", "transcribe",
-    "_transcribe_in", "whisper_word_timings", "write_srt",
+    "_transcribe_in", "transcribe_words", "_words_from_openai_whisper_json",
+    "_words_from_whisper_cpp_json", "whisper_word_timings", "write_srt",
     "_atoms", "best_break", "_bare_word", "break_penalty", "_break_spaced", "_cut_penalty", "_fix_orphans",
     "_fix_weak_lines", "_function_words", "FUNCTION_WORDS", "_HYPHENS", "_is_hiragana", "_is_ideograph",
     "_is_kana", "_is_weak_line", "JA_NO_LINE_END", "JA_NO_LINE_START", "JA_PARTICLE_WORDS", "JA_PARTICLES",

@@ -1279,6 +1279,60 @@ class EditingTests(MediaFixtures):
         self.assertIn("\u306a\u3093\u304b", fil["removed_words"])
         self.assertTrue(any("\u306a\u3093\u304b" in w for w in fil["warnings"]))
 
+    def test_filler_transcribe_uses_measured_word_timings(self):
+        """e2e with the engine bridge mocked: --transcribe must reach filler_spans with real
+        per-word start/end pairs. The bridge is mocked because the suite must pass on a machine
+        with no whisper at all -- which is what CI is."""
+        shim = OUT / "asr_shim"
+        shim.mkdir(exist_ok=True)
+        (shim / "sitecustomize.py").write_text(
+            "import sys, os\n"
+            "sys.path.insert(0, os.environ['FFSKILL_SCRIPTS'])\n"
+            "import _common.asr as asr, _common as c\n"
+            "def fake(video, language=None, model='base', audio_stream=0):\n"
+            "    return ([{'word': 'So', 'start': 0.2, 'end': 0.5},\n"
+            "             {'word': 'um', 'start': 0.6, 'end': 0.8},\n"
+            "             {'word': 'this', 'start': 1.0, 'end': 1.3},\n"
+            "             {'word': 'uh', 'start': 2.2, 'end': 2.45}], 'faster-whisper')\n"
+            "asr.transcribe_words = fake\n"
+            "c.transcribe_words = fake\n",
+            encoding="utf-8")
+        env = dict(os.environ, PYTHONPATH=str(shim), FFSKILL_SCRIPTS=str(SCRIPTS))
+        r = sh(sys.executable, SCRIPTS / "silence.py", self._gappy(), "--filler",
+               "--transcribe", "--filler-list", "--json", env=env)
+        fil = json.loads(r.stdout)["filler"]
+        self.assertEqual(fil["engine"], "faster-whisper")
+        self.assertEqual(fil["word_timings"], 4)
+        self.assertEqual(sorted(fil["removed_words"]), ["uh", "um"])
+        for span in fil["removed"]:
+            self.assertLess(span["start"], span["end"])
+
+    def test_filler_transcribe_refuses_when_the_engine_gives_no_word_timings(self):
+        """An engine that runs but whose build has no word timestamps must say exactly that and
+        name --words -- not report an empty removal as a success."""
+        shim = OUT / "asr_shim_empty"
+        shim.mkdir(exist_ok=True)
+        (shim / "sitecustomize.py").write_text(
+            "import sys, os\n"
+            "sys.path.insert(0, os.environ['FFSKILL_SCRIPTS'])\n"
+            "import _common.asr as asr, _common as c\n"
+            "def fake(video, language=None, model='base', audio_stream=0):\n"
+            "    return ([], 'whisper.cpp')\n"
+            "asr.transcribe_words = fake\n"
+            "c.transcribe_words = fake\n",
+            encoding="utf-8")
+        env = dict(os.environ, PYTHONPATH=str(shim), FFSKILL_SCRIPTS=str(SCRIPTS))
+        out = OUT / "filler_nowords.mp4"
+        if out.exists():
+            out.unlink()
+        r = sh(sys.executable, SCRIPTS / "silence.py", self._gappy(), "--filler",
+               "--transcribe", "-o", out, "--json", expect_fail=True, env=env)
+        err = json.loads(r.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("whisper.cpp", err["message"])
+        self.assertIn("--words", err["message"])
+        self.assertFalse(out.exists())
+
     def test_filler_refuses_without_a_transcript(self):
         out = OUT / "filler_refuse.mp4"
         if out.exists():
@@ -1386,6 +1440,38 @@ class FillerSpansTests(unittest.TestCase):
         self.assertNotIn("like", self.D.FILLER_WORDS["en"])
         self.assertNotIn("tipo", self.D.FILLER_WORDS["pt"])
         self.assertIn("like", self.D.FILLER_DISCOURSE_MARKERS["en"])
+
+    def test_whisper_cpp_json_becomes_word_timings(self):
+        """whisper.cpp --output-json-full: transcription[].tokens[] with MILLISECOND offsets,
+        special tokens dropped, and a continuation token glued to the word before it."""
+        import importlib
+        asr = importlib.import_module("_common.asr")
+        doc = OUT / "wcpp.json"
+        doc.write_text(json.dumps({"transcription": [{"tokens": [
+            {"text": "[_BEG_]", "offsets": {"from": 0, "to": 0}},
+            {"text": " So", "offsets": {"from": 200, "to": 500}},
+            {"text": " un", "offsets": {"from": 600, "to": 700}},
+            {"text": "believable", "offsets": {"from": 700, "to": 1100}},
+            {"text": " um", "offsets": {"from": 1200, "to": 1400}},
+            {"text": " broken", "offsets": {}},
+        ]}]}), encoding="utf-8")
+        words = asr._words_from_whisper_cpp_json(str(doc))
+        self.assertEqual([w["word"] for w in words], ["So", "unbelievable", "um"])
+        self.assertAlmostEqual(words[0]["start"], 0.2, places=6)
+        self.assertAlmostEqual(words[1]["end"], 1.1, places=6)      # glued span ends at the tail
+        self.assertEqual(asr._words_from_whisper_cpp_json(str(OUT / "nope.json")), [])
+
+    def test_openai_whisper_json_becomes_word_timings(self):
+        import importlib
+        asr = importlib.import_module("_common.asr")
+        doc = OUT / "owhisper.json"
+        doc.write_text(json.dumps({"segments": [
+            {"words": [{"word": " So", "start": 0.2, "end": 0.5},
+                       {"word": " um", "start": 0.6, "end": 0.8},
+                       {"word": " bad", "start": None, "end": 1.0}]}]}), encoding="utf-8")
+        words = asr._words_from_openai_whisper_json(str(doc))
+        self.assertEqual([w["word"] for w in words], ["So", "um"])
+        self.assertAlmostEqual(words[1]["start"], 0.6, places=6)
 
     def test_filler_spans_is_pure(self):
         import unittest.mock
