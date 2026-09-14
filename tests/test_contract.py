@@ -1158,6 +1158,49 @@ class ContractTests(unittest.TestCase):
 
     # ------------------------------------------------------------------ integration: claims hold at run time
     @unittest.skipIf(platform.system() == "Windows", "fake ffmpeg is a #!/bin/sh script on a POSIX-only PATH shim; not portable to Windows. The claim itself (run() never invokes ffmpeg under --dry-run) is still exercised on Windows by every --dry-run case in tests/test_all.py, just without a shim proving no *other* ffmpeg-shaped binary would have run.")
+    def test_every_1_17_flag_is_reachable_off(self):
+        """Each new 1.17 flag defaults to 1.16's behaviour, or is switched off by one flag.
+
+        The command lines below are the ones `main` builds, and they must still be what these
+        runs plan: `--fit-size off`, `--snap none` (the default), no `--filler`, `--jobs 1` (the
+        default) and no `--cache` are the five ways back.
+        """
+        outdir = self.work / "reach"
+        outdir.mkdir(exist_ok=True)
+
+        def plan(name, *args):
+            proc = tool(name, *args, "--dry-run", "--json", check=False)
+            self.assertEqual(proc.returncode, 0, f"{name}:\n{proc.stderr}")
+            return json.loads(proc.stdout)
+
+        # caption: --fit-size off plans exactly what no flag at all planned before the feature
+        off = plan("caption", self.src, "--text", self.cues, "--fit-size", "off",
+                   "-o", outdir / "c_off.mp4")
+        self.assertEqual(off["caption"]["size_used"], off["caption"]["size_requested"])
+        self.assertEqual(off["caption"]["shrunk"], 0)
+        explicit = plan("caption", self.src, "--text", self.cues, "--size", "24",
+                        "-o", outdir / "c_size.mp4")
+        self.assertEqual(explicit["caption"]["size_used"], 24)
+
+        # cut: --snap defaults to none, and no snap key appears
+        self.assertIsNone(plan("cut", self.src, "--start", "1", "--end", "3",
+                               "-o", outdir / "cut.mp4").get("snap"))
+
+        # silence: no --filler, no filler key, removed_seconds keeps its lone meaning
+        sil = plan("silence", self.src, "-o", outdir / "sil.mp4")
+        self.assertNotIn("filler", sil)
+        self.assertNotIn("removed_seconds_total", sil)
+
+        # render: no --cache, no cache key
+        proj = outdir / "p.json"
+        proj.write_text(json.dumps({"output": str(outdir / "r.mp4"),
+                                    "clips": [{"src": str(self.src), "in": 0, "out": 2}]}),
+                        encoding="utf-8")
+        rendered = plan("render", proj)
+        self.assertIsNone(rendered.get("cache"))
+        self.assertIsNone(rendered.get("snap"))
+        self.assertFalse(any("--snap" in c or "--cache" in c for c in rendered["commands"]))
+
     def test_dry_run_never_runs_ffmpeg_and_writes_nothing(self):
         """A fake ffmpeg first on PATH records every invocation; ffprobe stays real."""
         shim = self.work / "shim"
