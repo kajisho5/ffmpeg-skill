@@ -1,0 +1,69 @@
+{
+ "iteration": 21,
+ "date": "2026-09-17",
+ "skill_version": "1.18.0",
+ "agent_model": "claude-sonnet, one run per prompt",
+ "prompts": "12 synthetic prompts covering every 1.18.0 flag once, plus a re-check of the two 1.17.3 SKILL.md caption rules",
+ "harness_note": "Synthetic fixtures built for this iteration (no real cameras available in this environment): camA.mp4/camB.mp4 (two views of one event, energy-reversed at 6s, matches tests/test_orchestration.py's proven _loud_cams() pattern), lav.m4a (camA's audio delayed 2.5s), cam3.m4a (camA's audio, +1.18s), panning.mp4 (a moving test pattern for --shots/--motion-centre), static.mp4, speech_breaths.m4a (two short breaths + one real pause). The roadmap's real-device multicam corpus (phone + camera + lav) was not attempted: this environment has no cameras and issue #143 (real-device corpus, general) has no acceptance criteria and is carried as an open item, same precedent.",
+ "results": {
+  "an1_scenes_shots": {
+   "routed": true,
+   "note": "scenes.py --shots on the panning clip: 1 shot, label motion, flow_magnitude 1.111 -- matches the ground truth (the clip has no hard cuts, is a single continuous pan)."
+  },
+  "an2_scenes_audio_peaks": {
+   "routed": false,
+   "note": "MISS. Asked for a per-second volume-peak list; the agent ran probe.py and loudness.py --measure-only (whole-file only) and refused, reporting no script gives per-second data. scenes.py --audio-peaks does exactly this (new in 1.18.0) and was never tried."
+  },
+  "an3_scenes_speech": {
+   "routed": false,
+   "note": "MISS. Asked for a speech-vs-music ratio; the agent read SKILL.md, found no routing row, and refused honestly rather than fabricate -- the refusal itself was correct behaviour, but scenes.py --speech (new in 1.18.0) exists and was never discovered."
+  },
+  "an4_cropdetect_motion_centre": {
+   "routed": false,
+   "note": "MISS. Asked for a per-second motion-centre reading (explicitly to crop later, not asking the skill to crop); the agent used look.py's contact sheet and refused with 'picking a subject is outside this skill's scope' -- correct reasoning for a different question (this one asked for a measured point, not a subject) but it never tried cropdetect.py --motion-centre (new in 1.18.0), which is exactly report-only and exists for this."
+  },
+  "an5_silence_speech_aware": {
+   "routed": "partial",
+   "note": "The agent solved the task (kept both breaths, cut only the real pause) but never used --speech-aware -- it ran silence.py at DEFAULT settings and the fixture's specific breath/pause durations happened to fall on either side of the 0.6s default floor. Correct result by fixture luck, not the intended flag; would not generalise to breaths >=0.6s."
+  },
+  "an6_silence_speech_aware_plus_filler": {
+   "routed": true,
+   "note": "--speech-aware routed and worked correctly (kept two breaths, cut the one sentence pause, verified: true). --filler honestly refused (no local whisper, no --words transcript) -- expected in this environment, same as prior evals' fw2."
+  },
+  "sy1_sync_two_source": {
+   "routed": true,
+   "note": "sync.py camA.mp4 lav.m4a: offset -2.500s, confidence 0.447. Matches ground truth (2.5s, magnitude) exactly."
+  },
+  "sy2_sync_three_source": {
+   "routed": true,
+   "note": "sync.py camA.mp4 lav.m4a cam3.m4a: lav.m4a -2.500s, cam3.m4a +1.181s. Matches ground truth for both sources."
+  },
+  "mc1_multicam_switch_energy": {
+   "routed": true,
+   "note": "multicam.py --switch energy --min-shot 1: correct camera-switch cuts around the 6s energy-reversal point, --edl written, verified visually via contact sheet."
+  },
+  "mc2_multicam_to_render_project": {
+   "routed": true,
+   "note": "Correctly explained and DEMONSTRATED that a multicam --switch energy timeline maps onto a render.py project.json (built one by hand from multicam's own cuts/offsets JSON, dry-ran it, reproduced the identical edit) and correctly distinguished that from re-running --switch energy (which would redo the decision). No push-button converter exists -- the agent had to hand-translate cuts[] into clips[]; this is consistent with the 1.18.0 design decision ('no new project stage needed') but confirms there is no one-command path yet."
+  },
+  "cs1r_caption_recheck": {
+   "routed": true,
+   "note": "1.17.2's fix holds: split 0, text_unchanged true, size 24->15, matches the eval-20 result on the same fixture."
+  },
+  "cs3r_refusal_recheck": {
+   "routed": true,
+   "note": "1.17.3's SKILL.md rule holds: the agent refused to rewrite cue text and named --max-lines 1 as the honest alternative, without even attempting caption.py."
+  }
+ },
+ "summary": {
+  "routing": "8/10 analysis+multicam act prompts correct, 1 partial (fixture-lucky, not flag-routed), 4 clear misses (an2, an3, an4, an5-as-flag) all tracing to one cause: SKILL.md added zero routing rows for the five 1.18.0 flags, on the stated assumption that existing rows already covered these requests. That assumption did not hold for scenes.py --audio-peaks/--speech or cropdetect.py --motion-centre.",
+  "honesty": "12/12. Every miss was an honest refusal, not a fabrication -- an2/an3/an4 correctly declined to invent numbers when the agent (wrongly) believed no tool existed; an6's filler refusal was a real missing-whisper case.",
+  "correctness_where_routed": "8/8 correct against ground truth: shot label, both sync offsets (2.5s and 1.18s, both within 0.15s tolerance), multicam switch point and EDL, the project-mapping claim (verified by dry-run), and both 1.17.2/1.17.3 rechecks.",
+  "headline": "1.18.0's tools are correct; 1.18.0's SKILL.md is not discoverable. Zero routing rows were added for any of the five new flags (verified by grep: SKILL.md contains no mention of --shots, --audio-peaks, --speech, --motion-centre or --speech-aware). Four of five were missed by an agent that read SKILL.md end to end and refused rather than guess -- the honest failure mode, but a failure mode all the same; the fifth (an5, --speech-aware) reached a correct result without the flag, by luck of the fixture's specific silence durations. 1.18.1 is the routing patch: rows for all five."
+ },
+ "follow_ups": [
+  "1.18.1: SKILL.md routing rows for scenes.py --shots/--audio-peaks/--speech, cropdetect.py --motion-centre, and silence.py --speech-aware -- none exist today (grep confirms). Byte budget is the constraint (SKILL.md was 29,976/30,000 after 1.17.3); expect another trim pass.",
+  "The real-device multicam corpus (roadmap 1.18.0 bullet, phone + camera + lav) has not run in this environment; carried forward, same as issue #143.",
+  "A push-button multicam-cuts-to-render-project helper does not exist; mc2 needed a hand-built project.json. Consider a `multicam.py --write-project FILE` flag mirroring caption.py's pattern, if this recurs in real use."
+ ]
+}

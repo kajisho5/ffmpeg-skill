@@ -17,17 +17,16 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.18.0** — measured analysis and multicam at scale, shipped and
-not yet evaluated (eval 21 covers the analysis/multicam prompts and re-runs `cs1`/`cs3` for the
-1.17.3 SKILL.md lines). **1.17.2** is the last evaluated version: **eval 20**
-(`evals/results/iteration-20.json`) re-ran the eight caption prompts of eval 19, six of them three
-times, and graded them on the contact sheet rather than on the fit stats. The one-word-per-line
-stacking of evals 17, 18 and 19 is gone in 20/20 runs; the caption Style's side margins are the
-platform's horizontal safe zone and the fitter's numbers are what the frame shows (see the 1.17.2
-section). Two agent behaviours remained — rewriting the user's captions (`cs3`, four iterations)
-and raising `max_lines` to dodge a shrink — closed in 1.17.3's SKILL.md lines; the word a
-typesetter cannot break inside is a 1.18.0+ design item (see below). Everything after 1.18.0 is
-planned.
+The released version today is **1.18.1** — SKILL.md routing rows for the five 1.18.0 flags, no
+script changes. **Eval 21** (`evals/results/iteration-21.json`, 12 prompts) graded 1.18.0 the day
+it shipped and found the tools correct but the routing rows missing: agents that read SKILL.md
+end to end refused 4 of 5 new flags honestly rather than guess (`scenes.py --audio-peaks`/
+`--speech`, `cropdetect.py --motion-centre` — confirmed by grep, zero mentions of any 1.18.0 flag
+existed), and the fifth (`silence.py --speech-aware`) reached a correct result without the flag,
+by luck of one fixture's specific silence durations. Where routed, every result matched ground
+truth: both sync offsets, the shot label, the multicam switch point and its render-project
+mapping, and both 1.17.2/1.17.3 rechecks. 1.18.1 is the fix (see the 1.18.1 section); it has not
+been re-evaluated. Everything after 1.18.1 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -47,7 +46,8 @@ planned.
 | 1.17.2 | shipped, evaluated (eval 20) | eval 20 at 1.17.2 (`iteration-20.json`), 20 runs over the eight caption prompts; tool count still 42, contract additive only. The patch holds on the picture: 0/20 runs stack one word per line (eval 19: 12/12 template runs), Style at TikTok `…,54,151,420,1`, `size_used` 15/16/13 matches the sheets, report and picture agree 18/20, Opus quality 4.25 (3.65). Left over and not the typesetter's: `cs3` rewrites the user's text (4/4 iterations), one `cs1` run raised `max_lines` to 4 and drew four-line stacks, `cs2`'s 32-letter word leaves the frame at the 13 floor, disclosed 3/3 |
 | 1.17.3 | shipped, eval pending | two SKILL.md rules from eval 20, no code: the cue text is burned as written (never rewrite, shorten or paraphrase it, even when asked to "make it fit" — `cs3`, 4/4 iterations), and on a vertical delivery keep the template's `--max-lines` and let the size drop (rep3/cs1 raised it to 4 and drew four-line stacks). SKILL.md trimmed elsewhere to stay under 30,000 bytes; tool count still 42, contract unchanged |
 | refactor after 1.17.3 | shipped, eval pending | `_common/text.py` (1,655 lines, 111 top-level definitions) split into `fonts.py`, `emoji.py`, `drawtext.py` and `wrap.py`, with `text.py` a re-export shim; contract + MCP snapshots and every `--help` byte-identical, no behaviour change; 596/596 tests |
-| 1.18.0 | shipped, eval pending | `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware` (composes with 1.17's `--filler` through one `keep_ranges()`), `sync.py` N≥1 sources (the `second` positional kept exactly, additive `more_sources`), `multicam.py --switch energy`/`--edl`/`--min-shot`; tool count still 42, contract and MCP snapshots additive only, SKILL.md unchanged (29,976 bytes) — every reported number is measured, none is a judgement. 1109/1109 tests |
+| 1.18.0 | shipped, evaluated (eval 21) | `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware` (composes with 1.17's `--filler` through one `keep_ranges()`), `sync.py` N≥1 sources (the `second` positional kept exactly, additive `more_sources`), `multicam.py --switch energy`/`--edl`/`--min-shot`; tool count still 42, contract and MCP snapshots additive only. 1109/1109 tests. Eval 21 at this version found every tool correct and none discoverable — SKILL.md named zero of the five flags. 1.18.1 is the fix |
+| 1.18.1 | shipped, eval pending | routing rows for `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware`, and an extended `multicam.py` row for `--switch energy` — no script changes. SKILL.md trimmed elsewhere (same style as 1.17.3) to stay under 30,000 bytes: 29,998 |
 | 1.19.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -439,7 +439,7 @@ came out byte-identical, as did `--help` for all 42 tools.
   automatic) and a few parentheticals to stay under the 30,000-byte budget. Eval 21 at 1.18.0
   re-runs cs1 and cs3 to check both lines land.
 
-## 1.18.0 — measured analysis and multicam at scale (still no judgement) (shipped, eval pending)
+## 1.18.0 — measured analysis and multicam at scale (still no judgement) (shipped, evaluated, eval 21)
 
 - `scenes.py --shots` labels each shot static / pan / motion by measured optical flow;
   `--audio-peaks` and `--speech` (speech-vs-music energy ratio) as separate lists.
@@ -463,10 +463,36 @@ dests directly into the MCP `inputSchema`, so a rename would have broken the CLI
 guarantee) — a new optional `more_sources` positional carries the extra cameras/recorders instead,
 and a 1-source run keeps the original 2-source JSON shape with the same numbers additively
 available under `sources`. A multicam `--switch energy` timeline needed no new `render.py` project
-stage — it maps onto the existing `clips[]` array. Eval 21 (this bullet's last line) and the
-real-device corpus have not run yet. The caption word-too-wide-for-the-frame item from 1.17.2's
-eval (`cs2`, a break-at-the-column-edge escape for the 1.16.1 keep-the-run-whole rule) is still
-unaddressed and is not part of this section — it stays an open design item for a future release.
+stage — it maps onto the existing `clips[]` array. The caption word-too-wide-for-the-frame item
+from 1.17.2's eval (`cs2`, a break-at-the-column-edge escape for the 1.16.1 keep-the-run-whole
+rule) is still unaddressed and is not part of this section — it stays an open design item for a
+future release.
+
+- **Eval 21 (`iteration-21.json`) graded it the day it shipped**: 12 synthetic prompts (no real
+  cameras or footage available in this environment; the roadmap's real-device multicam corpus has
+  not run — carried forward, same as issue #143), one per new flag plus a re-check of `cs1`/`cs3`.
+  The tools measured correctly every time they were reached: both sync offsets (2.5 s and 1.18 s,
+  both within 0.15 s), the shot label on a panning clip, the multicam switch point and its
+  render-project mapping (verified by dry-running a hand-built project.json against multicam's own
+  cuts), and both 1.17.2/1.17.3 rechecks. What was not reached: `scenes.py --audio-peaks` and
+  `--speech`, `cropdetect.py --motion-centre` were each refused by an agent that read SKILL.md end
+  to end and, correctly finding no routing row, declined to guess rather than fabricate a number —
+  the honest failure mode, but a failure mode all the same. `silence.py --speech-aware` reached a
+  correct result without the flag, by luck of one fixture's specific silence durations, which would
+  not generalise. Grep confirmed the cause: SKILL.md named none of the five 1.18.0 flags anywhere.
+  1.18.1 is the fix.
+
+## 1.18.1 — SKILL.md routing for the five 1.18.0 flags (shipped, eval pending)
+
+- **Done.** Routing rows added for `scenes.py --shots`/`--audio-peaks`/`--speech`,
+  `cropdetect.py --motion-centre`, `silence.py --speech-aware`, and the existing `multicam.py`
+  row extended for `--switch energy`. No script changes; `tests.test_contract -k skill` and the
+  orchestration SKILL.md size test pass. SKILL.md trimmed elsewhere (a parenthetical tightened
+  here, a clause shortened there — the same style 1.17.3 used, not a change of meaning) to make
+  room under the 30,000-byte budget: 29,998 bytes.
+- **Not yet evaluated.** A future eval should re-run the four missed 1.18.0 prompts (an2/an3/an4
+  in eval 21's fixture set) plus `an5` to confirm `--speech-aware` is now found by name rather than
+  reached by fixture luck.
 
 ## 1.19.0 — observability, portability, a smaller MCP surface (planned)
 
