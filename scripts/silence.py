@@ -263,6 +263,8 @@ def main() -> int:
     breaths: List[Tuple[float, float]] = []
     if args.speech_aware:
         silences, breaths = speech_aware_silences(args.input, args.threshold, args.min_silence)
+    elif args.filler:
+        silences = []  # --filler alone: remove only the filler-word spans, not generic dead air
     else:
         silences = detect(args.input, args.threshold, args.min_silence)
     filler_info, filler_ranges = resolve_filler(args, meta) if args.filler else (None, [])
@@ -313,8 +315,13 @@ def main() -> int:
         die(f"{len(keeps)} keep ranges is above --max-cuts {args.max_cuts}: the filter graph grows "
             "with every range and a graph this size is slow and fragile. Raise --max-cuts if you "
             "mean it, or use --min-silence/--filler-pad to merge the short ones.", kind="input")
-    info(f"{len(silences)} silences, keeping {len(keeps)} ranges: {kept:.2f}s of {duration:.2f}s (removing {removed:.2f}s)")
-    if not silences and not (STATE.dry_run and not os.path.exists(args.input)):
+    filler_only = args.filler and not args.speech_aware
+    if filler_only:
+        info(f"--filler only (no --speech-aware): skipping generic silence detection, "
+             f"keeping {len(keeps)} range(s): {kept:.2f}s of {duration:.2f}s (removing {removed:.2f}s, filler only)")
+    else:
+        info(f"{len(silences)} silences, keeping {len(keeps)} ranges: {kept:.2f}s of {duration:.2f}s (removing {removed:.2f}s)")
+    if not silences and not filler_only and not (STATE.dry_run and not os.path.exists(args.input)):
         # Nothing under the threshold is a valid result, not a failure -- but an agent that only
         # sees "0 silences" tends to reach for raw ffmpeg next. Say what the floor actually is and
         # what threshold would bite, so the retry is a flag change, not a workaround.

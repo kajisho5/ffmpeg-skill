@@ -1184,8 +1184,13 @@ class EditingTests(MediaFixtures):
 
     def test_filler_removes_only_the_timed_filler_words(self):
         out = OUT / "filler_out.mp4"
+        # --margin 0: the filler words in _words_json() are ~0.2-0.3s wide with a 0.02s pad, and
+        # the default 0.15s margin trims each side of *every* removal span (silence or filler
+        # alike) -- with no generic silence to also cut, a margin comparable to the span itself
+        # would swallow it. 0 isolates what this test is checking: filler-only removal.
         data = json.loads(script("silence.py", self._gappy(), "--filler",
-                                 "--words", self._words_json(), "-o", out, "--json").stdout)
+                                 "--words", self._words_json(), "--margin", "0",
+                                 "-o", out, "--json").stdout)
         fil = data["filler"]
         self.assertEqual(fil["removed_count"], 3)
         self.assertEqual(fil["lang"], "en")
@@ -1194,6 +1199,9 @@ class EditingTests(MediaFixtures):
         self.assertEqual(sorted(fil["removed_words"]), ["erm", "uh", "um"])
         self.assertIn("removed_seconds_total", data)
         self.assertGreater(fil["removed_seconds"], 0)
+        # --filler alone (no --speech-aware) removes only the filler spans: no generic silence
+        self.assertEqual(data["silences"], [])
+        self.assertAlmostEqual(data["removed_seconds"], 0.0, delta=0.01)
         # "umbrella" is not "um": whole tokens only
         self.assertNotIn("umbrella", fil["removed_words"])
         m = probe(str(out))
@@ -1209,34 +1217,45 @@ class EditingTests(MediaFixtures):
                "-t", "10", talk)
         return talk
 
-    def test_filler_inside_a_silence_still_removes_the_silence(self):
-        """The regression: filler spans were merged only among themselves, so a span nested
-        inside a detected silence rewound keep_ranges' cursor and handed the silence back.
-        Adding --filler made the tool remove LESS than it did without it."""
+    def test_filler_alone_does_not_jump_cut_unrelated_silence(self):
+        """The 1.18.5 regression (fw1/fw3): --filler without --speech-aware must remove ONLY the
+        timed filler-word spans -- not every ordinary silence gap in the file. Previously the
+        `else: silences = detect(...)` branch ran unconditionally, so a plain --filler run also
+        jump-cut the unrelated 4s dead-air gap in this fixture, even though only the filler word
+        was asked for. `silences` must now be empty and `removed_seconds` (the silence-only
+        figure) must be ~0; only `removed_seconds_total` (which includes the filler span) may be
+        nonzero."""
         talk = self._talk_with_a_gap()
         words = OUT / "words_inside.json"
+        # the filler word sits INSIDE the unrelated 4s dead-air gap (2-6s) -- the worst case for
+        # the old bug, since the filler span and the silence gap overlap
         words.write_text(json.dumps({"language": "en", "segments": [
             {"words": [{"word": "um", "start": 3.0, "end": 3.2}]}]}), encoding="utf-8")
         plain = json.loads(script("silence.py", talk, "--list", "--json").stdout)
         withf = json.loads(script("silence.py", talk, "--filler", "--filler-list",
-                                  "--words", words, "--json").stdout)
-        self.assertEqual(plain["silences"], withf["silences"])
-        # --filler can only ever remove at least as much as the same run without it
-        self.assertGreaterEqual(withf["removed_seconds_total"], plain["removed_seconds"] - 0.01)
-        self.assertGreater(withf["removed_seconds_total"], 3.0)
+                                  "--words", words, "--margin", "0", "--json").stdout)
+        # the plain run (no --filler) does cut the 4s dead-air gap, as always
+        self.assertGreater(plain["removed_seconds"], 3.0)
+        # --filler alone runs no generic silence detection at all
+        self.assertEqual(withf["silences"], [])
+        self.assertAlmostEqual(withf["removed_seconds"], 0.0, delta=0.01)
+        # only the filler word's own (padded) span is removed -- far less than the 4s gap
+        self.assertGreater(withf["removed_seconds_total"], 0.0)
+        self.assertLess(withf["removed_seconds_total"], 1.0)
 
     def test_removed_seconds_keeps_its_silence_only_meaning(self):
-        """A caller reading `removed_seconds` since 1.0 asked how much dead air went. --filler
-        must not quietly make it mean something else; `removed_seconds_total` is the new figure."""
+        """A caller reading `removed_seconds` since 1.0 asked how much dead air went.
+        `removed_seconds_total` is the additive figure that also covers filler time. With
+        --filler alone (no --speech-aware) no dead air is removed at all, so `removed_seconds`
+        is 0 and everything reported comes from `removed_seconds_total`."""
         talk = self._talk_with_a_gap()
         words = OUT / "words_outside.json"
-        # a filler word in the SPEECH, well away from the silence, so the two figures differ
+        # a filler word in the SPEECH, well away from the silence gap
         words.write_text(json.dumps({"language": "en", "segments": [
             {"words": [{"word": "um", "start": 0.5, "end": 0.9}]}]}), encoding="utf-8")
-        plain = json.loads(script("silence.py", talk, "--list", "--json").stdout)
         withf = json.loads(script("silence.py", talk, "--filler", "--filler-list",
                                   "--words", words, "--json").stdout)
-        self.assertAlmostEqual(withf["removed_seconds"], plain["removed_seconds"], delta=0.01)
+        self.assertAlmostEqual(withf["removed_seconds"], 0.0, delta=0.01)
         self.assertGreater(withf["removed_seconds_total"], withf["removed_seconds"])
 
     def test_keep_ranges_is_monotone_with_a_nested_span(self):
