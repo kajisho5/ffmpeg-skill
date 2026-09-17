@@ -17,16 +17,13 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.18.1** — SKILL.md routing rows for the five 1.18.0 flags, no
-script changes. **Eval 21** (`evals/results/iteration-21.json`, 12 prompts) graded 1.18.0 the day
-it shipped and found the tools correct but the routing rows missing: agents that read SKILL.md
-end to end refused 4 of 5 new flags honestly rather than guess (`scenes.py --audio-peaks`/
-`--speech`, `cropdetect.py --motion-centre` — confirmed by grep, zero mentions of any 1.18.0 flag
-existed), and the fifth (`silence.py --speech-aware`) reached a correct result without the flag,
-by luck of one fixture's specific silence durations. Where routed, every result matched ground
-truth: both sync offsets, the shot label, the multicam switch point and its render-project
-mapping, and both 1.17.2/1.17.3 rechecks. 1.18.1 is the fix (see the 1.18.1 section); it has not
-been re-evaluated. Everything after 1.18.1 is planned.
+The released version today is **1.18.3** — the default MCP `tools/list` is the core 12, with the
+full 42 reachable through `FFMPEG_SKILL_MCP_FULL=1`; no CLI/MCP argument changed. **Eval 22**
+(`evals/results/iteration-22.json`, 14 runs) re-checked 1.18.1's routing rows against fresh
+symptom-only prompts and re-ran `cs1`/`cs3` after 1.18.2/1.18.3: 7 of 8 new 1.18.0-flag prompts
+routed correctly without the flag being named (up from eval 21's 4/9 at 1.18.0's own release),
+and `cs3` no longer rewrites the user's cue text in any of three runs — the 1.17.3 fix holds
+through two further releases. Everything after 1.18.3 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -47,7 +44,9 @@ been re-evaluated. Everything after 1.18.1 is planned.
 | 1.17.3 | shipped, eval pending | two SKILL.md rules from eval 20, no code: the cue text is burned as written (never rewrite, shorten or paraphrase it, even when asked to "make it fit" — `cs3`, 4/4 iterations), and on a vertical delivery keep the template's `--max-lines` and let the size drop (rep3/cs1 raised it to 4 and drew four-line stacks). SKILL.md trimmed elsewhere to stay under 30,000 bytes; tool count still 42, contract unchanged |
 | refactor after 1.17.3 | shipped, eval pending | `_common/text.py` (1,655 lines, 111 top-level definitions) split into `fonts.py`, `emoji.py`, `drawtext.py` and `wrap.py`, with `text.py` a re-export shim; contract + MCP snapshots and every `--help` byte-identical, no behaviour change; 596/596 tests |
 | 1.18.0 | shipped, evaluated (eval 21) | `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware` (composes with 1.17's `--filler` through one `keep_ranges()`), `sync.py` N≥1 sources (the `second` positional kept exactly, additive `more_sources`), `multicam.py --switch energy`/`--edl`/`--min-shot`; tool count still 42, contract and MCP snapshots additive only. 1109/1109 tests. Eval 21 at this version found every tool correct and none discoverable — SKILL.md named zero of the five flags. 1.18.1 is the fix |
-| 1.18.1 | shipped, eval pending | routing rows for `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware`, and an extended `multicam.py` row for `--switch energy` — no script changes. SKILL.md trimmed elsewhere (same style as 1.17.3) to stay under 30,000 bytes: 29,998 |
+| 1.18.1 | shipped, evaluated (eval 22) | routing rows for `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware`, and an extended `multicam.py` row for `--switch energy` — no script changes. SKILL.md trimmed elsewhere (same style as 1.17.3) to stay under 30,000 bytes: 29,998. `CHANGELOG.md`'s caption side-margin write-up had also been left under the `1.17.1` heading instead of `1.17.2`, where that behaviour (#239) actually shipped; corrected, docs-only, no version bump |
+| 1.18.2 | shipped, evaluated (eval 22) | README's tool table named none of the five 1.18.0 flags or `sync.py`'s additive extra-source positionals or `multicam.py --switch energy`; added the same one-liner facts already in SKILL.md since 1.18.1. No script changes |
+| 1.18.3 | shipped, evaluated (eval 22) | MCP `tools/list` defaults to the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`, chosen from eval 17-20's `expect`-field frequency), opt-in to the full 42 via `FFMPEG_SKILL_MCP_FULL=1`; every tool stays callable by name through `tools/call` either way, `contract --json` still describes all 42. Tool count still 42, CLI/MCP argument names unchanged |
 | 1.19.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -482,7 +481,7 @@ future release.
   not generalise. Grep confirmed the cause: SKILL.md named none of the five 1.18.0 flags anywhere.
   1.18.1 is the fix.
 
-## 1.18.1 — SKILL.md routing for the five 1.18.0 flags (shipped, eval pending)
+## 1.18.1 — SKILL.md routing for the five 1.18.0 flags (shipped, evaluated, eval 22)
 
 - **Done.** Routing rows added for `scenes.py --shots`/`--audio-peaks`/`--speech`,
   `cropdetect.py --motion-centre`, `silence.py --speech-aware`, and the existing `multicam.py`
@@ -490,11 +489,37 @@ future release.
   orchestration SKILL.md size test pass. SKILL.md trimmed elsewhere (a parenthetical tightened
   here, a clause shortened there — the same style 1.17.3 used, not a change of meaning) to make
   room under the 30,000-byte budget: 29,998 bytes.
-- **Not yet evaluated.** A future eval should re-run the four missed 1.18.0 prompts (an2/an3/an4
-  in eval 21's fixture set) plus `an5` to confirm `--speech-aware` is now found by name rather than
-  reached by fixture luck.
+- **CHANGELOG.md attribution.** The caption side-margin write-up had been left under the
+  `1.17.1` heading; it moved to `1.17.2`, where that behaviour (#239) actually shipped.
+  Docs-only, no version bump.
+- **Evaluated.** Eval 22 (`evals/results/iteration-22.json`) wrote eight new symptom-only
+  prompts for the five 1.18.0 flags, naming no flag: 7/8 routed correctly on the first try
+  (`scenes.py --shots`, `cropdetect.py --motion-centre`, `silence.py --speech-aware`, `sync.py`'s
+  N-source form, `multicam.py --switch energy`, plus Japanese and Spanish variants of two of
+  them), against eval 21's 4/9 at 1.18.0's own release. The eighth (`--filler` composed with
+  `--speech-aware`) is a partial for a content reason, not a routing miss — see follow-ups.
 
-## 1.19.0 — observability, portability, a smaller MCP surface (planned)
+## 1.18.2 — README routing for the five 1.18.0 flags (shipped, evaluated, eval 22)
+
+- **Done.** SKILL.md already carried the routing rows from 1.18.1; README's own tool table named
+  none of the same five flags, `sync.py`'s additive extra-source positionals, or `multicam.py
+  --switch energy`. Added the identical one-liner facts to README, matching its existing style.
+  No script changes.
+- **Evaluated.** Covered by eval 22 alongside 1.18.1 — see above.
+
+## 1.18.3 — MCP default tools/list is the core 12 (shipped, evaluated, eval 22)
+
+- **Done.** `docs/design-decisions.md`'s P1-7 decision shipped: `mcp/server.py`'s `tools/list`
+  now defaults to `scripts/_contract.py::MCP_CORE_TOOLS` — `render`, `look`, `caption`, `export`,
+  `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe` — chosen from eval
+  17-20's `expect`-field frequency, not taste. `FFMPEG_SKILL_MCP_FULL=1` opts back into all 42,
+  unchanged from prior behaviour; every tool stays callable by name through `tools/call`
+  regardless, and `contract --json` still documents all 42. Tool count still 42; no CLI/MCP
+  argument renamed or removed.
+- **Evaluated.** Eval 22 re-ran `cs1`/`cs3` (x3 each) on the tree carrying this change to confirm
+  the caption-honesty fixes (1.17.2/1.17.3) still hold after it: they do, 6/6.
+
+## 1.19.0 — observability, portability (planned)
 
 - `--trace FILE` (common flag): one JSON line per ffmpeg run with wall time, encode fps,
   speed, exit code, bytes written; `result_v2.metrics` carries the same for the whole tool.
@@ -510,12 +535,6 @@ future release.
 - `--hwaccel auto` (opt-in): videotoolbox / vaapi / nvenc for previews (`--fast`) only,
   never for the final encode unless `--hwaccel final` is given, with the encoder named in the
   result so a difference is traceable.
-- **MCP: core 12 tools, the rest lazily.** A 42-tool `tools/list` costs a client's context on
-  every session for tools most sessions never call. The default listing becomes the core 12
-  (`probe`, `cut`, `join`, `fit`, `caption`, `audio`, `loudness`, `export`, `check`, `look`,
-  `render`, `doctor`/`contract`); the other 30 stay reachable and are fetched through the
-  contract on demand. The contract itself still describes all 42 — nothing is removed from the
-  surface, only from the default listing.
 - Eval 20 on the Windows and macOS runners; it also grades whether agents quote the metrics
   rather than re-probe.
 
