@@ -2410,6 +2410,12 @@ class GraphicsSliceOverlongTests(unittest.TestCase):
         text = re.sub(r"\{[^}]*\}", "", text)  # strip the leading {\an5\pos(...)} override block
         return text.split("\\N")
 
+    def _skip_without(self, script_code):
+        from _common import script_font_status
+        if script_font_status(script_code) != "available":
+            raise unittest.SkipTest("no font on this machine covers %r; tests never install fonts"
+                                    % script_code)
+
     def test_overlong_word_no_longer_clips_a_hook_title(self):
         """The same 32-letter Spanish word from caption's cs2 fixture, with no break point, drawn
         as a --template hook --title at a scale where it used to be kept whole and clip past the
@@ -2434,6 +2440,7 @@ class GraphicsSliceOverlongTests(unittest.TestCase):
         """A short-enough-to-fit Thai phrase with no natural break point must come back as one
         unbroken line -- the escape hatch is only reachable when an atom does NOT fit alone, and
         this must hold through graphics.py's `wrapped()` specifically, not just wrap.py itself."""
+        self._skip_without("th")
         thai = "สวัสดีชาวโลก"
         out = OUT / "gfx_slice_thai.mp4"
         doc = json.loads(script("graphics.py", self.src, "--template", "hook", "--title", thai,
@@ -2445,6 +2452,7 @@ class GraphicsSliceOverlongTests(unittest.TestCase):
     def test_fitting_katakana_run_stays_unbroken_through_graphics_wrapped(self):
         """A short-enough-to-fit katakana run with no natural break point must also come back as
         one unbroken atom, unchanged, through graphics.py's `wrapped()`."""
+        self._skip_without("ja")
         kata = "コンピューター"
         out = OUT / "gfx_slice_kata.mp4"
         doc = json.loads(script("graphics.py", self.src, "--template", "hook", "--title", kata,
