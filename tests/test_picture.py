@@ -2383,6 +2383,77 @@ class EmojiTests(unittest.TestCase):
         self.assertIn("A \\{b\\} c \\ d", dialogue)
 
 
+class GraphicsSliceOverlongTests(unittest.TestCase):
+    """graphics.py's own `wrapped()` helper (used by lower-third, title, sticker, hook and meme
+    labels) now turns on the same `slice_overlong` escape hatch caption.py's burn path turned on
+    in 1.18.4, so a single unbreakable overlong atom drawn through a template no longer renders
+    past the frame's safe width."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "gfx_src.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=f=440",
+               "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", cls.src)
+
+    def _dialogue_lines(self, doc):
+        ass = Path(doc["ass"]).read_text(encoding="utf-8-sig")
+        dialogue = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
+        text = dialogue.split(",", 9)[-1]
+        text = re.sub(r"\{[^}]*\}", "", text)  # strip the leading {\an5\pos(...)} override block
+        return text.split("\\N")
+
+    def test_overlong_word_no_longer_clips_a_hook_title(self):
+        """The same 32-letter Spanish word from caption's cs2 fixture, with no break point, drawn
+        as a --template hook --title at a scale where it used to be kept whole and clip past the
+        frame's safe width. Every produced line must now measure within the column."""
+        from _common import text_width_em
+        word = "Supercalifragilísticoespialidoso"
+        out = OUT / "gfx_slice_hook.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "hook", "--title", word,
+                                "--scale", "2", "--text-render", "ass", "-o", out, "--json").stdout)
+        base = min(640, 360) * 2.0
+        h1 = int(base * 0.085)
+        max_em = (640 * 0.9) / h1  # SAFE_WIDTH_FRACTION default
+        lines = self._dialogue_lines(doc)
+        self.assertGreater(len(lines), 1, "the word should have been sliced into more than one line")
+        for line in lines:
+            self.assertLessEqual(text_width_em(line), max_em + 1e-6, lines)
+        # no character was added, dropped or reordered
+        self.assertEqual("".join(lines), word)
+        self.assertEqual(doc.get("broken_inside_word"), 1, doc)
+
+    def test_fitting_thai_phrase_stays_unbroken_through_graphics_wrapped(self):
+        """A short-enough-to-fit Thai phrase with no natural break point must come back as one
+        unbroken line -- the escape hatch is only reachable when an atom does NOT fit alone, and
+        this must hold through graphics.py's `wrapped()` specifically, not just wrap.py itself."""
+        thai = "สวัสดีชาวโลก"
+        out = OUT / "gfx_slice_thai.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "hook", "--title", thai,
+                                "--text-render", "ass", "-o", out, "--json").stdout)
+        lines = self._dialogue_lines(doc)
+        self.assertEqual(lines, [thai], lines)
+        self.assertNotIn("broken_inside_word", doc)
+
+    def test_fitting_katakana_run_stays_unbroken_through_graphics_wrapped(self):
+        """A short-enough-to-fit katakana run with no natural break point must also come back as
+        one unbroken atom, unchanged, through graphics.py's `wrapped()`."""
+        kata = "コンピューター"
+        out = OUT / "gfx_slice_kata.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "hook", "--title", kata,
+                                "--text-render", "ass", "-o", out, "--json").stdout)
+        lines = self._dialogue_lines(doc)
+        self.assertEqual(lines, [kata], lines)
+        self.assertNotIn("broken_inside_word", doc)
+
+
 class ShapingTests(unittest.TestCase):
     """1.15: drawtext does bidi and Arabic joining on a fribidi build but never reorders or
     re-clusters. graphics.py routes what it cannot shape through libass; overlay.py refuses."""

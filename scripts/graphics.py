@@ -260,6 +260,8 @@ def main() -> int:
         usable = W - left - right - 2 * pad
         return max(0.1, min(SAFE_WIDTH_FRACTION, usable / float(W))) if W else SAFE_WIDTH_FRACTION
 
+    sliced_atoms: List[int] = []
+
     def wrapped(text, size_px, frac=SAFE_WIDTH_FRACTION):
         """A label broken to the frame's safe width (1.16).
 
@@ -268,6 +270,12 @@ def main() -> int:
         the breaks in, at the same measured width and by the same four phrase rules caption.py
         uses. A label that already fits comes back unchanged, which is why this is additive: the
         only text it touches is text that used to run off the edge of the frame.
+
+        `slice_overlong=True` matches caption.py's burn path (1.18.4): a single atom that is
+        still wider than the column even alone -- a long hashtag/URL/name with no break point --
+        is hard-sliced at the column's edge (preferring an existing hyphen) rather than left to
+        render past the frame. An atom that already fits is never touched, so a fitting Thai
+        phrase or katakana run comes through exactly as before.
         """
         text = str(text or "")
         if not text or not size_px:
@@ -277,7 +285,8 @@ def main() -> int:
             return text
         out = []
         for para in text.split("\n"):
-            out.extend(wrap_text(para, max_em, mode=args.wrap, lang=args.lang) if para.strip() else [para])
+            out.extend(wrap_text(para, max_em, mode=args.wrap, lang=args.lang,
+                                  slice_overlong=True, sliced=sliced_atoms) if para.strip() else [para])
         return "\n".join(out)
 
     def add_text(text, drawtext, *, target=None, **el):
@@ -587,6 +596,8 @@ def main() -> int:
         extra["ass"] = ass_path
     if emoji_result:
         extra["emoji"] = emoji_result
+    if sliced_atoms:
+        extra["broken_inside_word"] = len(sliced_atoms)
     emit(output, **extra)
     return 0
 
