@@ -761,7 +761,8 @@
    "quality",
    "switch",
    "timeout",
-   "width"
+   "width",
+   "write_project"
   ],
   "required": []
  },

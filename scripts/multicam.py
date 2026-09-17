@@ -26,6 +26,7 @@ Examples:
   python3 multicam.py camA.mp4 camB.mp4 --auto 8 -o edit.mp4              # alternate cameras every 8 s
 """
 import argparse
+import json
 import math
 import sys
 from typing import Dict, List, Tuple
@@ -128,6 +129,13 @@ def main() -> int:
     ap.add_argument("--edl", help="write the resulting cut list to this file, one START-END per line "
                                   "(cut.py --segments format); the camera index for each cut is in "
                                   "the JSON `cuts` field alongside it")
+    ap.add_argument("--write-project", help="also write a render.py-compatible project JSON to this "
+                                            "file, reproducing the exact same cut decision: one "
+                                            "clips[] entry per cut, naming that cut's own camera "
+                                            "file with in/out on THAT camera's timeline (the "
+                                            "reference cut shifted by its measured offset). Running "
+                                            "render.py on it reproduces this same edit; the combined "
+                                            "output above is still written as usual.")
     ap.add_argument("--audio", type=int, default=0, help="input index to take audio from (default 0 = reference)")
     ap.add_argument("--offsets-only", action="store_true", help="print the measured offsets and exit")
     ap.add_argument("--max-offset", type=float, default=30.0)
@@ -260,6 +268,7 @@ def main() -> int:
         cmd += ["-i", p]
     parts: List[str] = []
     labels: List[str] = []
+    project_clips: List[Dict] = []
     for i, (s, e, c) in enumerate(filled):
         # reference time t maps to source time (t - offset_c) * ratio_c
         src_s = (s - offsets[c]) * ratios[c]
@@ -269,6 +278,7 @@ def main() -> int:
             c, src_s, src_e = 0, s, e
         parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts=PTS-STARTPTS,{geo}[v{i}]")
         labels.append(f"[v{i}]")
+        project_clips.append({"src": args.inputs[c], "in": round(src_s, 3), "out": round(src_e, 3)})
     parts.append("".join(labels) + f"concat=n={len(filled)}:v=1:a=0[vout]")
     a = args.audio
     a_start = -offsets[a] if offsets[a] < 0 else 0.0
@@ -288,6 +298,19 @@ def main() -> int:
     output = args.output or default_output(args.inputs[0], "multicam", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     cmd += video_args(metas[0], args.crf, args.preset) + aac_args() + ["-t", f"{ref_dur:.3f}", output]
+
+    if args.write_project:
+        # Same cut decision as the combined render above (project_clips was built alongside the
+        # filter graph, from the same src_s/src_e/c after the camera-0 fallback), expressed as a
+        # render.py project instead of the direct render this tool already does -- additive, not
+        # a replacement: the combined output below is still written as usual.
+        project = {"output": default_output(args.inputs[0], "multicam_project", "mp4"),
+                   "clips": project_clips}
+        if not STATE.dry_run:
+            with open(args.write_project, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(project, indent=2) + "\n")
+        info(f"wrote {args.write_project}")
+
     run(cmd)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {len(filled)} cuts, audio from input {a})")

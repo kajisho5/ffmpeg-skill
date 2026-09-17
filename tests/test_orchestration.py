@@ -343,6 +343,116 @@ class OrchestrationTests(MediaFixtures):
         # clip list at all, not a frame-accurate re-derivation of multicam's own timeline math.
         self.assertGreater(m["duration"], 8.0)
 
+    # ------------------------------------------------------------ --write-project
+    def test_multicam_write_project_energy_mode_two_cams(self):
+        """--switch energy --write-project FILE: FILE's clips[] must alternate src between the
+        two cameras the same way `cuts` does, with in/out on each camera's own timeline, and a
+        render.py --dry-run against it must plan exactly one cut.py per cut."""
+        camA, camB = self._loud_cams()
+        out = OUT / "mc_wp_energy.mp4"
+        proj = OUT / "mc_wp_energy.json"
+        data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "1",
+                                 "--write-project", proj, "--fast", "-o", out, "--json").stdout)
+        cuts = data["cuts"]
+        offsets = data["offsets_seconds"]
+        project = json.loads(proj.read_text(encoding="utf-8"))
+        clips = project["clips"]
+        self.assertEqual(len(clips), len(cuts))
+        inputs = [str(camA), str(camB)]
+        for clip, (s, e, c) in zip(clips, cuts):
+            self.assertEqual(clip["src"], inputs[c])
+            self.assertAlmostEqual(clip["in"], s - offsets[c], delta=0.01)
+            self.assertAlmostEqual(clip["out"], e - offsets[c], delta=0.01)
+        # at least one clip from each camera, confirming the src actually alternates
+        self.assertEqual({c["src"] for c in clips}, set(inputs))
+        # the combined multicam output itself is still written, unchanged, alongside the project
+        self.assertTrue(out.exists())
+        r = script("render.py", proj, "--dry-run", "--json")
+        rdata = json.loads(r.stdout)
+        self.assertEqual(rdata["status"], "completed")
+        # render.py's clips stage forwards to cut.py, one child call per clip; its dry-run
+        # accounting must match the number of cuts multicam.py itself made.
+        cut_calls = [line for line in r.stderr.splitlines() if re.search(r"cut\.py .* --dry-run", line)]
+        self.assertEqual(len(cut_calls), len(cuts))
+
+    def test_multicam_write_project_three_cams(self):
+        """3-source case: each camera has its own measured offset, and each clip's in/out must be
+        shifted by that camera's own offset, not the reference's or another camera's."""
+        camA = self.src
+        camB = OUT / "mc_wp3_camB.mp4"
+        camC = OUT / "mc_wp3_camC.mp4"
+        if not camB.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.5", "-i", camA,
+               "-vf", "hue=h=90", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", camB)
+        if not camC.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "3.0", "-i", camA,
+               "-vf", "hue=h=180", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", camC)
+        out = OUT / "mc_wp3.mp4"
+        proj = OUT / "mc_wp3.json"
+        data = json.loads(script("multicam.py", camA, camB, camC, "--switch", "0-3:0,3-6:1,6-9:2",
+                                 "--write-project", proj, "--fast", "-o", out, "--json").stdout)
+        offsets = data["offsets_seconds"]
+        self.assertAlmostEqual(offsets[1], 1.5, delta=0.05)
+        self.assertAlmostEqual(offsets[2], 3.0, delta=0.05)
+        cuts = data["cuts"]
+        project = json.loads(proj.read_text(encoding="utf-8"))
+        clips = project["clips"]
+        self.assertEqual(len(clips), len(cuts))
+        inputs = [str(camA), str(camB), str(camC)]
+        for clip, (s, e, c) in zip(clips, cuts):
+            self.assertEqual(clip["src"], inputs[c])
+            self.assertAlmostEqual(clip["in"], s - offsets[c], delta=0.01)
+            self.assertAlmostEqual(clip["out"], e - offsets[c], delta=0.01)
+        used = {c["src"] for c in clips}
+        self.assertEqual(used, set(inputs), f"expected all three cameras used: {clips}")
+        r = script("render.py", proj, "--dry-run", "--json")
+        rdata = json.loads(r.stdout)
+        self.assertEqual(rdata["status"], "completed")
+        self.assertEqual(rdata["stages"][0], "clips")
+
+    def test_multicam_write_project_manual_switch(self):
+        """--write-project must work the same off a hand-written --switch spec, not just energy
+        mode -- the project-writing logic is built from `cuts` + `offsets` alone."""
+        camB = OUT / "camB.mp4"
+        if not camB.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.5", "-i", self.src,
+               "-vf", "hue=h=90", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", camB)
+        out = OUT / "mc_wp_manual.mp4"
+        proj = OUT / "mc_wp_manual.json"
+        data = json.loads(script("multicam.py", self.src, camB, self.mic, "--audio", "2",
+                                 "--switch", "0-3:0,3-6:1,6-9:0", "--write-project", proj,
+                                 "--fast", "-o", out, "--json").stdout)
+        cuts = data["cuts"]
+        offsets = data["offsets_seconds"]
+        project = json.loads(proj.read_text(encoding="utf-8"))
+        clips = project["clips"]
+        self.assertEqual(len(clips), len(cuts), "one clips[] entry per cut, four: three named ranges plus the gap-fill")
+        inputs = [str(self.src), str(camB), str(self.mic)]
+        for clip, (s, e, c) in zip(clips, cuts):
+            self.assertEqual(clip["src"], inputs[c])
+            self.assertAlmostEqual(clip["in"], s - offsets[c], delta=0.01)
+            self.assertAlmostEqual(clip["out"], e - offsets[c], delta=0.01)
+        r = script("render.py", proj, "--dry-run", "--json")
+        rdata = json.loads(r.stdout)
+        self.assertEqual(rdata["status"], "completed")
+
+    def test_multicam_write_project_does_not_change_default_behavior(self):
+        """Without --write-project, multicam.py's existing behavior (combined output, --edl,
+        --offsets-only) must be exactly what it was before this flag existed."""
+        camA, camB = self._loud_cams()
+        out = OUT / "mc_wp_regress.mp4"
+        edl = OUT / "mc_wp_regress.edl"
+        data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "1",
+                                 "--edl", edl, "--fast", "-o", out, "--json").stdout)
+        self.assertTrue(out.exists())
+        self.assertTrue(edl.exists())
+        lines = edl.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(len(lines), len(data["cuts"]))
+        # --offsets-only is unaffected by the new flag either
+        odata = json.loads(script("multicam.py", camA, camB, "--offsets-only", "--json").stdout)
+        self.assertIn("offsets_seconds", odata)
+        self.assertNotIn("cuts", odata)
+
     def test_multicam_fix_drift_trims_before_resample_not_after(self):
         """--fix-drift's audio path computes a_start (an atrim start point) in the source's own
         pre-correction time axis, but the filter chain used to apply asetrate/aresample (the drift
