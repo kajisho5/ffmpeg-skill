@@ -578,6 +578,18 @@ for good (see "What 2.0 changes"). The flag is opt-in and changes nothing else: 
 pins -- descriptions may change between releases (the `--crf` deprecation mark did) -- so a lean
 client and a default client see the same tools with the same names.
 
+### Default `tools/list` surface: core 12, opt-in for all 42
+
+By default `tools/list` returns only the core dozen in `_contract.MCP_CORE_TOOLS` (`render`,
+`look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`,
+`probe`) rather than all 42, so a session doesn't pay context for 30 schemas it is unlikely to ever call
+directly -- the set is the tools eval iterations 17-20's ground-truth `expect` lists actually name
+most often across the corpus in `evals/agent_prompts*.json`. Every tool -- including the other 30
+-- is still callable by name through `tools/call` regardless of what `tools/list` advertised; the
+contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally. Set
+`FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
+return all 42, as every version before 1.19.0 did.
+
 ## Consuming the contract from an agent
 
 A planning agent (for example video-production-agent's SkillRegistry) can:

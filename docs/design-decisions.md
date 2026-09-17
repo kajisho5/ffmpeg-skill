@@ -201,9 +201,11 @@ decided. Recorded here so none of it is re-proposed from scratch.
   so the rule ("these are sentences, not labels") has an example next to it.
 - **P1-6 — eval prompt `ml2` tested a refusal, not the mux.** Accepted: `ml2` now ships a German
   SRT and a video and expects `caption|render`.
-- **P1-7 — the 42-tool MCP `tools/list` is paid for by every session.** Accepted, and moved
-  **ahead of the optical-flow work into 1.18.0**: the default listing becomes the core 12, the
-  rest stay reachable through the contract, which still describes all 42.
+- **P1-7 — the 42-tool MCP `tools/list` is paid for by every session.** Accepted, and **shipped**:
+  `tools/list` defaults to the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`,
+  `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`), chosen from eval iterations 17-20's
+  `expect` frequency, not taste. `FFMPEG_SKILL_MCP_FULL=1` lists all 42; the other 30 stay
+  reachable by name through `tools/call` either way, and the contract still describes all 42.
 - **P1-8 — at least one routing run on a non-Claude model.** Accepted as an `evals/run.py` task:
   the harness reads transcripts and files and is not Claude-specific; the routing/refusal set is
   what a Cursor or Codex run would publish.

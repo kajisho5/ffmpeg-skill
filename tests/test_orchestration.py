@@ -843,7 +843,9 @@ class OrchestrationTests(MediaFixtures):
     def test_brand_defaults_apply_to_caption_and_logo(self):
         brand = OUT / "brand.json"
         if not brand.exists():
-            self.test_graphics_templates()
+            brand.write_text(json.dumps({"font": "DejaVu Sans", "colors": {"primary": "FF6A00", "text": "FFFFFF", "background": "0B1D2A"},
+                                         "logo": "logo.png", "logo_position": "top-right", "logo_scale": 140, "safe_margin": 40,
+                                         "caption": {"size": 28, "position": "bottom", "animate": "pop", "karaoke": True, "bold": True}}), encoding="utf-8")
         ass = OUT / "brand.ass"
         script("caption.py", self.src, "--text", self.cues, "--brand", brand, "--write-ass", ass, "--fast", "-o", OUT / "brand_cap.mp4")
         style = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Style:")][0]
@@ -868,7 +870,11 @@ class OrchestrationTests(MediaFixtures):
             {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "nope", "arguments": {}}},
             {"jsonrpc": "2.0", "id": 7, "method": "bogus/method"},
         ]
-        proc = subprocess.run([sys.executable, str(server)], input="\n".join(json.dumps(r) for r in reqs) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # FFMPEG_SKILL_MCP_FULL=1: this test is about the stdio wiring (initialize / tools/list /
+        # tools/call / unknown name / unknown method), not the core-12-by-default filter, which
+        # has its own tests in tests/test_contract.py.
+        env = {**os.environ, "FFMPEG_SKILL_MCP_FULL": "1"}
+        proc = subprocess.run([sys.executable, str(server)], input="\n".join(json.dumps(r) for r in reqs) + "\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         resp = {r["id"]: r for r in (json.loads(l) for l in proc.stdout.splitlines() if l.strip())}
         self.assertEqual(resp[1]["result"]["serverInfo"]["name"], "ffmpeg-skill")

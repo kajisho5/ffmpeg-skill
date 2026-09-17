@@ -1075,6 +1075,15 @@ MCP_JSON_EXEMPT = ("look", "probe")
 # itself, not tool arguments. Off by default so tools/list stays byte-identical to the CLI surface
 # the contract promises; 2.0 drops them unconditionally.
 MCP_LEAN_DROP = ("json", "progress")
+# default MCP tools/list surface (roadmap P1-7, shipped 1.19.0): the 42-tool schema dump costs
+# every MCP session context whether it needs it or not. These 12 are the tools eval iterations
+# 17-20's ground-truth `expect` lists actually name most often across the 118 agent prompts in
+# evals/agent_prompts*.json (render/look/caption/export/check each >=10 hits; fit/cut/audio/
+# loudness/graphics/silence/probe each >=6) -- not a hand-picked "starter" set. `tools/list`
+# returns only these unless FFMPEG_SKILL_MCP_FULL=1 (anything but "" or "0") asks for all 42; the
+# other 30 stay reachable by name through tools/call either way, and `contract --json` always
+# describes all 42.
+MCP_CORE_TOOLS = ("render", "look", "caption", "export", "check", "fit", "cut", "audio", "loudness", "graphics", "silence", "probe")
 MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
                        "Media paths must be absolute.")

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """ffmpeg-skill as an MCP server (stdio, JSON-RPC 2.0) — standard library only.
 
-Every public script in ../scripts becomes a tool. Tool names, order, inputSchema and the
-structured-argument mapping all come from the contract (scripts/_contract.py); this file
-is only the transport. Arguments are passed as a flat object (keys = argparse dests) or,
-for CLI compatibility, as an argv list. Results are the script's --json output.
+Every public script in ../scripts becomes a callable tool, but tools/list defaults to
+advertising only the core 12 (_contract.MCP_CORE_TOOLS) to keep the schema dump small;
+set FFMPEG_SKILL_MCP_FULL=1 to list all 42. Every tool is still callable by name via
+tools/call either way. Tool names, order, inputSchema and the structured-argument mapping
+all come from the contract (scripts/_contract.py); this file is only the transport.
+Arguments are passed as a flat object (keys = argparse dests) or, for CLI compatibility,
+as an argv list. Results are the script's --json output.
 
 Run:
   python3 mcp/server.py                         # stdio transport
@@ -126,8 +129,18 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def tool_list() -> List[Dict[str, Any]]:
-    """tools/list: one entry per ToolSpec, in the contract's order, inputSchema derived from ToolSpec.input_schema."""
-    return [_contract.mcp_tool(spec) for spec in specs().values()]
+    """tools/list: one entry per ToolSpec, in the contract's order, inputSchema derived from ToolSpec.input_schema.
+
+    Default surface is the core 12 (_contract.MCP_CORE_TOOLS, roadmap P1-7): the other 30 stay
+    reachable by name through tools/call regardless. FFMPEG_SKILL_MCP_FULL=1 (anything but "" or
+    "0") lists all 42, unchanged from pre-1.19.0 behaviour.
+    """
+    all_specs = specs()
+    if os.environ.get("FFMPEG_SKILL_MCP_FULL", "") not in ("", "0"):
+        names = all_specs.keys()
+    else:
+        names = (n for n in all_specs if n in _contract.MCP_CORE_TOOLS)
+    return [_contract.mcp_tool(all_specs[name]) for name in names]
 
 
 def handle(req: Dict[str, Any]) -> Dict[str, Any]:

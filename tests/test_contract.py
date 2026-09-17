@@ -801,18 +801,43 @@ class ContractTests(unittest.TestCase):
 
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
-        mcp_names = [t["name"] for t in mcp_server.tool_list()]
-        self.assertEqual(sorted(mcp_names), sorted(self.tools), "MCP tools/list == contract tools")
-        listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout.splitlines() if l.strip()]
-        self.assertEqual(sorted(listed), sorted(self.tools))
+        """FFMPEG_SKILL_MCP_FULL=1 is the escape hatch back to the pre-1.19.0 behaviour: every
+        contract tool listed. This test proves that view is still byte-for-byte the full set."""
+        saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
+        os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
+        try:
+            mcp_names = [t["name"] for t in mcp_server.tool_list()]
+            self.assertEqual(sorted(mcp_names), sorted(self.tools), "MCP tools/list (full) == contract tools")
+            listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list", env={**os.environ}).stdout.splitlines() if l.strip()]
+            self.assertEqual(sorted(listed), sorted(self.tools))
+        finally:
+            os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
+            if saved is not None:
+                os.environ["FFMPEG_SKILL_MCP_FULL"] = saved
         for name, spec in self.tools.items():
             self.assertEqual(spec["mcp"]["tool"], name)
             self.assertEqual(spec["mcp"]["positional"], mcp_server.POSITIONAL.get(name, ["input"]) if spec["mcp"]["positional"] else spec["mcp"]["positional"])
-        # a real JSON-RPC round trip
-        req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n"
-        proc = subprocess.run([sys.executable, str(ROOT / "mcp" / "server.py")], input=req, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        resp = json.loads(proc.stdout.strip().splitlines()[0])
+        # a real JSON-RPC round trip, full surface
+        resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]
         self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(self.tools))
+
+    def test_mcp_tools_list_defaults_to_the_core_12(self):
+        """roadmap P1-7 (docs/design-decisions.md): tools/list defaults to _contract.MCP_CORE_TOOLS,
+        in contract order, not all 42 -- and every one of those 12 is a real contract tool. The
+        other 30 stay reachable through tools/call (proved by test_mcp_schema_drift_follows_the_scripts
+        and test_mcp_server_error_paths_raw_argv_and_call_helper calling non-core tools directly)."""
+        self.assertEqual(len(_contract.MCP_CORE_TOOLS), 12)
+        self.assertTrue(set(_contract.MCP_CORE_TOOLS).issubset(self.tools), "every core tool is a real contract tool")
+        expected_order = [n for n in self.tools if n in _contract.MCP_CORE_TOOLS]
+        mcp_names = [t["name"] for t in mcp_server.tool_list()]
+        self.assertEqual(mcp_names, expected_order, "default MCP tools/list is the core 12, in contract order")
+        resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]
+        self.assertEqual([t["name"] for t in resp["result"]["tools"]], expected_order, "JSON-RPC round trip matches")
+        for flag in ("0", ""):
+            resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=False)[0]
+            self.assertEqual([t["name"] for t in resp["result"]["tools"]], expected_order, f"FFMPEG_SKILL_MCP_FULL={flag!r} still core 12")
+        listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout.splitlines() if l.strip()]
+        self.assertEqual(listed, expected_order)
 
     def test_mcp_tool_surface_matches_the_frozen_1x_snapshot(self):
         """docs/contract.md, "Stability guarantee (1.x)": within 1.x no tool is removed or renamed
@@ -823,12 +848,21 @@ class ContractTests(unittest.TestCase):
         Adding a tool or an optional argument is allowed and must be reflected by regenerating the
         snapshot (UPDATE_MCP_SNAPSHOT=1 python3 tests/test_contract.py); removing or renaming
         anything, or making an argument required, is a breaking change and belongs behind the
-        deprecation policy and a major bump, not behind a regenerated fixture."""
+        deprecation policy and a major bump, not behind a regenerated fixture. The snapshot covers
+        all 42 tools, so this reads tool_list() under FFMPEG_SKILL_MCP_FULL=1 -- the default's
+        core-12 filter is a separate, tested concern (test_mcp_tools_list_defaults_to_the_core_12)."""
         snapshot_path = ROOT / "tests" / "fixtures" / "mcp_tools.json"
-        live = [{"name": t["name"],
-                 "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
-                 "required": sorted(t["inputSchema"].get("required", []))}
-                for t in mcp_server.tool_list()]
+        saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
+        os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
+        try:
+            live = [{"name": t["name"],
+                     "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
+                     "required": sorted(t["inputSchema"].get("required", []))}
+                    for t in mcp_server.tool_list()]
+        finally:
+            os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
+            if saved is not None:
+                os.environ["FFMPEG_SKILL_MCP_FULL"] = saved
         if os.environ.get("UPDATE_MCP_SNAPSHOT"):
             snapshot_path.write_text(json.dumps(live, indent=1) + "\n", encoding="utf-8")
         frozen = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -892,9 +926,14 @@ class ContractTests(unittest.TestCase):
             self.assertIn(surface, wheres)
 
     # ------------------------------------------------------------------ MCP inputSchema derived from the contract
-    def _rpc(self, requests, root=ROOT):
+    def _rpc(self, requests, root=ROOT, full=False):
         text = "".join(json.dumps(r) + "\n" for r in requests)
-        proc = subprocess.run([sys.executable, str(Path(root) / "mcp" / "server.py")], input=text, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        env = dict(os.environ)
+        if full:
+            env["FFMPEG_SKILL_MCP_FULL"] = "1"
+        else:
+            env.pop("FFMPEG_SKILL_MCP_FULL", None)
+        proc = subprocess.run([sys.executable, str(Path(root) / "mcp" / "server.py")], input=text, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return [json.loads(line) for line in proc.stdout.strip().splitlines()]
 
@@ -903,7 +942,7 @@ class ContractTests(unittest.TestCase):
         return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
     def test_mcp_input_schema_equals_translated_contract_schema(self):
-        listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]["result"]["tools"]
+        listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]["result"]["tools"]
         self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"]], "MCP order == contract order")
         for entry in listed:
             spec = self.tools[entry["name"]]
@@ -949,7 +988,7 @@ class ContractTests(unittest.TestCase):
             (root / "scripts" / "cut.py").unlink()
             # a new public script without metadata is reported, not silently dropped or guessed
             (root / "scripts" / "zzztool.py").write_text("#!/usr/bin/env python3\nimport argparse\ndef main():\n    argparse.ArgumentParser().parse_args()\nif __name__ == '__main__':\n    main()\n", encoding="utf-8")
-            err = self._rpc([{"jsonrpc": "2.0", "id": 0, "method": "tools/list"}], root=root)[0]
+            err = self._rpc([{"jsonrpc": "2.0", "id": 0, "method": "tools/list"}], root=root, full=True)[0]
             self.assertIn("no TOOL_META entry", err["error"]["message"])
             contract_py = (root / "scripts" / "_contract.py").read_text(encoding="utf-8")
             contract_py = contract_py.replace('TOOL_META: Dict[str, Dict[str, Any]] = {', 'TOOL_META: Dict[str, Dict[str, Any]] = {\n    "zzztool": dict(role="analysis", inputs=["x"], outputs=["y"], required=["ffprobe"], optional=[], video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=False, idempotency="bit_exact", deterministic=True),', 1)
@@ -964,13 +1003,22 @@ class ContractTests(unittest.TestCase):
             fit = (root / "scripts" / "fit.py").read_text(encoding="utf-8")
             fit = fit.replace('    add_common(ap)', '    ap.add_argument("--drift-flag", action="store_true", help="added for the drift test")\n    add_common(ap)', 1)
             (root / "scripts" / "fit.py").write_text(fit, encoding="utf-8")
-            tools = {t["name"]: t for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], root=root)[0]["result"]["tools"]}
+            tools = {t["name"]: t for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], root=root, full=True)[0]["result"]["tools"]}
             self.assertNotIn("cut", tools, "removed script still exposed")
             self.assertIn("zzztool", tools, "new public script not exposed")
             self.assertEqual(tools["zzztool"]["inputSchema"]["properties"]["knob"], {"type": "integer", "description": "a knob", "enum": [1, 2, 3], "default": 3})
             self.assertIn("drift_flag", tools["fit"]["inputSchema"]["properties"], "parser change not reflected")
             self.assertEqual(list(tools), sorted(tools), "order stays sorted after changes")
-            # the temporary tool also runs through the derived mapping
+            # the same drift, seen through the default core-12 view: zzztool never joins it (it
+            # isn't in MCP_CORE_TOOLS), the removed "cut" stays gone, and a core tool's parser
+            # change ("fit") still reaches it -- both views are derived from the same live scripts.
+            core = {t["name"]: t for t in self._rpc([{"jsonrpc": "2.0", "id": 4, "method": "tools/list"}], root=root)[0]["result"]["tools"]}
+            self.assertNotIn("cut", core, "removed script still exposed in the core-12 view")
+            self.assertNotIn("zzztool", core, "a non-core new script must not appear in the default view")
+            self.assertIn("drift_flag", core["fit"]["inputSchema"]["properties"], "parser change not reflected in the core-12 view")
+            self.assertEqual(set(core) - {"cut"}, set(_contract.MCP_CORE_TOOLS) - {"cut"}, "core-12 view is exactly MCP_CORE_TOOLS minus the removed script")
+            # the temporary tool also runs through the derived mapping (tools/call reaches it even
+            # though it is outside the default tools/list view)
             call = self._rpc([{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "zzztool", "arguments": {"input": "x", "knob": 2}}}], root=root)[0]
             self.assertEqual(call["result"]["structuredContent"]["knob"], 2)
             unknown = self._rpc([{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "_contract", "arguments": {}}}], root=root)[0]
