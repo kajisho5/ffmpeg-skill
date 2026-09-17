@@ -19,3 +19,6 @@ package-lock.json
 
 # downloaded real-world corpus
 tests/corpus/
+
+# eval staging (fixtures, prompts, per-run outputs) -- not part of the repo
+scratchpad/
