@@ -17,16 +17,15 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.18.4** — a caption atom still wider than the live column at
-`--min-size` (eval 20's `cs2`, a 32-letter Spanish word) now breaks at the column edge instead of
-clipping past the frame: the sliced pieces are the exact original characters, never rewritten, a
-fitting Thai phrase or katakana run is provably unaffected, and the burn path reports
-`broken_inside_word` distinct from `overlong` (now residual: only a single character wider than
-the column). Eval 22 (`evals/results/iteration-22.json`, 14 runs) re-checked 1.18.1's routing
-rows against fresh symptom-only prompts and re-ran `cs1`/`cs3` after 1.18.2/1.18.3: 7 of 8 new
-1.18.0-flag prompts routed correctly without the flag being named (up from eval 21's 4/9 at
-1.18.0's own release), and `cs3` no longer rewrites the user's cue text in any of three runs — the
-1.17.3 fix holds through three further releases. Everything after 1.18.4 is planned.
+The released version today is **1.19.1** — `multicam.py --write-project FILE` writes a
+`render.py` project that reproduces the tool's own cut decision (eval 21's `mc2` gap, no more
+hand-translating cuts/offsets into `clips[]`), and `--filler` alone no longer jump-cuts unrelated
+dead-air silence (eval 19's `fw1`/`fw3`: "remove the ums" silently removed ~5s of unasked-for
+pauses too; fixed by skipping generic silence detection unless `--speech-aware` is also given).
+1.19.0 (the `--write-project` feature) is a `feat:` release, hence the minor bump; it does not
+start the "1.19.0: observability, portability" theme further down this document, which remains
+planned. 1.18.4 (the caption column-edge slice, `cs2`) is unchanged from before; see its own
+section below.
 
 | version | state | evidence |
 |---|---|---|
@@ -51,7 +50,9 @@ rows against fresh symptom-only prompts and re-ran `cs1`/`cs3` after 1.18.2/1.18
 | 1.18.2 | shipped, evaluated (eval 22) | README's tool table named none of the five 1.18.0 flags or `sync.py`'s additive extra-source positionals or `multicam.py --switch energy`; added the same one-liner facts already in SKILL.md since 1.18.1. No script changes |
 | 1.18.3 | shipped, evaluated (eval 22) | MCP `tools/list` defaults to the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`, chosen from eval 17-20's `expect`-field frequency), opt-in to the full 42 via `FFMPEG_SKILL_MCP_FULL=1`; every tool stays callable by name through `tools/call` either way, `contract --json` still describes all 42. Tool count still 42, CLI/MCP argument names unchanged |
 | 1.18.4 | shipped, eval pending | eval 20's `cs2` (a 32-letter Spanish word still clipping the frame at `--min-size`): `scripts/_common/wrap.py` slices an atom at the column edge (preferring an existing hyphen) only when it does not fit alone even at the floor; `caption.py`'s burn path reports the new `broken_inside_word` stats key. A fitting Thai phrase or katakana run (1.16.1) is provably unchanged — the slice branch is unreachable for an atom that already fits. No new CLI flag, no script added, tool count still 42 |
-| 1.19.0 → 1.21.0, 2.0.0 | planned | — |
+| 1.19.0 | shipped, eval pending | `multicam.py --write-project FILE` (eval 21's `mc2` gap): writes a `render.py` project whose `clips[]` reproduces multicam's own cut decision exactly (`src`/`in`/`out` per cut, offset-shifted to each camera's own timeline), for `--switch energy`, a manual `--switch` spec, or `--auto` alike; multicam's own combined render and `--edl`/`--offsets-only` unchanged. `feat:` release, hence the minor bump — not the start of the "1.19.0" theme further down this document, which is unrelated and still planned |
+| 1.19.1 | shipped, eval pending | eval 19's `fw1`/`fw3`: `silence.py --filler` alone (no `--speech-aware`) jump-cut unrelated dead-air silence gaps too, ~5s unasked. Fixed: generic silence detection is skipped unless `--speech-aware` is also given, so `--filler` alone removes only the timed filler-word spans; `--speech-aware` alone and `--filler --speech-aware` combined are unchanged |
+| 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
