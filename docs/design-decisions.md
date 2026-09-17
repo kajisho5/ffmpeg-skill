@@ -255,9 +255,10 @@ Each item is recorded here so it is not re-proposed from scratch.
   1.11.1 reworded step 0 accordingly. The answer is not to make `references/` more attractive but
   to make the table better: the **intent-clustered request table is planned for 1.20.0**.
 - **The MCP catalogue costs a client context on every session.** A 42-tool `tools/list` is paid
-  for by every session, including the ones that call two tools. Decided for **1.19.0**: the
-  default listing becomes the core 12, the other 30 are reachable lazily through the contract.
-  The contract still describes all 42 — the surface does not shrink, only the default listing.
+  for by every session, including the ones that call two tools. Decided and shipped in **1.18.3**:
+  the default listing becomes the core 12, the other 30 are reachable lazily through `tools/call`
+  or `FFMPEG_SKILL_MCP_FULL=1`. The contract still describes all 42 — the surface does not shrink,
+  only the default listing.
 - **The roadmap read as though planned work had shipped.** Fixed: `docs/roadmap.md` now marks
   every version shipped + evaluated (naming the iteration), shipped with eval pending, or
   planned, and the reconciliation is against `CHANGELOG.md` and `evals/results/`.

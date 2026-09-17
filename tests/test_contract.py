@@ -801,7 +801,7 @@ class ContractTests(unittest.TestCase):
 
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
-        """FFMPEG_SKILL_MCP_FULL=1 is the escape hatch back to the pre-1.19.0 behaviour: every
+        """FFMPEG_SKILL_MCP_FULL=1 is the escape hatch back to the pre-1.18.3 behaviour: every
         contract tool listed. This test proves that view is still byte-for-byte the full set."""
         saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
         os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"

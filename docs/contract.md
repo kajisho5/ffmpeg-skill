@@ -588,7 +588,7 @@ most often across the corpus in `evals/agent_prompts*.json`. Every tool -- inclu
 -- is still callable by name through `tools/call` regardless of what `tools/list` advertised; the
 contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally. Set
 `FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
-return all 42, as every version before 1.19.0 did.
+return all 42, as every version before 1.18.3 did.
 
 ## Consuming the contract from an agent
 

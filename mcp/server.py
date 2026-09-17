@@ -133,7 +133,7 @@ def tool_list() -> List[Dict[str, Any]]:
 
     Default surface is the core 12 (_contract.MCP_CORE_TOOLS, roadmap P1-7): the other 30 stay
     reachable by name through tools/call regardless. FFMPEG_SKILL_MCP_FULL=1 (anything but "" or
-    "0") lists all 42, unchanged from pre-1.19.0 behaviour.
+    "0") lists all 42, unchanged from pre-1.18.3 behaviour.
     """
     all_specs = specs()
     if os.environ.get("FFMPEG_SKILL_MCP_FULL", "") not in ("", "0"):
