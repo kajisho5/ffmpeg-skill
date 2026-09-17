@@ -195,7 +195,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | Tool | What it does |
 |---|---|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for BT.2020 or PQ/HLG, `hdr_signal` for a real PQ/HLG/DV transfer only), colour space, rotation, every audio stream; `--analyze` flags Log footage |
-| `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments`; `--beats` measures the music's beat grid (tempo, beat times, confidence) |
+| `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments`; `--beats` measures the music's beat grid (tempo, beat times, confidence); `--shots` classifies each shot static/pan/motion by measured optical flow; `--audio-peaks` lists per-second dBFS; `--speech` reports a speech-vs-music ratio, not a classification |
 | `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers |
 
 **Editing**
@@ -204,10 +204,10 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio; reports `precision`; `--snap beats` moves the in/out points onto a measured beat, or refuses when there is no measurable pulse |
 | `join.py` | Concatenate clips with xfade transitions, normalising size, fps, sample rate and channel layout (the widest clip's, or `--channels`); audio-only inputs are joined as audio |
-| `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech; list or export the cut list; `--filler` also removes filler words, but only where a speech engine timed them |
+| `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech; list or export the cut list; `--filler` also removes filler words, but only where a speech engine timed them; `--speech-aware` keeps a breath inside a sentence and cuts only at sentence-boundary pauses, composing with `--filler` through the same `keep_ranges()` |
 | `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo) and/or aspect ratio (pad, crop or `--fit blur`'s blurred, darkened fill, with `--crop-x`/`--crop-y` to keep an off-centre subject) and/or exact `--width`/`--height`; rotate 90/180/270, flip h/v; force constant fps |
 | `crop.py` | Crop to an exact pixel rectangle (`--x --y --width --height`) — distinct from `fit.py --fit crop`, which crops to an aspect ratio it computes itself |
-| `cropdetect.py` | Measure existing black letterbox/pillarbox bars and report the `crop.py`-ready rectangle that removes them — analysis only, writes no file |
+| `cropdetect.py` | Measure existing black letterbox/pillarbox bars and report the `crop.py`-ready rectangle that removes them — analysis only, writes no file; `--motion-centre` reports the per-second motion centroid instead, for a 9:16 reframe — report only, the calling agent picks the crop, no auto-reframing |
 | `deinterlace.py` | Deinterlace interlaced source footage (`yadif`), `--mode frame`/`field`, `--parity` |
 | `denoise.py` | Reduce video noise/grain (`hqdn3d`), `--strength low/medium/high` or individual spatial/temporal overrides |
 | `redact.py` | Blur or pixelate an exact pixel rectangle for the whole clip (privacy/compliance redaction) |
@@ -232,7 +232,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | Tool | What it does |
 |---|---|
 | `audio.py` | Voice clean-up chain at three strengths (`--voice light\|medium\|strong`), FFT denoise, typed compressor / limiter / gate, music bed with sidechain ducking (`--duck-amount/-threshold/-attack/-release`), a never-ducked effects bed (`--effects`), `--stereo-widen`, fades, 5.1 → stereo, track replacement, extraction (`-o out.wav`), `--audio-stream N` |
-| `sync.py` | Offset between two recordings by audio cross-correlation (1 ms, pure Python), clock-drift correction; aligned video or audio out (audio-to-audio only — no lip-sync/face detection) |
+| `sync.py` | Offset between two recordings by audio cross-correlation (1 ms, pure Python), clock-drift correction; aligned video or audio out (audio-to-audio only — no lip-sync/face detection); a third or later camera is an additional `more_sources` positional (`sync.py REF A B ...`), the `second` positional itself keeps its name |
 | `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP or any target (`--lra` for the range), video stream-copied; the written file is measured again and re-encoded until it meets `--tp` (lossy encoders overshoot); `--measure-only` |
 
 **Picture**
@@ -259,7 +259,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays including the social sticker/hook/meme graphics, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after`, `--cache DIR`/`--from STAGE` (reuse the stages that did not change); the captions block takes the fit-size policy (`fit_size`, `min_size`, `fit_size_scope`) and the run reports the caption stage's counts as `caption`; `--template NAME INPUT` renders a shipped delivery template (`--template all` writes the whole social pack plus its table) |
 | `batch.py` | Apply a step recipe or a project to a folder with a content-hash cache; `--watch`; `--jobs N` processes several files at once under one shared `--timeout` |
-| `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list |
+| `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list; `--switch energy` auto-cuts to whichever camera is loudest/talking instead of a hand-built list, with `--min-shot` (minimum shot length) and `--edl` (write the cut list) |
 | `verify.py` | Run the toolchain on real device files and report PASS / FAIL per step |
 
 Not tools, but part of the surface: `mcp/server.py` (the MCP transport) and `scripts/_contract.py` (`contract --json`, `doctor`). Per-flag reference for every tool: [references/scripts.md](references/scripts.md).
