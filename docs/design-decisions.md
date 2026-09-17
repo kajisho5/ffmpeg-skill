@@ -184,6 +184,18 @@ decided. Recorded here so none of it is re-proposed from scratch.
   Accepted, and deliberately **not mixed into 1.17.1**: it is a behaviour-free split, so it gets
   the same treatment `_common.py` got — its own no-change release after 1.17.1, with the contract
   snapshot, the MCP surface and every `--help` byte-identical.
+  **Done in the refactor after 1.17.3.** `text.py` (1,655 lines, 111 top-level definitions) was
+  cut along its own section comments into `fonts.py` (font tables, `char_script`/`detect_script`,
+  the fontconfig lookups, `script_font_for_text`), `emoji.py` (clusters, assets, the support
+  probe, `emoji_filter_chain`), `drawtext.py` (option building, escaping, the shaping probe) and
+  `wrap.py` (the advance table, the caption wrapper, `fit_size`); the import graph is acyclic
+  (emoji → emit; fonts → emoji; drawtext → runner, decision; wrap → fonts, emoji) and every body
+  moved byte-identical, checked by AST source segment. `text.py` stays as a re-export shim that
+  mirrors rebinding to the defining part, the way the `_common` facade does, and the facade's
+  module list gained the four parts so a `mock.patch("_common.<name>")` still reaches the
+  binding the code reads at call time. The release rule held: `contract --json` and every
+  script's `--help` were dumped before and after and diffed empty, the contract and MCP
+  snapshot tests pass, no behaviour change.
 - **P1-5 — reports copy the English boilerplate lines into non-English answers.** Accepted:
   SKILL.md's failure example now shows the Japanese rendering of `Check:`/`Look:`'s filler lines,
   so the rule ("these are sentences, not labels") has an example next to it.
