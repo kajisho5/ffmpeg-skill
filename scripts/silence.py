@@ -42,6 +42,32 @@ def merge_spans(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     return out
 
 
+BREATH_FLOOR = 0.12  # shortest gap silencedetect is asked for under --speech-aware
+
+
+def speech_aware_silences(path: str, threshold: float, min_silence: float) -> "Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]":
+    """(sentence-boundary silences to remove, breaths kept) for --speech-aware.
+
+    Re-runs the same silencedetect() already used everywhere else in this file, but with a much
+    shorter minimum duration, so short in-sentence breaths are measured at all -- the plain
+    `detect()` call above never sees them because its own --min-silence floor filters them out
+    before they reach Python. Every gap silencedetect measured that is still shorter than
+    --min-silence sits *inside* a sentence -- the two speech-flagged stretches on either side of
+    it are close together in time because nothing longer separated them from the gaps around
+    them -- and is kept rather than cut; --min-silence keeps the meaning it already has for
+    --filler and the plain run: the shortest gap this tool will remove."""
+    floor = min(BREATH_FLOOR, min_silence)
+    fine = detect(path, threshold, floor)
+    boundaries, breaths = [], []
+    for s, e in fine:
+        length = (e - s) if e != float("inf") else float("inf")
+        if length >= min_silence:
+            boundaries.append((s, e))
+        else:
+            breaths.append((s, e))
+    return boundaries, breaths
+
+
 def keep_ranges(silences: List[Tuple[float, float]], duration: float, margin: float, min_keep: float) -> List[Tuple[float, float]]:
     keeps: List[Tuple[float, float]] = []
     cursor = 0.0
@@ -182,6 +208,11 @@ def main() -> int:
     ap.add_argument("--min-silence", type=float, default=0.6, help="only remove gaps at least this long in seconds (default 0.6)")
     ap.add_argument("--margin", type=float, default=0.15, help="seconds of silence to keep on each side of speech (default 0.15)")
     ap.add_argument("--min-keep", type=float, default=0.2, help="drop kept pieces shorter than this (default 0.2)")
+    ap.add_argument("--speech-aware", action="store_true",
+                    help="keep breaths shorter than --min-silence when they sit inside a sentence "
+                         "(measured by re-running silence detection at a much shorter floor), and "
+                         "only cut at sentence-boundary pauses (--min-silence or longer). Composes "
+                         "with --filler through the same keep_ranges() removal list.")
     ap.add_argument("--list", action="store_true", help="only print silences and the kept ranges")
     ap.add_argument("--edl", help="write the kept ranges to this file, one START-END per line")
     fil = ap.add_argument_group("filler words (1.17)")
@@ -229,7 +260,11 @@ def main() -> int:
     if not meta.get("audio"):
         die("input has no audio stream to analyse")
     duration = meta.get("duration") or 0.0
-    silences = detect(args.input, args.threshold, args.min_silence)
+    breaths: List[Tuple[float, float]] = []
+    if args.speech_aware:
+        silences, breaths = speech_aware_silences(args.input, args.threshold, args.min_silence)
+    else:
+        silences = detect(args.input, args.threshold, args.min_silence)
     filler_info, filler_ranges = resolve_filler(args, meta) if args.filler else (None, [])
     # One sorted, merged removal list through the graph the tool already has: filler removal IS
     # time-range removal, so it reuses keep_ranges() and the same aselect/concat chain.
@@ -253,6 +288,16 @@ def main() -> int:
         "kept_duration": round(kept, 3),
         "removed_seconds": round(silence_only, 3),
     }
+    if args.speech_aware:
+        summary["speech_aware"] = {
+            "min_silence": args.min_silence, "floor": min(BREATH_FLOOR, args.min_silence),
+            "breaths_kept": len(breaths),
+            "breaths_kept_seconds": round(sum((e - s) for s, e in breaths if e != float("inf")), 3),
+            "breaths": [[round(s, 3), None if e == float("inf") else round(e, 3)] for s, e in breaths],
+        }
+        info(f"--speech-aware: {len(breaths)} breath(s) kept "
+             f"({summary['speech_aware']['breaths_kept_seconds']:.2f}s), "
+             f"{len(silences)} sentence-boundary silence(s) cut")
     if filler_info is not None:
         # removed_seconds above is the silence-only figure, unchanged in meaning; the filler share
         # is reported inside `filler`, and removed_seconds_total is the additive sibling that

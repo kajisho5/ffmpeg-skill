@@ -64,6 +64,30 @@ class AnalysisTests(MediaFixtures):
     def test_cropdetect_bad_seconds_refused(self):
         script("cropdetect.py", self.src, "--seconds", "0", expect_fail=True)
 
+    # ---------------------------------------------------------------- 1.18.0: cropdetect.py --motion-centre
+    def test_cropdetect_motion_centre_reports_per_second_points(self):
+        data = json.loads(script("cropdetect.py", self.src, "--seconds", "4", "--samples", "2",
+                                 "--motion-centre", "--json").stdout)
+        self.assertIn("motion_centre", data)
+        self.assertGreater(len(data["motion_centre"]), 0)
+        for pt in data["motion_centre"]:
+            self.assertIn("time", pt)
+            if pt["x"] is not None:
+                self.assertGreaterEqual(pt["x"], 0)
+                self.assertLessEqual(pt["x"], data["source_width"])
+                self.assertGreaterEqual(pt["x_frac"], 0.0)
+                self.assertLessEqual(pt["x_frac"], 1.0)
+
+    def test_cropdetect_motion_centre_writes_no_file(self):
+        before = set(OUT.iterdir())
+        script("cropdetect.py", self.src, "--seconds", "1", "--samples", "1", "--motion-centre")
+        self.assertEqual(before, set(OUT.iterdir()))
+
+    def test_cropdetect_motion_centre_is_off_by_default(self):
+        data = json.loads(script("cropdetect.py", self.src, "--seconds", "1", "--samples", "1",
+                                 "--json").stdout)
+        self.assertNotIn("motion_centre", data)
+
     def test_fonts_dir_does_not_bypass_the_coverage_check(self):
         """--fonts-dir says "also look here", not "this exact face": a directory that does not
         cover the script must not silently switch the guarantee off."""
@@ -578,6 +602,53 @@ class AnalysisTests(MediaFixtures):
         data = json.loads(script("scenes.py", self._beats(), "--beat-range", "notarange",
                                  "--json").stdout)
         self.assertNotIn("beat_grid", data)
+
+    # --------------------------------------------------------------- 1.18.0: --shots / --audio-peaks / --speech
+    def test_scenes_shots_labels_every_scene(self):
+        data = json.loads(script("scenes.py", self.src, "--shots", "--json").stdout)
+        self.assertIn("shots", data)
+        self.assertEqual(len(data["shots"]), data["scene_count"])
+        for sh in data["shots"]:
+            self.assertIn(sh["label"], ("static", "pan", "motion"))
+            self.assertGreaterEqual(sh["flow_magnitude"], 0.0)
+            self.assertIn("start", sh)
+            self.assertIn("end", sh)
+
+    def test_scenes_shots_static_clip_is_labelled_static(self):
+        """A single unmoving frame held for the whole clip has nothing to flow: static, magnitude 0."""
+        still = OUT / "still.mp4"
+        if not still.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "color=c=gray:s=320x180:rate=10", "-f", "lavfi", "-i", "sine=f=440",
+               "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", still)
+        data = json.loads(script("scenes.py", still, "--shots", "--json").stdout)
+        self.assertTrue(all(sh["label"] == "static" for sh in data["shots"]))
+        self.assertTrue(all(sh["flow_magnitude"] == 0.0 for sh in data["shots"]))
+
+    def test_scenes_audio_peaks_db_is_measured_in_dbfs_and_separate_from_the_rms_list(self):
+        data = json.loads(script("scenes.py", self.src, "--audio-peaks", "--json").stdout)
+        self.assertIn("audio_peaks_db", data)
+        self.assertIn("audio_peaks", data)  # the pre-existing key, unchanged
+        for p in data["audio_peaks_db"]:
+            self.assertIn("time", p)
+            self.assertIn("level", p)
+            self.assertLess(p["level"], 0)  # dBFS, not linear RMS
+
+    def test_scenes_speech_reports_a_ratio_not_a_label(self):
+        data = json.loads(script("scenes.py", self.src, "--speech", "--json").stdout)
+        self.assertIn("speech", data)
+        self.assertGreater(len(data["speech"]), 0)
+        for w in data["speech"]:
+            self.assertIn("time", w)
+            self.assertIn("speech_music_ratio", w)
+            self.assertGreaterEqual(w["speech_music_ratio"], 0.0)
+
+    def test_scenes_shots_audio_peaks_speech_combine_with_beats_and_highlights(self):
+        data = json.loads(script("scenes.py", self._beats(), "--shots", "--audio-peaks", "--speech",
+                                 "--beats", "--highlights", "2", "--json").stdout)
+        for key in ("shots", "audio_peaks_db", "speech", "beats", "highlights"):
+            self.assertIn(key, data)
 
 
 class ProposeChaptersTests(unittest.TestCase):

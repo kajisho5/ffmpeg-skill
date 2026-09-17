@@ -864,3 +864,89 @@ def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = F
         m["start"] = round(m["start"], 4)
         m["end"] = round(m["end"], 4)
     return merged
+
+
+# --- 1.18.0: lightweight block-matching motion estimate (scenes.py --shots, cropdetect.py
+# --motion-centre) ---------------------------------------------------------------------------
+
+MOTION_GRID = 4          # NxN anchor blocks per frame
+MOTION_SEARCH = 3         # +/- pixels searched per block, at the decoded (low) resolution
+MOTION_STATIC_PX = 0.35   # average per-frame displacement below this, at decode resolution, is "static"
+MOTION_PAN_SPREAD = 0.6   # block-to-block direction agreement above this (0..1) reads as a pan
+
+
+def _block_match(prev: bytes, cur: bytes, w: int, h: int, cx: int, cy: int, half: int, search: int) -> "Tuple[float, float]":
+    """(dx, dy) that best aligns a `half*2` square centred at (cx, cy) in `prev` to `cur`,
+    searched over +/- `search` px by sum-of-absolute-differences. Coordinates and the returned
+    offset are in decoded-frame pixels (a handful of pixels a side at 1.18.0's sample size)."""
+    x0, y0 = max(half, min(w - half - 1, cx)), max(half, min(h - half - 1, cy))
+    ref = [prev[(y0 + dy) * w + (x0 + dx)] for dy in range(-half, half + 1) for dx in range(-half, half + 1)]
+
+    def sad_at(xx: int, yy: int) -> "Optional[int]":
+        if xx - half < 0 or xx + half >= w or yy - half < 0 or yy + half >= h:
+            return None
+        sad = 0
+        for dy in range(-half, half + 1):
+            row = (yy + dy) * w
+            for dx in range(-half, half + 1):
+                sad += abs(ref[(dy + half) * (2 * half + 1) + (dx + half)] - cur[row + xx + dx])
+        return sad
+
+    # Zero shift is the tie-break candidate, not the search order's first cell: on a textureless
+    # block (a flat colour, sky, an out-of-focus background) every offset scores the same SAD, and
+    # without an explicit tie towards "no motion" the scan used to report the search window's
+    # first corner as the measured displacement -- a still frame with nothing to match against
+    # read as steady motion in one direction, every time.
+    best_sad, best = sad_at(x0, y0), (0.0, 0.0)
+    if best_sad is None:
+        best_sad = float("inf")
+    for sy in range(-search, search + 1):
+        for sx in range(-search, search + 1):
+            if sx == 0 and sy == 0:
+                continue
+            sad = sad_at(x0 + sx, y0 + sy)
+            if sad is not None and sad < best_sad:
+                best_sad, best = sad, (float(sx), float(sy))
+    return best
+
+
+def frame_flow(prev: bytes, cur: bytes, w: int, h: int, *, grid: int = MOTION_GRID,
+               search: int = MOTION_SEARCH) -> "Dict[str, Any]":
+    """One measurement between two consecutive decoded grayscale frames: the mean block
+    displacement vector, its magnitude, and how consistently the blocks agree on direction
+    (0 = every block moved a different way, 1 = every block agrees -- a pan or dolly moves the
+    whole frame one way, on-screen motion inside a mostly-static frame does not)."""
+    half = max(1, min(w, h) // (grid * 3))
+    vecs: "List[Tuple[float, float]]" = []
+    for gy in range(grid):
+        for gx in range(grid):
+            cx = int((gx + 0.5) * w / grid)
+            cy = int((gy + 0.5) * h / grid)
+            vecs.append(_block_match(prev, cur, w, h, cx, cy, half, search))
+    mdx = sum(v[0] for v in vecs) / len(vecs)
+    mdy = sum(v[1] for v in vecs) / len(vecs)
+    magnitude = math.hypot(mdx, mdy)
+    mean_len = sum(math.hypot(*v) for v in vecs) / len(vecs)
+    agreement = (magnitude / mean_len) if mean_len > 1e-6 else 1.0  # 1.0 = every block agrees
+    return {"dx": mdx, "dy": mdy, "magnitude": magnitude, "agreement": min(1.0, agreement)}
+
+
+def label_shot_flow(flows: "Sequence[Dict[str, Any]]") -> "Dict[str, Any]":
+    """{label, flow_magnitude} for one shot from its per-frame-pair flow measurements.
+
+    static: mean displacement below MOTION_STATIC_PX. pan: above it, and blocks agree on
+    direction (a camera move shifts the whole frame). motion: above it, blocks disagree (motion
+    inside an otherwise still frame -- handheld jitter, or a subject moving across a static
+    background). This is a measured proxy, the same spirit as scenes.py --rank-by: it reports
+    what a coarse block match saw, not what is interesting about the shot."""
+    if not flows:
+        return {"label": "static", "flow_magnitude": 0.0}
+    magnitude = sum(f["magnitude"] for f in flows) / len(flows)
+    agreement = sum(f["agreement"] for f in flows) / len(flows)
+    if magnitude < MOTION_STATIC_PX:
+        label = "static"
+    elif agreement >= MOTION_PAN_SPREAD:
+        label = "pan"
+    else:
+        label = "motion"
+    return {"label": label, "flow_magnitude": round(magnitude, 3)}

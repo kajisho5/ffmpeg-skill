@@ -33,7 +33,10 @@ import sys
 from collections import Counter
 from typing import Dict, List, Tuple
 
-from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis
+from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis, decode_gray_frames, frame_flow
+
+MOTION_CENTRE_FPS = 2.0
+MOTION_CENTRE_W, MOTION_CENTRE_H = 64, 36
 
 CROP_RE = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
 
@@ -61,6 +64,52 @@ def detect(path: str, seconds: float, samples: int, limit: float, round_to: int,
     return rects
 
 
+def motion_centre(path: str, seconds: float, samples: int, duration: float, sw: int, sh: int) -> List[Dict]:
+    """Per-second motion centroid: {time, x, y, x_frac, y_frac} -- a report-only measurement,
+    the same sampled-window approach as detect() above. x/y are pixel coordinates in the SOURCE
+    frame (consistent with the --round crop rectangle this tool already reports in source
+    pixels); x_frac/y_frac are the same position as a 0..1 fraction of source_width/height, for a
+    caller that wants to reframe without first knowing the source size. This never picks a
+    subject -- it reports where in the frame the measured pixel motion was concentrated, which is
+    not the same thing as where the interesting subject is (a moving background behind a still
+    speaker centres the motion on the background)."""
+    per_window = max(0.5, seconds / max(1, samples))
+    cell = 8  # NxN diff grid at decode resolution
+    cw, ch = MOTION_CENTRE_W / cell, MOTION_CENTRE_H / cell
+    out: List[Dict] = []
+    for i in range(samples):
+        start = 0.0 if duration <= 0 else (duration - per_window) * i / max(1, samples - 1) if samples > 1 else 0.0
+        start = max(0.0, start)
+        frames = decode_gray_frames(path, MOTION_CENTRE_FPS, MOTION_CENTRE_W, MOTION_CENTRE_H,
+                                     start=start, seconds=per_window, check=False)
+        for k in range(len(frames) - 1):
+            prev, cur = frames[k], frames[k + 1]
+            wsum = wx = wy = 0.0
+            for gy in range(cell):
+                for gx in range(cell):
+                    x0, x1 = int(gx * cw), int((gx + 1) * cw)
+                    y0, y1 = int(gy * ch), int((gy + 1) * ch)
+                    diff = 0
+                    for y in range(y0, y1):
+                        row = y * MOTION_CENTRE_W
+                        for x in range(x0, x1):
+                            diff += abs(prev[row + x] - cur[row + x])
+                    cx = (gx + 0.5) / cell
+                    cy = (gy + 0.5) / cell
+                    wsum += diff
+                    wx += diff * cx
+                    wy += diff * cy
+            t = start + (k + 1) / MOTION_CENTRE_FPS
+            if wsum <= 0:
+                out.append({"time": round(t, 2), "x": None, "y": None, "x_frac": None, "y_frac": None, "motion": 0.0})
+                continue
+            xf, yf = wx / wsum, wy / wsum
+            out.append({"time": round(t, 2), "x": round(xf * sw), "y": round(yf * sh),
+                        "x_frac": round(xf, 3), "y_frac": round(yf, 3), "motion": round(wsum / (MOTION_CENTRE_W * MOTION_CENTRE_H), 2)})
+    out.sort(key=lambda r: r["time"])
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -68,6 +117,10 @@ def main() -> int:
     ap.add_argument("--samples", type=int, default=5, help="number of windows spread across the file (default 5)")
     ap.add_argument("--limit", type=float, default=0.0941176, help="black-pixel threshold, 0..1 (default ~0.094, cropdetect's own default)")
     ap.add_argument("--round", type=int, default=16, dest="round_to", help="the reported width/height are rounded to a multiple of this (default 16)")
+    ap.add_argument("--motion-centre", action="store_true",
+                    help="report the motion centroid per second, sampled the same way as the crop "
+                         "detection above (report only -- this tool never picks a reframe, it hands "
+                         "the calling agent numbers to reframe with)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -101,6 +154,11 @@ def main() -> int:
         else:
             info(f"detected crop={w}:{h}:{x}:{y} (source {sw}x{sh}, confidence {result['confidence']:.0%}) -- "
                  f"crop.py {args.input} --x {x} --y {y} --width {w} --height {h}")
+
+    if args.motion_centre:
+        centre = motion_centre(args.input, args.seconds, args.samples, duration, sw, sh)
+        result["motion_centre"] = centre
+        info(f"--motion-centre: {len(centre)} measured points")
 
     if args.json:
         emit(None, **result)

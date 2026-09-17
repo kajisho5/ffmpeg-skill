@@ -25,7 +25,11 @@ from typing import Dict, List, Optional, Tuple
 # `detect_scenes` moved into _common/probe.py in 1.16.0 (see silence.py); the body is unchanged.
 from _common import (detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
                      escape_filter_path, ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
-                     rms_envelope, BEAT_MIN_CONFIDENCE)
+                     rms_envelope, BEAT_MIN_CONFIDENCE, decode_gray_frames, frame_flow, label_shot_flow)
+
+SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
+SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
+SPEECH_STEP_S = 1.0      # --speech energy-ratio window
 
 
 
@@ -54,6 +58,51 @@ def parse_beat_range(text: str) -> "tuple":
     return (lo, hi)
 
 
+def shot_flow_label(path: str, start: float, end: float) -> Dict:
+    """{start, end, label, flow_magnitude} for one shot: decode it at SHOT_FPS/SHOT_W x SHOT_H
+    and block-match consecutive frames (see _common.decision.frame_flow / label_shot_flow). A
+    shot under two sampled frames has nothing to compare and is reported static with
+    flow_magnitude 0 -- there is no motion measurement to make on a single frame."""
+    frames = decode_gray_frames(path, SHOT_FPS, SHOT_W, SHOT_H, start=start, seconds=max(0.0, end - start), check=False)
+    flows = [frame_flow(frames[i], frames[i + 1], SHOT_W, SHOT_H) for i in range(len(frames) - 1)]
+    label = label_shot_flow(flows)
+    return {"start": round(start, 3), "end": round(end, 3), "label": label["label"], "flow_magnitude": label["flow_magnitude"]}
+
+
+def audio_peaks_db(samples: "List[float]", rate: int, step_s: float = 0.25) -> List[Dict]:
+    """--audio-peaks: local maxima of the loudness envelope reported as measured dBFS, not the
+    unitless RMS scenes.py has always put in the (unconditional) `audio_peaks` key -- a
+    different unit needs a different key so the existing one keeps meaning what it always has."""
+    env = rms_envelope(samples, int(rate * step_s))
+    peaks = []
+    for i, val in enumerate(env):
+        if val <= 1e-6:
+            continue
+        if (i == 0 or env[i - 1] <= val) and (i == len(env) - 1 or env[i + 1] <= val):
+            level = round(20 * math.log10(val), 1)
+            peaks.append({"time": round(i * step_s, 2), "level": level})
+    return peaks
+
+
+def speech_music_ratio(samples: "List[float]", rate: int, step_s: float = SPEECH_STEP_S) -> List[Dict]:
+    """--speech: a per-second zero-crossing-rate ratio, reported as a measured number, not a
+    speech/music label. Speech's rapid consonant transients drive the zero-crossing rate up and
+    make it jump window to window; sustained tones (music, a held note, room tone) cross zero at
+    a steadier rate. ratio = this window's ZCR / the file's median ZCR, so 1.0 is "typical for
+    this file" regardless of its overall noisiness -- a proxy, in the same spirit as scenes.py's
+    --rank-by, not a classifier: nothing here decides what is speech."""
+    step = max(1, int(rate * step_s))
+    zcrs: List[float] = []
+    for i in range(0, len(samples) - step + 1, step):
+        block = samples[i:i + step]
+        crossings = sum(1 for a, b in zip(block, block[1:]) if (a >= 0) != (b >= 0))
+        zcrs.append(crossings / max(1, len(block) - 1))
+    if not zcrs:
+        return []
+    med = sorted(zcrs)[len(zcrs) // 2] or 1e-9
+    return [{"time": round(i * step_s, 2), "speech_music_ratio": round(z / med, 3)} for i, z in enumerate(zcrs)]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -76,6 +125,15 @@ def main() -> int:
     ap.add_argument("--min-confidence", type=float, default=BEAT_MIN_CONFIDENCE,
                     help="with --beats: below this confidence the grid is still reported, marked "
                          f"usable: false (default {BEAT_MIN_CONFIDENCE})")
+    ap.add_argument("--shots", action="store_true",
+                    help="label each detected shot static / pan / motion by a measured optical-flow "
+                         "proxy (lightweight block matching over sampled frames); reports flow_magnitude too")
+    ap.add_argument("--audio-peaks", action="store_true",
+                    help="report loudness peaks as {time, level} in measured dBFS (separate from the "
+                         "always-on `audio_peaks` RMS list used to pick --highlights)")
+    ap.add_argument("--speech", action="store_true",
+                    help="report a per-second speech-vs-music energy ratio (zero-crossing-rate proxy, "
+                         "a measurement, not a speech/music classification)")
     ap.add_argument("--sheet", help="write a contact sheet PNG with the first frame of every scene")
     ap.add_argument("--no-timecode", action="store_true", help="--sheet without the burnt-in timecode stamp (a way out if drawtext itself is unusable, see doctor)")
     add_common(ap)
@@ -100,7 +158,8 @@ def main() -> int:
     # With --beats the file is decoded once, at the finer rate, and both envelopes come from that
     # one pass: the 0.5 s scene blocks are an exact multiple of the 10 ms onset blocks.
     beat_rate = 22050
-    fine_samples = decode_pcm_mono(args.input, beat_rate, check=False) if (args.beats and meta.get("audio")) else None
+    need_fine = args.beats or args.audio_peaks or args.speech
+    fine_samples = decode_pcm_mono(args.input, beat_rate, check=False) if (need_fine and meta.get("audio")) else None
     if fine_samples is not None:
         env = audio_envelope(args.input, step_s, rate=beat_rate, samples=fine_samples)
     else:
@@ -127,6 +186,32 @@ def main() -> int:
 
     result: Dict = {"file": args.input, "duration": round(dur, 3), "scene_count": len(scenes), "scenes": scenes, "audio_peaks": peaks}
     info(f"{len(scenes)} scenes, {len(peaks)} audio peaks over {dur:.1f}s")
+
+    if args.shots:
+        shots = [shot_flow_label(args.input, s, e) for s, e in zip(bounds[:-1], bounds[1:]) if e - s > 0.05]
+        result["shots"] = shots
+        counts = {}
+        for sh in shots:
+            counts[sh["label"]] = counts.get(sh["label"], 0) + 1
+        info(f"--shots: {len(shots)} shots (" + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())) + ")")
+
+    if args.audio_peaks:
+        if not meta.get("audio"):
+            result["audio_peaks_db"] = []
+            info("--audio-peaks: no audio stream, nothing to measure")
+        else:
+            db_samples = fine_samples if fine_samples is not None else decode_pcm_mono(args.input, 22050, check=False)
+            result["audio_peaks_db"] = audio_peaks_db(db_samples, 22050 if fine_samples is not None else 22050)
+            info(f"--audio-peaks: {len(result['audio_peaks_db'])} peaks")
+
+    if args.speech:
+        if not meta.get("audio"):
+            result["speech"] = []
+            info("--speech: no audio stream, nothing to measure")
+        else:
+            sp_samples = fine_samples if fine_samples is not None else decode_pcm_mono(args.input, 22050, check=False)
+            result["speech"] = speech_music_ratio(sp_samples, 22050)
+            info(f"--speech: {len(result['speech'])} one-second windows")
 
     if args.beats:
         # A beat grid is a measurement of the music's periodicity, not a statement about where a

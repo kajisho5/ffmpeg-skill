@@ -77,6 +77,32 @@ MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".m
              ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".aif", ".aiff", ".caf", ".wma", ".png", ".jpg", ".jpeg", ".webp"}
 
 
+def decode_gray_frames(path: str, fps: float, width: int, height: int, *, start: float = 0.0,
+                       seconds: "Optional[float]" = None, check: bool = True) -> "List[bytes]":
+    """Decode `path` to raw 8-bit grayscale frames at a low `fps`/`width`x`height`, one ffmpeg
+    pass to stdout. Used by scenes.py --shots (per-shot flow label) and cropdetect.py
+    --motion-centre (motion centroid): both need pixel data, not a filter's own summary number,
+    but at 1.18.0's resolutions (tens of pixels a side, a few fps) a whole shot is a few KB, so
+    piping raw frames through Python stays cheap and needs no extra dependency."""
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if start:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", path]
+    if seconds is not None:
+        cmd += ["-t", f"{max(0.0, seconds):.3f}"]
+    cmd += ["-vf", f"fps={fps:g},scale={width}:{height}:flags=area,format=gray",
+            "-f", "rawvideo", "-"]
+    proc = run_analysis(cmd, check=False, text=False)
+    if proc.returncode != 0 or not proc.stdout:
+        if check:
+            die(f"could not decode frames from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
+        return []
+    frame_size = width * height
+    data = proc.stdout
+    return [data[i:i + frame_size] for i in range(0, len(data) - frame_size + 1, frame_size)]
+
+
 def _output_failed(path: str, why: str) -> "None":
     """An ffmpeg run reported success but the artifact is not usable: say so, and do not leave a
     0-byte file behind that a later step could mistake for a result."""

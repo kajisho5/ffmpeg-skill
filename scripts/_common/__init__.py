@@ -68,12 +68,13 @@ from _common.emit import (
 )
 from _common.probe import (
     analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
-    _fraction, keyframes_near, SCORE_RE, SIL_RE,
+    _fraction, keyframes_near, SCORE_RE, SIL_RE, decode_gray_frames,
     measured_level_dbfs, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output
 )
 from _common.decision import (
     aac_args, add_pad_fill_args, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
     description_block, _evidence_rank, fmt_chapter_time, propose_chapters,
+    frame_flow, label_shot_flow, MOTION_GRID, MOTION_SEARCH, MOTION_STATIC_PX, MOTION_PAN_SPREAD,
     filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS, FILLER_MAX_WORD,
     FILLER_MIN_GAP, FILLER_PAD, normalise_filler_token,
     beat_grid, snap_points, BEAT_MIN_CONFIDENCE, BEAT_ONSET_K, BEAT_OCTAVE_MARGIN,
@@ -205,6 +206,7 @@ __all__ = [
     "place_output", "_plan_at_exit", "_plan_inputs", "_PLAN_STRIP", "PLAN_VERSION", "PREFERRED_FAMILIES",
     "print_json", "probe", "PROBE_TIMEOUT", "_progress_line", "read_text_or_die", "refuse_output_is_input",
     "_remember_output", "require_tool", "resolve_emoji_assets", "_result_v2", "rms_envelope", "run", "run_analysis",
+    "decode_gray_frames", "frame_flow", "label_shot_flow", "MOTION_GRID", "MOTION_SEARCH", "MOTION_STATIC_PX", "MOTION_PAN_SPREAD",
     "_run_captured", "run_keeping_subtitles", "run_tool", "_run_with_progress", "_SCRIPT_FONT_CACHE",
     "_script_font_entry", "script_font_for_text", "script_font_status", "_script_font_uncached", "_SCRIPT_RANGES",
     "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote",

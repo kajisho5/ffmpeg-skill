@@ -1272,6 +1272,72 @@ class EditingTests(MediaFixtures):
                                   "--json").stdout)["filler"]
         self.assertIn("so", extra["removed_words"])
 
+    # ------------------------------------------------ 1.18.0: silence.py --speech-aware
+    def _breathy(self):
+        """10 s: speech 0-3s, a 0.25 s breath (well under the 0.6 s default --min-silence),
+        speech 3.25-6s, a 1 s sentence-boundary pause 6-7s, speech 7-10s."""
+        clip = OUT / "breathy.mp4"
+        if not clip.exists():
+            expr = "0.5*sin(2*PI*440*t)*(lt(t\\,3)+between(t\\,3.25\\,6)+gt(t\\,7))"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", f"aevalsrc='{expr}':s=48000", "-t", "10", clip)
+        return clip
+
+    def test_speech_aware_keeps_a_short_breath_and_cuts_the_sentence_boundary(self):
+        data = json.loads(script("silence.py", self._breathy(), "--speech-aware", "--list",
+                                 "--margin", "0.05", "--json").stdout)
+        sa = data["speech_aware"]
+        self.assertEqual(sa["breaths_kept"], 1)
+        self.assertAlmostEqual(sa["breaths"][0][0], 3.0, delta=0.1)
+        self.assertAlmostEqual(sa["breaths"][0][1], 3.25, delta=0.1)
+        # the sentence-boundary pause (6-7s) is the only one removed
+        self.assertEqual(len(data["silences"]), 1)
+        self.assertAlmostEqual(data["silences"][0][0], 6.0, delta=0.1)
+
+    def test_speech_aware_without_the_flag_would_have_cut_the_breath_too(self):
+        """With a --min-silence short enough to catch the breath, the plain (non-speech-aware)
+        run removes it; --speech-aware is what keeps it."""
+        plain = json.loads(script("silence.py", self._breathy(), "--min-silence", "0.2",
+                                  "--threshold", "-35", "--list", "--json").stdout)
+        aware = json.loads(script("silence.py", self._breathy(), "--min-silence", "0.6",
+                                  "--speech-aware", "--list", "--json").stdout)
+        self.assertEqual(len(plain["silences"]), 2)   # breath + sentence pause, both cut
+        self.assertEqual(len(aware["silences"]), 1)   # only the sentence pause
+        self.assertEqual(aware["speech_aware"]["breaths_kept"], 1)
+
+    def test_speech_aware_writes_an_edl_like_the_plain_flag(self):
+        edl = OUT / "speech_aware.edl"
+        script("silence.py", self._breathy(), "--speech-aware", "--edl", edl, "--list", "--json")
+        lines = edl.read_text(encoding="utf-8").strip().splitlines()
+        self.assertGreaterEqual(len(lines), 1)
+        for line in lines:
+            a, b = line.split("-")
+            self.assertLess(float(a), float(b))
+
+    def test_speech_aware_composes_with_filler_into_one_removal_list(self):
+        """The trickiest part of 1.18.0: --speech-aware and --filler must flow through the same
+        keep_ranges() and produce one removal list, not two independent cuts. A filler word
+        placed inside the kept breath must still be removed -- and the breath must still not be
+        cut just because --filler ran."""
+        clip = self._breathy()
+        words = OUT / "words_breath.json"
+        # a filler word squarely inside the kept breath (3.0-3.25s)
+        words.write_text(json.dumps({"language": "en", "segments": [
+            {"words": [{"word": "um", "start": 3.05, "end": 3.15}]}]}), encoding="utf-8")
+        out = OUT / "speech_aware_filler.mp4"
+        data = json.loads(script("silence.py", clip, "--speech-aware", "--filler",
+                                 "--words", words, "-o", out, "--margin", "0.02", "--json").stdout)
+        self.assertIn("speech_aware", data)
+        self.assertIn("filler", data)
+        # the breath is still reported as kept by --speech-aware...
+        self.assertEqual(data["speech_aware"]["breaths_kept"], 1)
+        # ...but the filler word inside it is removed anyway: one composed list, not two cuts
+        # that ignore each other. removed_seconds_total covers both the sentence pause and the
+        # filler word.
+        self.assertGreater(data["removed_seconds_total"], data["removed_seconds"])
+        m = probe(str(out))
+        self.assertLess(m["duration"], data["input_duration"])
+
     def test_filler_warns_about_a_japanese_discourse_marker(self):
         words = [("\u305d\u308c\u306f", 0.2, 0.5), ("\u306a\u3093\u304b", 0.6, 0.85), ("\u3044\u3044", 1.0, 1.3)]
         data = json.loads(script("silence.py", self._gappy(), "--filler", "--filler-list",
