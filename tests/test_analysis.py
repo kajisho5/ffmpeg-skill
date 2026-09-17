@@ -143,6 +143,59 @@ class AnalysisTests(MediaFixtures):
         again = json.loads(script("sync.py", self.src, out, "--json").stdout)
         self.assertClose(again["offset_seconds"], 0.0, 0.05)
 
+    # ---------------------------------------------------------------- 1.18.0: sync.py 3+ sources
+    def _cam3(self):
+        """A third source: the reference shifted 1.2 s later, so it has a real measurable offset
+        distinct from self.mic's 2.5 s."""
+        cam3 = OUT / "sync_cam3.wav"
+        if not cam3.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "aevalsrc=0:s=48000:d=1.2", "-i", self.src,
+               "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1", cam3)
+        return cam3
+
+    def test_sync_two_sources_keeps_the_original_shape(self):
+        """The 2-source CLI shape is a special case of the N-source one, byte-for-byte: the same
+        top-level offset_seconds/confidence/second keys tested since 1.0, plus (additively) the
+        new `sources` list."""
+        data = json.loads(script("sync.py", self.src, self.mic, "--json").stdout)
+        self.assertIn("offset_seconds", data)
+        self.assertIn("second", data)
+        self.assertIn("confidence", data)
+        self.assertIn("sources", data)
+        self.assertEqual(len(data["sources"]), 1)
+        self.assertEqual(data["sources"][0]["path"], str(self.mic))
+        self.assertAlmostEqual(data["sources"][0]["offset_s"], data["offset_seconds"], delta=0.001)
+
+    def test_sync_three_sources_writes_one_offsets_json(self):
+        data = json.loads(script("sync.py", self.src, self.mic, self._cam3(), "--json").stdout)
+        self.assertNotIn("second", data)         # no single-pair shape for N>1
+        self.assertNotIn("offset_seconds", data)
+        self.assertEqual(data["reference"], str(self.src))
+        self.assertEqual(len(data["sources"]), 2)
+        by_path = {s["path"]: s for s in data["sources"]}
+        self.assertClose(by_path[str(self.mic)]["offset_s"], 2.5, 0.05)
+        self.assertClose(by_path[str(self._cam3())]["offset_s"], -1.2, 0.05)
+        for s in data["sources"]:
+            self.assertIn("confidence", s)
+
+    def test_sync_three_sources_reports_drift_ppm_per_source(self):
+        data = json.loads(script("sync.py", self.long_ref, self.long_drift, self.long_ref,
+                                 "--fix-drift", "--json").stdout)
+        drifts = {s["path"]: s["drift_ppm"] for s in data["sources"]}
+        self.assertClose(drifts[str(self.long_drift)], 500.0, 60.0)
+        self.assertClose(drifts[str(self.long_ref)], 0.0, 60.0)
+
+    def test_sync_replace_audio_refuses_multiple_sources(self):
+        r = script("sync.py", self.src, self.mic, self._cam3(), "--replace-audio",
+                   "-o", OUT / "nope.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
+
+    def test_sync_three_sources_text_output(self):
+        proc = script("sync.py", self.src, self.mic, self._cam3())
+        self.assertIn(str(self.mic), proc.stdout)
+        self.assertIn(str(self._cam3()), proc.stdout)
+
     # ---------------------------------------------------------------- real-world material
     def test_probe_detects_vfr_rotation_surround_hdr(self):
         self.assertTrue(probe(str(self.vfr))["video"]["variable_frame_rate_suspected"])

@@ -253,6 +253,96 @@ class OrchestrationTests(MediaFixtures):
         self.assertClose(probe(str(auto))["duration"], 12.0, 0.2)
         script("multicam.py", self.src, camB, "--switch", "0-3:5", expect_fail=True)
 
+    # ------------------------------------------------------------ 1.18.0: --switch energy / --edl
+    def _loud_cams(self):
+        """Two cameras on one reference timeline: camA loud 0-6s / quiet 6-12s, camB the reverse
+        -- --switch energy should pick camA for the first half and camB for the second."""
+        camA = OUT / "mc_energy_a.mp4"
+        camB = OUT / "mc_energy_b.mp4"
+        if not camA.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "testsrc2=size=160x90:rate=30", "-f", "lavfi",
+               "-i", "aevalsrc='0.8*sin(2*PI*440*t)*lt(t\\,6)+0.01*sin(2*PI*440*t)*gt(t\\,6)':s=48000",
+               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", camA)
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "testsrc2=size=160x90:rate=30,hue=h=90", "-f", "lavfi",
+               "-i", "aevalsrc='0.01*sin(2*PI*440*t)*lt(t\\,6)+0.8*sin(2*PI*440*t)*gt(t\\,6)':s=48000",
+               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", camB)
+        return camA, camB
+
+    def test_multicam_switch_energy_picks_the_loudest_camera(self):
+        camA, camB = self._loud_cams()
+        out = OUT / "mc_energy.mp4"
+        data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "1",
+                                 "--fast", "-o", out, "--json").stdout)
+        self.assertEqual(data["switch_mode"], "energy")
+        cams_by_time = {}
+        for s, e, c in data["cuts"]:
+            cams_by_time[(s + e) / 2] = c
+        early = [c for t, c in cams_by_time.items() if t < 5]
+        late = [c for t, c in cams_by_time.items() if t > 7]
+        self.assertTrue(early and all(c == 0 for c in early), f"expected camera 0 (louder) early: {data['cuts']}")
+        self.assertTrue(late and all(c == 1 for c in late), f"expected camera 1 (louder) late: {data['cuts']}")
+
+    def test_multicam_switch_energy_respects_min_shot(self):
+        camA, camB = self._loud_cams()
+        out = OUT / "mc_energy_minshot.mp4"
+        data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "3",
+                                 "--fast", "-o", out, "--json").stdout)
+        for s, e, _c in data["cuts"]:
+            # the very first/last cut may be shorter (it borders the clip edge), interior cuts
+            # must respect --min-shot
+            if s > 0.01 and e < 11.99:
+                self.assertGreaterEqual(round(e - s, 2), 3.0 - 0.05, data["cuts"])
+
+    def test_multicam_edl_matches_the_reported_cuts(self):
+        camA, camB = self._loud_cams()
+        edl = OUT / "mc_energy.edl"
+        out = OUT / "mc_energy_edl.mp4"
+        data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "1",
+                                 "--edl", edl, "--fast", "-o", out, "--json").stdout)
+        lines = edl.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(len(lines), len(data["cuts"]))
+        for line, (s, e, _c) in zip(lines, data["cuts"]):
+            a, b = (float(x) for x in line.split("-"))
+            self.assertAlmostEqual(a, s, delta=0.01)
+            self.assertAlmostEqual(b, e, delta=0.01)
+            self.assertLess(a, b)
+
+    def test_multicam_switch_energy_needs_at_least_one_video_camera(self):
+        wav_a = OUT / "mc_energy_audio_only_a.wav"
+        wav_b = OUT / "mc_energy_audio_only_b.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000", "-t", "4", wav_a)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000", "-t", "4", wav_b)
+        script("multicam.py", wav_a, wav_b, "--switch", "energy", "-o", OUT / "mc_nope.mp4", expect_fail=True)
+
+    def test_multicam_min_shot_must_be_positive(self):
+        camA, camB = self._loud_cams()
+        script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "0", "-o", OUT / "mc_nope2.mp4", expect_fail=True)
+
+    def test_multicam_edl_is_renderable_as_a_render_project(self):
+        """The multicam timeline is expressible as a render.py project without a new stage type:
+        each cut becomes a clip that points at its own camera's file with in/out on that camera's
+        OWN timeline (reference time shifted by the measured offset), using render.py's existing
+        clips array -- see docs/contract.md and docs/design-decisions.md for why no new project
+        schema was needed."""
+        camA, camB = self._loud_cams()
+        data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "1",
+                                 "--fast", "-o", OUT / "mc_energy_proj.mp4", "--json").stdout)
+        offsets = data["offsets_seconds"]
+        clips = [{"src": [str(camA), str(camB)][c], "in": round(s - offsets[c], 3), "out": round(e - offsets[c], 3)}
+                for s, e, c in data["cuts"]]
+        project = OUT / "mc_project.json"
+        project.write_text(json.dumps({"output": "mc_rendered.mp4", "clips": clips}), encoding="utf-8")
+        out = OUT / "mc_rendered.mp4"
+        script("render.py", project, "--fast", "-o", out)
+        self.assertTrue(out.exists())
+        m = probe(str(out))
+        # the measured per-camera offset carries its own small error, so this is a looser bound
+        # than the multicam output's own duration check -- the point is that render.py accepts the
+        # clip list at all, not a frame-accurate re-derivation of multicam's own timeline math.
+        self.assertGreater(m["duration"], 8.0)
+
     def test_multicam_fix_drift_trims_before_resample_not_after(self):
         """--fix-drift's audio path computes a_start (an atrim start point) in the source's own
         pre-correction time axis, but the filter chain used to apply asetrate/aresample (the drift
