@@ -265,6 +265,37 @@ def _split_hyphens(atoms: "List[Tuple[str, bool]]") -> "List[Tuple[str, bool]]":
     return out
 
 
+def _slice_atom(atom: str, max_em: float) -> "List[str]":
+    """The escape hatch (1.18.4): hard-slice a single atom that is wider than `max_em` all by
+    itself -- a word or run with no break point the wrapper may use, and that STILL does not fit
+    even alone on its own line. Nothing else in this file may ever chop an atom mid-character;
+    this is the one place that does, and only once every other mechanism (wrapping, then
+    caption.py's --min-size shrink) has already failed to make it fit.
+
+    No dictionary, no hyphenation library: an existing hyphen is preferred as the cut (the same
+    break R1 already allows), then whatever is left is cut again at exactly the widest prefix
+    that still measures within `max_em`, one character at a time. The characters themselves are
+    never rewritten -- every piece concatenates back to the original atom exactly."""
+    if text_width_em(atom) <= max_em:
+        return [atom]
+    for i in range(len(atom) - 2, 0, -1):
+        # latest hyphen whose left side still fits -- keeps the left half as large as possible
+        if atom[i] in _HYPHENS and text_width_em(atom[:i + 1]) <= max_em:
+            return [atom[:i + 1]] + _slice_atom(atom[i + 1:], max_em)
+    pieces: "List[str]" = []
+    cur = ""
+    for ch in atom:
+        candidate = cur + ch
+        if cur and text_width_em(candidate) > max_em:
+            pieces.append(cur)
+            cur = ch
+        else:
+            cur = candidate
+    if cur:
+        pieces.append(cur)
+    return pieces or [atom]
+
+
 def _join(left: str, atom: str, spaced: bool) -> str:
     """Put an atom back on a line, restoring the space that stood before it."""
     if not left:
@@ -574,15 +605,38 @@ def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]") 
     return out, moved
 
 
-def _greedy_chunks(raw: str, max_em: float) -> "List[str]":
-    """The greedy fill on its own: the line count every mode must keep."""
+def _greedy_chunks(raw: str, max_em: float, *, slice_overlong: bool = False,
+                   sliced: "Optional[List[int]]" = None) -> "List[str]":
+    """The greedy fill on its own: the line count every mode must keep.
+
+    `slice_overlong` (off by default -- only caption.py's final burn-in pass turns it on, never
+    fit_size()'s search) is the escape hatch: an atom that lands alone on a line and is STILL
+    wider than `max_em` -- a fitting atom never reaches this branch, so a Thai phrase or a
+    katakana run that already fits is completely untouched -- is hard-sliced by _slice_atom()
+    instead of kept whole. `sliced`, when given, gets one entry (the number of extra lines that
+    one atom produced) per atom actually sliced, which is how the caller counts
+    `broken_inside_word` without re-deriving it from the output lines."""
     current = ""
     chunk: "List[str]" = []
     for atom, spaced in _atoms(raw):
+        if slice_overlong and not current and text_width_em(atom) > max_em:
+            pieces = _slice_atom(atom, max_em)
+            if sliced is not None and len(pieces) > 1:
+                sliced.append(len(pieces) - 1)
+            chunk.extend(pieces[:-1])
+            current = pieces[-1]
+            continue
         candidate = _join(current, atom, spaced)
         if current and text_width_em(candidate) > max_em:
             chunk.append(current)
-            current = atom
+            if slice_overlong and text_width_em(atom) > max_em:
+                pieces = _slice_atom(atom, max_em)
+                if sliced is not None and len(pieces) > 1:
+                    sliced.append(len(pieces) - 1)
+                chunk.extend(pieces[:-1])
+                current = pieces[-1]
+            else:
+                current = atom
         else:
             current = candidate
     if current:
@@ -608,7 +662,8 @@ def _balance(chunk: "List[str]", max_em: float, mode: str, lang: "Optional[str]"
 
 
 def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "phrase",
-              lang: "Optional[str]" = None) -> "List[str]":
+              lang: "Optional[str]" = None, slice_overlong: bool = False,
+              sliced: "Optional[List[int]]" = None) -> "List[str]":
     """Wrap `text` to lines no wider than `max_em` em, keeping the manual breaks it already has.
 
     An atom wider than the whole line (one very long word) is left alone on its line rather than
@@ -626,11 +681,12 @@ def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "ph
     for raw in text.split("\n"):
         if not raw.strip():
             continue
-        chunk = _greedy_chunks(raw, max_em)
+        chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced)
         lines.extend(_balance(chunk, max_em, mode, lang) if balance else chunk)
     return lines or [text]
 def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
-                  lang: "Optional[str]" = None) -> "Tuple[List[str], List[str], List[str]]":
+                  lang: "Optional[str]" = None, slice_overlong: bool = False,
+                  sliced: "Optional[List[int]]" = None) -> "Tuple[List[str], List[str], List[str]]":
     """`(wrapped, greedy, measured)` for one cue from a single greedy fill.
 
     layout_cues needs all three -- `wrapped` is what is burnt in, `greedy` is what `rebalanced`
@@ -645,7 +701,7 @@ def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
     for raw in text.split("\n"):
         if not raw.strip():
             continue
-        chunk = _greedy_chunks(raw, max_em)
+        chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced)
         greedy.extend(chunk)
         wrapped.extend(_balance(list(chunk), max_em, mode, lang))
         measured.extend(chunk if mode == "measured" else _balance(list(chunk), max_em, "measured", None))

@@ -53,7 +53,7 @@ from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whi
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
                      fit_size, line_em_for_size, MIN_CAPTION_FRACTION,
                      break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
-                     _split_hyphens, FUNCTION_WORDS, JA_PARTICLES, JA_SENTENCE_END, _fix_orphans, _rebalance)
+                     _split_hyphens, _slice_atom, FUNCTION_WORDS, JA_PARTICLES, JA_SENTENCE_END, _fix_orphans, _rebalance)
 
 # The breaker's names are caption.py's public surface as much as _common's: every caller and test
 # that reached for `caption.wrap_text` before 1.16 still does.
@@ -62,7 +62,7 @@ __all__ = ["parse_srt", "write_srt", "transcribe", "whisper_word_timings", "die_
            "SAFE_WIDTH_FRACTION", "ORPHAN_MIN_EM", "WRAP_MODES", "wrap_text", "wrap_variants",
            "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION",
            "best_break", "break_penalty", "_is_weak_line", "_atoms", "_join", "_break_spaced",
-           "_bare_word", "_function_words", "_split_hyphens", "FUNCTION_WORDS", "JA_PARTICLES",
+           "_bare_word", "_function_words", "_split_hyphens", "_slice_atom", "FUNCTION_WORDS", "JA_PARTICLES",
            "JA_SENTENCE_END", "_fix_orphans", "_rebalance", "char_script", "NO_SPACE_SCRIPTS",
            "text_width_em"]
 
@@ -319,6 +319,10 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
     """
     stats = {"shifted": 0, "wrapped": 0, "split": 0, "extended": 0, "dropped": 0, "rebalanced": 0,
              "wrap": wrap, "phrase_breaks": 0}
+    # ass_units_local's floor + the escape hatch below mean an atom this loop hands to
+    # wrap_variants(..., slice_overlong=True) can still overflow only if a SINGLE character is
+    # wider than the column -- practically unreachable at any real --min-size. `overlong` stays
+    # in stats for that theoretical remainder; `broken_inside_word` is the count that matters now.
     staged: List[Tuple[float, float, str]] = []
     staged_sizes: List[Optional[int]] = []
     for cue_index, (start, end, text) in enumerate(cues):
@@ -339,12 +343,19 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
             # one greedy fill per cue, three answers off it: what gets burnt in, what the
             # greedy wrap would have given (`rebalanced`) and what 1.15's wrap would have
             # given (`phrase_breaks`). Three wrap_text() calls re-ran the atomiser each time.
-            lines, greedy, measured = wrap_variants(text, own_em, mode=wrap, lang=lang)
+            sliced_atoms: List[int] = []
+            lines, greedy, measured = wrap_variants(text, own_em, mode=wrap, lang=lang,
+                                                     slice_overlong=True, sliced=sliced_atoms)
             if lines != [l for l in text.split("\n") if l.strip()]:
                 stats["wrapped"] += 1
+            if sliced_atoms:
+                # the escape hatch fired: a word or run with no break point the wrapper may use
+                # was still wider than the column alone, even at the size in force, so it was
+                # hard-sliced at the column edge (or after its own hyphen) instead of clipping
+                stats["broken_inside_word"] = stats.get("broken_inside_word", 0) + len(sliced_atoms)
             if any(text_width_em(l) > own_em for l in lines):
-                # a run with no break point the wrapper may use (a long word, a Thai phrase
-                # without spaces) stays long rather than chopped: say so, and name the fix
+                # the escape hatch above could not make every piece fit -- only possible when a
+                # single character is wider than the column itself
                 stats["overlong"] = stats.get("overlong", 0) + 1
             if lines != greedy:
                 stats["rebalanced"] += 1
@@ -381,13 +392,19 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
 
 def report_layout(stats: dict) -> None:
     """One info line, only when a cue actually changed."""
-    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "rebalanced", "phrase_breaks", "split", "extended", "dropped", "overlong") if stats.get(k)]
+    parts = [f"{stats[k]} {k}" for k in ("shifted", "wrapped", "rebalanced", "phrase_breaks", "split",
+             "extended", "dropped", "broken_inside_word", "overlong") if stats.get(k)]
     if parts:
         info("cues: " + ", ".join(parts))
+    if stats.get("broken_inside_word"):
+        info(f"{stats['broken_inside_word']} cue line(s) had a word or run with no break point "
+             "(Thai writes none inside a phrase) that was still wider than the column alone -- it "
+             "was sliced at the column edge (after its own hyphen when it has one) instead of "
+             "clipping past the frame; put a space or `|` where the line may break, or use a "
+             "smaller --size, to avoid the slice")
     if stats.get("overlong"):
-        info(f"{stats['overlong']} cue line(s) wider than the safe width: a word or a run with no break "
-             "point (Thai writes none inside a phrase) was kept whole rather than chopped -- put a "
-             "space or `|` where the line may break, or use a smaller --size")
+        info(f"{stats['overlong']} cue line(s) wider than the safe width even after slicing: a "
+             "single character was wider than the column -- use a smaller --size")
 
 
 def margins_x(args, play_w: Optional[int]) -> Tuple[int, int]:

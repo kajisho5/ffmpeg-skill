@@ -2703,6 +2703,84 @@ class PhraseWrapTests(unittest.TestCase):
         self.assertEqual(C.wrap_text("\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf\u30fc\u3092\u8cb7\u3063\u305f", 7.0), ["\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf\u30fc", "\u3092\u8cb7\u3063\u305f"])
         self.assertEqual([a for a, _ in C._atoms("\u30bf\u30a4\u30df\u30f3\u30b0\u304c")][0], "\u30bf\u30a4\u30df\u30f3\u30b0")
 
+    # -------------------------------------------------------------- escape hatch (1.18.4, cs2)
+    def test_overlong_word_is_sliced_at_the_column_edge(self):
+        """cs2 (eval 20): a single 32-letter word with no break point, wider than the live column
+        even at --min-size, used to be kept whole and clipped past both frame edges. It is now
+        hard-sliced at exactly the column width, wherever `slice_overlong` is turned on -- the
+        escape hatch itself is off by default in wrap_text()/wrap_variants(), so nothing here
+        changes unless a caller asks for it (caption.py's burn-in pass is the only caller that
+        does)."""
+        C = self.caption
+        word = "Supercalifragil\u00edsticoespialidoso"
+        for max_em in (self.NARROW, 8.0, self.W):
+            with self.subTest(max_em=max_em):
+                # off by default: the word is kept whole, exactly as before this change
+                self.assertEqual(C.wrap_text(word, max_em), [word])
+                # the escape hatch: every produced line now measures within the column
+                lines = C.wrap_text(word, max_em, slice_overlong=True)
+                for line in lines:
+                    self.assertLessEqual(C.text_width_em(line), max_em, lines)
+                # no character was added, dropped or reordered
+                self.assertEqual("".join(lines), word)
+
+    def test_overlong_word_prefers_its_own_hyphen(self):
+        """When the overlong atom already has a hyphen, the slice prefers the cut right after it
+        -- the same break R1 already allows elsewhere -- over an arbitrary character cut, as long
+        as that still fits the column."""
+        C = self.caption
+        atom = "co-occurrencemeasurementsomethingunbreakablylong"
+        pieces = C._slice_atom(atom, 12.0)
+        self.assertTrue(pieces[0].endswith("-"), pieces)
+        for piece in pieces:
+            self.assertLessEqual(C.text_width_em(piece), 12.0, pieces)
+        self.assertEqual("".join(pieces), atom)
+
+    def test_layout_cues_reports_broken_inside_word_not_overlong(self):
+        """caption.py's per-cue loop (layout_cues) is the one caller that turns the escape hatch
+        on. cs2's cue now burns in with every line inside the safe column, and the new
+        `broken_inside_word` stat -- not `overlong` -- counts it."""
+        C = self.caption
+        word = "Supercalifragil\u00edsticoespialidoso"
+        max_em = self.NARROW
+        cues = [(0.0, 3.0, word)]
+        out, stats = C.layout_cues(cues, max_em=max_em, max_lines=4, min_duration=0.0, offset=0.0)
+        self.assertEqual(stats.get("broken_inside_word", 0), 1, stats)
+        self.assertNotIn("overlong", stats)
+        for _start, _end, text in out:
+            for line in text.split("\n"):
+                self.assertLessEqual(C.text_width_em(line), max_em, out)
+
+    def test_overlong_still_fires_when_even_one_character_does_not_fit(self):
+        """The escape hatch guarantees every piece fits as long as at least one character does.
+        `overlong` is not dead code: it is the fallback for the one case the hatch cannot fix, a
+        single character wider than the column itself (a pathologically small --size)."""
+        C = self.caption
+        # a full-width ideograph is 1.0 em; 0.5 em is narrower than any single character of it
+        text = "\u4e00\u4e8c\u4e09"
+        max_em = 0.5
+        cues = [(0.0, 3.0, text)]
+        out, stats = C.layout_cues(cues, max_em=max_em, max_lines=1, min_duration=0.0, offset=0.0)
+        self.assertEqual(stats.get("overlong", 0), 1, stats)
+
+    def test_escape_hatch_never_touches_a_fitting_thai_or_katakana_run(self):
+        """The hard constraint: an atom that already fits is never eligible for the escape hatch,
+        even with `slice_overlong=True` -- a fitting Thai phrase or katakana run must come back
+        exactly as written, same as 1.16.1."""
+        C = self.caption
+        thai_run = "\u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35\u0e0a\u0e32\u0e27\u0e42\u0e25\u0e01"
+        kata_run = "\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf\u30fc"
+        wide = self.W  # both runs fit comfortably at the wide platform width
+        self.assertLessEqual(C.text_width_em(thai_run), wide)
+        self.assertLessEqual(C.text_width_em(kata_run), wide)
+        self.assertEqual(C.wrap_text(thai_run, wide, slice_overlong=True), [thai_run])
+        self.assertEqual(C.wrap_text(kata_run, wide, slice_overlong=True), [kata_run])
+        # and unbroken through wrap_variants, the entry point caption.py actually calls
+        wrapped, greedy, measured = C.wrap_variants(thai_run, wide, slice_overlong=True)
+        self.assertEqual(wrapped, [thai_run])
+        wrapped, greedy, measured = C.wrap_variants(kata_run, wide, slice_overlong=True)
+        self.assertEqual(wrapped, [kata_run])
+
     # -------------------------------------------------------------- R4: function words
     def test_function_word_never_ends_a_line(self):
         C = self.caption

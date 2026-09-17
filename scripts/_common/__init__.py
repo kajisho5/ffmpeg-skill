@@ -107,7 +107,7 @@ from _common.text import (
     JA_NO_LINE_END, JA_NO_LINE_START, JA_PARTICLE_WORDS, JA_PARTICLES, JA_SENTENCE_END, _join, ORPHAN_MIN_EM,
     PENALTY_FORBIDDEN, PENALTY_FUNCTION_WORD, PENALTY_FUNCTION_WORD_START, PENALTY_IDEOGRAPHS,
     PENALTY_NEUTRAL, PENALTY_OKURIGANA,
-    PENALTY_PARTICLE, PENALTY_SENTENCE_END, _rebalance, _rebalance_phrase, SAFE_WIDTH_FRACTION, _split_hyphens,
+    PENALTY_PARTICLE, PENALTY_SENTENCE_END, _rebalance, _rebalance_phrase, SAFE_WIDTH_FRACTION, _split_hyphens, _slice_atom,
     _particle_ends, _particle_starts, wrap_text, wrap_variants, WRAP_MODES,
     fit_size, line_em_for_size, MIN_CAPTION_FRACTION, ass_units_local,
     script_font_for_text, script_font_status, _script_font_uncached, _SCRIPT_RANGES, SCRIPTS, _SHAPING_BUILD_CACHE,
@@ -223,7 +223,7 @@ __all__ = [
     "PENALTY_FUNCTION_WORD_START",
     "JA_SENTENCE_END", "_join", "ORPHAN_MIN_EM", "PENALTY_FORBIDDEN", "PENALTY_FUNCTION_WORD",
     "PENALTY_IDEOGRAPHS", "PENALTY_NEUTRAL", "PENALTY_OKURIGANA", "PENALTY_PARTICLE", "PENALTY_SENTENCE_END",
-    "_rebalance", "_rebalance_phrase", "SAFE_WIDTH_FRACTION", "_split_hyphens", "_particle_ends",
+    "_rebalance", "_rebalance_phrase", "SAFE_WIDTH_FRACTION", "_split_hyphens", "_slice_atom", "_particle_ends",
     "_particle_starts", "wrap_text", "wrap_variants", "WRAP_MODES",
     "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION", "ass_units_local"
 ]

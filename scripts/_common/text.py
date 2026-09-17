@@ -38,7 +38,7 @@ from _common.wrap import (
     text_width_em, SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, JA_PARTICLES, JA_PARTICLE_WORDS,
     JA_SENTENCE_END, JA_NO_LINE_START, JA_NO_LINE_END, FUNCTION_WORDS, _FUNCTION_WORDS_ANY, PENALTY_FORBIDDEN,
     PENALTY_OKURIGANA, PENALTY_FUNCTION_WORD, PENALTY_IDEOGRAPHS, PENALTY_NEUTRAL, PENALTY_FUNCTION_WORD_START,
-    PENALTY_PARTICLE, PENALTY_SENTENCE_END, _HYPHENS, _atoms, _split_hyphens, _join, _break_spaced, _is_kana,
+    PENALTY_PARTICLE, PENALTY_SENTENCE_END, _HYPHENS, _atoms, _split_hyphens, _slice_atom, _join, _break_spaced, _is_kana,
     _is_katakana_run, _is_hiragana, _is_ideograph, _is_weak_line, _function_words, _bare_word, _particle_starts,
     _particle_ends, break_penalty, _cut_penalty, best_break, _fix_orphans, _fix_weak_lines, _rebalance,
     _rebalance_phrase, _greedy_chunks, _balance, wrap_text, wrap_variants, MIN_CAPTION_FRACTION,
