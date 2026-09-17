@@ -240,6 +240,19 @@ class ContractTests(unittest.TestCase):
                               f"but package.json is {pkg['version']!r} -- update the stale example")
         self.assertGreater(checked, 0, "docs/contract.md: no example block contained skill.version to check")
 
+    def test_roadmap_released_version_matches_package_json(self):
+        """docs/roadmap.md's "The released version today is **X**" sentence hand-names a version;
+        it drifted to a stale 1.18.3 while package.json moved on to 1.18.4 and nothing caught it
+        (found during the 1.18.4 campaign). Pin that sentence's version to package.json so this
+        exact class of drift fails CI instead of sitting silently in the roadmap."""
+        pkg = json.loads((ROOT / "package.json").read_text())
+        text = (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8")
+        m = re.search(r"The released version today is \*\*([^*]+)\*\*", text)
+        self.assertIsNotNone(m, "docs/roadmap.md: no \"The released version today is **X**\" sentence found")
+        self.assertEqual(m.group(1), pkg["version"],
+                          f"docs/roadmap.md says the released version is {m.group(1)!r}, "
+                          f"but package.json is {pkg['version']!r} -- update the roadmap sentence")
+
     def test_docs_failure_json_example_keys_match_the_real_error_shape(self):
         """docs/contract.md's illustrative failure-JSON example listed only kind/message under
         error for years after "code"/"retryable" were added to the real die() output (Hardening

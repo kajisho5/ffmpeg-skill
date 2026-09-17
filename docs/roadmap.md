@@ -17,13 +17,16 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.18.3** — the default MCP `tools/list` is the core 12, with the
-full 42 reachable through `FFMPEG_SKILL_MCP_FULL=1`; no CLI/MCP argument changed. **Eval 22**
-(`evals/results/iteration-22.json`, 14 runs) re-checked 1.18.1's routing rows against fresh
-symptom-only prompts and re-ran `cs1`/`cs3` after 1.18.2/1.18.3: 7 of 8 new 1.18.0-flag prompts
-routed correctly without the flag being named (up from eval 21's 4/9 at 1.18.0's own release),
-and `cs3` no longer rewrites the user's cue text in any of three runs — the 1.17.3 fix holds
-through two further releases. Everything after 1.18.3 is planned.
+The released version today is **1.18.4** — a caption atom still wider than the live column at
+`--min-size` (eval 20's `cs2`, a 32-letter Spanish word) now breaks at the column edge instead of
+clipping past the frame: the sliced pieces are the exact original characters, never rewritten, a
+fitting Thai phrase or katakana run is provably unaffected, and the burn path reports
+`broken_inside_word` distinct from `overlong` (now residual: only a single character wider than
+the column). Eval 22 (`evals/results/iteration-22.json`, 14 runs) re-checked 1.18.1's routing
+rows against fresh symptom-only prompts and re-ran `cs1`/`cs3` after 1.18.2/1.18.3: 7 of 8 new
+1.18.0-flag prompts routed correctly without the flag being named (up from eval 21's 4/9 at
+1.18.0's own release), and `cs3` no longer rewrites the user's cue text in any of three runs — the
+1.17.3 fix holds through three further releases. Everything after 1.18.4 is planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -47,6 +50,7 @@ through two further releases. Everything after 1.18.3 is planned.
 | 1.18.1 | shipped, evaluated (eval 22) | routing rows for `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware`, and an extended `multicam.py` row for `--switch energy` — no script changes. SKILL.md trimmed elsewhere (same style as 1.17.3) to stay under 30,000 bytes: 29,998. `CHANGELOG.md`'s caption side-margin write-up had also been left under the `1.17.1` heading instead of `1.17.2`, where that behaviour (#239) actually shipped; corrected, docs-only, no version bump |
 | 1.18.2 | shipped, evaluated (eval 22) | README's tool table named none of the five 1.18.0 flags or `sync.py`'s additive extra-source positionals or `multicam.py --switch energy`; added the same one-liner facts already in SKILL.md since 1.18.1. No script changes |
 | 1.18.3 | shipped, evaluated (eval 22) | MCP `tools/list` defaults to the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`, chosen from eval 17-20's `expect`-field frequency), opt-in to the full 42 via `FFMPEG_SKILL_MCP_FULL=1`; every tool stays callable by name through `tools/call` either way, `contract --json` still describes all 42. Tool count still 42, CLI/MCP argument names unchanged |
+| 1.18.4 | shipped, eval pending | eval 20's `cs2` (a 32-letter Spanish word still clipping the frame at `--min-size`): `scripts/_common/wrap.py` slices an atom at the column edge (preferring an existing hyphen) only when it does not fit alone even at the floor; `caption.py`'s burn path reports the new `broken_inside_word` stats key. A fitting Thai phrase or katakana run (1.16.1) is provably unchanged — the slice branch is unreachable for an atom that already fits. No new CLI flag, no script added, tool count still 42 |
 | 1.19.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -518,6 +522,24 @@ future release.
   argument renamed or removed.
 - **Evaluated.** Eval 22 re-ran `cs1`/`cs3` (x3 each) on the tree carrying this change to confirm
   the caption-honesty fixes (1.17.2/1.17.3) still hold after it: they do, 6/6.
+
+## 1.18.4 — the caption escape hatch (shipped, eval pending)
+
+- **Done.** Eval 20's `cs2` finding (a single unbreakable 32-letter Spanish word still wider than
+  the column at `--min-size`, clipping past both frame edges) is fixed. `scripts/_common/wrap.py`
+  adds `_slice_atom`: when an atom lands alone on a line and is still too wide after every other
+  mechanism (wrapping, the size shrink), it prefers cutting after the atom's own existing hyphen
+  when that fits, otherwise hard-slices at the widest prefix that measures within the column. No
+  dictionary, no linguistic awareness, no rewriting — the pieces concatenate back to the exact
+  original characters. `caption.py`'s burn path (`layout_cues`) is the one call site that turns
+  this on; it reports the new `broken_inside_word` stats key, separate from `overlong` (which now
+  fires only in the residual case of a single character alone wider than the column). A fitting
+  Thai phrase or katakana run (1.16.1) is provably unaffected: the slice branch is unreachable for
+  an atom that already fits, proven by a test running both with the hatch enabled. No new CLI
+  flag, no script added, tool count still 42.
+- **Not yet evaluated.** A future eval should re-run `cs2` against real ground truth (an
+  independent grader opening the produced stills, not a self-report) to confirm the word no
+  longer clips in practice, not just in the unit tests.
 
 ## 1.19.0 — observability, portability (planned)
 
