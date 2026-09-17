@@ -458,6 +458,18 @@ Per-tool keys added in 1.17.3, all additive:
 | `text_unchanged` | `caption.py` | a sibling inside the `caption` block, **burn mode only** (`--mode mux` never touches the text and omits the key): `true` when the drawn text equals the cues that were handed in — nothing transcribed, no cue dropped, no cue **split** across two consecutive cues and no glyph stripped (`--emoji none`). Wrapping, line breaks and timing do not count: the words are the same. This tool never rewrites, shortens or translates a cue, so the key is a statement of what happened, not a judgement of the text |
 
 
+Per-tool keys added in 1.18.0, all additive:
+
+| key | tool | what it holds |
+|---|---|---|
+| `shots` | `scenes.py --shots` | `[{start, end, label, flow_magnitude}]` per detected scene, `label` one of `static`/`pan`/`motion` from a lightweight block-matching optical-flow proxy (frames decoded at 4 fps, 48x27, no external dependency). A shot too short to sample two frames is `static` with `flow_magnitude: 0` |
+| `audio_peaks_db` | `scenes.py --audio-peaks` | `[{time, level}]`, measured dBFS loudness peaks. A **new** key: the pre-existing `audio_peaks` (always reported, unrelated unitless RMS figures used for `--highlights` scoring) keeps its 1.0 meaning unchanged |
+| `speech` | `scenes.py --speech` | `[{time, speech_music_ratio}]`, a per-second zero-crossing-rate ratio against the file's own median — a measured proxy, not a speech/music classification |
+| `motion_centre` | `cropdetect.py --motion-centre` | `[{time, x, y, x_frac, y_frac, motion}]` per second, sampled over the same windows as the crop-bar detection. `x`/`y` are source pixels, `x_frac`/`y_frac` a 0..1 fraction of `source_width`/`source_height`; a window with no measured motion reports `x`/`y`/`x_frac`/`y_frac: null`. Report only — this tool never picks a reframe |
+| `speech_aware`, `speech_aware.breaths` | `silence.py --speech-aware` | `{min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}`. `breaths` are the sub-`--min-silence` gaps kept because they sit inside a sentence; the removal list (`silences`, `keep`, `removed_seconds`) already reflects the speech-aware classification. Composes with `--filler` through the same `keep_ranges()`/`merge_spans()` pipeline, so `--speech-aware --filler` produces one removal list |
+| `sources` | `sync.py` | `[{path, offset_s, confidence, drift_ppm}]`, one entry per SOURCE. Present for every run, including the original single-SOURCE shape (where it mirrors the top-level `second`/`offset_seconds`/`confidence` additively). With 2+ SOURCEs it is the *only* per-source shape: there is no top-level `second`/`offset_seconds` because there is no single pair to put there |
+| `switch_mode`, `min_shot` | `multicam.py --switch energy` | `"energy"` and the `--min-shot` value used (default 1.5s), alongside the existing `cuts` (`[[start, end, camera], ...]`) which already carries the camera index for `--edl`'s companion cut list |
+
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one
 does not (or when there are none). Like `channels` and `chapters` it is never

@@ -161,7 +161,7 @@ rounded, if they aren't.
 
 ### cropdetect.py — measure black bars, report the crop rectangle
 ```
-cropdetect.py INPUT [--seconds N] [--samples N] [--limit F] [--round N]
+cropdetect.py INPUT [--seconds N] [--samples N] [--limit F] [--round N] [--motion-centre]
 ```
 Measurement only -- writes no file. Samples `--samples` windows spread
 across the file (default 5, totalling `--seconds` 10s of footage) and
@@ -173,6 +173,14 @@ full source frame means no bars were found. Does not decide whether
 removing detected bars is wanted -- genuine letterboxed content (a
 scope-ratio film in a 16:9 frame) "detects" the same way as accidental
 bars; look at the frame before cropping it away.
+
+`--motion-centre` (1.18) reports the motion centroid once per second, sampled
+across the same windows: `motion_centre: [{time, x, y, x_frac, y_frac, motion}]`,
+`x`/`y` in source pixels and `x_frac`/`y_frac` as a 0..1 fraction of
+`source_width`/`source_height`. A frame with no measured motion in a window
+reports `x`/`y`/`x_frac`/`y_frac: null` and `motion: 0`. Report only, like the
+crop rectangle above -- this hands the calling agent numbers to reframe a 9:16
+crop with; it never picks the subject or the crop box itself.
 
 ### deinterlace.py — deinterlace interlaced footage
 ```
@@ -465,7 +473,7 @@ each shorter clip's last frame (with silence) out to the longest.
 
 ### silence.py — remove dead air / jump cuts
 ```
-silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.15] [--min-keep 0.2] [--list] [--edl keep.txt] [-o OUT]
+silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.15] [--min-keep 0.2] [--list] [--edl keep.txt] [--speech-aware] [-o OUT]
 silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|es|de|fr|pt|it]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
            [--transcribe] [--filler-list] [--max-cuts 400]
@@ -530,6 +538,17 @@ same run would report without `--filler` — and `removed_seconds_total` is the
 additive sibling covering everything that went. A filler word quiet enough to
 sit inside a detected silence is merged into it rather than counted twice, so
 the two figures can be equal.
+
+**`--speech-aware` (1.18)** keeps breaths shorter than `--min-silence` when
+they sit inside a sentence, and only cuts at sentence-boundary pauses
+(`--min-silence` or longer). It re-runs silence detection at a much shorter
+floor to measure the short gaps at all, then classifies each one: shorter than
+`--min-silence` is an in-sentence breath (kept, listed in
+`speech_aware.breaths`); `--min-silence` or longer is a sentence boundary (cut,
+same as the plain flag). It composes with `--filler` through the same
+`keep_ranges()`/`merge_spans()` pipeline the filler-inside-a-silence fix
+already uses, so `--speech-aware --filler` produces one removal list. `--edl`
+writes the resulting cut list exactly as it does today.
 
 ### join.py — concatenate with transitions
 ```
@@ -701,6 +720,7 @@ already has a picture.
 ```
 scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECONDS] [--max-scene 15]] [--edl picks.txt] [--sheet scenes.png] [--json]
 scenes.py INPUT --beats [--beat-step 0.01] [--beat-range 60-200] [--min-confidence 0.5] [--json]
+scenes.py INPUT [--shots] [--audio-peaks] [--speech] [--json]
 ```
 Lists scenes with audio energy, the loudest moments, and (with
 `--highlights`) proposes N ranges that add up to `--target` seconds, biased to
@@ -750,6 +770,29 @@ ambience, rubato — and the skill will not snap to a grid it cannot measure.
 would change a file on the strength of it (`cut.py --snap beats`). `--edl` with
 `--beats` is unchanged: beats are never written as an EDL, because a beat is
 not a cut. No audio stream is a `kind: input` refusal.
+
+**`--shots`, `--audio-peaks`, `--speech` (1.18)** are three independent
+measurements that combine with each other and with `--beats`/`--highlights`:
+
+- `--shots` labels each already-detected scene `static`/`pan`/`motion` by a
+  lightweight block-matching optical-flow proxy (frames decoded at 4 fps,
+  48x27, no external dependency), reporting `shots: [{start, end, label,
+  flow_magnitude}]`. A shot too short to sample two frames is `static` with
+  `flow_magnitude: 0` — there is nothing to measure motion between. A proxy,
+  the same spirit as `--rank-by`: it reports what a coarse block match saw,
+  not what is interesting about the shot.
+- `--audio-peaks` reports loudness peaks as measured dBFS: `audio_peaks_db:
+  [{time, level}]`. This is a new key, kept separate from the pre-existing
+  (always-on) `audio_peaks` list, whose entries are an unrelated unitless RMS
+  figure used for `--highlights` scoring — a different unit needed a
+  different key so `audio_peaks`'s meaning does not change underneath a
+  caller reading it since 1.0.
+- `--speech` reports a per-second zero-crossing-rate ratio,
+  `speech: [{time, speech_music_ratio}]` — speech's rapid consonant
+  transients raise the zero-crossing rate; sustained tones (music, room
+  tone) cross zero at a steadier rate. `1.0` means "typical for this file's
+  own median," not an absolute threshold. This is a measured number, not a
+  speech/music classification — nothing here decides which stretch is which.
 
 ### check.py — pre-delivery compliance
 ```
@@ -905,7 +948,8 @@ hand the path to the user together with the numbers.
 
 ### multicam.py — align several cameras and switch between them
 ```
-multicam.py REF CAM2 [CAM3 ...] [--switch "START-END:CAM,..."] | [--auto N] [--audio IDX] [--fix-drift]
+multicam.py REF CAM2 [CAM3 ...] [--switch "START-END:CAM,..."|energy [--min-shot 1.5]] | [--auto N]
+            [--audio IDX] [--fix-drift] [--edl cuts.txt]
             [--offsets-only] [--width W --height H --fps N] [-o OUT]
 ```
 All inputs are aligned to the first one by audio (same engine as `sync.py`,
@@ -914,6 +958,23 @@ each range of the reference timeline (gaps fall back to camera 0), `--auto N`
 simply alternates every N seconds. Audio comes from the reference unless
 `--audio` picks another input, e.g. an external recorder that has no video.
 `--offsets-only` reports offsets and confidence without rendering.
+
+**`--switch energy` (1.18)** auto-switches to whichever camera (of those with
+a video stream) measures the loudest audio at each 0.25 s window on the
+reference timeline, then folds any run shorter than `--min-shot` (default
+1.5 s) into its neighbour so the cut never lingers on a shot too short to
+read. A measured loudest-camera pick, the same spirit as `scenes.py
+--rank-by audio`: a proxy for who is talking, not a judgement — a loud crowd
+or a hot mic wins over a quiet subject exactly like the scene ranking does.
+`--edl` (1.18, any switch mode) writes the resulting cut list as `cut.py
+--segments`-format `START-END` lines; the camera index for each cut is
+already in the JSON `cuts` field (`[[start, end, camera], ...]`), which is
+what `--edl` leaves out on purpose — one file for an NLE's cut list, one
+field for the camera it came from. The multicam timeline needs no dedicated
+project format: each cut is a `render.py` clip (`{"src": ..., "in": ...,
+"out": ...}` on that camera's own timeline, shifted by its measured offset),
+so a switch list can be re-rendered with different `--min-shot` values by
+editing `project.json`'s `clips`, not by inventing a second timeline schema.
 
 ### verify.py — real-footage verification kit
 ```
@@ -1185,18 +1246,18 @@ draws whatever glyph the text font has; `--emoji none` strips them).
 
 ### sync.py — offset detection, alignment, drift correction
 ```
-sync.py REFERENCE SECOND [--json] [--max-offset 30] [--analyze-seconds 120] [--fix-drift [--drift-window 60]]
-        [--replace-audio | --trim-second] [-o OUT]
+sync.py REFERENCE SOURCE [SOURCE ...] [--json] [--max-offset 30] [--analyze-seconds 120]
+        [--fix-drift [--drift-window 60]] [--replace-audio | --trim-second] [-o OUT]
 ```
 Cross-correlates loudness envelopes: coarse FFT search (20 ms), then a direct
 1 ms refinement (pure Python, a 2-minute window takes ~1-3 s). Positive offset
-= the second recording started later. `--replace-audio` writes the reference
-video with the second file's audio aligned (video stream copied); the output
-keeps the reference's full length -- a shorter or head-trimmed second file is
+= the source recording started later. `--replace-audio` writes the reference
+video with the source file's audio aligned (video stream copied); the output
+keeps the reference's full length -- a shorter or head-trimmed source file is
 padded with silence, never allowed to cut the picture.
-`--trim-second` writes the second file shifted to the reference timeline.
+`--trim-second` writes the source file shifted to the reference timeline.
 `--fix-drift` measures the offset again near the end of the overlap, reports
-the clock difference in ppm, and resamples the second file so a 60-minute
+the clock difference in ppm, and resamples the source file so a 60-minute
 take stays in sync (typical consumer devices drift 20-500 ppm = up to 1.8 s/h).
 Use it whenever the recording is longer than ~10 minutes. Check `confidence`
 (0–1, normalised correlation with a runner-up penalty); below 0.3 the match is
@@ -1205,6 +1266,20 @@ with the default 120 s window 40/40 within 10 ms (max 1.1 ms); with a 60 s
 window 95 %, misses flagged below 0.3. Keep `--analyze-seconds` at least 4×
 `--max-offset` (default 120 s vs 30 s): lags with under 35 % overlap are
 ignored, so an offset larger than ~60 % of the window cannot be found.
+
+**One reference, 1+ SOURCE (1.18).** With exactly one SOURCE the CLI keeps its
+original shape byte for byte -- `second`, `offset_seconds`, `confidence`,
+`meaning`, `drift` at the top level, `--replace-audio`/`--trim-second`
+available -- with the same measurement additively mirrored under a new
+`sources: [{path, offset_s, confidence, drift_ppm}]` list. With 2+ SOURCEs the
+result is one offsets JSON, `{reference, sources: [...]}`, and no flat
+`second`/`offset_seconds` (there is no single pair to put there);
+`--replace-audio`/`--trim-second` refuse with `kind: input`, since each writes
+one synced output and there is more than one source to choose from. This is
+the same offset/drift measurement `multicam.py` already loops over per camera
+internally (it imports `sync.measure_offset`); `sync.py`'s own N-source CLI
+now exposes that loop directly, for aligning cameras without cutting between
+them.
 
 ### color.py — HDR to SDR, LUTs, colour tags, Dolby Vision
 ```

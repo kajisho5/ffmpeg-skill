@@ -445,3 +445,94 @@ folder" → `batch.py`, "a 60 s highlight" → `scenes.py`), `references/scripts
 flags, and SKILL.md has single digits of headroom under its 30,000-byte budget. Only the caption
 size got a row, because that one is a *different answer to a request the table already claims to
 route*. If eval 18 shows agents missing `--filler` or `--snap beats`, 1.18.0 buys the rows.
+
+**`--shots`' flow measurement is scoped to stay dependency-free and fast: 48x27 grayscale frames
+at 4 fps, a 4x4 grid of block matches, +/-3 px search.** A real optical-flow library was never on
+the table — the zero-dependency rule stdlib+ffmpeg covers every other script, and a Lucas-Kanade
+or dense-flow implementation in pure Python would be both slower and no more honest for what
+`--shots` actually needs, which is three labels, not a per-pixel field. 48x27 keeps a whole shot's
+decode at a few KB (a feature-length input never risks memory the way `--beats`' 22050 Hz PCM
+does), and 4 fps is enough to see whether the frame is panning, static or churning without
+sampling every frame ffmpeg decodes. The zero-shift tie-break in `_block_match` (see the code
+comment) exists because a textureless block — sky, an out-of-focus background, `--shots`' own
+`test_scenes_shots_static_clip_is_labelled_static` fixture — ties every candidate offset on SAD,
+and without an explicit bias towards "no motion" the scan reported the search window's first
+corner as the measured displacement: a still frame read as steady motion in one direction, every
+time. `agreement` (how consistently the 16 blocks agree on direction) is what tells a pan from
+motion-inside-a-static-frame: a camera move shifts the whole picture one way, a subject moving in
+front of a still background does not, and the two look identical in `magnitude` alone.
+
+**`--audio-peaks` writes a new `audio_peaks_db` key rather than changing `audio_peaks`.** The
+unconditional `audio_peaks` list scenes.py has always reported (`[{time, rms}]`) is a different
+measurement in a different unit, used to score `--highlights`; the stability guarantee's "no key
+given a different type" means an explicit request for dBFS-unit peaks needed its own name, not a
+unit change to a key a caller has been reading since 1.0.
+
+**`--speech` reports a ratio, not a label.** A zero-crossing-rate proxy (this window's ZCR over
+the file's own median) says nothing about whether a stretch *is* speech or music — it says speech
+transients cross zero faster than sustained tones, which is true often enough to be a usable
+number and not true often enough to be a classifier. Naming the key `speech_music_ratio` rather
+than `is_speech` keeps the tool on its side of the "analysis tools report numbers, they never
+decide what's interesting" line: the calling agent reads the number and decides what a high or
+low ratio means for its own request, the same way it already reads `--rank-by audio`'s RMS
+figures without this skill calling any of them "the best scene".
+
+**`--speech-aware` composes with `--filler` by feeding the same `keep_ranges()`/`merge_spans()`
+pipeline `--filler` already uses, not a second removal pass.** The composition risk was two
+independent cut lists disagreeing — a breath kept by `--speech-aware` getting cut anyway because
+`--filler` found a word inside it, or the reverse. `speech_aware_silences()` returns two lists
+(sentence-boundary silences to remove, breaths to keep) instead of a single filtered list, so a
+breath is simply never added to the removal side: it is not "removed then added back", which
+would leave a seam. The one designed interaction is a filler word *inside* a kept breath: the
+breath itself is not cut, but `merge_spans()` still unions the filler span into the removal list
+the same way it has always merged a filler word sitting inside a plain silencedetect gap (the
+1.17.0 regression fix), so a real disfluency is still removed even from air `--speech-aware`
+would otherwise keep whole. `BREATH_FLOOR` (0.12 s) exists because plain `detect()` only sees
+gaps at or above `--min-silence`; without a second, shorter silencedetect pass the breaths inside
+a sentence are invisible to begin with, not merely unclassified.
+
+**sync.py's N-source shape adds a new optional `more_sources` positional rather than renaming
+`second` to a list.** The stability guarantee treats an argparse dest as a CLI surface: renaming
+`second` to `sources` (even as a 1+ `nargs`) would have been a rename of a positional the contract
+promises never to rename, and the MCP `inputSchema` derives its property names directly from
+argparse dests (see `_contract.input_schema`), so the rename would have propagated into a removed
+MCP property too. `second` therefore keeps meaning exactly what it always has — the one other
+recording a 2-source call aligns — and `more_sources` (`nargs="*"`, default `[]`) is purely
+additive: omitted, the CLI and its JSON are unchanged from 1.17. `args.sources = [second] +
+more_sources` is built once, right after parsing, so the rest of `main()` (and `measure_one()`,
+factored out of the single-pair drift code that used to live inline) never has to know which
+positional a given source came from.
+
+**Why `sources` carries the single-source measurement too, additively, instead of only appearing
+at N>1.** A caller that standardises on reading `sources` for a multi-camera job should not also
+need a special case for the 2-source call — `sources[0]` is always the same measurement as the
+top-level `offset_seconds`/`confidence` when there is exactly one. The reverse (a flat `second`
+key materialising when there are three sources) is not offered, because there is no single "the"
+second source to put there once there are two or three, and inventing one would be worse than
+leaving the key out.
+
+**`multicam.py --switch energy`'s window and merge rule.** Loudness is measured every 0.25 s (four
+times finer than the default `--min-shot`, so a real cut point is not missed by more than 0.25 s)
+and picking the winner is a plain argmax over cameras with a video stream — the same "biggest
+number wins" rule `scenes.py --rank-by audio` already uses, not a smarter voice-activity model,
+because a second measurement method would be a second thing to keep honest and this one is easy to
+audit from the `cuts` list alone. Folding a run shorter than `--min-shot` into its neighbour
+(rather than, say, discarding it or holding the previous camera) was chosen because it never
+invents a cut that was not there and never drops the fact that a switch was measured at that
+instant — it only refuses to *act* on a switch too brief to be a readable shot. The direction of
+the fold (into the next run, or the previous one if it is the last) is arbitrary in the sense that
+either choice is defensible; it is documented here rather than left to be rediscovered from the
+code, and pinned by `test_multicam_switch_energy_respects_min_shot`.
+
+**The multicam timeline needed no new render.py project stage.** A `--switch` cut list is already
+exactly what `clips[]` expresses: one clip per cut, `src` the camera's own file, `in`/`out` on
+that camera's own timeline (the reference cut, shifted by the camera's measured offset). Inventing
+a `"multicam"` stage type would have meant a second way to say "play this camera from A to B" that
+`render.py` would have to keep in sync with `clips[]` forever; reusing `clips[]` means a switch
+list can be re-rendered with a different `--min-shot` by re-running `multicam.py --switch energy`
+and rewriting the same project's `clips` array, with every other stage (captions, audio, export,
+check) working on the multicam edit exactly as it would on any other project. `--edl` writes the
+plain `cut.py --segments` file (`START-END` per line) rather than a `render.py` project directly,
+because the camera index a project's clips need is already sitting in the JSON `cuts` field
+(`[[start, end, camera], ...]`) — turning that into `clips[]` is a few lines in the calling agent,
+not a new file format this tool would have to maintain.

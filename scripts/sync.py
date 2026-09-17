@@ -245,13 +245,16 @@ def measure_one(reference: str, path: str, args) -> Dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("reference", help="reference recording (usually the camera video)")
-    ap.add_argument("sources", nargs="+", metavar="SOURCE",
-                    help="one or more recordings to align to the reference (external audio, "
-                         "second/third/... camera). A single SOURCE is the original 2-source "
-                         "shape (offset_seconds/confidence/drift at the top level, plus --replace-audio "
-                         "/ --trim-second); 2+ sources write one offsets JSON "
-                         "{reference, sources: [{path, offset_s, confidence, drift_ppm}]} and no "
-                         "output is written for --replace-audio/--trim-second, which need exactly one source")
+    ap.add_argument("second", help="recording to align (external audio or second camera)")
+    ap.add_argument("more_sources", nargs="*", metavar="SOURCE3...", default=[],
+                    help="(1.18) additional recordings beyond `second` to align to the same "
+                         "reference -- a third camera, a second external recorder. With none of "
+                         "these, sync.py keeps its original 2-source shape (offset_seconds/"
+                         "confidence/drift at the top level, --replace-audio/--trim-second "
+                         "available). With 1+, all sources (second plus these) are measured and "
+                         "reported as one offsets JSON {reference, sources: [{path, offset_s, "
+                         "confidence, drift_ppm}]}, and --replace-audio/--trim-second refuse: "
+                         "each writes ONE synced output and there is more than one source")
     ap.add_argument("-o", "--output", help="output file when writing a synced result (one-source runs only)")
     ap.add_argument("--max-offset", type=float, default=30.0, help="largest offset to search in seconds (default 30)")
     ap.add_argument("--analyze-seconds", type=float, default=120.0, help="how much audio to analyse from each file (default 120)")
@@ -268,6 +271,7 @@ def main() -> int:
     apply_common(args)
     if args.analyze_seconds > 900:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
+    args.sources = [args.second] + list(args.more_sources)
 
     for p in (args.reference,) + tuple(args.sources):
         if not probe(p).get("audio"):
