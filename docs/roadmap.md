@@ -17,16 +17,17 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.17.3** — two SKILL.md caption rules from eval 20, no code,
-shipped and not yet evaluated (eval 21 at 1.18.0 re-runs `cs1` and `cs3`). **1.17.2** is the last
-evaluated version: **eval 20**
+The released version today is **1.18.0** — measured analysis and multicam at scale, shipped and
+not yet evaluated (eval 21 covers the analysis/multicam prompts and re-runs `cs1`/`cs3` for the
+1.17.3 SKILL.md lines). **1.17.2** is the last evaluated version: **eval 20**
 (`evals/results/iteration-20.json`) re-ran the eight caption prompts of eval 19, six of them three
 times, and graded them on the contact sheet rather than on the fit stats. The one-word-per-line
 stacking of evals 17, 18 and 19 is gone in 20/20 runs; the caption Style's side margins are the
 platform's horizontal safe zone and the fitter's numbers are what the frame shows (see the 1.17.2
-section). Two agent behaviours remain — rewriting the user's captions (`cs3`, four iterations) and
-raising `max_lines` to dodge a shrink — 1.17.3 is the SKILL.md answer to both — and one word the
-typesetter cannot break, a 1.18.0 item. Everything after 1.17.3 is planned.
+section). Two agent behaviours remained — rewriting the user's captions (`cs3`, four iterations)
+and raising `max_lines` to dodge a shrink — closed in 1.17.3's SKILL.md lines; the word a
+typesetter cannot break inside is a 1.18.0+ design item (see below). Everything after 1.18.0 is
+planned.
 
 | version | state | evidence |
 |---|---|---|
@@ -46,7 +47,8 @@ typesetter cannot break, a 1.18.0 item. Everything after 1.17.3 is planned.
 | 1.17.2 | shipped, evaluated (eval 20) | eval 20 at 1.17.2 (`iteration-20.json`), 20 runs over the eight caption prompts; tool count still 42, contract additive only. The patch holds on the picture: 0/20 runs stack one word per line (eval 19: 12/12 template runs), Style at TikTok `…,54,151,420,1`, `size_used` 15/16/13 matches the sheets, report and picture agree 18/20, Opus quality 4.25 (3.65). Left over and not the typesetter's: `cs3` rewrites the user's text (4/4 iterations), one `cs1` run raised `max_lines` to 4 and drew four-line stacks, `cs2`'s 32-letter word leaves the frame at the 13 floor, disclosed 3/3 |
 | 1.17.3 | shipped, eval pending | two SKILL.md rules from eval 20, no code: the cue text is burned as written (never rewrite, shorten or paraphrase it, even when asked to "make it fit" — `cs3`, 4/4 iterations), and on a vertical delivery keep the template's `--max-lines` and let the size drop (rep3/cs1 raised it to 4 and drew four-line stacks). SKILL.md trimmed elsewhere to stay under 30,000 bytes; tool count still 42, contract unchanged |
 | refactor after 1.17.3 | shipped, eval pending | `_common/text.py` (1,655 lines, 111 top-level definitions) split into `fonts.py`, `emoji.py`, `drawtext.py` and `wrap.py`, with `text.py` a re-export shim; contract + MCP snapshots and every `--help` byte-identical, no behaviour change; 596/596 tests |
-| 1.18.0 → 1.21.0, 2.0.0 | planned | — |
+| 1.18.0 | shipped, eval pending | `scenes.py --shots`/`--audio-peaks`/`--speech`, `cropdetect.py --motion-centre`, `silence.py --speech-aware` (composes with 1.17's `--filler` through one `keep_ranges()`), `sync.py` N≥1 sources (the `second` positional kept exactly, additive `more_sources`), `multicam.py --switch energy`/`--edl`/`--min-shot`; tool count still 42, contract and MCP snapshots additive only, SKILL.md unchanged (29,976 bytes) — every reported number is measured, none is a judgement. 1109/1109 tests |
+| 1.19.0 → 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
@@ -437,7 +439,7 @@ came out byte-identical, as did `--help` for all 42 tools.
   automatic) and a few parentheticals to stay under the 30,000-byte budget. Eval 21 at 1.18.0
   re-runs cs1 and cs3 to check both lines land.
 
-## 1.18.0 — measured analysis and multicam at scale (still no judgement) (planned)
+## 1.18.0 — measured analysis and multicam at scale (still no judgement) (shipped, eval pending)
 
 - `scenes.py --shots` labels each shot static / pan / motion by measured optical flow;
   `--audio-peaks` and `--speech` (speech-vs-music energy ratio) as separate lists.
@@ -452,8 +454,19 @@ came out byte-identical, as did `--help` for all 42 tools.
 - `multicam.py --switch energy` cuts to the loudest camera's audio with a minimum shot length;
   `--edl` exports the cut list for an NLE; the timeline is a `render.py` project so it can be
   re-rendered with different minimum shot lengths.
-- Eval 19 on analysis and multicam prompts, scored against hand-labelled ground truth; a
+- Eval 21 on analysis and multicam prompts, scored against hand-labelled ground truth; a
   real-device multicam corpus (phone + camera + lav).
+
+**Done, as written above**, with two implementation notes: `sync.py`'s `second` positional
+argument was kept exactly as-is rather than renamed to a list (`_contract.py` introspects argparse
+dests directly into the MCP `inputSchema`, so a rename would have broken the CLI/MCP stability
+guarantee) — a new optional `more_sources` positional carries the extra cameras/recorders instead,
+and a 1-source run keeps the original 2-source JSON shape with the same numbers additively
+available under `sources`. A multicam `--switch energy` timeline needed no new `render.py` project
+stage — it maps onto the existing `clips[]` array. Eval 21 (this bullet's last line) and the
+real-device corpus have not run yet. The caption word-too-wide-for-the-frame item from 1.17.2's
+eval (`cs2`, a break-at-the-column-edge escape for the 1.16.1 keep-the-run-whole rule) is still
+unaddressed and is not part of this section — it stays an open design item for a future release.
 
 ## 1.19.0 — observability, portability, a smaller MCP surface (planned)
 
