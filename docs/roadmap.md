@@ -17,7 +17,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.19.2** — `multicam.py --write-project FILE` writes a
+The released version today is **1.19.3** — `multicam.py --write-project FILE` writes a
 `render.py` project that reproduces the tool's own cut decision (eval 21's `mc2` gap, no more
 hand-translating cuts/offsets into `clips[]`), and `--filler` alone no longer jump-cuts unrelated
 dead-air silence (eval 19's `fw1`/`fw3`: "remove the ums" silently removed ~5s of unasked-for
@@ -25,6 +25,8 @@ pauses too; fixed by skipping generic silence detection unless `--speech-aware` 
 1.19.0 (the `--write-project` feature) is a `feat:` release, hence the minor bump; it does not
 start the "1.19.0: observability, portability" theme further down this document, which remains
 planned. 1.19.2 is docs-only (SKILL.md's overlong-word and MCP core-12 rows, this same truth-up).
+1.19.3 is a `fix:` patch: `graphics.py` now slices an unbreakable overlong word at the column
+edge the same way `caption.py` already did, closing that gap between the two renderers.
 1.18.4 (the caption column-edge slice, `cs2`) is unchanged from before; see its own
 section below.
 
@@ -54,6 +56,7 @@ section below.
 | 1.19.0 | shipped, eval pending | `multicam.py --write-project FILE` (eval 21's `mc2` gap): writes a `render.py` project whose `clips[]` reproduces multicam's own cut decision exactly (`src`/`in`/`out` per cut, offset-shifted to each camera's own timeline), for `--switch energy`, a manual `--switch` spec, or `--auto` alike; multicam's own combined render and `--edl`/`--offsets-only` unchanged. `feat:` release, hence the minor bump — not the start of the "1.19.0" theme further down this document, which is unrelated and still planned |
 | 1.19.1 | shipped, eval pending | eval 19's `fw1`/`fw3`: `silence.py --filler` alone (no `--speech-aware`) jump-cut unrelated dead-air silence gaps too, ~5s unasked. Fixed: generic silence detection is skipped unless `--speech-aware` is also given, so `--filler` alone removes only the timed filler-word spans; `--speech-aware` alone and `--filler --speech-aware` combined are unchanged |
 | 1.19.2 | shipped, docs-only | SKILL.md rows for 1.18.3's MCP core-12 (previously undocumented) and 1.18.4's overlong-word column-edge slice, plus this document's own roadmap truth-up. No script changes |
+| 1.19.3 | shipped, eval pending | `graphics.py` slices an unbreakable overlong word at the column edge the same way `caption.py`'s burn path already did (1.18.4), closing the gap between the two renderers. `fix:` release, hence the patch bump. Tool count still 42, no new CLI flag |
 | 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
