@@ -298,5 +298,35 @@
   "lang": "de",
   "prompt": "entwirf ein Podcast-Cover für Spotify",
   "should_trigger": false
+ },
+ {
+  "id": "t51",
+  "lang": "en",
+  "prompt": "not sure if the camera in this clip is locked off or drifting a little, can you tell me? handheld_take3.mov",
+  "should_trigger": true
+ },
+ {
+  "id": "t52",
+  "lang": "ja",
+  "prompt": "このインタビュー、息継ぎの間は残したいけど、変な長い沈黙だけ削りたい。interview.mp4",
+  "should_trigger": true
+ },
+ {
+  "id": "t53",
+  "lang": "en",
+  "prompt": "where's most of the movement happening in this shot? I want to crop it to 9:16 without cutting off the action. skate_run.mp4",
+  "should_trigger": true
+ },
+ {
+  "id": "t54",
+  "lang": "es",
+  "prompt": "grabamos la entrevista con tres cámaras a la vez, ¿puedes montarlo cortando siempre a quien está hablando más fuerte? cam1.mp4 cam2.mp4 cam3.mp4",
+  "should_trigger": true
+ },
+ {
+  "id": "t55",
+  "lang": "en",
+  "prompt": "I've got three separate recordings of the same panel from different phones, they're not lined up at all, can you get them in sync? phoneA.mp4 phoneB.mp4 phoneC.mp4",
+  "should_trigger": true
  }
 ]
