@@ -17,7 +17,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.19.3** — `multicam.py --write-project FILE` writes a
+The released version today is **1.20.0** — `multicam.py --write-project FILE` writes a
 `render.py` project that reproduces the tool's own cut decision (eval 21's `mc2` gap, no more
 hand-translating cuts/offsets into `clips[]`), and `--filler` alone no longer jump-cuts unrelated
 dead-air silence (eval 19's `fw1`/`fw3`: "remove the ums" silently removed ~5s of unasked-for
@@ -27,7 +27,8 @@ start the "1.19.0: observability, portability" theme further down this document,
 planned. 1.19.2 is docs-only (SKILL.md's overlong-word and MCP core-12 rows, this same truth-up).
 1.19.3 extends 1.18.4's column-edge slice to `graphics.py`'s own `wrapped()` helper (lower-third,
 title, sticker, hook and meme labels), so an unbreakable overlong word no longer clips off-frame
-on those templates either.
+on those templates either. 1.20.0 is `look.py --ink` (#261), a `feat:` release, hence the minor
+bump — not the start of a new theme.
 
 | version | state | evidence |
 |---|---|---|
@@ -55,7 +56,8 @@ on those templates either.
 | 1.19.0 | shipped, eval pending | `multicam.py --write-project FILE` (eval 21's `mc2` gap): writes a `render.py` project whose `clips[]` reproduces multicam's own cut decision exactly (`src`/`in`/`out` per cut, offset-shifted to each camera's own timeline), for `--switch energy`, a manual `--switch` spec, or `--auto` alike; multicam's own combined render and `--edl`/`--offsets-only` unchanged. `feat:` release, hence the minor bump — not the start of the "1.19.0" theme further down this document, which is unrelated and still planned |
 | 1.19.1 | shipped, eval pending | eval 19's `fw1`/`fw3`: `silence.py --filler` alone (no `--speech-aware`) jump-cut unrelated dead-air silence gaps too, ~5s unasked. Fixed: generic silence detection is skipped unless `--speech-aware` is also given, so `--filler` alone removes only the timed filler-word spans; `--speech-aware` alone and `--filler --speech-aware` combined are unchanged |
 | 1.19.2 | shipped, docs-only | SKILL.md rows for 1.18.3's MCP core-12 (previously undocumented) and 1.18.4's overlong-word column-edge slice, plus this document's own roadmap truth-up. No script changes |
-| 1.19.3 | shipped, eval pending | `graphics.py`'s `wrapped()` helper (used by the lower-third, title, sticker, hook and meme templates) turns on the same `slice_overlong` escape hatch `caption.py` turned on in 1.18.4, so a single unbreakable overlong atom drawn through a template no longer renders past the frame's safe width. `broken_inside_word` reported the same way as `caption.py`. A fitting Thai phrase or katakana run is unchanged, guarded by the same font-availability skip as `ShapingTests`. Tool count still 42, no new CLI flag |
+| 1.19.3 | shipped, eval pending | `graphics.py`'s `wrapped()` helper (used by the lower-third, title, sticker, hook and meme templates) turns on the same `slice_overlong` escape hatch `caption.py` turned on in 1.18.4, so a single unbreakable overlong atom drawn through a template no longer renders past the frame's safe width. `broken_inside_word` reported the same way as `caption.py`. A fitting Thai phrase or katakana run is unchanged, guarded by the same font-availability skip as `ShapingTests`. Tool count still 42, no new CLI flag for this change specifically -- `look.py --ink` is a separate, not-yet-versioned addition tracked in its own PR |
+| 1.20.0 | shipped, eval pending | `look.py --ink` (#261): measures the count and fraction of non-background pixels in a PNG (a still frame, a burned caption/graphics overlay, or a `--compare` diff), pixel-scan only -- no new dependency. `feat:` release, hence the minor bump. Tool count still 42 |
 | 1.21.0, 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
