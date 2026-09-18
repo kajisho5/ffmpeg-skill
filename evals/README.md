@@ -7,12 +7,13 @@ Two kinds of eval live here:
 
 `tasks.json` + `run.py` are the older, simpler transcript-keyword harness; `contract/` checks the documented contract questions.
 
-## The 100-prompt agent set
+## The 108-prompt agent set
 
-`agent_prompts_24.json` (89 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
-100-prompt set: the original 50 (39 + 11), plus 18 multilingual prompts in nine more languages,
-8 delivery/template prompts, 6 emoji/shaping prompts, the 8 long-form prompts 1.16 added and the
-13 prompts 1.17 added — minus three retired duplicates (`th2`, `el2`, `it2`, the "download this
+`agent_prompts_24.json` (97 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
+108-prompt set: the original 50 (39 + 11), plus 18 multilingual prompts in nine more languages,
+8 delivery/template prompts, 6 emoji/shaping prompts, the 8 long-form prompts 1.16 added, the
+13 prompts 1.17 added and the 8 prompts (`b1`–`b8`) 1.18 added — minus three retired duplicates
+(`th2`, `el2`, `it2`, the "download this
 YouTube video" refusal in a fourth, fifth and sixth language; `r03`, `c02` and `fr2` still measure
 that class in English, Chinese and French, and `th1`, `el1` and `it1` still carry those three
 languages). Both use the same field shape:
@@ -28,6 +29,7 @@ languages). Both use the same field shape:
 | `audio_only` | true when the input and output are audio: no picture-only script, no `look.py`, and the report marks the visual check not needed |
 | `expect_output` | true when an ffprobe-readable media file must exist in OUTDIR afterwards |
 | `fixtures` | text files the harness writes into OUTDIR **before** the run (see below) |
+| `media_fixtures` | (1.18) filenames of synthetic video/audio the harness ffmpeg-generates into OUTDIR **before** the run (see below); unlike `fixtures`, the content is built by `write_fixtures.py`'s `build_media_fixture()`, not carried inline |
 | `grader_expect` | (1.17) a regex the run's report text must match. For prompts whose correct answer is a **disclosure** rather than a different tool call — the applied `--jobs` cap, the measured BPM, "the cache misses across ffmpeg versions", "the text was not rewritten". A miss halves the score |
 | `grader_not` | (1.17) a regex the report must **not** match. A hit is a zero: a report claiming something the run did not do is worse than one that says too little |
 | `note` | grading hint for a human reader |
@@ -125,6 +127,25 @@ something a "starts with done" regex let through. SKILL.md forbids the third lab
 three come from the test fixtures — run the test suite once before an iteration, as the other
 media prompts already require.
 
+### 1.18 prompts (8, `b1`–`b8`), promoted from the eval 22 scratchpad
+
+Symptom-only, one per 1.18.0 analysis/multicam feature, none naming a tool or a flag. Media is
+built on demand by `write_fixtures.py`'s `media_fixtures` key (see below) rather than committed,
+and every ground-truth number quoted in a `note` was verified against the exact synthetic clip
+the harness builds — re-verify with the commands in `evals/write_fixtures.py`'s
+`build_media_fixture()` docstring if the fixture construction ever changes.
+
+| id | lang | what it asks | the answer being measured |
+|---|---|---|---|
+| `b1` | en | "which stretches are locked off, which is the camera moving, where's stuff moving in frame" | `scenes.py --shots`, section by section with timecodes |
+| `b2` | en | tighten a voiceover, "keep the breaths, lose the long gaps" | `silence.py --speech-aware`; 3 breaths kept (0.90s), 2 pauses cut, 8.60s of 11.00s |
+| `b3` | en | same voiceover, also remove "ums and ahs", "ONE removal pass" | `silence.py --filler --speech-aware` in one pass; no local whisper engine in this environment, so a disclosed partial refusal of the filler half is an acceptable PASS |
+| `b4` | en | "where's the action, I'll crop by hand later — don't crop or re-encode" | `cropdetect.py --motion-centre`, report-only; FAIL if it crops anyway |
+| `b5` | en | sync three recorders of the same take | `sync.py` with 3 sources; -2.500s / +1.180s measured offsets |
+| `b6` | en | two cameras, "always on whoever's loudest, no faster than a second" | `multicam.py --switch energy --min-shot 1` |
+| `b7` | ja | Japanese variant of `b4` | same as `b4`; report in Japanese, five English labels |
+| `b8` | es | Spanish variant of `b6` | same as `b6`; report in Spanish, five English labels |
+
 ### Fixtures
 
 `c01`, `k01`, `a01`, `th1`, `he1`, `vi1` refer to a cue file in their own language (`cues_zh.txt`,
@@ -140,6 +161,13 @@ committed, the same way no media fixture is committed. Each is a real 3-line cue
     python3 evals/write_fixtures.py ITERATION_DIR --all # every prompt, into ITERATION_DIR/<id>/
 
 Prompts without a `fixtures` key need nothing written.
+
+`b1`–`b8` use a second mechanism, `media_fixtures` (a list of filenames, not inline text), for
+the synthetic video/audio those prompts need (`shots.mp4`, `speech_breaths.m4a`, `camA.mp4`,
+`camB.mp4`, `lav.m4a`, `cam3.m4a`) — ffmpeg-generated by `write_fixtures.py`'s
+`build_media_fixture()` the first time each is needed, same "never committed" rule as every other
+generated fixture. It shares the same CLI shown above; `python3 evals/write_fixtures.py OUTDIR b1`
+also builds `OUTDIR/shots.mp4`.
 
 ## Grading
 

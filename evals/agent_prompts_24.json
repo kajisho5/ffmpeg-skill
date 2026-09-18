@@ -958,5 +958,130 @@
    "project.json": "{\n  \"output\": \"OUTDIR/final2.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"/home/user/ffmpeg-skill/tests/out/source.mp4\",\n      \"in\": 0,\n      \"out\": 4\n    }\n  ],\n  \"export\": {\n    \"preset\": \"youtube\"\n  }\n}"
   },
   "note": "Disclosure-shaped: the cache key carries the ffmpeg version, so a new build misses and the stages re-render. A report claiming the old artifacts were reused is the failure."
+ },
+ {
+  "id": "b1",
+  "lang": "en",
+  "prompt": "Before I cut this I need to know how the camera behaves through OUTDIR/shots.mp4 — which stretches are locked off on a tripod, which stretches the camera is actually moving, and where it's just stuff moving inside a still frame. Give me it section by section with timecodes. Write anything you produce into OUTDIR.",
+  "expect": [
+   "scenes"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "shots.mp4"
+  ],
+  "grader_expect": "(?i)--shots",
+  "grader_not": "(?i)\\bI (guess|assume)\\b",
+  "note": "scenes.py --shots discoverability, symptom only, no flag named. Ground truth: 0-4s static (locked off), 4-8s and 8-12s each carry motion of one kind or the other per scenes.py's own flow-based classifier -- routing PASS requires scenes.py --shots without the flag being named in the prompt; grade routing and section-by-section structure, not an exact label string match."
+ },
+ {
+  "id": "b2",
+  "lang": "en",
+  "prompt": "Tighten up this voiceover: OUTDIR/speech_breaths.m4a. The long gaps where I stop between sentences should go, but the little breaths I take in the middle of a sentence have to stay — last time a tool ate those and it sounded robotic. Save the result in OUTDIR.",
+  "expect": [
+   "silence"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "speech_breaths.m4a"
+  ],
+  "audio_only": true,
+  "expect_output": true,
+  "grader_expect": "(?i)--speech-aware",
+  "note": "silence.py --speech-aware. Ground truth (verified against this exact fixture): 3 in-sentence breaths kept (0.90s total, at 1.2-1.5/2.6-2.9/6.7-7.0), 2 sentence-boundary pauses cut, 8.60s of 11.00s kept."
+ },
+ {
+  "id": "b3",
+  "lang": "en",
+  "prompt": "Same voiceover, OUTDIR/speech_breaths.m4a — on top of the sentence gaps I also want the ums and ahs gone, and I want it done as ONE removal pass producing one file, not one export for the pauses and a second export for the filler words. OUTDIR.",
+  "expect": [
+   "silence"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "speech_breaths.m4a"
+  ],
+  "audio_only": true,
+  "grader_expect": "(?i)--filler",
+  "grader_not": "(?i)(two|second) (pass|export|render)",
+  "note": "silence.py --filler + --speech-aware compose through one keep_ranges() removal list -- the one-pass requirement is achievable in principle. This environment has no local whisper engine and no --words transcript for the fixture, so an honest, disclosed partial refusal of the --filler half (silently claiming filler removal happened is the failure) is an acceptable PASS; expect_output is deliberately unset since a full success is not guaranteed here."
+ },
+ {
+  "id": "b4",
+  "lang": "en",
+  "prompt": "I'm going to reframe OUTDIR/shots.mp4 to 9:16 by hand later. Where in the frame is the action over time? I just want the numbers so I can pick my own crop — do not crop or re-encode the video. OUTDIR.",
+  "expect": [
+   "cropdetect"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "shots.mp4"
+  ],
+  "grader_expect": "(?i)--motion-centre",
+  "grader_not": "(?i)(crop\\.py|fit\\.py|-o .*\\.mp4)",
+  "note": "cropdetect.py --motion-centre is report-only. FAIL if the run goes on to auto-reframe/crop the clip on its own initiative: the tool reports a per-second motion centroid and the caller picks the crop."
+ },
+ {
+  "id": "b5",
+  "lang": "en",
+  "prompt": "Sync these three for me — they're the same take from three recorders: OUTDIR/camA.mp4, OUTDIR/lav.m4a and OUTDIR/cam3.m4a. OUTDIR.",
+  "expect": [
+   "sync"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "camA.mp4",
+   "lav.m4a",
+   "cam3.m4a"
+  ],
+  "grader_expect": "(?i)-2\\.5|2\\.50",
+  "note": "sync.py with three sources (N>=1, additive more_sources). Ground truth (verified against these exact fixtures): lav.m4a -2.500s, cam3.m4a +1.180s, both relative to camA.mp4."
+ },
+ {
+  "id": "b6",
+  "lang": "en",
+  "prompt": "Two cameras on the same conversation: OUTDIR/camA.mp4 and OUTDIR/camB.mp4. Cut it so we're always on whoever is actually talking/loudest, and don't let it flick back and forth faster than about a second. OUTDIR.",
+  "expect": [
+   "multicam"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "camA.mp4",
+   "camB.mp4"
+  ],
+  "expect_output": true,
+  "grader_expect": "(?i)--switch energy",
+  "note": "multicam.py --switch energy --min-shot 1. Ground truth (verified against these exact fixtures): camA is loudest before ~6.25s, camB after -- one real switch, never faster than the requested ~1s floor."
+ },
+ {
+  "id": "b7",
+  "lang": "ja",
+  "prompt": "この動画 OUTDIR/shots.mp4 を後で自分で9:16に切り抜きたいので、時間ごとに画面のどのあたりで動きが起きているか、数値だけ教えてください。動画自体は切らないでください。OUTDIR。",
+  "expect": [
+   "cropdetect"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "shots.mp4"
+  ],
+  "grader_expect": "(?i)--motion-centre",
+  "grader_not": "(?i)(crop\\.py|fit\\.py)",
+  "note": "Japanese variant of b4. Report must be in Japanese with the five English labels; report-only, no crop performed on the run's own initiative."
+ },
+ {
+  "id": "b8",
+  "lang": "es",
+  "prompt": "Tengo dos cámaras de la misma charla: OUTDIR/camA.mp4 y OUTDIR/camB.mp4. Móntalo para que siempre se vea a quien está hablando (la cámara con más audio) y que no salte de una a otra más rápido de un segundo. OUTDIR.",
+  "expect": [
+   "multicam"
+  ],
+  "refuse": false,
+  "media_fixtures": [
+   "camA.mp4",
+   "camB.mp4"
+  ],
+  "expect_output": true,
+  "grader_expect": "(?i)--switch energy",
+  "note": "Spanish variant of b6. Report in Spanish, five English labels."
  }
 ]
