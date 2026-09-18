@@ -12,13 +12,12 @@ Then view the PNG (Read tool / image viewer) and verify before reporting.
 """
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, time_arg
+from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_analysis, time_arg
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -34,9 +33,12 @@ def timecode_filter(font_prefix: str) -> str:
 
 
 def _png_size(png_path: str) -> "Optional[tuple]":
-    proc = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                           "stream=width,height", "-of", "csv=p=0", png_path], stdout=subprocess.PIPE,
-                          text=True, encoding="utf-8", errors="replace")
+    # run_analysis(): the same wall-clock ceiling and #234 UTF-8 decoding as every other
+    # ffprobe/ffmpeg measurement in this codebase, check=False since a probe failure here is
+    # an unknown-metric result (has_ink: None), not a reason to die -- a stall still does,
+    # exactly like every other measurement's timeout.
+    proc = run_analysis(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                         "stream=width,height", "-of", "csv=p=0", png_path], check=False)
     parts = proc.stdout.strip().split(",")
     if len(parts) != 2:
         return None
@@ -47,8 +49,8 @@ def _png_size(png_path: str) -> "Optional[tuple]":
 
 
 def _png_pixels(png_path: str, w: int, h: int) -> "Optional[bytes]":
-    proc = subprocess.run(["ffmpeg", "-v", "error", "-i", png_path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-                          stdout=subprocess.PIPE)
+    proc = run_analysis(["ffmpeg", "-v", "error", "-i", png_path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                        check=False, text=False)
     data = proc.stdout
     return data if len(data) >= w * h * 3 else None
 
@@ -203,7 +205,11 @@ def main() -> int:
         probe(args.compare)
         for t in args.at:
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
-            out = args.output or os.path.join(outdir, f"{stem}_vs_{Path(args.compare).stem}_{sec:.3f}s.png")
+            if args.output and len(args.at) == 1:
+                out = args.output  # one frame, one named image file: the caller's -o is the contract
+            else:
+                # several frames, or -o given as a stem/prefix: don't overwrite the same file per timestamp
+                out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_vs_{Path(args.compare).stem}_{sec:.3f}s.png")
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
             tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp

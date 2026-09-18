@@ -2446,6 +2446,24 @@ class LookInkTests(unittest.TestCase):
         self.assertEqual(len(frames), 1)
         self.assertTrue(frames[0]["has_ink"])  # the hstacked image: busy half lights it up
 
+    def test_compare_with_repeated_at_and_o_writes_distinct_files(self):
+        """-o given alongside --compare --at T1 --at T2 must not collapse onto one file: each
+        timestamp needs its own comparison image, or ink.frames (and any other per-frame
+        measurement) silently describes the same picture twice."""
+        out = OUT / "ink_compare_multi.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--at", "2",
+                     "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        outputs = doc["outputs"]
+        self.assertEqual(len(outputs), 2)
+        self.assertNotEqual(outputs[0], outputs[1])
+        for o in outputs:
+            self.assertTrue(Path(o).exists(), o)
+        frames = doc["ink"]["frames"]
+        self.assertEqual(len(frames), 2)
+        self.assertTrue(frames[0]["has_ink"])
+        self.assertTrue(frames[1]["has_ink"])
+
 
 class GraphicsSliceOverlongTests(unittest.TestCase):
     """graphics.py's own `wrapped()` helper (used by lower-third, title, sticker, hook and meme
