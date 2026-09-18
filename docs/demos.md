@@ -579,8 +579,8 @@ python3 scripts/waveform.py demos/out/fixtures/music.m4a --image demos/out/audio
 ![Speech-aware silence removal keeps the breaths](demos/silence_speech_aware.gif)
 
 ```bash
-python3 scripts/silence.py demos/out/silence_speech_aware_breathy.mp4 --threshold -35 --min-silence 0.2 --list --json
-python3 scripts/silence.py demos/out/silence_speech_aware_breathy.mp4 --threshold -35 --min-silence 0.2 --preset veryfast -o demos/out/silence_speech_aware_naive.mp4
+python3 scripts/silence.py demos/out/silence_speech_aware_breathy.mp4 --threshold -35 --min-silence 0.2 --margin 0.1 --list --json
+python3 scripts/silence.py demos/out/silence_speech_aware_breathy.mp4 --threshold -35 --min-silence 0.2 --margin 0.1 --preset veryfast -o demos/out/silence_speech_aware_naive.mp4
 python3 scripts/silence.py demos/out/silence_speech_aware_breathy.mp4 --threshold -35 --min-silence 0.6 --speech-aware --list --json
 python3 scripts/silence.py demos/out/silence_speech_aware_breathy.mp4 --threshold -35 --min-silence 0.6 --speech-aware --preset veryfast -o demos/out/silence_speech_aware_after.mp4
 ```

@@ -1278,10 +1278,10 @@ def demo_silence_speech_aware(ctx):
     expr = "0.5*sin(2*PI*440*t)*(lt(t\\,3)+between(t\\,3.25\\,6)+gt(t\\,7))"
     ffmpeg("-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % expr, "-t", "10", str(before))
     naive_out = ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.2",
-                           "--list", "--json", capture=True)
+                           "--margin", "0.1", "--list", "--json", capture=True)
     naive = ctx.path("naive.mp4")
     ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.2",
-               "--preset", "veryfast", "-o", naive)
+               "--margin", "0.1", "--preset", "veryfast", "-o", naive)
     aware_out = ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.6",
                            "--speech-aware", "--list", "--json", capture=True)
     after = ctx.path("after.mp4")
@@ -1310,7 +1310,7 @@ def demo_motion_centre(ctx):
     x_frac = 0.83
     if out:
         found = json.loads(out)
-        points = found.get("motion_centre") or []
+        points = [p for p in (found.get("motion_centre") or []) if p.get("x_frac") is not None]
         if points:
             x_frac = sum(p["x_frac"] for p in points) / len(points)
             ctx.note("measured motion centroid: x_frac=%.2f (average of %d samples)"
