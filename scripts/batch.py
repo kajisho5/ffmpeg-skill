@@ -88,21 +88,30 @@ def log(message: str) -> None:
         buf.append(message)
 
 
-def run_step(argv: List[str], per_call: "Optional[float]" = None) -> bool:
+def run_step(argv: List[str], per_call: "Optional[float]" = None) -> "tuple[bool, Optional[dict]]":
+    """Returns (ok, doc): doc is the step's own --json result document, or None if it couldn't
+    be parsed. {in}/{out} are already resolved by the caller before argv reaches here, so forcing
+    --json on every step (harmless: no step reads another step's stdout, only its output path)
+    costs nothing and lets a caller like process() read back tool-specific fields, e.g. cut.py's
+    `reencoded`, without adding a bespoke flag per field it might someday want."""
     script = argv[0]
     if script not in ALLOWED_STEP_SCRIPTS:
         die(f"recipe step names a script that isn't one of this skill's own tools: {script!r} "
             f"(must be a bare filename like 'silence.py', found in scripts/)")
-    cmd = [str(HERE / script)] + argv[1:] + child_args()
+    cmd = [str(HERE / script)] + argv[1:] + child_args() + (["--json"] if "--json" not in argv[1:] else [])
     log("  → " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd)))
     proc = run_tool(cmd, per_call=per_call)
+    try:
+        doc = json.loads(proc.stdout)
+    except ValueError:
+        doc = None
     if proc.returncode != 0:
         log("    " + "\n    ".join(proc.stderr.strip().splitlines()[-4:]))
-        return False
+        return False, doc
     for line in proc.stderr.splitlines():
         if line.startswith("warning:"):  # a step's deprecation notice is not swallowed by a success (review 9)
             log("    " + line)
-    return True
+    return True, doc
 
 
 def _run_buffered(fn, *a):
@@ -147,22 +156,34 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         proj["output"] = str(final.resolve())
         pj = work / f"{src.stem}_project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
-        ok = run_step(["render.py", str(pj)], budget())
+        ok, _doc = run_step(["render.py", str(pj)], budget())
+        cut_reencoded: List[bool] = []
     else:
         steps = recipe.get("steps") or []
         if not steps:
             die("recipe needs steps or project")
         cur = str(src)
         ok = True
+        cut_reencoded = []
         for i, step in enumerate(steps):
             last = i == len(steps) - 1
             out = str(final) if last else str(work / f"{src.stem}_step{i}.{'mp4' if src.suffix.lower() not in ('.wav', '.mp3', '.m4a', '.flac') else src.suffix.lstrip('.')}")
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
-            if not run_step(argv, budget()):
+            step_ok, doc = run_step(argv, budget())
+            # only cut.py's own doc carries `reencoded` -- true if ANY range this call cut needed
+            # the tolerance-triggered hybrid re-encode fallback (cut.py ORs its per-segment results
+            # into one top-level field; it doesn't report which range, so this is per cut.py call,
+            # not per --segments range).
+            if step_ok and argv and argv[0] == "cut.py" and isinstance(doc, dict) and "reencoded" in doc:
+                cut_reencoded.append(bool(doc["reencoded"]))
+            if not step_ok:
                 ok = False
                 break
             cur = out
-    return {"file": str(src), "output": str(final), "ok": ok, "seconds": round(time.time() - t0, 1)}
+    result: Dict[str, Any] = {"file": str(src), "output": str(final), "ok": ok, "seconds": round(time.time() - t0, 1)}
+    if cut_reencoded:
+        result["cut_reencoded"] = cut_reencoded
+    return result
 
 
 def main() -> int:
@@ -512,10 +533,24 @@ def main() -> int:
         failed_files = [r["file"] for r in results if not r["ok"]]
         die(f"{len(results) - done} of {len(results)} items failed: {', '.join(failed_files[:5])}" + (" ..." if len(failed_files) > 5 else ""),
             kind="verification", output=None, dry_run=STATE.dry_run, results=results, processed=done, total=len(results))
+    # cut.py's own `reencoded`, rolled up across every cut.py step this batch ran: how much of the
+    # folder landed on the fast lossless path (mode "copy") vs fell back to the tolerance-triggered
+    # hybrid re-encode on at least one range -- purely a function of the sources' keyframe placement
+    # relative to each cut point, not something a single run can predict, so it's worth reporting
+    # after the fact rather than not at all. Per cut.py call, not per --segments range: cut.py ORs
+    # its own per-segment results into one top-level field and doesn't say which range needed it.
+    all_cuts = [r for res in results for r in (res.get("cut_reencoded") or [])]
+    cut_summary = None
+    if all_cuts:
+        copied = sum(1 for r in all_cuts if not r)
+        cut_summary = {"calls": len(all_cuts), "stream_copy": copied, "reencoded": len(all_cuts) - copied,
+                        "stream_copy_rate": round(copied / len(all_cuts), 3)}
+        info(f"cut.py: {copied}/{len(all_cuts)} call(s) stayed fully lossless stream-copy "
+             f"({cut_summary['stream_copy_rate']:.0%}), {len(all_cuts) - copied} fell back to hybrid re-encode on at least one range")
     emit(None, results=results, processed=done, total=len(results),
          jobs=jobs, jobs_requested=requested, wall_seconds=round(time.time() - started, 1),
          item_seconds_total=round(sum(float(r.get("seconds") or 0) for r in results), 1),
-         timed_out=timed_out["hit"])
+         timed_out=timed_out["hit"], cut_stream_copy=cut_summary)
     return 0
 
 
