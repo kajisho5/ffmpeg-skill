@@ -2464,6 +2464,20 @@ class LookInkTests(unittest.TestCase):
         self.assertTrue(frames[0]["has_ink"])
         self.assertTrue(frames[1]["has_ink"])
 
+    def test_compare_with_the_same_at_value_twice_still_writes_two_files(self):
+        """The occurrence index, not just the timestamp, disambiguates the filename: two
+        identical --at values (or two that would round to the same millisecond) must not
+        collapse onto one file either."""
+        out = OUT / "ink_compare_dup.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--at", "1",
+                     "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        outputs = doc["outputs"]
+        self.assertEqual(len(outputs), 2)
+        self.assertNotEqual(outputs[0], outputs[1])
+        for o in outputs:
+            self.assertTrue(Path(o).exists(), o)
+
 
 class GraphicsSliceOverlongTests(unittest.TestCase):
     """graphics.py's own `wrapped()` helper (used by lower-third, title, sticker, hook and meme

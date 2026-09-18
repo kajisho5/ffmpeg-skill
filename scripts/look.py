@@ -203,13 +203,15 @@ def main() -> int:
         if not args.at:
             die("--compare needs --at TIME")
         probe(args.compare)
-        for t in args.at:
+        for idx, t in enumerate(args.at):
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
             if args.output and len(args.at) == 1:
                 out = args.output  # one frame, one named image file: the caller's -o is the contract
             else:
-                # several frames, or -o given as a stem/prefix: don't overwrite the same file per timestamp
-                out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_vs_{Path(args.compare).stem}_{sec:.3f}s.png")
+                # several frames, or -o given as a stem/prefix: an occurrence index keeps every
+                # requested --at its own file even when two round to the same millisecond
+                stem_part = (args.output and Path(args.output).stem) or stem
+                out = os.path.join(outdir, f"{stem_part}_vs_{Path(args.compare).stem}_{idx}_{sec:.3f}s.png")
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
             tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp
