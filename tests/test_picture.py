@@ -2383,6 +2383,102 @@ class EmojiTests(unittest.TestCase):
         self.assertIn("A \\{b\\} c \\ d", dialogue)
 
 
+class LookInkTests(unittest.TestCase):
+    """look.py --ink: a pixel-only non-background measurement per written PNG, so the agent can
+    check "is there ink where the caption should be" without eyeballing every frame."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.busy = OUT / "ink_busy.mp4"
+        if not cls.busy.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "testsrc2=size=320x240:rate=10", "-t", "3", "-pix_fmt", "yuv420p", cls.busy)
+        cls.blank = OUT / "ink_blank.mp4"
+        if not cls.blank.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "color=c=black:size=320x240:rate=10", "-t", "3", "-pix_fmt", "yuv420p", cls.blank)
+
+    def test_ink_reports_a_lit_frame_via_at(self):
+        out = OUT / "ink_at.png"
+        proc = script("look.py", self.busy, "--at", "1", "--no-timecode", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        frame = doc["ink"]["frames"][0]
+        self.assertTrue(frame["has_ink"])
+        self.assertIsNotNone(frame["bbox"])
+        self.assertGreater(frame["ink_fraction"], 0.0)
+        self.assertTrue(frame["row_bands"])
+
+    def test_ink_reports_no_ink_on_a_blank_frame(self):
+        out = OUT / "ink_blank_at.png"
+        proc = script("look.py", self.blank, "--at", "1", "--no-timecode", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        frame = doc["ink"]["frames"][0]
+        self.assertFalse(frame["has_ink"])
+        self.assertIsNone(frame["bbox"])
+        self.assertEqual(frame["ink_fraction"], 0.0)
+        self.assertEqual(frame["row_bands"], [])
+
+    def test_ink_is_omitted_without_the_flag(self):
+        out = OUT / "ink_off.png"
+        proc = script("look.py", self.busy, "--at", "1", "--no-timecode", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        self.assertNotIn("ink", doc)
+
+    def test_ink_measures_each_tile_of_a_contact_sheet(self):
+        out = OUT / "ink_sheet.png"
+        proc = script("look.py", self.busy, "--tiles", "2x2", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        tiles = doc["ink"]["tiles"]
+        self.assertEqual(len(tiles), 4)
+        for tile in tiles:
+            self.assertTrue(tile["has_ink"])
+
+    def test_ink_measures_both_sides_of_a_compare(self):
+        out = OUT / "ink_compare.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        frames = doc["ink"]["frames"]
+        self.assertEqual(len(frames), 1)
+        self.assertTrue(frames[0]["has_ink"])  # the hstacked image: busy half lights it up
+
+    def test_compare_with_repeated_at_and_o_writes_distinct_files(self):
+        """-o given alongside --compare --at T1 --at T2 must not collapse onto one file: each
+        timestamp needs its own comparison image, or ink.frames (and any other per-frame
+        measurement) silently describes the same picture twice."""
+        out = OUT / "ink_compare_multi.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--at", "2",
+                     "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        outputs = doc["outputs"]
+        self.assertEqual(len(outputs), 2)
+        self.assertNotEqual(outputs[0], outputs[1])
+        for o in outputs:
+            self.assertTrue(Path(o).exists(), o)
+        frames = doc["ink"]["frames"]
+        self.assertEqual(len(frames), 2)
+        self.assertTrue(frames[0]["has_ink"])
+        self.assertTrue(frames[1]["has_ink"])
+
+    def test_compare_with_the_same_at_value_twice_still_writes_two_files(self):
+        """The occurrence index, not just the timestamp, disambiguates the filename: two
+        identical --at values (or two that would round to the same millisecond) must not
+        collapse onto one file either."""
+        out = OUT / "ink_compare_dup.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--at", "1",
+                     "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        outputs = doc["outputs"]
+        self.assertEqual(len(outputs), 2)
+        self.assertNotEqual(outputs[0], outputs[1])
+        for o in outputs:
+            self.assertTrue(Path(o).exists(), o)
+
+
 class GraphicsSliceOverlongTests(unittest.TestCase):
     """graphics.py's own `wrapped()` helper (used by lower-third, title, sticker, hook and meme
     labels) now turns on the same `slice_overlong` escape hatch caption.py's burn path turned on
