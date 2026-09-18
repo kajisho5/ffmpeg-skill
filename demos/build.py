@@ -1307,7 +1307,10 @@ def demo_motion_centre(ctx):
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
            str(before))
     out = ctx.script("cropdetect.py", before, "--motion-centre", "--json", capture=True)
-    x_frac = 0.83
+    # Matches this fixture's own measured centroid (deterministic -- verified across reruns) so
+    # _DryCtx's doc-generation pass (which never actually runs cropdetect.py) records the same
+    # --x the real build below computes, instead of drifting from an arbitrary placeholder.
+    x_frac = 0.817
     if out:
         found = json.loads(out)
         points = [p for p in (found.get("motion_centre") or []) if p.get("x_frac") is not None]

@@ -484,7 +484,7 @@ python3 scripts/multicam.py demos/out/fixtures/motion.mp4 demos/out/fixtures/cam
 ```bash
 python3 scripts/cropdetect.py demos/out/motion_centre_crop_offcentre.mp4 --motion-centre --json
 python3 scripts/crop.py demos/out/motion_centre_crop_offcentre.mp4 --x 328 --y 0 --width 304 --height 540 --preset veryfast -o demos/out/motion_centre_crop_centre.mp4
-python3 scripts/crop.py demos/out/motion_centre_crop_offcentre.mp4 --x 644 --y 0 --width 304 --height 540 --preset veryfast -o demos/out/motion_centre_crop_after.mp4
+python3 scripts/crop.py demos/out/motion_centre_crop_offcentre.mp4 --x 632 --y 0 --width 304 --height 540 --preset veryfast -o demos/out/motion_centre_crop_after.mp4
 ```
 
 **Look for:** cropdetect.py --motion-centre reports where the motion sits per second; it never picks a reframe itself. Left is a naive centre crop that clips the moving subject sitting off to one side; right is crop.py aimed at the measured centroid instead.
