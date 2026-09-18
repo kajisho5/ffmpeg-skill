@@ -2,7 +2,7 @@
   "iteration": "23-partial",
   "at_version": "1.19.3",
   "date": "2026-09-18",
-  "status": "partial — Set A and Set C complete with evidence; Set B and Set D blocked by this sandbox's toolchain; the non-Claude routing pass is out of scope here",
+  "status": "partial — Set A and Set C complete with evidence; Set B is blocked by this sandbox's toolchain; Set D was not attempted (out of this session's scope); the non-Claude routing pass is blocked by lack of model access here",
   "sets": {
     "A": {
       "description": "cs1/cs2/cs3 x3 real agent runs against the live ffmpeg-skill, regex-graded with the existing agent_prompts_24.json grader_expect/grader_not fields (independent of the acting agent: each run was a fresh subagent with no shared context)",
