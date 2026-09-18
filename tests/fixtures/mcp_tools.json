@@ -637,6 +637,7 @@
    "compare",
    "dry_run",
    "fast",
+   "ink",
    "input",
    "json",
    "json_brief",
