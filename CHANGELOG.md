@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 1.20.0
+
+_Automated release: version and notes generated from pull requests merged since 1.19.3._
+
+- feat: look.py --ink measures non-background pixels per PNG (#261)
+
 ## 1.19.3
 
 _Automated release: version and notes generated from pull requests merged since 1.19.2._

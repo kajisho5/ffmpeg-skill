@@ -14,10 +14,10 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, time_arg
+from _common import STATE, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_analysis, time_arg
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -32,6 +32,103 @@ def timecode_filter(font_prefix: str) -> str:
     return f"drawtext=text='%{{pts\\:hms}}':{font_prefix}{FONT}"
 
 
+def _png_size(png_path: str) -> "Optional[tuple]":
+    # run_analysis(): the same wall-clock ceiling and #234 UTF-8 decoding as every other
+    # ffprobe/ffmpeg measurement in this codebase, check=False since a probe failure here is
+    # an unknown-metric result (has_ink: None), not a reason to die -- a stall still does,
+    # exactly like every other measurement's timeout.
+    proc = run_analysis(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                         "stream=width,height", "-of", "csv=p=0", png_path], check=False)
+    parts = proc.stdout.strip().split(",")
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def _png_pixels(png_path: str, w: int, h: int) -> "Optional[bytes]":
+    proc = run_analysis(["ffmpeg", "-v", "error", "-i", png_path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                        check=False, text=False)
+    data = proc.stdout
+    return data if len(data) >= w * h * 3 else None
+
+
+def measure_ink(png_path: str, *, box=None, margin_frac: float = 0.03, threshold: int = 28) -> dict:
+    """Non-background ink in `png_path` (or the `box` = (x0, y0, w, h) sub-region of it): a pixel-only
+    measurement, never a judgement of legibility. The background is estimated as the median RGB of a
+    thin strip around the region's own edge (so it works on any frame, not just a black synthetic one);
+    a pixel is "ink" when any channel differs from that estimate by more than `threshold`. Returns
+    {has_ink, bbox (x0,y0,x1,y1 within the region, or None), ink_fraction, row_bands} -- row_bands are
+    gap-merged bands of rows carrying ink, the same convention tests/_fixtures.py's _ass_ink_rows uses,
+    so a caption wrapped onto two lines shows as two bands without measuring any font."""
+    size = _png_size(png_path)
+    if not size:
+        return {"has_ink": None, "bbox": None, "ink_fraction": None, "row_bands": []}
+    full_w, full_h = size
+    data = _png_pixels(png_path, full_w, full_h)
+    if data is None:
+        return {"has_ink": None, "bbox": None, "ink_fraction": None, "row_bands": []}
+    if box:
+        bx, by, bw, bh = box
+        bx, by = max(0, bx), max(0, by)
+        bw, bh = min(bw, full_w - bx), min(bh, full_h - by)
+    else:
+        bx, by, bw, bh = 0, 0, full_w, full_h
+    if bw <= 0 or bh <= 0:
+        return {"has_ink": None, "bbox": None, "ink_fraction": None, "row_bands": []}
+
+    def px(x, y):
+        off = ((by + y) * full_w + (bx + x)) * 3
+        return data[off], data[off + 1], data[off + 2]
+
+    margin = max(1, int(min(bw, bh) * margin_frac))
+    border = []
+    for x in range(0, bw, max(1, bw // 40 or 1)):
+        border.append(px(x, 0))
+        border.append(px(x, bh - 1))
+    for y in range(0, bh, max(1, bh // 40 or 1)):
+        border.append(px(0, y))
+        border.append(px(bw - 1, y))
+    if not border:
+        border = [px(0, 0)]
+    bg = tuple(sorted(c[i] for c in border)[len(border) // 2] for i in range(3))
+
+    lit_rows = []
+    min_x = min_y = None
+    max_x = max_y = None
+    ink_count = 0
+    for y in range(bh):
+        row_lit = False
+        for x in range(bw):
+            r, g, b = px(x, y)
+            if abs(r - bg[0]) > threshold or abs(g - bg[1]) > threshold or abs(b - bg[2]) > threshold:
+                row_lit = True
+                ink_count += 1
+                min_x = x if min_x is None else min(min_x, x)
+                max_x = x if max_x is None else max(max_x, x)
+                min_y = y if min_y is None else min(min_y, y)
+                max_y = y if max_y is None else max(max_y, y)
+        if row_lit:
+            lit_rows.append(y)
+
+    bands = []
+    for y in lit_rows:
+        if bands and y - bands[-1][1] <= margin:
+            bands[-1][1] = y
+        else:
+            bands.append([y, y])
+
+    has_ink = min_x is not None
+    return {
+        "has_ink": has_ink,
+        "bbox": [min_x, min_y, max_x, max_y] if has_ink else None,
+        "ink_fraction": round(ink_count / (bw * bh), 4) if bw * bh else 0.0,
+        "row_bands": [list(b) for b in bands],
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -43,6 +140,9 @@ def main() -> int:
     ap.add_argument("--no-timecode", action="store_true")
     ap.add_argument("--safe", choices=PLATFORM_CHOICES, help="shade the zones this platform's UI covers (its description bar, "
                                                        "like column, status bar) so you can see whether anything readable is under them")
+    ap.add_argument("--ink", action="store_true", help="measure non-background pixels in each written PNG (bbox, "
+                                                 "ink_fraction, row_bands per tile for a contact sheet) instead of "
+                                                 "just eyeballing it -- a pixel-only signal, not a legibility judgement")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -103,9 +203,15 @@ def main() -> int:
         if not args.at:
             die("--compare needs --at TIME")
         probe(args.compare)
-        for t in args.at:
+        for idx, t in enumerate(args.at):
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
-            out = args.output or os.path.join(outdir, f"{stem}_vs_{Path(args.compare).stem}_{sec:.3f}s.png")
+            if args.output and len(args.at) == 1:
+                out = args.output  # one frame, one named image file: the caller's -o is the contract
+            else:
+                # several frames, or -o given as a stem/prefix: an occurrence index keeps every
+                # requested --at its own file even when two round to the same millisecond
+                stem_part = (args.output and Path(args.output).stem) or stem
+                out = os.path.join(outdir, f"{stem_part}_vs_{Path(args.compare).stem}_{idx}_{sec:.3f}s.png")
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
             tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp
@@ -159,7 +265,29 @@ def main() -> int:
     for o in outputs:
         if STATE.dry_run or os.path.exists(o):
             info(f"wrote {o}")
-    emit(outputs[0] if len(outputs) == 1 else None, outputs=outputs)
+
+    ink = None
+    if args.ink and not STATE.dry_run:
+        if outputs and args.at is None and not args.compare:
+            # contact sheet: one PNG holding a cols x rows grid (tile_w:padding=2:margin=2, as built above)
+            # -- split it back into per-tile boxes so each tile is measured on its own, not the whole sheet.
+            sheet = outputs[0]
+            size = _png_size(sheet)
+            if size:
+                full_w, full_h = size
+                margin, padding = 2, 2
+                th = (full_h - 2 * margin - (rows - 1) * padding) // rows if rows else full_h
+                tiles = []
+                for r in range(rows):
+                    for c in range(cols):
+                        bx = margin + c * (tile_w + padding)
+                        by = margin + r * (th + padding)
+                        tiles.append(measure_ink(sheet, box=(bx, by, tile_w, th)))
+                ink = {"tiles": tiles}
+        else:
+            ink = {"frames": [measure_ink(o) for o in outputs]}
+
+    emit(outputs[0] if len(outputs) == 1 else None, outputs=outputs, **({"ink": ink} if ink is not None else {}))
     if len(outputs) > 1 and not args.json:
         for o in outputs:
             print(o)
