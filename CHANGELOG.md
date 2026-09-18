@@ -6,6 +6,16 @@
 
 (nothing yet)
 
+## 1.21.0
+
+_Automated release: version and notes generated from pull requests merged since 1.20.0._
+
+- feat: contract --json gains per-tool examples, parsed from SKILL.md's own table (#267)
+- docs: demo gallery entries for --shots, --speech-aware, --motion-centre, --switch energy (#263)
+- docs: eval iteration-23 partial results (Phase 3, Set A + Set C) (#265)
+- test: promote eval 22 Set B (b1-b8) into evals/agent_prompts_24.json (#264)
+- test: expand trigger set with 5 symptom-only 1.18 prompts (#262)
+
 ## 1.20.0
 
 _Automated release: version and notes generated from pull requests merged since 1.19.3._

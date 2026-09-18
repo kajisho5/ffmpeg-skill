@@ -18,6 +18,7 @@ The contract has its own version (CONTRACT_VERSION) that only changes when the s
 this document changes; the skill version comes from package.json.
 """
 import argparse
+import functools
 import importlib.util
 import json
 import os
@@ -461,6 +462,43 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     props.update(extra)
     required = ["status", "output", "dry_run", "commands"]
     return {"type": "object", "properties": props, "required": required, "additionalProperties": True}
+
+@functools.lru_cache(maxsize=1)
+def skill_examples() -> Dict[str, List[Dict[str, Any]]]:
+    """1.20.0: per-tool `examples`, parsed from SKILL.md's "User says" / "Do" table -- the
+    same facts that table already states, machine-readable instead of prose-only. A row
+    naming more than one tool (e.g. metadata.py's --auto-chapters row also names render.py)
+    attaches to each; a row naming none (prose only, no backtick command) attaches to none.
+    `prompts` is a list because a row often gives several phrasings ("cut from 1:20 to 2:05",
+    "trim the first 10 s") for the one `command`; `command` has the markdown backticks
+    stripped but otherwise keeps the row's own text (including "or"/"then" alternatives).
+    """
+    examples: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        lines = (ROOT / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return examples
+    in_table = False
+    esc_pipe = "\x00"  # a markdown-escaped "\|" (a literal pipe inside a cell, e.g. broll's --audio b\|mix) is not a column separator
+    for line in lines:
+        if line.startswith("| User says"):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if not line.startswith("|"):
+            break
+        if line.startswith("|---") or line.startswith("|-----"):
+            continue
+        cells = line.strip().strip("|").replace("\\|", esc_pipe).split("|")
+        if len(cells) != 2:
+            continue
+        prompt_cell, do = (c.replace(esc_pipe, "|").strip() for c in cells)
+        prompts = re.findall(r'"([^"]+)"', prompt_cell) or [prompt_cell.strip('"')]
+        command = re.sub(r"`([^`]*)`", r"\1", do)
+        for tool in dict.fromkeys(re.findall(r"`([a-z][a-z0-9_]*)\.py", do)):
+            examples.setdefault(tool, []).append({"prompts": prompts, "command": command})
+    return examples
 
 
 # ----------------------------------------------------------------------------- environment
@@ -1012,6 +1050,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "version": version,
         "description": (parser.description or "").strip().splitlines()[0] if parser.description else "",
         "executable": f"scripts/{name}.py",
+        # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
+        "examples": skill_examples().get(name, []),
         "role": meta["role"],
         "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], CODEC_CAPS if "codec" in schema["properties"] else [])},
         "inputs": list(meta["inputs"]),

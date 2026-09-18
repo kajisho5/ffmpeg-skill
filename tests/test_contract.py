@@ -276,6 +276,32 @@ class ContractTests(unittest.TestCase):
             self.assertTrue(re.fullmatch(r"[a-z]+", t["name"]), t["id"])
         self.assertEqual(ids, sorted(ids), "tools are listed in a stable, sorted order")
 
+    def test_examples_are_parsed_from_skill_md_and_cover_every_tool(self):
+        """1.20.0: contract --json's per-tool `examples` field is SKILL.md's own request table
+        (the "User says" / "Do" rows), machine-readable -- not a hand-maintained second copy.
+        Every one of the 42 tools is named in that table somewhere, so every tool has at least
+        one example; a row's markdown backticks are stripped from `command`, and a row with
+        several quoted phrasings ("cut from 1:20 to 2:05", "trim the first 10 s") becomes a
+        `prompts` list rather than one string."""
+        by_name = {t["name"]: t for t in self.contract["tools"]}
+        missing = [name for name, t in by_name.items() if not t.get("examples")]
+        self.assertEqual(missing, [], "every tool should have at least one SKILL.md example")
+        cut = next(e for e in by_name["cut"]["examples"] if "cut from 1:20 to 2:05" in e["prompts"])
+        self.assertEqual(cut, {"prompts": ["cut from 1:20 to 2:05", "trim the first 10 s"],
+                                "command": "cut.py input.mp4 --start 1:20 --end 2:05"})
+        for t in self.contract["tools"]:
+            for ex in t["examples"]:
+                self.assertEqual(set(ex), {"prompts", "command"})
+                self.assertIsInstance(ex["prompts"], list)
+                self.assertTrue(ex["prompts"])
+                self.assertNotIn("`", ex["command"], "markdown backticks should be stripped")
+                self.assertIn(f"{t['name']}.py", ex["command"])
+        # a markdown-escaped "\|" inside a cell (broll's --audio b\|mix) is a literal pipe,
+        # not a column separator -- confirms the escaping doesn't silently drop the row
+        broll = by_name["broll"]["examples"][0]
+        self.assertIn("b|mix", broll["command"])
+        self.assertIn("B-roll over this bit", broll["prompts"])
+
     def test_provides_covers_every_tool_with_the_dotted_capability_id(self):
         provides = self.contract["provides"]
         ids = [p["id"] for p in provides]
