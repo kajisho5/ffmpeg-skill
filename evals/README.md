@@ -2,7 +2,7 @@
 
 Two kinds of eval live here:
 
-- **Trigger tests** (`trigger/`) — does a model pick this skill for a request, and leave it alone for a near miss? 50 prompts (45 plus the five 1.17 features), see `trigger/README.md`.
+- **Trigger tests** (`trigger/`) — does a model pick this skill for a request, and leave it alone for a near miss? 55 prompts (45 plus the five 1.17 features, plus five for 1.18), see `trigger/README.md`.
 - **Agent runs** (`agent_prompts_*.json` + `grade_runs_24.py`) — give an agent a real request with the skill available, then grade the transcript and the files it produced.
 
 `tasks.json` + `run.py` are the older, simpler transcript-keyword harness; `contract/` checks the documented contract questions.
