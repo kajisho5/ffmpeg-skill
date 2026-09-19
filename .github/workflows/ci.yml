@@ -132,7 +132,7 @@ jobs:
       # is enough: cache it, and only fetch when the cache is cold.
       - name: Cache the ffmpeg 5.1.1 static tarball
         id: ffcache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ffmpeg.tar.xz
           key: ffmpeg-5.1.1-amd64-static-tar-xz
