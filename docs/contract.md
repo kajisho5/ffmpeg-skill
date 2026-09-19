@@ -595,6 +595,20 @@ contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally
 `FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
 return all 42, as every version before 1.23.0 did.
 
+### `prompts` capability: five workflow recipes
+
+Roadmap 1.20.0 "agent ergonomics": the server advertises `capabilities.prompts` in `initialize`
+and answers `prompts/list` / `prompts/get` with five canned workflows an agent can ask for by
+name instead of composing the individual tool calls itself: `reel`, `podcast`, `multicam`,
+`delivery_check`, `hdr`. `prompts/list` returns each one's `name`, `description` and `arguments`
+(from `_contract.MCP_PROMPTS`); `prompts/get {name, arguments}` fills the matching template and
+returns one user-role text message naming the actual command lines to run and what to check
+afterward -- the same facts SKILL.md's own request table states, addressed by workflow instead of
+by request phrasing. A missing required argument is a JSON-RPC error (`prompts/get` never guesses
+a path or a platform); an unknown prompt name is a JSON-RPC error too, distinct from "method not
+found" since `prompts/get` itself is a real method. These are recipes, not new tool calls: every
+command line a prompt names is one `tools/call` (or the CLI) can already run.
+
 ## Consuming the contract from an agent
 
 A planning agent (for example video-production-agent's SkillRegistry) can:

@@ -17,7 +17,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.22.0** — `multicam.py --write-project FILE` writes a
+The released version today is **1.23.0** — `multicam.py --write-project FILE` writes a
 `render.py` project that reproduces the tool's own cut decision (eval 21's `mc2` gap, no more
 hand-translating cuts/offsets into `clips[]`), and `--filler` alone no longer jump-cuts unrelated
 dead-air silence (eval 19's `fw1`/`fw3`: "remove the ums" silently removed ~5s of unasked-for
@@ -33,7 +33,9 @@ parsed from SKILL.md's own "User says" / "Do" table (#267), also a `feat:` relea
 start of the "1.21.0: the 2.0 freeze" heading further down this document, which remains planned.
 1.22.0 is `batch.py` rolling up `cut.py`'s per-call `reencoded` across a recipe's whole run into
 one `cut_stream_copy` summary (`{calls, stream_copy, reencoded, stream_copy_rate}`, #269), a
-`feat:` release, hence the minor bump -- not the start of a new theme.
+`feat:` release, hence the minor bump -- not the start of a new theme. 1.23.0 moves the MCP
+structured-arguments note out of every one of the 42 `tools/list` descriptions into `initialize`'s
+`instructions` field once (#271), also a `feat:` release, hence the minor bump.
 
 | version | state | evidence |
 |---|---|---|
@@ -65,6 +67,7 @@ one `cut_stream_copy` summary (`{calls, stream_copy, reencoded, stream_copy_rate
 | 1.20.0 | shipped, eval pending | `look.py --ink` (#261): measures the count and fraction of non-background pixels in a PNG (a still frame, a burned caption/graphics overlay, or a `--compare` side-by-side image), pixel-scan only -- no new dependency. `feat:` release, hence the minor bump. Tool count still 42 |
 | 1.21.0 | shipped, eval pending | `contract --json` gains `examples` per tool (#267): `scripts/_contract.py` parses SKILL.md's own "User says" / "Do" request table into `{tool_name: [{prompts, command}]}`, cached, so every one of the 42 tools has at least one machine-readable example that can't drift from the table a person reads. `feat:` release, hence the minor bump -- not the start of the "1.21.0: the 2.0 freeze" heading further down this document. Tool count still 42 |
 | 1.22.0 | shipped, eval pending | `batch.py` reports `cut.py`'s stream-copy vs hybrid re-encode rate across a folder (#269): `run_step()` reads each step's own `--json` result document back (previously only used for its output path), and rolls `cut.py`'s per-call `reencoded` into one `cut_stream_copy` summary (`{calls, stream_copy, reencoded, stream_copy_rate}`). `feat:` release, hence the minor bump. Tool count still 42 |
+| 1.23.0 | shipped, eval pending | MCP `tools/list` descriptions shortened to one line each (#271): `MCP_STRUCTURED_NOTE` used to be appended to every one of the 42 descriptions verbatim; it now goes once into `initialize`'s `instructions` field instead. Additive/no-op for `tools/call` and `inputSchema`; the frozen 1.x MCP snapshot doesn't track descriptions. `feat:` release, hence the minor bump. Tool count still 42 |
 | 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)

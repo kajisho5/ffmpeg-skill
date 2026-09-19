@@ -891,6 +891,46 @@ class ContractTests(unittest.TestCase):
         resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "initialize"}])[0]
         self.assertEqual(resp["result"]["instructions"], _contract.MCP_STRUCTURED_NOTE)
 
+    def test_mcp_prompts_capability_lists_and_fills_the_five_workflows(self):
+        """roadmap 1.20.0 agent ergonomics: a `prompts` capability with the five workflows
+        (reel, podcast, multicam, delivery_check, hdr). initialize advertises it; prompts/list
+        names each one with its arguments; prompts/get fills the template with real values,
+        including the optional-argument clauses (cues, chapters) that drop cleanly when the
+        argument is omitted; a missing required argument or an unknown prompt name is a
+        JSON-RPC error, not a silently wrong or empty prompt."""
+        init = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "initialize"}])[0]
+        self.assertIn("prompts", init["result"]["capabilities"])
+
+        listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/list"}])[0]["result"]["prompts"]
+        self.assertEqual(sorted(p["name"] for p in listed), sorted(p["name"] for p in _contract.MCP_PROMPTS))
+        self.assertEqual({"reel", "podcast", "multicam", "delivery_check", "hdr"}, {p["name"] for p in listed})
+        for p in listed:
+            self.assertTrue(p["description"])
+            self.assertTrue(any(a["required"] for a in p["arguments"]), f"{p['name']}: needs at least one required argument")
+
+        got = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                           "params": {"name": "reel", "arguments": {"input": "/abs/clip.mp4"}}}])[0]["result"]
+        text = got["messages"][0]["content"]["text"]
+        self.assertIn("/abs/clip.mp4", text)
+        self.assertIn("reels", text, "default platform applies when not given")
+        self.assertNotIn("cues", text, "no cues argument -> no dangling cues clause")
+
+        with_cues = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                                 "params": {"name": "reel", "arguments": {"input": "/abs/clip.mp4", "platform": "tiktok", "cues": "/abs/cues.txt"}}}])[0]["result"]
+        cues_text = with_cues["messages"][0]["content"]["text"]
+        self.assertIn("tiktok", cues_text)
+        self.assertIn("/abs/cues.txt", cues_text)
+
+        missing = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                               "params": {"name": "delivery_check", "arguments": {"input": "/abs/x.mp4"}}}])[0]
+        self.assertIn("error", missing)
+        self.assertIn("platform", missing["error"]["message"])
+
+        unknown = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                               "params": {"name": "not_a_real_prompt", "arguments": {}}}])[0]
+        self.assertIn("error", unknown)
+        self.assertNotEqual(unknown["error"]["code"], -32601, "an unknown prompt name is not the same as an unknown method")
+
     def test_mcp_tool_surface_matches_the_frozen_1x_snapshot(self):
         """docs/contract.md, "Stability guarantee (1.x)": within 1.x no tool is removed or renamed
         and no argument is removed, renamed or made newly required. The MCP surface is *derived*
