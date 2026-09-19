@@ -1187,8 +1187,12 @@ def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def mcp_tool(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """The MCP tools/list entry for a ToolSpec: name, description and the derived inputSchema."""
-    return {"name": spec["name"], "description": f"{spec['description']} {MCP_STRUCTURED_NOTE}".strip(), "inputSchema": mcp_input_schema(spec)}
+    """The MCP tools/list entry for a ToolSpec: name, one-line description and the derived
+    inputSchema. 1.20.0: MCP_STRUCTURED_NOTE used to be appended to every one of the 42
+    descriptions verbatim (the same ~250 characters repeated 42 times in every tools/list dump);
+    it now goes once into the server's `initialize` response (`instructions`) instead, so a tool's
+    own description stays its own one-line sentence."""
+    return {"name": spec["name"], "description": spec["description"], "inputSchema": mcp_input_schema(spec)}
 
 
 def mcp_tools(detect: bool = False) -> List[Dict[str, Any]]:

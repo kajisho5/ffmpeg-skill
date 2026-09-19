@@ -878,6 +878,19 @@ class ContractTests(unittest.TestCase):
         listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout.splitlines() if l.strip()]
         self.assertEqual(listed, expected_order)
 
+    def test_mcp_tool_descriptions_are_one_liners_with_the_structured_note_moved_to_initialize(self):
+        """1.20.0 agent ergonomics: MCP_STRUCTURED_NOTE used to be appended to every one of the 42
+        tool descriptions verbatim (the same ~250 characters repeated 42 times in a tools/list
+        dump). It is server-wide, not per-tool, so it now goes once into initialize's
+        `instructions` field instead, and each tool's own `description` is just its one-line
+        sentence again (no embedded newline, no trailing structured-arguments boilerplate)."""
+        for t in mcp_server.tool_list():
+            self.assertNotIn("\n", t["description"], f"{t['name']}: description should be one line")
+            self.assertNotIn("Structured arguments", t["description"],
+                              f"{t['name']}: the structured-arguments note belongs in initialize, not per tool")
+        resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "initialize"}])[0]
+        self.assertEqual(resp["result"]["instructions"], _contract.MCP_STRUCTURED_NOTE)
+
     def test_mcp_tool_surface_matches_the_frozen_1x_snapshot(self):
         """docs/contract.md, "Stability guarantee (1.x)": within 1.x no tool is removed or renamed
         and no argument is removed, renamed or made newly required. The MCP surface is *derived*

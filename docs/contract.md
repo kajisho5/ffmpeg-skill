@@ -541,8 +541,12 @@ argparse parser  →  ToolSpec.input_schema  →  contract  →  MCP tools/list 
 
 At start-up the server builds the ToolSpecs (`_contract.build(detect=False)`) and
 derives each `tools/list` entry with `_contract.mcp_tool`: the name is the ToolSpec
-name, the order is the contract's sorted order, and `inputSchema` is
-`_contract.mcp_input_schema(ToolSpec)`. `tools/call` maps structured arguments to
+name, `description` is the ToolSpec's own one-line description (unchanged from the
+CLI's `--help` first line), the order is the contract's sorted order, and `inputSchema` is
+`_contract.mcp_input_schema(ToolSpec)`. The structured-arguments note that explains how to
+call a tool (`_contract.MCP_STRUCTURED_NOTE`) is server-wide, not per-tool: it is sent once,
+in `initialize`'s `instructions` field, rather than appended to all 42 descriptions (1.20.0).
+`tools/call` maps structured arguments to
 argv with the ToolSpec's `mcp.positional` and `mcp.argument_exceptions`. A new
 public script, a removed one, or a changed parser therefore changes the MCP surface
 with no edit to `mcp/`; `tests/test_contract.py` proves this by copying the skill,
