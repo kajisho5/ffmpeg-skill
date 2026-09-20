@@ -345,6 +345,8 @@ On Windows, `python3` is only on PATH if Python was installed from the Microsoft
 
 `FFMPEG_SKILL_MCP_LEAN=1` in the server's environment drops `json` and `progress` from every `inputSchema`: they are transport flags the server sets itself, not tool arguments, and 2.0 drops them unconditionally. It is opt-in, independent of `FFMPEG_SKILL_MCP_FULL`, and the default `tools/list` stays byte-identical (aside from the core-12 filter) to the CLI surface the contract promises.
 
+The server also advertises a `prompts` capability: five canned workflow recipes an agent can ask for by name instead of composing the individual tool calls itself — `reel`, `podcast`, `multicam`, `delivery_check`, `hdr`. `prompts/list` returns each one's name, description and arguments; `prompts/get {name, arguments}` fills the matching template and returns one text message naming the actual command lines to run and what to check afterward. These are recipes, not new tool calls — every command line a prompt names is one `tools/call` (or the CLI) can already run.
+
 ### Capability detection
 
 ```bash
