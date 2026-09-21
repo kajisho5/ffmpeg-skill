@@ -99,6 +99,7 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "the captions are tiny / three lines on a Short", "don't chop the sentence" | `caption.py` shrinks the size until the cue fits `--max-lines` before splitting it (`--fit-size off` for 1.16 behaviour, `--min-size` sets the floor). Keep the template's `--max-lines` (2 on a vertical) and let the size drop; raising it to dodge a shrink stacks two words per line. A word still wider than the column at the floor is sliced at the edge (hyphen preferred), never rewritten, automatic; `broken_inside_word` in the JSON counts it |
 | "transcribe it and caption it" | `caption.py input.mp4 --transcribe --animate pop --karaoke` (needs a local whisper; else `--text`) |
 | "TikTok-style captions with the words popping" | `caption.py input.mp4 --text cues.txt --animate pop --karaoke` |
+| "the active word should get bigger, not just change colour" | `caption.py input.mp4 --text cues.txt --karaoke --karaoke-style word` (one event per word: active word scaled by `--karaoke-scale`, past words in `--color`, upcoming in `--upcoming-color`; `--karaoke-style sweep` is the unchanged `\kf` colour-fill default) |
 | "our logo top-right", "a watermark" | `overlay.py input.mp4 --image logo.png --position top-right --scale 200` |
 | "a title for the first 4 seconds" | `overlay.py input.mp4 --text "Title" --position top --start 0 --end 4 --fade 0.4` |
 | "webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |

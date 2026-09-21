@@ -25,6 +25,7 @@ Text-to-SRT input format (one cue per line, blank lines ignored):
 Examples:
   python3 caption.py input.mp4 --srt subs.srt
   python3 caption.py input.mp4 --text cues.txt --animate pop --karaoke        # word-by-word highlight, TikTok style
+  python3 caption.py input.mp4 --text cues.txt --karaoke --karaoke-style word # active word scaled + emboldened, past/upcoming colours
   python3 caption.py input.mp4 --srt subs.srt --font "Noto Sans CJK JP" --size 28 --position top
   python3 caption.py --text cues.txt --write-srt cues.srt          # only produce the SRT
   python3 caption.py input.mp4 --text cues.txt                     # generate + burn in one go
@@ -464,9 +465,18 @@ def max_line_em(args, play_w: Optional[int], play_h: Optional[int]) -> Optional[
 
     --size is in ASS points against a 288-line script (what libass's force_style uses), so the
     rendered pixel size is size * play_h / 288.
+
+    --karaoke-style word scales its active word up by --karaoke-scale and freezes the line break
+    (WrapStyle: 2 in write_ass) so libass can never re-wrap around that scale-up. The budget here
+    is narrowed by the same factor so the longest wrapped line -- computed at the UNscaled width --
+    still fits once its active word is drawn --karaoke-scale%% larger; without this, a line that
+    exactly filled the safe width would overflow it the moment its emphasised word appears.
     """
-    return line_em_for_size(args.size, play_w, play_h,
-                            safe_fraction=safe_width_fraction(args, play_w))
+    em = line_em_for_size(args.size, play_w, play_h,
+                          safe_fraction=safe_width_fraction(args, play_w))
+    if em is not None and getattr(args, "karaoke", False) and getattr(args, "karaoke_style", "sweep") == "word":
+        em = em / max(1.0, getattr(args, "karaoke_scale", 112) / 100.0)
+    return em
 
 
 def parse_ass_dialogue(path: str) -> str:
@@ -526,6 +536,23 @@ def word_durations_from_timings(words: List[Tuple[float, float, str]], start: fl
     return out
 
 
+def _karaoke_word_durations(args, video: Optional[str], start: float, end: float, n_words: int) -> List[int]:
+    """Centiseconds per word for one cue, shared by --karaoke-style sweep and word.
+
+    Real word timings from the transcript beat both the energy estimate and the even split --
+    they are what the speaker actually did, not a proxy for it.
+    """
+    dur_cs = max(1, int(round((end - start) * 100)))
+    durs = word_durations_from_timings(getattr(args, "_word_timings", None) or [], start, end, n_words)
+    if durs is None:
+        if getattr(args, "karaoke_timing", "even") == "energy" and video:
+            durs = word_durations_from_audio(video, start, end, n_words, getattr(args, "audio_stream", 0))
+        else:
+            per = max(1, dur_cs // max(1, n_words))
+            durs = [per] * n_words
+    return durs
+
+
 def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int, play_h: int, video: str = None) -> None:
     """Write a styled ASS file with optional animation and word-by-word highlight."""
     def t(sec: float) -> str:
@@ -544,8 +571,20 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
     secondary = ass_color(args.color)
     outline = ass_color(args.outline_color)
     back = ass_color(args.outline_color, 0x80)
+    word_style = args.karaoke and getattr(args, "karaoke_style", "sweep") == "word"
+    word_past = ass_color(args.color)
+    word_active = ass_color(args.highlight_color)
+    word_upcoming = ass_color(args.upcoming_color)
+    word_bord = f"{args.outline * scale * (max(1.0, args.karaoke_scale) / 100.0):.2f}"
+    word_scale = int(round(args.karaoke_scale))
+    # --karaoke-style word emits one Dialogue per word carrying the WHOLE cue with explicit \N
+    # breaks (the layout's own fixed line list -- see max_line_em's docstring). WrapStyle: 2 tells
+    # libass to honour only those explicit breaks and never re-wrap: with WrapStyle: 0 (the sweep
+    # default, unchanged), scaling the active word up would re-flow the line and it would visibly
+    # jump every time the highlight advances (the trap the issue this implements is filed against).
     header = [
-        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {play_w}", f"PlayResY: {play_h}", "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {play_w}", f"PlayResY: {play_h}",
+        f"WrapStyle: {2 if word_style else 0}", "ScaledBorderAndShadow: yes", "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Default,{ass_font_name(args.font)},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin_l},{margin_r},{margin},1",
@@ -579,20 +618,66 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         own = own_sizes[cue_index] if cue_index < len(own_sizes) else None
         if own and own != args.size:
             fx += "{\\fs%d}" % int(round(own * scale))
+        if args.karaoke and word_style:
+            # One Dialogue event per WORD, each carrying the whole cue -- \k/\kf can only
+            # interpolate colour, so scaling/emboldening the active word (and a third "upcoming"
+            # colour) needs a real per-word override block instead. The line list is `body`'s own
+            # \N split, already frozen by layout_cues (this function never re-wraps it), so every
+            # event uses the identical break -- WrapStyle: 2 above stops libass re-wrapping around
+            # the active word's larger \fscx/\fscy, which is the jump the issue is filed against.
+            line_words = [[w for w in seg.split(" ") if w] for seg in body.split("\\N")]
+            flat = [w for lw in line_words for w in lw]
+            real_idx = [i for i, w in enumerate(flat) if w.strip(EMOJI_SENTINEL)]
+            if not real_idx:
+                # nothing to highlight (an all-emoji or empty cue) -- one plain event, same as
+                # today's karaoke-off rendering, rather than zero Dialogue lines for this cue
+                out_body = body
+                if EMOJI_SENTINEL in out_body:
+                    out_body = out_body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size)))
+                lines.append(f"Dialogue: 0,{t(start)},{t(end)},Default,,0,0,0,,{fx}{out_body}")
+                continue
+            n_words = len(real_idx)
+            durs = _karaoke_word_durations(args, video, start, end, n_words)
+            starts_cs, acc = [], 0
+            for d in durs:
+                starts_cs.append(acc)
+                acc += d
+            for j in range(n_words):
+                w_start = start + starts_cs[j] / 100.0
+                w_end = start + (starts_cs[j] + durs[j]) / 100.0
+                # colour/scale each real word by its rank against the active one (j); an
+                # emoji-placeholder token is never active and just keeps its plain text
+                styled, flat_pos = [], 0
+                for lw in line_words:
+                    styled_line = []
+                    for w in lw:
+                        if not w.strip(EMOJI_SENTINEL):
+                            styled_line.append(w)
+                        else:
+                            rank = real_idx.index(flat_pos)
+                            if rank < j:
+                                styled_line.append(f"{{\\c{word_past}}}{w}")
+                            elif rank == j:
+                                styled_line.append(
+                                    f"{{\\c{word_active}\\fscx{word_scale}\\fscy{word_scale}\\bord{word_bord}}}{w}{{\\r}}")
+                            else:
+                                styled_line.append(f"{{\\c{word_upcoming}}}{w}")
+                        flat_pos += 1
+                    styled.append(" ".join(styled_line))
+                out_body = "\\N".join(styled)
+                if EMOJI_SENTINEL in out_body:
+                    out_body = out_body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size)))
+                # the size/fit override (\fsN) belongs on every event; the entrance animation
+                # (\fad/\move/pop) only on the cue's FIRST word event -- replaying it on every
+                # later word would re-fade/re-pop the whole cue each time the highlight advances
+                event_fx = fx if j == 0 else (fx[fx.index("{\\fs"):] if "{\\fs" in fx else "")
+                lines.append(f"Dialogue: 0,{t(w_start)},{t(w_end)},Default,,0,0,0,,{event_fx}{out_body}")
+            continue
         if args.karaoke:
             # split each line into words and give every word an equal share of the cue (\k is in centiseconds)
-            dur_cs = max(1, int(round((end - start) * 100)))
             segments = body.split("\\N")
             words = [w for seg in segments for w in seg.split(" ") if w and w.strip(EMOJI_SENTINEL)]
-            # real word timings from the transcript beat both the energy estimate and the even
-            # split -- they are what the speaker actually did, not a proxy for it
-            durs = word_durations_from_timings(getattr(args, "_word_timings", None) or [], start, end, len(words))
-            if durs is None:
-                if getattr(args, "karaoke_timing", "even") == "energy" and video:
-                    durs = word_durations_from_audio(video, start, end, len(words), getattr(args, "audio_stream", 0))
-                else:
-                    per = max(1, dur_cs // max(1, len(words)))
-                    durs = [per] * len(words)
+            durs = _karaoke_word_durations(args, video, start, end, len(words))
             it = iter(durs)
             out_segments = []
             for seg in segments:
@@ -840,7 +925,16 @@ def main() -> int:
     anim = ap.add_argument_group("animation (generates ASS; needs --text or --srt input)")
     anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default=None, help="per-cue entrance animation (default none, or brand caption.animate)")
     anim.add_argument("--karaoke", action="store_true", help="word-by-word highlight (fills from --color to --highlight-color across each cue)")
-    anim.add_argument("--highlight-color", default=None, help="karaoke fill colour RRGGBB (default FFD200 or brand primary)")
+    anim.add_argument("--karaoke-style", choices=["sweep", "word"], default="sweep",
+                      help="'sweep' (default): today's \\kf colour fill, one Dialogue event per cue -- unchanged. "
+                           "'word': one Dialogue event per word, the active word scaled by --karaoke-scale and "
+                           "emboldened, past words in --color, upcoming words in --upcoming-color -- \\k/\\kf can only "
+                           "interpolate colour, so this is the only way to also scale/embolden the active word")
+    anim.add_argument("--highlight-color", default=None, help="karaoke fill/active-word colour RRGGBB (default FFD200 or brand primary)")
+    anim.add_argument("--upcoming-color", default=None,
+                      help="--karaoke-style word: colour RRGGBB for words not yet spoken (default B4B4B4)")
+    anim.add_argument("--karaoke-scale", type=float, default=112.0,
+                      help="--karaoke-style word: the active word's size as a percentage of the caption size (default 112)")
     anim.add_argument("--karaoke-timing", choices=["even", "energy"], default="energy",
                       help="how words are timed inside a cue: 'energy' follows the speech loudness in the audio (default), 'even' splits time equally")
     anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
@@ -886,6 +980,9 @@ def main() -> int:
     # to be applied anyway and then refused as "animation is burn only" -- ignore it there
     args.animate = args.animate or (bcap.get("animate", "none") if args.brand and args.mode != "mux" else "none")
     args.highlight_color = color_hex(args.highlight_color or bc.get("primary", "FFD200"))
+    args.upcoming_color = color_hex(args.upcoming_color or bc.get("upcoming", "B4B4B4"))
+    if args.karaoke_scale <= 0:
+        die("--karaoke-scale must be positive")
     if args.brand and bcap.get("bold") and not args.bold:
         args.bold = True
     if args.brand and bcap.get("karaoke") and not args.karaoke:

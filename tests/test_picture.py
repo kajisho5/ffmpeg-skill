@@ -1198,6 +1198,100 @@ class PictureTests(MediaFixtures):
         line2 = [l for l in ass2.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue")][0]
         self.assertEqual([int(x) for x in re.findall(r"\\kf(\d+)", line2)], [100, 100, 100, 100])
 
+    # ---------------------------------------------------------------- --karaoke-style word (#276)
+    def test_karaoke_style_default_sweep_is_byte_identical_to_omitting_the_flag(self):
+        """The mode selector must not change a single byte of today's \\kf output for a caller who
+        never asks for --karaoke-style word: the default has to stay exactly 'sweep'."""
+        ass_default = OUT / "kstyle_default.ass"
+        ass_sweep = OUT / "kstyle_sweep.ass"
+        script("caption.py", self.src, "--text", self.cues, "--karaoke", "--write-ass", ass_default,
+               "--karaoke-timing", "even", "--preset", "veryfast", "-o", OUT / "kstyle_default.mp4")
+        script("caption.py", self.src, "--text", self.cues, "--karaoke", "--karaoke-style", "sweep",
+               "--karaoke-timing", "even", "--write-ass", ass_sweep, "--preset", "veryfast", "-o", OUT / "kstyle_sweep.mp4")
+        self.assertEqual(ass_default.read_bytes(), ass_sweep.read_bytes(),
+                         "--karaoke-style sweep (explicit or default) must be byte-identical")
+        self.assertIn("WrapStyle: 0", ass_default.read_text(encoding="utf-8-sig"),
+                      "sweep mode's header is unchanged from before this flag existed")
+
+    def test_karaoke_style_word_emits_one_dialogue_event_per_word_covering_its_span(self):
+        gappy = OUT / "gappy_kw.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "4", "-c:v", "libx264",
+           "-preset", "veryfast", "-c:a", "aac", gappy)
+        cues = OUT / "kwcues.txt"
+        cues.write_text("0:00-0:04 one two three four\n", encoding="utf-8")
+        ass = OUT / "kword.ass"
+        script("caption.py", gappy, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--write-ass", ass, "--fast", "-o", OUT / "kword.mp4")
+        text = ass.read_text(encoding="utf-8-sig")
+        self.assertIn("WrapStyle: 2", text, "word mode freezes the line break: libass must not re-wrap")
+        dialogues = [l for l in text.splitlines() if l.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 4, "one Dialogue event per word, not per cue")
+        # even timing over 4 s / 4 words -> 1 s each
+        expected_bounds = [("0:00:00.00", "0:00:01.00"), ("0:00:01.00", "0:00:02.00"),
+                           ("0:00:02.00", "0:00:03.00"), ("0:00:03.00", "0:00:04.00")]
+        for line, (want_start, want_end) in zip(dialogues, expected_bounds):
+            fields = line.split(",", 3)
+            self.assertEqual(fields[1], want_start)
+            self.assertEqual(fields[2], want_end)
+        # every event still carries the WHOLE cue text, not just the active word
+        for line in dialogues:
+            for word in ("one", "two", "three", "four"):
+                self.assertIn(word, line)
+
+    def test_karaoke_style_word_active_word_is_scaled_and_a_distinct_colour(self):
+        cues = OUT / "kwcues2.txt"
+        cues.write_text("0:00-0:02 alpha beta\n", encoding="utf-8")
+        ass = OUT / "kword2.ass"
+        script("caption.py", self.src, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--karaoke-scale", "130", "--highlight-color", "1EC3FC",
+               "--color", "FFFFFF", "--upcoming-color", "808080", "--write-ass", ass,
+               "--preset", "veryfast", "-o", OUT / "kword2.mp4")
+        dialogues = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 2)
+        first, second = dialogues
+        self.assertIn(r"\fscx130", first)
+        self.assertIn(r"\fscy130", first)
+        self.assertIn("&H00FCC31E", first, "active word carries --highlight-color")
+        self.assertIn("&H00808080", first, "the not-yet-spoken word carries --upcoming-color")
+        self.assertIn("&H00FCC31E", second, "the second event's active word (beta) also gets --highlight-color")
+        self.assertIn("&H00FFFFFF", second, "the already-spoken word (alpha) falls back to --color")
+
+    def test_karaoke_style_word_preserves_explicit_line_breaks(self):
+        """A cue with a manual two-line break (the `|` syntax) must keep exactly that \\N split in
+        every per-word event -- the frozen line list from layout_cues, not a re-wrap."""
+        cues = OUT / "kwcues3.txt"
+        cues.write_text("0:00-0:02 top line | bottom line\n", encoding="utf-8")
+        ass = OUT / "kword3.ass"
+        script("caption.py", self.src, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--write-ass", ass, "--preset", "veryfast", "-o", OUT / "kword3.mp4")
+        dialogues = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 4, "top line + bottom line = 4 words -> 4 events")
+        for line in dialogues:
+            self.assertEqual(line.count("\\N"), 1, "each event keeps the one frozen line break")
+            before, _, after = line.partition("\\N")
+            self.assertTrue(any(w in before for w in ("top", "line")))
+            self.assertTrue(any(w in after for w in ("bottom", "line")))
+
+    def test_karaoke_style_word_handles_emoji_placeholders_and_brace_escaping(self):
+        assets = _emoji_assets()
+        cues = OUT / "kwcues4.txt"
+        cues.write_text("0:00-0:02 say {hi} \U0001F389 now\n", encoding="utf-8")
+        ass = OUT / "kword4.ass"
+        script("caption.py", self.src, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--emoji-assets", assets, "--write-ass", ass,
+               "--preset", "veryfast", "-o", OUT / "kword4.mp4")
+        text = ass.read_text(encoding="utf-8-sig")
+        dialogues = [l for l in text.splitlines() if l.startswith("Dialogue:")]
+        # "say", "{hi}" (escaped) and "now" get their own event; the emoji token is a placeholder
+        # with no real duration of its own (same as --karaoke-style sweep's \kf0 emoji segment)
+        self.assertEqual(len(dialogues), 3)
+        self.assertNotIn("{\\pos", text, "cue text must not be able to open a real override block")
+        self.assertIn(r"\{hi\}", text, "the braces the user typed are escaped, not dropped")
+        for line in dialogues:
+            self.assertNotIn("\U0001F389", line, "the emoji glyph itself is replaced by the drawtext/libass placeholder")
+
     # ---------------------------------------------------------------- colour-flag filter-graph injection (adversarial)
     def test_color_like_flags_refuse_filter_graph_injection(self):
         """Every flag that string-formats a colour straight into a filter graph (color=c=...,
