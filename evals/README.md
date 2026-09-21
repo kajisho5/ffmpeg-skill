@@ -221,6 +221,71 @@ anything.
 Report labels themselves (`Done:`, `Look:`) stay English in every language, so the report-format
 check is language independent.
 
+## Running this from Cursor, Codex, or another harness
+
+`evals/run.py` and `evals/tasks.json`/`agent_prompts_24.json`/`agent_prompts_exec.json` have no
+dependency on Claude Code, the `claude` CLI, or any particular model: `run.py` only reads a
+transcript file (or a folder of them) and a prompts JSON, and grades with substrings and
+`re.search` — nothing in the grading path calls an LLM. That makes the corpus and the grader
+usable from any agent harness that can (a) hand the skill's prompts to an agent with the
+`ffmpeg-skill` scripts on `PATH`/importable, and (b) save what the agent did to a text file.
+
+1. **Get the prompts.** `python3 evals/run.py --list` prints the 29-prompt routing set
+   (`tasks.json`); add `--prompts evals/agent_prompts_24.json` (97 prompts) or
+   `--prompts evals/agent_prompts_exec.json` (11 prompts, real execution required) for the fuller
+   sets. Each line is `<id>. <request>  -> <expected script(s)>`.
+2. **Run each prompt in your own harness.** Paste the `request`/`prompt` text to your Cursor or
+   Codex session with `ffmpeg-skill` available the way that harness exposes local tools (MCP
+   server, a `scripts/*.py` CLI on `PATH`, or however it drives shell commands) exactly as you
+   normally would. Where a prompt says `OUTDIR`, substitute a real directory you created for the
+   run; where a prompt has a `fixtures` or `media_fixtures` key (see above), write those files
+   into that directory first — `evals/write_fixtures.py OUTDIR <id>` does this from any Python
+   environment, no agent needed.
+3. **Save the transcript.** Capture whatever your harness logs for that turn — the commands it
+   ran and the final report it gave the user — to `RESULTS/<id>.txt` (or `<id>.md`). It does not
+   need to be a Claude-shaped transcript; `run.py` only checks for substrings and regexes in the
+   text, so any log that shows the tool invocations and the final report works.
+4. **Grade it.**
+
+   ```bash
+   python3 evals/run.py RESULTS                                              # tasks.json (default)
+   python3 evals/run.py RESULTS --prompts evals/agent_prompts_24.json        # the 97-prompt set
+   python3 evals/run.py RESULTS/17.txt --task 17                             # one transcript
+   python3 evals/run.py RESULTS --json > my-vendor-results.json              # machine-readable
+   ```
+
+   A prompt passes when every `expect` slot (an `a|b` alternation means either satisfies it)
+   appears in the transcript, any `grader_expect` regex the prompt carries also matches, and any
+   `grader_not` regex does not.
+
+### What regex-only grading can and can't tell you
+
+It can tell you, mechanically and reproducibly: whether the agent called the scripts the prompt
+expects (routing), whether a report contains a required disclosure phrase (`grader_expect` — e.g.
+the applied `--jobs` cap, the measured BPM, "the cache misses across ffmpeg versions"), and
+whether it contains a phrase it must not (`grader_not` — e.g. claiming to have rewritten caption
+text the skill never rewrites). That is exactly what this repo's own grading measures too — see
+"Grading" above.
+
+It **cannot** tell you whether the output is actually good: whether a crop is well-composed,
+whether a caption break reads naturally, whether a color grade looks right, or whether a report
+that happens to contain the right substrings is otherwise coherent. This repo's own eval process
+pairs the same kind of regex/substring checks with a qualitative pass (a second model, or a human,
+reading the transcript and the produced media) for exactly that reason — see
+`docs/design-decisions.md`'s "The evaluation is Claude-only" entry. Regex grading alone is a
+floor, not a substitute for that judgment call; it catches "used the wrong tool" or "claimed
+something it didn't do", not "did an acceptable job".
+
+### Comparing results across vendors
+
+A pass rate from a Cursor or Codex run is **not directly comparable** to a pass rate in
+`evals/results/iteration-*.json`: those are produced by a different agent (this repo's own
+Claude-based harness), a different grader script (`grade_runs_24.py`, which adds language checks
+and the `with_skill`/`old_skill` iteration layout this repo uses to compare against no-skill
+baselines) and a different corpus subset in some cases. Report a cross-vendor result as its own
+number, with the model, harness and `--prompts` file named, rather than as a delta against this
+repo's own eval iterations.
+
 ## Results
 
 `results/` and `trigger/results-*.json` hold past runs.

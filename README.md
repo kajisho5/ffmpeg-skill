@@ -504,7 +504,7 @@ python3 tests/test_picture.py # one tool group on its own (analysis, editing, au
 npm run release-check         # pack, install, contract from the installed copy, MCP == contract, doctor, tests, contract evals
 npm run demo                  # python3 demos/build.py: synthetic footage -> every before/after demo + docs/demos/*.gif
 npm run demo:pipeline         # examples/make_demo.sh: the older single end-to-end run of every script
-python3 evals/run.py --list   # agent eval prompts (see evals/)
+python3 evals/run.py --list   # agent eval prompts (see evals/); regex-only grading, runnable from any agent harness -- see evals/README.md "Running this from Cursor, Codex, or another harness"
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
 

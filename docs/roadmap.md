@@ -561,6 +561,30 @@ future release.
   independent grader opening the produced stills, not a self-report) to confirm the word no
   longer clips in practice, not just in the unit tests.
 
+## Cross-vendor eval runner (shipped, evals/docs/tests only, no version bump)
+
+`evals/run.py` grades any transcript file against `evals/tasks.json` (the 29-prompt
+routing/refusal set) or the fuller `agent_prompts_24.json`/`agent_prompts_exec.json` sets with
+substrings and `re.search` only — no `claude` CLI, no LLM-judge call, no dependency on any
+particular vendor's model anywhere in the grading path. `--prompts` selects the corpus, `--json`
+gives machine-readable output, and an `expect` slot's `a|b` alternation plus the existing
+`grader_expect`/`grader_not` regexes are graded the same way whether the transcript came from
+Claude Code, Cursor, Codex, or another harness. `evals/README.md`'s "Running this from Cursor,
+Codex, or another harness" section documents the walkthrough end to end — how to get the
+prompts, run them in another harness, save a transcript, grade it, and how to read the result:
+what regex-only grading can and can't tell you, and why a cross-vendor pass rate is not directly
+comparable to this repo's own `evals/results/iteration-*.json` numbers (different agent, different
+grader script, in places a different corpus subset — see that section's "Comparing results across
+vendors"). This closes `docs/design-decisions.md`'s P1-8 ("at least one routing run on a
+non-Claude model") on the tooling side; no cross-vendor number is published here yet because the
+maintainer cannot run another vendor's model from this environment, which is stated rather than
+worked around. `scripts/`, the contract, and MCP are unchanged — this is dev-tooling only, so it
+carries no version bump and no CHANGELOG entry.
+
+MCP's `tools/list` defaulting to the core 12 — the other roadmap item this same review pass
+checked — was already shipped and documented: see the **1.18.3** row above and 1.19.2's SKILL.md
+truth-up. No further action was needed there.
+
 ## 1.19.0 — observability, portability (planned)
 
 - `--trace FILE` (common flag): one JSON line per ffmpeg run with wall time, encode fps,

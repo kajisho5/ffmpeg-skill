@@ -3138,5 +3138,125 @@ class DoctorDetectionTests(unittest.TestCase):
             self.assertEqual(d["tools"][tool_name]["usable"], "yes")
 
 
+class EvalRunnerTests(unittest.TestCase):
+    """evals/run.py's regex-only grading -- the cross-vendor path (Cursor, Codex, or any
+    harness that produces a transcript file). No LLM judge, no `claude` CLI dependency: every
+    assertion here is against the pure-Python score()/load_tasks() functions."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(ROOT / "evals"))
+        import importlib
+        cls.evals_run = importlib.import_module("run")
+
+    def test_score_passes_when_every_expect_slot_is_present(self):
+        run = self.evals_run
+        task = {"id": 1, "request": "r", "expect": ["probe.py", "cut.py"],
+                "grader_expect": None, "grader_not": None}
+        ok, reasons = run.score("ran probe.py then cut.py", task)
+        self.assertTrue(ok)
+        self.assertEqual(reasons, [])
+
+    def test_score_reports_missing_expect_slots(self):
+        run = self.evals_run
+        task = {"id": 2, "request": "r", "expect": ["probe.py", "cut.py"],
+                "grader_expect": None, "grader_not": None}
+        ok, reasons = run.score("ran probe.py only", task)
+        self.assertFalse(ok)
+        self.assertIn("cut.py", reasons[0])
+
+    def test_score_alternation_slot_accepts_either_side(self):
+        run = self.evals_run
+        task = {"id": 3, "request": "r", "expect": ["fit|render"], "grader_expect": None, "grader_not": None}
+        self.assertTrue(run.score("used render.py --template", task)[0])
+        self.assertTrue(run.score("used fit.py --duration 2x", task)[0])
+        self.assertFalse(run.score("used caption.py", task)[0])
+
+    def test_score_alternation_slot_accepts_dot_py_or_bare_name(self):
+        run = self.evals_run
+        # tasks.json's expect entries carry ".py"; agent_prompts_24.json's don't. Either spelling
+        # of the slot must match a transcript that names the script with ".py".
+        task = {"id": 4, "request": "r", "expect": ["render"], "grader_expect": None, "grader_not": None}
+        self.assertTrue(run.score("called render.py --template reel", task)[0])
+
+    def test_score_grader_expect_regex_must_match(self):
+        run = self.evals_run
+        task = {"id": 5, "request": "r", "expect": [], "grader_expect": r"(?i)\d+\s*bpm", "grader_not": None}
+        ok, reasons = run.score("tempo is 128 bpm", task)
+        self.assertTrue(ok)
+        ok, reasons = run.score("tempo unknown", task)
+        self.assertFalse(ok)
+        self.assertIn("grader_expect", reasons[0])
+
+    def test_score_grader_not_regex_must_not_match(self):
+        run = self.evals_run
+        task = {"id": 6, "request": "r", "expect": [], "grader_expect": None,
+                "grader_not": r"(?i)rewrote the caption"}
+        ok, reasons = run.score("Done: burned the captions as written", task)
+        self.assertTrue(ok)
+        ok, reasons = run.score("Done: rewrote the caption to fit", task)
+        self.assertFalse(ok)
+        self.assertIn("grader_not", reasons[0])
+
+    def test_load_tasks_normalises_tasks_json_shape(self):
+        run = self.evals_run
+        tasks = run.load_tasks(ROOT / "evals" / "tasks.json")
+        self.assertTrue(tasks)
+        t = tasks[0]
+        self.assertIn("id", t)
+        self.assertIn("request", t)
+        self.assertIsInstance(t["expect"], list)
+        self.assertIsNone(t["grader_expect"])
+
+    def test_load_tasks_normalises_agent_prompts_shape(self):
+        run = self.evals_run
+        tasks = run.load_tasks(ROOT / "evals" / "agent_prompts_24.json")
+        self.assertTrue(tasks)
+        by_id = {t["id"]: t for t in tasks}
+        self.assertIn("e01-reel", by_id)
+        self.assertEqual(by_id["e01-reel"]["expect"][0], "fit|render")
+        # at least one prompt in this set carries a grader_expect/grader_not regex
+        self.assertTrue(any(t["grader_expect"] for t in tasks))
+        self.assertTrue(any(t["grader_not"] for t in tasks))
+
+    def test_cli_grades_a_flat_directory_of_transcripts(self):
+        run = self.evals_run
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            (outdir / "1.txt").write_text("ran probe.py then fit.py then export.py", encoding="utf-8")
+            proc = sh(sys.executable, HERE_EVALS_RUN, str(outdir), "--json")
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["passed"], 1)
+            self.assertEqual(doc["total"], 1)
+            self.assertEqual(proc.returncode, 0)
+
+    def test_cli_exit_code_is_nonzero_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            (outdir / "2.txt").write_text("ran probe.py only", encoding="utf-8")
+            proc = sh(sys.executable, HERE_EVALS_RUN, str(outdir), "--json", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+
+    def test_cli_accepts_a_prompts_flag_pointing_at_the_108_prompt_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            (outdir / "e02-cut-lossless.txt").write_text("ran probe.py then cut.py --start 0:02 --end 0:08", encoding="utf-8")
+            proc = sh(sys.executable, HERE_EVALS_RUN, str(outdir), "--json",
+                      "--prompts", str(ROOT / "evals" / "agent_prompts_24.json"))
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["total"], 1)
+            self.assertEqual(doc["passed"], 1)
+
+    def test_run_py_has_no_claude_cli_or_llm_judge_dependency(self):
+        """The cross-vendor contract: grading is regex/substring only, so a Cursor or Codex
+        session can run this without a `claude` binary or an LLM call in the loop."""
+        src = (ROOT / "evals" / "run.py").read_text(encoding="utf-8")
+        for needle in ("subprocess", "anthropic", "openai", '"claude"', "'claude'", "ANTHROPIC_API_KEY"):
+            self.assertNotIn(needle, src, f"evals/run.py should not depend on {needle!r}")
+
+
+HERE_EVALS_RUN = str(ROOT / "evals" / "run.py")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
