@@ -166,6 +166,8 @@
    "json",
    "json_brief",
    "karaoke",
+   "karaoke_scale",
+   "karaoke_style",
    "karaoke_timing",
    "language",
    "margin",
@@ -192,6 +194,7 @@
    "timeout",
    "track_title",
    "transcribe",
+   "upcoming_color",
    "wrap",
    "write_ass",
    "write_srt"

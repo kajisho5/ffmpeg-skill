@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- feat(caption): `--karaoke-style word` -- one ASS Dialogue event per word, active word scaled/emboldened, past/upcoming colours (#276)
 
 ## 1.24.0
 
