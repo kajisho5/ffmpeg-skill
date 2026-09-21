@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+- docs: eval 23b at 1.25.0 — real-execution coverage for `caption.py --karaoke-style word` (#276)
+  and the `+faststart` fixes (#275, #277, #279), continuing eval 23's partial close at 1.19.3;
+  Opus-grader and trigger-judge passes remain blocked on model access this sandbox lacks
 
 ## 1.25.0
 

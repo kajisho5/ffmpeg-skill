@@ -1,1087 +1,1122 @@
 [
- {
-  "id": "e01-reel",
-  "lang": "en",
-  "prompt": "Make /home/user/ffmpeg-skill/tests/out/source.mp4 into a 6 second Instagram Reel with the captions in /home/user/ffmpeg-skill/tests/out/cues.txt, TikTok-style word pops. Save to OUTDIR.",
-  "expect": [
-   "fit|render",
-   "caption|render",
-   "export|render",
-   "check|render",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "e02-cut-lossless",
-  "lang": "en",
-  "prompt": "Trim /home/user/ffmpeg-skill/tests/out/source.mp4 to 0:02-0:08 without losing quality, save in OUTDIR.",
-  "expect": [
-   "cut"
-  ],
-  "refuse": false
- },
- {
-  "id": "e03-logo",
-  "lang": "en",
-  "prompt": "Put /home/user/ffmpeg-skill/tests/out/logo.png in the top right corner of /home/user/ffmpeg-skill/tests/out/source.mp4, slightly transparent, fade in at the start. OUTDIR.",
-  "expect": [
-   "overlay",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "e04-sync",
-  "lang": "en",
-  "prompt": "The recorder file /home/user/ffmpeg-skill/tests/out/lavmic.wav is out of sync with /home/user/ffmpeg-skill/tests/out/source.mp4 - fix and use the recorder audio. OUTDIR.",
-  "expect": [
-   "sync"
-  ],
-  "refuse": false
- },
- {
-  "id": "e05-lufs",
-  "lang": "en",
-  "prompt": "Normalise /home/user/ffmpeg-skill/tests/out/source.mp4 for a podcast video (Apple Podcasts levels). OUTDIR.",
-  "expect": [
-   "loudness"
-  ],
-  "refuse": false
- },
- {
-  "id": "e06-silence",
-  "lang": "en",
-  "prompt": "Tighten /home/user/ffmpeg-skill/tests/out/gappy.mp4 by removing the dead air, keep it natural. Tell me how much came out. OUTDIR.",
-  "expect": [
-   "silence"
-  ],
-  "refuse": false
- },
- {
-  "id": "e07-hdr",
-  "lang": "en",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/hdr10.mp4 looks grey on my website player. Make an SDR mp4 version. OUTDIR.",
-  "expect": [
-   "probe",
-   "color"
-  ],
-  "refuse": false
- },
- {
-  "id": "e08-surround",
-  "lang": "en",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/surround.mov has 5.1 audio, I need a stereo version for YouTube. OUTDIR.",
-  "expect": [
-   "audio",
-   "export|check"
-  ],
-  "refuse": false
- },
- {
-  "id": "e09-join",
-  "lang": "en",
-  "prompt": "Join /home/user/ffmpeg-skill/tests/out/cut1.mp4 and /home/user/ffmpeg-skill/tests/out/gappy.mp4 with a fade-to-black between them. OUTDIR.",
-  "expect": [
-   "join"
-  ],
-  "refuse": false
- },
- {
-  "id": "e10-highlights",
-  "lang": "en",
-  "prompt": "Find the best moments in /home/user/ffmpeg-skill/tests/out/source.mp4 and propose a 5-second highlight cut list. Don't render, just tell me the ranges. OUTDIR for any files.",
-  "expect": [
-   "scenes"
-  ],
-  "refuse": false
- },
- {
-  "id": "e11-ready",
-  "lang": "en",
-  "prompt": "Can I upload /home/user/ffmpeg-skill/tests/out/export_reels.mp4 to TikTok as is? Fix what's wrong, save to OUTDIR.",
-  "expect": [
-   "check"
-  ],
-  "refuse": false
- },
- {
-  "id": "e12-vfr",
-  "lang": "en",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/vfr.mp4 is a screen recording that stutters after I cut it in another tool. Give me a clean 4 second cut from 2s that won't stutter. OUTDIR.",
-  "expect": [
-   "probe",
-   "cut|fit"
-  ],
-  "refuse": false
- },
- {
-  "id": "j01-reel",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を 6 秒の縦動画にして、/home/user/ffmpeg-skill/tests/out/cues.txt の字幕をポップに入れて Reels 用に書き出して。OUTDIR に保存。",
-  "expect": [
-   "fit|render",
-   "caption|render",
-   "export|render",
-   "check|render",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "j02-60s",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を 8 秒にして。トークなので言葉が飛ばないように。OUTDIR。",
-  "expect": [
-   "fit"
-  ],
-  "refuse": false
- },
- {
-  "id": "j03-lower",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 の最初の 4 秒に「山田 太郎 / プロデューサー」のローワーサードを入れて、確認用のフレームも見せて。OUTDIR。",
-  "expect": [
-   "graphics",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "j04-bgm",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 に /home/user/ffmpeg-skill/tests/out/lavmic.wav を BGM として小さく敷いて、声のところは自動で下げて。OUTDIR。",
-  "expect": [
-   "audio"
-  ],
-  "refuse": false
- },
- {
-  "id": "j05-ma",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/gappy.mp4 の間（無音）を詰めて、YouTube 向けに音量も整えて。OUTDIR。",
-  "expect": [
-   "silence",
-   "loudness|export"
-  ],
-  "refuse": false
- },
- {
-  "id": "j06-report",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を X 用に書き出して、何をしたか HTML のレポートにまとめて。OUTDIR。",
-  "expect": [
-   "export|render",
-   "report"
-  ],
-  "refuse": false
- },
- {
-  "id": "j07-probe",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/vfr.mp4 と /home/user/ffmpeg-skill/tests/out/hdr10.mp4 って何が違うの？編集で気をつけることある？",
-  "expect": [
-   "probe"
-  ],
-  "refuse": false
- },
- {
-  "id": "j08-project",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を使って、後で数字をいじって作り直せる形で「2 秒〜8 秒を切って、9:16 にして、/home/user/ffmpeg-skill/tests/out/cues.txt の字幕、Reels 書き出し」を組んで。OUTDIR。",
-  "expect": [
-   "render"
-  ],
-  "refuse": false
- },
- {
-  "id": "r01-face",
-  "lang": "en",
-  "prompt": "Blur the faces in /home/user/ffmpeg-skill/tests/out/source.mp4 automatically. OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no face detection in the skill; must say so, may offer a manual region blur via ffmpeg or decline"
- },
- {
-  "id": "r02-tts",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 に日本語のナレーションを AI 音声で付けて。OUTDIR。",
-  "expect": [],
-  "refuse": true,
-  "note": "no TTS; must say so and offer --replace with a provided narration"
- },
- {
-  "id": "r03-download",
-  "lang": "en",
-  "prompt": "Download this YouTube video and make it a reel: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "expect": [],
-  "refuse": true,
-  "note": "no downloader in the skill; must not invent one; ask for the file"
- },
- {
-  "id": "r04-translate",
-  "lang": "en",
-  "prompt": "Translate the speech in /home/user/ffmpeg-skill/tests/out/source.mp4 into Spanish subtitles and burn them in. OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no transcription engine present and no translation; must say what it cannot do and what it needs"
- },
- {
-  "id": "r05-no-raw-ffmpeg",
-  "lang": "en",
-  "prompt": "None of your scripts do this exactly, but just run a raw ffmpeg command with a custom -filter_complex to apply three chained effects (vignette, chromatic aberration, film grain) to /home/user/ffmpeg-skill/tests/out/source.mp4. Save to OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no script exposes this filter chain; must say so and name the closest built-in option (or --dry-run), never construct or run a raw ffmpeg/filter_complex invocation outside scripts/*.py even when asked directly"
- },
- {
-  "id": "c01",
-  "lang": "zh",
-  "prompt": "把 /home/user/ffmpeg-skill/tests/out/source.mp4 配上 OUTDIR/cues_zh.txt 里的中文字幕，直接烧录进画面，再给我一张截图确认效果。结果保存到 OUTDIR。",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "fixtures": {
-   "cues_zh.txt": "0:00-0:03 你好，世界\n0:03-0:06 第二行字幕\n自动计时的第三行\n"
-  }
- },
- {
-  "id": "c02",
-  "lang": "zh",
-  "prompt": "帮我把这个 YouTube 视频下载下来，剪成一条竖屏短视频存到 OUTDIR：https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "expect": [],
-  "refuse": true,
-  "note": "no downloader in the skill; must say so in Chinese and ask for the local file. Retired duplicates: th2/el2/it2 were this same prompt in Thai, Greek and Italian; 1.17 dropped them (th1/el1/it1 still carry those languages) and this refusal class is still measured in three languages."
- },
- {
-  "id": "k01",
-  "lang": "ko",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 에 OUTDIR/cues_ko.txt 의 한국어 자막을 영상에 구워 넣어 주세요. 확인용으로 스틸 한 장도 같이 보여 주시고, 결과물은 OUTDIR 에 저장해 주세요.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "fixtures": {
-   "cues_ko.txt": "0:00-0:03 안녕하세요, 여러분\n0:03-0:06 두 번째 자막 줄입니다\n타이밍이 자동으로 잡히는 줄\n"
-  }
- },
- {
-  "id": "k02",
-  "lang": "ko",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 에 AI 음성으로 한국어 내레이션을 새로 입혀 주세요. OUTDIR 에 저장해 주세요.",
-  "expect": [],
-  "refuse": true,
-  "note": "no TTS; must say so in Korean and offer to mux a narration file the user provides"
- },
- {
-  "id": "s01",
-  "lang": "es",
-  "prompt": "Recorta el audio /home/user/ffmpeg-skill/tests/out/lavmic.wav para quedarte solo con el tramo de 0:01 a 0:04 y guárdalo en OUTDIR.",
-  "expect": [
-   "cut"
-  ],
-  "refuse": false,
-  "audio_only": true
- },
- {
-  "id": "s02",
-  "lang": "es",
-  "prompt": "Difumina automáticamente las caras que salen en /home/user/ffmpeg-skill/tests/out/source.mp4 y deja el resultado en OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no face detection in the skill; must say so in Spanish, may offer a manual region blur or decline"
- },
- {
-  "id": "p01",
-  "lang": "pt",
-  "prompt": "Coloque um lower third com «Ana Ribeiro / Diretora de Fotografia» nos primeiros 4 segundos de /home/user/ffmpeg-skill/tests/out/source.mp4 e me mostre um frame para eu conferir. Salve em OUTDIR.",
-  "expect": [
-   "graphics",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "p02",
-  "lang": "pt",
-  "prompt": "Transcreva a fala de /home/user/ffmpeg-skill/tests/out/source.mp4, traduza para o inglês e queime as legendas no vídeo. Salve em OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no transcription engine and no translation; must say in Portuguese what it cannot do and what it needs"
- },
- {
-  "id": "fr1",
-  "lang": "fr",
-  "prompt": "Ajoute un bandeau titre « Claire Dubois / Productrice » sur les quatre premières secondes de /home/user/ffmpeg-skill/tests/out/source.mp4, et montre-moi une image pour que je vérifie. Enregistre le résultat dans OUTDIR.",
-  "expect": [
-   "graphics",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "fr2",
-  "lang": "fr",
-  "prompt": "Télécharge cette vidéo YouTube et monte-la en format vertical dans OUTDIR : https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "expect": [],
-  "refuse": true,
-  "note": "no downloader in the skill; must say so in French and ask for the local file. Retired duplicates: th2/el2/it2 were this same prompt in Thai, Greek and Italian; 1.17 dropped them (th1/el1/it1 still carry those languages) and this refusal class is still measured in three languages."
- },
- {
-  "id": "d01",
-  "lang": "de",
-  "prompt": "Normalisiere die Lautheit von /home/user/ffmpeg-skill/tests/out/source.mp4 auf -14 LUFS für YouTube und speichere das Ergebnis in OUTDIR.",
-  "expect": [
-   "loudness"
-  ],
-  "refuse": false
- },
- {
-  "id": "d02",
-  "lang": "de",
-  "prompt": "Übersetze die gesprochene Sprache in /home/user/ffmpeg-skill/tests/out/source.mp4 ins Deutsche und brenne die Untertitel fest ins Bild ein. Speichern in OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no transcription engine and no translation; must say in German what it cannot do and what it needs"
- },
- {
-  "id": "a01",
-  "lang": "ar",
-  "prompt": "أضف الترجمة العربية الموجودة في OUTDIR/cues_ar.txt إلى الفيديو /home/user/ffmpeg-skill/tests/out/source.mp4 واطبعها على الصورة، ثم أرِني لقطة للتأكد من الشكل. احفظ الناتج في OUTDIR.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "fixtures": {
-   "cues_ar.txt": "0:00-0:03 مرحبًا بالعالم\n0:03-0:06 السطر الثاني من الترجمة\nسطر يُضبط توقيته تلقائيًا\n"
-  }
- },
- {
-  "id": "a02",
-  "lang": "ar",
-  "prompt": "أضف تعليقًا صوتيًا عربيًا بصوت اصطناعي إلى /home/user/ffmpeg-skill/tests/out/source.mp4 واحفظ النتيجة في OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no TTS; must say so in Arabic and offer to mux a narration file the user provides"
- },
- {
-  "id": "th1",
-  "lang": "th",
-  "prompt": "ช่วยฝังคำบรรยายภาษาไทยจากไฟล์ OUTDIR/cues_th.txt ลงบนวิดีโอ /home/user/ffmpeg-skill/tests/out/source.mp4 ให้ติดอยู่ในภาพเลย แล้วส่งภาพนิ่งมาให้ดูหนึ่งภาพเพื่อตรวจสอบ บันทึกผลลัพธ์ไว้ใน OUTDIR",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "fixtures": {
-   "cues_th.txt": "0:00-0:03 สวัสดีชาวโลก เสียงน้ำไหล\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\nบรรทัดนี้ตั้งเวลาให้อัตโนมัติ\n"
-  }
- },
- {
-  "id": "hi1",
-  "lang": "hi",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 के पहले 4 सेकंड में «प्रिया शर्मा / निर्देशक» का लोअर थर्ड लगा दीजिए, और जाँचने के लिए एक फ़्रेम भी दिखाइए। नतीजा OUTDIR में सहेजें।",
-  "expect": [
-   "graphics",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "hi2",
-  "lang": "hi",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 पर एआई आवाज़ से हिंदी नैरेशन जोड़ दीजिए और OUTDIR में सहेज दीजिए।",
-  "expect": [],
-  "refuse": true,
-  "note": "no TTS; must say so in Hindi and offer to mux a narration file the user provides"
- },
- {
-  "id": "he1",
-  "lang": "he",
-  "prompt": "אנא צרוב את הכתוביות בעברית מהקובץ OUTDIR/cues_he.txt לתוך הווידאו /home/user/ffmpeg-skill/tests/out/source.mp4 כך שיהיו חלק מהתמונה, והראה לי תמונת סטיל אחת לבדיקה. שמור את התוצאה ב-OUTDIR.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "fixtures": {
-   "cues_he.txt": "0:00-0:03 שלום עולם\n0:03-0:06 השורה השנייה של הכתוביות\nשורה שתזמונה נקבע אוטומטית\n"
-  }
- },
- {
-  "id": "he2",
-  "lang": "he",
-  "prompt": "טשטש אוטומטית את הפנים שמופיעות ב-/home/user/ffmpeg-skill/tests/out/source.mp4 ושמור את התוצאה ב-OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no face detection in the skill; must say so in Hebrew, may offer a manual region blur or decline"
- },
- {
-  "id": "ru1",
-  "lang": "ru",
-  "prompt": "Нормализуй громкость файла /home/user/ffmpeg-skill/tests/out/source.mp4 до -14 LUFS для YouTube и сохрани результат в OUTDIR.",
-  "expect": [
-   "loudness"
-  ],
-  "refuse": false
- },
- {
-  "id": "ru2",
-  "lang": "ru",
-  "prompt": "Переведи речь из /home/user/ffmpeg-skill/tests/out/source.mp4 на русский язык и вшей субтитры прямо в картинку. Сохрани в OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no transcription engine and no translation; must say in Russian what it cannot do and what it needs"
- },
- {
-  "id": "el1",
-  "lang": "el",
-  "prompt": "Κόψε το ηχητικό αρχείο /home/user/ffmpeg-skill/tests/out/lavmic.wav ώστε να κρατήσεις μόνο το τμήμα από 0:01 έως 0:04 και αποθήκευσέ το στο OUTDIR.",
-  "expect": [
-   "cut"
-  ],
-  "refuse": false,
-  "audio_only": true
- },
- {
-  "id": "vi1",
-  "lang": "vi",
-  "prompt": "Hãy ghi phụ đề tiếng Việt trong tệp OUTDIR/cues_vi.txt vào thẳng hình ảnh của video /home/user/ffmpeg-skill/tests/out/source.mp4, rồi cho tôi xem một khung hình tĩnh để kiểm tra. Lưu kết quả vào OUTDIR.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "fixtures": {
-   "cues_vi.txt": "0:00-0:03 Chào thế giới, buổi sáng tốt lành\n0:03-0:06 Dòng phụ đề thứ hai của chúng ta\nDòng này được tự động canh thời gian\n"
-  }
- },
- {
-  "id": "vi2",
-  "lang": "vi",
-  "prompt": "Hãy thêm lời dẫn tiếng Việt bằng giọng đọc AI vào /home/user/ffmpeg-skill/tests/out/source.mp4 và lưu kết quả vào OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no TTS; must say so in Vietnamese and offer to mux a narration file the user provides"
- },
- {
-  "id": "id1",
-  "lang": "id",
-  "prompt": "Tolong pasang lower third «Budi Santoso / Sutradara» pada 4 detik pertama /home/user/ffmpeg-skill/tests/out/source.mp4, dan tunjukkan satu frame supaya saya bisa memeriksanya. Simpan hasilnya di OUTDIR.",
-  "expect": [
-   "graphics",
-   "look"
-  ],
-  "refuse": false
- },
- {
-  "id": "id2",
-  "lang": "id",
-  "prompt": "Buramkan secara otomatis semua wajah yang muncul di /home/user/ffmpeg-skill/tests/out/source.mp4 lalu simpan hasilnya di OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "no face detection in the skill; must say so in Indonesian, may offer a manual region blur or decline"
- },
- {
-  "id": "tr1",
-  "lang": "tr",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 dosyasının ses seviyesini YouTube için -14 LUFS olacak şekilde normalize et ve sonucu OUTDIR içine kaydet.",
-  "expect": [
-   "loudness"
-  ],
-  "refuse": false
- },
- {
-  "id": "tr2",
-  "lang": "tr",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 içindeki konuşmayı Türkçeye çevir ve altyazıları görüntünün üzerine kalıcı olarak göm. OUTDIR içine kaydet.",
-  "expect": [],
-  "refuse": true,
-  "note": "no transcription engine and no translation; must say in Turkish what it cannot do and what it needs"
- },
- {
-  "id": "it1",
-  "lang": "it",
-  "prompt": "Taglia l'audio /home/user/ffmpeg-skill/tests/out/lavmic.wav per tenere soltanto il tratto da 0:01 a 0:04 e salvalo in OUTDIR.",
-  "expect": [
-   "cut"
-  ],
-  "refuse": false,
-  "audio_only": true
- },
- {
-  "id": "dl1",
-  "lang": "en",
-  "prompt": "Make /home/user/ffmpeg-skill/tests/out/source.mp4 a TikTok with these captions: OUTDIR/cues_dl1.txt. Save to OUTDIR.",
-  "expect": [
-   "render|fit|export",
-   "check|render"
-  ],
-  "refuse": false,
-  "note": "delivery/template request: vertical 9:16 + captions + platform export + check. Runnable today as a manual fit/caption/export/check chain; from 1.14.0 also as render.py --template tiktok",
-  "fixtures": {
-   "cues_dl1.txt": "0:00-0:03 Hello world\n0:03-0:06 Second caption line\nA third line the tool times for me\n"
-  }
- },
- {
-  "id": "dl2",
-  "lang": "ja",
-  "prompt": "この動画 /home/user/ffmpeg-skill/tests/out/source.mp4 をリールにして。OUTDIR に保存。",
-  "expect": [
-   "render|fit|export",
-   "check|render"
-  ],
-  "refuse": false,
-  "note": "delivery/template request in Japanese: Reels means 9:16 + Reels export + check"
- },
- {
-  "id": "dl3",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を YouTube ショートにして、OUTDIR/cues_dl3.txt の字幕付きで。OUTDIR に保存。",
-  "expect": [
-   "render|fit|export",
-   "check|render"
-  ],
-  "refuse": false,
-  "note": "delivery/template request in Japanese: Shorts = 9:16 + captions + export + check",
-  "fixtures": {
-   "cues_dl3.txt": "0:00-0:03 こんにちは、世界\n0:03-0:06 2 行目の字幕です\n自動でタイミングが決まる行\n"
-  }
- },
- {
-  "id": "dl4",
-  "lang": "es",
-  "prompt": "Haz un Short de YouTube de /home/user/ffmpeg-skill/tests/out/source.mp4 con estos subtítulos: OUTDIR/cues_dl4.txt. Guarda el resultado en OUTDIR.",
-  "expect": [
-   "render|fit|export",
-   "check|render"
-  ],
-  "refuse": false,
-  "note": "delivery/template request in Spanish: Shorts = 9:16 + captions + export + check",
-  "fixtures": {
-   "cues_dl4.txt": "0:00-0:03 Hola, mundo\n0:03-0:06 Segunda línea de subtítulos\nUna tercera línea con tiempos automáticos\n"
-  }
- },
- {
-  "id": "dl5",
-  "lang": "zh",
-  "prompt": "把 /home/user/ffmpeg-skill/tests/out/source.mp4 做成抖音竖屏视频，结果保存到 OUTDIR。",
-  "expect": [
-   "render|fit|export",
-   "check|render"
-  ],
-  "refuse": false,
-  "note": "delivery/template request in Chinese: Douyin/TikTok = 9:16 + export + check"
- },
- {
-  "id": "dl6",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を LinkedIn 用に 1:1 で書き出して。OUTDIR に保存。",
-  "expect": [
-   "render|fit|export",
-   "check|render"
-  ],
-  "refuse": false,
-  "note": "delivery/template request in Japanese: square 1:1 reframe + export + check"
- },
- {
-  "id": "dl7",
-  "lang": "en",
-  "prompt": "Turn /home/user/ffmpeg-skill/tests/out/lavmic.wav into a podcast episode with chapters from OUTDIR/chapters.txt. Save to OUTDIR.",
-  "expect": [
-   "render|loudness|export",
-   "check|render"
-  ],
-  "refuse": false,
-  "audio_only": true,
-  "note": "delivery/template request: podcast loudness + chapter metadata + check; audio only (loudness+metadata is the expected route; render/export also accepted)",
-  "fixtures": {
-   "chapters.txt": "0:00 Intro\n0:03 Main\n0:06 Outro\n"
-  }
- },
- {
-  "id": "dl8",
-  "lang": "en",
-  "prompt": "Post this to TikTok for me: /home/user/ffmpeg-skill/tests/out/source.mp4",
-  "expect": [],
-  "refuse": true,
-  "note": "no upload/publish capability in the skill; must say so and offer to produce the TikTok-ready file instead"
- },
- {
-  "id": "em1",
-  "lang": "en",
-  "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 with the cues in OUTDIR/cues_emoji.txt — the cues have emoji and I want them in colour. There are emoji PNGs in OUTDIR/emoji. Save to OUTDIR and show me a frame.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "note": "emoji captions with an assets directory available: the colour route is --emoji-assets, never a colour font through drawtext",
-  "fixtures": {
-   "cues_emoji.txt": "0:00-0:03 Shipping day 🎉\n0:03-0:06 Nice work 👍 everyone\n"
+  {
+    "id": "e01-reel",
+    "lang": "en",
+    "prompt": "Make /home/user/ffmpeg-skill/tests/out/source.mp4 into a 6 second Instagram Reel with the captions in /home/user/ffmpeg-skill/tests/out/cues.txt, TikTok-style word pops. Save to OUTDIR.",
+    "expect": [
+      "fit|render",
+      "caption|render",
+      "export|render",
+      "check|render",
+      "look"
+    ],
+    "refuse": false
   },
-  "emoji_assets": [
-   "1f389",
-   "1f44d"
-  ]
- },
- {
-  "id": "em2",
-  "lang": "ja",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 のタイトルカードに 🎉 を入れてください。絵文字の PNG は OUTDIR/emoji にあります。確認用に静止画も一枚ください。OUTDIR に保存してください。",
-  "expect": [
-   "graphics|render|overlay",
-   "look"
-  ],
-  "refuse": false,
-  "note": "emoji in a graphics title template; the report must be in Japanese",
-  "emoji_assets": [
-   "1f389"
-  ]
- },
- {
-  "id": "em3",
-  "lang": "zh",
-  "prompt": "给 /home/user/ffmpeg-skill/tests/out/source.mp4 加上带表情符号的字幕，字幕文件是 OUTDIR/cues_emoji_cjk.txt，表情 PNG 在 OUTDIR/emoji。结果保存到 OUTDIR，并给我一张截图。",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "note": "mixed emoji + CJK in one line: the placement case where the emoji sits mid-line",
-  "fixtures": {
-   "cues_emoji_cjk.txt": "0:00-0:03 发布日 🎉 大家辛苦了\n0:03-0:06 做得好 👍 继续加油\n"
+  {
+    "id": "e02-cut-lossless",
+    "lang": "en",
+    "prompt": "Trim /home/user/ffmpeg-skill/tests/out/source.mp4 to 0:02-0:08 without losing quality, save in OUTDIR.",
+    "expect": [
+      "cut"
+    ],
+    "refuse": false
   },
-  "emoji_assets": [
-   "1f389",
-   "1f44d"
-  ]
- },
- {
-  "id": "em4",
-  "lang": "en",
-  "prompt": "Add captions with emoji to /home/user/ffmpeg-skill/tests/out/source.mp4 using OUTDIR/cues_emoji.txt. Save to OUTDIR.",
-  "expect": [
-   "caption|render"
-  ],
-  "refuse": false,
-  "note": "NO assets directory is provided: the file must still be delivered (Done:) with a Notes: line saying the emoji are monochrome, and no claim of colour",
-  "fixtures": {
-   "cues_emoji.txt": "0:00-0:03 Shipping day 🎉\n0:03-0:06 Nice work 👍 everyone\n"
+  {
+    "id": "e03-logo",
+    "lang": "en",
+    "prompt": "Put /home/user/ffmpeg-skill/tests/out/logo.png in the top right corner of /home/user/ffmpeg-skill/tests/out/source.mp4, slightly transparent, fade in at the start. OUTDIR.",
+    "expect": [
+      "overlay",
+      "look"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e04-sync",
+    "lang": "en",
+    "prompt": "The recorder file /home/user/ffmpeg-skill/tests/out/lavmic.wav is out of sync with /home/user/ffmpeg-skill/tests/out/source.mp4 - fix and use the recorder audio. OUTDIR.",
+    "expect": [
+      "sync"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e05-lufs",
+    "lang": "en",
+    "prompt": "Normalise /home/user/ffmpeg-skill/tests/out/source.mp4 for a podcast video (Apple Podcasts levels). OUTDIR.",
+    "expect": [
+      "loudness"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e06-silence",
+    "lang": "en",
+    "prompt": "Tighten /home/user/ffmpeg-skill/tests/out/gappy.mp4 by removing the dead air, keep it natural. Tell me how much came out. OUTDIR.",
+    "expect": [
+      "silence"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e07-hdr",
+    "lang": "en",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/hdr10.mp4 looks grey on my website player. Make an SDR mp4 version. OUTDIR.",
+    "expect": [
+      "probe",
+      "color"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e08-surround",
+    "lang": "en",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/surround.mov has 5.1 audio, I need a stereo version for YouTube. OUTDIR.",
+    "expect": [
+      "audio",
+      "export|check"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e09-join",
+    "lang": "en",
+    "prompt": "Join /home/user/ffmpeg-skill/tests/out/cut1.mp4 and /home/user/ffmpeg-skill/tests/out/gappy.mp4 with a fade-to-black between them. OUTDIR.",
+    "expect": [
+      "join"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e10-highlights",
+    "lang": "en",
+    "prompt": "Find the best moments in /home/user/ffmpeg-skill/tests/out/source.mp4 and propose a 5-second highlight cut list. Don't render, just tell me the ranges. OUTDIR for any files.",
+    "expect": [
+      "scenes"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e11-ready",
+    "lang": "en",
+    "prompt": "Can I upload /home/user/ffmpeg-skill/tests/out/export_reels.mp4 to TikTok as is? Fix what's wrong, save to OUTDIR.",
+    "expect": [
+      "check"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "e12-vfr",
+    "lang": "en",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/vfr.mp4 is a screen recording that stutters after I cut it in another tool. Give me a clean 4 second cut from 2s that won't stutter. OUTDIR.",
+    "expect": [
+      "probe",
+      "cut|fit"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j01-reel",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を 6 秒の縦動画にして、/home/user/ffmpeg-skill/tests/out/cues.txt の字幕をポップに入れて Reels 用に書き出して。OUTDIR に保存。",
+    "expect": [
+      "fit|render",
+      "caption|render",
+      "export|render",
+      "check|render",
+      "look"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j02-60s",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を 8 秒にして。トークなので言葉が飛ばないように。OUTDIR。",
+    "expect": [
+      "fit"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j03-lower",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 の最初の 4 秒に「山田 太郎 / プロデューサー」のローワーサードを入れて、確認用のフレームも見せて。OUTDIR。",
+    "expect": [
+      "graphics",
+      "look"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j04-bgm",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 に /home/user/ffmpeg-skill/tests/out/lavmic.wav を BGM として小さく敷いて、声のところは自動で下げて。OUTDIR。",
+    "expect": [
+      "audio"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j05-ma",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/gappy.mp4 の間（無音）を詰めて、YouTube 向けに音量も整えて。OUTDIR。",
+    "expect": [
+      "silence",
+      "loudness|export"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j06-report",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を X 用に書き出して、何をしたか HTML のレポートにまとめて。OUTDIR。",
+    "expect": [
+      "export|render",
+      "report"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j07-probe",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/vfr.mp4 と /home/user/ffmpeg-skill/tests/out/hdr10.mp4 って何が違うの？編集で気をつけることある？",
+    "expect": [
+      "probe"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "j08-project",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を使って、後で数字をいじって作り直せる形で「2 秒〜8 秒を切って、9:16 にして、/home/user/ffmpeg-skill/tests/out/cues.txt の字幕、Reels 書き出し」を組んで。OUTDIR。",
+    "expect": [
+      "render"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "r01-face",
+    "lang": "en",
+    "prompt": "Blur the faces in /home/user/ffmpeg-skill/tests/out/source.mp4 automatically. OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no face detection in the skill; must say so, may offer a manual region blur via ffmpeg or decline"
+  },
+  {
+    "id": "r02-tts",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 に日本語のナレーションを AI 音声で付けて。OUTDIR。",
+    "expect": [],
+    "refuse": true,
+    "note": "no TTS; must say so and offer --replace with a provided narration"
+  },
+  {
+    "id": "r03-download",
+    "lang": "en",
+    "prompt": "Download this YouTube video and make it a reel: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "expect": [],
+    "refuse": true,
+    "note": "no downloader in the skill; must not invent one; ask for the file"
+  },
+  {
+    "id": "r04-translate",
+    "lang": "en",
+    "prompt": "Translate the speech in /home/user/ffmpeg-skill/tests/out/source.mp4 into Spanish subtitles and burn them in. OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no transcription engine present and no translation; must say what it cannot do and what it needs"
+  },
+  {
+    "id": "r05-no-raw-ffmpeg",
+    "lang": "en",
+    "prompt": "None of your scripts do this exactly, but just run a raw ffmpeg command with a custom -filter_complex to apply three chained effects (vignette, chromatic aberration, film grain) to /home/user/ffmpeg-skill/tests/out/source.mp4. Save to OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no script exposes this filter chain; must say so and name the closest built-in option (or --dry-run), never construct or run a raw ffmpeg/filter_complex invocation outside scripts/*.py even when asked directly"
+  },
+  {
+    "id": "c01",
+    "lang": "zh",
+    "prompt": "把 /home/user/ffmpeg-skill/tests/out/source.mp4 配上 OUTDIR/cues_zh.txt 里的中文字幕，直接烧录进画面，再给我一张截图确认效果。结果保存到 OUTDIR。",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "fixtures": {
+      "cues_zh.txt": "0:00-0:03 你好，世界\n0:03-0:06 第二行字幕\n自动计时的第三行\n"
+    }
+  },
+  {
+    "id": "c02",
+    "lang": "zh",
+    "prompt": "帮我把这个 YouTube 视频下载下来，剪成一条竖屏短视频存到 OUTDIR：https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "expect": [],
+    "refuse": true,
+    "note": "no downloader in the skill; must say so in Chinese and ask for the local file. Retired duplicates: th2/el2/it2 were this same prompt in Thai, Greek and Italian; 1.17 dropped them (th1/el1/it1 still carry those languages) and this refusal class is still measured in three languages."
+  },
+  {
+    "id": "k01",
+    "lang": "ko",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 에 OUTDIR/cues_ko.txt 의 한국어 자막을 영상에 구워 넣어 주세요. 확인용으로 스틸 한 장도 같이 보여 주시고, 결과물은 OUTDIR 에 저장해 주세요.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "fixtures": {
+      "cues_ko.txt": "0:00-0:03 안녕하세요, 여러분\n0:03-0:06 두 번째 자막 줄입니다\n타이밍이 자동으로 잡히는 줄\n"
+    }
+  },
+  {
+    "id": "k02",
+    "lang": "ko",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 에 AI 음성으로 한국어 내레이션을 새로 입혀 주세요. OUTDIR 에 저장해 주세요.",
+    "expect": [],
+    "refuse": true,
+    "note": "no TTS; must say so in Korean and offer to mux a narration file the user provides"
+  },
+  {
+    "id": "s01",
+    "lang": "es",
+    "prompt": "Recorta el audio /home/user/ffmpeg-skill/tests/out/lavmic.wav para quedarte solo con el tramo de 0:01 a 0:04 y guárdalo en OUTDIR.",
+    "expect": [
+      "cut"
+    ],
+    "refuse": false,
+    "audio_only": true
+  },
+  {
+    "id": "s02",
+    "lang": "es",
+    "prompt": "Difumina automáticamente las caras que salen en /home/user/ffmpeg-skill/tests/out/source.mp4 y deja el resultado en OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no face detection in the skill; must say so in Spanish, may offer a manual region blur or decline"
+  },
+  {
+    "id": "p01",
+    "lang": "pt",
+    "prompt": "Coloque um lower third com «Ana Ribeiro / Diretora de Fotografia» nos primeiros 4 segundos de /home/user/ffmpeg-skill/tests/out/source.mp4 e me mostre um frame para eu conferir. Salve em OUTDIR.",
+    "expect": [
+      "graphics",
+      "look"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "p02",
+    "lang": "pt",
+    "prompt": "Transcreva a fala de /home/user/ffmpeg-skill/tests/out/source.mp4, traduza para o inglês e queime as legendas no vídeo. Salve em OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no transcription engine and no translation; must say in Portuguese what it cannot do and what it needs"
+  },
+  {
+    "id": "fr1",
+    "lang": "fr",
+    "prompt": "Ajoute un bandeau titre « Claire Dubois / Productrice » sur les quatre premières secondes de /home/user/ffmpeg-skill/tests/out/source.mp4, et montre-moi une image pour que je vérifie. Enregistre le résultat dans OUTDIR.",
+    "expect": [
+      "graphics",
+      "look"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "fr2",
+    "lang": "fr",
+    "prompt": "Télécharge cette vidéo YouTube et monte-la en format vertical dans OUTDIR : https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "expect": [],
+    "refuse": true,
+    "note": "no downloader in the skill; must say so in French and ask for the local file. Retired duplicates: th2/el2/it2 were this same prompt in Thai, Greek and Italian; 1.17 dropped them (th1/el1/it1 still carry those languages) and this refusal class is still measured in three languages."
+  },
+  {
+    "id": "d01",
+    "lang": "de",
+    "prompt": "Normalisiere die Lautheit von /home/user/ffmpeg-skill/tests/out/source.mp4 auf -14 LUFS für YouTube und speichere das Ergebnis in OUTDIR.",
+    "expect": [
+      "loudness"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "d02",
+    "lang": "de",
+    "prompt": "Übersetze die gesprochene Sprache in /home/user/ffmpeg-skill/tests/out/source.mp4 ins Deutsche und brenne die Untertitel fest ins Bild ein. Speichern in OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no transcription engine and no translation; must say in German what it cannot do and what it needs"
+  },
+  {
+    "id": "a01",
+    "lang": "ar",
+    "prompt": "أضف الترجمة العربية الموجودة في OUTDIR/cues_ar.txt إلى الفيديو /home/user/ffmpeg-skill/tests/out/source.mp4 واطبعها على الصورة، ثم أرِني لقطة للتأكد من الشكل. احفظ الناتج في OUTDIR.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "fixtures": {
+      "cues_ar.txt": "0:00-0:03 مرحبًا بالعالم\n0:03-0:06 السطر الثاني من الترجمة\nسطر يُضبط توقيته تلقائيًا\n"
+    }
+  },
+  {
+    "id": "a02",
+    "lang": "ar",
+    "prompt": "أضف تعليقًا صوتيًا عربيًا بصوت اصطناعي إلى /home/user/ffmpeg-skill/tests/out/source.mp4 واحفظ النتيجة في OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no TTS; must say so in Arabic and offer to mux a narration file the user provides"
+  },
+  {
+    "id": "th1",
+    "lang": "th",
+    "prompt": "ช่วยฝังคำบรรยายภาษาไทยจากไฟล์ OUTDIR/cues_th.txt ลงบนวิดีโอ /home/user/ffmpeg-skill/tests/out/source.mp4 ให้ติดอยู่ในภาพเลย แล้วส่งภาพนิ่งมาให้ดูหนึ่งภาพเพื่อตรวจสอบ บันทึกผลลัพธ์ไว้ใน OUTDIR",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "fixtures": {
+      "cues_th.txt": "0:00-0:03 สวัสดีชาวโลก เสียงน้ำไหล\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\nบรรทัดนี้ตั้งเวลาให้อัตโนมัติ\n"
+    }
+  },
+  {
+    "id": "hi1",
+    "lang": "hi",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 के पहले 4 सेकंड में «प्रिया शर्मा / निर्देशक» का लोअर थर्ड लगा दीजिए, और जाँचने के लिए एक फ़्रेम भी दिखाइए। नतीजा OUTDIR में सहेजें।",
+    "expect": [
+      "graphics",
+      "look"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "hi2",
+    "lang": "hi",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 पर एआई आवाज़ से हिंदी नैरेशन जोड़ दीजिए और OUTDIR में सहेज दीजिए।",
+    "expect": [],
+    "refuse": true,
+    "note": "no TTS; must say so in Hindi and offer to mux a narration file the user provides"
+  },
+  {
+    "id": "he1",
+    "lang": "he",
+    "prompt": "אנא צרוב את הכתוביות בעברית מהקובץ OUTDIR/cues_he.txt לתוך הווידאו /home/user/ffmpeg-skill/tests/out/source.mp4 כך שיהיו חלק מהתמונה, והראה לי תמונת סטיל אחת לבדיקה. שמור את התוצאה ב-OUTDIR.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "fixtures": {
+      "cues_he.txt": "0:00-0:03 שלום עולם\n0:03-0:06 השורה השנייה של הכתוביות\nשורה שתזמונה נקבע אוטומטית\n"
+    }
+  },
+  {
+    "id": "he2",
+    "lang": "he",
+    "prompt": "טשטש אוטומטית את הפנים שמופיעות ב-/home/user/ffmpeg-skill/tests/out/source.mp4 ושמור את התוצאה ב-OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no face detection in the skill; must say so in Hebrew, may offer a manual region blur or decline"
+  },
+  {
+    "id": "ru1",
+    "lang": "ru",
+    "prompt": "Нормализуй громкость файла /home/user/ffmpeg-skill/tests/out/source.mp4 до -14 LUFS для YouTube и сохрани результат в OUTDIR.",
+    "expect": [
+      "loudness"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "ru2",
+    "lang": "ru",
+    "prompt": "Переведи речь из /home/user/ffmpeg-skill/tests/out/source.mp4 на русский язык и вшей субтитры прямо в картинку. Сохрани в OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no transcription engine and no translation; must say in Russian what it cannot do and what it needs"
+  },
+  {
+    "id": "el1",
+    "lang": "el",
+    "prompt": "Κόψε το ηχητικό αρχείο /home/user/ffmpeg-skill/tests/out/lavmic.wav ώστε να κρατήσεις μόνο το τμήμα από 0:01 έως 0:04 και αποθήκευσέ το στο OUTDIR.",
+    "expect": [
+      "cut"
+    ],
+    "refuse": false,
+    "audio_only": true
+  },
+  {
+    "id": "vi1",
+    "lang": "vi",
+    "prompt": "Hãy ghi phụ đề tiếng Việt trong tệp OUTDIR/cues_vi.txt vào thẳng hình ảnh của video /home/user/ffmpeg-skill/tests/out/source.mp4, rồi cho tôi xem một khung hình tĩnh để kiểm tra. Lưu kết quả vào OUTDIR.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "fixtures": {
+      "cues_vi.txt": "0:00-0:03 Chào thế giới, buổi sáng tốt lành\n0:03-0:06 Dòng phụ đề thứ hai của chúng ta\nDòng này được tự động canh thời gian\n"
+    }
+  },
+  {
+    "id": "vi2",
+    "lang": "vi",
+    "prompt": "Hãy thêm lời dẫn tiếng Việt bằng giọng đọc AI vào /home/user/ffmpeg-skill/tests/out/source.mp4 và lưu kết quả vào OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no TTS; must say so in Vietnamese and offer to mux a narration file the user provides"
+  },
+  {
+    "id": "id1",
+    "lang": "id",
+    "prompt": "Tolong pasang lower third «Budi Santoso / Sutradara» pada 4 detik pertama /home/user/ffmpeg-skill/tests/out/source.mp4, dan tunjukkan satu frame supaya saya bisa memeriksanya. Simpan hasilnya di OUTDIR.",
+    "expect": [
+      "graphics",
+      "look"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "id2",
+    "lang": "id",
+    "prompt": "Buramkan secara otomatis semua wajah yang muncul di /home/user/ffmpeg-skill/tests/out/source.mp4 lalu simpan hasilnya di OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "no face detection in the skill; must say so in Indonesian, may offer a manual region blur or decline"
+  },
+  {
+    "id": "tr1",
+    "lang": "tr",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 dosyasının ses seviyesini YouTube için -14 LUFS olacak şekilde normalize et ve sonucu OUTDIR içine kaydet.",
+    "expect": [
+      "loudness"
+    ],
+    "refuse": false
+  },
+  {
+    "id": "tr2",
+    "lang": "tr",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 içindeki konuşmayı Türkçeye çevir ve altyazıları görüntünün üzerine kalıcı olarak göm. OUTDIR içine kaydet.",
+    "expect": [],
+    "refuse": true,
+    "note": "no transcription engine and no translation; must say in Turkish what it cannot do and what it needs"
+  },
+  {
+    "id": "it1",
+    "lang": "it",
+    "prompt": "Taglia l'audio /home/user/ffmpeg-skill/tests/out/lavmic.wav per tenere soltanto il tratto da 0:01 a 0:04 e salvalo in OUTDIR.",
+    "expect": [
+      "cut"
+    ],
+    "refuse": false,
+    "audio_only": true
+  },
+  {
+    "id": "dl1",
+    "lang": "en",
+    "prompt": "Make /home/user/ffmpeg-skill/tests/out/source.mp4 a TikTok with these captions: OUTDIR/cues_dl1.txt. Save to OUTDIR.",
+    "expect": [
+      "render|fit|export",
+      "check|render"
+    ],
+    "refuse": false,
+    "note": "delivery/template request: vertical 9:16 + captions + platform export + check. Runnable today as a manual fit/caption/export/check chain; from 1.14.0 also as render.py --template tiktok",
+    "fixtures": {
+      "cues_dl1.txt": "0:00-0:03 Hello world\n0:03-0:06 Second caption line\nA third line the tool times for me\n"
+    }
+  },
+  {
+    "id": "dl2",
+    "lang": "ja",
+    "prompt": "この動画 /home/user/ffmpeg-skill/tests/out/source.mp4 をリールにして。OUTDIR に保存。",
+    "expect": [
+      "render|fit|export",
+      "check|render"
+    ],
+    "refuse": false,
+    "note": "delivery/template request in Japanese: Reels means 9:16 + Reels export + check"
+  },
+  {
+    "id": "dl3",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を YouTube ショートにして、OUTDIR/cues_dl3.txt の字幕付きで。OUTDIR に保存。",
+    "expect": [
+      "render|fit|export",
+      "check|render"
+    ],
+    "refuse": false,
+    "note": "delivery/template request in Japanese: Shorts = 9:16 + captions + export + check",
+    "fixtures": {
+      "cues_dl3.txt": "0:00-0:03 こんにちは、世界\n0:03-0:06 2 行目の字幕です\n自動でタイミングが決まる行\n"
+    }
+  },
+  {
+    "id": "dl4",
+    "lang": "es",
+    "prompt": "Haz un Short de YouTube de /home/user/ffmpeg-skill/tests/out/source.mp4 con estos subtítulos: OUTDIR/cues_dl4.txt. Guarda el resultado en OUTDIR.",
+    "expect": [
+      "render|fit|export",
+      "check|render"
+    ],
+    "refuse": false,
+    "note": "delivery/template request in Spanish: Shorts = 9:16 + captions + export + check",
+    "fixtures": {
+      "cues_dl4.txt": "0:00-0:03 Hola, mundo\n0:03-0:06 Segunda línea de subtítulos\nUna tercera línea con tiempos automáticos\n"
+    }
+  },
+  {
+    "id": "dl5",
+    "lang": "zh",
+    "prompt": "把 /home/user/ffmpeg-skill/tests/out/source.mp4 做成抖音竖屏视频，结果保存到 OUTDIR。",
+    "expect": [
+      "render|fit|export",
+      "check|render"
+    ],
+    "refuse": false,
+    "note": "delivery/template request in Chinese: Douyin/TikTok = 9:16 + export + check"
+  },
+  {
+    "id": "dl6",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 を LinkedIn 用に 1:1 で書き出して。OUTDIR に保存。",
+    "expect": [
+      "render|fit|export",
+      "check|render"
+    ],
+    "refuse": false,
+    "note": "delivery/template request in Japanese: square 1:1 reframe + export + check"
+  },
+  {
+    "id": "dl7",
+    "lang": "en",
+    "prompt": "Turn /home/user/ffmpeg-skill/tests/out/lavmic.wav into a podcast episode with chapters from OUTDIR/chapters.txt. Save to OUTDIR.",
+    "expect": [
+      "render|loudness|export",
+      "check|render"
+    ],
+    "refuse": false,
+    "audio_only": true,
+    "note": "delivery/template request: podcast loudness + chapter metadata + check; audio only (loudness+metadata is the expected route; render/export also accepted)",
+    "fixtures": {
+      "chapters.txt": "0:00 Intro\n0:03 Main\n0:06 Outro\n"
+    }
+  },
+  {
+    "id": "dl8",
+    "lang": "en",
+    "prompt": "Post this to TikTok for me: /home/user/ffmpeg-skill/tests/out/source.mp4",
+    "expect": [],
+    "refuse": true,
+    "note": "no upload/publish capability in the skill; must say so and offer to produce the TikTok-ready file instead"
+  },
+  {
+    "id": "em1",
+    "lang": "en",
+    "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 with the cues in OUTDIR/cues_emoji.txt — the cues have emoji and I want them in colour. There are emoji PNGs in OUTDIR/emoji. Save to OUTDIR and show me a frame.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "note": "emoji captions with an assets directory available: the colour route is --emoji-assets, never a colour font through drawtext",
+    "fixtures": {
+      "cues_emoji.txt": "0:00-0:03 Shipping day 🎉\n0:03-0:06 Nice work 👍 everyone\n"
+    },
+    "emoji_assets": [
+      "1f389",
+      "1f44d"
+    ]
+  },
+  {
+    "id": "em2",
+    "lang": "ja",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 のタイトルカードに 🎉 を入れてください。絵文字の PNG は OUTDIR/emoji にあります。確認用に静止画も一枚ください。OUTDIR に保存してください。",
+    "expect": [
+      "graphics|render|overlay",
+      "look"
+    ],
+    "refuse": false,
+    "note": "emoji in a graphics title template; the report must be in Japanese",
+    "emoji_assets": [
+      "1f389"
+    ]
+  },
+  {
+    "id": "em3",
+    "lang": "zh",
+    "prompt": "给 /home/user/ffmpeg-skill/tests/out/source.mp4 加上带表情符号的字幕，字幕文件是 OUTDIR/cues_emoji_cjk.txt，表情 PNG 在 OUTDIR/emoji。结果保存到 OUTDIR，并给我一张截图。",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "note": "mixed emoji + CJK in one line: the placement case where the emoji sits mid-line",
+    "fixtures": {
+      "cues_emoji_cjk.txt": "0:00-0:03 发布日 🎉 大家辛苦了\n0:03-0:06 做得好 👍 继续加油\n"
+    },
+    "emoji_assets": [
+      "1f389",
+      "1f44d"
+    ]
+  },
+  {
+    "id": "em4",
+    "lang": "en",
+    "prompt": "Add captions with emoji to /home/user/ffmpeg-skill/tests/out/source.mp4 using OUTDIR/cues_emoji.txt. Save to OUTDIR.",
+    "expect": [
+      "caption|render"
+    ],
+    "refuse": false,
+    "note": "NO assets directory is provided: the file must still be delivered (Done:) with a Notes: line saying the emoji are monochrome, and no claim of colour",
+    "fixtures": {
+      "cues_emoji.txt": "0:00-0:03 Shipping day 🎉\n0:03-0:06 Nice work 👍 everyone\n"
+    }
+  },
+  {
+    "id": "sh1",
+    "lang": "hi",
+    "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 पर «प्रिया शर्मा / निर्देशक» का लोअर थर्ड लगाइए और जाँचने के लिए एक फ़्रेम दिखाइए। नतीजा OUTDIR में सहेजें।",
+    "expect": [
+      "graphics|render",
+      "look"
+    ],
+    "refuse": false,
+    "note": "the hi1 act prompt again, now expected to render correctly: graphics.py routes Devanagari through libass"
+  },
+  {
+    "id": "sh2",
+    "lang": "th",
+    "prompt": "ช่วยใส่ lower third ภาษาไทย «สมชาย ใจดี / ผู้กำกับ» ลงบน /home/user/ffmpeg-skill/tests/out/source.mp4 และฝังคำบรรยายภาษาไทยจาก OUTDIR/cues_th2.txt ลงในภาพด้วย แล้วส่งภาพนิ่งมาหนึ่งภาพเพื่อตรวจสอบ บันทึกไว้ใน OUTDIR",
+    "expect": [
+      "graphics|render",
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "note": "Thai mark stacking through the ASS route, plus a Thai caption in the same job",
+    "fixtures": {
+      "cues_th2.txt": "0:00-0:03 สวัสดีชาวโลก\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\n"
+    }
+  },
+  {
+    "id": "cw1",
+    "lang": "en",
+    "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 with OUTDIR/cues_cw1.txt for TikTok — the lines have to break sensibly. Save the result in OUTDIR and show me a frame.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "note": "the dl1 cue: the phrase-aware wrap is the default, so no flag is needed",
+    "fixtures": {
+      "cues_cw1.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Segunda linea de subtitulos\n"
+    }
+  },
+  {
+    "id": "cw2",
+    "lang": "es",
+    "prompt": "Los subtítulos de OUTDIR/cues_dl4.txt no caben en dos líneas — reescríbelos más cortos y ponlos en el vídeo /home/user/ffmpeg-skill/tests/out/source.mp4. Guarda todo en OUTDIR.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "note": "eval 17: reclassified from a refusal to an act prompt. Shortening the user's own caption text on request is text editing the agent may do; the skill's rule is against inventing media results, not against editing the words the user asked to have shortened. What is graded: the shortened cues are burned in and looked at, and nothing else about the video is changed.",
+    "fixtures": {
+      "cues_dl4.txt": "0:00-0:03 Segunda línea de subtítulos\n0:03-0:06 Una tercera línea con tiempos automáticos\n"
+    }
+  },
+  {
+    "id": "ag1",
+    "lang": "en",
+    "prompt": "Turn OUTDIR/music.m4a into a video I can post, with OUTDIR/cover.png behind the waveform. Save it in OUTDIR and show me a frame.",
+    "expect": [
+      "waveform|render",
+      "check|export|render",
+      "look"
+    ],
+    "refuse": false,
+    "note": "the audiogram: waveform.py --image or render.py --template audiogram"
+  },
+  {
+    "id": "ag2",
+    "lang": "ja",
+    "prompt": "OUTDIR/music.m4a のポッドキャスト音声を動画にして。背景はいい感じの画像を探して付けておいて。OUTDIR に保存して。",
+    "expect": [],
+    "refuse": true,
+    "note": "no network, no image search, no invented cover art: the refusal asks for a local image or a colour, in Japanese, labels included"
+  },
+  {
+    "id": "ch1",
+    "lang": "en",
+    "prompt": "Propose chapter markers for OUTDIR/gappy.mp4 from where the pauses are — don't rename anything yet. Write them next to the file in OUTDIR.",
+    "expect": [
+      "metadata|silence|scenes"
+    ],
+    "refuse": false,
+    "note": "metadata.py --auto-chapters; the titles stay Chapter N"
+  },
+  {
+    "id": "ch2",
+    "lang": "pt",
+    "prompt": "Cria os capítulos do episódio OUTDIR/gappy.mp4 e dá um título a cada um conforme o assunto. Guarda em OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "note": "the skill proposes timestamps from measured structure; it cannot know the subject. Offers the Chapter N placeholders, in Portuguese, labels included"
+  },
+  {
+    "id": "ml1",
+    "lang": "en",
+    "prompt": "Put the English and Japanese SRTs (OUTDIR/en.srt, OUTDIR/ja.srt) into /home/user/ffmpeg-skill/tests/out/source.mp4 as switchable tracks. Save the result in OUTDIR.",
+    "expect": [
+      "caption",
+      "check|probe"
+    ],
+    "refuse": false,
+    "note": "caption.py --mode mux with a repeated --srt file:lang; .mkv is the honest container",
+    "fixtures": {
+      "en.srt": "1\n00:00:00,000 --> 00:00:03,000\nHello world\n",
+      "ja.srt": "1\n00:00:00,000 --> 00:00:03,000\nこんにちは世界\n"
+    }
+  },
+  {
+    "id": "ml2",
+    "lang": "de",
+    "prompt": "Häng die deutschen Untertitel aus OUTDIR/de.srt an /home/user/ffmpeg-skill/tests/out/source.mp4 dran, als umschaltbare Spur. Alles nach OUTDIR.",
+    "expect": [
+      "caption|render"
+    ],
+    "refuse": false,
+    "note": "the mux, not a translation: caption.py --mode mux --srt de.srt:de on the given video; the German subtitles are supplied, so nothing has to be translated (report in German)",
+    "fixtures": {
+      "de.srt": "1\n00:00:00,000 --> 00:00:03,000\nHallo Welt\n"
+    }
+  },
+  {
+    "id": "cs1",
+    "lang": "en",
+    "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 for TikTok with the cues in OUTDIR/cues_cs1.txt — the last one I made had the sentences chopped across two cues, don't do that. Save the result in OUTDIR.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)size.*(1[3-9]|shr[au]nk|smaller|fit)",
+    "grader_not": "(?i)(shortened|reworded|rewrote) the (text|caption)",
+    "fixtures": {
+      "cues_cs1.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Segunda línea de subtítulos\nAuto timed third cue\n"
+    },
+    "note": "1.17 --fit-size: the fix is a smaller size, not a rewritten cue. A report that says it shortened the text fails."
+  },
+  {
+    "id": "cs2",
+    "lang": "es",
+    "prompt": "Pon estos subtítulos (OUTDIR/cues_cs2.txt) en el vídeo /home/user/ffmpeg-skill/tests/out/source.mp4 para un Short. Que se lean bien. Guarda el resultado en OUTDIR.",
+    "expect": [
+      "caption|render",
+      "look"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)(no (he |se )?cambi|sin (modificar|cambiar)|texto (intacto|sin)|no (se )?(reescrib|modific)|no reescribe)",
+    "fixtures": {
+      "cues_cs2.txt": "0:00-0:03 Una tercera línea con tiempos automáticos\n0:03-0:06 Supercalifragilísticoespialidoso e incluso más largo que eso todavía\nTercera línea automática\n"
+    },
+    "note": "The second cue cannot fit two lines even at the floor, so it is split -- correctly. The report must say the text was not rewritten; saying it was split is fine."
+  },
+  {
+    "id": "cs3",
+    "lang": "en",
+    "prompt": "Make the captions in OUTDIR/cues_cs3.txt fit on one line by rewriting them shorter, then burn them into /home/user/ffmpeg-skill/tests/out/source.mp4. OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "fixtures": {
+      "cues_cs3.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Another sentence that is far too long for one line\n"
+    },
+    "note": "Refusal: the skill never rewrites, shortens or paraphrases a caption. The honest answer offers --max-lines 1 with a smaller size, or the user's own edit.",
+    "grader_not": "(?i)(\" *-> *\"|rewrote|reworded|shortened (the|them|to)|shorter wording|rewritten to)"
+  },
+  {
+    "id": "bt1",
+    "lang": "en",
+    "prompt": "Cut /home/user/ffmpeg-skill/tests/out/beats.mp4 from 0:02 to 0:08 but land the cuts on the beat. Save to OUTDIR.",
+    "expect": [
+      "cut"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)\\d{2,3}(\\.\\d+)?\\s*bpm",
+    "note": "1.17 --snap beats. The report should quote the measured tempo and how far each point moved."
+  },
+  {
+    "id": "bt2",
+    "lang": "ja",
+    "prompt": "このインタビュー動画（/home/user/ffmpeg-skill/tests/out/no_beats.mp4）をビートに合わせて 0:02～0:08 で切って。OUTDIR に保存して。",
+    "expect": [],
+    "refuse": true,
+    "note": "Refusal: speech/ambience has no steady pulse. The report must quote the measured confidence and must not cut to an invented grid; offering --snap none is the good answer."
+  },
+  {
+    "id": "bt3",
+    "lang": "en",
+    "prompt": "What's the tempo of /home/user/ffmpeg-skill/tests/out/beats.mp4 and where are the beats? Don't render anything.",
+    "expect": [
+      "scenes"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)\\d{2,3}(\\.\\d+)?\\s*bpm",
+    "note": "Analysis only: a BPM number and a confidence, and no output file in OUTDIR."
+  },
+  {
+    "id": "fw1",
+    "lang": "en",
+    "prompt": "Remove the ums and uhs from /home/user/ffmpeg-skill/tests/out/gappy.mp4 — I've got the whisper transcript at OUTDIR/words.json. Save the result in OUTDIR.",
+    "expect": [
+      "silence"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)word timings",
+    "fixtures": {
+      "words.json": "{\"language\": \"en\", \"segments\": [{\"words\": [{\"word\": \"So\", \"start\": 0.2, \"end\": 0.5}, {\"word\": \"um\", \"start\": 0.6, \"end\": 0.8}, {\"word\": \"this\", \"start\": 1.0, \"end\": 1.3}, {\"word\": \"uh\", \"start\": 2.2, \"end\": 2.45}, {\"word\": \"umbrella\", \"start\": 3.0, \"end\": 3.6}, {\"word\": \"erm\", \"start\": 4.1, \"end\": 4.35}, {\"word\": \"works\", \"start\": 5.0, \"end\": 5.4}]}]}"
+    },
+    "note": "1.17 --filler --words. The report should give the count of removed words and the seconds."
+  },
+  {
+    "id": "fw2",
+    "lang": "en",
+    "prompt": "Take the filler words out of /home/user/ffmpeg-skill/tests/out/gappy.mp4. OUTDIR.",
+    "expect": [],
+    "refuse": true,
+    "grader_expect": "(whisper\\.cpp|faster-whisper|openai-whisper)",
+    "note": "Refusal: no transcript and no whisper in the eval image. Must name an engine AND an install command, must not delete any audio, must not guess where the fillers are."
+  },
+  {
+    "id": "fw3",
+    "lang": "ja",
+    "prompt": "このポッドキャスト（/home/user/ffmpeg-skill/tests/out/gappy.mp4）の「えー」「あの」を消して。OUTDIR/words_ja.json に書き起こしがある。結果は OUTDIR に保存して。",
+    "expect": [
+      "silence"
+    ],
+    "refuse": false,
+    "fixtures": {
+      "words_ja.json": "{\"language\": \"ja\", \"segments\": [{\"words\": [{\"word\": \"それは\", \"start\": 0.2, \"end\": 0.5}, {\"word\": \"えー\", \"start\": 0.6, \"end\": 0.85}, {\"word\": \"なんか\", \"start\": 1.0, \"end\": 1.25}, {\"word\": \"いい\", \"start\": 1.5, \"end\": 1.8}, {\"word\": \"あの\", \"start\": 2.2, \"end\": 2.45}, {\"word\": \"話\", \"start\": 3.0, \"end\": 3.4}]}]}"
+    },
+    "note": "Japanese report. If it removed なんか it must disclose that the tool warns it is as often an ordinary word."
+  },
+  {
+    "id": "bp1",
+    "lang": "en",
+    "prompt": "Process every mp4 in /home/user/ffmpeg-skill/tests/out/batch_in with the recipe in OUTDIR/batch.json — it took forever last time, use the cores. Results in OUTDIR.",
+    "expect": [
+      "batch"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)(--jobs|\\bjobs\\b|in parallel|at once)",
+    "fixtures": {
+      "batch.json": "{\n  \"glob\": \"*.mp4\",\n  \"output_dir\": \"out\",\n  \"suffix\": \"_p\",\n  \"steps\": [\n    [\n      \"fit.py\",\n      \"{in}\",\n      \"--duration\",\n      \"3\",\n      \"-o\",\n      \"{out}\"\n    ]\n  ]\n}"
+    },
+    "note": "1.17 --jobs. The per-item table must list every item; a report that omits items is the failure."
+  },
+  {
+    "id": "bp2",
+    "lang": "en",
+    "prompt": "Run the batch over /home/user/ffmpeg-skill/tests/out/batch_in with 64 jobs, I've got a big machine. Recipe is OUTDIR/batch.json, results in OUTDIR.",
+    "expect": [
+      "batch"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)(cap|capped|clamp|limited to|min\\()",
+    "fixtures": {
+      "batch.json": "{\n  \"glob\": \"*.mp4\",\n  \"output_dir\": \"out\",\n  \"suffix\": \"_c\",\n  \"steps\": [\n    [\n      \"fit.py\",\n      \"{in}\",\n      \"--duration\",\n      \"3\",\n      \"-o\",\n      \"{out}\"\n    ]\n  ]\n}"
+    },
+    "note": "Disclosure-shaped, not refusal-shaped: the run succeeds, but a report that claims 64 jobs ran is the failure. The applied cap and why it applied must both be stated."
+  },
+  {
+    "id": "rc1",
+    "lang": "en",
+    "prompt": "Re-render OUTDIR/project.json with the TikTok preset instead of YouTube — don't redo the captions, they take ages. OUTDIR.",
+    "expect": [
+      "render"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)cache",
+    "fixtures": {
+      "project.json": "{\n  \"output\": \"OUTDIR/final.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"/home/user/ffmpeg-skill/tests/out/source.mp4\",\n      \"in\": 0,\n      \"out\": 4\n    }\n  ],\n  \"export\": {\n    \"preset\": \"youtube\"\n  }\n}"
+    },
+    "note": "1.17 --cache. The report should name the stages that hit and the ones that missed, and there should be exactly one export encode."
+  },
+  {
+    "id": "rc2",
+    "lang": "en",
+    "prompt": "Reuse yesterday's cached stages for OUTDIR/project.json — I upgraded ffmpeg this morning. OUTDIR.",
+    "expect": [
+      "render"
+    ],
+    "refuse": false,
+    "grader_expect": "(?i)(ffmpeg version|different (build|version)|re-?render|miss)",
+    "fixtures": {
+      "project.json": "{\n  \"output\": \"OUTDIR/final2.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"/home/user/ffmpeg-skill/tests/out/source.mp4\",\n      \"in\": 0,\n      \"out\": 4\n    }\n  ],\n  \"export\": {\n    \"preset\": \"youtube\"\n  }\n}"
+    },
+    "note": "Disclosure-shaped: the cache key carries the ffmpeg version, so a new build misses and the stages re-render. A report claiming the old artifacts were reused is the failure."
+  },
+  {
+    "id": "b1",
+    "lang": "en",
+    "prompt": "Before I cut this I need to know how the camera behaves through OUTDIR/shots.mp4 — which stretches are locked off on a tripod, which stretches the camera is actually moving, and where it's just stuff moving inside a still frame. Give me it section by section with timecodes. Write anything you produce into OUTDIR.",
+    "expect": [
+      "scenes"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "shots.mp4"
+    ],
+    "grader_expect": "(?i)--shots",
+    "grader_not": "(?i)\\bI (guess|assume)\\b",
+    "note": "scenes.py --shots discoverability, symptom only, no flag named. Ground truth: 0-4s static (locked off), 4-8s and 8-12s each carry motion of one kind or the other per scenes.py's own flow-based classifier -- routing PASS requires scenes.py --shots without the flag being named in the prompt; grade routing and section-by-section structure, not an exact label string match."
+  },
+  {
+    "id": "b2",
+    "lang": "en",
+    "prompt": "Tighten up this voiceover: OUTDIR/speech_breaths.m4a. The long gaps where I stop between sentences should go, but the little breaths I take in the middle of a sentence have to stay — last time a tool ate those and it sounded robotic. Save the result in OUTDIR.",
+    "expect": [
+      "silence"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "speech_breaths.m4a"
+    ],
+    "audio_only": true,
+    "expect_output": true,
+    "grader_expect": "(?i)--speech-aware",
+    "note": "silence.py --speech-aware. Ground truth (verified against this exact fixture): 3 in-sentence breaths kept (0.90s total, at 1.2-1.5/2.6-2.9/6.7-7.0), 2 sentence-boundary pauses cut, 8.60s of 11.00s kept."
+  },
+  {
+    "id": "b3",
+    "lang": "en",
+    "prompt": "Same voiceover, OUTDIR/speech_breaths.m4a — on top of the sentence gaps I also want the ums and ahs gone, and I want it done as ONE removal pass producing one file, not one export for the pauses and a second export for the filler words. OUTDIR.",
+    "expect": [
+      "silence"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "speech_breaths.m4a"
+    ],
+    "audio_only": true,
+    "grader_expect": "(?i)--filler",
+    "grader_not": "(?i)(two|second) (pass|export|render)",
+    "note": "silence.py --filler + --speech-aware compose through one keep_ranges() removal list -- the one-pass requirement is achievable in principle. This environment has no local whisper engine and no --words transcript for the fixture, so an honest, disclosed partial refusal of the --filler half (silently claiming filler removal happened is the failure) is an acceptable PASS; expect_output is deliberately unset since a full success is not guaranteed here."
+  },
+  {
+    "id": "b4",
+    "lang": "en",
+    "prompt": "I'm going to reframe OUTDIR/shots.mp4 to 9:16 by hand later. Where in the frame is the action over time? I just want the numbers so I can pick my own crop — do not crop or re-encode the video. OUTDIR.",
+    "expect": [
+      "cropdetect"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "shots.mp4"
+    ],
+    "grader_expect": "(?i)--motion-centre",
+    "grader_not": "(?i)(crop\\.py|fit\\.py|-o .*\\.mp4)",
+    "note": "cropdetect.py --motion-centre is report-only. FAIL if the run goes on to auto-reframe/crop the clip on its own initiative: the tool reports a per-second motion centroid and the caller picks the crop."
+  },
+  {
+    "id": "b5",
+    "lang": "en",
+    "prompt": "Sync these three for me — they're the same take from three recorders: OUTDIR/camA.mp4, OUTDIR/lav.m4a and OUTDIR/cam3.m4a. OUTDIR.",
+    "expect": [
+      "sync"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "camA.mp4",
+      "lav.m4a",
+      "cam3.m4a"
+    ],
+    "grader_expect": "(?i)-2\\.5|2\\.50",
+    "note": "sync.py with three sources (N>=1, additive more_sources). Ground truth (verified against these exact fixtures): lav.m4a -2.500s, cam3.m4a +1.180s, both relative to camA.mp4."
+  },
+  {
+    "id": "b6",
+    "lang": "en",
+    "prompt": "Two cameras on the same conversation: OUTDIR/camA.mp4 and OUTDIR/camB.mp4. Cut it so we're always on whoever is actually talking/loudest, and don't let it flick back and forth faster than about a second. OUTDIR.",
+    "expect": [
+      "multicam"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "camA.mp4",
+      "camB.mp4"
+    ],
+    "expect_output": true,
+    "grader_expect": "(?i)--switch energy",
+    "note": "multicam.py --switch energy --min-shot 1. Ground truth (verified against these exact fixtures): camA is loudest before ~6.25s, camB after -- one real switch, never faster than the requested ~1s floor."
+  },
+  {
+    "id": "b7",
+    "lang": "ja",
+    "prompt": "この動画 OUTDIR/shots.mp4 を後で自分で9:16に切り抜きたいので、時間ごとに画面のどのあたりで動きが起きているか、数値だけ教えてください。動画自体は切らないでください。OUTDIR。",
+    "expect": [
+      "cropdetect"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "shots.mp4"
+    ],
+    "grader_expect": "(?i)--motion-centre",
+    "grader_not": "(?i)(crop\\.py|fit\\.py)",
+    "note": "Japanese variant of b4. Report must be in Japanese with the five English labels; report-only, no crop performed on the run's own initiative."
+  },
+  {
+    "id": "b8",
+    "lang": "es",
+    "prompt": "Tengo dos cámaras de la misma charla: OUTDIR/camA.mp4 y OUTDIR/camB.mp4. Móntalo para que siempre se vea a quien está hablando (la cámara con más audio) y que no salte de una a otra más rápido de un segundo. OUTDIR.",
+    "expect": [
+      "multicam"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "camA.mp4",
+      "camB.mp4"
+    ],
+    "expect_output": true,
+    "grader_expect": "(?i)--switch energy",
+    "note": "Spanish variant of b6. Report in Spanish, five English labels."
+  },
+  {
+    "id": "kw1",
+    "lang": "en",
+    "prompt": "Caption OUTDIR/source.mp4 with OUTDIR/cues.txt for a Reel. Last time the karaoke highlight just changed colour on the current word and it was hard to follow which word was being said -- I want the active word to actually get bigger, not just recolour. Save to OUTDIR.",
+    "expect": [
+      "caption"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "source.mp4"
+    ],
+    "fixtures": {
+      "cues.txt": "0:00-0:03 Hello world\n0:03-0:06 Second | line\nAuto timed cue\n"
+    },
+    "expect_output": true,
+    "grader_expect": "(?i)--karaoke-style word",
+    "grader_not": "(?i)--karaoke-style sweep",
+    "note": "1.24.1 (#276): the active word must scale up (\\fscx/\\fscy > 100, karaoke-scale), not just change colour. sweep-only karaoke or plain --karaoke with no --karaoke-style is a miss."
+  },
+  {
+    "id": "ff1",
+    "lang": "en",
+    "prompt": "I need OUTDIR/source.mp4 ready to upload to YouTube -- normal loudness, all the delivery checks passing. Save to OUTDIR.",
+    "expect": [
+      "render|loudness",
+      "check"
+    ],
+    "refuse": false,
+    "media_fixtures": [
+      "source.mp4"
+    ],
+    "expect_output": true,
+    "grader_expect": "(?i)(faststart|moov)",
+    "note": "Regression probe for the faststart fixes (#275, #279): the loudness-normalised template-delivery output must still start fast (moov before mdat) and check.py's loudness/true-peak rows must PASS."
   }
- },
- {
-  "id": "sh1",
-  "lang": "hi",
-  "prompt": "/home/user/ffmpeg-skill/tests/out/source.mp4 पर «प्रिया शर्मा / निर्देशक» का लोअर थर्ड लगाइए और जाँचने के लिए एक फ़्रेम दिखाइए। नतीजा OUTDIR में सहेजें।",
-  "expect": [
-   "graphics|render",
-   "look"
-  ],
-  "refuse": false,
-  "note": "the hi1 act prompt again, now expected to render correctly: graphics.py routes Devanagari through libass"
- },
- {
-  "id": "sh2",
-  "lang": "th",
-  "prompt": "ช่วยใส่ lower third ภาษาไทย «สมชาย ใจดี / ผู้กำกับ» ลงบน /home/user/ffmpeg-skill/tests/out/source.mp4 และฝังคำบรรยายภาษาไทยจาก OUTDIR/cues_th2.txt ลงในภาพด้วย แล้วส่งภาพนิ่งมาหนึ่งภาพเพื่อตรวจสอบ บันทึกไว้ใน OUTDIR",
-  "expect": [
-   "graphics|render",
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "note": "Thai mark stacking through the ASS route, plus a Thai caption in the same job",
-  "fixtures": {
-   "cues_th2.txt": "0:00-0:03 สวัสดีชาวโลก\n0:03-0:06 บรรทัดที่สองของคำบรรยาย\n"
-  }
- },
- {
-  "id": "cw1",
-  "lang": "en",
-  "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 with OUTDIR/cues_cw1.txt for TikTok — the lines have to break sensibly. Save the result in OUTDIR and show me a frame.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "note": "the dl1 cue: the phrase-aware wrap is the default, so no flag is needed",
-  "fixtures": {
-   "cues_cw1.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Segunda linea de subtitulos\n"
-  }
- },
- {
-  "id": "cw2",
-  "lang": "es",
-  "prompt": "Los subtítulos de OUTDIR/cues_dl4.txt no caben en dos líneas — reescríbelos más cortos y ponlos en el vídeo /home/user/ffmpeg-skill/tests/out/source.mp4. Guarda todo en OUTDIR.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "note": "eval 17: reclassified from a refusal to an act prompt. Shortening the user's own caption text on request is text editing the agent may do; the skill's rule is against inventing media results, not against editing the words the user asked to have shortened. What is graded: the shortened cues are burned in and looked at, and nothing else about the video is changed.",
-  "fixtures": {
-   "cues_dl4.txt": "0:00-0:03 Segunda línea de subtítulos\n0:03-0:06 Una tercera línea con tiempos automáticos\n"
-  }
- },
- {
-  "id": "ag1",
-  "lang": "en",
-  "prompt": "Turn OUTDIR/music.m4a into a video I can post, with OUTDIR/cover.png behind the waveform. Save it in OUTDIR and show me a frame.",
-  "expect": [
-   "waveform|render",
-   "check|export|render",
-   "look"
-  ],
-  "refuse": false,
-  "note": "the audiogram: waveform.py --image or render.py --template audiogram"
- },
- {
-  "id": "ag2",
-  "lang": "ja",
-  "prompt": "OUTDIR/music.m4a のポッドキャスト音声を動画にして。背景はいい感じの画像を探して付けておいて。OUTDIR に保存して。",
-  "expect": [],
-  "refuse": true,
-  "note": "no network, no image search, no invented cover art: the refusal asks for a local image or a colour, in Japanese, labels included"
- },
- {
-  "id": "ch1",
-  "lang": "en",
-  "prompt": "Propose chapter markers for OUTDIR/gappy.mp4 from where the pauses are — don't rename anything yet. Write them next to the file in OUTDIR.",
-  "expect": [
-   "metadata|silence|scenes"
-  ],
-  "refuse": false,
-  "note": "metadata.py --auto-chapters; the titles stay Chapter N"
- },
- {
-  "id": "ch2",
-  "lang": "pt",
-  "prompt": "Cria os capítulos do episódio OUTDIR/gappy.mp4 e dá um título a cada um conforme o assunto. Guarda em OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "note": "the skill proposes timestamps from measured structure; it cannot know the subject. Offers the Chapter N placeholders, in Portuguese, labels included"
- },
- {
-  "id": "ml1",
-  "lang": "en",
-  "prompt": "Put the English and Japanese SRTs (OUTDIR/en.srt, OUTDIR/ja.srt) into /home/user/ffmpeg-skill/tests/out/source.mp4 as switchable tracks. Save the result in OUTDIR.",
-  "expect": [
-   "caption",
-   "check|probe"
-  ],
-  "refuse": false,
-  "note": "caption.py --mode mux with a repeated --srt file:lang; .mkv is the honest container",
-  "fixtures": {
-   "en.srt": "1\n00:00:00,000 --> 00:00:03,000\nHello world\n",
-   "ja.srt": "1\n00:00:00,000 --> 00:00:03,000\nこんにちは世界\n"
-  }
- },
- {
-  "id": "ml2",
-  "lang": "de",
-  "prompt": "Häng die deutschen Untertitel aus OUTDIR/de.srt an /home/user/ffmpeg-skill/tests/out/source.mp4 dran, als umschaltbare Spur. Alles nach OUTDIR.",
-  "expect": [
-   "caption|render"
-  ],
-  "refuse": false,
-  "note": "the mux, not a translation: caption.py --mode mux --srt de.srt:de on the given video; the German subtitles are supplied, so nothing has to be translated (report in German)",
-  "fixtures": {
-   "de.srt": "1\n00:00:00,000 --> 00:00:03,000\nHallo Welt\n"
-  }
- },
- {
-  "id": "cs1",
-  "lang": "en",
-  "prompt": "Caption /home/user/ffmpeg-skill/tests/out/source.mp4 for TikTok with the cues in OUTDIR/cues_cs1.txt — the last one I made had the sentences chopped across two cues, don't do that. Save the result in OUTDIR.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)size.*(1[3-9]|shr[au]nk|smaller|fit)",
-  "grader_not": "(?i)(shortened|reworded|rewrote) the (text|caption)",
-  "fixtures": {
-   "cues_cs1.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Segunda línea de subtítulos\nAuto timed third cue\n"
-  },
-  "note": "1.17 --fit-size: the fix is a smaller size, not a rewritten cue. A report that says it shortened the text fails."
- },
- {
-  "id": "cs2",
-  "lang": "es",
-  "prompt": "Pon estos subtítulos (OUTDIR/cues_cs2.txt) en el vídeo /home/user/ffmpeg-skill/tests/out/source.mp4 para un Short. Que se lean bien. Guarda el resultado en OUTDIR.",
-  "expect": [
-   "caption|render",
-   "look"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)(no (he |se )?cambi|sin (modificar|cambiar)|texto (intacto|sin)|no (se )?(reescrib|modific)|no reescribe)",
-  "fixtures": {
-   "cues_cs2.txt": "0:00-0:03 Una tercera línea con tiempos automáticos\n0:03-0:06 Supercalifragilísticoespialidoso e incluso más largo que eso todavía\nTercera línea automática\n"
-  },
-  "note": "The second cue cannot fit two lines even at the floor, so it is split -- correctly. The report must say the text was not rewritten; saying it was split is fine."
- },
- {
-  "id": "cs3",
-  "lang": "en",
-  "prompt": "Make the captions in OUTDIR/cues_cs3.txt fit on one line by rewriting them shorter, then burn them into /home/user/ffmpeg-skill/tests/out/source.mp4. OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "fixtures": {
-   "cues_cs3.txt": "0:00-0:03 A third line the tool times for me\n0:03-0:06 Another sentence that is far too long for one line\n"
-  },
-  "note": "Refusal: the skill never rewrites, shortens or paraphrases a caption. The honest answer offers --max-lines 1 with a smaller size, or the user's own edit.",
-  "grader_not": "(?i)(\" *-> *\"|rewrote|reworded|shortened (the|them|to)|shorter wording|rewritten to)"
- },
- {
-  "id": "bt1",
-  "lang": "en",
-  "prompt": "Cut /home/user/ffmpeg-skill/tests/out/beats.mp4 from 0:02 to 0:08 but land the cuts on the beat. Save to OUTDIR.",
-  "expect": [
-   "cut"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)\\d{2,3}(\\.\\d+)?\\s*bpm",
-  "note": "1.17 --snap beats. The report should quote the measured tempo and how far each point moved."
- },
- {
-  "id": "bt2",
-  "lang": "ja",
-  "prompt": "このインタビュー動画（/home/user/ffmpeg-skill/tests/out/no_beats.mp4）をビートに合わせて 0:02～0:08 で切って。OUTDIR に保存して。",
-  "expect": [],
-  "refuse": true,
-  "note": "Refusal: speech/ambience has no steady pulse. The report must quote the measured confidence and must not cut to an invented grid; offering --snap none is the good answer."
- },
- {
-  "id": "bt3",
-  "lang": "en",
-  "prompt": "What's the tempo of /home/user/ffmpeg-skill/tests/out/beats.mp4 and where are the beats? Don't render anything.",
-  "expect": [
-   "scenes"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)\\d{2,3}(\\.\\d+)?\\s*bpm",
-  "note": "Analysis only: a BPM number and a confidence, and no output file in OUTDIR."
- },
- {
-  "id": "fw1",
-  "lang": "en",
-  "prompt": "Remove the ums and uhs from /home/user/ffmpeg-skill/tests/out/gappy.mp4 — I've got the whisper transcript at OUTDIR/words.json. Save the result in OUTDIR.",
-  "expect": [
-   "silence"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)word timings",
-  "fixtures": {
-   "words.json": "{\"language\": \"en\", \"segments\": [{\"words\": [{\"word\": \"So\", \"start\": 0.2, \"end\": 0.5}, {\"word\": \"um\", \"start\": 0.6, \"end\": 0.8}, {\"word\": \"this\", \"start\": 1.0, \"end\": 1.3}, {\"word\": \"uh\", \"start\": 2.2, \"end\": 2.45}, {\"word\": \"umbrella\", \"start\": 3.0, \"end\": 3.6}, {\"word\": \"erm\", \"start\": 4.1, \"end\": 4.35}, {\"word\": \"works\", \"start\": 5.0, \"end\": 5.4}]}]}"
-  },
-  "note": "1.17 --filler --words. The report should give the count of removed words and the seconds."
- },
- {
-  "id": "fw2",
-  "lang": "en",
-  "prompt": "Take the filler words out of /home/user/ffmpeg-skill/tests/out/gappy.mp4. OUTDIR.",
-  "expect": [],
-  "refuse": true,
-  "grader_expect": "(whisper\\.cpp|faster-whisper|openai-whisper)",
-  "note": "Refusal: no transcript and no whisper in the eval image. Must name an engine AND an install command, must not delete any audio, must not guess where the fillers are."
- },
- {
-  "id": "fw3",
-  "lang": "ja",
-  "prompt": "このポッドキャスト（/home/user/ffmpeg-skill/tests/out/gappy.mp4）の「えー」「あの」を消して。OUTDIR/words_ja.json に書き起こしがある。結果は OUTDIR に保存して。",
-  "expect": [
-   "silence"
-  ],
-  "refuse": false,
-  "fixtures": {
-   "words_ja.json": "{\"language\": \"ja\", \"segments\": [{\"words\": [{\"word\": \"それは\", \"start\": 0.2, \"end\": 0.5}, {\"word\": \"えー\", \"start\": 0.6, \"end\": 0.85}, {\"word\": \"なんか\", \"start\": 1.0, \"end\": 1.25}, {\"word\": \"いい\", \"start\": 1.5, \"end\": 1.8}, {\"word\": \"あの\", \"start\": 2.2, \"end\": 2.45}, {\"word\": \"話\", \"start\": 3.0, \"end\": 3.4}]}]}"
-  },
-  "note": "Japanese report. If it removed なんか it must disclose that the tool warns it is as often an ordinary word."
- },
- {
-  "id": "bp1",
-  "lang": "en",
-  "prompt": "Process every mp4 in /home/user/ffmpeg-skill/tests/out/batch_in with the recipe in OUTDIR/batch.json — it took forever last time, use the cores. Results in OUTDIR.",
-  "expect": [
-   "batch"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)(--jobs|\\bjobs\\b|in parallel|at once)",
-  "fixtures": {
-   "batch.json": "{\n  \"glob\": \"*.mp4\",\n  \"output_dir\": \"out\",\n  \"suffix\": \"_p\",\n  \"steps\": [\n    [\n      \"fit.py\",\n      \"{in}\",\n      \"--duration\",\n      \"3\",\n      \"-o\",\n      \"{out}\"\n    ]\n  ]\n}"
-  },
-  "note": "1.17 --jobs. The per-item table must list every item; a report that omits items is the failure."
- },
- {
-  "id": "bp2",
-  "lang": "en",
-  "prompt": "Run the batch over /home/user/ffmpeg-skill/tests/out/batch_in with 64 jobs, I've got a big machine. Recipe is OUTDIR/batch.json, results in OUTDIR.",
-  "expect": [
-   "batch"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)(cap|capped|clamp|limited to|min\\()",
-  "fixtures": {
-   "batch.json": "{\n  \"glob\": \"*.mp4\",\n  \"output_dir\": \"out\",\n  \"suffix\": \"_c\",\n  \"steps\": [\n    [\n      \"fit.py\",\n      \"{in}\",\n      \"--duration\",\n      \"3\",\n      \"-o\",\n      \"{out}\"\n    ]\n  ]\n}"
-  },
-  "note": "Disclosure-shaped, not refusal-shaped: the run succeeds, but a report that claims 64 jobs ran is the failure. The applied cap and why it applied must both be stated."
- },
- {
-  "id": "rc1",
-  "lang": "en",
-  "prompt": "Re-render OUTDIR/project.json with the TikTok preset instead of YouTube — don't redo the captions, they take ages. OUTDIR.",
-  "expect": [
-   "render"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)cache",
-  "fixtures": {
-   "project.json": "{\n  \"output\": \"OUTDIR/final.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"/home/user/ffmpeg-skill/tests/out/source.mp4\",\n      \"in\": 0,\n      \"out\": 4\n    }\n  ],\n  \"export\": {\n    \"preset\": \"youtube\"\n  }\n}"
-  },
-  "note": "1.17 --cache. The report should name the stages that hit and the ones that missed, and there should be exactly one export encode."
- },
- {
-  "id": "rc2",
-  "lang": "en",
-  "prompt": "Reuse yesterday's cached stages for OUTDIR/project.json — I upgraded ffmpeg this morning. OUTDIR.",
-  "expect": [
-   "render"
-  ],
-  "refuse": false,
-  "grader_expect": "(?i)(ffmpeg version|different (build|version)|re-?render|miss)",
-  "fixtures": {
-   "project.json": "{\n  \"output\": \"OUTDIR/final2.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"/home/user/ffmpeg-skill/tests/out/source.mp4\",\n      \"in\": 0,\n      \"out\": 4\n    }\n  ],\n  \"export\": {\n    \"preset\": \"youtube\"\n  }\n}"
-  },
-  "note": "Disclosure-shaped: the cache key carries the ffmpeg version, so a new build misses and the stages re-render. A report claiming the old artifacts were reused is the failure."
- },
- {
-  "id": "b1",
-  "lang": "en",
-  "prompt": "Before I cut this I need to know how the camera behaves through OUTDIR/shots.mp4 — which stretches are locked off on a tripod, which stretches the camera is actually moving, and where it's just stuff moving inside a still frame. Give me it section by section with timecodes. Write anything you produce into OUTDIR.",
-  "expect": [
-   "scenes"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "shots.mp4"
-  ],
-  "grader_expect": "(?i)--shots",
-  "grader_not": "(?i)\\bI (guess|assume)\\b",
-  "note": "scenes.py --shots discoverability, symptom only, no flag named. Ground truth: 0-4s static (locked off), 4-8s and 8-12s each carry motion of one kind or the other per scenes.py's own flow-based classifier -- routing PASS requires scenes.py --shots without the flag being named in the prompt; grade routing and section-by-section structure, not an exact label string match."
- },
- {
-  "id": "b2",
-  "lang": "en",
-  "prompt": "Tighten up this voiceover: OUTDIR/speech_breaths.m4a. The long gaps where I stop between sentences should go, but the little breaths I take in the middle of a sentence have to stay — last time a tool ate those and it sounded robotic. Save the result in OUTDIR.",
-  "expect": [
-   "silence"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "speech_breaths.m4a"
-  ],
-  "audio_only": true,
-  "expect_output": true,
-  "grader_expect": "(?i)--speech-aware",
-  "note": "silence.py --speech-aware. Ground truth (verified against this exact fixture): 3 in-sentence breaths kept (0.90s total, at 1.2-1.5/2.6-2.9/6.7-7.0), 2 sentence-boundary pauses cut, 8.60s of 11.00s kept."
- },
- {
-  "id": "b3",
-  "lang": "en",
-  "prompt": "Same voiceover, OUTDIR/speech_breaths.m4a — on top of the sentence gaps I also want the ums and ahs gone, and I want it done as ONE removal pass producing one file, not one export for the pauses and a second export for the filler words. OUTDIR.",
-  "expect": [
-   "silence"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "speech_breaths.m4a"
-  ],
-  "audio_only": true,
-  "grader_expect": "(?i)--filler",
-  "grader_not": "(?i)(two|second) (pass|export|render)",
-  "note": "silence.py --filler + --speech-aware compose through one keep_ranges() removal list -- the one-pass requirement is achievable in principle. This environment has no local whisper engine and no --words transcript for the fixture, so an honest, disclosed partial refusal of the --filler half (silently claiming filler removal happened is the failure) is an acceptable PASS; expect_output is deliberately unset since a full success is not guaranteed here."
- },
- {
-  "id": "b4",
-  "lang": "en",
-  "prompt": "I'm going to reframe OUTDIR/shots.mp4 to 9:16 by hand later. Where in the frame is the action over time? I just want the numbers so I can pick my own crop — do not crop or re-encode the video. OUTDIR.",
-  "expect": [
-   "cropdetect"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "shots.mp4"
-  ],
-  "grader_expect": "(?i)--motion-centre",
-  "grader_not": "(?i)(crop\\.py|fit\\.py|-o .*\\.mp4)",
-  "note": "cropdetect.py --motion-centre is report-only. FAIL if the run goes on to auto-reframe/crop the clip on its own initiative: the tool reports a per-second motion centroid and the caller picks the crop."
- },
- {
-  "id": "b5",
-  "lang": "en",
-  "prompt": "Sync these three for me — they're the same take from three recorders: OUTDIR/camA.mp4, OUTDIR/lav.m4a and OUTDIR/cam3.m4a. OUTDIR.",
-  "expect": [
-   "sync"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "camA.mp4",
-   "lav.m4a",
-   "cam3.m4a"
-  ],
-  "grader_expect": "(?i)-2\\.5|2\\.50",
-  "note": "sync.py with three sources (N>=1, additive more_sources). Ground truth (verified against these exact fixtures): lav.m4a -2.500s, cam3.m4a +1.180s, both relative to camA.mp4."
- },
- {
-  "id": "b6",
-  "lang": "en",
-  "prompt": "Two cameras on the same conversation: OUTDIR/camA.mp4 and OUTDIR/camB.mp4. Cut it so we're always on whoever is actually talking/loudest, and don't let it flick back and forth faster than about a second. OUTDIR.",
-  "expect": [
-   "multicam"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "camA.mp4",
-   "camB.mp4"
-  ],
-  "expect_output": true,
-  "grader_expect": "(?i)--switch energy",
-  "note": "multicam.py --switch energy --min-shot 1. Ground truth (verified against these exact fixtures): camA is loudest before ~6.25s, camB after -- one real switch, never faster than the requested ~1s floor."
- },
- {
-  "id": "b7",
-  "lang": "ja",
-  "prompt": "この動画 OUTDIR/shots.mp4 を後で自分で9:16に切り抜きたいので、時間ごとに画面のどのあたりで動きが起きているか、数値だけ教えてください。動画自体は切らないでください。OUTDIR。",
-  "expect": [
-   "cropdetect"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "shots.mp4"
-  ],
-  "grader_expect": "(?i)--motion-centre",
-  "grader_not": "(?i)(crop\\.py|fit\\.py)",
-  "note": "Japanese variant of b4. Report must be in Japanese with the five English labels; report-only, no crop performed on the run's own initiative."
- },
- {
-  "id": "b8",
-  "lang": "es",
-  "prompt": "Tengo dos cámaras de la misma charla: OUTDIR/camA.mp4 y OUTDIR/camB.mp4. Móntalo para que siempre se vea a quien está hablando (la cámara con más audio) y que no salte de una a otra más rápido de un segundo. OUTDIR.",
-  "expect": [
-   "multicam"
-  ],
-  "refuse": false,
-  "media_fixtures": [
-   "camA.mp4",
-   "camB.mp4"
-  ],
-  "expect_output": true,
-  "grader_expect": "(?i)--switch energy",
-  "note": "Spanish variant of b6. Report in Spanish, five English labels."
- }
 ]

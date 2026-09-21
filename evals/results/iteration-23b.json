@@ -1,0 +1,46 @@
+{
+  "iteration": "23b",
+  "at_version": "1.25.0",
+  "date": "2026-09-21",
+  "status": "partial, continuing iteration-23-partial (this repo's most recently completed campaign was eval 22 at 1.18.3; eval 23 opened at 1.19.3 and closed as partial -- Set B, Set D and the routing pass were documented blockers there, not silently skipped). This pass adds real, graded coverage for the two features that shipped since: caption.py --karaoke-style word (#276, 1.24.1) and the +faststart fixes (#275, #279, 1.24.1/1.25.0). It does not attempt Set B, Set D or the routing pass again -- see 'blockers' below, which restate iteration-23-partial's findings because this sandbox has not changed.",
+  "note_on_version": "The task brief that started this pass assumed the shipped version was 1.24.1. package.json / git tags show 1.25.0 is current on main (1.25.0 is a chore: release bump, no script changes since 1.24.1 -- see CHANGELOG.md). Both karaoke-style word and the faststart fixes are present and unchanged at 1.25.0, so the eval below is valid at the version actually on main.",
+  "set_e": {
+    "description": "Two new real-execution prompts added to evals/agent_prompts_24.json (ids kw1, ff1), run for real (actual ffmpeg encodes, not simulated) against the live scripts, and graded with this repo's own evals/grade_runs_24.py -- the same regex-based grader iteration-22/23 used for Set A/B/C, not a fabricated score.",
+    "runs": 2,
+    "pass": 2,
+    "fail": 0,
+    "detail": [
+      {
+        "id": "kw1",
+        "prompt_summary": "caption a Reel with word-level karaoke, explicitly complaining that a prior run 'just changed colour' and asking for the active word to 'actually get bigger'",
+        "command": "caption.py source.mp4 --text cues.txt --karaoke --karaoke-style word --write-ass cues.ass --output kw1.mp4",
+        "result": "pass",
+        "grader": "routing 100% (caption.py used), report_fmt ok, grader_expect '(?i)--karaoke-style word' matched, grader_not '(?i)--karaoke-style sweep' did not match, real execution: kw1.mp4 ffprobe-readable",
+        "evidence": "generated cues.ass Dialogue lines carry \\fscx112\\fscy112 on the active word (e.g. 'Hello{\\r} {\\c&H00B4B4B4}world' -> next event '{\\c...\\fscx112\\fscy112...}world{\\r}'), confirming the active word is genuinely scaled (112% of caption size, --karaoke-scale default), not only recoloured. faststart also holds on this output (moov offset 36 < mdat offset 14170)."
+      },
+      {
+        "id": "ff1",
+        "prompt_summary": "template delivery for YouTube with normal loudness and all checks passing -- exercises fit -> loudness.py -I -14 --tp -1 -> export -> check.py",
+        "command": "render.py --template youtube source.mp4 --output ff1_delivery.mp4",
+        "result": "pass",
+        "grader": "routing 100% (render.py/loudness.py chain + check.py), report_fmt ok, grader_expect '(?i)(faststart|moov)' matched, real execution: ff1_delivery.mp4 ffprobe-readable",
+        "evidence": "check.py: loudness PASS -14.0 LUFS (target -14 +/- 2), true peak PASS -4.4 dBTP (target <= -1 dBTP), 0 failed / 1 warning (no subtitle track, not requested). Byte-level check of ff1_delivery.mp4: moov atom at offset 36, mdat at offset 14396 -- moov precedes mdat, i.e. faststart is present after the loudnorm re-encode. No faststart regression found on the template-delivery + loudness-normalize path (#275/#279)."
+      }
+    ]
+  },
+  "blockers": {
+    "opus_focused_grader": {
+      "status": "not performed as an independent model pass",
+      "reason": "Earlier iterations' 'Opus focused grader' (eval 16-18 CHANGELOG entries) used a separate model call to read full transcripts and assign a quality score (e.g. 'Opus quality 4.25' in eval 20's roadmap note). This session has only this one model (Sonnet 5, the model doing the run) available -- no separate Opus/other-model API credentials are configured in this sandbox, same as iteration-23-partial's routing_pass finding. Grading here was therefore done with evals/grade_runs_24.py's regex-based grader only (routing/disclosure/report-format/real-execution), which is real and mechanical but not an independent qualitative read. Reported as a gap, not faked as a score."
+    },
+    "trigger_judge": {
+      "status": "not run",
+      "reason": "evals/trigger/README.md's method needs 'an independent model' choosing between this skill's description and four decoy skills for each of the 55 trigger.json prompts. That requires non-Claude (or at least a separately-invoked) model access this sandbox does not have, identical to the blocker iteration-23-partial (Set D / routing_pass) already documented. Not attempted with a substitute; documented as a blocker instead."
+    },
+    "full_108_or_re_run": {
+      "status": "not attempted",
+      "reason": "Re-running the full 108-prompt corpus end to end (real ffmpeg encodes for every prompt) is a multi-hour campaign; iteration-23-partial already covers Set A (cs1-cs3 x3) and Set C (MCP routing) with real evidence, unaffected by anything shipped since 1.19.3 (no caption/MCP-routing-relevant changes in 1.19.3-1.25.0 touch those code paths). This pass adds only the two new-feature-targeted prompts (kw1, ff1) rather than re-running Set A/C for no code-path reason to expect a different result."
+    }
+  },
+  "conclusion": "kw1 and ff1 both pass with real evidence: karaoke-style word genuinely scales the active word (\\fscx/\\fscy 112%, not just a colour change), and the +faststart fixes hold through the loudness-normalize template-delivery path (moov before mdat, check.py loudness/true-peak PASS). No regression found. The Opus-grader and trigger-judge steps remain blocked in this sandbox for the same reason iteration-23-partial recorded (no independent/non-Claude model access) -- this is a restated, not a new, gap. Eval 23 (encompassing -partial and this -23b addendum) stays open pending an environment with that access, or a session scoped to schedule Set D (the 55-prompt trigger judge) and Set B (whisper/TTS) separately, as iteration-23-partial recommended."
+}

@@ -17,11 +17,13 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.24.1** — `caption.py --karaoke-style word` emits one ASS
+The released version today is **1.25.0** — `caption.py --karaoke-style word` emits one ASS
 Dialogue event per word (active word scaled/emboldened, past/upcoming colours) instead of the
 `\kf` colour-only sweep (#276), and `loudness.py`'s video-stream-copy branch now writes
 `-movflags +faststart` like every other mp4-writing path, fixing a `render.py --template`
-delivery that lost faststart on its `--normalize` pass (#275).
+delivery that lost faststart on its `--normalize` pass (#275). 1.25.0 is a `chore:` release bump
+that closes the remaining mp4 stream-copy paths over to `+faststart` too (#279); no script API
+change, tool count still 42.
 1.19.0 (the `--write-project` feature) is a `feat:` release, hence the minor bump; it does not
 start the "1.19.0: observability, portability" theme further down this document, which remains
 planned. 1.19.2 is docs-only (SKILL.md's overlong-word and MCP core-12 rows, this same truth-up).
@@ -71,6 +73,8 @@ structured-arguments note out of every one of the 42 `tools/list` descriptions i
 | 1.22.0 | shipped, eval pending | `batch.py` reports `cut.py`'s stream-copy vs hybrid re-encode rate across a folder (#269): `run_step()` reads each step's own `--json` result document back (previously only used for its output path), and rolls `cut.py`'s per-call `reencoded` into one `cut_stream_copy` summary (`{calls, stream_copy, reencoded, stream_copy_rate}`). `feat:` release, hence the minor bump. Tool count still 42 |
 | 1.23.0 | shipped, eval pending | MCP `tools/list` descriptions shortened to one line each (#271): `MCP_STRUCTURED_NOTE` used to be appended to every one of the 42 descriptions verbatim; it now goes once into `initialize`'s `instructions` field instead. Additive/no-op for `tools/call` and `inputSchema`; the frozen 1.x MCP snapshot doesn't track descriptions. `feat:` release, hence the minor bump. Tool count still 42 |
 | 1.24.0 | shipped, eval pending | MCP `prompts` capability with five workflow recipes (#272): `reel`, `podcast`, `multicam`, `delivery_check`, `hdr`. `initialize` advertises `capabilities.prompts`; `prompts/list`/`prompts/get` fill a template built from facts SKILL.md's own request table already states -- recipes, not new tool calls, every command line named is one `tools/call` (or the CLI) can already run. `feat:` release, hence the minor bump. Tool count still 42 |
+| 1.24.1 | shipped, evaluated (eval 23b) | `caption.py --karaoke-style word` (#276, #278): one ASS Dialogue event per word, active word scaled by `--karaoke-scale` (default 112%) and emboldened, past/upcoming words coloured -- not a colour-only sweep. `loudness.py`'s stream-copy branch gains `-movflags +faststart` (#277, #275), fixing a `render.py --template ... --normalize` delivery that lost faststart. Eval 23b's `kw1`/`ff1` prompts (`evals/results/iteration-23b.json`) confirm both for real: the generated ASS carries `\fscx112\fscy112` on the active word, and a loudness-normalised template-youtube delivery still has `moov` before `mdat`, with `check.py`'s loudness/true-peak rows PASS |
+| 1.25.0 | shipped, evaluated (eval 23b) | `chore:` release bump; closes the remaining mp4 stream-copy paths over to `-movflags +faststart` (#279). No script API change, tool count still 42. Covered by eval 23b alongside 1.24.1 -- same faststart code path, no regression found |
 | 2.0.0 | planned | — |
 
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
@@ -560,6 +564,60 @@ future release.
 - **Not yet evaluated.** A future eval should re-run `cs2` against real ground truth (an
   independent grader opening the produced stills, not a self-report) to confirm the word no
   longer clips in practice, not just in the unit tests.
+
+## Cross-vendor eval runner (shipped, evals/docs/tests only, no version bump)
+
+`evals/run.py` grades any transcript file against `evals/tasks.json` (the 29-prompt
+routing/refusal set) or the fuller `agent_prompts_24.json`/`agent_prompts_exec.json` sets with
+substrings and `re.search` only — no `claude` CLI, no LLM-judge call, no dependency on any
+particular vendor's model anywhere in the grading path. `--prompts` selects the corpus, `--json`
+gives machine-readable output, and an `expect` slot's `a|b` alternation plus the existing
+`grader_expect`/`grader_not` regexes are graded the same way whether the transcript came from
+Claude Code, Cursor, Codex, or another harness. `evals/README.md`'s "Running this from Cursor,
+Codex, or another harness" section documents the walkthrough end to end — how to get the
+prompts, run them in another harness, save a transcript, grade it, and how to read the result:
+what regex-only grading can and can't tell you, and why a cross-vendor pass rate is not directly
+comparable to this repo's own `evals/results/iteration-*.json` numbers (different agent, different
+grader script, in places a different corpus subset — see that section's "Comparing results across
+vendors"). This closes `docs/design-decisions.md`'s P1-8 ("at least one routing run on a
+non-Claude model") on the tooling side; no cross-vendor number is published here yet because the
+maintainer cannot run another vendor's model from this environment, which is stated rather than
+worked around. `scripts/`, the contract, and MCP are unchanged — this is dev-tooling only, so it
+carries no version bump and no CHANGELOG entry.
+
+MCP's `tools/list` defaulting to the core 12 — the other roadmap item this same review pass
+checked — was already shipped and documented: see the **1.18.3** row above and 1.19.2's SKILL.md
+truth-up. No further action was needed there.
+
+## 1.24.1 / 1.25.0 — karaoke-style word + the remaining faststart paths (shipped, evaluated, eval 23b)
+
+- **Done.** `caption.py --karaoke-style word` (#276, #278): `sweep` (default) keeps today's `\kf`
+  colour-fill, one Dialogue event per cue; `word` instead emits one Dialogue event per word, the
+  active word scaled by `--karaoke-scale` (default 112%) and emboldened, past words in `--color`,
+  upcoming words in `--upcoming-color`. `loudness.py`'s stream-copy branch gained
+  `-movflags +faststart` (#277, #275), and 1.25.0 closes the same flag over the remaining
+  mp4 stream-copy paths repo-wide (#279). No new CLI surface beyond `--karaoke-style`,
+  `--highlight-color`/`--upcoming-color`/`--karaoke-scale`/`--karaoke-timing`; tool count still 42.
+- **Evaluated (eval 23b, `evals/results/iteration-23b.json`), continuing eval 23 which closed
+  partial at 1.19.3 (`iteration-23-partial.json`).** Two new real-execution prompts (`kw1`, `ff1`)
+  were added to `evals/agent_prompts_24.json` and run for real (actual ffmpeg encodes) against the
+  live scripts, graded with `evals/grade_runs_24.py` (the same regex grader Set A/B/C used, not a
+  fabricated score): `kw1` asks for word-level karaoke where "the active word should get bigger,
+  not just change colour" (the #276 reporter's own words) — routed to `caption.py --karaoke-style
+  word`, and the generated ASS carries `\fscx112\fscy112` on the active word, confirming the size
+  bump is real, not just a colour change. `ff1` is a template-delivery prompt through
+  `render.py --template youtube` (fit → `loudness.py -I -14 --tp -1` → export → `check.py`):
+  faststart holds through the loudness-normalize re-encode (`moov` before `mdat`, byte-checked)
+  and `check.py`'s loudness/true-peak rows both PASS. Both pass; no regression found. Routing
+  100%, report format 2/2, disclosure (`grader_expect`) 2/2, real execution 2/2 — all against the
+  actual grader script, not restated by hand.
+- **Not done.** The Opus-focused-grader qualitative pass and the 55-prompt trigger-judge routing
+  pass (`evals/trigger/`) both need a model call independent of the one producing the run; this
+  sandbox has no such access configured, the same blocker iteration-23-partial recorded for its
+  routing pass. Not faked with this run's own self-report standing in for an independent judge —
+  documented here as a still-open gap. Eval 23 (both `-partial` and this `-23b` addendum) stays
+  open until an environment with that access runs Set B (whisper/TTS), Set D (the 55-prompt
+  trigger judge), and an Opus/independent-model quality pass.
 
 ## 1.19.0 — observability, portability (planned)
 
