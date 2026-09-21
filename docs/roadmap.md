@@ -17,11 +17,11 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.24.0** — `multicam.py --write-project FILE` writes a
-`render.py` project that reproduces the tool's own cut decision (eval 21's `mc2` gap, no more
-hand-translating cuts/offsets into `clips[]`), and `--filler` alone no longer jump-cuts unrelated
-dead-air silence (eval 19's `fw1`/`fw3`: "remove the ums" silently removed ~5s of unasked-for
-pauses too; fixed by skipping generic silence detection unless `--speech-aware` is also given).
+The released version today is **1.24.1** — `caption.py --karaoke-style word` emits one ASS
+Dialogue event per word (active word scaled/emboldened, past/upcoming colours) instead of the
+`\kf` colour-only sweep (#276), and `loudness.py`'s video-stream-copy branch now writes
+`-movflags +faststart` like every other mp4-writing path, fixing a `render.py --template`
+delivery that lost faststart on its `--normalize` pass (#275).
 1.19.0 (the `--write-project` feature) is a `feat:` release, hence the minor bump; it does not
 start the "1.19.0: observability, portability" theme further down this document, which remains
 planned. 1.19.2 is docs-only (SKILL.md's overlong-word and MCP core-12 rows, this same truth-up).
