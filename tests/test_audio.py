@@ -16,6 +16,16 @@ from _fixtures import MediaFixtures, OUT, SCRIPTS, script, sh  # noqa: E402
 from _common import probe  # noqa: E402
 
 
+def _is_faststart(path) -> bool:
+    """moov before mdat. Reads the whole file rather than a leading slice: bytes.find() on a
+    short read returns -1 for an atom that is actually further in, which compares as "before"
+    every other offset and reports a false faststart -- issue #275 called this out explicitly
+    after hitting it while confirming the bug."""
+    data = Path(path).read_bytes()
+    moov, mdat = data.find(b"moov"), data.find(b"mdat")
+    return moov != -1 and mdat != -1 and moov < mdat
+
+
 class AudioTests(MediaFixtures):
     """Audio, loudness and waveform."""
 
@@ -79,6 +89,12 @@ class AudioTests(MediaFixtures):
         self.assertClose(float(stats["input_i"]), -16.0, 1.0, "integrated loudness")
         self.assertLessEqual(float(stats["input_tp"]), -1.0, "true peak ceiling")
         self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
+        # #275: every other mp4-writing path (x264, colour, export.py) adds -movflags
+        # +faststart; this stream-copy branch (video copied, only audio re-encoded -- the path
+        # render.py --template's export.py --normalize step runs) silently dropped it, so a
+        # template delivery came out with moov at the end despite export.py having just written
+        # it faststart.
+        self.assertTrue(_is_faststart(out), "#275: loudness.py's stream-copy branch must write +faststart")
 
     def test_audio_music_bed_never_shortens_the_video(self):
         """#164: a looped music bed under --duck came out 11.925 s from a 12.00 s source, and
