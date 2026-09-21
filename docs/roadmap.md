@@ -17,11 +17,10 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.24.1** — `caption.py --karaoke-style word` emits one ASS
-Dialogue event per word (active word scaled/emboldened, past/upcoming colours) instead of the
-`\kf` colour-only sweep (#276), and `loudness.py`'s video-stream-copy branch now writes
-`-movflags +faststart` like every other mp4-writing path, fixing a `render.py --template`
-delivery that lost faststart on its `--normalize` pass (#275).
+The released version today is **1.25.0** — `audio.py`, `caption.py --mode mux`, `sync.py` and
+`cut.py`'s remaining mp4 stream-copy paths now write `-movflags +faststart` too, the same fix
+`loudness.py` got in 1.24.1 (#275/#277/#279); `metadata.py`'s own `-c copy` tag/chapter write is
+left alone, since its documented guarantee is the container's metadata only.
 1.19.0 (the `--write-project` feature) is a `feat:` release, hence the minor bump; it does not
 start the "1.19.0: observability, portability" theme further down this document, which remains
 planned. 1.19.2 is docs-only (SKILL.md's overlong-word and MCP core-12 rows, this same truth-up).
