@@ -43,6 +43,17 @@ def png_size(path) -> tuple:
     return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
 
 
+def _is_faststart(path) -> bool:
+    """moov before mdat. Reads the whole file rather than a leading slice: bytes.find() on a
+    short read returns -1 for an atom that is actually further in, which compares as "before"
+    every other offset and reports a false faststart -- issue #275 called this out explicitly
+    after hitting it while confirming the bug. Shared by every test module that writes an mp4
+    through a stream-copy path (#277's faststart regression tests)."""
+    data = Path(path).read_bytes()
+    moov, mdat = data.find(b"moov"), data.find(b"mdat")
+    return moov != -1 and mdat != -1 and moov < mdat
+
+
 def script(name, *args, **kw):
     return sh(sys.executable, SCRIPTS / name, *args, **kw)
 

@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, script, sh  # noqa: E402
 from _common import probe  # noqa: E402
 
 
@@ -34,6 +34,15 @@ class EditingTests(MediaFixtures):
         out = OUT / "cut3.mp4"
         proc = script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out)
         self.assertIn("lossless stream copy", proc.stderr)
+        # same shape as #275/#277: a stream-copy mp4-writing path must add -movflags +faststart
+        self.assertTrue(_is_faststart(out), "cut.py's lossless single-segment stream copy must write +faststart")
+
+    def test_cut_multi_segment_concat_copy_writes_faststart_mp4(self):
+        """Same shape as #275/#277: the multi-segment concat join (`-f concat ... -c copy`) is a
+        second, separate mp4-writing stream-copy path from the single-segment one above."""
+        out = OUT / "cut_concat_faststart.mp4"
+        script("cut.py", self.src, "--segments", "1-3,6-9", "-o", out)
+        self.assertTrue(_is_faststart(out), "cut.py's multi-segment concat join must write +faststart")
 
     def test_cut_segments_accurate(self):
         out = OUT / "cut2.mp4"

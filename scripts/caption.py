@@ -1260,6 +1260,8 @@ def main() -> int:
         for n in range(len(added)):
             maps += ["-map", f"{n + 1}:0"]
         cmd += maps + ["-c:v", "copy"] + (["-c:a", "copy"] if meta.get("audio") else [])
+        if mp4_family:
+            cmd += ["-movflags", "+faststart"]
         for i in range(existing_subs):
             cmd += [f"-c:s:{i}", "copy"]
         tracks: List[Dict[str, Any]] = []

@@ -18,7 +18,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
 from _common import default_font_file, detect_script, escape_filter_path, font_family_for_script, font_for_script, probe  # noqa: E402
 
 
@@ -740,6 +740,15 @@ class PictureTests(MediaFixtures):
         self.assertEqual(m["video"]["codec"], "h264", "video must be copied, not re-encoded to a different codec")
         self.assertEqual(m["audio"]["codec"], "aac", "audio must be copied untouched")
         self.assertClose(m["duration"], 12.0, 0.15)
+
+    def test_caption_mux_writes_faststart_mp4(self):
+        """Same shape as #275/#277: --mode mux stream-copies video/audio with -c:v copy / -c:a
+        copy while only adding a subtitle track, and must write -movflags +faststart on an mp4
+        output the same way every other mp4-writing path does."""
+        srt = OUT / "mux_faststart_cues.srt"
+        out = OUT / "cap_mux_faststart.mp4"
+        script("caption.py", self.src, "--text", self.cues, "--write-srt", srt, "--mode", "mux", "-o", out)
+        self.assertTrue(_is_faststart(out), "caption.py --mode mux must write +faststart")
 
     def test_caption_mux_chained_keeps_every_language_track(self):
         """--mode mux used to drop any subtitle track the input already had when adding a new

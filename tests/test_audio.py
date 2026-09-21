@@ -12,18 +12,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, script, sh  # noqa: E402
 from _common import probe  # noqa: E402
-
-
-def _is_faststart(path) -> bool:
-    """moov before mdat. Reads the whole file rather than a leading slice: bytes.find() on a
-    short read returns -1 for an atom that is actually further in, which compares as "before"
-    every other offset and reports a false faststart -- issue #275 called this out explicitly
-    after hitting it while confirming the bug."""
-    data = Path(path).read_bytes()
-    moov, mdat = data.find(b"moov"), data.find(b"mdat")
-    return moov != -1 and mdat != -1 and moov < mdat
 
 
 class AudioTests(MediaFixtures):
@@ -116,6 +106,15 @@ class AudioTests(MediaFixtures):
             self.assertAlmostEqual(m["duration"], src_dur, msg=tag, delta=0.02)
             self.assertEqual(self._frame_count(out), src_frames, f"{tag}: the picture lost or gained frames")
             self.assertAlmostEqual(m["audio"].get("duration") or m["duration"], src_dur, msg=tag, delta=0.05)
+
+    def test_audio_keep_video_branch_writes_faststart_mp4(self):
+        """Same shape as #275/#277 (loudness.py): --replace's keep_video branch stream-copies the
+        video with -c:v copy while only the audio is touched, and must add -movflags +faststart
+        on an mp4 output the same way every other mp4-writing path does."""
+        out = OUT / "audio_keepvideo_faststart.mp4"
+        script("audio.py", self.src, "--replace", self.mic, "-o", out)
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
+        self.assertTrue(_is_faststart(out), "audio.py's keep_video branch must write +faststart")
 
     def test_audio_downmix_voice_and_ducking(self):
         out = OUT / "downmix.mp4"

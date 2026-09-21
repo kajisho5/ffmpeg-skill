@@ -78,7 +78,10 @@ def copy_args(meta: dict, dst: str) -> List[str]:
     """Stream-copy arguments: everything into a video container, audio only into an audio extension."""
     if is_audio_output(dst) and meta.get("video"):
         return ["-vn", "-c:a", "copy"]
-    return ["-c", "copy"]
+    args = ["-c", "copy"]
+    if os.path.splitext(dst)[1].lower() in (".mp4", ".mov", ".m4v"):
+        args += ["-movflags", "+faststart"]
+    return args
 
 
 LOSSLESS_AUDIO = {"pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "flac"}
@@ -353,7 +356,10 @@ def main() -> int:
             with open(listfile, "w", encoding="utf-8") as fh:
                 for p in parts:
                     fh.write(concat_list_line(p) + "\n")
-            cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", output]
+            cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy"]
+            if ext in (".mp4", ".mov", ".m4v"):
+                cmd += ["-movflags", "+faststart"]
+            cmd += [output]
             proc = run(cmd, check=False)
             if proc.returncode != 0:
                 info("concat with stream copy failed, re-encoding the join")

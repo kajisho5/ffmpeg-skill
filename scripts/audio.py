@@ -21,6 +21,7 @@ Examples:
 """
 import argparse
 import sys
+from pathlib import Path
 from typing import Any, Dict, List
 
 from _common import STATE, add_common, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, run_keeping_subtitles, fmt_secs
@@ -305,6 +306,8 @@ def main() -> int:
     cmd = ffmpeg_base() + inputs + ["-filter_complex", ";".join(graph), "-map", f"[{last}]"]
     if keep_video:
         cmd += ["-map", "0:v:0", "-c:v", "copy"]
+        if Path(output).suffix.lower() in (".mp4", ".mov", ".m4v"):
+            cmd += ["-movflags", "+faststart"]
     elif has_video:
         cmd += ["-vn"]  # audio extension: the picture is dropped, not copied into a container that cannot hold it
     cmd += audio_codec_for(output, args.bitrate)
