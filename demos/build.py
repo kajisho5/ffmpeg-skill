@@ -1234,6 +1234,115 @@ def demo_metadata_chapters(ctx):
     return before, after
 
 
+def demo_scenes_shots(ctx):
+    """scenes.py --shots labels each detected shot static / pan / motion from a measured
+    optical-flow proxy -- a report, not an edit. The three shots in the fixture are three
+    unrelated sources concatenated, so the labels differ and this is not a guess."""
+    before = FIX / "shots.mp4"
+    out = ctx.script("scenes.py", before, "--shots", "--json", capture=True)
+    shots = []
+    if out:
+        found = json.loads(out)
+        shots = found.get("shots") or []
+        if shots:
+            ctx.note("%d shots: %s" % (len(shots), ", ".join(
+                "%.1fs-%.1fs %s" % (s.get("start", 0), s.get("end", 0), s.get("label", "?"))
+                for s in shots)))
+    total = duration(before) or 6.0
+    font = label_font()
+    draws = ["drawbox=x=0:y=70:w=960:h=8:color=0x39ff88@0.7:t=fill"]
+    for idx, s in enumerate(shots or [{"start": 0, "end": total, "label": "?"}]):
+        x0 = int((s.get("start", 0) / total) * 940)
+        draws.append("drawbox=x=%d:y=56:w=4:h=36:color=white:t=fill" % x0)
+        draws.append("drawtext=fontfile='%s':text='%s':fontsize=22:fontcolor=white:"
+                     "x=%d:y=%d" % (esc(font), s.get("label", "?"), x0 + 10,
+                                    100 if idx % 2 else 20))
+    strip = ctx.path("strip.png")
+    ffmpeg("-f", "lavfi", "-i", "color=c=0x101014:s=960x160", "-frames:v", "1",
+           "-vf", ",".join(draws), str(strip))
+    after = ctx.path("after.mp4")
+    ffmpeg("-loop", "1", "-t", "3", "-i", str(strip), "-vf",
+           "pad=960:540:0:190:0x101014,format=yuv420p", "-r", "10", "-c:v", "libx264",
+           "-preset", "veryfast", "-crf", "24", str(after))
+    return before, after
+
+
+def demo_silence_speech_aware(ctx):
+    """A 0.25 s breath sits inside a sentence, well under the 0.6 s default --min-silence, and a
+    1 s pause sits between sentences. Left is what a --min-silence low enough to also catch the
+    breath (0.2 s) cuts under plain detection -- it removes the breath along with the pause.
+    Right is --speech-aware at the ordinary 0.6 s --min-silence: the fine 0.12 s floor still
+    finds the breath, but it is shorter than --min-silence so it is kept and only the real
+    sentence-boundary pause is cut."""
+    before = ctx.path("breathy.mp4")
+    expr = "0.5*sin(2*PI*440*t)*(lt(t\\,3)+between(t\\,3.25\\,6)+gt(t\\,7))"
+    ffmpeg("-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % expr, "-t", "10", str(before))
+    naive_out = ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.2",
+                           "--margin", "0.1", "--list", "--json", capture=True)
+    naive = ctx.path("naive.mp4")
+    ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.2",
+               "--margin", "0.1", "--preset", "veryfast", "-o", naive)
+    aware_out = ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.6",
+                           "--speech-aware", "--list", "--json", capture=True)
+    after = ctx.path("after.mp4")
+    ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.6",
+               "--speech-aware", "--preset", "veryfast", "-o", after)
+    naive_cuts = len(json.loads(naive_out).get("silences", [])) if naive_out else "?"
+    aware = json.loads(aware_out) if aware_out else {}
+    breaths = aware.get("speech_aware", {}).get("breaths_kept", "?")
+    ctx.note("--min-silence 0.2 (low enough to also catch the 0.25s breath): %s silence(s) cut, "
+             "the breath among them; --min-silence 0.6 --speech-aware: only the real "
+             "sentence-boundary pause is cut, %s breath(s) kept" % (naive_cuts, breaths))
+    return naive, after
+
+
+def demo_motion_centre(ctx):
+    """cropdetect.py --motion-centre reports where the motion sits per second; it never picks a
+    reframe. Left is a naive centre crop, which clips the moving subject sitting off to one
+    side; right is a crop.py window placed on the measured centroid instead."""
+    before = ctx.path("offcentre.mp4")
+    ffmpeg("-f", "lavfi", "-i", "color=c=0x101014:s=960x540", "-f", "lavfi",
+           "-i", "color=c=0xff5533:s=90x90", "-filter_complex",
+           "[0:v][1:v]overlay=x='740+40*sin(2*PI*0.4*t)':y=225", "-t", "4",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
+           str(before))
+    out = ctx.script("cropdetect.py", before, "--motion-centre", "--json", capture=True)
+    # Matches this fixture's own measured centroid (deterministic -- verified across reruns) so
+    # _DryCtx's doc-generation pass (which never actually runs cropdetect.py) records the same
+    # --x the real build below computes, instead of drifting from an arbitrary placeholder.
+    x_frac = 0.817
+    if out:
+        found = json.loads(out)
+        points = [p for p in (found.get("motion_centre") or []) if p.get("x_frac") is not None]
+        if points:
+            x_frac = sum(p["x_frac"] for p in points) / len(points)
+            ctx.note("measured motion centroid: x_frac=%.2f (average of %d samples)"
+                     % (x_frac, len(points)))
+    crop_w, crop_h = 304, 540
+    centre = ctx.path("centre.mp4")
+    ctx.script("crop.py", before, "--x", (960 - crop_w) // 2, "--y", 0,
+               "--width", crop_w, "--height", crop_h, "--preset", "veryfast", "-o", centre)
+    target_x = max(0, min(960 - crop_w, int(x_frac * 960 - crop_w / 2)))
+    after = ctx.path("after.mp4")
+    ctx.script("crop.py", before, "--x", target_x, "--y", 0, "--width", crop_w,
+               "--height", crop_h, "--preset", "veryfast", "-o", after)
+    return centre, after
+
+
+def demo_switch_energy(ctx):
+    """multicam.py --switch energy auto-switches to whichever camera is loudest at each moment,
+    respecting --min-shot; left is a fixed single-camera cut for contrast."""
+    before = ctx.path("single_cam.mp4")
+    ctx.script("multicam.py", FIX / "motion.mp4", FIX / "camb.mp4", "--switch", "0-6:0",
+               "--width", "960", "--height", "540", "--fps", "25", "--preset", "veryfast",
+               "-o", before)
+    after = ctx.path("after.mp4")
+    ctx.script("multicam.py", FIX / "motion.mp4", FIX / "camb.mp4", "--switch", "energy",
+               "--min-shot", "1", "--width", "960", "--height", "540", "--fps", "25",
+               "--preset", "veryfast", "-o", after)
+    return before, after
+
+
 CAPTIONS, PICTURE, AUDIO, DELIVERY, PROJECTS = (
     "Captions & text", "Picture", "Audio", "Delivery & checks", "Projects & inspection")
 
@@ -1433,6 +1542,19 @@ _ROWS = [
     ("metadata_auto_chapters", PROJECTS, "Chapters proposed from measured structure",
      "The left strip is the file with no markers; the right is the same file after --auto-chapters, whose timestamps come from the measured pauses and scene cuts and whose titles are deliberately 'Chapter 1..N' -- the skill proposes where, the caller says what.",
      demo_auto_chapters, "video", "latin", ("NO CHAPTERS", "PROPOSED CHAPTERS")),
+
+    ("scenes_shots", PROJECTS, "Shots labelled static / pan / motion",
+     "scenes.py --shots measures an optical-flow proxy per detected shot and reports a label for each -- a measurement, not an edit. The strip shows the three shots in the fixture with the labels actually returned.",
+     demo_scenes_shots, "video", None),
+    ("silence_speech_aware", AUDIO, "Speech-aware silence removal keeps the breaths",
+     "A 0.25 s breath sits inside a sentence and a 1 s pause sits between sentences. Left uses a --min-silence low enough to catch the breath too, so plain detection cuts both; right is --speech-aware at the ordinary --min-silence -- its finer 0.12 s floor still measures the breath, but the breath is shorter than --min-silence so it is kept, and only the real sentence-boundary pause is cut.",
+     demo_silence_speech_aware, "wave", None, ("--MIN-SILENCE 0.2 (cuts the breath)", "--SPEECH-AWARE (breath kept)")),
+    ("motion_centre_crop", PICTURE, "Crop centred on the measured motion",
+     "cropdetect.py --motion-centre reports where the motion sits per second; it never picks a reframe itself. Left is a naive centre crop that clips the moving subject sitting off to one side; right is crop.py aimed at the measured centroid instead.",
+     demo_motion_centre, "video", None, ("CENTRE CROP", "MOTION-CENTRED CROP")),
+    ("multicam_switch_energy", PICTURE, "Auto-switch to whichever camera is loudest",
+     "The literal 'energy' switch list auto-cuts to whichever of the two cameras is loudest at each moment, respecting --min-shot; left is a fixed single-camera cut for contrast.",
+     demo_switch_energy, "video", None, ("SINGLE CAMERA", "--SWITCH ENERGY")),
 ]
 
 DEMOS = [Demo(*row) for row in _ROWS]

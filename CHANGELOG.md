@@ -4,7 +4,62 @@
 
 ## Unreleased
 
-(nothing yet)
+- docs: eval 23b at 1.25.0 — real-execution coverage for `caption.py --karaoke-style word` (#276)
+  and the `+faststart` fixes (#275, #277, #279), continuing eval 23's partial close at 1.19.3;
+  Opus-grader and trigger-judge passes remain blocked on model access this sandbox lacks
+
+## 1.25.0
+
+_Automated release: version and notes generated from pull requests merged since 1.24.1._
+
+- Add -movflags +faststart to remaining mp4 stream-copy paths (#279)
+
+## 1.24.1
+
+_Automated release: version and notes generated from pull requests merged since 1.24.0._
+
+- feat(caption): `--karaoke-style word` -- one ASS Dialogue event per word, active word scaled/emboldened, past/upcoming colours (#276)
+- fix(loudness): stream-copy branch was dropping -movflags +faststart (#277)
+- caption.py: --karaoke-style word for per-word Dialogue events (scale + 3-colour highlight) (#278)
+- docs(skill): regroup the request table by intent, not script name (#274)
+- docs: README documents the MCP prompts capability; roadmap truth-up to 1.24.0 (#273)
+
+Closes: #276
+
+## 1.24.0
+
+_Automated release: version and notes generated from pull requests merged since 1.23.0._
+
+- feat(mcp): add a prompts capability with five workflow recipes (#272)
+
+## 1.23.0
+
+_Automated release: version and notes generated from pull requests merged since 1.22.0._
+
+- feat(mcp): shorten tools/list descriptions to one line, move structured-arguments note to initialize (#271)
+
+## 1.22.0
+
+_Automated release: version and notes generated from pull requests merged since 1.21.0._
+
+- feat(batch): report cut.py's stream-copy vs hybrid re-encode rate across a folder (#269)
+- docs(roadmap): truth up the released-version sentence and table to 1.21.0 (#270)
+
+## 1.21.0
+
+_Automated release: version and notes generated from pull requests merged since 1.20.0._
+
+- feat: contract --json gains per-tool examples, parsed from SKILL.md's own table (#267)
+- docs: demo gallery entries for --shots, --speech-aware, --motion-centre, --switch energy (#263)
+- docs: eval iteration-23 partial results (Phase 3, Set A + Set C) (#265)
+- test: promote eval 22 Set B (b1-b8) into evals/agent_prompts_24.json (#264)
+- test: expand trigger set with 5 symptom-only 1.18 prompts (#262)
+
+## 1.20.0
+
+_Automated release: version and notes generated from pull requests merged since 1.19.3._
+
+- feat: look.py --ink measures non-background pixels per PNG (#261)
 
 ## 1.19.3
 

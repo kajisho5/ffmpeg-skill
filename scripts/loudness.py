@@ -105,6 +105,8 @@ def main() -> int:
             cmd += ["-vn"] + audio_codec_for(output, bitrate)
         else:
             cmd += ["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", bitrate]
+            if ext in (".mp4", ".mov", ".m4v"):
+                cmd += ["-movflags", "+faststart"]
             dropped_streams = run_keeping_subtitles(cmd, output)
             return
         cmd.append(output)

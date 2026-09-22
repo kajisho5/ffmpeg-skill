@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _no_fontconfig, png_size, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _is_faststart, _no_fontconfig, png_size, script, sh  # noqa: E402
 from _common import default_font_file, font_for_script, probe  # noqa: E402
 
 
@@ -130,6 +130,31 @@ class AnalysisTests(MediaFixtures):
         script("sync.py", self.src, self.mic, "--replace-audio", "-o", out)
         again = json.loads(script("sync.py", self.src, out, "--json").stdout)
         self.assertClose(again["offset_seconds"], 0.0, 0.05, "aligned output has no residual offset")
+
+    def test_sync_replace_audio_stream_copy_writes_faststart_mp4(self):
+        """Same shape as #275/#277: --replace-audio stream-copies the reference's video with
+        -c:v copy while only the audio is rebuilt, and must write -movflags +faststart on the
+        mp4 output the same way every other mp4-writing path does."""
+        out = OUT / "sync_replace_faststart.mp4"
+        script("sync.py", self.src, self.mic, "--replace-audio", "-o", out)
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
+        self.assertTrue(_is_faststart(out), "sync.py --replace-audio must write +faststart")
+
+    def test_sync_trim_second_stream_copy_writes_faststart_mp4(self):
+        """Same shape as #275/#277, the other stream-copy spot in sync.py: --trim-second's
+        head-trim path (`-c copy`) when the second file has video and started earlier."""
+        early_video = OUT / "early_video.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=1.5",
+           "-f", "lavfi", "-i", "aevalsrc=0:s=48000:d=1.5",
+           "-i", self.src, "-filter_complex",
+           "[0:v][2:v]concat=n=2:v=1:a=0[v];[1:a][2:a]concat=n=2:v=0:a=1[a]",
+           "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
+           str(early_video))
+        out = OUT / "sync_trim_second_faststart.mp4"
+        script("sync.py", self.src, early_video, "--trim-second", "-o", out)
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
+        self.assertTrue(_is_faststart(out), "sync.py --trim-second's stream-copy branch must write +faststart")
 
     def test_sync_negative_offset_trim_second(self):
         early = OUT / "early.wav"

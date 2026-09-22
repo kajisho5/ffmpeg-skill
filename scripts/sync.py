@@ -335,6 +335,8 @@ def main() -> int:
             if head_trim > 0:
                 cmd += ["-ss", f"{head_trim:.4f}"]
             cmd += ["-i", args.second, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]
+            if os.path.splitext(output)[1].lower() in (".mp4", ".mov", ".m4v"):
+                cmd += ["-movflags", "+faststart"]
             # the reference picture is the deliverable: pad the (possibly trimmed) second audio to
             # its length instead of -shortest, which cut the reference's tail whenever the second
             # file started earlier (head_trim > 0) or was simply shorter
@@ -350,7 +352,10 @@ def main() -> int:
                 run(cmd)
         else:
             if head_trim > 0 and not drift_af:
-                cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second, "-c", "copy", "-avoid_negative_ts", "make_zero", output]
+                cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second, "-c", "copy"]
+                if os.path.splitext(output)[1].lower() in (".mp4", ".mov", ".m4v"):
+                    cmd += ["-movflags", "+faststart"]
+                cmd += ["-avoid_negative_ts", "make_zero", output]
                 proc = run(cmd, check=False)
                 if proc.returncode != 0:
                     cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + (video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) if has_video else []) + audio_codec_for(output) + [output]

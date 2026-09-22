@@ -18,7 +18,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
 from _common import default_font_file, detect_script, escape_filter_path, font_family_for_script, font_for_script, probe  # noqa: E402
 
 
@@ -741,6 +741,15 @@ class PictureTests(MediaFixtures):
         self.assertEqual(m["audio"]["codec"], "aac", "audio must be copied untouched")
         self.assertClose(m["duration"], 12.0, 0.15)
 
+    def test_caption_mux_writes_faststart_mp4(self):
+        """Same shape as #275/#277: --mode mux stream-copies video/audio with -c:v copy / -c:a
+        copy while only adding a subtitle track, and must write -movflags +faststart on an mp4
+        output the same way every other mp4-writing path does."""
+        srt = OUT / "mux_faststart_cues.srt"
+        out = OUT / "cap_mux_faststart.mp4"
+        script("caption.py", self.src, "--text", self.cues, "--write-srt", srt, "--mode", "mux", "-o", out)
+        self.assertTrue(_is_faststart(out), "caption.py --mode mux must write +faststart")
+
     def test_caption_mux_chained_keeps_every_language_track(self):
         """--mode mux used to drop any subtitle track the input already had when adding a new
         one (its map list never included 0:s?), so chaining it once per language -- the natural
@@ -1197,6 +1206,100 @@ class PictureTests(MediaFixtures):
         script("caption.py", gappy, "--text", cues, "--karaoke", "--karaoke-timing", "even", "--write-ass", ass2, "--fast", "-o", OUT / "ke2.mp4")
         line2 = [l for l in ass2.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue")][0]
         self.assertEqual([int(x) for x in re.findall(r"\\kf(\d+)", line2)], [100, 100, 100, 100])
+
+    # ---------------------------------------------------------------- --karaoke-style word (#276)
+    def test_karaoke_style_default_sweep_is_byte_identical_to_omitting_the_flag(self):
+        """The mode selector must not change a single byte of today's \\kf output for a caller who
+        never asks for --karaoke-style word: the default has to stay exactly 'sweep'."""
+        ass_default = OUT / "kstyle_default.ass"
+        ass_sweep = OUT / "kstyle_sweep.ass"
+        script("caption.py", self.src, "--text", self.cues, "--karaoke", "--write-ass", ass_default,
+               "--karaoke-timing", "even", "--preset", "veryfast", "-o", OUT / "kstyle_default.mp4")
+        script("caption.py", self.src, "--text", self.cues, "--karaoke", "--karaoke-style", "sweep",
+               "--karaoke-timing", "even", "--write-ass", ass_sweep, "--preset", "veryfast", "-o", OUT / "kstyle_sweep.mp4")
+        self.assertEqual(ass_default.read_bytes(), ass_sweep.read_bytes(),
+                         "--karaoke-style sweep (explicit or default) must be byte-identical")
+        self.assertIn("WrapStyle: 0", ass_default.read_text(encoding="utf-8-sig"),
+                      "sweep mode's header is unchanged from before this flag existed")
+
+    def test_karaoke_style_word_emits_one_dialogue_event_per_word_covering_its_span(self):
+        gappy = OUT / "gappy_kw.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "4", "-c:v", "libx264",
+           "-preset", "veryfast", "-c:a", "aac", gappy)
+        cues = OUT / "kwcues.txt"
+        cues.write_text("0:00-0:04 one two three four\n", encoding="utf-8")
+        ass = OUT / "kword.ass"
+        script("caption.py", gappy, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--write-ass", ass, "--fast", "-o", OUT / "kword.mp4")
+        text = ass.read_text(encoding="utf-8-sig")
+        self.assertIn("WrapStyle: 2", text, "word mode freezes the line break: libass must not re-wrap")
+        dialogues = [l for l in text.splitlines() if l.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 4, "one Dialogue event per word, not per cue")
+        # even timing over 4 s / 4 words -> 1 s each
+        expected_bounds = [("0:00:00.00", "0:00:01.00"), ("0:00:01.00", "0:00:02.00"),
+                           ("0:00:02.00", "0:00:03.00"), ("0:00:03.00", "0:00:04.00")]
+        for line, (want_start, want_end) in zip(dialogues, expected_bounds):
+            fields = line.split(",", 3)
+            self.assertEqual(fields[1], want_start)
+            self.assertEqual(fields[2], want_end)
+        # every event still carries the WHOLE cue text, not just the active word
+        for line in dialogues:
+            for word in ("one", "two", "three", "four"):
+                self.assertIn(word, line)
+
+    def test_karaoke_style_word_active_word_is_scaled_and_a_distinct_colour(self):
+        cues = OUT / "kwcues2.txt"
+        cues.write_text("0:00-0:02 alpha beta\n", encoding="utf-8")
+        ass = OUT / "kword2.ass"
+        script("caption.py", self.src, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--karaoke-scale", "130", "--highlight-color", "1EC3FC",
+               "--color", "FFFFFF", "--upcoming-color", "808080", "--write-ass", ass,
+               "--preset", "veryfast", "-o", OUT / "kword2.mp4")
+        dialogues = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 2)
+        first, second = dialogues
+        self.assertIn(r"\fscx130", first)
+        self.assertIn(r"\fscy130", first)
+        self.assertIn("&H00FCC31E", first, "active word carries --highlight-color")
+        self.assertIn("&H00808080", first, "the not-yet-spoken word carries --upcoming-color")
+        self.assertIn("&H00FCC31E", second, "the second event's active word (beta) also gets --highlight-color")
+        self.assertIn("&H00FFFFFF", second, "the already-spoken word (alpha) falls back to --color")
+
+    def test_karaoke_style_word_preserves_explicit_line_breaks(self):
+        """A cue with a manual two-line break (the `|` syntax) must keep exactly that \\N split in
+        every per-word event -- the frozen line list from layout_cues, not a re-wrap."""
+        cues = OUT / "kwcues3.txt"
+        cues.write_text("0:00-0:02 top line | bottom line\n", encoding="utf-8")
+        ass = OUT / "kword3.ass"
+        script("caption.py", self.src, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--write-ass", ass, "--preset", "veryfast", "-o", OUT / "kword3.mp4")
+        dialogues = [l for l in ass.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 4, "top line + bottom line = 4 words -> 4 events")
+        for line in dialogues:
+            self.assertEqual(line.count("\\N"), 1, "each event keeps the one frozen line break")
+            before, _, after = line.partition("\\N")
+            self.assertTrue(any(w in before for w in ("top", "line")))
+            self.assertTrue(any(w in after for w in ("bottom", "line")))
+
+    def test_karaoke_style_word_handles_emoji_placeholders_and_brace_escaping(self):
+        assets = _emoji_assets()
+        cues = OUT / "kwcues4.txt"
+        cues.write_text("0:00-0:02 say {hi} \U0001F389 now\n", encoding="utf-8")
+        ass = OUT / "kword4.ass"
+        script("caption.py", self.src, "--text", cues, "--karaoke", "--karaoke-style", "word",
+               "--karaoke-timing", "even", "--emoji-assets", assets, "--write-ass", ass,
+               "--preset", "veryfast", "-o", OUT / "kword4.mp4")
+        text = ass.read_text(encoding="utf-8-sig")
+        dialogues = [l for l in text.splitlines() if l.startswith("Dialogue:")]
+        # "say", "{hi}" (escaped) and "now" get their own event; the emoji token is a placeholder
+        # with no real duration of its own (same as --karaoke-style sweep's \kf0 emoji segment)
+        self.assertEqual(len(dialogues), 3)
+        self.assertNotIn("{\\pos", text, "cue text must not be able to open a real override block")
+        self.assertIn(r"\{hi\}", text, "the braces the user typed are escaped, not dropped")
+        for line in dialogues:
+            self.assertNotIn("\U0001F389", line, "the emoji glyph itself is replaced by the drawtext/libass placeholder")
 
     # ---------------------------------------------------------------- colour-flag filter-graph injection (adversarial)
     def test_color_like_flags_refuse_filter_graph_injection(self):
@@ -2381,6 +2484,102 @@ class EmojiTests(unittest.TestCase):
         ass = Path(doc["ass"]).read_text(encoding="utf-8-sig")
         dialogue = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
         self.assertIn("A \\{b\\} c \\ d", dialogue)
+
+
+class LookInkTests(unittest.TestCase):
+    """look.py --ink: a pixel-only non-background measurement per written PNG, so the agent can
+    check "is there ink where the caption should be" without eyeballing every frame."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.busy = OUT / "ink_busy.mp4"
+        if not cls.busy.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "testsrc2=size=320x240:rate=10", "-t", "3", "-pix_fmt", "yuv420p", cls.busy)
+        cls.blank = OUT / "ink_blank.mp4"
+        if not cls.blank.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "color=c=black:size=320x240:rate=10", "-t", "3", "-pix_fmt", "yuv420p", cls.blank)
+
+    def test_ink_reports_a_lit_frame_via_at(self):
+        out = OUT / "ink_at.png"
+        proc = script("look.py", self.busy, "--at", "1", "--no-timecode", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        frame = doc["ink"]["frames"][0]
+        self.assertTrue(frame["has_ink"])
+        self.assertIsNotNone(frame["bbox"])
+        self.assertGreater(frame["ink_fraction"], 0.0)
+        self.assertTrue(frame["row_bands"])
+
+    def test_ink_reports_no_ink_on_a_blank_frame(self):
+        out = OUT / "ink_blank_at.png"
+        proc = script("look.py", self.blank, "--at", "1", "--no-timecode", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        frame = doc["ink"]["frames"][0]
+        self.assertFalse(frame["has_ink"])
+        self.assertIsNone(frame["bbox"])
+        self.assertEqual(frame["ink_fraction"], 0.0)
+        self.assertEqual(frame["row_bands"], [])
+
+    def test_ink_is_omitted_without_the_flag(self):
+        out = OUT / "ink_off.png"
+        proc = script("look.py", self.busy, "--at", "1", "--no-timecode", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        self.assertNotIn("ink", doc)
+
+    def test_ink_measures_each_tile_of_a_contact_sheet(self):
+        out = OUT / "ink_sheet.png"
+        proc = script("look.py", self.busy, "--tiles", "2x2", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        tiles = doc["ink"]["tiles"]
+        self.assertEqual(len(tiles), 4)
+        for tile in tiles:
+            self.assertTrue(tile["has_ink"])
+
+    def test_ink_measures_both_sides_of_a_compare(self):
+        out = OUT / "ink_compare.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        frames = doc["ink"]["frames"]
+        self.assertEqual(len(frames), 1)
+        self.assertTrue(frames[0]["has_ink"])  # the hstacked image: busy half lights it up
+
+    def test_compare_with_repeated_at_and_o_writes_distinct_files(self):
+        """-o given alongside --compare --at T1 --at T2 must not collapse onto one file: each
+        timestamp needs its own comparison image, or ink.frames (and any other per-frame
+        measurement) silently describes the same picture twice."""
+        out = OUT / "ink_compare_multi.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--at", "2",
+                     "--ink", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        outputs = doc["outputs"]
+        self.assertEqual(len(outputs), 2)
+        self.assertNotEqual(outputs[0], outputs[1])
+        for o in outputs:
+            self.assertTrue(Path(o).exists(), o)
+        frames = doc["ink"]["frames"]
+        self.assertEqual(len(frames), 2)
+        self.assertTrue(frames[0]["has_ink"])
+        self.assertTrue(frames[1]["has_ink"])
+
+    def test_compare_with_the_same_at_value_twice_still_writes_two_files(self):
+        """The occurrence index, not just the timestamp, disambiguates the filename: two
+        identical --at values (or two that would round to the same millisecond) must not
+        collapse onto one file either."""
+        out = OUT / "ink_compare_dup.png"
+        proc = script("look.py", self.busy, "--compare", self.blank, "--at", "1", "--at", "1",
+                     "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        outputs = doc["outputs"]
+        self.assertEqual(len(outputs), 2)
+        self.assertNotEqual(outputs[0], outputs[1])
+        for o in outputs:
+            self.assertTrue(Path(o).exists(), o)
 
 
 class GraphicsSliceOverlongTests(unittest.TestCase):

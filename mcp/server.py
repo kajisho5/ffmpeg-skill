@@ -147,11 +147,27 @@ def handle(req: Dict[str, Any]) -> Dict[str, Any]:
     method = req.get("method")
     params = req.get("params") or {}
     if method == "initialize":
-        return {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}, "serverInfo": {"name": "ffmpeg-skill", "version": version()}}
+        # 1.20.0: the structured-arguments note used to be appended to every one of the 42 tool
+        # descriptions verbatim; it's server-wide, not per-tool, so it now lives here once instead
+        # -- `tools/list` descriptions stay each tool's own one-line sentence.
+        return {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}, "prompts": {}},
+                "serverInfo": {"name": "ffmpeg-skill", "version": version()},
+                "instructions": _contract.MCP_STRUCTURED_NOTE}
     if method == "tools/list":
         return {"tools": tool_list()}
     if method == "tools/call":
         return call_tool(params.get("name", ""), params.get("arguments") or {})
+    if method == "prompts/list":
+        # roadmap 1.20.0: the five workflow recipes (reel, podcast, multicam, delivery_check, hdr)
+        return {"prompts": _contract.mcp_prompt_list()}
+    if method == "prompts/get":
+        try:
+            return _contract.mcp_prompt_get(params.get("name", ""), params.get("arguments") or {})
+        except KeyError as exc:
+            # not "method not found" (-32601, handle()'s own KeyError below): the *method*
+            # prompts/get exists, only this prompt *name* doesn't -- a caller mistake, same as
+            # call_tool()'s "unknown tool" text, not a transport-level error.
+            raise ValueError(f"unknown prompt: {exc}") from exc
     if method == "ping":
         return {}
     raise KeyError(method)
@@ -167,7 +183,7 @@ def version() -> str:
 def main() -> int:
     if "--list" in sys.argv:
         for t in tool_list():
-            print(f"{t['name']:10s} {t['description'].split(' Structured arguments:')[0]}")
+            print(f"{t['name']:10s} {t['description']}")
         return 0
     if "--call" in sys.argv:  # debugging helper: --call NAME '{"input": "..."}'
         i = sys.argv.index("--call")

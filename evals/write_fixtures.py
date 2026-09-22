@@ -67,7 +67,81 @@ def write(outdir: Path, prompt: dict) -> list:
                             "-i", "color=c=%s:s=72x72:d=0.04" % palette[i % len(palette)],
                             "-vf", "format=rgba", "-frames:v", "1", str(target)], check=True)
             written.append(target)
+    for name in prompt.get("media_fixtures") or []:
+        target = outdir / name
+        if not target.exists():
+            outdir.mkdir(parents=True, exist_ok=True)
+            build_media_fixture(name, target)
+        written.append(target)
     return written
+
+
+def build_media_fixture(name: str, target: Path) -> None:
+    """Synthetic media eval 22's Set B prompts need, ffmpeg-generated on demand (never
+    committed) so the repo stays free of generated media. Ground truth for each file is
+    documented next to its build here, and was verified against the tool it exercises
+    (scenes.py --shots, silence.py --speech-aware, sync.py, multicam.py --switch energy)
+    when these prompts were staged as scratchpad/eval22."""
+    import subprocess
+
+    def ffmpeg(*args):
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *[str(a) for a in args]], check=True)
+
+    if name == "shots.mp4":
+        # 0-4s locked-off (static, a Life pattern with no camera motion); 4-8s a crop window
+        # sliding across a wide testsrc (measured scenes.py --shots label: "motion"); 8-12s a
+        # box crossing an otherwise static frame (measured label: "pan"). The labels below are
+        # what scenes.py's flow-based classifier actually returns for this synthetic footage --
+        # verified once with scenes.py --shots --json against this exact build -- not a semantic
+        # guess about which construction "should" read as camera motion vs in-frame motion.
+        ffmpeg("-f", "lavfi", "-i",
+               "life=size=80x45:rate=30:mold=32:ratio=0.1:death_color=#101030:life_color=#39ff88:seed=1",
+               "-t", "4", "-vf", "scale=640:360:flags=neighbor", target.parent / "_shots_a.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+               "-t", "4", "-vf", "crop=640:360:'80*t':0", target.parent / "_shots_b.mp4")
+        ffmpeg("-f", "lavfi", "-i", "color=c=0x101832:s=640x360:rate=30",
+               "-f", "lavfi", "-i", "color=c=0xffcc00:s=80x80:rate=30",
+               "-filter_complex", "[0:v][1:v]overlay=x='(640-80)*t/4':y=140", "-t", "4",
+               target.parent / "_shots_c.mp4")
+        list_file = target.parent / "_shots_concat.txt"
+        list_file.write_text("\n".join(f"file '{target.parent / n}'" for n in
+                                       ("_shots_a.mp4", "_shots_b.mp4", "_shots_c.mp4")) + "\n",
+                             encoding="utf-8")
+        ffmpeg("-f", "concat", "-safe", "0", "-i", list_file, "-c:v", "libx264",
+               "-preset", "ultrafast", "-pix_fmt", "yuv420p", target)
+        for n in ("_shots_a.mp4", "_shots_b.mp4", "_shots_c.mp4"):
+            (target.parent / n).unlink(missing_ok=True)
+        list_file.unlink(missing_ok=True)
+    elif name == "speech_breaths.m4a":
+        # 11.0s: speech bursts with three 0.30s in-sentence breaths (1.2-1.5, 2.6-2.9, 6.7-7.0)
+        # and two 1.50s sentence-boundary pauses (4.0-5.5, 8.2-9.7). silence.py --speech-aware
+        # keeps the three breaths (0.90s) and cuts only the two pauses (8.60s of 11.00s kept).
+        expr = ("0.5*sin(2*PI*180*t)*(lt(t\\,1.2)+between(t\\,1.5\\,2.6)+between(t\\,2.9\\,4.0)"
+                "+between(t\\,5.5\\,6.7)+between(t\\,7.0\\,8.2)+gt(t\\,9.7))")
+        ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{expr}':s=48000", "-t", "11", "-c:a", "aac", target)
+    elif name in ("camA.mp4", "camB.mp4"):
+        # Two cameras on one reference timeline: camA loud 0-6s / quiet 6-12s, camB the reverse
+        # -- multicam.py --switch energy should pick camA for the first half, camB the second.
+        # Same construction as tests/test_orchestration.py's own _loud_cams().
+        loud_first = name == "camA.mp4"
+        hue = "" if loud_first else ",hue=h=90"
+        vol_expr = ("0.8*sin(2*PI*440*t)*lt(t\\,6)+0.01*sin(2*PI*440*t)*gt(t\\,6)" if loud_first else
+                   "0.01*sin(2*PI*440*t)*lt(t\\,6)+0.8*sin(2*PI*440*t)*gt(t\\,6)")
+        ffmpeg("-f", "lavfi", "-i", f"testsrc2=size=160x90:rate=30{hue}",
+               "-f", "lavfi", "-i", f"aevalsrc='{vol_expr}':s=48000",
+               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", target)
+    elif name == "lav.m4a":
+        # camA's audio (loud 0-6s / quiet 6-12s tone) delayed 2.500s -- sync ground truth -2.500s.
+        vol_expr = "0.8*sin(2*PI*440*t)*lt(t\\,6)+0.01*sin(2*PI*440*t)*gt(t\\,6)"
+        ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{vol_expr}':s=48000", "-t", "9.5",
+               "-af", "adelay=2500|2500", "-c:a", "aac", target)
+    elif name == "cam3.m4a":
+        # camA's audio advanced 1.180s -- sync ground truth +1.18s.
+        vol_expr = "0.8*sin(2*PI*440*(t+1.18))*lt(t+1.18\\,6)+0.01*sin(2*PI*440*(t+1.18))*gt(t+1.18\\,6)"
+        ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{vol_expr}':s=48000", "-t", "10.82", "-c:a", "aac", target)
+    else:
+        raise SystemExit(f"no media fixture builder for {name!r}")
 
 
 def main(argv) -> int:

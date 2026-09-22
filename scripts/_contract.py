@@ -18,6 +18,7 @@ The contract has its own version (CONTRACT_VERSION) that only changes when the s
 this document changes; the skill version comes from package.json.
 """
 import argparse
+import functools
 import importlib.util
 import json
 import os
@@ -461,6 +462,43 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     props.update(extra)
     required = ["status", "output", "dry_run", "commands"]
     return {"type": "object", "properties": props, "required": required, "additionalProperties": True}
+
+@functools.lru_cache(maxsize=1)
+def skill_examples() -> Dict[str, List[Dict[str, Any]]]:
+    """1.20.0: per-tool `examples`, parsed from SKILL.md's "User says" / "Do" table -- the
+    same facts that table already states, machine-readable instead of prose-only. A row
+    naming more than one tool (e.g. metadata.py's --auto-chapters row also names render.py)
+    attaches to each; a row naming none (prose only, no backtick command) attaches to none.
+    `prompts` is a list because a row often gives several phrasings ("cut from 1:20 to 2:05",
+    "trim the first 10 s") for the one `command`; `command` has the markdown backticks
+    stripped but otherwise keeps the row's own text (including "or"/"then" alternatives).
+    """
+    examples: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        lines = (ROOT / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return examples
+    in_table = False
+    esc_pipe = "\x00"  # a markdown-escaped "\|" (a literal pipe inside a cell, e.g. broll's --audio b\|mix) is not a column separator
+    for line in lines:
+        if line.startswith("| User says"):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if not line.startswith("|"):
+            break
+        if line.startswith("|---") or line.startswith("|-----"):
+            continue
+        cells = line.strip().strip("|").replace("\\|", esc_pipe).split("|")
+        if len(cells) != 2:
+            continue
+        prompt_cell, do = (c.replace(esc_pipe, "|").strip() for c in cells)
+        prompts = re.findall(r'"([^"]+)"', prompt_cell) or [prompt_cell.strip('"')]
+        command = re.sub(r"`([^`]*)`", r"\1", do)
+        for tool in dict.fromkeys(re.findall(r"`([a-z][a-z0-9_]*)\.py", do)):
+            examples.setdefault(tool, []).append({"prompts": prompts, "command": command})
+    return examples
 
 
 # ----------------------------------------------------------------------------- environment
@@ -1012,6 +1050,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "version": version,
         "description": (parser.description or "").strip().splitlines()[0] if parser.description else "",
         "executable": f"scripts/{name}.py",
+        # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
+        "examples": skill_examples().get(name, []),
         "role": meta["role"],
         "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], CODEC_CAPS if "codec" in schema["properties"] else [])},
         "inputs": list(meta["inputs"]),
@@ -1088,6 +1128,92 @@ MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
                        "Media paths must be absolute.")
 
+# roadmap 1.20.0 "agent ergonomics": a `prompts` capability with the five workflows an agent asks
+# for most often (per the SKILL.md request table these are built from -- see skill_examples()'s
+# own source, not a separate hand-picked list). Each `template` is filled with `{name}` -> the
+# matching argument's value; a missing optional argument's `{name}` is dropped along with the
+# surrounding text named in `optional` (so "no chapters file" doesn't leave a dangling clause).
+# The five are recipes, not new tool calls -- every command line named is one this skill already
+# runs; `prompts/get` hands back the same facts SKILL.md's own table states, just addressed by
+# workflow instead of by request phrasing.
+MCP_PROMPTS: List[Dict[str, Any]] = [
+    {
+        "name": "reel", "description": "Turn a clip into a captioned vertical delivery (TikTok/Reels/Shorts) and verify it.",
+        "arguments": [{"name": "input", "description": "path to the source video", "required": True},
+                      {"name": "platform", "description": "tiktok | reels | shorts | youtube-shorts (default reels)", "required": False, "default": "reels"},
+                      {"name": "cues", "description": "path to a captions cue file, if the clip needs captions", "required": False}],
+        "optional": {"cues": " with cues from {cues}"},
+        "template": ("Turn {input} into a {platform} deliverable: run `render.py --template {platform} {input}`{cues}, "
+                     "which handles frame, captions, loudness and export in one command. Then verify with "
+                     "`check.py <output> --platform {platform}` before calling it done -- format rows (codec, pixel "
+                     "format, size, true peak, colour tags, VFR) are safe to fix; judgement rows (duration, aspect, "
+                     "fps, loudness) change content, so fix them only when the request implies the answer, otherwise "
+                     "state the choice and its cost. Mention WARNs; do not chase them."),
+    },
+    {
+        "name": "podcast", "description": "Turn an audio recording into a loudness-normalised podcast episode with chapters.",
+        "arguments": [{"name": "input", "description": "path to the source audio", "required": True},
+                      {"name": "chapters", "description": "path to a chapters timing file", "required": False}],
+        "optional": {"chapters": " with chapters from `metadata.py <output> --chapters {chapters}`"},
+        "template": ("Turn {input} into a podcast episode: normalise loudness with `loudness.py {input} -I -16 --tp -1.5`"
+                     "{chapters}, then verify with `check.py <output> --platform podcast` (its chapters and channels rows)."),
+    },
+    {
+        "name": "multicam", "description": "Cut between several camera angles of the same scene.",
+        "arguments": [{"name": "inputs", "description": "the camera files, space-separated", "required": True}],
+        "optional": {},
+        "template": ("Cut between the cameras in {inputs}: `multicam.py {inputs} --switch energy` auto-cuts to the "
+                     "loudest camera at each moment (`--min-shot` sets the shortest allowed shot); a manual spec "
+                     "looks like `--switch \"0-20:0,20-40:1,40-60:2\"`. Check the reported sync confidence per camera "
+                     "-- under 0.3 (or a large offset) is suspect and needs a manual look; these align audio, never lip sync."),
+    },
+    {
+        "name": "delivery_check", "description": "Verify a finished file is ready to upload to a platform.",
+        "arguments": [{"name": "input", "description": "path to the file to check", "required": True},
+                      {"name": "platform", "description": "youtube | reels | tiktok | shorts | x | linkedin | facebook | podcast", "required": True}],
+        "optional": {},
+        "template": ("Verify {input} is ready for {platform}: run `check.py {input} --platform {platform}`. Format "
+                     "rows (codec, pixel format, size, true peak, colour tags, VFR) are safe to fix automatically. "
+                     "Judgement rows (duration, aspect, fps, loudness) change content -- fix only when the request "
+                     "implies the answer, otherwise state the choice and its cost. Mention WARNs; do not chase them."),
+    },
+    {
+        "name": "hdr", "description": "Bring an HDR or Dolby Vision clip down to SDR (or strip only the DV layer).",
+        "arguments": [{"name": "input", "description": "path to the HDR/Dolby Vision source", "required": True},
+                      {"name": "strip_dovi", "description": "true to keep HDR and drop only the Dolby Vision layer, instead of converting to SDR", "required": False}],
+        "optional": {},
+        "template": ("Bring {input} from HDR/Dolby Vision down to SDR: `color.py {input} --to-sdr` (or `--strip-dovi` "
+                     "to keep HDR and only drop the Dolby Vision layer, when strip_dovi is asked for). A flat, washed-out "
+                     "look after a re-encode usually means HDR metadata was lost upstream; `probe` shows `hdr: true` "
+                     "for BT.2020 primaries or a PQ/HLG transfer, and `hdr_signal: true` only for a real PQ/HLG/DV transfer."),
+    },
+]
+
+
+def mcp_prompt_list() -> List[Dict[str, Any]]:
+    """`prompts/list`: name, description and arguments for each of MCP_PROMPTS -- everything but
+    the template, which `prompts/get` fills."""
+    return [{"name": p["name"], "description": p["description"], "arguments": p["arguments"]} for p in MCP_PROMPTS]
+
+
+def mcp_prompt_get(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """`prompts/get`: the filled template as a single user-role text message. Raises KeyError for
+    an unknown prompt name (mirrors call_tool's own unknown-tool handling) and ValueError naming
+    the missing argument when a required one is absent -- both are caller mistakes, not server
+    failures, so the transport turns them into a JSON-RPC error rather than a crash."""
+    by_name = {p["name"]: p for p in MCP_PROMPTS}
+    if name not in by_name:
+        raise KeyError(name)
+    prompt = by_name[name]
+    missing = [a["name"] for a in prompt["arguments"] if a["required"] and not (arguments or {}).get(a["name"])]
+    if missing:
+        raise ValueError(f"prompt {name!r} needs {', '.join(missing)}")
+    fields: Dict[str, str] = {a["name"]: str((arguments or {}).get(a["name"]) or a.get("default", "")) for a in prompt["arguments"]}
+    for opt_name, clause in prompt["optional"].items():
+        fields[opt_name] = clause.format(**fields) if fields.get(opt_name) else ""
+    text = prompt["template"].format(**fields)
+    return {"description": prompt["description"], "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
+
 
 def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
     """Translate a ToolSpec.input_schema into the JSON Schema an MCP tools/list entry carries.
@@ -1147,8 +1273,12 @@ def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def mcp_tool(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """The MCP tools/list entry for a ToolSpec: name, description and the derived inputSchema."""
-    return {"name": spec["name"], "description": f"{spec['description']} {MCP_STRUCTURED_NOTE}".strip(), "inputSchema": mcp_input_schema(spec)}
+    """The MCP tools/list entry for a ToolSpec: name, one-line description and the derived
+    inputSchema. 1.20.0: MCP_STRUCTURED_NOTE used to be appended to every one of the 42
+    descriptions verbatim (the same ~250 characters repeated 42 times in every tools/list dump);
+    it now goes once into the server's `initialize` response (`instructions`) instead, so a tool's
+    own description stays its own one-line sentence."""
+    return {"name": spec["name"], "description": spec["description"], "inputSchema": mcp_input_schema(spec)}
 
 
 def mcp_tools(detect: bool = False) -> List[Dict[str, Any]]:

@@ -345,6 +345,8 @@ On Windows, `python3` is only on PATH if Python was installed from the Microsoft
 
 `FFMPEG_SKILL_MCP_LEAN=1` in the server's environment drops `json` and `progress` from every `inputSchema`: they are transport flags the server sets itself, not tool arguments, and 2.0 drops them unconditionally. It is opt-in, independent of `FFMPEG_SKILL_MCP_FULL`, and the default `tools/list` stays byte-identical (aside from the core-12 filter) to the CLI surface the contract promises.
 
+The server also advertises a `prompts` capability: five canned workflow recipes an agent can ask for by name instead of composing the individual tool calls itself — `reel`, `podcast`, `multicam`, `delivery_check`, `hdr`. `prompts/list` returns each one's name, description and arguments; `prompts/get {name, arguments}` fills the matching template and returns one text message naming the actual command lines to run and what to check afterward. These are recipes, not new tool calls — every command line a prompt names is one `tools/call` (or the CLI) can already run.
+
 ### Capability detection
 
 ```bash
@@ -502,7 +504,7 @@ python3 tests/test_picture.py # one tool group on its own (analysis, editing, au
 npm run release-check         # pack, install, contract from the installed copy, MCP == contract, doctor, tests, contract evals
 npm run demo                  # python3 demos/build.py: synthetic footage -> every before/after demo + docs/demos/*.gif
 npm run demo:pipeline         # examples/make_demo.sh: the older single end-to-end run of every script
-python3 evals/run.py --list   # agent eval prompts (see evals/)
+python3 evals/run.py --list   # agent eval prompts (see evals/); regex-only grading, runnable from any agent harness -- see evals/README.md "Running this from Cursor, Codex, or another harness"
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
 

@@ -206,9 +206,15 @@ decided. Recorded here so none of it is re-proposed from scratch.
   `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`), chosen from eval iterations 17-20's
   `expect` frequency, not taste. `FFMPEG_SKILL_MCP_FULL=1` lists all 42; the other 30 stay
   reachable by name through `tools/call` either way, and the contract still describes all 42.
-- **P1-8 — at least one routing run on a non-Claude model.** Accepted as an `evals/run.py` task:
-  the harness reads transcripts and files and is not Claude-specific; the routing/refusal set is
-  what a Cursor or Codex run would publish.
+- **P1-8 — at least one routing run on a non-Claude model.** Accepted as an `evals/run.py` task,
+  and **shipped**: `run.py` grades any transcript file against `tasks.json` or the fuller
+  `agent_prompts_24.json`/`agent_prompts_exec.json` sets with substring and regex checks only
+  (`--json` output, an `a|b` alternation in `expect`, and the `grader_expect`/`grader_not`
+  regexes), no `claude` CLI or LLM-judge dependency anywhere in the path. `evals/README.md`'s
+  "Running this from Cursor, Codex, or another harness" section documents the walkthrough. What
+  is still true, and stated rather than fixed: the maintainer has not run another vendor's model
+  from this environment, so no cross-vendor number is published here yet -- the harness is ready
+  for whoever does.
 - **P2-9 — issue #143 (real-device corpus) has no acceptance criteria.** Accepted as written in
   the issue: the corpus run is the criterion, one row per device family.
 - **P2-10 — `--cache` has no failure-path tests.** Accepted and **closed in this patch**: the
@@ -245,10 +251,14 @@ Each item is recorded here so it is not re-proposed from scratch.
 - **The evaluation is Claude-only.** True, and it is stated rather than fixed: the agent runs use
   a Sonnet agent, the independent grader is Opus, and the trigger judge is Sonnet. The maintainer
   cannot run other vendors' models from this environment, so a cross-vendor number would be
-  invented, not measured. What is being done instead: `evals/run.py` and the regex grader
-  (`evals/grade_runs_24.py`) are being made runnable from Cursor and Codex, so anyone with access
-  to another model can run the routing/refusal set — the original 50 prompts — there and publish
-  the result. The harness reads transcripts and files; nothing in it is Claude-specific by design.
+  invented, not measured. What is done instead, **shipped**: `evals/run.py` is a regex/substring-
+  only grader runnable from Cursor, Codex, or any harness that can produce a transcript file —
+  `--prompts` selects `tasks.json` (the 29-prompt routing/refusal set) or the fuller
+  `agent_prompts_24.json`/`agent_prompts_exec.json` sets, and `evals/README.md` documents the
+  walkthrough. Anyone with access to another model can run it there and publish the result,
+  reported as its own number (see that section's "Comparing results across vendors") rather than
+  a delta against this repo's own Claude-based iterations. The harness reads transcripts and
+  files; nothing in it is Claude-specific by design.
 - **`references/` is rarely read during evals.** Measured and expected. The reference files are
   the long-form detail, and SKILL.md's request→script table is what carries a job: iteration 11
   showed that pointing agents at the reference files cost tokens without changing outcomes, and

@@ -1,0 +1,53 @@
+{
+  "iteration": "23-partial",
+  "at_version": "1.19.3",
+  "date": "2026-09-18",
+  "status": "partial — Set A and Set C complete with evidence; Set B is blocked by this sandbox's toolchain; Set D was not attempted (out of this session's scope); the non-Claude routing pass is blocked by lack of model access here",
+  "sets": {
+    "A": {
+      "description": "cs1/cs2/cs3 x3 real agent runs against the live ffmpeg-skill, regex-graded with the existing agent_prompts_24.json grader_expect/grader_not fields (independent of the acting agent: each run was a fresh subagent with no shared context)",
+      "runs": 9,
+      "pass": 9,
+      "fail": 0,
+      "detail": [
+        {"id": "cs1", "rep": 1, "result": "pass", "note": "size shrunk 24pt->15pt, no cue split, no forbidden 'shortened/reworded' language"},
+        {"id": "cs1", "rep": 2, "result": "pass", "note": "size shrunk 24->15, sentences intact within their own cues"},
+        {"id": "cs1", "rep": 3, "result": "pass", "note": "size shrunk 24->15, no split, no forbidden language"},
+        {"id": "cs2", "rep": 1, "result": "pass", "note": "\"no se reescribió ni se acortó\" — matches the Spanish not-rewritten regex; long cue split automatically, word sliced at column edge"},
+        {"id": "cs2", "rep": 2, "result": "pass", "note": "text unchanged per policy, split=1/rebalanced=1/broken_inside_word=1 reported"},
+        {"id": "cs2", "rep": 3, "result": "pass", "note": "\"sin reescribir ni acortar el texto\" — matches"},
+        {"id": "cs3", "rep": 1, "result": "pass", "note": "refused the rewrite-to-fit request, offered --max-lines 1 / user-edits-cues alternatives, no forbidden 'rewrote/reworded/shortened' language"},
+        {"id": "cs3", "rep": 2, "result": "pass", "note": "same refusal shape"},
+        {"id": "cs3", "rep": 3, "result": "pass", "note": "same refusal shape"}
+      ]
+    },
+    "B": {
+      "description": "a real-speech fixture (not synthetic tones) exercising silence.py --filler --speech-aware together, per the roadmap's Phase 3 spec",
+      "status": "blocked",
+      "reason": "silence.py --filler needs whisper word timestamps (scripts import openai-whisper), which is not installed in this sandbox (`pip show openai-whisper` -> not found, `import whisper` -> ModuleNotFoundError). No TTS engine (espeak/espeak-ng/festival/say) is present either to synthesize genuine speech locally, and fetching a third-party speech sample is out of scope for a synthetic-fixtures-only eval harness. Not attempted with a faked substitute — recorded as a blocker instead of a result."
+    },
+    "C": {
+      "description": ">=3 MCP prompts needing a non-core-12 tool called by name (core 12 = render, look, caption, export, check, fit, cut, audio, loudness, graphics, silence, probe per scripts/_contract.py MCP_CORE_TOOLS)",
+      "method": "direct mcp/server.py JSON-RPC calls in-process: tools/list confirmed each tool absent from the default 12-tool listing, then tools/call confirmed each was still dispatched to its real script by name",
+      "runs": 3,
+      "pass": 3,
+      "fail": 0,
+      "detail": [
+        {"tool": "scenes", "result": "pass", "note": "tools/list: absent (12-tool default). tools/call name=scenes: full success, real scene/audio-peak JSON returned"},
+        {"tool": "sync", "result": "pass", "note": "tools/list: absent. tools/call name=sync: reached the real script (argparse usage error on my args, not 'unknown tool') — proves routing, not a routing failure"},
+        {"tool": "metadata", "result": "pass", "note": "tools/list: absent. tools/call name=metadata: reached the real script (its own 'nothing to write' usage error, not 'unknown tool')"}
+      ]
+    },
+    "D": {
+      "description": "the enlarged 55-prompt trigger set (evals/trigger/prompts.json, expanded in PR #262) run for real through a trigger-judge model pass",
+      "status": "not attempted",
+      "reason": "a full trigger-judge run is a separate, larger campaign (55 prompts x a judge model call each) than this session's scope; needs to be scheduled as its own pass"
+    },
+    "routing_pass": {
+      "description": "a non-Claude-model routing/refusal pass, or a documented blocker",
+      "status": "blocked",
+      "reason": "this sandbox has no configured access to a non-Claude model (no OpenAI/Gemini/other API credentials available to this session) to genuinely exercise routing/refusal behaviour against. Documented as the blocker rather than skipped silently."
+    }
+  },
+  "conclusion": "Sets A and C pass cleanly with real evidence (12/12 real agent+MCP runs). Sets B and D, and the routing pass, are genuine gaps in this session's toolchain/scope, not silently skipped — they need either a whisper/TTS-capable environment (B), a dedicated larger judge run (D), or non-Claude model access (routing) to complete. The full 108-prompt eval remains conditional on iteration-23 being green; given B/D/routing are incomplete rather than failing, iteration-23 is not yet closed out."
+}

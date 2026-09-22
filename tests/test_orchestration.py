@@ -1341,6 +1341,44 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(data["processed"], 1)
         self.assertClose(probe(data["results"][0]["output"])["duration"], 3.0, 0.3)
 
+    def test_batch_reports_cuts_stream_copy_vs_hybrid_rate_across_the_folder(self):
+        """cut.py's own `reencoded` (mode "copy" vs the tolerance-triggered hybrid re-encode
+        fallback -- ORed across every range of a --segments call into one top-level field, since
+        cut.py doesn't say which range needed it) was never surfaced anywhere batch.py's caller
+        could see without re-deriving it from every step's own stdout. run_step() now forces
+        --json on every step (a step's own stdout was never read for anything but the log before;
+        only the output path computed by process() itself was used to chain steps) so process()
+        can read cut.py's `reencoded` back, and batch.py rolls it up into one `cut_stream_copy`
+        summary: how many of the cut.py calls this run made landed on the fast lossless path
+        versus fell back to a re-encode on at least one range."""
+        folder = OUT / "batch_cut_stats"
+        folder.mkdir(exist_ok=True)
+        for name in ("a.mp4", "b.mp4"):
+            (folder / name).write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "batch.json"
+        # step 0 misses the tight tolerance and must fall back to hybrid (same fixture behaviour
+        # test_cut_json_reports_requested_vs_actual_and_mode already pins); step 1 re-cuts that
+        # fresh re-encode's own start, which is always its own keyframe, so it stream-copies.
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_cut",
+                                      "steps": [["cut.py", "{in}", "--start", "1.13", "--end", "5.71",
+                                                 "--tolerance", "0.02", "-o", "{out}"],
+                                                ["cut.py", "{in}", "--start", "0", "--end", "2",
+                                                 "--tolerance", "-1", "-o", "{out}"]]}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertEqual(data["processed"], 2)
+        for r in data["results"]:
+            self.assertEqual(r["cut_reencoded"], [True, False])
+        summary = data["cut_stream_copy"]
+        self.assertEqual(summary, {"calls": 4, "stream_copy": 2, "reencoded": 2, "stream_copy_rate": 0.5})
+
+        # a recipe with no cut.py step reports nothing -- the key isn't invented from nowhere
+        recipe2 = folder / "batch_no_cut.json"
+        recipe2.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out2", "suffix": "_nc",
+                                       "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+        data2 = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
+        self.assertIsNone(data2["cut_stream_copy"])
+        self.assertNotIn("cut_reencoded", data2["results"][0])
+
     def test_batch_project_recipe_cache_invalidates_on_project_json_content_change(self):
         """A "project" recipe is just {"project": "<path>", "clip_key": N} -- the real settings
         (export preset, captions, everything) live in the file at that path. The cache key used

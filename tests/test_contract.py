@@ -276,6 +276,32 @@ class ContractTests(unittest.TestCase):
             self.assertTrue(re.fullmatch(r"[a-z]+", t["name"]), t["id"])
         self.assertEqual(ids, sorted(ids), "tools are listed in a stable, sorted order")
 
+    def test_examples_are_parsed_from_skill_md_and_cover_every_tool(self):
+        """1.20.0: contract --json's per-tool `examples` field is SKILL.md's own request table
+        (the "User says" / "Do" rows), machine-readable -- not a hand-maintained second copy.
+        Every one of the 42 tools is named in that table somewhere, so every tool has at least
+        one example; a row's markdown backticks are stripped from `command`, and a row with
+        several quoted phrasings ("cut from 1:20 to 2:05", "trim the first 10 s") becomes a
+        `prompts` list rather than one string."""
+        by_name = {t["name"]: t for t in self.contract["tools"]}
+        missing = [name for name, t in by_name.items() if not t.get("examples")]
+        self.assertEqual(missing, [], "every tool should have at least one SKILL.md example")
+        cut = next(e for e in by_name["cut"]["examples"] if "cut from 1:20 to 2:05" in e["prompts"])
+        self.assertEqual(cut, {"prompts": ["cut from 1:20 to 2:05", "trim the first 10 s"],
+                                "command": "cut.py input.mp4 --start 1:20 --end 2:05"})
+        for t in self.contract["tools"]:
+            for ex in t["examples"]:
+                self.assertEqual(set(ex), {"prompts", "command"})
+                self.assertIsInstance(ex["prompts"], list)
+                self.assertTrue(ex["prompts"])
+                self.assertNotIn("`", ex["command"], "markdown backticks should be stripped")
+                self.assertIn(f"{t['name']}.py", ex["command"])
+        # a markdown-escaped "\|" inside a cell (broll's --audio b\|mix) is a literal pipe,
+        # not a column separator -- confirms the escaping doesn't silently drop the row
+        broll = by_name["broll"]["examples"][0]
+        self.assertIn("b|mix", broll["command"])
+        self.assertIn("B-roll over this bit", broll["prompts"])
+
     def test_provides_covers_every_tool_with_the_dotted_capability_id(self):
         provides = self.contract["provides"]
         ids = [p["id"] for p in provides]
@@ -851,6 +877,59 @@ class ContractTests(unittest.TestCase):
             self.assertEqual([t["name"] for t in resp["result"]["tools"]], expected_order, f"FFMPEG_SKILL_MCP_FULL={flag!r} still core 12")
         listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout.splitlines() if l.strip()]
         self.assertEqual(listed, expected_order)
+
+    def test_mcp_tool_descriptions_are_one_liners_with_the_structured_note_moved_to_initialize(self):
+        """1.20.0 agent ergonomics: MCP_STRUCTURED_NOTE used to be appended to every one of the 42
+        tool descriptions verbatim (the same ~250 characters repeated 42 times in a tools/list
+        dump). It is server-wide, not per-tool, so it now goes once into initialize's
+        `instructions` field instead, and each tool's own `description` is just its one-line
+        sentence again (no embedded newline, no trailing structured-arguments boilerplate)."""
+        for t in mcp_server.tool_list():
+            self.assertNotIn("\n", t["description"], f"{t['name']}: description should be one line")
+            self.assertNotIn("Structured arguments", t["description"],
+                              f"{t['name']}: the structured-arguments note belongs in initialize, not per tool")
+        resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "initialize"}])[0]
+        self.assertEqual(resp["result"]["instructions"], _contract.MCP_STRUCTURED_NOTE)
+
+    def test_mcp_prompts_capability_lists_and_fills_the_five_workflows(self):
+        """roadmap 1.20.0 agent ergonomics: a `prompts` capability with the five workflows
+        (reel, podcast, multicam, delivery_check, hdr). initialize advertises it; prompts/list
+        names each one with its arguments; prompts/get fills the template with real values,
+        including the optional-argument clauses (cues, chapters) that drop cleanly when the
+        argument is omitted; a missing required argument or an unknown prompt name is a
+        JSON-RPC error, not a silently wrong or empty prompt."""
+        init = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "initialize"}])[0]
+        self.assertIn("prompts", init["result"]["capabilities"])
+
+        listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/list"}])[0]["result"]["prompts"]
+        self.assertEqual(sorted(p["name"] for p in listed), sorted(p["name"] for p in _contract.MCP_PROMPTS))
+        self.assertEqual({"reel", "podcast", "multicam", "delivery_check", "hdr"}, {p["name"] for p in listed})
+        for p in listed:
+            self.assertTrue(p["description"])
+            self.assertTrue(any(a["required"] for a in p["arguments"]), f"{p['name']}: needs at least one required argument")
+
+        got = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                           "params": {"name": "reel", "arguments": {"input": "/abs/clip.mp4"}}}])[0]["result"]
+        text = got["messages"][0]["content"]["text"]
+        self.assertIn("/abs/clip.mp4", text)
+        self.assertIn("reels", text, "default platform applies when not given")
+        self.assertNotIn("cues", text, "no cues argument -> no dangling cues clause")
+
+        with_cues = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                                 "params": {"name": "reel", "arguments": {"input": "/abs/clip.mp4", "platform": "tiktok", "cues": "/abs/cues.txt"}}}])[0]["result"]
+        cues_text = with_cues["messages"][0]["content"]["text"]
+        self.assertIn("tiktok", cues_text)
+        self.assertIn("/abs/cues.txt", cues_text)
+
+        missing = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                               "params": {"name": "delivery_check", "arguments": {"input": "/abs/x.mp4"}}}])[0]
+        self.assertIn("error", missing)
+        self.assertIn("platform", missing["error"]["message"])
+
+        unknown = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                               "params": {"name": "not_a_real_prompt", "arguments": {}}}])[0]
+        self.assertIn("error", unknown)
+        self.assertNotEqual(unknown["error"]["code"], -32601, "an unknown prompt name is not the same as an unknown method")
 
     def test_mcp_tool_surface_matches_the_frozen_1x_snapshot(self):
         """docs/contract.md, "Stability guarantee (1.x)": within 1.x no tool is removed or renamed
@@ -3057,6 +3136,126 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertTrue(d["ok"])
         for tool_name in ("caption", "graphics"):
             self.assertEqual(d["tools"][tool_name]["usable"], "yes")
+
+
+class EvalRunnerTests(unittest.TestCase):
+    """evals/run.py's regex-only grading -- the cross-vendor path (Cursor, Codex, or any
+    harness that produces a transcript file). No LLM judge, no `claude` CLI dependency: every
+    assertion here is against the pure-Python score()/load_tasks() functions."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(ROOT / "evals"))
+        import importlib
+        cls.evals_run = importlib.import_module("run")
+
+    def test_score_passes_when_every_expect_slot_is_present(self):
+        run = self.evals_run
+        task = {"id": 1, "request": "r", "expect": ["probe.py", "cut.py"],
+                "grader_expect": None, "grader_not": None}
+        ok, reasons = run.score("ran probe.py then cut.py", task)
+        self.assertTrue(ok)
+        self.assertEqual(reasons, [])
+
+    def test_score_reports_missing_expect_slots(self):
+        run = self.evals_run
+        task = {"id": 2, "request": "r", "expect": ["probe.py", "cut.py"],
+                "grader_expect": None, "grader_not": None}
+        ok, reasons = run.score("ran probe.py only", task)
+        self.assertFalse(ok)
+        self.assertIn("cut.py", reasons[0])
+
+    def test_score_alternation_slot_accepts_either_side(self):
+        run = self.evals_run
+        task = {"id": 3, "request": "r", "expect": ["fit|render"], "grader_expect": None, "grader_not": None}
+        self.assertTrue(run.score("used render.py --template", task)[0])
+        self.assertTrue(run.score("used fit.py --duration 2x", task)[0])
+        self.assertFalse(run.score("used caption.py", task)[0])
+
+    def test_score_alternation_slot_accepts_dot_py_or_bare_name(self):
+        run = self.evals_run
+        # tasks.json's expect entries carry ".py"; agent_prompts_24.json's don't. Either spelling
+        # of the slot must match a transcript that names the script with ".py".
+        task = {"id": 4, "request": "r", "expect": ["render"], "grader_expect": None, "grader_not": None}
+        self.assertTrue(run.score("called render.py --template reel", task)[0])
+
+    def test_score_grader_expect_regex_must_match(self):
+        run = self.evals_run
+        task = {"id": 5, "request": "r", "expect": [], "grader_expect": r"(?i)\d+\s*bpm", "grader_not": None}
+        ok, reasons = run.score("tempo is 128 bpm", task)
+        self.assertTrue(ok)
+        ok, reasons = run.score("tempo unknown", task)
+        self.assertFalse(ok)
+        self.assertIn("grader_expect", reasons[0])
+
+    def test_score_grader_not_regex_must_not_match(self):
+        run = self.evals_run
+        task = {"id": 6, "request": "r", "expect": [], "grader_expect": None,
+                "grader_not": r"(?i)rewrote the caption"}
+        ok, reasons = run.score("Done: burned the captions as written", task)
+        self.assertTrue(ok)
+        ok, reasons = run.score("Done: rewrote the caption to fit", task)
+        self.assertFalse(ok)
+        self.assertIn("grader_not", reasons[0])
+
+    def test_load_tasks_normalises_tasks_json_shape(self):
+        run = self.evals_run
+        tasks = run.load_tasks(ROOT / "evals" / "tasks.json")
+        self.assertTrue(tasks)
+        t = tasks[0]
+        self.assertIn("id", t)
+        self.assertIn("request", t)
+        self.assertIsInstance(t["expect"], list)
+        self.assertIsNone(t["grader_expect"])
+
+    def test_load_tasks_normalises_agent_prompts_shape(self):
+        run = self.evals_run
+        tasks = run.load_tasks(ROOT / "evals" / "agent_prompts_24.json")
+        self.assertTrue(tasks)
+        by_id = {t["id"]: t for t in tasks}
+        self.assertIn("e01-reel", by_id)
+        self.assertEqual(by_id["e01-reel"]["expect"][0], "fit|render")
+        # at least one prompt in this set carries a grader_expect/grader_not regex
+        self.assertTrue(any(t["grader_expect"] for t in tasks))
+        self.assertTrue(any(t["grader_not"] for t in tasks))
+
+    def test_cli_grades_a_flat_directory_of_transcripts(self):
+        run = self.evals_run
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            (outdir / "1.txt").write_text("ran probe.py then fit.py then export.py", encoding="utf-8")
+            proc = sh(sys.executable, HERE_EVALS_RUN, str(outdir), "--json")
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["passed"], 1)
+            self.assertEqual(doc["total"], 1)
+            self.assertEqual(proc.returncode, 0)
+
+    def test_cli_exit_code_is_nonzero_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            (outdir / "2.txt").write_text("ran probe.py only", encoding="utf-8")
+            proc = sh(sys.executable, HERE_EVALS_RUN, str(outdir), "--json", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+
+    def test_cli_accepts_a_prompts_flag_pointing_at_the_108_prompt_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            (outdir / "e02-cut-lossless.txt").write_text("ran probe.py then cut.py --start 0:02 --end 0:08", encoding="utf-8")
+            proc = sh(sys.executable, HERE_EVALS_RUN, str(outdir), "--json",
+                      "--prompts", str(ROOT / "evals" / "agent_prompts_24.json"))
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["total"], 1)
+            self.assertEqual(doc["passed"], 1)
+
+    def test_run_py_has_no_claude_cli_or_llm_judge_dependency(self):
+        """The cross-vendor contract: grading is regex/substring only, so a Cursor or Codex
+        session can run this without a `claude` binary or an LLM call in the loop."""
+        src = (ROOT / "evals" / "run.py").read_text(encoding="utf-8")
+        for needle in ("subprocess", "anthropic", "openai", '"claude"', "'claude'", "ANTHROPIC_API_KEY"):
+            self.assertNotIn(needle, src, f"evals/run.py should not depend on {needle!r}")
+
+
+HERE_EVALS_RUN = str(ROOT / "evals" / "run.py")
 
 
 if __name__ == "__main__":

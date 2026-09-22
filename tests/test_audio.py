@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, script, sh  # noqa: E402
 from _common import probe  # noqa: E402
 
 
@@ -79,6 +79,12 @@ class AudioTests(MediaFixtures):
         self.assertClose(float(stats["input_i"]), -16.0, 1.0, "integrated loudness")
         self.assertLessEqual(float(stats["input_tp"]), -1.0, "true peak ceiling")
         self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
+        # #275: every other mp4-writing path (x264, colour, export.py) adds -movflags
+        # +faststart; this stream-copy branch (video copied, only audio re-encoded -- the path
+        # render.py --template's export.py --normalize step runs) silently dropped it, so a
+        # template delivery came out with moov at the end despite export.py having just written
+        # it faststart.
+        self.assertTrue(_is_faststart(out), "#275: loudness.py's stream-copy branch must write +faststart")
 
     def test_audio_music_bed_never_shortens_the_video(self):
         """#164: a looped music bed under --duck came out 11.925 s from a 12.00 s source, and
@@ -100,6 +106,15 @@ class AudioTests(MediaFixtures):
             self.assertAlmostEqual(m["duration"], src_dur, msg=tag, delta=0.02)
             self.assertEqual(self._frame_count(out), src_frames, f"{tag}: the picture lost or gained frames")
             self.assertAlmostEqual(m["audio"].get("duration") or m["duration"], src_dur, msg=tag, delta=0.05)
+
+    def test_audio_keep_video_branch_writes_faststart_mp4(self):
+        """Same shape as #275/#277 (loudness.py): --replace's keep_video branch stream-copies the
+        video with -c:v copy while only the audio is touched, and must add -movflags +faststart
+        on an mp4 output the same way every other mp4-writing path does."""
+        out = OUT / "audio_keepvideo_faststart.mp4"
+        script("audio.py", self.src, "--replace", self.mic, "-o", out)
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
+        self.assertTrue(_is_faststart(out), "audio.py's keep_video branch must write +faststart")
 
     def test_audio_downmix_voice_and_ducking(self):
         out = OUT / "downmix.mp4"
