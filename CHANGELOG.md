@@ -42,6 +42,8 @@ withdrawn (`result_v2`, below). No new feature; tool count still 42. `docs/contr
   waived the 90-day half of its window (the deprecations date from 1.10.0, 2026-09-13; sixteen
   minor releases carried them), and `tests/test_contract.py` requires such a waiver to be stated
   there. `ctx` on `run()`/`emit()`/`die()` stays optional (docs/design-decisions.md says why).
+- `render.py` refuses an existing project output before its first stage runs, not at the final
+  copy after every stage had.
 - `demos/build.py` clears a demo's own outputs before rebuilding it, since a tool now refuses to
   replace them.
 

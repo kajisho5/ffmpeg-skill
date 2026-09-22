@@ -64,7 +64,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, fingerprint, PLAN_VERSION, ffmpeg_version
+from _common import STATE, add_common, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, fingerprint, PLAN_VERSION, ffmpeg_version
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -816,6 +816,9 @@ def main() -> int:
     output = rel(proj.get("output") or "final.mp4")
     # the final stage is a copy from the work dir, so run()'s own guard never sees the sources (review 5)
     refuse_output_is_input(output, *[rel(c.get("src")) for c in clips if c.get("src")])
+    # 2.0 refuses an existing output without --overwrite; the final place_output() would, but
+    # only after every stage had run -- say so before the first one instead
+    _check_existing_output(["ffmpeg", output])
     # The default work dir name comes only from the output path, with no PID or timestamp --
     # two concurrent render.py runs targeting the same output (a batch.py "project" recipe
     # processing several files in parallel, or simply running render.py twice by mistake) shared

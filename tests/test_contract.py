@@ -414,7 +414,10 @@ class ContractTests(unittest.TestCase):
         cut = self.tools["cut"]["input_schema"]["properties"]
         self.assertEqual(cut["input"]["cli"], "positional")
         self.assertEqual(cut["accurate"]["type"], "boolean")
-        self.assertEqual(cut["crf"]["type"], "integer")
+        self.assertEqual(cut["quality"]["type"], "integer")
+        self.assertEqual(cut["quality"]["default"], 18)
+        self.assertNotIn("crf", cut, "2.0 removed --crf where --quality exists")
+        self.assertEqual(self.tools["export"]["input_schema"]["properties"]["crf"]["type"], "integer")
         self.assertEqual(self.tools["export"]["input_schema"]["properties"]["preset"]["enum"], sorted(self.tools["export"]["input_schema"]["properties"]["preset"]["enum"]))
 
     def test_response_schema(self):
@@ -1935,7 +1938,12 @@ class ContractTests(unittest.TestCase):
         # 8 -- render's final copy goes through the output guards (existing file replaced via a temp, nothing left behind)
         out = self.out("rend_out.mp4"); shutil.copyfile(self.src, out)
         proj = self.out("rend.json"); proj.write_text(json.dumps({"output": str(out), "clips": [{"src": str(self.src), "in": 0, "out": 1}]}))
-        doc = json.loads(tool("render", proj, "--fast", "--json").stdout)
+        # 2.0: without --overwrite render refuses up front, before any stage runs
+        refused = tool("render", proj, "--fast", "--json", check=False)
+        self.assertEqual(refused.returncode, 1)
+        self.assertEqual((json.loads(refused.stdout)["error"]["kind"], json.loads(refused.stdout)["commands"]), ("input", []))
+        self.assertNotIn("cut.py", refused.stderr, "no stage ran before the refusal")
+        doc = json.loads(tool("render", proj, "--fast", "--json", "--overwrite").stdout)
         self.assertEqual(doc["status"], "completed")
         self.assertAlmostEqual(doc["probe"]["duration"], 1.0, delta=0.15)
         self.assertEqual([p.name for p in out.parent.glob(".rend_out.ffskill-*")], [])
