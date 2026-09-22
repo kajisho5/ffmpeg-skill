@@ -569,7 +569,21 @@ render.py --init project.json                # starter file
 render.py project.json [--fast] [--dry-run] [--stop-after STAGE] [--work DIR --keep]
 render.py project.json --cache DIR [--from STAGE]    # reuse identical stages from a previous run
 render.py plan.json                          # execute a plan written by <tool> --plan plan.json
+render.py project.json --export-timeline edit.fcpxml|edit.edl|edit.otio   # the cut for an editor, nothing rendered
 ```
+`--export-timeline FILE` (2.1) writes the project's cut as an editor timeline instead of
+rendering it: `.fcpxml` (FCPXML 1.10: Final Cut Pro, DaVinci Resolve), `.edl` (CMX 3600:
+Premiere, Resolve, Avid) or `.otio` (OpenTimelineIO JSON: Resolve natively, others through
+OTIO's adapters). Clips keep their in/out and speed (an M2 line, a `timeMap`, a
+`LinearTimeWarp`); `transition` becomes a cross dissolve centred on each cut, trimmed so the
+timeline is exactly as long as `join.py`'s crossfade would render it; `audio.music` is its own
+track; inline `chapters` are markers. Everything else in the project -- captions, graphics,
+overlays, the silence cut, fit, audio processing, loudness, export -- is listed in the result's
+`timeline.not_exported` and on stderr, never dropped silently. Media paths are absolute file
+URLs to the sources, nothing is copied or encoded, and the existing-output rule applies
+(`--overwrite` to replace). The timeline follows the project's numbers exactly; a render of
+the same project can come out a few frames longer, because `join.py` offsets its crossfades
+by each part's container duration, audio included.
 A plan is a single tool's dry run as an artifact: `cut.py in.mp4 --start 2 --end 8
 --plan cut.json` writes `{plan_version, tool, argv, inputs (path, size, sha256 of
 head+tail), commands, output, verify}` and runs nothing. `render.py cut.json`

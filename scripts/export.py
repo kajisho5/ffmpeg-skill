@@ -148,7 +148,10 @@ def main() -> int:
             f"{meta['video'].get('color_transfer') or 'untagged'})",
             hint="use --preset youtube for an SDR delivery; there is no way to invent HDR range from an SDR master")
     if meta["video"].get("bt2020_or_hdr") and args.preset not in ("prores", "copy", "youtube-hdr"):
-        notes.append("source is HDR (%s). This preset outputs SDR BT.709 tags without tone mapping; run color.py --to-sdr first for correct colours." % meta["video"].get("hdr_format"))
+        # 2.0: `hdr` is a real PQ/HLG/DV signal; bt2020_or_hdr also covers BT.2020 SDR, which is
+        # not HDR but still needs converting before BT.709 tags describe it (eval 24 h1)
+        kind = "HDR" if meta["video"].get("hdr") else "wide-gamut SDR, not HDR"
+        notes.append("source is %s (%s). This preset outputs SDR BT.709 tags without converting it; run color.py --to-sdr first for correct colours." % (kind, meta["video"].get("hdr_format")))
         info("warning: " + notes[-1])
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, args.preset, p["ext"])

@@ -117,8 +117,8 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "pull the audio out", "give me the sound as WAV" | `audio.py input.mp4 -o input.wav` (an audio extension drops the picture; `--audio-stream 1` picks a track) |
 | "compress the voice", "limit the peaks", "gate the room noise" | `audio.py input.mp4 --compress --comp-threshold -20 --comp-ratio 4` / `--limit --limit-ceiling -1` / `--gate --gate-threshold -45` |
 | "the audio drifts out of sync over the hour" | `sync.py camera.mp4 recorder.wav --fix-drift --replace-audio` |
-| "turn this podcast into a video", "audiogram" | `render.py --template audiogram ep.m4a --image cover.png` — waveform over a still or colour plate; give an image or colour, nothing is fetched |
-| "make this a TikTok / Reel / Short / YouTube / X / LinkedIn / podcast" | `render.py --template tiktok\|reels\|shorts\|youtube-shorts\|youtube\|x\|linkedin\|facebook\|podcast input.mp4 [--cues cues.txt] [--title "..."]` — frame, captions, loudness, export and check in one command (`--list-templates`, `--write-project` to edit first) |
+| "turn this podcast into a video", "audiogram" | `render.py --template audiogram ep.m4a --image cover.png` — waveform over a still or colour plate; nothing is fetched |
+| "make this a TikTok / Reel / Short / YouTube / X / LinkedIn / podcast" | `render.py --template tiktok\|reels\|shorts\|youtube-shorts\|youtube\|x\|linkedin\|facebook\|podcast input.mp4 [--cues cues.txt] [--title "..."]` — frame, captions, loudness, export, check in one command (`--list-templates`; `--write-project` to edit first) |
 | "post it everywhere", "one edit for every platform" | `render.py --template all input.mp4 --cues cues.txt` (or a comma list) → one file per destination plus `<name>_pack.md` (`report.py --pack` renders the HTML) |
 | "export for YouTube / Reels / X", "a ProRes master" | `export.py input.mp4 --preset youtube\|reels\|tiktok\|shorts\|linkedin\|facebook\|x\|prores\|h265` (`--normalize` hits the loudness spec in the same call; `youtube-hdr` keeps HDR, `youtube-av1` writes AV1) |
 | "make a GIF preview" | `export.py input.mp4 --preset gif` |
@@ -133,12 +133,13 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "waveform/spectrum video for this track" | `waveform.py podcast.wav -o waveform.mp4` |
 | "add black at the start" | `pad.py clip.mp4 --start 1.5` |
 | "cut to the product shot 0:12-0:16", "B-roll over this bit" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16` (repeat `--insert/--at`; `--audio b\|mix`) |
-| "add chapters", "chapter markers for YouTube" | `metadata.py episode.mp4 --chapters chapters.txt` (`TIME TITLE` per line; streams copied; a `render.py` project spells it `"chapters"`). `--auto-chapters` proposes them from measured pauses/scene cuts, titled `Chapter N`, renameable |
+| "add chapters", "chapter markers for YouTube" | `metadata.py episode.mp4 --chapters chapters.txt` (`TIME TITLE` per line; streams copied; in a project: `"chapters"`). `--auto-chapters` proposes them from measured pauses/scene cuts (`Chapter N`) |
 | "set the title / artist / comment" | `metadata.py episode.mp4 --title "Episode 12" --artist "Studio"` |
 | "put these videos in a 4x2 grid" | `grid.py t1.mp4 ... t8.mp4 --cols 4 --rows 2` |
 | "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` |
-| "several changes to the same edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
-| "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` — identical stages come from the cache (`--from STAGE` starts there) |
+| "several changes to one edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
+| "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` — identical stages reused (`--from STAGE` starts there) |
+| "open it in Premiere / Resolve / Final Cut" | `render.py project.json --export-timeline edit.fcpxml\|.edl\|.otio` — the cut as a timeline, nothing rendered; read `not_exported` |
 | "do this to every file in the folder", "use all the cores" | `batch.py FOLDER --recipe batch.json --jobs auto` (steps or a render project; cached) |
 | "three cameras, cut between them" | `multicam.py camA.mp4 camB.mp4 camC.mp4 --switch "0-20:0,20-40:1,40-60:2"` (manual) or `--switch energy` (auto-cuts to the loudest camera, `--min-shot`, `--edl`) |
 | "what's in this file", "how long is it" | `probe.py input.mp4` |

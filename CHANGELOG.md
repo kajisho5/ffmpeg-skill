@@ -6,6 +6,30 @@
 
 (nothing yet)
 
+## 2.1.0
+
+### Added
+
+- `render.py project.json --export-timeline edit.fcpxml|edit.edl|edit.otio` writes the project's
+  cut as an editor timeline instead of rendering it -- FCPXML 1.10 (Final Cut Pro, DaVinci
+  Resolve), CMX 3600 EDL (Premiere, Resolve, Avid) or OpenTimelineIO JSON. Clips keep their
+  in/out and speed, `transition` becomes a cross dissolve centred on each cut (trimmed so the
+  timeline is exactly `join.py`'s rendered length), `audio.music` is its own track and inline
+  `chapters` are markers. Nothing is encoded. Everything else the project asks for (captions,
+  graphics, overlays, the silence cut, fit, audio processing, loudness, export) is listed in the
+  new `timeline` result block's `not_exported` and on stderr, never dropped silently; a file that
+  exists is refused without `--overwrite`, like every output. Verified: the three formats read
+  back at the right length through the reference `opentimelineio` library and its FCPXML and
+  CMX 3600 adapters. Not verified here: Final Cut, Resolve or Premiere opening them (#143).
+
+### Fixed
+
+- `export.py`'s colour warning called a BT.2020 SDR source "HDR (BT.2020 SDR)" -- 1.x wording
+  that 2.0's `hdr` contradicts. It now says "wide-gamut SDR, not HDR" for that case, and still
+  points at `color.py --to-sdr` (found by eval 24 h1).
+- `docs/demos.md` still printed `proxy.py --crf 34`, a flag 2.0 removed; the gallery is
+  regenerated.
+
 ## 2.0.0
 
 What 1.10.0 announced for 2.0 (`contract --json`'s `deprecated` list): four changes made, one
