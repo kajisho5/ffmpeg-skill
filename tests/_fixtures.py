@@ -55,6 +55,11 @@ def _is_faststart(path) -> bool:
 
 
 def script(name, *args, **kw):
+    # Every media test shares one OUT directory and many reuse a name (cap_mux.mp4 is written by
+    # three tests), so since 2.0 refuses an existing output the helper gives the consent. What the
+    # refusal itself does is pinned by test_contract.py's own helper, which never adds the flag.
+    if ("-o" in args or "--output" in args) and "--overwrite" not in args:
+        args = args + ("--overwrite",)
     return sh(sys.executable, SCRIPTS / name, *args, **kw)
 
 # ---------------------------------------------------------------------------- fonts by script (1.12)
