@@ -30,7 +30,7 @@ def main() -> int:
     ap.add_argument("--hold", type=float, required=True, help="how long the freeze lasts, in seconds")
     ap.add_argument("--mode", choices=["insert", "extend"], default="insert",
                      help="insert (default): hold pushes the rest of the clip later; extend: only valid at/after the clip's end, makes the last frame last longer with nothing pushed")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

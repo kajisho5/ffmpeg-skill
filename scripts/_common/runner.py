@@ -195,45 +195,20 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         g.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
                        help=f"kill an ffmpeg run past this many seconds, kind=timeout (default {DEFAULT_TIMEOUT:.0f}; 0 = no limit)")
     g.add_argument("--overwrite", action="store_true",
-                   help="allow replacing an existing output (warned today, refused from 2.0)")
+                   help="allow replacing an existing output (refused without it)")
     g.add_argument("--plan", metavar="FILE",
                    help="write the dry run as a plan (inputs fingerprinted, commands, expected output, verify steps) that render.py FILE executes later; implies --dry-run")
-    if codec and "--crf" in ap._option_string_actions:
-        # --crf became an alias of --quality in 1.8; 1.10 deprecates it (removed in 2.0, see the
-        # `deprecated` list in `contract --json` and docs/contract.md "What 2.0 changes"). Marked
-        # here, once, rather than in each re-encoding tool's own parser.
-        crf = ap._option_string_actions["--crf"]
-        # The flag's own default moves aside so apply_common() can tell an explicit --crf (in any
-        # spelling argparse accepts, including the --cr / --c abbreviations) from the default;
-        # apply_common() puts _CRF_DEFAULT back when the flag was absent.
-        global _CRF_DEFAULT
-        _CRF_DEFAULT = crf.default
-        crf.deprecated_default = crf.default  # the schema still advertises it (_contract._json_type)
-        crf.default = None
-        if "deprecated" not in (crf.help or ""):
-            # the nine tools that declare --crf with no help string used to fall through this and
-            # never show the mark at all (review 9)
-            crf.help = (crf.help or "x264 CRF when re-encoding (default 18)") + " (deprecated: use --quality)"
-        # only the tools that re-encode (they declare --crf before add_common): one encoder choice
-        # resolved in video_args(), the 2.0 encoder abstraction pre-shipped in 1.8 (docs/roadmap.md)
+    if codec and "crf" in ap._defaults:
+        # A tool that re-encodes declares its CRF default with set_defaults(crf=N) before calling
+        # this; --codec/--quality are its only encoder flags, resolved in video_args(). --crf was
+        # the 1.x spelling of --quality (an alias from 1.8, deprecated in 1.10, removed in 2.0).
         g.add_argument("--codec", choices=CODECS, default=None,
                        help="video encoder for the re-encode: h264 (x264, the default for SDR), hevc (x265, the default for HDR), av1 (SVT-AV1 or libaom), prores (422 HQ, needs a .mov/.mkv output); HDR sources keep their colour on hevc/av1/prores")
-        g.add_argument("--quality", type=int, default=None, metavar="N",
-                       help="encoder quality on the CRF scale (lower = better; 18 visually lossless for x264/x265, up to 63 for av1); overrides --crf, ignored by prores")
-
-
-# The declared default of a deprecated --crf, parked by add_common() (one parser per process).
-_CRF_DEFAULT: Optional[int] = None
+        g.add_argument("--quality", type=int, default=ap._defaults["crf"], metavar="N",
+                       help="encoder quality on the CRF scale (default %(default)s; lower = better; 18 visually lossless for x264/x265, up to 63 for av1); ignored by prores")
 
 
 def apply_common(args: "argparse.Namespace") -> None:
-    # Was --crf typed? add_common() parked the flag's default (None in its place) on every tool
-    # whose --crf is deprecated, i.e. the ones that also have --quality; export.py's --crf is not
-    # an alias and keeps its own default. Scanning sys.argv for "--crf" instead missed the unique
-    # prefixes argparse accepts (--cr, --c) and never ran for batch.py's recipe steps (review 9).
-    crf_explicit = hasattr(args, "quality") and getattr(args, "crf", None) is not None
-    if hasattr(args, "quality") and hasattr(args, "crf") and args.crf is None:
-        args.crf = _CRF_DEFAULT
     STATE.plan = getattr(args, "plan", None) or None
     STATE.dry_run = bool(getattr(args, "dry_run", False)) or bool(STATE.plan)
     if STATE.plan:
@@ -269,12 +244,7 @@ def apply_common(args: "argparse.Namespace") -> None:
         if os.path.splitext(str(out))[1].lower() not in (".mov", ".mkv"):
             die(f"--codec prores needs a .mov (or .mkv) output; {os.path.basename(str(out))} cannot hold ProRes",
                 hint="give -o NAME.mov")
-    crf = getattr(args, "crf", None)
-    # The warning the deprecation policy asks for, only when the caller typed the flag (see
-    # crf_explicit above). export.py has no --quality (its preset chooses the encoder), so its
-    # --crf is not an alias and is not deprecated: warn only where --quality exists.
-    if crf is not None and crf_explicit:
-        info("warning: --crf is deprecated since 1.10.0; use --quality N (the same CRF scale, codec-neutral). --crf is removed in 2.0.")
+    crf = getattr(args, "crf", None)  # export.py's own --crf (its preset chooses the encoder)
     top = 63 if STATE.codec == "av1" else 51
     if crf is not None and not 0 <= int(crf) <= top:
         die(f"--crf must be between 0 and {top} ({'SVT-AV1' if STATE.codec == 'av1' else 'x264/x265'} scale; 18 is visually lossless), got {crf}")
@@ -565,9 +535,9 @@ def _odd_dimension_retry(cmd: List[str], stderr: str) -> Optional[List[str]]:
 def _check_existing_output(cmd: Sequence[str]) -> None:
     """An output path that already exists is someone's file: a previous result, a source the
     agent mis-named, a deliverable from another run. ffmpeg's -y (which every command carries so
-    a run never blocks on a y/N prompt) would replace it without a word. Until 2.0 this only
-    warns, per docs/contract.md's deprecation policy; FFMPEG_SKILL_NO_OVERWRITE=1 opts into the
-    2.0 behaviour (refuse) today, and --overwrite is the explicit consent either way. Paths this
+    a run never blocks on a y/N prompt) would replace it without a word. Since 2.0 it is refused
+    (kind: input, before anything runs, dry runs included) unless --overwrite gives explicit
+    consent; 1.x only warned, and FFMPEG_SKILL_NO_OVERWRITE=1 was the opt-in to this. Paths this
     process wrote itself (a two-pass tool, a copy-then-re-encode fallback) are never in question."""
     output = cmd[-1]
     if output in ("-",) or output.startswith("pipe:") or output.startswith("-"):
@@ -586,10 +556,8 @@ def _check_existing_output(cmd: Sequence[str]) -> None:
         pass
     if STATE.overwrite:
         return
-    if os.environ.get("FFMPEG_SKILL_NO_OVERWRITE", "") not in ("", "0"):
-        die(f"refusing to overwrite existing output {output!r}: pass --overwrite to replace it, or choose another -o path", kind="input")
-    info(f"warning: {output} already exists and will be overwritten (pass --overwrite to confirm; "
-         f"from 2.0 an existing output is refused without it, FFMPEG_SKILL_NO_OVERWRITE=1 enables that now)")
+    die(f"refusing to overwrite existing output {output!r}: pass --overwrite to replace it, or choose another -o path",
+        kind="input", hint="pass --overwrite, or choose another -o path")
 
 
 def _remember_output(cmd: Sequence[str]) -> None:

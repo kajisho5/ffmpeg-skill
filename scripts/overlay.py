@@ -137,7 +137,7 @@ def main() -> int:
     emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build")
     txt.add_argument("--box-color", default="black@0.5")
     enc = ap.add_argument_group("encoding")
-    enc.add_argument("--crf", type=int, default=18)
+    enc.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     enc.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()

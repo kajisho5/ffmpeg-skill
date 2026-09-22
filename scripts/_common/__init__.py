@@ -53,7 +53,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from _common.runner import (
     add_common, apply_common, _check_existing_output, _check_no_overwrite_input, _check_output_path, child_args,
-    child_limit, _CHILDREN, _cleanup_partial_output, _cmdline, CODECS, Context, _CRF_DEFAULT, DEFAULT_TIMEOUT,
+    child_limit, _CHILDREN, _cleanup_partial_output, _cmdline, CODECS, Context, DEFAULT_TIMEOUT,
     _DRAWTEXT_PENDING, _DRAWTEXT_TMPDIR, _drawtext_tmpdir, dry_run_input_pending, _ENCODERS, _env_timeout,
     ERROR_CODE, ERROR_RETRYABLE, EVEN_SCALE, _execute, _fail, ffmpeg_base, ffmpeg_encoders, _FFMPEG_VERSION,
     ffmpeg_version, flush_drawtext_textfiles, INSTALL_HINTS, install_signal_handlers, _is_ffmpeg, _limit_for,
@@ -64,7 +64,7 @@ from _common.runner import (
 )
 from _common.emit import (
     _brief, _BRIEF_DROP, _brief_summary, _CURRENT_CTX, die, emit, info, _plan_at_exit, _plan_inputs, _PLAN_STRIP,
-    PLAN_VERSION, print_json, _result_v2, _set_current_ctx, _V2_HANDLED, write_plan
+    PLAN_VERSION, print_json, _set_current_ctx, write_plan
 )
 from _common.probe import (
     analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
@@ -144,7 +144,7 @@ class _Facade(_types.ModuleType):
     # own copy is the import-time binding and would read stale. Reads of these names go to the
     # defining module (audit 14, P1-1); every other name is a plain re-export of the same object.
     _LIVE = {
-        "_FFMPEG_VERSION": "runner", "_CRF_DEFAULT": "runner", "_SIGNALS_INSTALLED": "runner",
+        "_FFMPEG_VERSION": "runner", "_SIGNALS_INSTALLED": "runner",
         "_DRAWTEXT_TMPDIR": "runner", "_ENCODERS": "runner", "_CURRENT_CTX": "emit",
     }
 
@@ -181,7 +181,7 @@ __all__ = [
     "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_tag_args", "cfr_args", "_char_em",
     "char_script", "_check_existing_output", "_check_no_overwrite_input", "_check_output_path", "child_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",
-    "concat_list_line", "Context", "_CRF_DEFAULT", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",
+    "concat_list_line", "Context", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",
     "filler_spans", "FILLER_WORDS", "FILLER_AMBIGUOUS", "FILLER_DISCOURSE_MARKERS",
     "FILLER_MAX_WORD", "FILLER_MIN_GAP", "FILLER_PAD", "normalise_filler_token",
     "beat_grid", "snap_points", "BEAT_MIN_CONFIDENCE", "BEAT_ONSET_K", "BEAT_OCTAVE_MARGIN",
@@ -205,13 +205,13 @@ __all__ = [
     "_odd_dimension_retry", "_on_signal", "_output_failed", "_OutputLock", "pad_filters", "parse_time", "_pid_dead",
     "place_output", "_plan_at_exit", "_plan_inputs", "_PLAN_STRIP", "PLAN_VERSION", "PREFERRED_FAMILIES",
     "print_json", "probe", "PROBE_TIMEOUT", "_progress_line", "read_text_or_die", "refuse_output_is_input",
-    "_remember_output", "require_tool", "resolve_emoji_assets", "_result_v2", "rms_envelope", "run", "run_analysis",
+    "_remember_output", "require_tool", "resolve_emoji_assets", "rms_envelope", "run", "run_analysis",
     "decode_gray_frames", "frame_flow", "label_shot_flow", "MOTION_GRID", "MOTION_SEARCH", "MOTION_STATIC_PX", "MOTION_PAN_SPREAD",
     "_run_captured", "run_keeping_subtitles", "run_tool", "_run_with_progress", "_SCRIPT_FONT_CACHE",
     "_script_font_entry", "script_font_for_text", "script_font_status", "_script_font_uncached", "_SCRIPT_RANGES",
     "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote",
     "_SIGNALS_INSTALLED", "signed_time_arg", "_stage_existing_output", "STATE", "SVT_PRESET", "text_width_em",
-    "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "_V2_HANDLED", "validate_color", "verify_output",
+    "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "validate_color", "verify_output",
     "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
     "_x264_raw", "_ZWJ",
     "ASR_ENGINES", "ASR_INSTALL_HINT", "_asr_run", "die_no_engine", "parse_srt", "transcribe",

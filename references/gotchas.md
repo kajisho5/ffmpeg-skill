@@ -9,13 +9,13 @@ detail, not an aside.
 
 ### HDR and colour
 SDR outputs are H.264 tagged BT.709 `yuv420p`. When `probe.py` reports
-`hdr: true` (HDR10/PQ, HLG, Dolby Vision, BT.2020), every editing script keeps
-the output HDR (HEVC Main10, source colour tags) so nothing is silently
+`bt2020_or_hdr: true` (HDR10/PQ, HLG, Dolby Vision, or BT.2020 SDR), every editing script keeps
+the output on the 10-bit path (HEVC Main10, source colour tags) so nothing is silently
 flattened. Decide with the user: keep HDR (fine for YouTube/phones) or run
 `color.py --to-sdr` first for SDR-only destinations, LUT work or H.264
-deliverables. `hdr: true` counts BT.2020 primaries too, so it is also true for a
-wide-gamut SDR file; `hdr_signal: true` is the narrower fact — a real PQ / HLG /
-Dolby Vision transfer — and `hdr_format` names the in-between case
+deliverables. Since 2.0 `hdr: true` (and its 1.9 twin `hdr_signal`) is the narrow
+fact — a real PQ / HLG / Dolby Vision transfer; `bt2020_or_hdr` also counts a
+wide-gamut SDR file (1.x's `hdr`), and `hdr_format` names that in-between case
 (`BT.2020 SDR`). `export.py` platform presets are SDR and warn on HDR input.
 iPhone `.mov` files also carry timecode/metadata tracks; scripts map only the
 first audio track, so extra tracks are dropped on re-encode. Keep ProRes masters

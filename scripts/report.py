@@ -71,7 +71,7 @@ def media_rows(meta: Dict[str, Any], ld: Dict[str, Any]) -> List[List[str]]:
         ["Duration", fmt_dur(meta.get("duration"))],
         ["Size", f"{(meta.get('size_bytes') or 0) / 1024 / 1024:.1f} MB"],
         ["Video", f"{v.get('codec')} {v.get('width')}×{v.get('height')} @ {v.get('fps')} fps, {v.get('pix_fmt')}" if v else "none"],
-        ["Colour", (f"{v.get('color_primaries')}/{v.get('color_transfer')}" + (f" — {v.get('hdr_format')}" if v.get("hdr") else " (SDR)")) if v else "—"],
+        ["Colour", (f"{v.get('color_primaries')}/{v.get('color_transfer')}" + (f" — {v.get('hdr_format')}" if v.get("bt2020_or_hdr") else " (SDR)")) if v else "—"],
         ["Frame rate", ("variable (suspected)" if v.get("variable_frame_rate_suspected") else "constant") if v else "—"],
         ["Audio", f"{a.get('codec')} {a.get('channels')} ch {a.get('sample_rate')} Hz" if a else "none"],
     ]

@@ -230,7 +230,7 @@ def encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str, Any
     it video_args() does what it always did (x264 for SDR, x265 Main10 for HDR).
     """
     v = (meta or {}).get("video") or {}
-    hdr = bool(v.get("hdr"))
+    hdr = bool(v.get("bt2020_or_hdr"))
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"
     trc = v.get("color_transfer") or "arib-std-b67"
@@ -298,7 +298,7 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     if STATE.codec:
         return encoder_args(STATE.codec, crf, preset, meta)
     v = (meta or {}).get("video") or {}
-    if not v.get("hdr"):
+    if not v.get("bt2020_or_hdr"):
         return x264_args(crf, preset)
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"

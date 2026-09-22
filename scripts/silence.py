@@ -242,7 +242,7 @@ def main() -> int:
     fil.add_argument("--max-cuts", type=int, default=400,
                      help="refuse above this many removal ranges: the filter graph grows with them "
                           "(default 400)")
-    ap.add_argument("--crf", type=int, default=18)
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()

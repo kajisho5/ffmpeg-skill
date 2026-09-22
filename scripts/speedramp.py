@@ -60,7 +60,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output file (default: <name>_ramp.<ext>)")
     ap.add_argument("--segment", action="append", required=True, dest="segments",
                      help=f"START-END:FACTOR, repeatable; segments must cover 0..duration with no gaps or overlaps, in order. FACTOR is {MIN_SPEED}..{MAX_SPEED} (2.0 = twice as fast, 0.5 = half speed)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

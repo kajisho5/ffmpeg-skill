@@ -73,7 +73,7 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
         was_json, STATE.json = STATE.json, False  # probe()'s die() would print a JSON document of its own
         try:
             v = probe(argv[1]).get("video") or {}
-            ok = bool(v.get("hdr")) and v.get("bit_depth", 8) >= 10
+            ok = bool(v.get("bt2020_or_hdr")) and v.get("bit_depth", 8) >= 10
             err = "" if ok else f"re-encode lost HDR: {v.get('color_transfer')}/{v.get('pix_fmt')}"
         except SystemExit:
             ok, err = False, "output missing"
@@ -148,7 +148,7 @@ def main() -> int:
             if not args.quick:
                 plan.append(("overlay text", ["overlay.py", cut, "--text", "verify", "--position", "top-left", "-o", f"{stem}_ovl.mp4"] + fast))
                 plan.append(("look sheet", ["look.py", cut, "-o", f"{stem}_sheet.png"]))
-                if (meta.get("video") or {}).get("hdr"):
+                if (meta.get("video") or {}).get("bt2020_or_hdr"):
                     plan.append(("color to-sdr", ["color.py", f"{stem}_acc.mp4", "--to-sdr", "-o", f"{stem}_sdr.mp4"] + fast))
                     plan.append(("hdr preserved", ["__check_hdr__", f"{stem}_acc.mp4"]))
                 plan.append(("probe analyze", ["probe.py", cut, "--analyze"]))

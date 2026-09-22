@@ -106,7 +106,7 @@ def main() -> int:
     r.add_argument("--rotate", type=int, choices=[90, 180, 270], help="rotate the picture clockwise by this many degrees")
     r.add_argument("--flip", choices=["h", "v"], help="mirror the picture horizontally (h) or vertically (v)")
     e = ap.add_argument_group("encoding")
-    e.add_argument("--crf", type=int, default=18)
+    e.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     e.add_argument("--preset", default="medium", choices=X264_PRESETS)
     e.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
     add_common(ap)
@@ -227,7 +227,7 @@ def main() -> int:
             # (gamma-encoded) signal and something else entirely on a PQ/HLG one -- so an HDR
             # source keeps its blurred background undimmed rather than being silently altered
             # (review 12). The blur itself is neutral either way, and no tone mapping happens.
-            darken = 0.0 if meta["video"].get("hdr") else BLUR_DARKEN
+            darken = 0.0 if meta["video"].get("bt2020_or_hdr") else BLUR_DARKEN
             if not darken:
                 info("--fit blur: HDR source, so the blurred background is not dimmed "
                      "(an eq on PQ/HLG code values is not the -15%% dim it is on SDR); "

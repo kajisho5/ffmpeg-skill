@@ -111,14 +111,26 @@ class AnalysisTests(MediaFixtures):
         self.assertIn("no face in", proc.stderr, "the caller is told the directory does not cover the script")
         self.assertNotIn("FontName=DejaVu Sans", " ".join(json.loads(proc.stdout)["commands"]))
 
-    def test_probe_hdr_signal_is_the_transfer_not_the_primaries(self):
-        """1.9: hdr_signal is true for PQ / HLG / Dolby Vision only; hdr keeps its 1.x meaning."""
-        m = probe(str(self.hdr))
-        self.assertTrue(m["video"]["hdr"])
-        self.assertTrue(m["video"]["hdr_signal"])
-        m = probe(str(self.src))
-        self.assertFalse(m["video"]["hdr"])
-        self.assertFalse(m["video"]["hdr_signal"])
+    def test_probe_hdr_is_the_signal_and_bt2020_sdr_keeps_the_10bit_route(self):
+        """2.0 (deprecated in 1.10.0): `hdr` is true only for PQ / HLG / Dolby Vision, equal to
+        `hdr_signal`; BT.2020 primaries on an SDR transfer are `hdr: false` with
+        `bt2020_or_hdr: true` (the 1.x meaning) and `hdr_format: "BT.2020 SDR"`. The editing tools
+        route on `bt2020_or_hdr`, so such a source still re-encodes as HEVC Main10 keeping its
+        BT.2020 tags -- x264 with BT.709 tags would shift its colours."""
+        m = probe(str(self.hdr))["video"]
+        self.assertEqual((m["hdr"], m["hdr_signal"], m["bt2020_or_hdr"]), (True, True, True))
+        m = probe(str(self.src))["video"]
+        self.assertEqual((m["hdr"], m["hdr_signal"], m["bt2020_or_hdr"]), (False, False, False))
+        wide = OUT / "bt2020_sdr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+           "-t", "1", "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=bt709:colormatrix=bt2020nc:log-level=error", "-tag:v", "hvc1", wide)
+        m = probe(str(wide))["video"]
+        self.assertEqual((m["hdr"], m["hdr_signal"], m["bt2020_or_hdr"], m["hdr_format"]), (False, False, True, "BT.2020 SDR"))
+        padded = OUT / "bt2020_sdr_pad.mp4"
+        script("pad.py", wide, "--start", "0.5", "--preset", "ultrafast", "-o", padded, "--overwrite")
+        m = probe(str(padded))["video"]
+        self.assertEqual((m["codec"], m["bit_depth"], m["color_primaries"]), ("hevc", 10, "bt2020"))
 
     # ---------------------------------------------------------------- sync
     def test_sync_detects_offset_and_replaces_audio(self):

@@ -28,7 +28,7 @@ def main() -> int:
     group = ap.add_mutually_exclusive_group(required=True)
     group.add_argument("--times", type=int, help="repeat the whole clip this many times (2 = original + 1 repeat)")
     group.add_argument("--duration", help="loop (and trim the last repeat) to hit exactly this target duration (seconds or mm:ss)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

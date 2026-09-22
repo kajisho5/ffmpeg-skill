@@ -870,8 +870,8 @@ class EditingTests(MediaFixtures):
         wf = OUT / "codec_wave.mp4"
         script("waveform.py", self.src, "--codec", "hevc", "-o", wf, "--fast", "--json", "--overwrite")  # source.mp4: c_tone.wav is a test_contract fixture
         self.assertEqual(probe(str(wf))["video"]["codec"], "hevc")
-        # review 7: the av1 bound is named in the --crf message, and HDR hevc --quality 51 does not overflow
-        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "av1", "--crf", "70", "-o", out, "--json", expect_fail=True).stdout)
+        # review 7: the av1 bound is named in the --quality message, and HDR hevc --quality 51 does not overflow
+        d = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "av1", "--quality", "70", "-o", out, "--json", expect_fail=True).stdout)
         self.assertIn("63", d["error"]["message"])
         sys.path.insert(0, str(SCRIPTS))
         try:
@@ -1003,16 +1003,19 @@ class EditingTests(MediaFixtures):
         self.assertEqual(data["precision"], "frame")
         self.assertIsNotNone(data["probe"]["video"])
 
-    def test_crf_warns_once_as_a_deprecated_alias_of_quality(self):
-        """docs/contract.md, "Deprecation policy" step 1: the old spelling keeps working and says
-        what replaces it. argparse's own default (18) must stay silent."""
-        quiet = script("cut.py", self.src, "--start", "0", "--end", "1", "--dry-run", "-o", str(OUT / "crf_default.mp4"))
-        self.assertNotIn("--crf is deprecated", quiet.stderr)
-        warned = script("cut.py", self.src, "--start", "0", "--end", "1", "--crf", "20", "--dry-run", "-o", str(OUT / "crf_explicit.mp4"))
-        self.assertIn("--crf is deprecated", warned.stderr)
-        self.assertIn("--quality", warned.stderr)
-        helptext = " ".join(script("cut.py", "--help").stdout.split())
-        self.assertIn("(deprecated: use --quality)", helptext)
+    def test_crf_is_gone_and_quality_keeps_its_default(self):
+        """2.0 (deprecated in 1.10.0): --crf is no longer an alias of --quality on the re-encoding
+        tools -- argparse refuses it -- and --quality's default is what --crf's was (18, proxy 30).
+        export.py keeps its own --crf: its preset chooses the encoder, so it has no --quality."""
+        gone = script("cut.py", self.src, "--start", "0", "--end", "1", "--crf", "20", "--dry-run",
+                      "-o", str(OUT / "crf_gone.mp4"), expect_fail=True)
+        self.assertIn("unrecognized arguments: --crf", gone.stderr)
+        self.assertIn("default 18", " ".join(script("cut.py", "--help").stdout.split()))
+        self.assertIn("default 30", " ".join(script("proxy.py", "--help").stdout.split()))
+        doc = json.loads(script("cut.py", self.src, "--start", "0", "--end", "1", "--accurate", "--dry-run",
+                                "-o", str(OUT / "crf_default.mp4"), "--json").stdout)
+        self.assertIn("-crf 18", " ".join(doc["commands"]))
+        self.assertIn("--crf", script("export.py", "--help").stdout)
 
     def test_json_brief_is_a_shorter_json_with_the_same_verdict(self):
         """1.11.0 token diet: `--json-brief` is additive -- the same success document with the

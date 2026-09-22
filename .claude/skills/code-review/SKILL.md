@@ -72,7 +72,7 @@ Also grep before claiming a gap, because several checks are centralised:
 
 ```bash
 grep -rn "validate_color(" scripts/     # colour flags are validated at tool level, not per call site
-grep -rn "apply_common()" scripts/      # --crf range check happens once, here
+grep -rn "apply_common()" scripts/      # --quality range check happens once, here
 grep -rn "time_arg(" scripts/           # the single time parser; a tool parsing time itself is the bug
 ```
 
@@ -103,9 +103,9 @@ applicable rule against the tree:
 - **Scope boundary.** No AI/LLM content judgement, no cloud or API keys, no raw
   `ffmpeg`/`ffprobe` shell invocation outside `scripts/*.py`, no mutation of input
   files, no creative decisions on the caller's behalf.
-- **1.x discipline.** Contract-shape changes wait for 2.0 and ship as parallel
-  keys (`result_v2`, `hdr_signal`). A PR that changes the meaning of an existing
-  field in a patch release is a finding.
+- **Within-major discipline.** Contract-shape changes wait for the next major and
+  ship first as parallel keys (as `hdr_signal` did before 2.0). A PR that changes the
+  meaning of an existing field in a minor or patch release is a finding.
 
 ## Run the gate, then read it honestly
 

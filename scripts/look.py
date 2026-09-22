@@ -191,7 +191,7 @@ def main() -> int:
              f"left {z['left'] * 100:.0f}% / right {z['right'] * 100:.0f}% of the frame -- keep text out of those")
     tc = safe_filter + tc
     # HDR sources: tone-map for the PNG so the agent judges representative colours, not raw HLG/PQ
-    if meta["video"].get("hdr"):
+    if meta["video"].get("bt2020_or_hdr"):
         v = meta["video"]
         tm = (f"zscale=tin={v.get('color_transfer') or 'arib-std-b67'}:pin={v.get('color_primaries') or 'bt2020'}:min={v.get('color_space') or 'bt2020nc'}:rin=tv:t=linear:npl=1000,"
               "format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,")

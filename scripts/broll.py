@@ -35,7 +35,7 @@ def main() -> int:
     ap.add_argument("--from", dest="from_", action="append", metavar="TIME", help="where in B to start from (default 0); one per --insert, or omit")
     ap.add_argument("--audio", choices=["a", "b", "mix"], default="a", help="under a cutaway: A's audio (default), B's audio, or both mixed")
     ap.add_argument("--pad-color", default="black", help="pad colour when B's aspect differs from A's (default black)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
@@ -104,7 +104,7 @@ def main() -> int:
     for i, c in enumerate(cutaways):
         geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={args.pad_color}"
         parts.append(f"[{i + 1}:v]trim=start={c['from']:.3f}:duration={c['length']:.3f},setpts=PTS-STARTPTS+{c['at']:.3f}/TB,"
-                     f"{geo},setsar=1,fps={fps:g},format={'yuv420p10le' if (meta_a.get('video') or {}).get('hdr') else 'yuv420p'}[b{i}]")
+                     f"{geo},setsar=1,fps={fps:g},format={'yuv420p10le' if (meta_a.get('video') or {}).get('bt2020_or_hdr') else 'yuv420p'}[b{i}]")
         parts.append(f"{cur}[b{i}]overlay=0:0:eof_action=pass:enable='between(t,{c['at']:.3f},{c['at'] + c['length']:.3f})'[v{i}]")
         cur = f"[v{i}]"
     vout = cur

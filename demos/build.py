@@ -1174,7 +1174,7 @@ def demo_proxy(ctx):
     with its master: the proxy is smaller on disk, not on screen."""
     before = FIX / "mandel.mp4"
     after = ctx.path("after.mp4")
-    ctx.script("proxy.py", before, "--width", "320", "--crf", "34", "--fps", "12", "-o", after)
+    ctx.script("proxy.py", before, "--width", "320", "--quality", "34", "--fps", "12", "-o", after)
     ctx.note("%.1f MB master, %.2f MB proxy"
              % (before.stat().st_size / 1e6, after.stat().st_size / 1e6 if after.exists() else 0))
     return before, after
@@ -1672,6 +1672,13 @@ def build_demo(name, font, verbose=True):
         return {"name": name, "status": "skipped", "reason": reason}
     print("==> %s (%s)" % (name, group))
     ctx = Ctx(name, verbose=verbose)
+    # A rebuild writes the same paths again, and since 2.0 a tool refuses an existing output
+    # without --overwrite: clear this demo's own files (not those of a demo whose name extends
+    # this one's) rather than add the flag to every command the gallery prints.
+    longer = tuple(n + "_" for n in BY_NAME if n != name and n.startswith(name + "_"))
+    for stale in OUT.glob("%s_*" % name):
+        if stale.is_file() and not stale.name.startswith(longer):
+            stale.unlink()
     started = time.time()
     before, after = builder(ctx)
 

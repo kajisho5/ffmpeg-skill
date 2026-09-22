@@ -265,7 +265,7 @@ def main() -> int:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--replace-audio", action="store_true", help="write reference video with the second file's audio, aligned")
     mode.add_argument("--trim-second", action="store_true", help="write the second file shifted so it lines up with the reference")
-    ap.add_argument("--crf", type=int, default=18)
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

@@ -17,12 +17,13 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **1.26.0** — eval 23b adds real-execution coverage for
-`caption.py --karaoke-style word` (#276) and the `+faststart` fixes (#275, #277, #279), a
-repo-local `code-review` skill under `.claude/skills/` reviews this repo's own result-document
-honesty and surface rules (#268), and `evals/run.py` now speaks the full 108-prompt corpus with
-regex-only grading so a Cursor/Codex user can run it without this repo's own Claude-based harness
-(#281). No `scripts/` or contract change; tool count still 42.
+The released version today is **2.0.0** — the five changes 1.10.0 announced: `--crf` removed in
+favour of `--quality`, an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed
+to a real PQ/HLG/Dolby Vision signal (`bt2020_or_hdr` keeps the 1.x meaning, and the tools route
+on it), `json` / `progress` out of the MCP `inputSchema`, and the `result_v2` preview withdrawn
+rather than promoted (the flat keys are the 2.0 shape). No new feature; tool count still 42.
+`docs/contract.md` "What 2.0 changed" is the migration table, and `contract --json` lists the same
+under `removed`. 2.0.0 waived the 90-day half of the deprecation window (stated there).
 that closes the remaining mp4 stream-copy paths — `audio.py`, `caption.py --mode mux`, `sync.py`
 and `cut.py` — over to `+faststart` too (#279); `metadata.py`'s own `-c copy` tag/chapter write is
 left alone, since its documented guarantee is the container's metadata only. No script API
@@ -661,11 +662,20 @@ truth-up. No further action was needed there.
   corpus and every eval set re-run on the tree; ninth audit pass.
 - No new options after 1.21.0 on 1.x: 1.21.x is fixes only while 2.0.0 is prepared.
 
-## 2.0.0 (planned, after 1.21.x settles)
+## 2.0.0 — the announced breaks (shipped)
 
-Manual `package.json` bump in one PR (the release workflow never picks a major). It removes
-the deprecated spellings, promotes `result_v2` to the top level, makes `ctx` required, renames
-`hdr`, flips the overwrite default, and drops `json` / `progress` from MCP. Nothing else.
+Manual `package.json` bump in one PR (the release workflow never picks a major). It removed
+`--crf` (use `--quality`), refuses an existing output without `--overwrite`, narrowed `hdr` to a
+real HDR signal (adding `bt2020_or_hdr` for the 1.x meaning), and dropped `json` / `progress`
+from the MCP schema. Two planned items were not done, deliberately:
+
+- **`result_v2` was withdrawn, not promoted.** It placed a key in `metrics` or `details` by its
+  value, so the flat keys stay the one shape (docs/design-decisions.md).
+- **`ctx` stays optional.** The MCP server still runs one subprocess per call; a required
+  argument would break every call site for a risk nothing has yet.
+
+The 1.21.0 "2.0 freeze" above did not happen as written either: 1.21-1.26 kept shipping
+features, and the deprecation window's 90-day half was waived (docs/contract.md). Nothing else.
 
 ## Not planned
 

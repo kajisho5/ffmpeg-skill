@@ -939,7 +939,7 @@ def main() -> int:
                       help="how words are timed inside a cue: 'energy' follows the speech loudness in the audio (default), 'even' splits time equally")
     anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
     enc = ap.add_argument_group("encoding")
-    enc.add_argument("--crf", type=int, default=18)
+    enc.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     enc.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args(_glue_negative_offset(sys.argv[1:]))

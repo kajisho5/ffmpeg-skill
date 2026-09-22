@@ -351,9 +351,7 @@ def input_schema(parser: argparse.ArgumentParser) -> Dict[str, Any]:
         if isinstance(action, argparse._HelpAction):
             continue
         prop: Dict[str, Any] = _json_type(action)
-        # add_common() parks a deprecated --crf's default aside (so an explicit flag is
-        # distinguishable from the default); the schema still advertises the real one
-        default = getattr(action, "deprecated_default", action.default)
+        default = action.default
         if action.help and action.help != argparse.SUPPRESS:
             prop["description"] = action.help % {"default": default} if "%(default)" in action.help else action.help
         if action.choices:
@@ -1087,34 +1085,39 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
 # tools that print JSON without --json (probe) or whose primary output is a file path (look): the transport
 # does not append --json for them (stated in invocation.structured.argument_mapping.json)
 # ----------------------------------------------------------------------------- deprecations
-# What 2.0.0 removes, announced here per docs/contract.md's three-step deprecation policy:
+# What the next major removes, announced here per docs/contract.md's three-step deprecation policy:
 # step 1 (this list, --help text and the CHANGELOG) in a minor, step 2 keeps it working, step 3
-# removes it in the major. `where` says which surface a caller sees it on. docs/contract.md's
-# "What 2.0 changes" section is written from this list.
-DEPRECATED: List[Dict[str, str]] = [
-    {"what": "top-level per-tool keys next to result_v2 in a success document (output, probe, commands, verified, verification and each tool's own keys)",
-     "since": "1.10.0", "replacement": "result_v2 (FFMPEG_SKILL_RESULT_V2=1 today; the only shape in 2.0)",
-     "removed_in": "2.0.0", "where": "json"},
+# removes it in the major. `where` says which surface a caller sees it on. Empty at 2.0.0: all
+# five 1.10.0 deprecations were settled by it (REMOVED below).
+DEPRECATED: List[Dict[str, str]] = []
+
+# What 2.0.0 removed or changed, with the version that deprecated each: the "Removed" half of the
+# policy's step 3, kept in the contract so a caller migrating from 1.x can diff it instead of reading
+# a CHANGELOG. docs/contract.md's "What 2.0 changed" table is written from this list.
+REMOVED: List[Dict[str, str]] = [
     {"what": "--crf as an alias of --quality on every re-encoding tool that takes --quality (export.py keeps --crf: its preset chooses the encoder)",
-     "since": "1.10.0", "replacement": "--quality N (same CRF scale, codec-neutral)",
-     "removed_in": "2.0.0", "where": "cli"},
+     "since": "1.10.0", "removed_in": "2.0.0", "where": "cli",
+     "replacement": "--quality N (the same CRF scale, codec-neutral; each tool's old --crf default is its --quality default)"},
     {"what": "json and progress in the MCP inputSchema (they are CLI transport flags, not tool arguments)",
-     "since": "1.10.0", "replacement": "nothing: the MCP transport sets them itself (FFMPEG_SKILL_MCP_LEAN=1 drops them today)",
-     "removed_in": "2.0.0", "where": "mcp"},
+     "since": "1.10.0", "removed_in": "2.0.0", "where": "mcp",
+     "replacement": "nothing: the MCP transport sets them itself; a client that still sends them is not refused"},
     {"what": "probe's hdr meaning BT.2020 primaries or a PQ/HLG transfer",
-     "since": "1.10.0", "replacement": "hdr_signal (true only for PQ / HLG / Dolby Vision); in 2.0 hdr takes that meaning and hdr_format keeps naming the BT.2020 SDR case",
-     "removed_in": "2.0.0", "where": "json"},
-    {"what": "overwriting an existing output without --overwrite (warned, not refused)",
-     "since": "1.10.0", "replacement": "--overwrite, or FFMPEG_SKILL_NO_OVERWRITE=1 to refuse today",
-     "removed_in": "2.0.0", "where": "behaviour"},
+     "since": "1.10.0", "removed_in": "2.0.0", "where": "json",
+     "replacement": "hdr is now true only for PQ / HLG / Dolby Vision (as hdr_signal, which stays); bt2020_or_hdr carries the 1.x meaning"},
+    {"what": "overwriting an existing output without --overwrite (1.x warned)",
+     "since": "1.10.0", "removed_in": "2.0.0", "where": "behaviour",
+     "replacement": "--overwrite as explicit consent; without it an existing output is refused (kind: input) before anything runs"},
+    {"what": "the result_v2 preview key and FFMPEG_SKILL_RESULT_V2 (the v1 top-level keys it was to replace were un-deprecated: they are the 2.0 shape)",
+     "since": "1.10.0", "removed_in": "2.0.0", "where": "json",
+     "replacement": "the top-level keys, unchanged from 1.x; --json-brief for a short document"},
 ]
 
 
 MCP_JSON_EXEMPT = ("look", "probe")
-# opt-in lean MCP schema (roadmap 1.10.0): json/progress are transport flags the server appends
-# itself, not tool arguments. Off by default so tools/list stays byte-identical to the CLI surface
-# the contract promises; 2.0 drops them unconditionally.
-MCP_LEAN_DROP = ("json", "progress")
+# json/progress are CLI transport flags the MCP server sets itself, not tool arguments: 2.0 leaves
+# them out of every inputSchema (1.10.0-1.x kept them unless FFMPEG_SKILL_MCP_LEAN=1). A client
+# that still sends them is not refused -- build_argv() maps them like any other key.
+MCP_TRANSPORT_FLAGS = ("json", "progress")
 # default MCP tools/list surface (roadmap P1-7, shipped 1.18.3): the 42-tool schema dump costs
 # every MCP session context whether it needs it or not. These 12 are the tools eval iterations
 # 17-20's ground-truth `expect` lists actually name most often across the 118 agent prompts in
@@ -1185,7 +1188,7 @@ MCP_PROMPTS: List[Dict[str, Any]] = [
         "template": ("Bring {input} from HDR/Dolby Vision down to SDR: `color.py {input} --to-sdr` (or `--strip-dovi` "
                      "to keep HDR and only drop the Dolby Vision layer, when strip_dovi is asked for). A flat, washed-out "
                      "look after a re-encode usually means HDR metadata was lost upstream; `probe` shows `hdr: true` "
-                     "for BT.2020 primaries or a PQ/HLG transfer, and `hdr_signal: true` only for a real PQ/HLG/DV transfer."),
+                     "only for a real PQ/HLG/Dolby Vision signal, and `bt2020_or_hdr: true` also for BT.2020 SDR."),
     },
 ]
 
@@ -1259,13 +1262,12 @@ def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
     one_of = [[{"required": [d]} for d in group] for group in src.get("one_of_required", [])]
     if one_of:
         structured["anyOf"] = one_of[0] if len(one_of) == 1 else [{"allOf": [{"anyOf": g} for g in one_of]}]
-    if os.environ.get("FFMPEG_SKILL_MCP_LEAN", "") not in ("", "0"):
-        for dest in MCP_LEAN_DROP:
-            props.pop(dest, None)
-        if structured.get("required"):
-            structured["required"] = [d for d in structured["required"] if d not in MCP_LEAN_DROP]
-            if not structured["required"]:
-                del structured["required"]
+    for dest in MCP_TRANSPORT_FLAGS:
+        props.pop(dest, None)
+    if structured.get("required"):
+        structured["required"] = [d for d in structured["required"] if d not in MCP_TRANSPORT_FLAGS]
+        if not structured["required"]:
+            del structured["required"]
     schema: Dict[str, Any] = {"type": "object", "properties": props, "additionalProperties": False}
     if structured:
         schema["anyOf"] = [{"required": ["argv"]}, structured]
@@ -1297,6 +1299,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
     return {
         "contract_version": CONTRACT_VERSION,
         "deprecated": [dict(d) for d in DEPRECATED],
+        "removed": [dict(d) for d in REMOVED],
         "skill": {
             "id": SKILL_ID,
             "version": version,

@@ -292,7 +292,7 @@ def main() -> int:
                            "this media file) instead of measuring the input again")
     snap.add_argument("--min-confidence", type=float, default=BEAT_MIN_CONFIDENCE,
                       help=f"refuse to snap below this measured beat confidence (default {BEAT_MIN_CONFIDENCE})")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF when re-encoding (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset when re-encoding")
     add_common(ap)
     args = ap.parse_args()

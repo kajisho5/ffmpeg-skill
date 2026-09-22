@@ -46,7 +46,7 @@ def main() -> int:
     ap.add_argument("--zoom", choices=["in", "out"], help="Ken Burns: slow linear zoom in or out across the clip")
     ap.add_argument("--zoom-amount", type=float, default=1.3, help="end (zoom in) or start (zoom out) zoom factor, > 1.0 (default 1.3)")
     ap.add_argument("--pan", choices=["left", "right", "up", "down"], help="drift the visible window this direction while zoomed (needs --zoom)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

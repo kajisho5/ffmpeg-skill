@@ -56,10 +56,10 @@ wc -c SKILL.md                                            # must be < 30000
 - [ ] No raw `ffmpeg`/`ffprobe` shell call outside `scripts/*.py`
 - [ ] No mutation of an input file
 - [ ] No AI/LLM content judgement, no cloud, no API keys
-- [ ] Colour flags go through `validate_color(`; `--crf` range check stays in
+- [ ] Colour flags go through `validate_color(`; `--quality` range check stays in
       `apply_common()`; time parsing goes through `time_arg()`
-- [ ] A 1.x change does not change the meaning of an existing field — parallel key
-      (`result_v2`, `hdr_signal`) instead
+- [ ] A minor/patch change does not change the meaning of an existing field — a
+      parallel key (as `hdr_signal` was before 2.0) instead
 - [ ] A fix ships a regression test that would have caught the original bug
 
 ## 4. The gate

@@ -46,7 +46,7 @@ def main() -> int:
     ap.add_argument("--start-number", type=int, default=0, help="first frame index, for a printf pattern (default 0)")
     ap.add_argument("--width", type=int, help="output width in px; with --height also given, both are used directly")
     ap.add_argument("--height", type=int, help="output height in px; with --width also given, both are used directly")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

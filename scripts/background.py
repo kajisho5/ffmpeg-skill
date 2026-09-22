@@ -28,7 +28,7 @@ def main() -> int:
     src.add_argument("--color", default="black", help="solid background colour, e.g. black, 0x101010 (default black)")
     src.add_argument("--gradient", help="two colours as C1:C2 for a linear gradient, e.g. 0xff6a00:0x0057ff")
     ap.add_argument("--angle", type=float, default=0.0, help="gradient angle in degrees (with --gradient, default 0 = left to right)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

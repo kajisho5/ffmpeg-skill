@@ -26,7 +26,7 @@ def main() -> int:
     ap.add_argument("--start", default="0", help="padding to add before the clip: seconds or mm:ss (default 0)")
     ap.add_argument("--end", default="0", help="padding to add after the clip: seconds or mm:ss (default 0)")
     ap.add_argument("--color", default="black", help="padding colour (default black)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

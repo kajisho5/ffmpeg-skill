@@ -149,7 +149,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             # sites are now guarded to treat 0 as "unknown" and fall back sanely instead of dividing
             # by it, so the stub can finally report the honest, unknown value.
             return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
-                    "video": {"codec": None, "width": 0, "height": 0, "fps": 0.0, "pix_fmt": None, "hdr": False,
+                    "video": {"codec": None, "width": 0, "height": 0, "fps": 0.0, "pix_fmt": None, "hdr": False, "bt2020_or_hdr": False,
                               "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
                     "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0, "data_streams": 0}
         die(f"input not found: {path}")
@@ -250,6 +250,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
                 dovi = {"profile": sd.get("dv_profile"), "level": sd.get("dv_level"), "bl_compatibility_id": sd.get("dv_bl_signal_compatibility_id")}
         if dovi:  # a Dolby Vision stream is HDR even when its base layer tags are missing
             hdr = True
+        hdr_signal = trc in ("smpte2084", "arib-std-b67") or bool(dovi)
         out["video"] = {
             "codec": video.get("codec_name"),
             "profile": video.get("profile"),
@@ -262,11 +263,14 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "variable_frame_rate_suspected": vfr,
             "pix_fmt": video.get("pix_fmt"),
             "bit_depth": _bit_depth(pix),
-            "hdr": hdr,
-            # 1.9 (2.0 A1 pre-shipped as a parallel key): true only for a PQ / HLG transfer or Dolby
-            # Vision, i.e. a genuinely HDR signal. `hdr` also counts BT.2020 primaries on an SDR
-            # transfer ("BT.2020 SDR" in hdr_format) and keeps that meaning until 2.0 renames it.
-            "hdr_signal": trc in ("smpte2084", "arib-std-b67") or bool(dovi),
+            # 2.0: `hdr` is true only for a PQ / HLG transfer or Dolby Vision, i.e. a genuinely HDR
+            # signal (1.x also counted BT.2020 primaries on an SDR transfer). `hdr_signal` (1.9) is
+            # kept, equal to it, for callers that moved to it. `bt2020_or_hdr` is the 1.x meaning,
+            # which every editing tool still routes on: a BT.2020 SDR source goes through the
+            # 10-bit path with its own tags, since x264 with BT.709 tags would shift its colours.
+            "hdr": hdr_signal,
+            "hdr_signal": hdr_signal,
+            "bt2020_or_hdr": hdr,
             "hdr_format": (("Dolby Vision %s" % (("profile %s" % dovi["profile"]) if dovi and dovi.get("profile") is not None else "")).strip() if dovi else
                            "HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
             "dolby_vision": dovi,

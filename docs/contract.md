@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`1.26.0`) | any release |
+| `skill.version` | the npm / package.json version (`2.0.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -35,11 +35,12 @@ from `scripts/` on every CI run instead — a stale count fails a test rather th
 silently. (`SKILL.md` was added to that check after its "the 28 scripts" sat stale through
 twelve tool additions while the other three files were correct.)
 
-## Stability guarantee (1.x)
+## Stability guarantee (2.x)
 
 1.0.0 was published on 2026-09-11 (by accident: see CHANGELOG.md's 1.0.0 entry; the number
-is kept rather than burned). From 1.0.3 on, the number is treated as the promise it implies.
-For the whole of 1.x:
+is kept rather than burned). From 1.0.3 on, the number is treated as the promise it implies;
+2.0.0 (2026-09-22) is the first deliberate break, listed under "What 2.0 changed" below.
+The same promise holds for the whole of 2.x:
 
 | Surface | Promise |
 |---|---|
@@ -71,40 +72,54 @@ out to be misleading) is retired in three steps, never in one:
    naming the replacement is printed to stderr when it is used, the CHANGELOG entry says
    "deprecated", and `--help` marks it `(deprecated: use ...)`.
 2. **Keep** it for at least two further minor releases or 90 days, whichever is longer.
-3. **Remove** it only in the next major (2.0.0), listed in that release's CHANGELOG under
+3. **Remove** it only in the next major, listed in that release's CHANGELOG under
    "Removed", together with the version that first deprecated it.
 
 A defect fix that changes behaviour is not a deprecation: it ships in a patch with a
 CHANGELOG line, and if the old behaviour was something a caller could reasonably have relied
 on, the line says so.
 
-## What 2.0 changes
-
 `contract --json` carries a top-level `deprecated` list, next to `contract_version`: one entry per
-thing 2.0.0 removes, `{"what", "since", "replacement", "removed_in", "where"}` with `where` naming
-the surface (`cli`, `json`, `mcp`, `behaviour`). It is the machine-readable half of the policy
-above, and this section is written from it. Nothing below changes behaviour in 1.x -- every old
-spelling keeps working until 2.0.
+thing the next major removes, `{"what", "since", "replacement", "removed_in", "where"}` with `where`
+naming the surface (`cli`, `json`, `mcp`, `behaviour`). It is empty in 2.0.0. `tests/test_contract.py`
+refuses a package.json major bump that still lists an entry that major should remove, or that
+comes before step 2's window has passed -- unless the waiver is written here, as 2.0.0's is.
 
-Everything in the table was deprecated in 1.10.0 (2026-09-13), so under step 2 the earliest 2.0.0
-is 2026-12-12. That is a test, not a promise to remember: a package.json major bump before then,
-or one that still lists a deprecated entry, fails `tests/test_contract.py`.
+**2.0.0 waived the 90-day half of step 2.** Its deprecations date from 1.10.0 (2026-09-13), so
+the policy's earliest 2.0.0 was 2026-12-12; on 2026-09-22 the maintainer decided not to wait.
+The other half held with room to spare: sixteen minor releases (1.11-1.26) carried every one
+of them, each already had a 1.x opt-in to the 2.0 behaviour (`--quality`,
+`FFMPEG_SKILL_MCP_LEAN=1`, `hdr_signal`, `FFMPEG_SKILL_NO_OVERWRITE=1`), and the one change a
+caller could not have prepared for mechanically -- promoting `result_v2` -- was withdrawn
+rather than shipped early (below).
 
-| What 2.0 removes | Since | Replacement | To be ready today |
+## What 2.0 changed
+
+`contract --json`'s `removed` list is the machine-readable form of this table, one entry per
+change with the version that deprecated it.
+
+| What changed in 2.0.0 | Deprecated in | 2.0 behaviour | Migrating from 1.x |
 |---|---|---|---|
-| The per-tool v1 success keys next to `result_v2` (`output`, `probe`, `commands`, `verified`, `verification` and each tool's own keys at the top level) | 1.10.0 | `result_v2`, promoted to the top level in 2.0 | Run with `FFMPEG_SKILL_RESULT_V2=1` and read `result_v2` (`metrics`, `notes`, `details`) instead of the top-level keys |
-| `--crf` as an alias of `--quality` on every re-encoding tool that takes `--quality` (`export.py` keeps `--crf`: its preset chooses the encoder) | 1.10.0 | `--quality N` (the same CRF scale, codec-neutral) | Pass `--quality`; `--crf` warns on stderr and is marked in `--help` |
-| `json` and `progress` in the MCP `inputSchema` | 1.10.0 | nothing: the transport sets them itself | Stop sending them from an MCP client; run the server with `FFMPEG_SKILL_MCP_LEAN=1` to see the 2.0 schema |
-| `hdr` meaning "BT.2020 primaries *or* a PQ/HLG transfer" in `probe` | 1.10.0 | `hdr_signal` (true only for PQ / HLG / Dolby Vision); in 2.0 `hdr` takes that meaning | Key on `hdr_signal` for "is this a real HDR signal" and on `hdr_format` for the `BT.2020 SDR` case |
-| Overwriting an existing output with only a warning | 1.10.0 | `--overwrite` as explicit consent (refused without it from 2.0) | Set `FFMPEG_SKILL_NO_OVERWRITE=1` (the recommended agent setting) and pass `--overwrite` where a replacement is intended |
+| `--crf` as an alias of `--quality` on every re-encoding tool that takes `--quality` (`export.py` keeps `--crf`: its preset chooses the encoder) | 1.10.0 | removed; `--quality N` defaults to what `--crf` did (18, `proxy.py` 30) | Pass `--quality` where you passed `--crf`; `--crf` is now an unknown argument |
+| `json` and `progress` in the MCP `inputSchema` | 1.10.0 | left out of every schema (as `FFMPEG_SKILL_MCP_LEAN=1` did); the transport sets them itself | Nothing: a client that still sends them is not refused |
+| `hdr` in `probe` meaning "BT.2020 primaries *or* a PQ/HLG transfer" | 1.10.0 | `hdr` is true only for PQ / HLG / Dolby Vision, equal to `hdr_signal` (kept); `bt2020_or_hdr` carries the 1.x meaning, and every editing tool still routes on it | Key on `bt2020_or_hdr` where you meant the old `hdr` (e.g. "needs the 10-bit path"); `hdr_format` still names `BT.2020 SDR` |
+| Overwriting an existing output with only a warning | 1.10.0 | refused (`kind: input`, before anything runs, dry runs included) unless `--overwrite` | Pass `--overwrite` where a replacement is intended; `FFMPEG_SKILL_NO_OVERWRITE` no longer does anything |
+| The `result_v2` preview key and `FFMPEG_SKILL_RESULT_V2` | 1.10.0 (the v1 keys it was to replace) | removed; the top-level keys are the 2.0 shape, unchanged | Read the top-level keys; `--json-brief` for a short document |
+
+The v1 success keys were deprecated in 1.10.0 in favour of `result_v2`. 2.0 withdrew that
+deprecation instead: `result_v2` decided whether a key landed in `metrics` or in `details` by its
+value (a number went to `metrics`, the same key holding `null` went to `details`), so a caller
+could not know where to look without knowing the value first, and every consumer of every tool's
+JSON would have been rewritten for that. The flat keys, typed per tool in `output_schema`, stay.
 
 ## Skill
 
 ```json
 {
   "contract_version": "1.0",
-  "deprecated": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "1.26.0", "execution_mode": "local", "kind": "execution",
+  "deprecated": [],
+  "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
+  "skill": {"id": "ffmpeg-skill", "version": "2.0.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0"},
@@ -185,12 +200,13 @@ tool's job; only the artifact is skipped, including side files such as `--edl`, 
 generated `.ass`), and `verify` does not support dry-run (its steps run). `SKILL.md` and
 `references/scripts.md` repeat the same list; the contract is the authority.
 
-`--codec h264|hevc|av1|prores` and `--quality N` (1.8) are on every tool whose schema has
-`crf` (the ones that re-encode), marked `common`. They are resolved in one place
+`--codec h264|hevc|av1|prores` and `--quality N` (1.8) are on every tool that re-encodes,
+marked `common`. They are resolved in one place
 (`_common.encoder_args()`): hevc keeps an HDR source Main10 with its tags and writes 8-bit
 BT.709 for SDR; av1 is SVT-AV1 with libaom as the fallback; prores is 422 HQ and needs a
-`.mov`/`.mkv` output; h264 refuses an HDR source (`kind: input`). `--quality` is the CRF scale
-and overrides `--crf`. Without `--codec` the encoder is what it always was (x264 for SDR, x265
+`.mov`/`.mkv` output; h264 refuses an HDR source (`kind: input`). `--quality` is the CRF scale;
+its default is the tool's own (18, `proxy.py` 30). 1.x also accepted `--crf` as an alias; 2.0
+removed it (`export.py` keeps its own `--crf`). Without `--codec` the encoder is what it always was (x264 for SDR, x265
 Main10 for HDR), so the flags add no behaviour to a caller that does not pass them. The
 encoder each value needs is listed under the tool's optional capabilities (`--codec hevc` and
 so on). `export.py` refuses `--codec`: its presets decide the codec.
@@ -498,15 +514,6 @@ listed step met its target. A `--dry-run` document has `verified: false` and an 
 `export.py` whose written file misses the platform's loudness spec stays `completed` (the
 file is valid) with `verified: false` and the fix in `notes`, so a caller keys on one field.
 
-With `FFMPEG_SKILL_RESULT_V2=1` in the environment, every writing tool's success document
-also carries `result_v2`: a preview of the one shape 2.0 will use for every tool
-(issue #189). `{"schema": 2, "output", "probe", "commands", "metrics", "notes", "dropped":
-{"non_av_streams"}, "verified", "verification", "details"}` -- `metrics` holds the numbers a caller keys on (loudness's
-measurement dicts flattened, plus any numeric top-level key such as `expected_duration` or
-`offset_seconds`), `notes` the free text, `details` the tool's remaining keys unchanged. The
-1.x keys are not moved; the environment variable only adds the key, and its absence is the
-default until 2.0.
-
 Success is decided by `verify_output` in `_common` (`scripts/_common/probe.py`), not by the
 ffmpeg exit code alone:
 the file must exist, be non-empty and give ffprobe at least one stream. A tool that ran
@@ -578,14 +585,11 @@ already applied when the ToolSpec is built.
 The `tools/list` document is deterministic (byte-identical across processes and
 identical to the translation of `contract --json`), which the tests check.
 
-`FFMPEG_SKILL_MCP_LEAN=1` (anything but "" or `0`) in the server's environment removes `json` and
-`progress` from every `inputSchema` (from `properties`, and from `required` if a tool ever made
-them required). They are transport flags `mcp/server.py` sets itself -- it appends `--json` for
-every tool but `look` and `probe` -- rather than arguments a caller chooses, and 2.0 drops them
-for good (see "What 2.0 changes"). The flag is opt-in and changes nothing else: without it
-`tools/list` carries the tool names, argument names and `required` lists the frozen 1.x snapshot
-pins -- descriptions may change between releases (the `--crf` deprecation mark did) -- so a lean
-client and a default client see the same tools with the same names.
+No `inputSchema` lists `json` or `progress`: they are transport flags `mcp/server.py` sets
+itself -- it appends `--json` for every tool but `look` and `probe` -- rather than arguments a
+caller chooses. 1.10.0-1.26 listed them unless `FFMPEG_SKILL_MCP_LEAN=1`; 2.0 leaves them out for
+good (see "What 2.0 changed"). A client that still sends either is not refused: the server maps
+it like any other key.
 
 ### Default `tools/list` surface: core 12, opt-in for all 42
 

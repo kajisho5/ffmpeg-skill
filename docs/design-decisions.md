@@ -56,9 +56,12 @@ exists. When a decision changes, edit the entry in the same PR.
 
 ## Outputs and files
 
-- **An existing output is warned about, not refused, until 2.0** (`--overwrite` is the explicit
-  consent; `FFMPEG_SKILL_NO_OVERWRITE=1` opts into the 2.0 refusal today). Per the 1.x
-  deprecation policy in `docs/contract.md`. Code: `_common._check_existing_output()`.
+- **An existing output is refused without `--overwrite`, dry runs included** (2.0; 1.x warned,
+  with `FFMPEG_SKILL_NO_OVERWRITE=1` as the opt-in). The refusal is `kind: input` before any
+  ffmpeg runs, so a dry run predicts it. A path this same run wrote (two-pass tools,
+  copy-then-re-encode fallbacks) is never someone else's file. Code:
+  `_common._check_existing_output()`. Test:
+  `test_existing_output_is_refused_without_overwrite_and_never_for_its_own_files`.
 - **An existing output is written through a hidden sibling temp file and replaced only on
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the
@@ -81,8 +84,10 @@ exists. When a decision changes, edit the entry in the same PR.
 - **A clip `speed` of 0 in a render project means "no speed change"**, the same as omitting the
   key; it is not a division by zero. A negative or non-finite speed is refused. Code:
   `render.py` (`if c.get("speed")`).
-- **`--crf` is range-checked once in `apply_common()` for every tool**; a tool's own parser does
-  not repeat the check. Code: `_common.apply_common()`.
+- **`--quality` (and `export.py`'s own `--crf`) is range-checked once in `apply_common()` for
+  every tool**; a tool's own parser does not repeat the check. A re-encoding tool declares its
+  default with `set_defaults(crf=N)`, which `add_common()` turns into `--quality`'s default; 2.0
+  removed the `--crf` alias. Code: `_common.add_common()`, `_common.apply_common()`.
 - **Colour flags are validated with `validate_color()` at the tool level**, including `overlay`,
   `grid`, `broll`, `join`, `fit`, `pad`, `waveform`, `straighten`, `background`, `export`. A
   review that reads one call site should grep for `validate_color(` before reporting a gap.
@@ -116,16 +121,18 @@ exists. When a decision changes, edit the entry in the same PR.
   re-export or re-trim is still caught. Execution re-runs the *tool* with the planned argv, not
   the recorded command lines: the tool's own guards, staging and verification stay in force.
   Code: `_common.write_plan()`, `render.execute_plan()`.
-- **The 2.0 success-document shape ships in 1.x as an opt-in parallel key.** `result_v2`
-  (`FFMPEG_SKILL_RESULT_V2=1`) is built once in `emit()` from what every tool already passes,
-  so no tool changes its own keys and 2.0 becomes "promote `result_v2` to the top level". Per
-  issue #189's plan: parallel keys first, deprecation notices second, 2.0 removes the old.
-  Code: `_common._result_v2()`.
+- **The flat success document is the 2.0 shape; `result_v2` was withdrawn, not promoted.**
+  1.10.0 deprecated the top-level per-tool keys in favour of an opt-in `result_v2` block
+  (issue #189). At 2.0 the block turned out to place a key by its value -- a number in `metrics`,
+  the same key holding `null` in `details` -- so a caller had to know a value to know where to
+  look it up, and promoting it would have rewritten every consumer of every tool's JSON for
+  that. The flat keys, typed per tool in `output_schema`, stay; `--json-brief` answers the size
+  concern. Test: `test_result_v2_preview_is_gone`.
 - **`retryable` is always `false` in failure documents.** No failure kind is distinguishable
   today from a deterministic one that would fail identically on a blind retry, so the field never
   invites a retry loop. Code: `_common.ERROR_RETRYABLE`.
 
-## Decided for 2.0 (issue #189 B), recorded in 1.x so the code moves toward them
+## Decided for 2.0 (issue #189 B), recorded in 1.x so the code moved toward them
 
 - **Time grammar: seconds, `mm:ss(.fff)`, `hh:mm:ss(.fff)` everywhere; four-part `hh:mm:ss:ff`
   is SMPTE at the source's frame rate, and a `@fps` suffix (e.g. `00:01:02:15@29.97`) names the
@@ -147,20 +154,24 @@ exists. When a decision changes, edit the entry in the same PR.
   `--codec` added piecemeal in 1.x (the audits found HDR fragility wherever encoder choice was
   duplicated; one more duplication is the wrong direction). Code: `_common.video_args()`.
   1.8.0 shipped the two flags (`add_common()` adds them to every tool that declares `--crf`;
-  `encoder_args()` resolves them; `--crf`/`--preset` unchanged), so 2.0 only has to deprecate the aliases.
-- **`hdr` keeps counting BT.2020 primaries on an SDR transfer until 2.0; `hdr_signal` (1.9) is
-  the parallel key that is true only for PQ / HLG / Dolby Vision.** The editing tools keep
-  routing every `hdr: true` source through the HEVC Main10 path with its own tags (a BT.2020 SDR
-  source re-encoded as x264 with BT.709 tags would shift its colours, so the old path is the safe
-  one); a caller that wants to know whether the file is a real HDR signal reads `hdr_signal`, and
-  `hdr_format` says "BT.2020 SDR" for the in-between case. 2.0 renames: `hdr` takes
-  `hdr_signal`'s meaning. Code: `_common.probe()`.
-- **Per-request Context: `STATE` stays process-global through 1.x; 2.0 passes a `Context`
-  explicitly to `run()`/`emit()`/`die()`.** Today the MCP server spawns one subprocess per
-  call, so the global is never shared between requests; the risk only appears if a future
-  server runs tools in-process. 2.0 threads `ctx` through the three choke points (a signature
-  change, hence major); tools that only call those keep working with a one-line change. Rejected:
-  thread-locals (hides the dependency the reviews keep asking about). Code: `_common.Context`.
+  `encoder_args()` resolves them; `--crf`/`--preset` unchanged); 1.10.0 deprecated `--crf`, and
+  2.0 removed it (`--preset` stays: it is x264's speed/size trade, not an alias). Test:
+  `test_crf_is_gone_and_quality_keeps_its_default`.
+- **`hdr` is a real HDR signal (PQ / HLG / Dolby Vision) since 2.0; the tools route on
+  `bt2020_or_hdr`.** 1.x's `hdr` also counted BT.2020 primaries on an SDR transfer; 1.9 added
+  `hdr_signal` as the narrow parallel key, and 2.0 gave `hdr` its meaning (`hdr_signal` stays,
+  equal to it). The editing tools still route every BT.2020-or-HDR source through the HEVC Main10
+  path with its own tags -- a BT.2020 SDR source re-encoded as x264 with BT.709 tags would shift
+  its colours -- so that condition got its own key, `bt2020_or_hdr`, and tool behaviour did not
+  change. `hdr_format` says "BT.2020 SDR" for the in-between case. Code: `_common.probe()`. Test:
+  `test_probe_hdr_is_the_signal_and_bt2020_sdr_keeps_the_10bit_route`.
+- **Per-request Context: `STATE` stays process-global; `run()`/`emit()`/`die()` take an
+  optional `Context`.** 2.0 did not make it required: the server still spawns one subprocess per
+  call, so nothing shares the global, and a required argument would have broken every tool's
+  call sites for a risk that does not exist yet. The plan, kept for when a server runs tools
+  in-process: thread `ctx` through the three choke points (a signature change, hence a major);
+  tools that only call those keep working with a one-line change. Rejected: thread-locals (hides
+  the dependency the reviews keep asking about). Code: `_common.Context`.
 
 ## External review, 2026-09-14 (1.17.0)
 

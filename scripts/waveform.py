@@ -73,7 +73,7 @@ def main() -> int:
     ag.add_argument("--text", help="plain cue file to burn, same as caption.py --text")
     ag.add_argument("--title", help="one static label drawn over the plate, through graphics.py's sticker template")
     ag.add_argument("--brand", help="brand.json: --color / --background / font defaults")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()

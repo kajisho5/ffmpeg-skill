@@ -89,8 +89,6 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         doc["verified"] = not ctx.dry_run and bool(steps) and all(s.get("ok") for s in steps)
         doc["verification"] = steps
         doc.update(extra)
-        if os.environ.get("FFMPEG_SKILL_RESULT_V2", "") not in ("", "0"):
-            doc["result_v2"] = _result_v2(output, meta, dict(extra, verified=doc["verified"], verification=steps))
         if ctx.plan:
             doc["plan"] = write_plan(ctx.plan, output, extra, ctx=ctx)
         print_json(_brief(doc, meta) if ctx.json_brief else doc)
@@ -101,8 +99,8 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
 
 
 # Keys the brief document replaces or drops: the full probe (summarised), the command lines
-# (counted), the per-step verification list (its verdict stays as `verified`) and the 2.0 preview.
-_BRIEF_DROP = ("probe", "commands", "verification", "result_v2")
+# (counted) and the per-step verification list (its verdict stays as `verified`).
+_BRIEF_DROP = ("probe", "commands", "verification")
 
 
 def _brief_summary(meta: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
@@ -243,39 +241,6 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
     ctx.plan_written = True
     info(f"plan written: {path} ({len(doc['commands'])} command(s), {len(doc['inputs'])} input(s)); run it with render.py {path}", ctx)
     return path
-
-
-_V2_HANDLED = ("result", "measured", "notes", "dropped_non_av_streams", "verified", "verification")
-
-
-def _result_v2(output: Optional[str], meta: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
-    """The 2.0 success-document shape, previewed in 1.x as a parallel `result_v2` key when
-    FFMPEG_SKILL_RESULT_V2=1 (issue #189 B). Every tool gets the same six slots: `output`,
-    `probe`, `commands`, `metrics` (numbers a caller keys on: loudness's `result`/`measured`
-    dicts flattened, plus every top-level numeric extra such as `expected_duration` or
-    `offset_seconds`), `notes` (free text), `dropped` (what did not make it into the output),
-    and `details` (the tool's remaining extras, unchanged). The 1.x keys stay where they are;
-    this key is additive and its shape is what 2.0 promotes to the top level."""
-    metrics: Dict[str, Any] = {}
-    for key in ("measured", "result"):
-        if isinstance(extra.get(key), dict):
-            metrics.update(extra[key])
-    for key, value in extra.items():
-        if key not in _V2_HANDLED and isinstance(value, (int, float)) and not isinstance(value, bool):
-            metrics[key] = value
-    notes = extra.get("notes")
-    return {
-        "schema": 2,
-        "output": output,
-        "probe": meta or None,
-        "commands": list(STATE.commands),
-        "metrics": metrics,
-        "notes": list(notes) if isinstance(notes, (list, tuple)) else ([notes] if notes else []),
-        "dropped": {"non_av_streams": bool(extra.get("dropped_non_av_streams", False))},
-        "verified": bool(extra.get("verified", False)),
-        "verification": list(extra.get("verification") or []),
-        "details": {k: v for k, v in extra.items() if k not in _V2_HANDLED and k not in metrics},
-    }
 
 
 def print_json(obj: Any) -> None:

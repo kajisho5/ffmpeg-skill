@@ -115,7 +115,7 @@ def main() -> int:
     emo.add_argument("--emoji-scale", type=float, default=1.0,
                      help="emoji box as a multiple of the line's font size (default 1.0)")
     emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build (default 60)")
-    ap.add_argument("--crf", type=int, default=18)
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()

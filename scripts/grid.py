@@ -49,7 +49,7 @@ def main() -> int:
     ap.add_argument("--audio-from", type=int, help="0-based index into inputs to take audio from (default: no audio)")
     ap.add_argument("--gap", type=int, default=0, help="gap between cells in px, must be even (default 0, cells touch)")
     ap.add_argument("--background", default="black", help="colour of the gap/pad borders (default black)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
@@ -124,7 +124,7 @@ def main() -> int:
     # A grid is an 8-bit SDR composite by design (a comparison/contact artefact, not a
     # deliverable); an HDR input is flattened like look.py's contact sheet flattens it. Say so
     # once so the caller is not surprised by the 8-bit output.
-    if any((m.get("video") or {}).get("hdr") for m in metas):
+    if any((m.get("video") or {}).get("bt2020_or_hdr") for m in metas):
         info("note: an HDR input is composited into an 8-bit SDR grid (grid.py is a comparison artefact); use color.py --to-sdr first for a graded conversion")
     cmd += video_args(None, args.crf, args.preset)
     cmd += cfr_args(None, args.fps)

@@ -17,7 +17,6 @@ Produced by `emit()`. Keys a review must trace, with where the value comes from:
 | `reencodes_*` | whether the copy path fell back to a re-encode | copy fallback silently unreported |
 | `dropped_non_av_streams` | `run_keeping_subtitles()` result, or timeline-move tools | `false` when the track was dropped |
 | `mode`, `keyframe_snapped`, `duration_delta_seconds` | `cut.py` | a snapped copy reported as lossless |
-| `result_v2` | `_result_v2()` when `FFMPEG_SKILL_RESULT_V2=1` | a field that disagrees with its 1.x twin |
 | `commands` | the argv actually run | a command that was not the one executed |
 
 `verified` is defined as **what the tool measured itself, not a promise about the
@@ -66,9 +65,8 @@ as success. Do not reintroduce that shape.
 
 ## Existing outputs
 
-- An existing output is **warned about, not refused, until 2.0**; `--overwrite` is
-  the explicit consent and `FFMPEG_SKILL_NO_OVERWRITE=1` opts into refusal today
-  (`_common._check_existing_output()`).
+- An existing output is **refused without `--overwrite`** (since 2.0, `kind: input`,
+  before any ffmpeg runs; `_common._check_existing_output()`).
 - It is written through a hidden sibling temp (`.<stem>.ffskill-<pid><ext>`) and
   replaced only on success (`_common._stage_existing_output()`), so a failed run
   never costs the caller the file that was there.

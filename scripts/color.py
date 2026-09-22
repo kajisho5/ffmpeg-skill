@@ -203,7 +203,7 @@ def main() -> int:
                           "the first track, same as leaving it unset always did. Only affects modes that re-encode "
                           "audio (--to-sdr, --lut, --correct, and --retag's re-encode fallback) -- --strip-dovi and "
                           "a successful --retag stream-copy all streams untouched, so the flag has nothing to select there.")
-    ap.add_argument("--crf", type=int, default=18)
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
@@ -279,13 +279,13 @@ def main() -> int:
 
     measurements = None
     if args.to_sdr:
-        if not v.get("hdr") and not args.force:
+        if not v.get("bt2020_or_hdr") and not args.force:
             die(f"{args.input} is not tagged as HDR (transfer={v.get('color_transfer')}, primaries={v.get('color_primaries')}). Use --force to tone-map anyway.")
         vf = hdr_to_sdr_chain(meta, args.tonemap, args.peak, args.desat)
         output = args.output or default_output(args.input, "sdr")
         tag = "sdr"
     elif args.correct:
-        if v.get("hdr") and not args.force:
+        if v.get("bt2020_or_hdr") and not args.force:
             die(f"{args.input} is HDR ({v.get('hdr_format')}); --correct works on SDR pixels and would tag PQ/HLG data as BT.709 "
                 f"without a tone map (sweep F10). Run --to-sdr first, or --force to grade the raw values anyway")
         vf = correction_chain(args)
@@ -295,7 +295,7 @@ def main() -> int:
         # "looks better" judgement -- the same primitive probe.py --analyze uses for Log detection.
         measurements = None if STATE.dry_run else {"input": analyze_levels(args.input)}
     else:
-        if v.get("hdr") and not args.force:
+        if v.get("bt2020_or_hdr") and not args.force:
             die(f"{args.input} is HDR ({v.get('hdr_format')}); a LUT made for SDR applied to PQ/HLG pixels gives a wrong picture "
                 f"tagged BT.709 (sweep F10). Run --to-sdr first (or chain it), or --force if the LUT expects HDR input")
         if not os.path.exists(args.lut):

@@ -137,14 +137,14 @@ def main() -> int:
         if args.platform in ("reels", "tiktok", "x", "linkedin", "facebook"):
             row("pixel format", "PASS" if pf == "yuv420p" else "FAIL", pf, "yuv420p (8-bit 4:2:0)", "export.py preset re-encodes to yuv420p",
                 reason="QuickTime and iOS commonly reject video that isn't 8-bit 4:2:0")
-        if spec["sdr_only"] and v.get("hdr"):
+        if spec["sdr_only"] and v.get("bt2020_or_hdr"):
             row("colour", "FAIL", v.get("hdr_format"), "SDR BT.709", "color.py --to-sdr",
                 reason="a platform or player without HDR support will show this washed-out, too dark, or with wrong colours -- not a rendering glitch, a colour space mismatch")
         else:
             tags = (v.get("color_primaries"), v.get("color_transfer"))
             untagged = not tags[0] and not tags[1]
-            if v.get("hdr") or tags == ("bt709", "bt709") or args.platform in ("podcast", "custom"):
-                row("colour", "PASS", f"{tags[0]}/{tags[1]}" + (f" ({v.get('hdr_format')})" if v.get("hdr") else ""), "bt709/bt709 tagged (or HDR)")
+            if v.get("bt2020_or_hdr") or tags == ("bt709", "bt709") or args.platform in ("podcast", "custom"):
+                row("colour", "PASS", f"{tags[0]}/{tags[1]}" + (f" ({v.get('hdr_format')})" if v.get("bt2020_or_hdr") else ""), "bt709/bt709 tagged (or HDR)")
             elif untagged and (v.get("bit_depth") or 8) == 8:
                 # untagged 8-bit video is treated as BT.709 by every player and platform; nothing to fix
                 row("colour", "PASS", "untagged (players assume bt709)", "bt709/bt709 tagged (or HDR)")

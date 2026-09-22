@@ -194,7 +194,7 @@ These are the rules the skill file gives the agent and the code enforces.
 
 | Tool | What it does |
 |---|---|
-| `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for BT.2020 or PQ/HLG, `hdr_signal` for a real PQ/HLG/DV transfer only), colour space, rotation, every audio stream; `--analyze` flags Log footage |
+| `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for a real PQ/HLG/DV transfer only, `bt2020_or_hdr` also for BT.2020 SDR), colour space, rotation, every audio stream; `--analyze` flags Log footage |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments`; `--beats` measures the music's beat grid (tempo, beat times, confidence); `--shots` classifies each shot static/pan/motion by measured optical flow; `--audio-peaks` lists per-second dBFS; `--speech` reports a speech-vs-music ratio, not a classification |
 | `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers |
 
@@ -249,7 +249,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | Tool | What it does |
 |---|---|
 | `export.py` | Presets `youtube`, `youtube4k`, `reels`, `tiktok`, `shorts`, `linkedin`, `facebook`, `x`, `youtube-hdr` (HEVC Main10, source HDR tags kept), `youtube-av1`, `prores`, `h265`, `gif`, `copy`, all tagged BT.709 unless they carry HDR; `--normalize` meets the platform's loudness in the same call (`render.py` turns it on by default for platform presets) |
-| `proxy.py` | Small, low-bitrate proxy for downstream AI analysis/preview/editing decisions — resize by `--width`/`--scale`, proxy-grade `--crf` (deprecated alias of `--quality`), `--fps`, `--no-audio`; not a delivery preset |
+| `proxy.py` | Small, low-bitrate proxy for downstream AI analysis/preview/editing decisions — resize by `--width`/`--scale`, proxy-grade `--quality` (default 30), `--fps`, `--no-audio`; not a delivery preset |
 | `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, Facebook, broadcast and podcast specs, from the same delivery table the export presets and templates read (podcast also reports chapter markers and channel count), with the fix for each failure and a `format` / `judgement` kind per row |
 | `report.py` | Single-file HTML delivery report: before/after sheets, media facts, loudness, compliance, the commands run; `--pack` renders a social pack table |
 
@@ -343,7 +343,7 @@ On Windows, `python3` is only on PATH if Python was installed from the Microsoft
 
 `mcp/server.py` is a stdio JSON-RPC transport with no tool table of its own. `tools/list` is derived from the contract at start-up, in contract order, with `inputSchema` translated from each tool's `input_schema`. By default it lists only the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`) so a client doesn't pay context for 30 schemas it rarely calls directly; set `FFMPEG_SKILL_MCP_FULL=1` to list all 42. Every tool, listed or not, is callable through `tools/call`, which maps structured arguments to argv and runs the named script; a raw `argv` form is accepted for compatibility and marked non-canonical. `python3 mcp/server.py --list` prints the tools; `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
 
-`FFMPEG_SKILL_MCP_LEAN=1` in the server's environment drops `json` and `progress` from every `inputSchema`: they are transport flags the server sets itself, not tool arguments, and 2.0 drops them unconditionally. It is opt-in, independent of `FFMPEG_SKILL_MCP_FULL`, and the default `tools/list` stays byte-identical (aside from the core-12 filter) to the CLI surface the contract promises.
+No `inputSchema` lists `json` or `progress`: they are transport flags the server sets itself, not tool arguments (2.0; 1.x listed them unless `FFMPEG_SKILL_MCP_LEAN=1`). A client that still sends them is not refused.
 
 The server also advertises a `prompts` capability: five canned workflow recipes an agent can ask for by name instead of composing the individual tool calls itself — `reel`, `podcast`, `multicam`, `delivery_check`, `hdr`. `prompts/list` returns each one's name, description and arguments; `prompts/get {name, arguments}` fills the matching template and returns one text message naming the actual command lines to run and what to check afterward. These are recipes, not new tool calls — every command line a prompt names is one `tools/call` (or the CLI) can already run.
 
@@ -379,7 +379,7 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 - **Non-Latin text picks a font by script (1.12).** Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari, Thai, Cyrillic and Greek cues, titles and overlays resolve a font file that covers them automatically, and a machine with no such font fails the job (`kind: input`) instead of rendering boxes. `doctor --json`'s `fonts.scripts` says which languages this machine can render; `--lang ja|ko` disambiguates Han-only text; an explicit `--font`/`--font-file` is always kept.
 - **Silence detection finds nothing?** The default threshold is −35 dBFS. The tool prints a hint with the track's measured level; raise the threshold (`silence.py --threshold -25`) or shorten `--min-silence`.
 - **Sync results carry a confidence.** Below 0.3, or an offset near the edge of the analysis window, is probably wrong: enlarge `--analyze-seconds` or find a clap. Recordings over ten minutes from separate devices need `sync.py --fix-drift`.
-- **Outputs are never overwritten silently.** An existing output path is warned about today and refused from 2.0; set `FFMPEG_SKILL_NO_OVERWRITE=1` (the recommended agent setting) to get the refusal now and pass `--overwrite` where a replacement is intended.
+- **Outputs are never overwritten silently.** An existing output path is refused (`kind: input`, before anything runs); pass `--overwrite` where a replacement is intended.
 - **Long chains belong in a plan.** Three hand-chained re-encodes lose quality and are hard to change; `render.py` runs the whole edit from one JSON file, and `--dry-run` shows every ffmpeg command before anything is written.
 
 ## FFmpeg compatibility
@@ -494,7 +494,7 @@ FFmpeg itself:
 
 ## Stability
 
-1.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 2.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-1x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. What 2.0 will remove is already announced: `contract --json` lists it under `deprecated`, `--crf` prints a one-line warning where `--quality` exists, and [docs/contract.md](docs/contract.md#what-20-changes) says what a caller does today to be ready.
+2.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 3.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-2x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality`, an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`.
 
 ## Development
 

@@ -32,7 +32,7 @@ def main() -> int:
     ap.add_argument("--y", type=int, required=True, help="top edge of the crop rectangle, in source pixels")
     ap.add_argument("--width", type=int, required=True, help="crop width in px (must be even)")
     ap.add_argument("--height", type=int, required=True, help="crop height in px (must be even)")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF (default 18)")
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     ap.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
     add_common(ap)

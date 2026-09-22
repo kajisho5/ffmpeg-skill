@@ -93,7 +93,7 @@ def main() -> int:
     ap.add_argument("--fps", type=float, help="output frame rate (default: first clip)")
     ap.add_argument("--fit", choices=["pad", "crop"], default="pad", help="how clips of another aspect reach the frame (default pad)")
     ap.add_argument("--pad-color", default="black")
-    ap.add_argument("--crf", type=int, default=18)
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     aud = ap.add_argument_group("audio-only inputs")
     aud.add_argument("--sample-rate", type=int, help="output sample rate in Hz (default: first clip's)")
@@ -170,7 +170,7 @@ def main() -> int:
         geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={args.pad_color}"
     # Any HDR input makes the join HDR (10-bit, HEVC via video_args on that clip's tags): an SDR
     # first clip used to drag an HDR second clip down to 8-bit without a tone map.
-    hdr_meta = next((m for m in metas if (m.get("video") or {}).get("hdr")), None)
+    hdr_meta = next((m for m in metas if (m.get("video") or {}).get("bt2020_or_hdr")), None)
     pixfmt = "yuv420p10le" if hdr_meta else "yuv420p"
     # the audio-only join keeps the widest layout; the video join used to force stereo and
     # silently dropped the centre/LFE of 5.1 material

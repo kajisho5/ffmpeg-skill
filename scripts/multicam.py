@@ -144,7 +144,7 @@ def main() -> int:
     ap.add_argument("--width", type=int, help="output width (default: reference)")
     ap.add_argument("--height", type=int, help="output height (default: reference)")
     ap.add_argument("--fps", type=float, help="output fps (default: reference)")
-    ap.add_argument("--crf", type=int, default=18)
+    ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
     args = ap.parse_args()
@@ -260,7 +260,7 @@ def main() -> int:
         w, h = h, w
     fps = args.fps or v0.get("fps") or 30.0
     fps = round(fps) if abs(fps - round(fps)) < 0.02 else fps
-    pixfmt = "yuv420p10le" if v0.get("hdr") else "yuv420p"
+    pixfmt = "yuv420p10le" if v0.get("bt2020_or_hdr") else "yuv420p"
     geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:g},format={pixfmt}"
 
     cmd = ffmpeg_base()

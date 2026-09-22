@@ -141,13 +141,13 @@ def main() -> int:
     if not meta.get("video"):
         die("input has no video stream")
     notes: List[str] = []
-    if p.get("hdr_only") and not meta["video"].get("hdr"):
+    if p.get("hdr_only") and not meta["video"].get("bt2020_or_hdr"):
         # The point of this preset is that the delivery stays HDR. Running it on an SDR source
         # would write a 10-bit HEVC file labelled with SDR tags and call it an HDR delivery.
         die(f"--preset {args.preset} delivers HDR and this source is SDR ({meta['video'].get('codec')}, "
             f"{meta['video'].get('color_transfer') or 'untagged'})",
             hint="use --preset youtube for an SDR delivery; there is no way to invent HDR range from an SDR master")
-    if meta["video"].get("hdr") and args.preset not in ("prores", "copy", "youtube-hdr"):
+    if meta["video"].get("bt2020_or_hdr") and args.preset not in ("prores", "copy", "youtube-hdr"):
         notes.append("source is HDR (%s). This preset outputs SDR BT.709 tags without tone mapping; run color.py --to-sdr first for correct colours." % meta["video"].get("hdr_format"))
         info("warning: " + notes[-1])
     has_audio = bool(meta.get("audio"))

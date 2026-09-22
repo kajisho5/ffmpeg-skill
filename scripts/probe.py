@@ -48,7 +48,7 @@ def main() -> int:
                 line += f" | {v.get('width')}x{v.get('height')} @ {v.get('fps')}fps {v.get('codec')} {v.get('pix_fmt')}"
                 if v.get("variable_frame_rate_suspected"):
                     line += " (VFR?)"
-                if v.get("hdr"):
+                if v.get("bt2020_or_hdr"):  # hdr_format also names the BT.2020 SDR case
                     line += f" [{v.get('hdr_format')}]"
                 if r.get("levels", {}).get("looks_like_log"):
                     line += " [Log?]"

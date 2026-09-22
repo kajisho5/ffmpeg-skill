@@ -4,6 +4,49 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 2.0.0
+
+What 1.10.0 announced for 2.0 (`contract --json`'s `deprecated` list): four changes made, one
+withdrawn (`result_v2`, below). No new feature; tool count still 42. `docs/contract.md` "What 2.0 changed" is the migration table, and
+`contract --json` now lists the same under `removed`, with the version that deprecated each.
+
+### Removed
+
+- `--crf` on every re-encoding tool that has `--quality` (deprecated in 1.10.0): it was an alias
+  of `--quality`, and argparse now refuses it. `--quality`'s default is what `--crf`'s was (18;
+  `proxy.py` 30). `export.py` keeps its own `--crf` -- its preset chooses the encoder, so it is not
+  an alias. A `render.py` project's `export.crf` still reaches `export.py --crf`.
+- `json` and `progress` from every MCP `inputSchema` (deprecated in 1.10.0): they are transport
+  flags the server sets itself, as `FFMPEG_SKILL_MCP_LEAN=1` showed since 1.10.0; that variable
+  no longer does anything. A client that still sends them is not refused. The frozen MCP snapshot
+  is regenerated.
+- The `result_v2` preview key and `FFMPEG_SKILL_RESULT_V2` (1.10.0 deprecated the flat keys in its
+  favour). It was withdrawn rather than promoted: it put a key in `metrics` or `details` by its
+  value (a number in one, the same key holding `null` in the other), so a caller could not know
+  where to look without the value. The flat top-level keys, typed per tool in `output_schema`, are
+  the 2.0 shape -- unchanged from 1.x.
+
+### Changed
+
+- An existing output is refused without `--overwrite` (1.x warned; deprecated in 1.10.0):
+  `kind: input`, before any ffmpeg runs, dry runs included, with a hint naming the flag.
+  `FFMPEG_SKILL_NO_OVERWRITE` no longer does anything.
+- `probe`'s `hdr` is true only for a PQ / HLG transfer or Dolby Vision (deprecated in 1.10.0),
+  equal to `hdr_signal`, which stays. The new `bt2020_or_hdr` carries the 1.x meaning (BT.2020
+  primaries count), and every editing tool routes on it, so a BT.2020 SDR source still re-encodes
+  as HEVC Main10 with its own tags: tool behaviour is unchanged. `hdr_format` still names
+  `BT.2020 SDR`.
+- `docs/contract.md`: "Stability guarantee (2.x)"; the deprecation policy records that 2.0.0
+  waived the 90-day half of its window (the deprecations date from 1.10.0, 2026-09-13; sixteen
+  minor releases carried them), and `tests/test_contract.py` requires such a waiver to be stated
+  there. `ctx` on `run()`/`emit()`/`die()` stays optional (docs/design-decisions.md says why).
+- `demos/build.py` clears a demo's own outputs before rebuilding it, since a tool now refuses to
+  replace them.
+
+### Also in this release
+
 - Fix: `docs/contract.md`'s historical versions no longer move with every release. The auto-bump in `release.yml` replaced every occurrence of the outgoing version in that file, so each "Since" in "What 2.0 changes" (all 1.10.0), "Per-tool keys added in 1.17.1 / 1.18.0", `broken_inside_word` (1.18.4), "every version before 1.18.3", `examples[]` (1.21.0) and `supports_json_brief` (1.11.0) had been rewritten to 1.26.0. They are restored from git history, and the bump now lives in `.github/scripts/bump_contract_md.py`, which moves only the `skill.version` row and the example's `version`, each required exactly once.
 - Tests: the 2.0 table's Since column is pinned to `_contract.DEPRECATED`, and a package.json major bump fails before the policy's window has passed (two further minors and 90 days after 1.10.0: 2026-12-12) or while a deprecated entry is still listed.
 

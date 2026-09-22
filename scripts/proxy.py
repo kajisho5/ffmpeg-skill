@@ -5,7 +5,7 @@ editing-decision workflows that only need to look at (or feed a model) a
 much smaller stand-in for the original.
 
 Resizes to --width (default 640px, height follows the source aspect) or by
---scale factor, re-encodes at a proxy-grade --crf (default 30 - well above any
+--scale factor, re-encodes at a proxy-grade --quality (default 30 - well above any
 delivery preset's 18-24 in export.py, since a proxy trades visual quality for
 size and speed), and always uses the fastest x264/x265 preset. Keeps the
 source's own dynamic range (an HDR source proxies to HEVC10, same as every
@@ -39,7 +39,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output file (default: <name>_proxy.<ext>)")
     ap.add_argument("--width", type=int, default=640, help="output width in px, height follows the source aspect (default 640)")
     ap.add_argument("--scale", type=float, help="scale factor applied to the source dimensions instead of --width (0 < scale <= 1)")
-    ap.add_argument("--crf", type=int, default=30, help="proxy-grade CRF, higher = smaller/lower quality (default 30)")
+    ap.set_defaults(crf=30)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--fps", type=float, help="force a constant output frame rate")
     ap.add_argument("--no-audio", action="store_true", help="drop audio entirely (default: keep it)")
     add_common(ap)

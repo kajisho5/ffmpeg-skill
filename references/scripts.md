@@ -1,6 +1,6 @@
 # Script reference
 
-Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--json-brief` (since 1.11.0: the same JSON result trimmed to `status`, `output`, `dry_run`, `verified`, a compact `summary` of the output probe -- duration_s, width, height, fps, vcodec, acodec, channels, and lufs when measured -- the tool's own keys, and the count of commands instead of the command lines; it implies `--json`, leaves `--json`'s own output untouched, and failures print the usual full failure document), `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `--plan FILE` (the dry run written as a plan document that `render.py FILE` executes later; see render.py), `-o OUT`; every editing tool that re-encodes (not `export.py`, whose preset decides the codec) also takes `--codec h264|hevc|av1|prores` (the encoder for the re-encode; default x264 for SDR, x265 Main10 for HDR, unchanged) and `--quality N` (CRF scale, overrides `--crf`; up to 63 for av1; ignored by prores). `--crf` is deprecated since 1.10.0 (it warns on stderr and is removed in 2.0): use `--quality`, except on `export.py`, whose `--crf` is not an alias and stays. With `FFMPEG_SKILL_NO_OVERWRITE=1` in the environment, any tool refuses (`kind: input`) to replace an existing output unless `--overwrite` is given. `--codec hevc` on SDR writes 8-bit BT.709 HEVC (`hvc1`), `av1` uses SVT-AV1 (libaom fallback), `prores` is 422 HQ and needs an explicit `-o NAME.mov` (or `.mkv`), `h264` refuses an HDR source (`kind: input`, run `color.py --to-sdr` first). `export.py` keeps choosing the codec from its preset and has neither flag; a `render.py` project cannot choose a codec either -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) still runs ffprobe, `check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report`/`silence`/`loudness`/`stabilize` still run their ffmpeg/ffprobe measurements (a dry-run plan rests on real numbers; they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
+Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--json-brief` (since 1.11.0: the same JSON result trimmed to `status`, `output`, `dry_run`, `verified`, a compact `summary` of the output probe -- duration_s, width, height, fps, vcodec, acodec, channels, and lufs when measured -- the tool's own keys, and the count of commands instead of the command lines; it implies `--json`, leaves `--json`'s own output untouched, and failures print the usual full failure document), `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `--plan FILE` (the dry run written as a plan document that `render.py FILE` executes later; see render.py), `-o OUT`; every editing tool that re-encodes (not `export.py`, whose preset decides the codec) also takes `--codec h264|hevc|av1|prores` (the encoder for the re-encode; default x264 for SDR, x265 Main10 for HDR, unchanged) and `--quality N` (CRF scale, default 18 -- 30 for `proxy.py`; up to 63 for av1; ignored by prores). 2.0 removed `--crf` from these tools (it was `--quality`'s alias); `export.py` keeps its own `--crf`, which is not an alias. Every tool refuses (`kind: input`, before anything runs) to replace an existing output unless `--overwrite` is given. `--codec hevc` on SDR writes 8-bit BT.709 HEVC (`hvc1`), `av1` uses SVT-AV1 (libaom fallback), `prores` is 422 HQ and needs an explicit `-o NAME.mov` (or `.mkv`), `h264` refuses an HDR source (`kind: input`, run `color.py --to-sdr` first). `export.py` keeps choosing the codec from its preset and has neither flag; a `render.py` project cannot choose a codec either -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) still runs ffprobe, `check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report`/`silence`/`loudness`/`stabilize` still run their ffmpeg/ffprobe measurements (a dry-run plan rests on real numbers; they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
 
 ## Time grammar (every time-taking flag, 1.9)
 
@@ -56,9 +56,9 @@ between tools.
 ```
 probe.py INPUT... [--compact] [--field duration|video.fps|...]
 ```
-JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected,hdr,hdr_signal,hdr_format}`
-(`hdr_signal` is true only for a PQ / HLG transfer or Dolby Vision; `hdr` also counts
-BT.2020 primaries on an SDR transfer, which `hdr_format` names "BT.2020 SDR" -- 2.0 renames),
+JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected,hdr,hdr_signal,bt2020_or_hdr,hdr_format}`
+(`hdr`, and `hdr_signal` equal to it, is true only for a PQ / HLG transfer or Dolby Vision -- since 2.0;
+`bt2020_or_hdr` also counts BT.2020 primaries on an SDR transfer, which `hdr_format` names "BT.2020 SDR"),
 `audio{codec,channels,sample_rate}`. `--compact` gives one line per file.
 
 ### cut.py — cut / join segments
@@ -1408,10 +1408,10 @@ neither.
 
 ### proxy.py — low-bitrate proxy for analysis/preview
 ```
-proxy.py INPUT [--width W | --scale F] [--crf N] [--fps N] [--no-audio] [-o OUT]
+proxy.py INPUT [--width W | --scale F] [--quality N] [--fps N] [--no-audio] [-o OUT]
 ```
 Not a delivery preset: resizes to `--width` (default 640) or by `--scale`
-factor, re-encodes at a proxy-grade `--crf` (default 30) with the fastest
+factor, re-encodes at a proxy-grade `--quality` (default 30) with the fastest
 x264/x265 preset, keeps the source's own dynamic range (HDR stays HDR;
 run `color.py --to-sdr` first if SDR is wanted) and keeps a subtitle/data
 track when the container can hold it (`dropped_non_av_streams`). Only executes the spec

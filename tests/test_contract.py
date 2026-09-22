@@ -973,76 +973,74 @@ class ContractTests(unittest.TestCase):
                          "MCP surface grew (new tool or optional argument) -- regenerate the snapshot: "
                          "UPDATE_MCP_SNAPSHOT=1 python3 tests/test_contract.py")
 
-    def test_mcp_lean_schema_is_opt_in_and_drops_only_json_and_progress(self):
-        """roadmap 1.10.0: FFMPEG_SKILL_MCP_LEAN=1 drops the two transport flags the server sets
-        itself (`json`, `progress`) from every inputSchema, pre-shipping the 2.0 surface. Unset
-        (the default) the surface is byte-identical to today's, which the snapshot test above
-        pins -- so this checks both directions rather than only the new one."""
-        default = _contract.mcp_tools()
-        self.assertTrue(any("json" in t["inputSchema"]["properties"] for t in default),
-                        "without the env var json/progress stay in the schema")
-        saved = os.environ.get("FFMPEG_SKILL_MCP_LEAN")
-        os.environ["FFMPEG_SKILL_MCP_LEAN"] = "1"
-        try:
-            lean = _contract.mcp_tools()
-        finally:
-            os.environ.pop("FFMPEG_SKILL_MCP_LEAN", None)
-            if saved is not None:
-                os.environ["FFMPEG_SKILL_MCP_LEAN"] = saved
-        self.assertEqual([t["name"] for t in lean], [t["name"] for t in default], "no tool appears or disappears")
-        for was, now in zip(default, lean):
-            with self.subTest(tool=now["name"]):
+    def test_mcp_schema_leaves_out_the_transport_flags(self):
+        """2.0 (deprecated in 1.10.0, opt-in then as FFMPEG_SKILL_MCP_LEAN=1): `json` and
+        `progress` are CLI transport flags the server sets itself, so no inputSchema lists them --
+        and nothing else is dropped: every other CLI option still has its property. A client that
+        still sends `json: true` is not refused; the server maps it like any other key."""
+        tools = _contract.mcp_tools()
+        for tool in tools:
+            with self.subTest(tool=tool["name"]):
+                props = tool["inputSchema"]["properties"]
                 for dest in ("json", "progress"):
-                    self.assertNotIn(dest, now["inputSchema"]["properties"])
-                self.assertEqual(sorted(set(was["inputSchema"]["properties"]) - set(now["inputSchema"]["properties"])),
-                                 sorted(set(("json", "progress")) & set(was["inputSchema"]["properties"])),
-                                 "nothing but json/progress is dropped")
-        # the server reads the same builder, so tools/list follows with no edit under mcp/
+                    self.assertNotIn(dest, props)
+                cli = set(self.tools[tool["name"]]["input_schema"]["properties"]) - {"json", "progress"}
+                self.assertEqual(cli - set(props), set(), "only json/progress are left out")
         resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]
-        self.assertIn("json", resp["result"]["tools"][0]["inputSchema"]["properties"], "the default server surface is unchanged")
+        self.assertNotIn("json", resp["result"]["tools"][0]["inputSchema"]["properties"])
+        self.assertIn("--json", mcp_server.build_argv("cut", {"input": "/x.mp4", "json": True}))
 
-    def test_contract_lists_what_2_0_removes(self):
-        """docs/contract.md, "Deprecation policy" step 1 and "What 2.0 changes": everything 2.0
-        removes is announced in the contract itself, one entry per surface, so a caller can diff
-        the list instead of reading a CHANGELOG."""
-        dep = self.contract["deprecated"]
-        self.assertTrue(dep)
-        for entry in dep:
-            with self.subTest(what=entry["what"]):
-                self.assertEqual(sorted(entry), ["removed_in", "replacement", "since", "what", "where"])
-                self.assertEqual(entry["removed_in"], "2.0.0")
-                self.assertIn(entry["where"], ("cli", "json", "mcp", "behaviour"))
-                self.assertTrue(entry["replacement"])
-        wheres = [e["where"] for e in dep]
+    def test_contract_lists_what_the_next_major_removes_and_what_2_0_removed(self):
+        """docs/contract.md, "Deprecation policy" step 1 and "What 2.0 changed": everything a major
+        removes is announced in the contract itself (`deprecated`), and what 2.0.0 removed stays
+        listed with the version that deprecated it (`removed`), so a caller can diff the lists
+        instead of reading a CHANGELOG."""
+        pkg_major = int(json.loads((ROOT / "package.json").read_text())["version"].split(".")[0])
+        for key in ("deprecated", "removed"):
+            for entry in self.contract[key]:
+                with self.subTest(key=key, what=entry["what"]):
+                    self.assertEqual(sorted(entry), ["removed_in", "replacement", "since", "what", "where"])
+                    self.assertIn(entry["where"], ("cli", "json", "mcp", "behaviour"))
+                    self.assertTrue(entry["replacement"])
+        for entry in self.contract["deprecated"]:
+            self.assertGreater(int(entry["removed_in"].split(".")[0]), pkg_major)
+        removed = self.contract["removed"]
+        self.assertTrue(removed)
+        for entry in removed:
+            self.assertEqual(entry["removed_in"], "2.0.0")
         for surface in ("cli", "json", "mcp", "behaviour"):
-            self.assertIn(surface, wheres)
+            self.assertIn(surface, [e["where"] for e in removed])
 
-    def test_contract_md_2_0_table_since_matches_deprecated(self):
-        """docs/contract.md's "What 2.0 changes" table and its JSON example restate each
-        deprecation's `since`. release.yml's auto-bump used to replace every occurrence of the
-        old version in that file, so by 1.26.0 the whole Since column read "1.26.0" for
-        deprecations made in 1.10.0 -- the date 2.0's 90-day window is counted from. Pin the
-        column, in order, to _contract.DEPRECATED."""
+    def test_contract_md_2_0_table_matches_removed(self):
+        """docs/contract.md's "What 2.0 changed" table restates `removed`, row for row, with the
+        version each was deprecated in. release.yml's auto-bump used to replace every occurrence
+        of the old version in that file, so by 1.26.0 that column read "1.26.0" for deprecations
+        made in 1.10.0 -- the date 2.0's window is counted from. Pin the column, in order."""
         text = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
-        section = text.split("| What 2.0 removes | Since |", 1)[1].split("\n\n", 1)[0]
+        section = text.split("| What changed in 2.0.0 | Deprecated in |", 1)[1].split("\n\n", 1)[0]
         rows = [r for r in section.splitlines()[1:] if r.startswith("| ")]
-        since_col = [r.split(" | ")[1].strip() for r in rows]
-        self.assertEqual(since_col, [e["since"] for e in _contract.DEPRECATED])
-        example = re.search(r'"deprecated": \[\{"what": "\.\.\.", "since": "([^"]+)"', text)
-        self.assertIsNotNone(example, "docs/contract.md: deprecated example not found")
-        self.assertIn(example.group(1), {e["since"] for e in _contract.DEPRECATED})
+        self.assertEqual(len(rows), len(_contract.REMOVED))
+        for row, entry in zip(rows, _contract.REMOVED):
+            self.assertTrue(row.split(" | ")[1].strip().startswith(entry["since"]), row[:80])
+        example = re.search(r'"removed": \[\{"what": "\.\.\.", "since": "([^"]+)"', text)
+        self.assertIsNotNone(example, "docs/contract.md: removed example not found")
+        self.assertIn(example.group(1), {e["since"] for e in _contract.REMOVED})
 
-    # Release date of each version a DEPRECATED entry names as `since` (git tag date). CI checks
-    # out without tags, so the dates live here, and they stay after the major that removes the
-    # entries: they are what that major's own PR is checked against.
+    # Release date of each version a deprecation dates from (git tag date). CI checks out without
+    # tags, so the dates live here, and they stay after the major that removes the entries: they
+    # are what that major's own PR is checked against.
     DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13"}
+    # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
+    # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
+    WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**"}
 
     def test_major_release_waits_for_the_deprecation_window(self):
         """docs/contract.md "Deprecation policy" step 2: keep a deprecated form for at least two
         further minor releases or 90 days, whichever is longer; step 3 removes it only in the next
         major. Nothing enforced either: release.yml refuses to auto-bump across a major, but a
-        hand-bumped package.json in a PR could ship 2.0.0 the day after a deprecation, or ship it
-        with the deprecated forms still in place. This fails on such a PR, not after the release."""
+        hand-bumped package.json in a PR could ship a major the day after a deprecation, or ship it
+        with the deprecated forms still in place. This fails on such a PR, not after the release.
+        2.0.0 waived the 90 days (WINDOW_WAIVERS); the two-minor half is still checked."""
         import datetime
         pkg = json.loads((ROOT / "package.json").read_text())
         major = int(pkg["version"].split(".")[0])
@@ -1053,6 +1051,11 @@ class ContractTests(unittest.TestCase):
                 self.assertGreater(int(entry["removed_in"].split(".")[0]), major,
                                    f"package.json is {pkg['version']} but {entry['what']!r} is still "
                                    f"deprecated, not removed: remove it, then drop the entry")
+        for entry in _contract.REMOVED:
+            self.assertIn(entry["since"], self.DEPRECATION_RELEASE_DATES)
+        contract_md = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        for m, needle in self.WINDOW_WAIVERS.items():
+            self.assertIn(needle, contract_md, f"the {m}.0.0 waiver is not stated in docs/contract.md")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         released = {tuple(int(x) for x in v.split(".")) for v in re.findall(r"(?m)^## (\d+\.\d+\.\d+)\s*$", changelog)}
         for since, day in self.DEPRECATION_RELEASE_DATES.items():
@@ -1062,6 +1065,8 @@ class ContractTests(unittest.TestCase):
             with self.subTest(since=since):
                 later_minors = {(a, b) for a, b, _ in released if a == s_major and b > s_minor}
                 self.assertGreaterEqual(len(later_minors), 2, f"{since}: fewer than two further minor releases")
+                if s_major + 1 in self.WINDOW_WAIVERS:
+                    continue
                 earliest = datetime.date.fromisoformat(day) + datetime.timedelta(days=90)
                 self.assertGreaterEqual(datetime.date.today(), earliest,
                                         f"{pkg['version']} removes {since}'s deprecations before {earliest}")
@@ -1128,6 +1133,9 @@ class ContractTests(unittest.TestCase):
             self.assertFalse(schema["additionalProperties"])
             self.assertIn("argv", schema["properties"])
             for dest, prop in spec["input_schema"]["properties"].items():
+                if dest in _contract.MCP_TRANSPORT_FLAGS:
+                    self.assertNotIn(dest, schema["properties"], "2.0: the transport sets json/progress itself")
+                    continue
                 self.assertIn(dest, schema["properties"], f"{entry['name']}.{dest} lost in translation")
                 self.assertEqual(schema["properties"][dest]["type"], prop["type"])
                 for key in ("enum", "default"):
@@ -1562,16 +1570,19 @@ class ContractTests(unittest.TestCase):
         """--preset took any string and --crf any integer; an agent's typo ("--preset fastest",
         "--crf 99") reached ffmpeg and came back as kind ffmpeg with x264's stderr, which reads as
         an encoder failure rather than a bad argument. Every x264 --preset is now an argparse
-        choice (so the contract and MCP schema carry the enum) and --crf is range-checked once
-        in apply_common for all 31 tools that take it."""
+        choice (so the contract and MCP schema carry the enum) and --quality (2.0; --crf until
+        then) and export.py's own --crf are range-checked once in apply_common."""
         proc = tool("cut", self.src, "--start", "0", "--end", "1", "--preset", "fastest", "--json", "-o", self.out("p.mp4"), check=False)
         self.assertEqual(proc.returncode, 2, "argparse rejects an unknown preset")
         self.assertIn("invalid choice", proc.stderr)
-        proc = tool("cut", self.src, "--start", "0", "--end", "1", "--crf", "99", "--json", "-o", self.out("c.mp4"), check=False)
+        proc = tool("cut", self.src, "--start", "0", "--end", "1", "--quality", "99", "--json", "-o", self.out("c.mp4"), check=False)
         doc = json.loads(proc.stdout)
         self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
-        self.assertIn("--crf must be between 0 and 51", doc["error"]["message"])
+        self.assertIn("--quality must be between 0 and 51", doc["error"]["message"])
         self.assertEqual(doc["commands"], [], "refused before any ffmpeg ran")
+        proc = tool("export", self.src, "--preset", "youtube", "--crf", "99", "--json", "-o", self.out("e.mp4"), check=False)
+        doc = json.loads(proc.stdout)
+        self.assertIn("--crf must be between 0 and 51", doc["error"]["message"])
         for name, spec in self.tools.items():
             preset = spec["input_schema"]["properties"].get("preset")
             if preset and name != "export":
@@ -1663,7 +1674,7 @@ class ContractTests(unittest.TestCase):
         shutil.copy(self.src, folder / "a.mp4")
         recipe = folder / "batch.json"
         recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_x",
-                                      "steps": [["cut.py", "{in}", "--start", "0", "--end", "1", "--crf", "99", "-o", "{out}"]]}))
+                                      "steps": [["cut.py", "{in}", "--start", "0", "--end", "1", "--quality", "99", "-o", "{out}"]]}))
         proc = tool("batch", folder, "--recipe", recipe, "--json", check=False)
         self.assertEqual(proc.returncode, 1)
         doc = json.loads(proc.stdout)
@@ -2026,29 +2037,15 @@ class ContractTests(unittest.TestCase):
             proc = tool("fit", self.src, "--aspect", "1:1", "--dry-run", "--json", "-o", ro / "x.mp4", check=False)
             self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
 
-    def test_result_v2_is_opt_in_and_uniform(self):
-        """#189: FFMPEG_SKILL_RESULT_V2=1 adds one uniform `result_v2` block to every success
-        document; without it nothing changes. loudness's `result` dict lands in metrics, cut's
-        numeric extras too, and the tool's other keys survive under details."""
-        doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("v2_off.mp4"), "--json").stdout)
-        self.assertNotIn("result_v2", doc)
+    def test_result_v2_preview_is_gone(self):
+        """2.0: the result_v2 preview (#189, FFMPEG_SKILL_RESULT_V2=1 since 1.10.0) was withdrawn
+        rather than promoted -- it placed a key in `metrics` or `details` by its value -- and the
+        top-level keys are the one shape. The old environment variable adds nothing."""
         env = dict(os.environ, FFMPEG_SKILL_RESULT_V2="1")
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("v2_cut.mp4"), "--json", env=env).stdout)
-        v2 = doc["result_v2"]
-        self.assertEqual(sorted(v2), sorted(["schema", "output", "probe", "commands", "metrics", "notes", "dropped", "details", "verified", "verification"]))
-        self.assertEqual((v2["schema"], v2["output"], v2["commands"]), (2, doc["output"], doc["commands"]))
-        self.assertEqual(v2["probe"]["duration"], doc["probe"]["duration"])
-        self.assertEqual(v2["metrics"]["expected_duration"], doc["expected_duration"])
-        self.assertEqual(v2["details"]["precision"], doc["precision"])
-        self.assertEqual(v2["dropped"], {"non_av_streams": False})
-        doc = json.loads(tool("loudness", self.src, "-o", self.out("v2_loud.mp4"), "--json", env=env).stdout)
-        v2 = doc["result_v2"]
-        self.assertEqual(v2["metrics"]["input_i"], doc["result"]["input_i"])
-        self.assertNotIn("result", v2["details"])
-        doc = json.loads(tool("export", self.hdr, "--preset", "youtube", "--fast", "-o", self.out("v2_hdr.mp4"), "--json", env=env).stdout)
-        self.assertEqual(doc["result_v2"]["notes"], doc["notes"])
-        doc = json.loads(tool("fit", self.src, "--aspect", "1:1", "--dry-run", "-o", self.out("v2_dry.mp4"), "--json", env=env).stdout)
-        self.assertEqual((doc["result_v2"]["probe"], doc["result_v2"]["output"]), (None, doc["output"]))
+        self.assertNotIn("result_v2", doc)
+        for key in ("output", "probe", "commands", "verified", "verification", "expected_duration", "precision"):
+            self.assertIn(key, doc)
 
     def test_eval6_followups(self):
         """Eval iteration 6: overlay --fade without --end fades in only; export measures the
@@ -2091,9 +2088,6 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(doc["verified"]); self.assertEqual(doc["verification"], [{"step": "exists", "ok": True}])
         doc = json.loads(tool("look", self.src, "-o", self.out("vf_look.png"), "--json").stdout)
         self.assertEqual((doc["verified"], doc["verification"]), (True, [{"step": "probe", "ok": True}]))
-        env = dict(os.environ, FFMPEG_SKILL_RESULT_V2="1")
-        doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_v2.mp4"), "--json", env=env).stdout)
-        self.assertTrue(doc["result_v2"]["verified"]); self.assertNotIn("verified", doc["result_v2"]["details"])
 
     def test_sixth_review_regressions(self):
         """Review 6: loudness's verified reflects its target; --plan is written by tools that never
@@ -2289,10 +2283,11 @@ class ContractTests(unittest.TestCase):
         before = (keep.stat().st_size, keep.stat().st_mtime_ns)
         bad = self.out("bad.cube")
         bad.write_text('TITLE "x"\nLUT_3D_SIZE 2\ngarbage\n')
-        for extra in ((), ("--overwrite",)):
+        # without --overwrite 2.0 refuses before ffmpeg runs; with it, ffmpeg fails on the LUT
+        for extra, kind in (((), "input"), (("--overwrite",), "ffmpeg")):
             proc = tool("color", self.src, "--lut", bad, "--json", "-o", keep, *extra, check=False)
             self.assertNotEqual(proc.returncode, 0)
-            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "ffmpeg")
+            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], kind)
             self.assertTrue(keep.exists(), f"failed run deleted a pre-existing output ({extra})")
             self.assertEqual((keep.stat().st_size, keep.stat().st_mtime_ns), before, "pre-existing output was modified")
             self.assertEqual([p.name for p in keep.parent.glob(".*ffskill*")], [], "temp file left behind after a failure")
@@ -2347,42 +2342,34 @@ class ContractTests(unittest.TestCase):
             self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "ffmpeg"), name)
             self.assertIn("decode error", doc["error"]["message"], name)
 
-    def test_existing_output_warns_today_refuses_on_request_and_never_for_its_own_files(self):
+    def test_existing_output_is_refused_without_overwrite_and_never_for_its_own_files(self):
         """Every ffmpeg command carries -y (so a run never blocks on a y/N prompt), which meant an
         output path that already existed -- a previous deliverable, a mis-named source -- was
-        replaced without a word. Per the 1.x deprecation policy the default stays but warns;
-        FFMPEG_SKILL_NO_OVERWRITE=1 opts into the 2.0 refusal now; --overwrite is the explicit
-        consent in both modes; a path this same run wrote (two-pass tools, copy-then-re-encode
+        replaced without a word. 1.x warned (FFMPEG_SKILL_NO_OVERWRITE=1 opted into refusing);
+        2.0 refuses, kind input, before any ffmpeg runs, dry runs included. --overwrite is the
+        explicit consent; a path this same run wrote (two-pass tools, copy-then-re-encode
         fallbacks) is never treated as someone else's file."""
         out = self.out("exists.mp4")
+        if out.exists():
+            out.unlink()
         first = tool("cut", self.src, "--start", "0", "--end", "1", "-o", out)
-        self.assertNotIn("already exists", first.stderr, "a fresh path must not warn")
-        again = tool("cut", self.src, "--start", "0", "--end", "1", "-o", out)
-        self.assertEqual(again.returncode, 0)
-        self.assertIn("already exists and will be overwritten", again.stderr)
-        self.assertIn("--overwrite", again.stderr)
-        quiet = tool("cut", self.src, "--start", "0", "--end", "1", "--overwrite", "-o", out)
-        self.assertNotIn("already exists", quiet.stderr, "--overwrite is the consent; no warning")
-        env = dict(os.environ, FFMPEG_SKILL_NO_OVERWRITE="1")
-        proc = tool("cut", self.src, "--start", "0", "--end", "1", "--json", "-o", out, env=env, check=False)
-        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("refusing", first.stderr, "a fresh path is not refused")
+        size_before = out.stat().st_size
+        proc = tool("cut", self.src, "--start", "0", "--end", "2", "--json", "-o", out, check=False)
+        self.assertEqual(proc.returncode, 1)
         doc = json.loads(proc.stdout)
         self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
         self.assertIn("refusing to overwrite", doc["error"]["message"])
+        self.assertIn("--overwrite", doc["error"]["hint"])
         self.assertEqual(doc["commands"], [], "refused before any ffmpeg ran")
-        size_before = out.stat().st_size
-        self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "2", "--overwrite", "-o", out, env=env).returncode, 0)
-        self.assertNotEqual(out.stat().st_size, size_before, "--overwrite replaced the file under the strict mode")
-        # a tool that writes its own output twice in one run (color --retag's copy-then-re-encode
-        # fallback path is exercised elsewhere); the guard keys on paths written by this process
-        fresh = self.out("own.mp4")
-        proc = tool("cut", self.src, "--start", "0", "--end", "1", "-o", fresh, env=env)
-        self.assertEqual(proc.returncode, 0)
-        self.assertNotIn("refusing", proc.stderr)
-        # dry-run never touches the file but still says what it would do
-        dry = tool("cut", self.src, "--start", "0", "--end", "1", "--dry-run", "-o", out)
-        self.assertIn("already exists", dry.stderr)
-        self.assertEqual(out.stat().st_size, os.path.getsize(out))
+        self.assertEqual(out.stat().st_size, size_before, "the existing file is untouched")
+        dry = tool("cut", self.src, "--start", "0", "--end", "2", "--dry-run", "-o", out, check=False)
+        self.assertEqual(dry.returncode, 1, "a dry run says the real run would be refused")
+        self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "2", "--overwrite", "-o", out).returncode, 0)
+        self.assertNotEqual(out.stat().st_size, size_before, "--overwrite replaced the file")
+        # the old opt-in variable changes nothing either way
+        env = dict(os.environ, FFMPEG_SKILL_NO_OVERWRITE="0")
+        self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "1", "-o", out, env=env, check=False).returncode, 1)
 
     def _fails(self, name, *args, kind=None, code=None):
         proc = tool(name, *args, "--json", check=False)
