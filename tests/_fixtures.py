@@ -58,7 +58,9 @@ def script(name, *args, **kw):
     # Every media test shares one OUT directory and many reuse a name (cap_mux.mp4 is written by
     # three tests), so since 2.0 refuses an existing output the helper gives the consent. What the
     # refusal itself does is pinned by test_contract.py's own helper, which never adds the flag.
-    if ("-o" in args or "--output" in args) and "--overwrite" not in args:
+    # render.py and batch.py name their outputs in the project / recipe file, not with -o.
+    names_output = "-o" in args or "--output" in args or name in ("render.py", "batch.py")
+    if names_output and "--overwrite" not in args and "--help" not in args:
         args = args + ("--overwrite",)
     return sh(sys.executable, SCRIPTS / name, *args, **kw)
 
