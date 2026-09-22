@@ -1017,6 +1017,90 @@ class ContractTests(unittest.TestCase):
         for surface in ("cli", "json", "mcp", "behaviour"):
             self.assertIn(surface, wheres)
 
+    def test_contract_md_2_0_table_since_matches_deprecated(self):
+        """docs/contract.md's "What 2.0 changes" table and its JSON example restate each
+        deprecation's `since`. release.yml's auto-bump used to replace every occurrence of the
+        old version in that file, so by 1.26.0 the whole Since column read "1.26.0" for
+        deprecations made in 1.10.0 -- the date 2.0's 90-day window is counted from. Pin the
+        column, in order, to _contract.DEPRECATED."""
+        text = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        section = text.split("| What 2.0 removes | Since |", 1)[1].split("\n\n", 1)[0]
+        rows = [r for r in section.splitlines()[1:] if r.startswith("| ")]
+        since_col = [r.split(" | ")[1].strip() for r in rows]
+        self.assertEqual(since_col, [e["since"] for e in _contract.DEPRECATED])
+        example = re.search(r'"deprecated": \[\{"what": "\.\.\.", "since": "([^"]+)"', text)
+        self.assertIsNotNone(example, "docs/contract.md: deprecated example not found")
+        self.assertIn(example.group(1), {e["since"] for e in _contract.DEPRECATED})
+
+    # Release date of each version a DEPRECATED entry names as `since` (git tag date). CI checks
+    # out without tags, so the dates live here, and they stay after the major that removes the
+    # entries: they are what that major's own PR is checked against.
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13"}
+
+    def test_major_release_waits_for_the_deprecation_window(self):
+        """docs/contract.md "Deprecation policy" step 2: keep a deprecated form for at least two
+        further minor releases or 90 days, whichever is longer; step 3 removes it only in the next
+        major. Nothing enforced either: release.yml refuses to auto-bump across a major, but a
+        hand-bumped package.json in a PR could ship 2.0.0 the day after a deprecation, or ship it
+        with the deprecated forms still in place. This fails on such a PR, not after the release."""
+        import datetime
+        pkg = json.loads((ROOT / "package.json").read_text())
+        major = int(pkg["version"].split(".")[0])
+        for entry in _contract.DEPRECATED:
+            with self.subTest(what=entry["what"]):
+                self.assertIn(entry["since"], self.DEPRECATION_RELEASE_DATES,
+                              f"add {entry['since']}'s release date to DEPRECATION_RELEASE_DATES")
+                self.assertGreater(int(entry["removed_in"].split(".")[0]), major,
+                                   f"package.json is {pkg['version']} but {entry['what']!r} is still "
+                                   f"deprecated, not removed: remove it, then drop the entry")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        released = {tuple(int(x) for x in v.split(".")) for v in re.findall(r"(?m)^## (\d+\.\d+\.\d+)\s*$", changelog)}
+        for since, day in self.DEPRECATION_RELEASE_DATES.items():
+            s_major, s_minor, _ = (int(x) for x in since.split("."))
+            if s_major >= major:
+                continue  # its removal is a later major's; nothing to check until then
+            with self.subTest(since=since):
+                later_minors = {(a, b) for a, b, _ in released if a == s_major and b > s_minor}
+                self.assertGreaterEqual(len(later_minors), 2, f"{since}: fewer than two further minor releases")
+                earliest = datetime.date.fromisoformat(day) + datetime.timedelta(days=90)
+                self.assertGreaterEqual(datetime.date.today(), earliest,
+                                        f"{pkg['version']} removes {since}'s deprecations before {earliest}")
+
+    def test_release_contract_md_bump_moves_only_the_current_version(self):
+        """.github/scripts/bump_contract_md.py (release.yml's auto-bump): only the two
+        current-version mentions in docs/contract.md move. The step it replaced was
+        `contract.replace(old, new)`, which also rewrote every historical version equal to the
+        one being released -- the 2.0 table's Since column, "added in 1.17.1", "(1.18.4)"."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "bump_contract_md", ROOT / ".github" / "scripts" / "bump_contract_md.py")
+        bump = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bump)
+
+        old = json.loads((ROOT / "package.json").read_text())["version"]
+        ma, mi, _ = old.split(".")
+        new = f"{ma}.{int(mi) + 1}.0"
+        text = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        out = bump.bump_contract_md(text, old, new)
+        changed = [(a, b) for a, b in zip(text.splitlines(), out.splitlines()) if a != b]
+        self.assertEqual(len(changed), 2, changed)
+        for a, b in changed:
+            self.assertEqual(a.replace(old, new), b)
+
+        # the 1.10.0 -> 1.10.1 release is the one that corrupted the Since column; replay it
+        hist = ('| x | the npm / package.json version (`1.10.0`) | any release |\n'
+                '| --crf | 1.10.0 | --quality |\n'
+                '  "skill": {"id": "ffmpeg-skill", "version": "1.10.0", "kind": "execution"},\n')
+        out = bump.bump_contract_md(hist, "1.10.0", "1.10.1")
+        self.assertIn("| --crf | 1.10.0 |", out)
+        self.assertIn("(`1.10.1`)", out)
+        self.assertIn('"version": "1.10.1"', out)
+        # an anchor that is missing (or doubled) is an error, never a partial bump
+        with self.assertRaises(ValueError):
+            bump.bump_contract_md(hist, "1.9.9", "1.10.0")
+        with self.assertRaises(ValueError):
+            bump.bump_contract_md(hist + hist, "1.10.0", "1.10.1")
+
     # ------------------------------------------------------------------ MCP inputSchema derived from the contract
     def _rpc(self, requests, root=ROOT, full=False):
         text = "".join(json.dumps(r) + "\n" for r in requests)

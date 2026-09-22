@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- Fix: `docs/contract.md`'s historical versions no longer move with every release. The auto-bump in `release.yml` replaced every occurrence of the outgoing version in that file, so each "Since" in "What 2.0 changes" (all 1.10.0), "Per-tool keys added in 1.17.1 / 1.18.0", `broken_inside_word` (1.18.4), "every version before 1.18.3", `examples[]` (1.21.0) and `supports_json_brief` (1.11.0) had been rewritten to 1.26.0. They are restored from git history, and the bump now lives in `.github/scripts/bump_contract_md.py`, which moves only the `skill.version` row and the example's `version`, each required exactly once.
+- Tests: the 2.0 table's Since column is pinned to `_contract.DEPRECATED`, and a package.json major bump fails before the policy's window has passed (two further minors and 90 days after 1.10.0: 2026-12-12) or while a deprecated entry is still listed.
 
 ## 1.26.0
 

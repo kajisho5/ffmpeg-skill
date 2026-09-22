@@ -153,9 +153,13 @@ jobs:
           assert plugin != plugin_new, ".claude-plugin/plugin.json version field not found/replaced"
           plugin_path.write_text(plugin_new, encoding="utf-8")
 
+          # Only the two current-version mentions move; a blind replace of the version string
+          # also rewrote every historical "since"/"added in" version (see the helper's docstring).
+          sys.path.insert(0, str(root / ".github" / "scripts"))
+          from bump_contract_md import bump_contract_md
           contract_path = root / "docs" / "contract.md"
           contract = contract_path.read_text(encoding="utf-8")
-          contract_path.write_text(contract.replace(old, new), encoding="utf-8")
+          contract_path.write_text(bump_contract_md(contract, old, new), encoding="utf-8")
 
           last_tag = f"v{old}" if old != "0.0.0" else None
           rev_range = f"{last_tag}..HEAD" if last_tag else "HEAD"
