@@ -543,7 +543,7 @@ class PictureTests(MediaFixtures):
         }
         for label, env in cases.items():
             with self.subTest(case=label):
-                out = OUT / "unknown_fc.mp4"
+                out = OUT / ("unknown_fc_%s.mp4" % label.replace(" ", "_").replace("-", "_"))
                 proc = script("caption.py", self._small(), "--text", cues, "--json", "--fast",
                               "-o", out, env=env)
                 doc = json.loads(proc.stdout)
