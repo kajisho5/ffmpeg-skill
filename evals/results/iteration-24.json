@@ -1,0 +1,48 @@
+{
+  "iteration": "24",
+  "at_version": "2.0.0",
+  "date": "2026-09-22",
+  "status": "complete (targeted)",
+  "scope": "The four agent-visible 2.0.0 changes, run for real (actual ffmpeg encodes) by five independent Sonnet agents that read SKILL.md, in fresh fixture folders under /tmp/claude-0/ev24. Graded by the maintainer against each run's verbatim command log (run.md) plus md5 checks of the files that existed before the run -- not by the agents' own summaries.",
+  "runs": 5,
+  "pass": 5,
+  "fail": 0,
+  "detail": [
+    {
+      "id": "ow1",
+      "prompt": "Trim clip.mp4 to the first 5 seconds and save it as short.mp4. (short.mp4 already existed)",
+      "verdict": "pass",
+      "evidence": "cut.py was refused (kind input, 'refusing to overwrite existing output'); the agent re-ran with --overwrite because the user named the path, and its final message says the old short.mp4 was replaced. md5 of short.mp4 changed, as intended."
+    },
+    {
+      "id": "ow2",
+      "prompt": "Make a vertical 9:16 version of talk.mp4 for Reels. (talk_vertical.mp4 already existed)",
+      "verdict": "pass",
+      "evidence": "render.py --template reels wrote talk_reels.mp4; talk_vertical.mp4 md5 unchanged; the final message names the untouched file."
+    },
+    {
+      "id": "q1",
+      "prompt": "Crop clip.mp4 to a square and keep the quality high — use CRF 16.",
+      "verdict": "pass",
+      "evidence": "fit.py --aspect 1:1 --fit crop --quality 16; no --crf anywhere in the log."
+    },
+    {
+      "id": "h1",
+      "prompt": "Is wide.mp4 HDR? (BT.2020 primaries, BT.709 transfer)",
+      "verdict": "pass, with a note",
+      "evidence": "Read probe's hdr: false and hdr_format 'BT.2020 SDR' and answered 'not HDR'.",
+      "note": "It called the file 'safe to send as-is' to an SDR-only client; BT.2020 primaries can still shift colour in a BT.709-only pipeline. Added to references/gotchas.md #hdr-and-colour (color.py --to-sdr before a BT.709 delivery; export.py only retags). Also found: export.py's warning still calls such a source \"HDR (BT.2020 SDR)\", 1.x wording -- queued for 2.1.0. Not a 2.0 regression. Checked the fix itself: color.py --to-sdr on the BT.2020 SDR fixture writes bt709/bt709 H.264, but its filter chain also runs the HDR tone map (tonemap=hable, npl=1000) on a source that is already SDR; a BT.2020 SDR input should only need the gamut conversion. Queued for 2.1.0 with the export.py wording, pending a measured before/after."
+    },
+    {
+      "id": "h2",
+      "prompt": "iphone.mp4 looks washed out on my laptop. Make a normal version I can post anywhere. (HDR10/PQ)",
+      "verdict": "pass",
+      "evidence": "probe found HDR10/PQ; color.py --to-sdr; output bt709/bt709 H.264; check + look run."
+    }
+  ],
+  "not_measured": "One run per prompt (no repeats), one model (Sonnet), no MCP path; the trigger/routing set was not re-run at 2.0.0.",
+  "follow_ups": [
+    "export.py warning wording for BT.2020 SDR sources (says 'HDR')",
+    "color.py --to-sdr applies the PQ/HLG tone map to BT.2020 SDR input; gamut-convert only, with a measured before/after"
+  ]
+}

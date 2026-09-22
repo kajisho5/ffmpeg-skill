@@ -16,7 +16,10 @@ flattened. Decide with the user: keep HDR (fine for YouTube/phones) or run
 deliverables. Since 2.0 `hdr: true` (and its 1.9 twin `hdr_signal`) is the narrow
 fact — a real PQ / HLG / Dolby Vision transfer; `bt2020_or_hdr` also counts a
 wide-gamut SDR file (1.x's `hdr`), and `hdr_format` names that in-between case
-(`BT.2020 SDR`). `export.py` platform presets are SDR and warn on HDR input.
+(`BT.2020 SDR`). "Not HDR" is not "ready for a BT.709 deliverable": a BT.2020 SDR file
+still carries wide-gamut primaries, so an SDR-only client or platform expecting BT.709 needs
+`color.py --to-sdr` first -- `export.py` only retags BT.709, it does not convert (eval 24 h1).
+`export.py` platform presets are SDR and warn on HDR input.
 iPhone `.mov` files also carry timecode/metadata tracks; scripts map only the
 first audio track, so extra tracks are dropped on re-encode. Keep ProRes masters
 at source colour: `export.py --preset prores` does not retag.
