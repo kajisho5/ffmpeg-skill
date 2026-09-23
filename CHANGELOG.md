@@ -4,7 +4,13 @@
 
 ## Unreleased
 
-(nothing yet)
+- `join.py --list parts.txt` joins the segments a TTS or render step wrote, one path per line
+  (relative to the list; `#` comments and ffmpeg's `file 'x.wav'` lines accepted). Every input
+  is now checked before anything runs, and a missing, empty or unreadable one is named together
+  with every other problem in a single refusal (`kind: input`, `problems[]`) instead of being
+  found one rerun at a time; `--on-missing skip` joins the rest and lists what it left out under
+  the new `skipped` key. An empty list is refused as such. Asked for by a user whose VPS short-video
+  pipeline crashed when one TTS line failed and emptied its concat list.
 
 ## 2.0.0
 

@@ -929,6 +929,49 @@ class EditingTests(MediaFixtures):
         self.assertFalse(any("eq=brightness" in c for c in hdr_plan["commands"]),
                          "an HDR source must not be dimmed by an SDR-shaped eq")
 
+    def test_join_list_checks_every_segment_before_joining(self):
+        """Reported by a user generating shorts on a VPS: TTS writes one audio file per line,
+        a concat step joins them, and one failed TTS call left a gap that emptied the list and
+        crashed the whole run. `--list` reads the segments, and every missing, empty or
+        unreadable one is named in a single refusal (kind input, nothing run) instead of being
+        found one rerun at a time; `--on-missing skip` joins the rest and reports what it left out."""
+        d = OUT / "join_list"
+        d.mkdir(exist_ok=True)
+        for i in (1, 2, 4):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", f"sine=frequency={300 * i}:sample_rate=24000", "-t", "1.5", d / f"line{i}.wav")
+        (d / "line5.wav").write_bytes(b"")             # a TTS call that created its file and then failed
+        (d / "line6.wav").write_bytes(b"not audio")    # a download that saved an error page
+        (d / "parts.txt").write_text("line1.wav\n# the TTS step's own comment\n\nline2.wav\nline3.wav\n"
+                                     "file 'line4.wav'\nline5.wav\nline6.wav\n", encoding="utf-8")
+        proc = script("join.py", "--list", d / "parts.txt", "--transition", "none", "--json",
+                      "-o", d / "voice_fail.wav", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["error"]["kind"], doc["commands"]), ("input", []))
+        self.assertEqual([(p["index"], Path(p["path"]).name) for p in doc["problems"]],
+                         [(2, "line3.wav"), (4, "line5.wav"), (5, "line6.wav")], "every problem, in list order")
+        self.assertEqual([p["reason"].split(":")[0] for p in doc["problems"]], ["missing", "empty (0 bytes)", "unreadable"])
+        self.assertIn("--on-missing skip", doc["error"]["hint"])
+        self.assertFalse((d / "voice_fail.wav").exists())
+        doc = json.loads(script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-missing", "skip",
+                                "--json", "-o", d / "voice.wav").stdout)
+        self.assertEqual((doc["status"], doc["clips"], doc["verified"]), ("completed", 3, True))
+        self.assertAlmostEqual(doc["probe"]["duration"], 4.5, delta=0.05)
+        self.assertEqual([Path(p["path"]).name for p in doc["skipped"]], ["line3.wav", "line5.wav", "line6.wav"])
+        # the crash itself: an upstream step wrote an empty list
+        (d / "empty.txt").write_text("\n# nothing\n", encoding="utf-8")
+        proc = script("join.py", "--list", d / "empty.txt", "-o", d / "x.wav", "--json", expect_fail=True)
+        self.assertIn("names no segments", json.loads(proc.stdout)["error"]["message"])
+        # skipping everything but one leaves nothing to join
+        (d / "one.txt").write_text("line1.wav\nline3.wav\n", encoding="utf-8")
+        proc = script("join.py", "--list", d / "one.txt", "--on-missing", "skip", "-o", d / "y.wav", "--json", expect_fail=True)
+        self.assertEqual([Path(p["path"]).name for p in json.loads(proc.stdout)["skipped"]], ["line3.wav"])
+        script("join.py", d / "line1.wav", "--list", d / "parts.txt", "-o", d / "z.wav", expect_fail=True)
+        # a clean join reports an empty skipped list, not a missing key
+        doc = json.loads(script("join.py", d / "line1.wav", d / "line2.wav", "--transition", "none",
+                                "--json", "-o", d / "clean.wav").stdout)
+        self.assertEqual(doc["skipped"], [])
+
     def test_join_audio_only_inputs(self):
         """WAV + M4A + MP3 of different rates and channel counts join as audio; video containers and mixed inputs are refused."""
         st = OUT / "j_stereo44.m4a"
