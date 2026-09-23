@@ -563,7 +563,10 @@ before anything runs: missing, empty (0 bytes) or unreadable as media. By defaul
 are named in one refusal (`kind: input`, `problems: [{index, path, reason}]`, nothing encoded);
 `--on-missing skip` joins the usable ones and reports the rest under `skipped` (always present,
 `[]` when nothing was). A list with no entries is refused as such, and a skip that leaves fewer
-than two inputs is refused rather than "joining" one file.
+than two inputs is refused rather than "joining" one file. Under `--dry-run` an input that does
+not exist yet is an earlier step's output, with either `--on-missing`: it stays in the plan and
+is named under `pending: [{index, path}]` and in `notes` (never `skipped`); audio vs video is
+decided by the inputs that exist, or by the extensions when none does.
 Normalises every clip to one frame size, fps, `yuv420p`, 48 kHz and one
 channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
 silent track generated for clips without audio), then chains `xfade` +

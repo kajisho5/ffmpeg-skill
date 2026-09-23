@@ -983,6 +983,47 @@ class EditingTests(MediaFixtures):
                                 "--json", "-o", d / "clean.wav").stdout)
         self.assertEqual(doc["skipped"], [])
 
+    def test_join_dry_run_plans_on_pending_segments(self):
+        """Under --dry-run a segment that does not exist yet is an earlier step's output. Its
+        probe is the dry-run stub, whose (0x0) video stream used to decide the mode: one pending
+        TTS line failed the plan with "tts_01.wav has no video stream while tts_03.wav has one",
+        and a list of nothing but pending .wav lines planned a libx264 join into voice.wav. The
+        mode now comes from the inputs that exist (the extensions when none does), and a pending
+        segment is planned on and named under `pending` -- never `skipped` -- in both
+        --on-missing modes; a real run still decides on the file as it then is."""
+        d = OUT / "join_pending"
+        d.mkdir(exist_ok=True)
+        for i in (1, 2):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", f"sine=frequency={300 * i}:sample_rate=24000", "-t", "1.5", d / f"tts_0{i}.wav")
+        (d / "tts_03.wav").unlink(missing_ok=True)  # the line the TTS step has not written yet
+        (d / "parts.txt").write_text("tts_01.wav\ntts_02.wav\ntts_03.wav\n", encoding="utf-8")
+        for mode, then in (("fail", "refuses"), ("skip", "skips")):
+            proc = script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-missing", mode,
+                          "--dry-run", "--json", "-o", d / "voice_plan.wav")
+            doc = json.loads(proc.stdout)
+            self.assertEqual((doc["status"], doc["mode"], doc["clips"]), ("completed", "audio", 3), mode)
+            self.assertEqual(doc["sample_rate"], 24000, f"{mode}: planned from the segments that exist, not the stub")
+            self.assertEqual([(p["index"], Path(p["path"]).name) for p in doc["pending"]], [(2, "tts_03.wav")], mode)
+            self.assertEqual(doc["skipped"], [], f"{mode}: a pending segment is planned on, not left out")
+            self.assertIn("tts_03.wav", doc["commands"][0])
+            self.assertNotIn("libx264", doc["commands"][0])
+            self.assertTrue(any("tts_03.wav" in n and f"a real run {then}" in n for n in doc["notes"]), doc["notes"])
+            self.assertIn("tts_03.wav does not exist yet", proc.stderr)
+        self.assertFalse((d / "voice_plan.wav").exists())
+        # nothing written yet at all: the extensions decide, and .wav plans an audio join
+        (d / "later.txt").write_text("gen_01.wav\ngen_02.wav\n", encoding="utf-8")
+        doc = json.loads(script("join.py", "--list", d / "later.txt", "--dry-run", "--json", "-o", d / "later.wav").stdout)
+        self.assertEqual((doc["mode"], len(doc["pending"])), ("audio", 2))
+        self.assertFalse(any("libx264" in c for c in doc["commands"]), doc["commands"])
+        self.assertIn("acrossfade", doc["commands"][0])
+        self.assertTrue(any("file extensions" in n for n in doc["notes"]), doc["notes"])
+        # the real run is unchanged: the missing line is skipped (or refused), never pending
+        doc = json.loads(script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-missing", "skip",
+                                "--json", "-o", d / "voice.wav").stdout)
+        self.assertEqual((doc["clips"], doc["pending"]), (2, []))
+        self.assertEqual([Path(p["path"]).name for p in doc["skipped"]], ["tts_03.wav"])
+
     def test_join_audio_only_inputs(self):
         """WAV + M4A + MP3 of different rates and channel counts join as audio; video containers and mixed inputs are refused."""
         st = OUT / "j_stereo44.m4a"

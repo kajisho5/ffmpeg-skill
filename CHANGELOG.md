@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-(nothing yet)
+- `join.py --dry-run` no longer fails a plan because one of its inputs is not written yet. The
+  pending file's placeholder probe always claimed a video stream, so a TTS list with one line
+  still to come was refused as an audio/video mix ("tts_01.wav has no video stream while
+  tts_03.wav has one"), a list of nothing but pending `.wav` lines planned a libx264 join into
+  `voice.wav`, and a `render.py --dry-run` of an audio project with one trimmed and one untrimmed
+  clip failed at the join. Audio vs video now comes from the inputs that exist (the extensions
+  when none does), and each pending input is named -- a stderr note, the new `pending` key and
+  `notes` -- instead of being passed over in silence. With either `--on-missing` a dry run plans
+  on a pending input and never lists it under `skipped`; a real run still refuses or skips a
+  file that is missing when it runs.
 
 ## 2.2.1
 

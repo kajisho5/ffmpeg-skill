@@ -31,6 +31,15 @@ exists. When a decision changes, edit the entry in the same PR.
 - **When a measured input is an intermediate an earlier dry-run stage would have written**
   (render/batch plans), the measurement is skipped with a note rather than failing the plan.
   Code: `_common.dry_run_input_pending()`.
+- **`join.py --dry-run` plans on an input that does not exist yet, whatever `--on-missing`
+  says.** The file is taken for an earlier step's output (render's cut clips, a TTS line): it
+  stays in the planned command and is named under `pending` and in `notes`, never under
+  `skipped`, which in a dry run as in a real run holds only what the join left out. A real run
+  decides on the file as it then is: refused under `fail`, skipped under `skip`. Its probe is
+  the dry-run stub, whose video stream means nothing, so audio vs video comes from the inputs
+  that exist, and from the extensions when none does. Code: `join.preflight()`, `join.main()`.
+  Tests: `test_join_dry_run_plans_on_pending_segments`,
+  `test_render_dry_run_joins_a_trimmed_and_an_untrimmed_audio_clip`.
 - **`verify` accepts `--dry-run` and ignores it.** Its job is to run the tools for real.
   Contract: `_contract.DRY_RUN_NOTES["verify"]`.
 
