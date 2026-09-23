@@ -554,7 +554,16 @@ writes the resulting cut list exactly as it does today.
 ```
 join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen|none]
         [--duration 0.5] [--width W --height H] [--fps N] [--fit pad|crop] [-o OUT]
+join.py --list parts.txt [--on-missing fail|skip] [...]
 ```
+`--list FILE` (2.2) reads the clips from a file, one per line in order, paths relative to the
+file (blank lines and `#` comments ignored; ffmpeg's `file 'x.wav'` lines accepted), for the
+segments a TTS or render step wrote. Every input -- listed or given as arguments -- is checked
+before anything runs: missing, empty (0 bytes) or unreadable as media. By default all of them
+are named in one refusal (`kind: input`, `problems: [{index, path, reason}]`, nothing encoded);
+`--on-missing skip` joins the usable ones and reports the rest under `skipped` (always present,
+`[]` when nothing was). A list with no entries is refused as such, and a skip that leaves fewer
+than two inputs is refused rather than "joining" one file.
 Normalises every clip to one frame size, fps, `yuv420p`, 48 kHz and one
 channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
 silent track generated for clips without audio), then chains `xfade` +

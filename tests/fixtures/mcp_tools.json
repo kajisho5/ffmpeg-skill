@@ -567,6 +567,8 @@
    "height",
    "inputs",
    "json_brief",
+   "list",
+   "on_missing",
    "output",
    "overwrite",
    "pad_color",

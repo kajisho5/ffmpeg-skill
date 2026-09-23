@@ -18,16 +18,25 @@ Examples:
   python3 join.py a.mov b.mp4 --transition none --width 1920 --height 1080 --fps 30
   python3 join.py intro.wav talk.m4a outro.wav -o episode.flac            # audio join, 0.5 s crossfade
   python3 join.py part1.wav part2.wav --transition none -o full.wav       # butt join, sample rate of part1
+  python3 join.py --list parts.txt --transition none -o voice.wav          # the segments a TTS step wrote, in order
+  python3 join.py --list parts.txt --on-missing skip -o voice.wav          # join what is there, report the rest
+
+Every input is checked before anything is joined: a missing, empty or unreadable segment is
+refused with every problem named at once (kind input), never discovered one run at a time.
+--on-missing skip joins the usable segments instead and lists the others under `skipped`.
 """
 import argparse
+import os
 import sys
-from typing import List
+from typing import Any, Dict, List
 
-from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
 LAYOUTS = {1: "mono", 2: "stereo", 6: "5.1", 8: "7.1"}
+# inputs --on-missing skip dropped, reported in the success document (empty when nothing was)
+STATE_SKIPPED: List[Dict[str, Any]] = []
 
 
 def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
@@ -77,14 +86,74 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
             die(f"{output} is {a.get('sample_rate')} Hz {a.get('channels')} ch, expected {rate} Hz {channels} ch")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
          + ("crossfade" if d else "butt join") + ")")
-    emit(output, mode="audio", clips=n, transition=args.transition if d else "none", expected_duration=round(expected, 3),
+    emit(output, mode="audio", skipped=list(STATE_SKIPPED), clips=n, transition=args.transition if d else "none", expected_duration=round(expected, 3),
          sample_rate=rate, channels=channels, video=False)
     return 0
 
 
+def read_list(path: str) -> List[str]:
+    """--list FILE: one segment per line, in order, relative to the list file's own folder.
+    Blank lines and # comments are ignored, and ffmpeg's concat-demuxer spelling
+    (`file 'part 01.wav'`) is accepted, so a list written for `ffmpeg -f concat` works as is."""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError as exc:
+        die(f"cannot read --list {path}: {exc}")
+    base = os.path.dirname(os.path.abspath(path))
+    entries: List[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("file "):
+            line = line[5:].strip()
+            if len(line) >= 2 and line[0] == line[-1] and line[0] in "'\"":
+                line = line[1:-1].replace("'\\''", "'")
+        entries.append(line if os.path.isabs(line) else os.path.join(base, line))
+    if not entries:
+        # the failure this exists for: an upstream step produced nothing, and the join must
+        # say so plainly rather than hand ffmpeg an empty concat and die somewhere later
+        die(f"--list {path} names no segments (empty, or only blank lines and comments)",
+            hint="check the step that writes the list: it produced no files")
+    return entries
+
+
+def preflight(paths: List[str]) -> List[Dict[str, Any]]:
+    """Every problem with every input, found before anything runs: missing, empty (0 bytes,
+    the usual trace of a TTS or download step that failed after creating its file), or not
+    readable as media. One ffprobe per file; nothing is decoded. Under --dry-run a file that
+    does not exist yet is not a problem: in a planned pipeline it is an earlier step's output."""
+    ffprobe = require_tool("ffprobe")
+    problems: List[Dict[str, Any]] = []
+    for i, p in enumerate(paths):
+        if not os.path.exists(p):
+            if STATE.dry_run:
+                continue  # a dry-run pipeline plans on outputs earlier steps have not written yet
+            problems.append({"index": i, "path": p, "reason": "missing"})
+            continue
+        if os.path.isdir(p):
+            problems.append({"index": i, "path": p, "reason": "a directory, not a file"})
+            continue
+        if os.path.getsize(p) == 0:
+            problems.append({"index": i, "path": p, "reason": "empty (0 bytes)"})
+            continue
+        proc = run([ffprobe, "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", p],
+                   quiet=True, check=False)
+        kinds = {line.strip() for line in (proc.stdout or "").splitlines() if line.strip()}
+        if proc.returncode != 0 or not kinds & {"audio", "video"}:
+            first = ((proc.stderr or "").strip().splitlines() or ["no audio or video stream"])[-1]
+            problems.append({"index": i, "path": p, "reason": f"unreadable: {first}"})
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("inputs", nargs="+", help="two or more clips in order")
+    ap.add_argument("inputs", nargs="*", help="two or more clips in order (or --list FILE)")
+    ap.add_argument("--list", metavar="FILE", help="read the clips from FILE, one per line in order (paths relative to FILE; "
+                                                   "ffmpeg concat lines `file 'x.wav'` also accepted); an empty list is refused")
+    ap.add_argument("--on-missing", choices=["fail", "skip"], default="fail",
+                    help="a missing, empty or unreadable input: fail (default; every problem named at once) or skip "
+                         "(join the rest; each skipped input is reported under `skipped`)")
     ap.add_argument("-o", "--output", help="output file (default: <first>_joined.mp4)")
     ap.add_argument("--transition", choices=TRANSITIONS, default="fade", help="transition between clips (default fade)")
     ap.add_argument("--duration", type=float, default=0.5, help="transition length in seconds (default 0.5)")
@@ -104,8 +173,29 @@ def main() -> int:
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
 
+    if args.list:
+        if args.inputs:
+            die("give the clips either as arguments or with --list, not both")
+        args.inputs = read_list(args.list)
+    if not args.inputs:
+        die("give at least two clips (or --list FILE)")
+    skipped: List[Dict[str, Any]] = []
+    problems = preflight(args.inputs)
+    if problems and args.on_missing == "fail":
+        listing = "; ".join(f"#{p['index'] + 1} {p['path']}: {p['reason']}" for p in problems)
+        die(f"{len(problems)} of {len(args.inputs)} inputs cannot be joined: {listing}",
+            hint="fix or regenerate them, or pass --on-missing skip to join the rest", problems=problems)
+    if problems:
+        bad = {p["index"] for p in problems}
+        skipped = problems
+        args.inputs = [p for i, p in enumerate(args.inputs) if i not in bad]
+        for p in problems:
+            info(f"skipping #{p['index'] + 1} {p['path']}: {p['reason']}")
+    STATE_SKIPPED[:] = skipped
     if len(args.inputs) < 2:
-        die("give at least two clips")
+        die("give at least two clips" if not skipped else
+            f"only {len(args.inputs)} usable input(s) left after skipping {len(skipped)}; nothing to join",
+            skipped=skipped)
     validate_color(args.pad_color, "--pad-color")
     metas = [probe(p) for p in args.inputs]
     if all(not m.get("video") for m in metas):
@@ -206,7 +296,7 @@ def main() -> int:
     expected = sum(durs) - d * (n - 1)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
-    emit(output, mode="video", clips=n, transition=args.transition, expected_duration=round(expected, 3),
+    emit(output, mode="video", skipped=list(STATE_SKIPPED), clips=n, transition=args.transition, expected_duration=round(expected, 3),
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
     return 0
 

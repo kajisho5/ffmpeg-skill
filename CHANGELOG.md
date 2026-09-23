@@ -11,6 +11,18 @@
   names every missing extra `--srt` track at once, before any work. `sequence.py` warns when
   frames exist past a gap in the numbering instead of silently stopping at the gap.
 
+## 2.2.0
+
+### Added
+
+- `join.py --list parts.txt` joins the segments a TTS or render step wrote, one path per line
+  (relative to the list; `#` comments and ffmpeg's `file 'x.wav'` lines accepted). Every input
+  is now checked before anything runs, and a missing, empty or unreadable one is named together
+  with every other problem in a single refusal (`kind: input`, `problems[]`) instead of being
+  found one rerun at a time; `--on-missing skip` joins the rest and lists what it left out under
+  the new `skipped` key. An empty list is refused as such. Asked for by a user whose VPS short-video
+  pipeline crashed when one TTS line failed and emptied its concat list.
+
 ## 2.1.0
 
 ### Added
