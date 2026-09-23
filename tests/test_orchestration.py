@@ -1700,6 +1700,80 @@ class TimelineExportTests(unittest.TestCase):
         self.assertEqual(tl_mod.exact_rate(23.976), Fraction(24000, 1001))
         self.assertEqual(tl_mod.exact_rate(25.0), Fraction(25))
 
+    def test_times_are_read_with_the_render_grammar(self):
+        """Clip in/out and chapter times in the forms render.py's own stages take ("0:01",
+        hh:mm:ss:ff at the source's fps, @fps) count the frames the numeric form counts. 2.2.1
+        called float() on them: the --init starter's own "in": "0:00" was a traceback."""
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        probes["/m/v.m4a"] = {"duration": 8, "audio": {"channels": 2}}
+        rel = lambda p: f"/m/{p}"  # noqa: E731
+
+        def frames(clip, at, **proj):
+            tl = tl_mod.build(dict(proj, clips=[dict({"src": "a.mp4"}, **clip)], chapters=[{"at": at, "title": "x"}]),
+                              probes, rel)
+            c = tl["clips"][0]
+            return c["src_in"], c["src_out"], tl["total"], [m["at"] for m in tl["markers"]]
+
+        numeric = frames({"in": 1.5, "out": 5}, 2)
+        self.assertEqual(numeric, (45, 150, 105, [60]))
+        for clip, at in (({"in": "0:01.5", "out": "0:05"}, "0:02"),
+                         ({"in": "00:00:01:15", "out": "00:00:05:00"}, "00:00:02:00@30"),
+                         ({"in": "00:00:01:15@30", "out": "0:00:05,000"}, "2")):
+            with self.subTest(clip=clip, at=at):
+                self.assertEqual(frames(clip, at), numeric)
+        self.assertEqual(frames({"in": "0:00", "out": 5}, "0:00"), frames({"in": 0, "out": 5}, 0))
+        self.assertEqual(frames({"in": "0:00", "out": 5}, "0:00")[3], [0], 'a chapter at "0:00" is the first frame')
+        # a clip with no picture of its own reads hh:mm:ss:ff at the project's frame.fps
+        self.assertEqual(frames({"src": "v.m4a", "in": "00:00:01:15", "out": 5}, 0, frame={"fps": 30})[:2], (45, 150))
+        # a chapter list carries no fps: render.py's chapters stage needs @fps there too
+        for clip, at, word in (({"in": "1:xx"}, 0, "not a time"), ({"in": "nan"}, 0, "not a time"),
+                               ({"in": -1}, 0, "negative"), ({"speed": "fast"}, 0, "not a number"),
+                               ({}, "00:00:02:00", "@fps")):
+            with self.subTest(refused=clip or at):
+                with self.assertRaises(tl_mod.TimelineError) as ctx:
+                    frames(clip, at)
+                self.assertIn(word, str(ctx.exception))
+        with self.assertRaisesRegex(tl_mod.TimelineError, "@fps"):  # no picture and no frame.fps: no rate to read
+            tl_mod.build({"clips": [{"src": "a.mp4"}, {"src": "v.m4a", "in": "00:00:01:15"}]}, probes, rel)
+
+    def test_sequence_frame_is_the_frame_the_render_delivers(self):
+        """The sequence is sized by fit.py's own rule on the project frame. 2.2.1 took the width
+        from the project and the height from the source: {aspect 16:9, width 1920} over a 4K
+        source was a 1920x2160 sequence. A picture of another aspect is a reframe the timeline
+        cannot state, so it is named in not_exported."""
+        tl_mod = self._tl()
+
+        def seq(frame, w, h, rotation=0):
+            probes = {"/m/a.mp4": {"duration": 8, "video": {"fps": 30.0, "width": w, "height": h, "rotation": rotation},
+                                   "audio": {"channels": 2}}}
+            tl = tl_mod.build({"clips": [{"src": "a.mp4"}], "frame": frame}, probes, lambda p: f"/m/{p}")
+            return (tl["width"], tl["height"]), [x for x in tl["not_exported"] if "reframe" in x]
+
+        self.assertEqual(seq({"aspect": "16:9", "width": 1920}, 3840, 2160), ((1920, 1080), []))
+        size, reframe = seq({"aspect": "16:9", "width": 1920, "fit": "crop"}, 640, 480)
+        self.assertEqual(size, (1920, 1080))
+        self.assertEqual(len(reframe), 1)
+        self.assertIn("a.mp4", reframe[0])
+        self.assertIn("crop", reframe[0])
+        self.assertEqual(seq({"width": 1920}, 640, 360), ((1920, 1080), []), "one side follows the source's aspect")
+        self.assertEqual(seq({"aspect": "9:16", "height": 1920}, 1920, 1080)[0], (1080, 1920))
+        self.assertEqual(seq({"aspect": "9:16"}, 1920, 1080)[0], (608, 1080), "fit.py's bound: no upscale")
+        self.assertEqual(seq({}, 1920, 1080, rotation=90), ((1080, 1920), []), "the displayed picture")
+        with self.assertRaises(tl_mod.TimelineError):
+            seq({"aspect": "wide"}, 1920, 1080)
+
+    def test_fcpxml_keeps_the_dtd_child_order_on_a_retimed_first_clip(self):
+        """FCPXML 1.10's asset-clip content model is timeMap, anchored items, then markers."""
+        import xml.etree.ElementTree as ET
+        tl_mod = self._tl()
+        proj = {"clips": [{"src": "a.mp4", "in": 1, "out": 5, "speed": 1.25}, {"src": "b.mp4"}],
+                "audio": {"music": "bed.m4a"}, "chapters": [{"at": "0:00", "title": "Intro"}]}
+        tl = tl_mod.build(proj, self._probes(**{"a.mp4": 8, "b.mp4": 8, "bed.m4a": 30}), lambda p: f"/m/{p}")
+        first = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8")).find("./library/event/project/sequence/spine")[0]
+        self.assertEqual([e.tag for e in first], ["timeMap", "asset-clip", "chapter-marker"])
+        self.assertEqual((first[1].get("lane"), first[2].get("start")), ("-1", "0s"))
+
     @classmethod
     def setUpClass(cls):
         if not shutil.which("ffmpeg"):
@@ -1785,6 +1859,11 @@ class TimelineExportTests(unittest.TestCase):
         self.assertIsNotNone(spine[2].find("timeMap"), "the 1.25x clip is retimed")
         self.assertEqual(len(spine[0].findall("chapter-marker")), 2)
         self.assertEqual(spine[0].find("asset-clip").get("lane"), "-1", "the music bed is a connected clip below")
+        # FCPXML 1.10's asset-clip holds anchored items before markers; 2.1.0-2.2.1 wrote the
+        # music bed after the chapter markers, a file that does not validate against the DTD
+        self.assertEqual([e.tag for e in spine[0]], ["asset-clip", "chapter-marker", "chapter-marker"])
+        fmt = root.find("./resources/format")
+        self.assertEqual((fmt.get("width"), fmt.get("height")), ("640", "360"), "no frame: the source's own picture")
         for asset in root.findall("./resources/asset"):
             self.assertTrue(asset.find("media-rep").get("src").startswith("file://"))
 
@@ -1802,3 +1881,58 @@ class TimelineExportTests(unittest.TestCase):
         self.assertFalse(dry.exists(), "a dry run writes nothing")
         proc = sh(sys.executable, SCRIPTS / "render.py", self.project, "--export-timeline", self.dir / "x.aaf", "--json", expect_fail=True)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+    def _sequence(self, project, name):
+        """Export `project` as FCPXML: the result document and the sequence's width x height."""
+        import xml.etree.ElementTree as ET
+        out = self.dir / name
+        if out.exists():
+            out.unlink()
+        doc = json.loads(script("render.py", project, "--export-timeline", out, "--json").stdout)
+        fmt = ET.parse(str(out)).getroot().find("./resources/format")
+        return doc, (int(fmt.get("width")), int(fmt.get("height")))
+
+    def test_the_init_starter_exports_as_written(self):
+        """--init's project with only its src replaced: "in": "0:00" / "out": "0:30" count the frames
+        0 / 30 count, and frame {aspect 16:9, width 1920} over a 4:3 source is a 1920x1080 sequence
+        with the reframe named. 2.2.1 printed a traceback (and, given numbers, a 1920x48 sequence)."""
+        src = self.dir / "long43.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=30",
+               "-t", "30", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", src)
+        init = self.dir / "init.json"
+        script("render.py", "--init", init)
+        proj = json.loads(init.read_text(encoding="utf-8"))
+        self.assertEqual(proj["clips"][0]["in"], "0:00", "the starter is what this test is about")
+        proj["clips"][0]["src"] = src.name
+        init.write_text(json.dumps(proj), encoding="utf-8")
+        proj["clips"][0].update({"in": 0, "out": 30})
+        numeric = self.dir / "init_numeric.json"
+        numeric.write_text(json.dumps(proj), encoding="utf-8")
+        doc, size = self._sequence(init, "init.fcpxml")
+        numeric_doc, numeric_size = self._sequence(numeric, "init_numeric.fcpxml")
+        self.assertEqual((doc["status"], doc["timeline"]["frames"]), ("completed", 900))
+        self.assertEqual(doc["timeline"], numeric_doc["timeline"])
+        self.assertEqual(size, (1920, 1080))
+        self.assertEqual(numeric_size, (1920, 1080))
+        self.assertTrue(any("reframe" in x and "long43.mp4" in x for x in doc["timeline"]["not_exported"]))
+
+    def test_an_aspect_only_frame_takes_the_export_preset_size(self):
+        """frame_from_preset() is the render's reading of an aspect-only frame; the export reads it too."""
+        proj = self.dir / "reels.json"
+        proj.write_text(json.dumps({"frame": {"aspect": "9:16"}, "export": {"preset": "reels"},
+                                    "clips": [{"src": "a.mp4", "in": 1, "out": 3}]}), encoding="utf-8")
+        doc, size = self._sequence(proj, "reels.fcpxml")
+        self.assertEqual(size, (1080, 1920))
+        self.assertTrue(any("reframe" in x for x in doc["timeline"]["not_exported"]), "a 16:9 source in a 9:16 frame")
+
+    def test_a_bad_time_is_an_input_failure_not_a_traceback(self):
+        bad = self.dir / "bad_time.json"
+        bad.write_text(json.dumps({"clips": [{"src": "a.mp4", "in": "1:xx", "out": 5}]}), encoding="utf-8")
+        out = self.dir / "bad_time.edl"
+        proc = sh(sys.executable, SCRIPTS / "render.py", bad, "--export-timeline", out, "--json", expect_fail=True)
+        self.assertNotIn("Traceback", proc.stderr)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("clips[0].in", err["message"])
+        self.assertFalse(out.exists())

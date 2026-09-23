@@ -64,7 +64,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
+from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -709,10 +709,8 @@ def frame_from_preset(frame: Dict[str, Any], export: Dict[str, Any]) -> None:
     preset = PRESETS.get(str(export.get("preset") or ""), {})
     if not (preset.get("w") and preset.get("h")):
         return
-    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*", str(frame["aspect"]))
-    if not m or float(m.group(2)) == 0:
-        return
-    if abs(float(m.group(1)) / float(m.group(2)) - preset["w"] / preset["h"]) > 0.01:
+    ratio = aspect_ratio(frame["aspect"])
+    if ratio is None or abs(float(ratio) - preset["w"] / preset["h"]) > 0.01:
         return
     frame["width"], frame["height"] = preset["w"], preset["h"]
     info(f"frame: {preset['w']}x{preset['h']} from the {export['preset']} export preset (captions and overlays are sized for delivery)")
@@ -733,8 +731,12 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
         if not os.path.exists(path):
             die(f"timeline source not found: {path}")
         probes[path] = probe(path)  # a timeline needs real durations and rates, dry run or not
+    # the sequence frame is the one the render would deliver: an aspect-only frame takes its size
+    # from the export preset exactly as the render's own frame does
+    frame = dict(proj.get("frame") or {})
+    frame_from_preset(frame, proj.get("export") or {})
     try:
-        tl = tlmod.build(proj, probes, rel)
+        tl = tlmod.build(dict(proj, frame=frame), probes, rel)
     except tlmod.TimelineError as exc:
         die(f"--export-timeline: {exc}", kind="input")
     text = tlmod.WRITERS[fmt](tl)

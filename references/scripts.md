@@ -586,13 +586,16 @@ Premiere, Resolve, Avid) or `.otio` (OpenTimelineIO JSON: Resolve natively, othe
 OTIO's adapters). Clips keep their in/out and speed (an M2 line, a `timeMap`, a
 `LinearTimeWarp`); `transition` becomes a cross dissolve centred on each cut, trimmed so the
 timeline is exactly as long as `join.py`'s crossfade would render it; `audio.music` is its own
-track; inline `chapters` are markers. Everything else in the project -- captions, graphics,
-overlays, the silence cut, fit, audio processing, loudness, export -- is listed in the result's
-`timeline.not_exported` and on stderr, never dropped silently. Media paths are absolute file
-URLs to the sources, nothing is copied or encoded, and the existing-output rule applies
-(`--overwrite` to replace). The timeline follows the project's numbers exactly; a render of
-the same project can come out a few frames longer, because `join.py` offsets its crossfades
-by each part's container duration, audio included.
+track; inline `chapters` are markers. Times take the render's own grammar (`"0:05"`,
+`hh:mm:ss:ff` at the source's fps), and the sequence is the project's `frame` sized as the
+render sizes it (`{aspect 16:9, width 1920}` is 1920x1080; an aspect alone takes the export
+preset's size). Everything else in the project -- captions, graphics, overlays, the silence
+cut, fit, the reframe of a clip of another aspect, audio processing, loudness, export -- is
+listed in the result's `timeline.not_exported` and on stderr, never dropped silently. Media
+paths are absolute file URLs to the sources, nothing is copied or encoded, and the
+existing-output rule applies (`--overwrite` to replace). The timeline follows the project's
+numbers exactly; a render of the same project can come out a few frames longer, because
+`join.py` offsets its crossfades by each part's container duration, audio included.
 A plan is a single tool's dry run as an artifact: `cut.py in.mp4 --start 2 --end 8
 --plan cut.json` writes `{plan_version, tool, argv, inputs (path, size, sha256 of
 head+tail), commands, output, verify}` and runs nothing. `render.py cut.json`

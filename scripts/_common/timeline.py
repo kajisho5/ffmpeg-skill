@@ -13,17 +13,21 @@ either side of the new cut: the same frames blend over the same span, and the to
 the rendered one.
 
 Only what an editor timeline can carry is exported: clips (with in/out and speed), the
-transition between them, a music bed on its own audio track, and chapters as markers.
-Everything else in the project -- captions, graphics, overlays, the silence cut, fit/crop,
-audio processing, loudness, the export preset -- is listed under `not_exported`, never silently
-dropped.
+transition between them, a music bed on its own audio track, and chapters as markers, on a
+sequence of the project's frame (sized by the rule fit.py renders it with). Everything else in
+the project -- captions, graphics, overlays, the silence cut, fit/crop and the reframe of a
+picture of another aspect, audio processing, loudness, the export preset -- is listed under
+`not_exported`, never silently dropped.
 """
 import json
+import math
 import os
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from xml.sax.saxutils import escape as _xml_escape
+
+from _common.decision import MissingFpsError, aspect_ratio, frame_size, parse_time
 
 FORMATS = {".edl": "edl", ".fcpxml": "fcpxml", ".otio": "otio"}
 # Common NTSC rates are stored as the exact ratio an editor expects, not as 29.97.
@@ -63,6 +67,43 @@ def exact_rate(fps: float) -> Fraction:
     return frac
 
 
+def _number(value: Any, what: str) -> float:
+    """A numeric project value (a rate, a size, a speed, a transition length) as a float, or a
+    TimelineError naming it -- never float()'s traceback."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = math.nan
+    if not math.isfinite(number):
+        raise TimelineError(f"{what}: {value!r} is not a number")
+    return number
+
+
+def _seconds(value: Any, what: str, fps: Optional[float]) -> float:
+    """A project time read with the grammar render.py's own stages read it (time_arg()): seconds,
+    mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff at `fps` or its own @fps. A value it refuses is a
+    TimelineError, so `--json` gets a `kind: input` document, not a traceback and empty stdout."""
+    try:
+        seconds = parse_time(str(value), fps)
+    except MissingFpsError as exc:
+        raise TimelineError(f"{what}: {exc}")
+    except ValueError as exc:
+        raise TimelineError(f"{what}: {exc} (use seconds, mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff at the "
+                            "source's fps or with an explicit @fps suffix)")
+    if not math.isfinite(seconds):
+        raise TimelineError(f"{what}: {value!r} is not a time")
+    return seconds
+
+
+def _picture(meta: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    """A source's displayed width x height (rotation metadata swaps them, as fit.py reads it)."""
+    video = meta.get("video") or {}
+    w, h = int(video.get("width") or 0), int(video.get("height") or 0)
+    if not (w and h):
+        return None
+    return (h, w) if video.get("rotation") in (90, -90, 270, -270) else (w, h)
+
+
 def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[str, Any]:
     """The editor-neutral timeline: every time in frames at `rate`.
 
@@ -71,37 +112,64 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
     clips_in = proj.get("clips") or []
     if not clips_in:
         raise TimelineError("project.clips is empty")
+    for i, c in enumerate(clips_in):
+        if not isinstance(c, dict) or not c.get("src"):
+            raise TimelineError(f"clips[{i}]: no src")
     frame = proj.get("frame") or {}
     first = probes[rel(clips_in[0]["src"])]
-    fps = frame.get("fps") or (first.get("video") or {}).get("fps")
+    frame_fps = _number(frame["fps"], "frame.fps") if frame.get("fps") else None
+    fps = frame_fps or (first.get("video") or {}).get("fps")
     if not fps:
         raise TimelineError("no frame rate: the first clip has no video stream and project.frame.fps is not set")
     rate = exact_rate(float(fps))
-    width = int(frame.get("width") or (first.get("video") or {}).get("width") or 1920)
-    height = int(frame.get("height") or (first.get("video") or {}).get("height") or 1080)
+    # The sequence is the frame the render delivers: fit.py's sizing rule on the project frame
+    # (render.py has already filled an aspect-only frame from the export preset), so
+    # {aspect 16:9, width 1920} is 1920x1080 whatever the source's height. No frame at all is
+    # the first clip's own picture, which is what the render keeps.
+    aspect = frame.get("aspect")
+    ratio = aspect_ratio(aspect) if aspect else None
+    if aspect and ratio is None:
+        raise TimelineError(f"frame.aspect {aspect!r} is not W:H (e.g. 16:9)")
+    want_w, want_h = (int(_number(frame[k], f"frame.{k}")) if frame.get(k) else None for k in ("width", "height"))
+    if (want_w or 0) < 0 or (want_h or 0) < 0:
+        raise TimelineError(f"frame width/height must be positive, got {frame.get('width')!r} x {frame.get('height')!r}")
+    src_w, src_h = _picture(first) or (1920, 1080)
+    if ratio is None and not want_w and not want_h:
+        width, height = src_w, src_h
+    else:
+        width, height = frame_size(ratio, want_w, want_h, src_w, src_h)
 
     def fr(seconds: float) -> int:
         return int(round(Fraction(seconds).limit_denominator(1000000) * rate))
 
     trans = proj.get("transition") or {}
     t_type = str(trans.get("type", "fade")) if len(clips_in) > 1 else "none"
-    d_frames = 0 if t_type == "none" else fr(float(trans.get("duration", 0.5)))
+    d_frames = 0 if t_type == "none" else fr(_number(trans.get("duration", 0.5), "transition.duration"))
     notes: List[str] = []
     if d_frames and t_type != "fade":
         notes.append(f'transition "{t_type}" is exported as a cross dissolve: editors do not share xfade\'s other patterns')
 
     clips: List[Dict[str, Any]] = []
+    reframed: List[str] = []
     for i, c in enumerate(clips_in):
         src = rel(c["src"])
         meta = probes[src]
         dur = float(meta.get("duration") or 0.0)
-        start = float(c.get("in") or 0.0)
-        end = float(c["out"]) if c.get("out") is not None else dur
+        # in/out are on the source's own clock, as cut.py reads them: hh:mm:ss:ff at the
+        # source's fps, then the project's frame.fps (an audio-only clip has none of its own)
+        clip_fps = (meta.get("video") or {}).get("fps") or frame_fps
+        start = _seconds(c["in"], f"clips[{i}].in", clip_fps) if c.get("in") is not None else 0.0
+        if start < 0:
+            raise TimelineError(f"clips[{i}].in must not be negative, got {c['in']!r}")
+        end = _seconds(c["out"], f"clips[{i}].out", clip_fps) if c.get("out") is not None else dur
         if end <= start:
             raise TimelineError(f"clip {i}: out ({end:g}) is not after in ({start:g})")
-        speed = float(c.get("speed") or 1.0)
+        speed = _number(c.get("speed") or 1.0, f"clips[{i}].speed")
         if not speed > 0:
             raise TimelineError(f"clip {i}: speed must be positive, got {c.get('speed')!r}")
+        picture = _picture(meta)
+        if picture and abs(Fraction(*picture) - Fraction(width, height)) > Fraction(1, 100):
+            reframed.append(os.path.basename(src))
         src_in, src_out = fr(start), fr(end)
         clips.append({"index": i, "src": os.path.abspath(src), "name": os.path.basename(src),
                       "src_in": src_in, "src_out": src_out, "speed": speed,
@@ -140,14 +208,22 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
     markers: List[Dict[str, Any]] = []
     chapters = proj.get("chapters")
     if isinstance(chapters, list):
-        for ch in chapters:
-            at = fr(float(ch.get("at", 0)))
+        for j, ch in enumerate(chapters):
+            # read as render.py's chapters stage reads it (metadata.py): a chapter list carries
+            # no fps, so hh:mm:ss:ff needs its @fps there and here alike
+            at = fr(_seconds(ch.get("at", 0), f"chapters[{j}].at", None))
             if 0 <= at < total:
                 markers.append({"at": at, "title": str(ch.get("title") or "")})
     elif chapters:
         notes.append("chapters given as a file are not exported as markers; write them inline as [{at, title}]")
 
     not_exported = [text for key, text in _NOT_EXPORTED.items() if proj.get(key)]
+    if reframed:
+        # the sequence carries the frame; how a picture of another aspect fills it (pad, crop,
+        # blur) is each editor's own spatial conform, which none of the three formats states
+        not_exported.append(f"the reframe to {width}x{height} (frame.fit {frame.get('fit') or 'pad'}) of "
+                            + ", ".join(dict.fromkeys(reframed))
+                            + ": set the clips' spatial conform in the editor (fit = pad, fill = crop)")
     dropped_audio = sorted(k for k in _AUDIO_NOT_EXPORTED if audio.get(k) not in (None, False, "", 0) and k != "music")
     if dropped_audio:
         not_exported.append("audio processing: " + ", ".join(dropped_audio))
@@ -273,14 +349,17 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
         else:
             start_attr = _t(src_start, rate)
         local0 = src_start if abs(c["speed"] - 1.0) <= 1e-6 else 0
-        for mk in [m for m in markers if c["record_in"] <= m["at"] < c["record_in"] + c["visible"]]:
-            inner.append(f'          <chapter-marker start="{_t(local0 + mk["at"] - c["record_in"], rate)}" '
-                         f'duration="{fd}" value="{q(mk["title"])}"/>')
+        # the FCPXML 1.10 DTD's order inside an asset-clip: timeMap, then anchored items (the
+        # music bed), then markers. A marker before the connected clip does not validate, and
+        # Final Cut validates what it imports against that DTD.
         if i == 0 and tl["music"]:
             m = tl["music"]
             mid = asset(m["src"], m["name"], m["media_frames"], False, True)
             inner.append(f'          <asset-clip ref="{mid}" lane="-1" offset="{_t(local0, rate)}" name="{q(m["name"])}" '
                          f'start="0s" duration="{_t(m["length"], rate)}" audioRole="music"/>')
+        for mk in [m for m in markers if c["record_in"] <= m["at"] < c["record_in"] + c["visible"]]:
+            inner.append(f'          <chapter-marker start="{_t(local0 + mk["at"] - c["record_in"], rate)}" '
+                         f'duration="{fd}" value="{q(mk["title"])}"/>')
         head = (f'        <asset-clip ref="{rid}" offset="{_t(c["record_in"], rate)}" name="{q(c["name"])}" '
                 f'start="{start_attr}" duration="{_t(c["visible"], rate)}" format="r1" tcFormat="NDF"')
         spine.append(head + (">\n" + "\n".join(inner) + "\n        </asset-clip>" if inner else "/>"))

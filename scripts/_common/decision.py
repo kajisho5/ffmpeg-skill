@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import argparse
+from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import bt709_tag_args, _sdr_bt709
 from _common.emit import die
 from _common.runner import CODECS, STATE, ffmpeg_encoders
@@ -45,6 +47,52 @@ def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
     parser.add_argument("--pad-fill", choices=["color", "blur"], default="color",
                         help="what fills the letterbox/pillarbox bars under --fit pad: a solid --pad-color (default) or a blurred, scaled-up copy of the frame")
     parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur (default 20)")
+
+
+def aspect_ratio(value: Any) -> Optional[Fraction]:
+    """A project's frame.aspect (`16:9`, `9/16`, `2.39:1`) as an exact ratio, or None when it is
+    not W:H with both sides positive. render.py's frame_from_preset() and --export-timeline read
+    the aspect through this one function."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*", str(value))
+    if not m or not Fraction(m.group(1)) or not Fraction(m.group(2)):
+        return None
+    return Fraction(m.group(1)) / Fraction(m.group(2))
+
+
+def _even(n: float) -> int:
+    v = int(round(n))
+    return v if v % 2 == 0 else v + 1
+
+
+def frame_size(ratio: Optional[Fraction], width: Optional[int], height: Optional[int],
+               src_w: int, src_h: int) -> Tuple[int, int]:
+    """The frame fit.py sizes for --aspect `ratio` (None: the source's own) and --width/--height,
+    from a src_w x src_h picture -- and so the sequence frame render.py --export-timeline writes
+    for the same project frame. Both sides given are used directly; one side takes the other from
+    the aspect. With neither, the canvas takes the new aspect without exceeding the source's
+    resolution in either dimension: a narrower/taller target than the source (e.g. 9:16 from a
+    16:9 source) must be bounded by the source's HEIGHT, not its width -- bounding by width there
+    multiplies the height by src_ratio/ratio (a 1920x1080 source asked for 9:16 used to come out
+    1920x3414, a ~3.16x upscale in both fit=pad and fit=crop, entirely unrequested). Every side is
+    rounded to even."""
+    src_ratio = Fraction(src_w, src_h) if src_h else None
+    if ratio is None:
+        ratio = src_ratio
+    if width and height:
+        return _even(width), _even(height)
+    if width:
+        out_w = _even(width)
+        return out_w, (_even(out_w / ratio) if ratio else width)
+    if height:
+        out_h = _even(height)
+        return (_even(out_h * ratio) if ratio else height), out_h
+    if ratio and src_ratio:
+        if ratio <= src_ratio:
+            out_h = _even(src_h)
+            return _even(out_h * ratio), out_h
+        out_w = _even(src_w)
+        return out_w, _even(out_w / ratio)
+    return _even(src_w), _even(src_h)
 
 
 # x264 preset names mapped onto SVT-AV1's 0-13 speed scale (lower = slower / better)

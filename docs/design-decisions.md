@@ -579,6 +579,21 @@ not a new file format this tool would have to maintain.
   `timeline.not_exported` and stderr. A caption track or a title in FCPXML would be a second
   implementation of `caption.py`/`graphics.py` whose output no one here can see.
   Test: `test_build_refuses_what_a_timeline_cannot_hold`.
+- **The sequence frame is the one the render delivers, sized by fit.py's own rule.** The
+  project's `frame` goes through `frame_from_preset()` (an aspect-only frame takes the export
+  preset's size) and then `frame_size()`, the function fit.py sizes its output with: one side
+  and an aspect give the other, so `{aspect 16:9, width 1920}` is 1920x1080 over any source
+  (2.1.0-2.2.1 took the height from the source: 1920x2160 over 4K). How a clip of another
+  aspect fills that frame (`frame.fit` pad/crop/blur) is each editor's spatial conform, which
+  none of the three formats states, so it is named in `not_exported`, not guessed.
+  Test: `test_sequence_frame_is_the_frame_the_render_delivers`.
+- **Times are read the way render.py's own stages read them.** `clips[].in`/`out` take
+  `parse_time()`'s grammar at the source's fps, as cut.py reads them (a clip with no picture,
+  so no fps of its own, falls back to `frame.fps`); a chapter's `at` takes no fps, as
+  metadata.py reads it, so `hh:mm:ss:ff` there needs its `@fps` in both paths rather than one
+  accepting what the other refuses. A time that does not parse is `kind: input` (2.1.0-2.2.1
+  called `float()`, and `--init`'s own `"in": "0:00"` was a traceback).
+  Test: `test_times_are_read_with_the_render_grammar`.
 - **OTIO's `source_range` is timeline length, with the speed in a `LinearTimeWarp`.** Core
   OTIO does not rescale a clip's duration by its effects; the first version stored the
   speed-scaled source length and the reference `opentimelineio` library (0.18) measured the
@@ -588,5 +603,11 @@ not a new file format this tool would have to maintain.
   All three formats were read back by the reference OTIO library and its FCPXML / CMX 3600
   adapters at the right length, but none of Final Cut, Resolve or Premiere is available in this
   environment, and OTIO's own FCPXML adapter ignores dissolves, markers and retiming, so those
-  parts of the FCPXML are checked only against Apple's schema by hand. The editor round trip is
+  parts of the FCPXML are checked against Apple's FCPXML 1.10 DTD with `xmllint --dtdvalid`, by
+  hand: the DTD ships inside Final Cut, not in this repository, so no test reads it. 2.1.0 made
+  the same claim and its files did not validate: the music bed came after the chapter markers
+  inside the first clip, where the DTD's `asset-clip` holds `timeMap`, then anchored items (the
+  connected music clip), then markers. That order is pinned by
+  `test_fcpxml_spine_matches_the_cut` and
+  `test_fcpxml_keeps_the_dtd_child_order_on_a_retimed_first_clip`. The editor round trip is
   on #143's real-hands checklist.

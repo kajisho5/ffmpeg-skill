@@ -4,7 +4,21 @@
 
 ## Unreleased
 
-(nothing yet)
+- `render.py --export-timeline` writes FCPXML that validates against Apple's FCPXML 1.10 DTD:
+  the music bed now comes before the chapter markers inside the first clip (the DTD's order is
+  `timeMap`, connected clips, markers). 2.1.0-2.2.1 wrote them the other way round, which does
+  not validate -- and Final Cut validates what it imports against that DTD.
+- `--export-timeline` reads clip `in`/`out` and chapter times the way the render does (`"0:05"`,
+  `hh:mm:ss:ff` at the source's fps, `@fps`). Before, any string time was a Python traceback
+  with nothing on stdout under `--json` -- including the `"in": "0:00"` of `render.py --init`'s
+  own starter project. A time that does not parse is now a `kind: input` failure naming the
+  field (`clips[0].in`).
+- The exported sequence is the frame the render delivers: `frame: {aspect: "16:9", width: 1920}`
+  is 1920x1080 over any source (it was 1920x2160 over a 4K one, the height taken from the
+  source), and an aspect-only frame takes the export preset's size as the render's does. A clip
+  whose picture has another aspect is listed in `not_exported` as a reframe, since how it fills
+  the frame is the editor's spatial conform. fit.py now sizes its output with the same shared
+  function (`frame_size()`), so the two cannot drift apart.
 
 ## 2.2.1
 

@@ -72,7 +72,7 @@ from _common.probe import (
     measured_level_dbfs, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output
 )
 from _common.decision import (
-    aac_args, add_pad_fill_args, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
+    aac_args, add_pad_fill_args, aspect_ratio, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
     description_block, _evidence_rank, fmt_chapter_time, propose_chapters,
     frame_flow, label_shot_flow, MOTION_GRID, MOTION_SEARCH, MOTION_STATIC_PX, MOTION_PAN_SPREAD,
     filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS, FILLER_MAX_WORD,
@@ -82,7 +82,7 @@ from _common.decision import (
     BEAT_Z_FLOOR, BEAT_Z_SPAN,
     _onset_strength, _pick_onsets, _autocorrelation_peak, _grid_score,
     brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
-    fmt_secs, fmt_smpte_time, fmt_srt_time, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
+    fmt_secs, fmt_smpte_time, fmt_srt_time, frame_size, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
     signed_time_arg, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
 from _common.asr import (
