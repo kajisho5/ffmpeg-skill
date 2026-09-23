@@ -121,11 +121,14 @@ def read_list(path: str) -> List[str]:
 def preflight(paths: List[str]) -> List[Dict[str, Any]]:
     """Every problem with every input, found before anything runs: missing, empty (0 bytes,
     the usual trace of a TTS or download step that failed after creating its file), or not
-    readable as media. One ffprobe per file; nothing is decoded."""
+    readable as media. One ffprobe per file; nothing is decoded. Under --dry-run a file that
+    does not exist yet is not a problem: in a planned pipeline it is an earlier step's output."""
     ffprobe = require_tool("ffprobe")
     problems: List[Dict[str, Any]] = []
     for i, p in enumerate(paths):
         if not os.path.exists(p):
+            if STATE.dry_run:
+                continue  # a dry-run pipeline plans on outputs earlier steps have not written yet
             problems.append({"index": i, "path": p, "reason": "missing"})
             continue
         if os.path.isdir(p):
