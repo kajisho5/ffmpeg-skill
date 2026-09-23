@@ -392,6 +392,11 @@ def main() -> int:
                            "by its measured length")
     output = args.output or default_output(args.inputs[0], "joined", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
+    if d:
+        # the fps filter already made the picture constant-rate and xfade places every frame: FFmpeg
+        # 5.1's default cfr output mode still duplicated the last one to meet the AAC tail (a 51-frame
+        # dissolve came out 52), which newer builds no longer do -- pass the frames through as built
+        cmd += ["-fps_mode", "passthrough"]
     cmd += video_args(hdr_meta or metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
     expected = unpending_length(lens, d)
