@@ -596,11 +596,13 @@ not a new file format this tool would have to maintain.
   `render.export_timeline()`, `_common/timeline.py`.
 - **The timeline matches the project's numbers, not a render's.** A dissolve is centred on
   each cut and trimmed `trim_head`/`trim_tail` frames either side, so the total is the sum of the
-  clip lengths minus one transition per join -- what `join.py`'s xfade renders by design. A real
-  render can come out a few frames longer, because `join.py` offsets each crossfade by the
-  part's *container* duration (audio priming included); that is render's drift, recorded as a
-  follow-up, and copying it into the timeline would hand an editor a cut nobody asked for.
-  Test: `test_build_centres_each_dissolve_and_keeps_the_rendered_length`.
+  clip lengths minus one transition per join -- what `join.py`'s xfade renders by design. Since
+  the Unreleased fix after 2.2.2, `join.py` offsets each crossfade by the part's video-stream
+  length (its audio's only when the sound runs more than a frame past the picture), no longer
+  the *container* duration with its audio priming, so a render matches this total to the frame.
+  Tests: `test_build_centres_each_dissolve_and_keeps_the_rendered_length`,
+  `test_join_dissolve_of_short_parts_keeps_the_frame_count`,
+  `test_join_transition_keeps_each_clips_sound_with_its_picture`.
 - **What a timeline cannot carry is reported, never dropped.** Captions, graphics, overlays,
   the silence cut, fit, audio processing, loudness and the export preset go to
   `timeline.not_exported` and stderr. A caption track or a title in FCPXML would be a second

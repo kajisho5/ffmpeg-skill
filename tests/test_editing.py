@@ -815,6 +815,64 @@ class EditingTests(MediaFixtures):
         self.assertClose(probe(str(out2))["duration"], 16.0, 0.3)
         script("join.py", self.src, expect_fail=True)
 
+    def _av_clip(self, out, picture, tone, freq, fps=30):
+        """A tiny clip: `picture` s of colour at `fps`, `tone` s of a sine at `freq` Hz, AAC audio."""
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=gray:s=64x48:r={fps}:d={picture}",
+           "-f", "lavfi", "-i", f"sine=f={freq}:d={tone}", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", out)
+        return out
+
+    @staticmethod
+    def _tone_onset(path, freq):
+        """When a tone at `freq` Hz is first heard: the end of the leading silence in a narrow band."""
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af",
+                               f"bandpass=f={freq}:width_type=q:w=8,bandpass=f={freq}:width_type=q:w=8,silencedetect=n=-35dB:d=0.1",
+                               "-f", "null", "-"], capture_output=True, text=True)
+        ends = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", proc.stderr)]
+        return ends[0] if ends else 0.0
+
+    def test_join_transition_keeps_each_clips_sound_with_its_picture(self):
+        """Three clips of 5 s picture and 3 s of sound (a TTS line): each clip's sound must start
+        where its picture does, 4.5 s and 9.0 s with a 0.5 s fade. join.py used to chain the raw
+        audio lengths through acrossfade, so clip 2 spoke at ~2.5 s and clip 3 at ~5 s."""
+        d = OUT / "join_sync"
+        d.mkdir(exist_ok=True)
+        freqs = (500, 1300, 2900)
+        clips = [self._av_clip(d / f"c{f}.mp4", 5, 3, f) for f in freqs]
+        out = d / "synced.mp4"
+        doc = json.loads(script("join.py", *clips, "--transition", "fade", "--duration", "0.5", "--preset", "ultrafast",
+                                "--json", "-o", out).stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        for f, start in zip(freqs[1:], (4.5, 9.0)):
+            self.assertClose(self._tone_onset(out, f), start, 0.1, f"the {f} Hz clip's sound starts with its picture")
+        self.assertClose(probe(str(out))["video"]["duration"], 14.0, 0.05)
+
+    def test_join_transition_keeps_a_picture_shorter_than_its_sound(self):
+        """Audio past the picture: the clip lasts as long as its sound (the last frame held), so
+        the next clip's picture is neither lost nor started early, and `verified` measures the
+        video stream against the expected length."""
+        d = OUT / "join_long_audio"
+        d.mkdir(exist_ok=True)
+        a = self._av_clip(d / "a.mp4", 2, 3, 700)
+        b = self._av_clip(d / "b.mp4", 2, 2, 1900)
+        out = d / "long.mp4"
+        doc = json.loads(script("join.py", a, b, "--duration", "0.5", "--preset", "ultrafast", "--json", "-o", out).stdout)
+        self.assertEqual(doc["expected_duration"], 4.5)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertClose(probe(str(out))["video"]["duration"], 4.5, 0.05)
+        self.assertClose(self._tone_onset(out, 1900), 2.5, 0.1)
+
+    def test_join_dissolve_of_short_parts_keeps_the_frame_count(self):
+        """Two 1 s parts at 30 fps whose AAC sound runs 20 ms past the picture (a cut part) dissolved
+        over 0.3 s: 30 + 30 - 9 = 51 frames. Offsetting by the container length added frames and
+        cut the dissolve short."""
+        d = OUT / "join_frames"
+        d.mkdir(exist_ok=True)
+        a = self._av_clip(d / "a.mp4", 1, 1.02, 440)
+        b = self._av_clip(d / "b.mp4", 1, 1.02, 880)
+        out = d / "parts.mp4"
+        script("join.py", a, b, "--transition", "dissolve", "--duration", "0.3", "--preset", "ultrafast", "-o", out)
+        self.assertEqual(probe(str(out))["video"]["nb_frames"], 51)
+
     def test_join_two_or_more_audio_less_clips(self):
         """Every no-audio clip gets a synthetic silent audio track added as an extra ffmpeg input (join.py
         builds this itself, not this test's fixtures) -- `idx` must be this ffmpeg input's actual position

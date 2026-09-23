@@ -63,6 +63,20 @@ def unpending_length(durs: List[float], d: float) -> Optional[float]:
     return round(sum(durs) - d * (len(durs) - 1), 3)
 
 
+def clip_length(meta: Dict[str, Any], fps: float) -> float:
+    """The one length a clip holds in a crossfaded join, for its picture and its sound alike: the
+    video stream's, or the audio stream's when the sound runs more than a frame past the picture
+    (narration is never cut; an AAC tail adds no frame). The container duration (audio priming,
+    a longer track) is only the fallback when a stream length is unknown (a pending input)."""
+    v = (meta.get("video") or {}).get("duration")
+    a = (meta.get("audio") or {}).get("duration")
+    if not v:
+        return meta.get("duration") or 0.0
+    if a and fps and a > v + 1.0 / fps:
+        return a
+    return v
+
+
 def expected_text(expected: Optional[float]) -> str:
     """unpending_length() as the stderr summary line puts it."""
     return f"expected ~{expected:.3f}s" if expected is not None else "expected length unknown until the pending inputs exist"
@@ -293,7 +307,10 @@ def main() -> int:
     w, h = w - (w % 2), h - (h % 2)
     durs = [m.get("duration") or 0.0 for m in metas]
     d = args.duration if args.transition != "none" else 0.0
-    for p, dur in zip(args.inputs, durs):
+    # a crossfaded join gives each clip one length for both streams, so the offsets that place
+    # every picture also place its sound; the plain cut (concat) keeps the streams paired itself
+    lens = [clip_length(m, fps) for m in metas] if d else durs
+    for p, dur in zip(args.inputs, lens):
         if d and dur <= d * 2 and not STATE.dry_run:
             die(f"{p} is only {dur:.2f}s, too short for a {d:.2f}s transition; shorten --duration")
 
@@ -347,14 +364,22 @@ def main() -> int:
         chain = "".join(f"[v{i}][a{i}]" for i in range(n))
         parts.append(f"{chain}concat=n={n}:v=1:a=1[vout][aout]")
     else:
-        vprev, aprev = "v0", "a0"
+        # pad the shorter stream to the clip's length: the audio with silence, the picture by
+        # holding its last frame, then cut both there -- each xfade and acrossfade then starts
+        # at the same clip boundary instead of the audio chain drifting by every clip's gap
+        for i in range(n):
+            vlen = (metas[i].get("video") or {}).get("duration") or lens[i]
+            hold = f"tpad=stop_mode=clone:stop_duration={lens[i] - vlen:.3f}," if lens[i] > vlen else ""
+            parts.append(f"[v{i}]{hold}trim=duration={lens[i]:.3f}[vp{i}]")
+            parts.append(f"[a{i}]apad=whole_dur={lens[i]:.3f},atrim=duration={lens[i]:.3f}[ap{i}]")
+        vprev, aprev = "vp0", "ap0"
         offset = 0.0
         for i in range(1, n):
-            offset += durs[i - 1] - d
+            offset += lens[i - 1] - d
             vout = f"vx{i}" if i < n - 1 else "vout"
             aout = f"ax{i}" if i < n - 1 else "aout"
-            parts.append(f"[{vprev}][v{i}]xfade=transition={args.transition}:duration={d:g}:offset={offset:.3f}[{vout}]")
-            parts.append(f"[{aprev}][a{i}]acrossfade=d={d:g}:c1=tri:c2=tri[{aout}]")
+            parts.append(f"[{vprev}][vp{i}]xfade=transition={args.transition}:duration={d:g}:offset={offset:.3f}[{vout}]")
+            parts.append(f"[{aprev}][ap{i}]acrossfade=d={d:g}:c1=tri:c2=tri[{aout}]")
             vprev, aprev = vout, aout
 
     # A pending input's stub is unmeasured (0x0, 0 fps, 0 s -- #77 keeps it honest rather than
@@ -369,10 +394,19 @@ def main() -> int:
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     cmd += video_args(hdr_meta or metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
-    expected = unpending_length(durs, d)
+    expected = unpending_length(lens, d)
     r = probe(output, role="output")
-    info(f"wrote {output} ({fmt_secs(r['duration'])}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
+    # the picture is what the offsets place: measure the video stream, not the container (whose
+    # length also counts the AAC tail), against the length the clips add up to
+    measured = (r.get("video") or {}).get("duration") or r.get("duration")
+    verification = []
+    if expected is not None and measured is not None and not STATE.dry_run:
+        tol = max(1.5 / fps, 0.05)
+        verification.append({"step": "duration", "ok": abs(measured - expected) <= tol,
+                             "measured": round(measured, 3), "expected": expected, "tolerance": round(tol, 3)})
+    info(f"wrote {output} ({fmt_secs(measured)}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
     emit(output, mode="video", **reported(), clips=n, transition=args.transition, expected_duration=expected,
+         verification=verification,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
     return 0
 
