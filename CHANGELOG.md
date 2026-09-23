@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+## 2.2.0
+
+### Added
+
 - `join.py --list parts.txt` joins the segments a TTS or render step wrote, one path per line
   (relative to the list; `#` comments and ffmpeg's `file 'x.wav'` lines accepted). Every input
   is now checked before anything runs, and a missing, empty or unreadable one is named together
