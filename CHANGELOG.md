@@ -11,6 +11,15 @@
   only (its own transfer to linear, BT.2020 to BT.709 primaries, back to the BT.709 transfer);
   PQ, HLG, Dolby Vision and `--force` on an untagged file are tone-mapped as before. The result
   says which path ran in the new `sdr_path` key (`tonemap` / `gamut`) and in `notes`.
+- **join.py: a crossfaded join keeps each clip's sound with its picture.** Every clip now has one
+  length for both streams -- its video stream's, or its audio's when the sound runs more than a
+  frame past the picture -- and the shorter stream is padded to it (silence, or the last frame
+  held) before `xfade`/`acrossfade`, whose offsets both come from it. Clips with 5 s of picture
+  and 3 s of narration used to speak clip 2 at ~2.6 s instead of 4.5 s; audio longer than the
+  picture could lose a clip's picture; parts gained a frame or two per join from the container's
+  AAC tail. `verified` now includes a `duration` step comparing the output's video-stream length
+  with `expected_duration`, and `probe` reports each stream's own `duration`. The audio-only
+  join and `--transition none` build the same commands as before.
 
 ## 2.2.2
 

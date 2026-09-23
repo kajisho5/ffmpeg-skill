@@ -573,7 +573,11 @@ frame, rate or xfade offsets that rest on a pending input's unmeasured placehold
 Normalises every clip to one frame size, fps, `yuv420p`, 48 kHz and one
 channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
 silent track generated for clips without audio), then chains `xfade` +
-`acrossfade`. Output length = sum of clips − transition × (n−1). Clips must be
+`acrossfade`. With a transition each clip has one length for picture and sound
+-- the video stream's, or the audio's when it runs more than a frame longer --
+and the shorter stream is padded (silence / last frame held), so every clip's
+sound stays with its picture. Output length = sum of clip lengths −
+transition × (n−1); `verified` checks the output's video-stream length against it. Clips must be
 longer than 2 × the transition. Use `--transition none` for a plain cut.
 A subtitle/data track in the source is not carried into the retimed/concatenated
 output; the result says so with `dropped_non_av_streams: true`.
