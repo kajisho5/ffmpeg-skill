@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-(nothing yet)
+- The same check-everything-first rule as `join.py --list`, where one bad input used to cost a
+  whole run: `render.py` checks every clip source before cutting the first one and names every
+  missing, empty or directory source in one refusal (`problems[]`) -- before, a missing clip 7
+  surfaced after clips 0-6 were cut, one missing source per rerun. `caption.py --mode mux`
+  names every missing extra `--srt` track at once, before any work. `sequence.py` warns when
+  frames exist past a gap in the numbering instead of silently stopping at the gap.
 
 ## 2.1.0
 

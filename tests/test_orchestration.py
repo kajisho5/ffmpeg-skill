@@ -658,8 +658,24 @@ class OrchestrationTests(MediaFixtures):
         tmpl = OUT / "render_template_valid.json"
         script("render.py", "--init", tmpl)
         proc = script("render.py", tmpl, "--dry-run", expect_fail=True)  # only REPLACE_ME.mp4 is missing
-        self.assertIn("source not found", proc.stderr)
+        self.assertIn("clip 0: missing: ", proc.stderr)
         self.assertNotIn("unknown key", proc.stderr)
+
+    def test_render_names_every_unusable_clip_source_before_cutting(self):
+        """2.2.1: a missing third clip used to surface after the first two were cut, and a second
+        missing clip only on the next run. Now every missing/empty source is named in one refusal."""
+        empty = OUT / "render_empty_src.mp4"
+        empty.write_bytes(b"")
+        body = {"clips": [{"src": "source.mp4", "in": 0, "out": 1},
+                          {"src": "gone_a.mp4"},
+                          {"src": str(empty)},
+                          {"src": "gone_b.mp4"}]}
+        proc = script("render.py", self._proj("render_preflight.json", body), "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"))
+        self.assertEqual([(p["index"], p["reason"]) for p in doc["problems"]],
+                         [(1, "missing"), (2, "empty (0 bytes)"), (3, "missing")])
+        self.assertIn("3 of 4 clip sources unusable", proc.stderr)
 
     def test_emit_and_die_use_the_ctx_they_were_given_for_the_plan(self):
         """Review 9: run()/emit()/die() took ctx= but write_plan() and the atexit hook still read

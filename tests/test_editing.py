@@ -619,6 +619,17 @@ class EditingTests(MediaFixtures):
             else:
                 self.assertGreater(px[2], 100, f"frame {i} should be blue")
 
+    def test_sequence_warns_about_frames_past_a_numbering_gap(self):
+        """2.2.1: frame 2 missing used to silently stop the sequence at 2 frames."""
+        frames_dir = OUT / "seqframes_gap"
+        frames_dir.mkdir(exist_ok=True)
+        for i in (0, 1, 3, 4):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=64x48",
+               "-frames:v", "1", frames_dir / f"frame_{i:04d}.png")
+        proc = script("sequence.py", "--dir", frames_dir, "--pattern", "frame_%04d.png", "--fps", "5",
+                      "-o", OUT / "seq_gap.mp4")
+        self.assertIn("frame_0002.png is missing; 2 later frame(s)", proc.stderr)
+
     def test_sequence_glob_pattern(self):
         frames_dir = OUT / "seqframes_glob"
         frames_dir.mkdir(exist_ok=True)

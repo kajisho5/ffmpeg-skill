@@ -37,6 +37,20 @@ def natural_key(name: str) -> list:
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
+def _frames_after(directory: Path, pattern: str, index: int) -> list:
+    """Files in `directory` that match printf `pattern` with a number above `index`."""
+    m = re.search(r"%0?(\d*)d", pattern)
+    if not m:
+        return []
+    rx = re.compile("^" + re.escape(pattern[:m.start()]) + r"(\d+)" + re.escape(pattern[m.end():]) + "$")
+    found = []
+    for f in directory.iterdir():
+        hit = rx.match(f.name)
+        if hit and int(hit.group(1)) > index:
+            found.append((int(hit.group(1)), f))
+    return [f for _n, f in sorted(found)]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dir", required=True, help="directory containing the frames")
@@ -79,6 +93,12 @@ def main() -> int:
         if not frames:
             die(f"first frame not found: {directory / (args.pattern % args.start_number)} (check --pattern / --start-number)")
         info(f"found {len(frames)} consecutive frames from index {args.start_number}")
+        # 2.2.1: frames past a gap in the numbering (one render or export step that failed) used
+        # to be dropped silently, giving a shorter video; name the gap and what was left out
+        later = _frames_after(directory, args.pattern, i)
+        if later:
+            info(f"WARNING: frame {args.pattern % i} is missing; {len(later)} later frame(s) "
+                 f"(from {later[0].name}) are NOT in the sequence -- fill the gap or rename them")
 
     frame_meta = probe(str(frames[0]))
     if not frame_meta.get("video"):

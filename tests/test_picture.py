@@ -821,6 +821,18 @@ class PictureTests(MediaFixtures):
                          "-o", OUT / "dup4.mkv", expect_fail=True)
         self.assertIn("not found", missing.stderr)
 
+    def test_every_missing_extra_srt_track_is_named_at_once(self):
+        """2.2.1: two missing extra tracks are one refusal naming both, not two reruns."""
+        srt = OUT / "mux_multi_ok.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
+        proc = script("caption.py", self.src, "--mode", "mux", "--srt", f"{srt}:en",
+                      "--srt", str(OUT / "gone_ja.srt") + ":ja", "--srt", str(OUT / "gone_fr.srt") + ":fr",
+                      "-o", OUT / "multi_missing.mkv", "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertEqual([p["index"] for p in doc["problems"]], [1, 2])
+        self.assertIn("2 SRT file(s) not found", doc["error"]["message"])
+
     def test_burn_with_two_srts_refused(self):
         srt = OUT / "mux_burn2.srt"
         srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")

@@ -1146,6 +1146,14 @@ def main() -> int:
         die(f"--track-title given {len(args.track_title)} times for {len(srt_tracks)} --srt file(s)",
             kind="input")
     args.srt = srt_tracks[0][0] if srt_tracks else None
+    # 2.2.1: the extra --srt tracks (always inputs; the first may be written by --text or
+    # --transcribe) are checked up front, every missing one named together, before any work.
+    # Dry-run plans on files earlier steps have not written yet, as join.py does.
+    missing_srt = [{"index": i, "path": p, "reason": "missing"}
+                   for i, (p, _l) in enumerate(srt_tracks) if i > 0 and not os.path.exists(p)]
+    if missing_srt and not STATE.dry_run:
+        die(f"{len(missing_srt)} SRT file(s) not found: " + ", ".join(m["path"] for m in missing_srt),
+            kind="input", problems=missing_srt)
     srt_path = args.srt
     if args.transcribe:
         if not args.input:

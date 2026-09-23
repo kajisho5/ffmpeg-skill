@@ -930,13 +930,30 @@ def main() -> int:
             f'{snap_spec.get("to")!r}', kind="input")
 
     # ---- clips
+    # 2.2.1: every clip source is checked before the first one is cut, and every problem is named
+    # in one refusal -- before, clip 7's missing file surfaced after clips 0-6 had been cut, and
+    # only the first of several missing sources was reported per run.
+    problems: List[Dict[str, Any]] = []
+    for i, c in enumerate(clips):
+        src = rel(c["src"])
+        if not os.path.exists(src):  # under --dry-run too: a plan for a missing file is no plan
+            problems.append({"index": i, "path": src, "reason": "missing"})
+        elif os.path.isdir(src):
+            problems.append({"index": i, "path": src, "reason": "a directory, not a file"})
+        elif os.path.getsize(src) == 0:
+            problems.append({"index": i, "path": src, "reason": "empty (0 bytes)"})
+    if problems:
+        die(f"{len(problems)} of {len(clips)} clip sources unusable: "
+            + "; ".join(f"clip {p['index']}: {p['reason']}: {p['path']}" for p in problems),
+            kind="input", problems=problems,
+            hint="fix or remove these clips in the project; nothing was cut")
+    if not STATE.dry_run:
+        for c in clips:
+            probe(rel(c["src"]))  # an unreadable source stops the run before any clip is cut
+
     parts: List[str] = []
     for i, c in enumerate(clips):
         src = rel(c["src"])
-        if not os.path.exists(src):
-            die(f"clip {i}: source not found: {src}")  # under --dry-run too: a plan for a missing file is no plan
-        if not STATE.dry_run:
-            probe(src)
         needs_cut = c.get("in") is not None or c.get("out") is not None
         part = str(work / f"clip{i:02d}{mid}")
         if needs_cut:
