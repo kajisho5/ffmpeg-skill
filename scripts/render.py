@@ -751,7 +751,7 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
     for line in report["not_exported"]:
         info(f"not exported: {line}")
     info(("[dry-run] would write " if STATE.dry_run else "wrote ") +
-         f"{dest} ({fmt}, {report['clips']} clips, {report['duration']:.3f}s at {report['rate']} fps)")
+         f"{dest} ({fmt}, {report['clips']} clips, {report['duration']}s at {report['rate']} fps)")
     emit(dest, timeline=report, verification=verification)
     return 0
 
