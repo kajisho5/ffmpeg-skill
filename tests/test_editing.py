@@ -252,6 +252,28 @@ class EditingTests(MediaFixtures):
         self.assertClose(m["duration"], 4.0, 0.15)
         self.assertEqual(m["video"]["width"], m["video"]["height"])
 
+    def test_fit_aspect_reads_each_side_as_2_2_1_did(self):
+        """fit.py --aspect reads each side with int(), as 2.2.1 did: 2.2.2's shared parser briefly
+        refused `+9:16` and `1_6:9`, which int() takes, and `0:9`, which 2.2.1 ran as no aspect
+        (the source frame). A patch release refuses nothing fit.py took."""
+        from fractions import Fraction
+        from _common import aspect_ratio
+        self.assertEqual(aspect_ratio("+9:16"), Fraction(9, 16))
+        self.assertEqual(aspect_ratio("1_6:9"), Fraction(16, 9))
+        self.assertEqual(aspect_ratio(" 16 : 9 "), Fraction(16, 9))
+        self.assertEqual(aspect_ratio("0:9"), Fraction(0))
+        for bad in ("16/9", "2.39:1", "16:0", "wide", "1:2:3"):
+            self.assertIsNone(aspect_ratio(bad), bad)
+        # self.src is 1280x720: 9:16 bounded by its height is 406x720. A zero ratio is no aspect,
+        # so --width alone is a square, as 2.2.1 (whose else-branch took the width) made it
+        for aspect, extra, size in (("+9:16", (), (406, 720)), ("0:9", ("--width", "640"), (640, 640))):
+            with self.subTest(aspect):
+                out = OUT / f"fit_asp_{aspect.strip('+').replace(':', '_')}.mp4"
+                doc = json.loads(script("fit.py", self.src, "--aspect", aspect, *extra, "-o", out, "--fast", "--json", "--overwrite").stdout)
+                self.assertEqual(doc["status"], "completed")
+                m = probe(str(out))
+                self.assertEqual((m["video"]["width"], m["video"]["height"]), size)
+
     def test_fit_aspect_only_never_upscales_past_source_resolution(self):
         """With only --aspect given (no --width/--height), the "elif ratio and src_ratio" branch
         used to bound a narrower/taller target by the source's WIDTH, not its height -- so a

@@ -415,7 +415,18 @@ def require_object(obj: Any, label: str) -> None:
         die(f"{label}: must be an object {{...}}, got {type(obj).__name__} {obj!r:.60}")
 
 
-def validate_project(proj: Dict[str, Any], timeline: bool = False) -> None:
+# the stage that first reads each section; --stop-after before it means the run never reads it
+READ_AT = {"transition": "join", "silence": "silence", "fit": "fit", "captions": "captions",
+           "graphics": "graphics", "overlays": "overlays", "loudness": "loudness", "export": "export",
+           "check": "check"}
+_READ_ORDER = ["clips", "join", "silence", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export", "check"]
+
+
+def _reaches(stage: str, stop_after: Optional[str]) -> bool:
+    return not stop_after or _READ_ORDER.index(stage) <= _READ_ORDER.index(stop_after)
+
+
+def validate_project(proj: Dict[str, Any], timeline: bool = False, stop_after: Optional[str] = None) -> None:
     """Every project error the run would hit, before the first ffmpeg call. A value that is not
     an object is refused only where this run reads it (require_object()): a full render reads
     every stage's section, a transition only between two or more clips and a clip's snap only
@@ -430,6 +441,9 @@ def validate_project(proj: Dict[str, Any], timeline: bool = False) -> None:
     read = {"frame", "audio"} | ({"transition"} if several else set())
     if not timeline:
         read |= {"silence", "audiogram", "captions", "loudness", "fit", "export", "check", "snap"}
+        # --stop-after ends the run before later stages read their sections: 2.2.1 completed a
+        # `--stop-after fit` preview of a project with "captions": "subs.srt", never reading it
+        read = {n for n in read if n not in READ_AT or _reaches(READ_AT[n], stop_after)}
     for name in ("frame", "transition", "silence", "audiogram", "captions", "audio", "loudness", "fit", "export", "check", "snap"):
         if name in read:
             require_object(proj.get(name), name)
@@ -445,7 +459,7 @@ def validate_project(proj: Dict[str, Any], timeline: bool = False) -> None:
                 die(f'chapters[{i}]: needs {{"at": TIME, "title": STR}}')
     for name in ("clips", "graphics", "overlays"):
         items = proj.get(name)
-        if name == "clips" or not timeline:  # the export reads only the clips
+        if name == "clips" or (not timeline and _reaches(READ_AT[name], stop_after)):  # the export reads only the clips
             if items and not isinstance(items, list):
                 die(f"{name}: must be a list of objects [{{...}}], got {type(items).__name__} {items!r:.60}")
             for i, item in enumerate(items or []):
@@ -888,7 +902,7 @@ def main() -> int:
         if "plan_version" in proj:
             return execute_plan(proj, os.path.abspath(args.project))
         base = Path(args.project).resolve().parent
-    validate_project(proj, timeline=bool(args.export_timeline))
+    validate_project(proj, timeline=bool(args.export_timeline), stop_after=args.stop_after)
     if args.write_project:
         # Only the filled project: the point is to edit it before rendering, so nothing runs.
         try:

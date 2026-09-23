@@ -37,7 +37,8 @@
   the render and `--export-timeline` alike, that covers a string `frame`, a clip written as a
   bare path, a clip with no `src`, a string `audio` and a string `transition` between two or
   more clips. In the render it also covers every stage section (`"export": "reels"`,
-  `"captions": "subs.srt"`) and the `snap` of a clip it cuts. Nothing a full run never reads is
+  `"captions": "subs.srt"`) and the `snap` of a clip it cuts, up to the `--stop-after`
+  stage (a `--stop-after fit` preview never reads `captions`). Nothing a full run never reads is
   refused. A single clip's `"transition": "none"` and an uncut clip's `snap` still render and
   export. `--export-timeline` still writes a timeline for a stage section that is not an
   object and lists it in `not_exported`, as 2.2.1 did.
@@ -45,11 +46,10 @@
   `frame: {aspect: "16:9", width: 1920}` is 1920x1080 over any source (it was 1920x2160 over a
   4K one, the height taken from the source). An aspect-only frame takes the export preset's
   size when the preset has that aspect, as the render's does. fit.py now sizes its output with
-  the same shared function (`frame_size()`) and reads `--aspect` with the same whole-number
-  `W:H` parser (`aspect_ratio()`). So the export refuses a `frame.aspect` of `16/9` or `2.39:1`
-  when the render would hand it to fit.py, which refuses it too. The same parser makes fit.py
-  refuse `--aspect 0:9`, which silently kept the source frame, and a signed or underscored
-  number (`+16:9`), which `int()` used to take. The render's own preset match
+  the same shared function (`frame_size()`) and reads `--aspect` with the same parser
+  (`aspect_ratio()`), which reads each side with `int()` as fit.py did, so fit.py accepts and
+  sizes every `--aspect` exactly as 2.2.1 did. The export now refuses a `frame.aspect` of `16/9`
+  or `2.39:1` when the render would hand it to fit.py, which refuses it too. The render's own preset match
   (`frame_from_preset()`) keeps 2.2.1's looser reading, so a `16/9` frame replaced by the
   project's `fit.aspect` renders exactly as before, and the export writes its frame.
 - A render of several clips delivers that frame too. When the frame gives an aspect and one

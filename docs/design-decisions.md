@@ -611,9 +611,11 @@ not a new file format this tool would have to maintain.
   takes the export preset's size when the preset has that aspect) and then `frame_size()`, the
   function fit.py sizes its output with: one side and an aspect give the other, so
   `{aspect 16:9, width 1920}` is 1920x1080 over any source (2.1.0-2.2.1 took the height from
-  the source: 1920x2160 over 4K). The aspect is read with `aspect_ratio()`, fit.py's own
-  whole-number `W:H` grammar, so the export refuses `16/9` where the render hands it to
-  fit.py, which refuses it too. When the project's own `fit.aspect` replaces it, the render
+  the source: 1920x2160 over 4K). The aspect is read with `aspect_ratio()`, which fit.py now
+  reads `--aspect` with too: two sides split at `:`, each read with `int()` as fit.py read them
+  in 2.2.1 (`+16:9` and `1_6:9` parse, `0:9` is a zero ratio that sizes as no aspect). So the
+  export refuses `16/9` where the render hands it to fit.py, which refuses it too, and fit.py
+  refuses nothing it took in 2.2.1. When the project's own `fit.aspect` replaces it, the render
   never gives fit.py the frame's aspect and completes, so the export sizes the sequence
   without it. `frame_from_preset()` keeps 2.2.1's looser match (`16/9`, `1.78:1`) for the
   preset size: it drops nothing a 2.2.1 render was sized by.
@@ -664,8 +666,10 @@ not a new file format this tool would have to maintain.
   In both paths that covers a string `frame`, a clip written as a bare path, a clip with no
   `src`, a string `audio` and a string `transition` between two or more clips. In the render
   it also covers every stage section (`"export": "reels"`, `"captions": "subs.srt"`) and the
-  `snap` of a clip it cuts; it checks what a full run reads, whatever `--stop-after` says.
-  2.2.1 died on each of these with a traceback and nothing on stdout under `--json`. A value
+  `snap` of a clip it cuts, up to the `--stop-after` stage: a section read only after it
+  (`"captions": "subs.srt"` under `--stop-after fit`, a string `transition` under
+  `--stop-after clips`) is not refused, as 2.2.1 completed those previews. A full run of each
+  of these died in 2.2.1 with a traceback and nothing on stdout under `--json`. A value
   the run never reads is left as 2.2.1 left it. That is a single
   clip's `transition` (a batch.py project recipe that carries join.py's `--transition none`),
   an uncut clip's `snap`, and, in `--export-timeline`, every section it only lists in

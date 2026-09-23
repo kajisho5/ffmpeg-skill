@@ -2104,7 +2104,8 @@ class TimelineExportTests(unittest.TestCase):
                 except tl_mod.TimelineError:
                     exported = False
                 self.assertEqual(exported, fit.returncode == 0, fit.stderr[-300:])
-                self.assertEqual(exported, aspect in ("16:9", "4:5"))
+                # 0:9 is a zero ratio -- no aspect, as fit.py ran it in 2.2.1 -- in both
+                self.assertEqual(exported, aspect in ("16:9", "4:5", "0:9"))
         # ...but only an aspect the render hands to fit.py: when the project's own fit.aspect
         # replaces it, the render completes (sized by frame_from_preset()'s 2.2.1 match) and the
         # export writes that frame instead of refusing a project 2.2.1 exported
@@ -2179,3 +2180,17 @@ class TimelineExportTests(unittest.TestCase):
                 self.assertEqual(json.loads(script("render.py", proj, "--dry-run", "--json").stdout)["status"], "completed")
                 self.assertEqual(json.loads(script("render.py", proj, "--export-timeline", out, "--json").stdout)["status"],
                                  "completed")
+        # --stop-after ends the run before a later stage reads its section: a preview of a
+        # project with shorthand sections completed in 2.2.1 and still does
+        for name, body, stop in (("stop_fit_captions", {"captions": "subs.srt", "export": "reels", "check": "youtube",
+                                                        "graphics": "title", "clips": [{"src": "a.mp4", "in": 0, "out": 1}]}, "fit"),
+                                 ("stop_clips_transition", {"transition": "fade",
+                                                            "clips": [{"src": "a.mp4", "in": 0, "out": 1}, {"src": "b.mp4"}]}, "clips")):
+            with self.subTest(name):
+                proj = self.dir / f"{name}.json"
+                proj.write_text(json.dumps(dict(body, output=f"{name}.mp4")), encoding="utf-8")
+                doc = json.loads(script("render.py", proj, "--stop-after", stop, "--dry-run", "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                # without --stop-after the full run reads them, and refuses up front
+                proc = sh(sys.executable, SCRIPTS / "render.py", proj, "--dry-run", "--json", expect_fail=True)
+                self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
