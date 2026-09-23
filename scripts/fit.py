@@ -39,20 +39,16 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
-ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
 
 def parse_aspect(value: str) -> Fraction:
-    if value in ASPECT_PRESETS:
-        return ASPECT_PRESETS[value]
-    try:
-        w, h = value.split(":")
-        return Fraction(int(w), int(h))
-    except (ValueError, ZeroDivisionError):
+    # the one aspect grammar, shared with render.py's frame and --export-timeline's sequence
+    ratio = aspect_ratio(value)
+    if ratio is None:
         die(f"bad aspect '{value}', use W:H like 16:9")
-    return Fraction(1)  # unreachable
+    return ratio
 
 
 def atempo_chain(factor: float) -> str:

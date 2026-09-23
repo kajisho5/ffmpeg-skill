@@ -12,13 +12,29 @@
   `hh:mm:ss:ff` at the source's fps, `@fps`). Before, any string time was a Python traceback
   with nothing on stdout under `--json` -- including the `"in": "0:00"` of `render.py --init`'s
   own starter project. A time that does not parse is now a `kind: input` failure naming the
-  field (`clips[0].in`).
-- The exported sequence is the frame the render delivers: `frame: {aspect: "16:9", width: 1920}`
-  is 1920x1080 over any source (it was 1920x2160 over a 4K one, the height taken from the
-  source), and an aspect-only frame takes the export preset's size as the render's does. A clip
-  whose picture has another aspect is listed in `not_exported` as a reframe, since how it fills
-  the frame is the editor's spatial conform. fit.py now sizes its output with the same shared
-  function (`frame_size()`), so the two cannot drift apart.
+  field (`clips[0].in`). A clip with no picture has no fps of its own, and `frame.fps` does not
+  stand in for one in either path: its `hh:mm:ss:ff` needs `@fps`, as `cut.py` asks.
+- `render.py` refuses a project object that is not an object (`"export": "reels"`, a string
+  `frame`, a clip written as a bare path) and a clip with no `src` as `kind: input`, naming the
+  key -- in the render and in `--export-timeline`, which both died with a traceback and nothing
+  on stdout under `--json`.
+- The exported sequence is the frame the project asks for, sized by fit.py's own rule:
+  `frame: {aspect: "16:9", width: 1920}` is 1920x1080 over any source (it was 1920x2160 over a
+  4K one, the height taken from the source), and an aspect-only frame takes the export preset's
+  size when the preset has that aspect, as the render's does. fit.py now sizes its output with
+  the same shared function (`frame_size()`) and reads `--aspect` with the same parser, so the
+  export refuses `16/9` and `2.39:1` exactly as the render's fit stage does.
+- A render of several clips delivers that frame too: `render.py` now gives fit.py the frame's
+  width/height whenever it reframes to an aspect. Before, join.py sized the join at the first
+  clip's aspect and fit.py fitted the new aspect inside it: `{aspect: "9:16", width: 1080}`
+  (`render.py`'s own docstring frame) over 16:9 clips came out 342x608 -- the delivered size
+  without an export preset, and the size captions were burned at with one.
+- FCPXML describes each video asset as its own source (size and frame rate) and the sequence
+  as the frame; one shared format made a 320x180 file under a 9:16 frame claim to be
+  1080x1920. A clip of another aspect states its spatial conform, `adjust-conform` `fill` for
+  `frame.fit: crop` and `fit` for pad; the DTD reads a missing one as fit, so a crop project
+  was exported as a fit. EDL and OTIO cannot state a conform, so there the reframe is listed in
+  `not_exported` with the project's `frame.fit`, as is `blur`'s blurred background in all three.
 
 ## 2.2.1
 

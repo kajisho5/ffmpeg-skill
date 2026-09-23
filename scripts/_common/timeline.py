@@ -14,10 +14,11 @@ the rendered one.
 
 Only what an editor timeline can carry is exported: clips (with in/out and speed), the
 transition between them, a music bed on its own audio track, and chapters as markers, on a
-sequence of the project's frame (sized by the rule fit.py renders it with). Everything else in
-the project -- captions, graphics, overlays, the silence cut, fit/crop and the reframe of a
-picture of another aspect, audio processing, loudness, the export preset -- is listed under
-`not_exported`, never silently dropped.
+sequence of the project's frame (sized by the rule fit.py renders it with). FCPXML also states
+how a clip of another aspect fills that frame (`adjust-conform`); EDL and OTIO cannot.
+Everything else in the project -- captions, graphics, overlays, the silence cut, fit/crop, a
+reframe the format cannot state, audio processing, loudness, the export preset -- is listed
+under `not_exported`, never silently dropped.
 """
 import json
 import math
@@ -47,6 +48,9 @@ _NOT_EXPORTED = {
     "brand": "brand styles",
     "snap": "beat snapping (the timeline uses the project's in/out as written, before any snap)",
 }
+# frame.fit -> the FCPXML adjust-conform type that fills the sequence the same way. blur has no
+# conform of its own: the picture is fitted whole, and its blurred background is not exported.
+_CONFORM = {"pad": "fit", "crop": "fill", "blur": "fit"}
 _AUDIO_NOT_EXPORTED = ("replace", "voice", "denoise", "duck", "duck_amount", "duck_threshold", "duck_attack",
                        "duck_release", "gain", "stereo", "mono", "downmix", "stereo_widen", "effects",
                        "effects_volume", "stems", "music_volume", "fade_in", "fade_out", "music_fade_out",
@@ -122,14 +126,14 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
     if not fps:
         raise TimelineError("no frame rate: the first clip has no video stream and project.frame.fps is not set")
     rate = exact_rate(float(fps))
-    # The sequence is the frame the render delivers: fit.py's sizing rule on the project frame
-    # (render.py has already filled an aspect-only frame from the export preset), so
-    # {aspect 16:9, width 1920} is 1920x1080 whatever the source's height. No frame at all is
-    # the first clip's own picture, which is what the render keeps.
+    # The sequence is the project's frame sized by fit.py's rule (render.py has already filled an
+    # aspect-only frame from the export preset), so {aspect 16:9, width 1920} is 1920x1080
+    # whatever the source's height -- the size the render's fit stage delivers. No frame at all
+    # is the first clip's own picture, which is what the render keeps.
     aspect = frame.get("aspect")
     ratio = aspect_ratio(aspect) if aspect else None
     if aspect and ratio is None:
-        raise TimelineError(f"frame.aspect {aspect!r} is not W:H (e.g. 16:9)")
+        raise TimelineError(f"frame.aspect {aspect!r}: use W:H with whole numbers, like 16:9 (fit.py refuses it too)")
     want_w, want_h = (int(_number(frame[k], f"frame.{k}")) if frame.get(k) else None for k in ("width", "height"))
     if (want_w or 0) < 0 or (want_h or 0) < 0:
         raise TimelineError(f"frame width/height must be positive, got {frame.get('width')!r} x {frame.get('height')!r}")
@@ -138,6 +142,9 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
         width, height = src_w, src_h
     else:
         width, height = frame_size(ratio, want_w, want_h, src_w, src_h)
+    fit_mode = str(frame.get("fit") or "pad")
+    if fit_mode not in _CONFORM:
+        raise TimelineError(f"frame.fit {frame.get('fit')!r}: use pad, crop or blur (fit.py's --fit)")
 
     def fr(seconds: float) -> int:
         return int(round(Fraction(seconds).limit_denominator(1000000) * rate))
@@ -156,8 +163,9 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
         meta = probes[src]
         dur = float(meta.get("duration") or 0.0)
         # in/out are on the source's own clock, as cut.py reads them: hh:mm:ss:ff at the
-        # source's fps, then the project's frame.fps (an audio-only clip has none of its own)
-        clip_fps = (meta.get("video") or {}).get("fps") or frame_fps
+        # source's fps, never frame.fps. A clip with no picture has no fps, and cut.py takes no
+        # other, so its hh:mm:ss:ff needs an @fps suffix here as in the render.
+        clip_fps = (meta.get("video") or {}).get("fps")
         start = _seconds(c["in"], f"clips[{i}].in", clip_fps) if c.get("in") is not None else 0.0
         if start < 0:
             raise TimelineError(f"clips[{i}].in must not be negative, got {c['in']!r}")
@@ -168,7 +176,8 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
         if not speed > 0:
             raise TimelineError(f"clip {i}: speed must be positive, got {c.get('speed')!r}")
         picture = _picture(meta)
-        if picture and abs(Fraction(*picture) - Fraction(width, height)) > Fraction(1, 100):
+        reframe = bool(picture and abs(Fraction(*picture) - Fraction(width, height)) > Fraction(1, 100))
+        if reframe:
             reframed.append(os.path.basename(src))
         src_in, src_out = fr(start), fr(end)
         clips.append({"index": i, "src": os.path.abspath(src), "name": os.path.basename(src),
@@ -176,7 +185,7 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
                       "length": int(round((src_out - src_in) / speed)),
                       "media_frames": fr(dur), "has_video": bool(meta.get("video")),
                       "has_audio": bool(meta.get("audio")),
-                      "width": (meta.get("video") or {}).get("width"), "height": (meta.get("video") or {}).get("height")})
+                      "picture": picture, "fps": clip_fps, "reframed": reframe})
 
     # Centre each dissolve on the cut: trim d/2 off the outgoing tail and d/2 off the incoming head.
     half_a, half_b = d_frames // 2, d_frames - d_frames // 2
@@ -217,19 +226,33 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
     elif chapters:
         notes.append("chapters given as a file are not exported as markers; write them inline as [{at, title}]")
 
+    # A clip of another aspect than the sequence is a reframe: whether the file can state it
+    # depends on the format, so summary() adds it to not_exported per format (_reframe_note).
     not_exported = [text for key, text in _NOT_EXPORTED.items() if proj.get(key)]
-    if reframed:
-        # the sequence carries the frame; how a picture of another aspect fills it (pad, crop,
-        # blur) is each editor's own spatial conform, which none of the three formats states
-        not_exported.append(f"the reframe to {width}x{height} (frame.fit {frame.get('fit') or 'pad'}) of "
-                            + ", ".join(dict.fromkeys(reframed))
-                            + ": set the clips' spatial conform in the editor (fit = pad, fill = crop)")
     dropped_audio = sorted(k for k in _AUDIO_NOT_EXPORTED if audio.get(k) not in (None, False, "", 0) and k != "music")
     if dropped_audio:
         not_exported.append("audio processing: " + ", ".join(dropped_audio))
     return {"name": Path(str(proj.get("output") or "timeline")).stem, "rate": rate, "width": width, "height": height,
+            "fit": fit_mode, "reframed": list(dict.fromkeys(reframed)),
             "clips": clips, "transition": t_type if d_frames else "none", "transition_frames": d_frames,
             "music": music, "markers": markers, "total": total, "notes": notes, "not_exported": not_exported}
+
+
+def _reframe_note(tl: Dict[str, Any], fmt: str) -> List[str]:
+    """What `not_exported` says about the clips whose picture has another aspect than the
+    sequence. FCPXML states each one's spatial conform (adjust-conform: fit for frame.fit pad,
+    fill for crop), so there only blur's blurred background is missing; EDL and OTIO have no
+    field for a conform at all, so the editor's own default decides and the caller is told."""
+    if not tl["reframed"]:
+        return []
+    names = ", ".join(tl["reframed"])
+    if fmt == "fcpxml":
+        if tl["fit"] != "blur":
+            return []
+        return [f"frame.fit blur's blurred background behind {names}: the FCPXML fits the picture into "
+                f"{tl['width']}x{tl['height']} (adjust-conform fit), leaving bars where the render blurs"]
+    return [f"the reframe to {tl['width']}x{tl['height']} (frame.fit {tl['fit']}) of {names}: "
+            "set the clips' spatial conform in the editor (fit = pad, fill = crop)"]
 
 
 # ---------------------------------------------------------------------------------------- EDL
@@ -310,21 +333,40 @@ def _url(path: str) -> str:
 def to_fcpxml(tl: Dict[str, Any]) -> str:
     """FCPXML 1.10 (Final Cut Pro 10.6+, DaVinci Resolve): one library/event/project, a spine of
     asset-clips with cross dissolves between them, the music bed as a connected clip on lane -1
-    of the first clip, chapters as chapter-markers. Speed is a linear timeMap on the clip."""
+    of the first clip, chapters as chapter-markers. Speed is a linear timeMap on the clip. The
+    sequence has its own format (r1); each video asset has its source's, and a clip of another
+    aspect states its spatial conform (adjust-conform) for frame.fit."""
     rate = tl["rate"]
     q = lambda s: _xml_escape(str(s), {'"': "&quot;"})  # noqa: E731
     fd = _t(1, rate)
-    res = [f'    <format id="r1" name="FFVideoFormat{tl["height"]}p" frameDuration="{fd}" width="{tl["width"]}" height="{tl["height"]}"/>']
-    ids: Dict[str, str] = {}
+    res: List[str] = []
+    ids: Dict[Any, str] = {}  # a format's (width, height, frameDuration) or an asset's path -> its id
 
-    def asset(path: str, name: str, frames: int, has_video: bool, has_audio: bool) -> str:
+    def fmt(width: int, height: int, frame_duration: str) -> str:
+        key = (width, height, frame_duration)
+        if key not in ids:
+            ids[key] = f"r{len(ids) + 1}"
+            res.append(f'    <format id="{ids[key]}" name="FFVideoFormat{height}p" frameDuration="{frame_duration}" '
+                       f'width="{width}" height="{height}"/>')
+        return ids[key]
+
+    seq_fmt = fmt(tl["width"], tl["height"], fd)  # r1: the sequence's frame
+
+    def clip_fmt(c: Dict[str, Any]) -> str:
+        # An asset describes its own media, not the sequence: with every asset on r1, a 320x180
+        # file under a 1080x1920 frame claimed to be 1080x1920, and its conform had nothing to do.
+        if not (c["has_video"] and c["picture"]):
+            return seq_fmt
+        return fmt(c["picture"][0], c["picture"][1], _t(1, exact_rate(float(c["fps"]))) if c["fps"] else fd)
+
+    def asset(path: str, name: str, frames: int, has_video: bool, has_audio: bool, format_id: str = "") -> str:
         if path in ids:
             return ids[path]
-        rid = f"r{len(ids) + 2}"
+        rid = f"r{len(ids) + 1}"
         ids[path] = rid
         res.append(f'    <asset id="{rid}" name="{q(name)}" start="0s" duration="{_t(frames, rate)}" '
                    f'hasVideo="{int(has_video)}" hasAudio="{int(has_audio)}"'
-                   + (' format="r1"' if has_video else "") + ' audioSources="1" audioChannels="2">\n'
+                   + (f' format="{format_id}"' if has_video else "") + ' audioSources="1" audioChannels="2">\n'
                    f'      <media-rep kind="original-media" src="{q(_url(path))}"/>\n    </asset>')
         return rid
 
@@ -332,7 +374,8 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
     d = tl["transition_frames"]
     markers = list(tl["markers"])
     for i, c in enumerate(tl["clips"]):
-        rid = asset(c["src"], c["name"], c["media_frames"], c["has_video"], c["has_audio"])
+        cid = clip_fmt(c)
+        rid = asset(c["src"], c["name"], c["media_frames"], c["has_video"], c["has_audio"], cid)
         if i > 0 and d:
             spine.append(f'        <transition name="Cross Dissolve" offset="{_t(c["record_in"] - c["trim_head"], rate)}" '
                          f'duration="{_t(d, rate)}"/>')
@@ -349,9 +392,13 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
         else:
             start_attr = _t(src_start, rate)
         local0 = src_start if abs(c["speed"] - 1.0) <= 1e-6 else 0
-        # the FCPXML 1.10 DTD's order inside an asset-clip: timeMap, then anchored items (the
-        # music bed), then markers. A marker before the connected clip does not validate, and
-        # Final Cut validates what it imports against that DTD.
+        # the FCPXML 1.10 DTD's order inside an asset-clip: timeMap, then the adjust-* elements
+        # (adjust-conform), then anchored items (the music bed), then markers. Anything out of
+        # that order does not validate, and Final Cut validates what it imports against that DTD.
+        if c["reframed"]:
+            # the DTD reads a missing adjust-conform as fit, so crop has to say fill; fit is
+            # written too, so the file states the project's choice rather than a default
+            inner.append(f'          <adjust-conform type="{_CONFORM[tl["fit"]]}"/>')
         if i == 0 and tl["music"]:
             m = tl["music"]
             mid = asset(m["src"], m["name"], m["media_frames"], False, True)
@@ -361,12 +408,12 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
             inner.append(f'          <chapter-marker start="{_t(local0 + mk["at"] - c["record_in"], rate)}" '
                          f'duration="{fd}" value="{q(mk["title"])}"/>')
         head = (f'        <asset-clip ref="{rid}" offset="{_t(c["record_in"], rate)}" name="{q(c["name"])}" '
-                f'start="{start_attr}" duration="{_t(c["visible"], rate)}" format="r1" tcFormat="NDF"')
+                f'start="{start_attr}" duration="{_t(c["visible"], rate)}" format="{cid}" tcFormat="NDF"')
         spine.append(head + (">\n" + "\n".join(inner) + "\n        </asset-clip>" if inner else "/>"))
     out = ['<?xml version="1.0" encoding="UTF-8"?>', "<!DOCTYPE fcpxml>", '<fcpxml version="1.10">',
            "  <resources>", *res, "  </resources>", "  <library>", f'    <event name="{q(tl["name"])}">',
            f'      <project name="{q(tl["name"])}">',
-           f'        <sequence format="r1" duration="{_t(tl["total"], rate)}" tcStart="0s" tcFormat="NDF">',
+           f'        <sequence format="{seq_fmt}" duration="{_t(tl["total"], rate)}" tcStart="0s" tcFormat="NDF">',
            "      <spine>", *spine, "      </spine>", "        </sequence>", "      </project>", "    </event>",
            "  </library>", "</fcpxml>"]
     return "\n".join(out) + "\n"
@@ -455,4 +502,5 @@ def summary(tl: Dict[str, Any], fmt: str) -> Dict[str, Any]:
             "duration": round(float(Fraction(tl["total"]) / rate), 3), "frames": tl["total"],
             "clips": len(tl["clips"]), "transition": tl["transition"],
             "transition_frames": tl["transition_frames"], "music": bool(tl["music"]),
-            "markers": len(tl["markers"]), "notes": tl["notes"], "not_exported": tl["not_exported"]}
+            "markers": len(tl["markers"]), "notes": tl["notes"],
+            "not_exported": tl["not_exported"] + _reframe_note(tl, fmt)}

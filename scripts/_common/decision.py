@@ -50,13 +50,15 @@ def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
 
 
 def aspect_ratio(value: Any) -> Optional[Fraction]:
-    """A project's frame.aspect (`16:9`, `9/16`, `2.39:1`) as an exact ratio, or None when it is
-    not W:H with both sides positive. render.py's frame_from_preset() and --export-timeline read
-    the aspect through this one function."""
-    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*", str(value))
-    if not m or not Fraction(m.group(1)) or not Fraction(m.group(2)):
+    """An aspect written W:H with two positive whole numbers (`16:9`, `9:16`, `4:5`) as an exact
+    ratio, or None. fit.py --aspect, render.py's frame_from_preset() and --export-timeline all
+    read an aspect through this one function, so none accepts what another refuses: `16/9` and
+    `2.39:1` are refused by all three (the timeline once took them and wrote a sequence for a
+    project whose render then failed in fit.py)."""
+    m = re.fullmatch(r"\s*(\d+)\s*:\s*(\d+)\s*", str(value))
+    if not m or not int(m.group(1)) or not int(m.group(2)):
         return None
-    return Fraction(m.group(1)) / Fraction(m.group(2))
+    return Fraction(int(m.group(1)), int(m.group(2)))
 
 
 def _even(n: float) -> int:
