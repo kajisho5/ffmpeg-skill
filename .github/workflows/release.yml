@@ -116,7 +116,7 @@ jobs:
       # since PR titles are attacker-controlled text and GitHub Actions expression
       # interpolation into a run: block is a known script-injection vector -- only our own
       # already-resolved, numeric version strings pass through ${{ }} here.
-      - name: Auto-bump package.json / docs/contract.md / CHANGELOG.md
+      - name: Auto-bump package.json / docs/contract.md / docs/roadmap.md / CHANGELOG.md
         if: |
           steps.setup.outputs.needs_auto_bump == 'true' &&
           steps.drafter.outputs.resolved_version != '' &&
@@ -161,6 +161,14 @@ jobs:
           contract = contract_path.read_text(encoding="utf-8")
           contract_path.write_text(bump_contract_md(contract, old, new), encoding="utf-8")
 
+          # The roadmap's "released version today" sentence is pinned to package.json by a test;
+          # the auto-bump used to leave it behind, so every label-driven release left main red
+          # until a docs PR moved it (2.2.1 -> #288).
+          from bump_roadmap_md import bump_roadmap_md
+          roadmap_path = root / "docs" / "roadmap.md"
+          roadmap = roadmap_path.read_text(encoding="utf-8")
+          roadmap_path.write_text(bump_roadmap_md(roadmap, old, new), encoding="utf-8")
+
           last_tag = f"v{old}" if old != "0.0.0" else None
           rev_range = f"{last_tag}..HEAD" if last_tag else "HEAD"
           log = subprocess.run(
@@ -203,7 +211,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md
+          git add package.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md docs/roadmap.md
           git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
           # A merge that landed during this step would still make the push non-fast-forward;
           # replay the bump on top of it (a conflict here is real and should fail the run).

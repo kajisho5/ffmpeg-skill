@@ -1109,6 +1109,39 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bump.bump_contract_md(hist + hist, "1.10.0", "1.10.1")
 
+    def test_release_roadmap_bump_moves_the_released_version_sentence(self):
+        """.github/scripts/bump_roadmap_md.py (release.yml's auto-bump): the roadmap sentence
+        pinned to package.json moves with the bump. The auto-bump used to skip it, so the 2.2.1
+        label release left test_roadmap_released_version_matches_package_json red on main until
+        a docs PR (#288). The hand-written prose stays, marked with the version it describes."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "bump_roadmap_md", ROOT / ".github" / "scripts" / "bump_roadmap_md.py")
+        bump = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bump)
+
+        old = json.loads((ROOT / "package.json").read_text())["version"]
+        ma, mi, pa = old.split(".")
+        new = f"{ma}.{mi}.{int(pa) + 1}"
+        text = (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8")
+        out = bump.bump_roadmap_md(text, old, new)
+        m = re.search(r"The released version today is \*\*([^*]+)\*\*", out)
+        self.assertEqual(m.group(1), new)
+        changed = [(a, b) for a, b in zip(text.splitlines(), out.splitlines()) if a != b]
+        self.assertEqual(len(changed), 1, changed)
+
+        s = "The released version today is **2.2.1** — `render.py` checks inputs.\n"
+        once = bump.bump_roadmap_md(s, "2.2.1", "2.2.2")
+        self.assertEqual(once, "The released version today is **2.2.2** (notes in CHANGELOG.md); "
+                               "**2.2.1** — `render.py` checks inputs.\n")
+        twice = bump.bump_roadmap_md(once, "2.2.2", "2.2.3")
+        self.assertEqual(twice, once.replace("**2.2.2**", "**2.2.3**"))
+        # a missing or doubled sentence is an error, never a partial bump
+        with self.assertRaises(ValueError):
+            bump.bump_roadmap_md(s, "2.2.0", "2.2.1")
+        with self.assertRaises(ValueError):
+            bump.bump_roadmap_md(s + s, "2.2.1", "2.2.2")
+
     # ------------------------------------------------------------------ MCP inputSchema derived from the contract
     def _rpc(self, requests, root=ROOT, full=False):
         text = "".join(json.dumps(r) + "\n" for r in requests)

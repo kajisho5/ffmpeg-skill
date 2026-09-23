@@ -87,7 +87,9 @@ would have caught the original bug isn't done yet.
   it gets a command and a sentence in the gallery's Inspection section.
 - A release PR moves `docs/roadmap.md`'s "the released version today is ..." line in the **same
   PR as the version bump**, so the roadmap never describes a version that is already out as
-  planned.
+  planned. A label-driven release (release.yml's auto-bump) moves only the version number and
+  keeps the hand-written prose, marked with the version it describes
+  (`.github/scripts/bump_roadmap_md.py`); the next hand-written release PR replaces the sentence.
 
 ## Reporting issues
 
