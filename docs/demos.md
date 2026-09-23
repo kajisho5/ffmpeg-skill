@@ -616,7 +616,7 @@ python3 scripts/render.py demos/out/fixtures/motion.mp4 --template tiktok --cues
 ![Proxy vs. master, shown at the same size](demos/proxy.gif)
 
 ```bash
-python3 scripts/proxy.py demos/out/fixtures/mandel.mp4 --width 320 --crf 34 --fps 12 -o demos/out/proxy_after.mp4
+python3 scripts/proxy.py demos/out/fixtures/mandel.mp4 --width 320 --quality 34 --fps 12 -o demos/out/proxy_after.mp4
 ```
 
 **Look for:** Both halves are scaled to the same cell, which is the honest comparison: the proxy is smaller on disk and cheaper to decode, not smaller on screen. The softness is the point of it.
@@ -630,6 +630,7 @@ python3 scripts/proxy.py demos/out/fixtures/mandel.mp4 --width 320 --crf 34 --fp
 
 ```bash
 python3 scripts/render.py demos/out/fixtures/project.json --fast
+python3 scripts/render.py demos/out/fixtures/project.json --export-timeline demos/out/render_project_timeline.otio
 ```
 
 **Look for:** Clips, a transition, captions and a title card described as JSON and rendered in one pass.

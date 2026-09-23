@@ -17,33 +17,11 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **2.0.0** — the five changes 1.10.0 announced: `--crf` removed in
-favour of `--quality`, an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed
-to a real PQ/HLG/Dolby Vision signal (`bt2020_or_hdr` keeps the 1.x meaning, and the tools route
-on it), `json` / `progress` out of the MCP `inputSchema`, and the `result_v2` preview withdrawn
-rather than promoted (the flat keys are the 2.0 shape). No new feature; tool count still 42.
-`docs/contract.md` "What 2.0 changed" is the migration table, and `contract --json` lists the same
-under `removed`. 2.0.0 waived the 90-day half of the deprecation window (stated there).
-that closes the remaining mp4 stream-copy paths — `audio.py`, `caption.py --mode mux`, `sync.py`
-and `cut.py` — over to `+faststart` too (#279); `metadata.py`'s own `-c copy` tag/chapter write is
-left alone, since its documented guarantee is the container's metadata only. No script API
-change, tool count still 42.
-1.19.0 (the `--write-project` feature) is a `feat:` release, hence the minor bump; it does not
-start the "1.19.0: observability, portability" theme further down this document, which remains
-planned. 1.19.2 is docs-only (SKILL.md's overlong-word and MCP core-12 rows, this same truth-up).
-1.19.3 extends 1.18.4's column-edge slice to `graphics.py`'s own `wrapped()` helper (lower-third,
-title, sticker, hook and meme labels), so an unbreakable overlong word no longer clips off-frame
-on those templates either. 1.20.0 is `look.py --ink` (#261), a `feat:` release, hence the minor
-bump — not the start of a new theme. 1.21.0 is `contract --json` gaining per-tool `examples`,
-parsed from SKILL.md's own "User says" / "Do" table (#267), also a `feat:` release and not the
-start of the "1.21.0: the 2.0 freeze" heading further down this document, which remains planned.
-1.22.0 is `batch.py` rolling up `cut.py`'s per-call `reencoded` across a recipe's whole run into
-one `cut_stream_copy` summary (`{calls, stream_copy, reencoded, stream_copy_rate}`, #269), a
-`feat:` release, hence the minor bump -- not the start of a new theme. 1.23.0 moves the MCP
-structured-arguments note out of every one of the 42 `tools/list` descriptions into `initialize`'s
-`instructions` field once (#271), also a `feat:` release, hence the minor bump. 1.24.0 adds the
-"1.20.0" theme's last big item, a `prompts` capability with the five workflow recipes (`reel`,
-`podcast`, `multicam`, `delivery_check`, `hdr`, #272), also a `feat:` release, hence the minor bump.
+The released version today is **2.1.0** — `render.py --export-timeline` hands the cut to an
+editor as FCPXML, CMX 3600 EDL or OpenTimelineIO (clips, speed, dissolves, music bed, chapter
+markers; everything else listed as `not_exported`), plus the eval-24 follow-up that stops
+`export.py` calling a BT.2020 SDR source HDR. 2.0.0 made the five changes 1.10.0 announced
+(docs/contract.md "What 2.0 changed"). Tool count still 42.
 
 | version | state | evidence |
 |---|---|---|

@@ -64,7 +64,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, fingerprint, PLAN_VERSION, ffmpeg_version
+from _common import STATE, add_common, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -718,6 +718,44 @@ def frame_from_preset(frame: Dict[str, Any], export: Dict[str, Any]) -> None:
     info(f"frame: {preset['w']}x{preset['h']} from the {export['preset']} export preset (captions and overlays are sized for delivery)")
 
 
+def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
+    """--export-timeline: the project's cut as an editor timeline, nothing rendered (_common.timeline)."""
+    from _common import timeline as tlmod
+    fmt = tlmod.FORMATS.get(Path(dest).suffix.lower())
+    if not fmt:
+        die(f"--export-timeline {dest}: unknown timeline format", kind="input",
+            hint="name the file .fcpxml, .edl or .otio")
+    paths = [rel(c["src"]) for c in proj.get("clips") or [] if c.get("src")]
+    if (proj.get("audio") or {}).get("music"):
+        paths.append(rel(proj["audio"]["music"]))
+    probes: Dict[str, Dict[str, Any]] = {}
+    for path in paths:
+        if not os.path.exists(path):
+            die(f"timeline source not found: {path}")
+        probes[path] = probe(path)  # a timeline needs real durations and rates, dry run or not
+    try:
+        tl = tlmod.build(proj, probes, rel)
+    except tlmod.TimelineError as exc:
+        die(f"--export-timeline: {exc}", kind="input")
+    text = tlmod.WRITERS[fmt](tl)
+    report = tlmod.summary(tl, fmt)
+    _check_output_path(["ffmpeg", dest])
+    _check_existing_output(["ffmpeg", dest])
+    verification: List[Dict[str, Any]] = []
+    if not STATE.dry_run:
+        try:
+            Path(dest).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            die(f"cannot write {dest}: {exc}", kind="output")
+        verification.append({"step": "parse", "ok": tlmod.parses(dest, fmt)})
+    for line in report["not_exported"]:
+        info(f"not exported: {line}")
+    info(("[dry-run] would write " if STATE.dry_run else "wrote ") +
+         f"{dest} ({fmt}, {report['clips']} clips, {report['duration']}s at {report['rate']} fps)")
+    emit(dest, timeline=report, verification=verification)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project", nargs="?", help="project.json, or a plan.json written by <tool> --plan")
@@ -732,6 +770,10 @@ def main() -> int:
                     choices=list(STAGE_ORDER),
                     help="start at this stage, taking every earlier one from --cache; refuses if "
                          "one of them is not there")
+    ap.add_argument("--export-timeline", metavar="FILE",
+                    help="write the project's cut as an editor timeline instead of rendering it: .fcpxml (Final Cut, "
+                         "Resolve), .edl (CMX 3600: Premiere, Resolve, Avid) or .otio (OpenTimelineIO); clips, speed, "
+                         "transitions, the music bed and chapter markers carry over, everything else is listed as not exported")
     ap.add_argument("--stop-after", choices=["clips", "join", "silence", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export"], help="stop after this stage (for iterating)")
     tpl = ap.add_argument_group("delivery templates (one command per destination)")
     tpl.add_argument("--template", metavar="NAME", help="render INPUT with a shipped template: " + ", ".join(template_names())
@@ -809,6 +851,9 @@ def main() -> int:
 
     if isinstance(proj.get("chapters"), str) and not os.path.exists(rel(proj["chapters"])):
         die(f"chapters file not found: {rel(proj['chapters'])}")
+
+    if args.export_timeline:
+        return export_timeline(proj, rel, args.export_timeline)
 
     clips = proj.get("clips") or []
     if not clips:

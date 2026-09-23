@@ -77,6 +77,23 @@ class DeliveryTests(MediaFixtures):
         self.assertTrue(m["video"]["hdr"], "the source's real HDR tags must survive a stream copy")
         self.assertNotEqual(m["video"]["color_space"], "bt709", "copy must never relabel HDR content as bt709")
 
+    def test_export_warning_names_bt2020_sdr_as_not_hdr(self):
+        """Eval 24 h1: after 2.0 narrowed `hdr` to a real PQ/HLG/DV signal, export.py still warned
+        "source is HDR (BT.2020 SDR)" for a wide-gamut SDR file -- the 1.x wording, contradicting
+        probe. The warning now says which case it is, and still points at color.py --to-sdr."""
+        wide = OUT / "export_bt2020_sdr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+           "-t", "1", "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=bt709:colormatrix=bt2020nc:log-level=error", "-tag:v", "hvc1", wide)
+        doc = json.loads(script("export.py", wide, "--preset", "youtube", "--fast", "--json",
+                                "-o", OUT / "export_bt2020_sdr_yt.mp4").stdout)
+        note = " ".join(doc.get("notes") or [])
+        self.assertIn("wide-gamut SDR, not HDR", note)
+        self.assertIn("color.py --to-sdr", note)
+        doc = json.loads(script("export.py", self.hdr, "--preset", "youtube", "--fast", "--json",
+                                "-o", OUT / "export_hdr_yt_note.mp4").stdout)
+        self.assertIn("source is HDR (HDR10/PQ)", " ".join(doc.get("notes") or []))
+
     def test_proxy_default_width_and_crf_keeps_audio(self):
         out = OUT / "proxy_default.mp4"
         script("proxy.py", self.src, "-o", out)

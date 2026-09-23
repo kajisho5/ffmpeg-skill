@@ -1623,3 +1623,166 @@ class CommonFacadeTests(unittest.TestCase):
         importlib.reload(_common)
         self.assertEqual(runner.__file__, before)
         self.assertTrue(callable(_common.emit) and callable(_common.probe))
+
+
+class TimelineExportTests(unittest.TestCase):
+    """2.1: render.py --export-timeline writes the project's cut as an editor timeline (EDL,
+    FCPXML, OTIO) instead of rendering it. The arithmetic is the contract: every format must put
+    the same frames on the same timeline positions render.py's own join would, dissolves included,
+    and whatever an editor timeline cannot carry is named in `not_exported`, never dropped."""
+
+    RATE = 30
+
+    @staticmethod
+    def _tl():
+        from _common import timeline
+        return timeline
+
+    def _probes(self, **durations):
+        return {f"/m/{name}": {"duration": dur, "video": {"fps": 30.0, "width": 1280, "height": 720},
+                               "audio": {"channels": 2}} for name, dur in durations.items()}
+
+    def test_build_centres_each_dissolve_and_keeps_the_rendered_length(self):
+        """Three clips, a 0.5 s (15-frame, odd) dissolve, one clip at 1.25x: the total is the sum of
+        the clip lengths minus one dissolve per join -- what join.py's xfade renders -- and each
+        dissolve's window starts `trim_head` frames before the cut and ends `trim_tail` after it."""
+        tl_mod = self._tl()
+        proj = {"clips": [{"src": "a.mp4", "in": 1, "out": 5}, {"src": "b.mp4", "in": 2, "out": 7, "speed": 1.25},
+                          {"src": "c.mp4"}], "transition": {"type": "fade", "duration": 0.5}}
+        tl = tl_mod.build(proj, self._probes(**{"a.mp4": 8, "b.mp4": 8, "c.mp4": 3}), lambda p: f"/m/{p}")
+        lengths = [c["length"] for c in tl["clips"]]
+        self.assertEqual(lengths, [120, 120, 90])
+        self.assertEqual(tl["transition_frames"], 15)
+        self.assertEqual(tl["total"], sum(lengths) - 15 * 2)
+        a, b, c = tl["clips"]
+        self.assertEqual((a["trim_head"], a["trim_tail"], b["trim_head"], b["trim_tail"], c["trim_head"]), (0, 7, 8, 7, 8))
+        self.assertEqual(b["record_in"], a["visible"])
+        self.assertEqual(c["record_in"], a["visible"] + b["visible"])
+        # b's window: from its visible start minus trim_head, for 15 frames; a's media covers it
+        self.assertEqual(a["visible"] + a["trim_tail"], a["length"])
+
+    def test_build_refuses_what_a_timeline_cannot_hold(self):
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8, "b.mp4": 8})
+        rel = lambda p: f"/m/{p}"  # noqa: E731
+        with self.assertRaises(tl_mod.TimelineError):
+            tl_mod.build({"clips": [{"src": "a.mp4", "in": 5, "out": 5}]}, probes, rel)
+        with self.assertRaises(tl_mod.TimelineError):  # 0.2 s clip, 0.5 s dissolves on both sides
+            tl_mod.build({"clips": [{"src": "a.mp4"}, {"src": "b.mp4", "in": 0, "out": 0.2}, {"src": "a.mp4"}],
+                          "transition": {"duration": 0.5}}, probes, rel)
+        tl = tl_mod.build({"clips": [{"src": "a.mp4"}], "captions": {"text": "c.txt"}, "silence": {},
+                           "audio": {"voice": "light"}, "export": {"preset": "reels"}}, probes, rel)
+        joined = " | ".join(tl["not_exported"])
+        for word in ("captions", "export preset", "voice"):
+            self.assertIn(word, joined)
+        self.assertNotIn("silence", joined, "an empty silence block asked for nothing")
+
+    def test_ntsc_rates_are_exact(self):
+        tl_mod = self._tl()
+        from fractions import Fraction
+        self.assertEqual(tl_mod.exact_rate(29.97), Fraction(30000, 1001))
+        self.assertEqual(tl_mod.exact_rate(23.976), Fraction(24000, 1001))
+        self.assertEqual(tl_mod.exact_rate(25.0), Fraction(25))
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        d = OUT / "timeline"
+        d.mkdir(parents=True, exist_ok=True)
+        cls.dir = d
+        for name, src, freq in (("a.mp4", "testsrc2", 440), ("b.mp4", "testsrc", 660)):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"{src}=size=640x360:rate=30",
+               "-f", "lavfi", "-i", f"sine=frequency={freq}:sample_rate=48000", "-t", "8", "-c:v", "libx264",
+               "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", d / name)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=48000",
+           "-t", "30", "-c:a", "aac", d / "bed.m4a")
+        cls.project = d / "p.json"
+        cls.project.write_text(json.dumps({
+            "output": "final.mp4",
+            "clips": [{"src": "a.mp4", "in": 1, "out": 5}, {"src": "b.mp4", "in": 2, "out": 7, "speed": 1.25}],
+            "transition": {"type": "fade", "duration": 0.5}, "audio": {"music": "bed.m4a"},
+            "chapters": [{"at": 0, "title": "Intro"}, {"at": 3.5, "title": "Part B"}],
+            "captions": {"text": "cues.txt"}}), encoding="utf-8")
+
+    def _export(self, name, *extra):
+        out = self.dir / name
+        if out.exists():
+            out.unlink()
+        doc = json.loads(script("render.py", self.project, "--export-timeline", out, "--json", *extra).stdout)
+        return out, doc
+
+    def test_every_format_reports_the_same_cut_and_what_it_left_out(self):
+        for name in ("e.edl", "e.fcpxml", "e.otio"):
+            with self.subTest(fmt=name):
+                out, doc = self._export(name)
+                self.assertEqual((doc["status"], doc["verified"]), ("completed", True))
+                self.assertEqual(doc["verification"], [{"step": "exists", "ok": True}, {"step": "parse", "ok": True}])
+                t = doc["timeline"]
+                # a: 4 s = 120 frames; b: 5 s at 1.25x = 120 frames; one 15-frame dissolve
+                self.assertEqual((t["frames"], t["duration"], t["rate"]), (225, 7.5, "30"))
+                self.assertEqual((t["clips"], t["transition_frames"], t["music"], t["markers"]), (2, 15, True, 2))
+                self.assertTrue(any("captions" in x for x in t["not_exported"]))
+                self.assertEqual(doc["commands"], [], "a timeline is written, nothing is encoded")
+
+    def test_edl_events_line_up_with_the_dissolve(self):
+        out, _ = self._export("golden.edl")
+        events = [ln for ln in out.read_text(encoding="utf-8").splitlines() if ln[:3].isdigit()]
+        self.assertEqual(events, [
+            "001  AX       B     C        00:00:01:00 00:00:04:15 01:00:00:00 01:00:03:15",
+            "002  AX       B     C        00:00:04:15 00:00:04:15 01:00:03:15 01:00:03:15",
+            "002  AX       B     D    015 00:00:02:00 00:00:07:00 01:00:03:15 01:00:07:15",
+            "003  AX       A2    C        00:00:00:00 00:00:07:15 01:00:00:00 01:00:07:15"])
+        text = out.read_text(encoding="utf-8")
+        self.assertIn("M2   AX       037.5", text, "1.25x at 30 fps is an M2 of 37.5")
+        self.assertIn("* LOC: 01:00:03:15 WHITE   Part B", text)
+
+    def test_otio_track_lengths_add_up_without_counting_transitions(self):
+        """OTIO: a track's length is the sum of its clips' source_range durations; transitions
+        overlap them and add nothing. The first version put the speed-scaled source length there
+        and the track came out 253 frames for a 225-frame cut (caught with the reference
+        opentimelineio library, 0.18)."""
+        out, _ = self._export("e2.otio")
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        video, music = doc["tracks"]["children"]
+        clips = [c for c in video["children"] if c["OTIO_SCHEMA"] == "Clip.2"]
+        trans = [c for c in video["children"] if c["OTIO_SCHEMA"] == "Transition.1"]
+        self.assertEqual(sum(c["source_range"]["duration"]["value"] for c in clips), 225)
+        self.assertEqual([(t["in_offset"]["value"], t["out_offset"]["value"]) for t in trans], [(8, 7)])
+        self.assertEqual(clips[1]["effects"][0]["time_scalar"], 1.25)
+        self.assertEqual(music["children"][0]["source_range"]["duration"]["value"], 225)
+        self.assertEqual([m["name"] for m in doc["tracks"]["markers"]], ["Intro", "Part B"])
+
+    def test_fcpxml_spine_matches_the_cut(self):
+        import xml.etree.ElementTree as ET
+        out, _ = self._export("e2.fcpxml")
+        root = ET.fromstring(out.read_bytes())
+        self.assertEqual(root.get("version"), "1.10")
+        seq = root.find("./library/event/project/sequence")
+        self.assertEqual(seq.get("duration"), "15/2s")
+        spine = list(seq.find("spine"))
+        self.assertEqual([e.tag for e in spine], ["asset-clip", "transition", "asset-clip"])
+        self.assertEqual((spine[1].get("offset"), spine[1].get("duration")), ("7/2s", "1/2s"))
+        self.assertEqual(spine[2].get("offset"), "113/30s")
+        self.assertIsNotNone(spine[2].find("timeMap"), "the 1.25x clip is retimed")
+        self.assertEqual(len(spine[0].findall("chapter-marker")), 2)
+        self.assertEqual(spine[0].find("asset-clip").get("lane"), "-1", "the music bed is a connected clip below")
+        for asset in root.findall("./resources/asset"):
+            self.assertTrue(asset.find("media-rep").get("src").startswith("file://"))
+
+    def test_existing_file_dry_run_and_unknown_format(self):
+        out, _ = self._export("guard.edl")
+        before = out.read_bytes()
+        proc = sh(sys.executable, SCRIPTS / "render.py", self.project, "--export-timeline", out, "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", "2.0: an existing file is refused")
+        self.assertEqual(out.read_bytes(), before)
+        dry = self.dir / "dry.otio"
+        if dry.exists():
+            dry.unlink()
+        doc = json.loads(script("render.py", self.project, "--export-timeline", dry, "--dry-run", "--json").stdout)
+        self.assertEqual((doc["dry_run"], doc["verified"]), (True, False))
+        self.assertFalse(dry.exists(), "a dry run writes nothing")
+        proc = sh(sys.executable, SCRIPTS / "render.py", self.project, "--export-timeline", self.dir / "x.aaf", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")

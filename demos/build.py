@@ -761,6 +761,13 @@ def demo_render_project(ctx):
     ctx.script("render.py", FIX / "project.json", "--fast")
     if not after.exists():
         raise BuildError("render.py did not write %s" % after)
+    # 2.1: the same project as an editor timeline (nothing rendered), so every demo build runs
+    # --export-timeline end to end and the gallery shows the command next to the render
+    timeline = ctx.path("timeline.otio")
+    ctx.script("render.py", FIX / "project.json", "--export-timeline", timeline)
+    if not timeline.exists():
+        raise BuildError("render.py --export-timeline did not write %s" % timeline)
+    ctx.note("the same project also opens in an editor: --export-timeline writes .otio / .fcpxml / .edl")
     return before, after
 
 

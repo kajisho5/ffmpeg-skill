@@ -560,3 +560,33 @@ plain `cut.py --segments` file (`START-END` per line) rather than a `render.py` 
 because the camera index a project's clips need is already sitting in the JSON `cuts` field
 (`[[start, end, camera], ...]`) — turning that into `clips[]` is a few lines in the calling agent,
 not a new file format this tool would have to maintain.
+
+## 2.1.0 — handing the cut to an editor
+
+- **`--export-timeline` is an option on `render.py`, not a 43rd tool.** The input is a
+  project file and the translation is render.py's own reading of it (paths resolved the same
+  way, the same validation); a separate tool would re-implement both. Code:
+  `render.export_timeline()`, `_common/timeline.py`.
+- **The timeline matches the project's numbers, not a render's.** A dissolve is centred on
+  each cut and trimmed `trim_head`/`trim_tail` frames either side, so the total is the sum of the
+  clip lengths minus one transition per join -- what `join.py`'s xfade renders by design. A real
+  render can come out a few frames longer, because `join.py` offsets each crossfade by the
+  part's *container* duration (audio priming included); that is render's drift, recorded as a
+  follow-up, and copying it into the timeline would hand an editor a cut nobody asked for.
+  Test: `test_build_centres_each_dissolve_and_keeps_the_rendered_length`.
+- **What a timeline cannot carry is reported, never dropped.** Captions, graphics, overlays,
+  the silence cut, fit, audio processing, loudness and the export preset go to
+  `timeline.not_exported` and stderr. A caption track or a title in FCPXML would be a second
+  implementation of `caption.py`/`graphics.py` whose output no one here can see.
+  Test: `test_build_refuses_what_a_timeline_cannot_hold`.
+- **OTIO's `source_range` is timeline length, with the speed in a `LinearTimeWarp`.** Core
+  OTIO does not rescale a clip's duration by its effects; the first version stored the
+  speed-scaled source length and the reference `opentimelineio` library (0.18) measured the
+  track at 253 frames for a 225-frame cut. Test:
+  `test_otio_track_lengths_add_up_without_counting_transitions`.
+- **Verified here: structure and arithmetic; not verified here: an editor opening the file.**
+  All three formats were read back by the reference OTIO library and its FCPXML / CMX 3600
+  adapters at the right length, but none of Final Cut, Resolve or Premiere is available in this
+  environment, and OTIO's own FCPXML adapter ignores dissolves, markers and retiming, so those
+  parts of the FCPXML are checked only against Apple's schema by hand. The editor round trip is
+  on #143's real-hands checklist.
