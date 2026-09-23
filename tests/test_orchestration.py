@@ -69,6 +69,36 @@ class OrchestrationTests(MediaFixtures):
         self.assertIsNone(data.get("snap"))
         self.assertFalse(any("--snap" in c for c in data["commands"]))
 
+    def test_render_dry_run_joins_a_trimmed_and_an_untrimmed_audio_clip(self):
+        """A trimmed clip is a cut the dry run never wrote, so join.py saw its probe stub (which
+        always has a video stream) next to the untrimmed, audio-only clip and refused the plan as
+        an audio/video mix. The join is planned as audio, from the clip that exists."""
+        proj = OUT / "render_pending_audio.json"
+        proj.write_text(json.dumps({
+            "output": str(OUT / "render_pending_audio.wav"),
+            "transition": {"type": "none"},
+            "clips": [{"src": str(self.mic), "in": "0.5", "out": "2"}, {"src": str(self.mic)}],
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        self.assertEqual((data["status"], data["dry_run"], data["stages"]), ("completed", True, ["clips", "join"]))
+        join_cmd = [c for c in data["commands"] if "concat=n=2:v=0:a=1" in c]
+        self.assertEqual(len(join_cmd), 1, data["commands"])
+        self.assertNotIn("libx264", join_cmd[0])
+        self.assertTrue(any("clip00.wav does not exist yet" in c for c in data["commands"]), data["commands"])
+        # a trimmed video clip (clip00.mp4, pending) next to an untrimmed .wav is the audio/video
+        # mix the real run refuses: the plan refuses it too, for that reason, not as an audio join
+        # that cannot fill render's joined.mp4
+        proj = OUT / "render_pending_mix.json"
+        proj.write_text(json.dumps({
+            "output": str(OUT / "render_pending_mix.mp4"),
+            "transition": {"type": "none"},
+            "clips": [{"src": str(self.src), "in": "0.5", "out": "2"}, {"src": str(self.mic)}],
+        }), encoding="utf-8")
+        err = json.loads(script("render.py", proj, "--dry-run", "--json", expect_fail=True).stdout)["error"]
+        self.assertIn(f"{self.mic} has no video stream while ", err["message"])
+        self.assertIn("clip00.mp4, which does not exist yet, is expected to have one", err["message"])
+        self.assertNotIn("give -o an audio extension", err["message"])
+
 
     def test_zero_or_negative_fps_refused_across_every_cfr_script(self):
         """--fps flows straight into cfr_args(meta, args.fps) / a `fps or source_fps or 30.0`

@@ -451,10 +451,13 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "reencoded": {"type": "boolean"},
                  "lossless_alternative": {"type": ["string", "null"], "description": "when a lossless cut re-encoded because of the keyframe snap: the --start that would stream-copy instead, and how far it is from the request"}}
     elif name == "join":
-        extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"}, "expected_duration": {"type": "number"},
+        extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"},
+                 "expected_duration": {"type": ["number", "null"], "description": "clip lengths minus the transitions; null under --dry-run while an input is pending (its length is unknown)"},
                  "sample_rate": {"type": "integer", "description": "audio mode only"}, "channels": {"type": "integer", "description": "audio mode only"},
                  "video": {"type": "boolean", "description": "false in audio mode: the output has no video stream"},
-                 "skipped": {"type": "array", "description": "inputs --on-missing skip left out: [{index, path, reason}] ([] when none were)"}}
+                 "skipped": {"type": "array", "description": "inputs --on-missing skip left out: [{index, path, reason}] ([] when none were)"},
+                 "pending": {"type": "array", "description": "--dry-run: inputs that do not exist yet, planned on as an earlier step's output and never also under skipped: [{index, path}] ([] otherwise)"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--dry-run with pending inputs: which ones, what a real run does if one is still missing (including a skip that leaves fewer than two inputs), and whether the mode came from the extensions"}}
     elif name == "audio":
         extra = {"video": {"type": "boolean", "description": "true when the input's video stream was copied; false for an audio output extension (extraction)"},
                  "audio_stream": {"type": "integer", "description": "which input audio stream was processed (--audio-stream)"},

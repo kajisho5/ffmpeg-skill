@@ -24,19 +24,48 @@ Examples:
 Every input is checked before anything is joined: a missing, empty or unreadable segment is
 refused with every problem named at once (kind input), never discovered one run at a time.
 --on-missing skip joins the usable segments instead and lists the others under `skipped`.
+Under --dry-run a segment that does not exist yet is an earlier step's output: it is planned
+on and named under `pending` (never `skipped`), whichever --on-missing was given, and its
+extension stands in for what it will hold (an audio extension: no picture).
 """
 import argparse
 import os
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
 LAYOUTS = {1: "mono", 2: "stereo", 6: "5.1", 8: "7.1"}
 # inputs --on-missing skip dropped, reported in the success document (empty when nothing was)
 STATE_SKIPPED: List[Dict[str, Any]] = []
+# --dry-run: inputs that do not exist yet, planned on as an earlier step's output
+STATE_PENDING: List[Dict[str, Any]] = []
+STATE_NOTES: List[str] = []
+
+
+def reported() -> Dict[str, Any]:
+    """The input bookkeeping both success documents carry: `skipped` is what the join left out,
+    `pending` what a dry run planned on without it existing; `notes` says the same in words."""
+    extra: Dict[str, Any] = {"skipped": list(STATE_SKIPPED), "pending": list(STATE_PENDING)}
+    if STATE_NOTES:
+        extra["notes"] = list(STATE_NOTES)
+    return extra
+
+
+def unpending_length(durs: List[float], d: float) -> Optional[float]:
+    """The joined length the clip durations add up to, or None while an input is pending: its
+    dry-run stub says 0 s, which would count the clip as nothing and still subtract a transition
+    for it (a negative length when nothing exists yet)."""
+    if STATE_PENDING:
+        return None
+    return round(sum(durs) - d * (len(durs) - 1), 3)
+
+
+def expected_text(expected: Optional[float]) -> str:
+    """unpending_length() as the stderr summary line puts it."""
+    return f"expected ~{expected:.3f}s" if expected is not None else "expected length unknown until the pending inputs exist"
 
 
 def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
@@ -47,8 +76,11 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     for p, dur in zip(args.inputs, durs):
         if d and dur <= d * 2 and not STATE.dry_run:
             die(f"{p} is only {dur:.2f}s, too short for a {d:.2f}s crossfade; shorten --duration")
-    rates = [m["audio"].get("sample_rate") or 48000 for m in metas]
-    chans = [m["audio"].get("channels") or 2 for m in metas]
+    # a pending input's probe is the dry-run stub (rate and layout unmeasured): plan from the
+    # clips that exist, and fall back to 48 kHz stereo only when none does
+    known = [m for m in metas if not m.get("dry_run")] or metas
+    rates = [m["audio"].get("sample_rate") or 48000 for m in known]
+    chans = [m["audio"].get("channels") or 2 for m in known]
     rate = args.sample_rate or rates[0]
     channels = args.channels or max(chans)
     layout = LAYOUTS.get(channels)
@@ -76,7 +108,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
             prev = out
     cmd += ["-filter_complex", ";".join(parts), "-map", "[aout]", "-vn"] + audio_codec_for(output) + [output]
     run(cmd)
-    expected = sum(durs) - d * (n - 1)
+    expected = unpending_length(durs, d)
     r = probe(output, role="output")
     a = r.get("audio") or {}
     if not STATE.dry_run:
@@ -84,9 +116,9 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
             die(f"{output} unexpectedly contains a video stream")
         if a.get("sample_rate") != rate or a.get("channels") != channels:
             die(f"{output} is {a.get('sample_rate')} Hz {a.get('channels')} ch, expected {rate} Hz {channels} ch")
-    info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, {expected_text(expected)}, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
          + ("crossfade" if d else "butt join") + ")")
-    emit(output, mode="audio", skipped=list(STATE_SKIPPED), clips=n, transition=args.transition if d else "none", expected_duration=round(expected, 3),
+    emit(output, mode="audio", **reported(), clips=n, transition=args.transition if d else "none", expected_duration=expected,
          sample_rate=rate, channels=channels, video=False)
     return 0
 
@@ -118,17 +150,20 @@ def read_list(path: str) -> List[str]:
     return entries
 
 
-def preflight(paths: List[str]) -> List[Dict[str, Any]]:
+def preflight(paths: List[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Every problem with every input, found before anything runs: missing, empty (0 bytes,
     the usual trace of a TTS or download step that failed after creating its file), or not
     readable as media. One ffprobe per file; nothing is decoded. Under --dry-run a file that
-    does not exist yet is not a problem: in a planned pipeline it is an earlier step's output."""
+    does not exist yet is not a problem but pending (the second list, with a note): in a
+    planned pipeline it is an earlier step's output, and the plan keeps it."""
     ffprobe = require_tool("ffprobe")
     problems: List[Dict[str, Any]] = []
+    pending: List[Dict[str, Any]] = []
     for i, p in enumerate(paths):
+        if dry_run_input_pending(p):
+            pending.append({"index": i, "path": p})
+            continue
         if not os.path.exists(p):
-            if STATE.dry_run:
-                continue  # a dry-run pipeline plans on outputs earlier steps have not written yet
             problems.append({"index": i, "path": p, "reason": "missing"})
             continue
         if os.path.isdir(p):
@@ -143,7 +178,7 @@ def preflight(paths: List[str]) -> List[Dict[str, Any]]:
         if proc.returncode != 0 or not kinds & {"audio", "video"}:
             first = ((proc.stderr or "").strip().splitlines() or ["no audio or video stream"])[-1]
             problems.append({"index": i, "path": p, "reason": f"unreadable: {first}"})
-    return problems
+    return problems, pending
 
 
 def main() -> int:
@@ -180,7 +215,7 @@ def main() -> int:
     if not args.inputs:
         die("give at least two clips (or --list FILE)")
     skipped: List[Dict[str, Any]] = []
-    problems = preflight(args.inputs)
+    problems, pending = preflight(args.inputs)
     if problems and args.on_missing == "fail":
         listing = "; ".join(f"#{p['index'] + 1} {p['path']}: {p['reason']}" for p in problems)
         die(f"{len(problems)} of {len(args.inputs)} inputs cannot be joined: {listing}",
@@ -192,21 +227,51 @@ def main() -> int:
         for p in problems:
             info(f"skipping #{p['index'] + 1} {p['path']}: {p['reason']}")
     STATE_SKIPPED[:] = skipped
+    STATE_PENDING[:] = pending
+    if pending:
+        # a dry run cannot know whether the file will be there: it plans on it, and says what a
+        # real run does if it still is not (the same --on-missing rule as any missing input --
+        # including the refusal when skipping would leave fewer than two inputs)
+        left = len(args.inputs) - len(pending)
+        if args.on_missing == "fail":
+            then = "refuses the join if one is still missing"
+        elif left >= 2:
+            then = "skips one that is still missing"
+        else:
+            then = (f"skips one that is still missing and refuses the join if that leaves fewer than two inputs "
+                    f"(only {left} exist{'s' if left == 1 else ''} now)")
+        STATE_NOTES.append(f"{len(pending)} of {len(args.inputs) + len(skipped)} inputs do not exist yet and were planned on "
+                           "as an earlier step's output: " + ", ".join(f"#{p['index'] + 1} {p['path']}" for p in pending)
+                           + f"; a real run {then}")
     if len(args.inputs) < 2:
         die("give at least two clips" if not skipped else
             f"only {len(args.inputs)} usable input(s) left after skipping {len(skipped)}; nothing to join",
             skipped=skipped)
     validate_color(args.pad_color, "--pad-color")
     metas = [probe(p) for p in args.inputs]
-    if all(not m.get("video") for m in metas):
+    # A pending input's probe is the dry-run stub, whose (0x0) video stream says nothing about the
+    # file an earlier step will write. Its extension stands in: a step names its output for what
+    # it holds, so an audio extension (.wav, .m4a, ...) is taken for a file without a picture and
+    # any other for one with a picture. Measured and pending inputs then meet the same rules a
+    # real run applies: all without a picture is an audio join, a mix is refused.
+    pictured = [(not is_audio_output(p)) if m.get("dry_run") else bool(m.get("video")) for p, m in zip(args.inputs, metas)]
+    if all(m.get("dry_run") for m in metas):
+        STATE_NOTES.append(f"no input exists yet: {'a video' if any(pictured) else 'an audio'} join was planned from the file extensions")
+    if not any(pictured):
         for p, m in zip(args.inputs, metas):
             if not m.get("audio"):
                 die(f"{p} has neither a video nor an audio stream")
         return join_audio(args, metas)
-    for p, m in zip(args.inputs, metas):
-        if not m.get("video"):
-            others = [q for q, mm in zip(args.inputs, metas) if mm.get("video")]
-            die(f"{p} has no video stream" + (f" while {others[0]} has one; join audio with audio or give every clip a picture" if others else ""))
+    for p, m, pic in zip(args.inputs, metas, pictured):
+        if not pic:
+            # name an input measured to have a picture first; a pending one only as expected to
+            measured = [q for q, mm in zip(args.inputs, metas) if mm.get("video") and not mm.get("dry_run")]
+            planned = [q for q, mm, pc in zip(args.inputs, metas, pictured) if pc and mm.get("dry_run")]
+            other = (f"{measured[0]} has one" if measured else
+                     f"{planned[0]}, which does not exist yet, is expected to have one (its extension is not an audio one)" if planned else "")
+            die((f"{p} does not exist yet, and its audio extension says it will have no video stream" if m.get("dry_run")
+                 else f"{p} has no video stream")
+                + (f" while {other}; join audio with audio or give every clip a picture" if other else ""))
     first = metas[0]["video"]
     fw, fh = first["width"], first["height"]
     if first.get("rotation") in (90, -90, 270, -270):
@@ -293,10 +358,10 @@ def main() -> int:
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     cmd += video_args(hdr_meta or metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
-    expected = sum(durs) - d * (n - 1)
+    expected = unpending_length(durs, d)
     r = probe(output, role="output")
-    info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
-    emit(output, mode="video", skipped=list(STATE_SKIPPED), clips=n, transition=args.transition, expected_duration=round(expected, 3),
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
+    emit(output, mode="video", **reported(), clips=n, transition=args.transition, expected_duration=expected,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
     return 0
 
