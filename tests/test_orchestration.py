@@ -1722,6 +1722,13 @@ class TimelineExportTests(unittest.TestCase):
         for word in ("captions", "export preset", "voice"):
             self.assertIn(word, joined)
         self.assertNotIn("silence", joined, "an empty silence block asked for nothing")
+        # what the render refuses too: a clip with no source, a fit.py --fit that does not exist
+        for proj, word in (({"clips": [{"src": "a.mp4"}, {"in": 0}]}, "clips[1]: no src"),
+                           ({"clips": [{"src": "a.mp4"}], "frame": {"aspect": "9:16", "fit": "stretch"}}, "frame.fit")):
+            with self.subTest(refused=word):
+                with self.assertRaises(tl_mod.TimelineError) as ctx:
+                    tl_mod.build(proj, probes, rel)
+                self.assertIn(word, str(ctx.exception))
 
     def test_ntsc_rates_are_exact(self):
         tl_mod = self._tl()
@@ -1729,6 +1736,128 @@ class TimelineExportTests(unittest.TestCase):
         self.assertEqual(tl_mod.exact_rate(29.97), Fraction(30000, 1001))
         self.assertEqual(tl_mod.exact_rate(23.976), Fraction(24000, 1001))
         self.assertEqual(tl_mod.exact_rate(25.0), Fraction(25))
+
+    def test_times_are_read_with_the_render_grammar(self):
+        """Clip in/out and chapter times in the forms render.py's own stages take ("0:01",
+        hh:mm:ss:ff at the source's fps, @fps) count the frames the numeric form counts. 2.2.1
+        called float() on them: the --init starter's own "in": "0:00" was a traceback."""
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        probes["/m/v.m4a"] = {"duration": 8, "audio": {"channels": 2}}
+        rel = lambda p: f"/m/{p}"  # noqa: E731
+
+        def frames(clip, at, **proj):
+            tl = tl_mod.build(dict(proj, clips=[dict({"src": "a.mp4"}, **clip)], chapters=[{"at": at, "title": "x"}]),
+                              probes, rel)
+            c = tl["clips"][0]
+            return c["src_in"], c["src_out"], tl["total"], [m["at"] for m in tl["markers"]]
+
+        numeric = frames({"in": 1.5, "out": 5}, 2)
+        self.assertEqual(numeric, (45, 150, 105, [60]))
+        for clip, at in (({"in": "0:01.5", "out": "0:05"}, "0:02"),
+                         ({"in": "00:00:01:15", "out": "00:00:05:00"}, "00:00:02:00@30"),
+                         ({"in": "00:00:01:15@30", "out": "0:00:05,000"}, "2")):
+            with self.subTest(clip=clip, at=at):
+                self.assertEqual(frames(clip, at), numeric)
+        self.assertEqual(frames({"in": "0:00", "out": 5}, "0:00"), frames({"in": 0, "out": 5}, 0))
+        self.assertEqual(frames({"in": "0:00", "out": 5}, "0:00")[3], [0], 'a chapter at "0:00" is the first frame')
+        # hh:mm:ss:ff is on the SOURCE's clock, as cut.py reads it: 00:00:01:15 of a 30 fps source
+        # is 1.5 s, 38 frames of a 25 fps sequence (at the sequence's 25 fps it would be 1.6 s, 40)
+        self.assertEqual(frames({"in": "00:00:01:15", "out": 5}, 0, frame={"fps": 25})[:2], (38, 125))
+        # a clip with no picture has no fps, and cut.py takes no other: frame.fps does not stand in
+        # for it (the render refuses 00:00:01:15 there), so it needs its @fps in both paths
+        with self.assertRaisesRegex(tl_mod.TimelineError, "@fps"):
+            frames({"src": "v.m4a", "in": "00:00:01:15", "out": 5}, 0, frame={"fps": 30})
+        self.assertEqual(frames({"src": "v.m4a", "in": "00:00:01:15@30", "out": 5}, 0, frame={"fps": 30})[:2], (45, 150))
+        # a chapter list carries no fps: render.py's chapters stage needs @fps there too
+        for clip, at, word in (({"in": "1:xx"}, 0, "not a time"), ({"in": "nan"}, 0, "not a time"),
+                               ({"in": -1}, 0, "negative"), ({"speed": "fast"}, 0, "not a number"),
+                               ({}, "00:00:02:00", "@fps")):
+            with self.subTest(refused=clip or at):
+                with self.assertRaises(tl_mod.TimelineError) as ctx:
+                    frames(clip, at)
+                self.assertIn(word, str(ctx.exception))
+        with self.assertRaisesRegex(tl_mod.TimelineError, "@fps"):  # no picture and no frame.fps: no rate to read
+            tl_mod.build({"clips": [{"src": "a.mp4"}, {"src": "v.m4a", "in": "00:00:01:15"}]}, probes, rel)
+
+    def test_sequence_frame_is_the_frame_the_render_delivers(self):
+        """The sequence is sized by fit.py's own rule on the project frame. 2.2.1 took the width
+        from the project and the height from the source: {aspect 16:9, width 1920} over a 4K
+        source was a 1920x2160 sequence. A picture of another aspect is a reframe: EDL and OTIO
+        cannot state it, so they name it in not_exported with the project's frame.fit; FCPXML
+        states it (test_fcpxml_describes_each_source_and_states_the_conform)."""
+        tl_mod = self._tl()
+
+        def seq(frame, w, h, rotation=0, fmt="edl"):
+            probes = {"/m/a.mp4": {"duration": 8, "video": {"fps": 30.0, "width": w, "height": h, "rotation": rotation},
+                                   "audio": {"channels": 2}}}
+            tl = tl_mod.build({"clips": [{"src": "a.mp4"}], "frame": frame}, probes, lambda p: f"/m/{p}")
+            return (tl["width"], tl["height"]), [x for x in tl_mod.summary(tl, fmt)["not_exported"] if "reframe" in x or "blur" in x]
+
+        self.assertEqual(seq({"aspect": "16:9", "width": 1920}, 3840, 2160), ((1920, 1080), []))
+        for fit in ("crop", "pad", "blur"):
+            with self.subTest(fit=fit):
+                size, reframe = seq({"aspect": "16:9", "width": 1920, "fit": fit}, 640, 480)
+                self.assertEqual(size, (1920, 1080))
+                self.assertEqual(len(reframe), 1)
+                self.assertIn("a.mp4", reframe[0])
+                self.assertIn(f"(frame.fit {fit})", reframe[0], "the note reports the project's own frame.fit")
+                self.assertEqual(seq({"aspect": "16:9", "width": 1920, "fit": fit}, 640, 480, fmt="otio")[1], reframe)
+                # FCPXML states pad and crop as the clip's adjust-conform; only blur's background is missing
+                self.assertEqual(len(seq({"aspect": "16:9", "width": 1920, "fit": fit}, 640, 480, fmt="fcpxml")[1]),
+                                 1 if fit == "blur" else 0)
+        self.assertEqual(seq({"width": 1920}, 640, 360), ((1920, 1080), []), "one side follows the source's aspect")
+        self.assertEqual(seq({"aspect": "9:16", "height": 1920}, 1920, 1080)[0], (1080, 1920))
+        self.assertEqual(seq({"aspect": "9:16"}, 1920, 1080)[0], (608, 1080), "fit.py's bound: no upscale")
+        self.assertEqual(seq({}, 1920, 1080, rotation=90), ((1080, 1920), []), "the displayed picture")
+        with self.assertRaises(tl_mod.TimelineError):
+            seq({"aspect": "wide"}, 1920, 1080)
+
+    def test_fcpxml_describes_each_source_and_states_the_conform(self):
+        """Each video asset carries its own source's format and the sequence its frame: with one
+        format for both, a 1280x720 asset under a 1080x1920 frame claimed to be 1080x1920. A clip
+        of another aspect states its conform, which the DTD reads as fit when it is absent: fill
+        for frame.fit crop, fit for pad."""
+        import xml.etree.ElementTree as ET
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        probes["/m/tall.mp4"] = {"duration": 8, "video": {"fps": 30.0, "width": 1080, "height": 1920}, "audio": {"channels": 2}}
+        probes["/m/sq25.mp4"] = {"duration": 8, "video": {"fps": 25.0, "width": 96, "height": 96}, "audio": {"channels": 2}}
+        for fit, conform in (("crop", "fill"), ("pad", "fit")):
+            with self.subTest(fit=fit):
+                tl = tl_mod.build({"clips": [{"src": "a.mp4"}, {"src": "tall.mp4"}, {"src": "sq25.mp4"}],
+                                   "frame": {"aspect": "9:16", "width": 1080, "fit": fit}}, probes, lambda p: f"/m/{p}")
+                root = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8"))
+                formats = {f.get("id"): (f.get("width"), f.get("height"), f.get("frameDuration"))
+                           for f in root.findall("./resources/format")}
+                assets = {a.get("name"): a.get("format") for a in root.findall("./resources/asset")}
+                seq = root.find("./library/event/project/sequence")
+                self.assertEqual(formats[seq.get("format")], ("1080", "1920", "1/30s"))
+                self.assertEqual(formats[assets["a.mp4"]], ("1280", "720", "1/30s"))
+                self.assertEqual(assets["tall.mp4"], seq.get("format"), "a source that is the frame shares its format")
+                self.assertEqual(formats[assets["sq25.mp4"]], ("96", "96", "1/25s"))
+                spine = seq.find("spine").findall("asset-clip")
+                self.assertEqual([c.get("format") for c in spine], [assets["a.mp4"], assets["tall.mp4"], assets["sq25.mp4"]])
+                self.assertEqual([[e.get("type") for e in c.findall("adjust-conform")] for c in spine],
+                                 [[conform], [], [conform]])
+
+    def test_fcpxml_keeps_the_dtd_child_order_on_a_retimed_first_clip(self):
+        """FCPXML 1.10's asset-clip content model is timeMap, the adjust-* elements, anchored
+        items, then markers."""
+        import xml.etree.ElementTree as ET
+        tl_mod = self._tl()
+        proj = {"clips": [{"src": "a.mp4", "in": 1, "out": 5, "speed": 1.25}, {"src": "b.mp4"}],
+                "audio": {"music": "bed.m4a"}, "chapters": [{"at": "0:00", "title": "Intro"}]}
+        tl = tl_mod.build(proj, self._probes(**{"a.mp4": 8, "b.mp4": 8, "bed.m4a": 30}), lambda p: f"/m/{p}")
+        first = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8")).find("./library/event/project/sequence/spine")[0]
+        self.assertEqual([e.tag for e in first], ["timeMap", "asset-clip", "chapter-marker"])
+        self.assertEqual((first[1].get("lane"), first[2].get("start")), ("-1", "0s"))
+        # a reframed clip's adjust-conform is one of the intrinsic adjustments: after timeMap,
+        # before the anchored music bed
+        tl = tl_mod.build(dict(proj, frame={"aspect": "1:1", "fit": "crop"}),
+                          self._probes(**{"a.mp4": 8, "b.mp4": 8, "bed.m4a": 30}), lambda p: f"/m/{p}")
+        first = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8")).find("./library/event/project/sequence/spine")[0]
+        self.assertEqual([e.tag for e in first], ["timeMap", "adjust-conform", "asset-clip", "chapter-marker"])
 
     @classmethod
     def setUpClass(cls):
@@ -1815,6 +1944,11 @@ class TimelineExportTests(unittest.TestCase):
         self.assertIsNotNone(spine[2].find("timeMap"), "the 1.25x clip is retimed")
         self.assertEqual(len(spine[0].findall("chapter-marker")), 2)
         self.assertEqual(spine[0].find("asset-clip").get("lane"), "-1", "the music bed is a connected clip below")
+        # FCPXML 1.10's asset-clip holds anchored items before markers; 2.1.0-2.2.1 wrote the
+        # music bed after the chapter markers, a file that does not validate against the DTD
+        self.assertEqual([e.tag for e in spine[0]], ["asset-clip", "chapter-marker", "chapter-marker"])
+        fmt = root.find("./resources/format")
+        self.assertEqual((fmt.get("width"), fmt.get("height")), ("640", "360"), "no frame: the source's own picture")
         for asset in root.findall("./resources/asset"):
             self.assertTrue(asset.find("media-rep").get("src").startswith("file://"))
 
@@ -1832,3 +1966,133 @@ class TimelineExportTests(unittest.TestCase):
         self.assertFalse(dry.exists(), "a dry run writes nothing")
         proc = sh(sys.executable, SCRIPTS / "render.py", self.project, "--export-timeline", self.dir / "x.aaf", "--json", expect_fail=True)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+    def _sequence(self, project, name):
+        """Export `project` as FCPXML: the result document, the sequence's width x height, the root."""
+        import xml.etree.ElementTree as ET
+        out = self.dir / name
+        if out.exists():
+            out.unlink()
+        doc = json.loads(script("render.py", project, "--export-timeline", out, "--json").stdout)
+        root = ET.parse(str(out)).getroot()
+        seq = root.find("./library/event/project/sequence")
+        fmt = root.find(f"./resources/format[@id='{seq.get('format')}']")
+        return doc, (int(fmt.get("width")), int(fmt.get("height"))), root
+
+    def test_the_init_starter_exports_as_written(self):
+        """--init's project with only its src replaced: "in": "0:00" / "out": "0:30" count the frames
+        0 / 30 count, and frame {aspect 16:9, width 1920} over a 4:3 source is a 1920x1080 sequence
+        with the reframe stated (FCPXML) or named (EDL). 2.2.1 printed a traceback (and, given
+        numbers, a 1920x48 sequence)."""
+        src = self.dir / "long43.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=30",
+               "-t", "30", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", src)
+        init = self.dir / "init.json"
+        script("render.py", "--init", init)
+        proj = json.loads(init.read_text(encoding="utf-8"))
+        self.assertEqual(proj["clips"][0]["in"], "0:00", "the starter is what this test is about")
+        proj["clips"][0]["src"] = src.name
+        init.write_text(json.dumps(proj), encoding="utf-8")
+        proj["clips"][0].update({"in": 0, "out": 30})
+        numeric = self.dir / "init_numeric.json"
+        numeric.write_text(json.dumps(proj), encoding="utf-8")
+        doc, size, root = self._sequence(init, "init.fcpxml")
+        numeric_doc, numeric_size, _ = self._sequence(numeric, "init_numeric.fcpxml")
+        self.assertEqual((doc["status"], doc["timeline"]["frames"]), ("completed", 900))
+        self.assertEqual(doc["timeline"], numeric_doc["timeline"])
+        self.assertEqual(size, (1920, 1080))
+        self.assertEqual(numeric_size, (1920, 1080))
+        conform = root.find("./library/event/project/sequence/spine/asset-clip/adjust-conform")
+        self.assertEqual(conform.get("type"), "fit", "no frame.fit is pad: the 4:3 picture is fitted into 16:9")
+        self.assertFalse(any("reframe" in x for x in doc["timeline"]["not_exported"]), "the FCPXML states it")
+        edl = self.dir / "init.edl"
+        if edl.exists():
+            edl.unlink()
+        edl_doc = json.loads(script("render.py", init, "--export-timeline", edl, "--json").stdout)
+        self.assertTrue(any("reframe" in x and "long43.mp4" in x and "(frame.fit pad)" in x
+                            for x in edl_doc["timeline"]["not_exported"]), "an EDL cannot state it")
+
+    def test_an_aspect_only_frame_takes_the_export_preset_size(self):
+        """frame_from_preset() is the render's reading of an aspect-only frame; the export reads it too."""
+        proj = self.dir / "reels.json"
+        proj.write_text(json.dumps({"frame": {"aspect": "9:16"}, "export": {"preset": "reels"},
+                                    "clips": [{"src": "a.mp4", "in": 1, "out": 3}]}), encoding="utf-8")
+        doc, size, root = self._sequence(proj, "reels.fcpxml")
+        self.assertEqual(size, (1080, 1920))
+        asset = root.find("./resources/asset[@name='a.mp4']")
+        fmt = root.find(f"./resources/format[@id='{asset.get('format')}']")
+        self.assertEqual((fmt.get("width"), fmt.get("height")), ("640", "360"), "the asset is its source, not the frame")
+        clip = root.find("./library/event/project/sequence/spine/asset-clip")
+        self.assertEqual((clip.get("format"), clip.find("adjust-conform").get("type")), (asset.get("format"), "fit"))
+
+    def test_a_multi_clip_render_delivers_the_sequence_size(self):
+        """Several clips: join.py scales them to frame.width/height at the FIRST clip's aspect, then
+        fit.py reframes the join. fit.py used to get only the aspect and bound it by the joined
+        picture, so {aspect 9:16, width 72} over two 16:9 clips rendered 22x40 against a 72x128
+        sequence (render.py's own docstring project, at 1080 wide: 342x608 against 1080x1920)."""
+        for name, size, rate in (("w128.mp4", "128x72", 30), ("sq96.mp4", "96x96", 25)):
+            if not (self.dir / name).exists():
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                   f"testsrc2=size={size}:rate={rate}", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
+                   "-pix_fmt", "yuv420p", self.dir / name)
+        for i, (frame, srcs) in enumerate((({"aspect": "9:16", "width": 72}, ("w128.mp4", "w128.mp4")),
+                                           ({"aspect": "16:9", "height": 72}, ("sq96.mp4", "w128.mp4")))):
+            with self.subTest(frame=frame):
+                proj = self.dir / f"multi{i}.json"
+                proj.write_text(json.dumps({"output": f"multi{i}.mp4", "frame": frame, "transition": {"type": "none"},
+                                            "clips": [{"src": src, "in": 0, "out": 1} for src in srcs]}), encoding="utf-8")
+                _, seq_size, _ = self._sequence(proj, f"multi{i}.fcpxml")
+                work = self.dir / f"multi{i}_work"
+                shutil.rmtree(work, ignore_errors=True)
+                doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
+                m = probe(doc["output"])
+                self.assertEqual((m["video"]["width"], m["video"]["height"]), seq_size)
+
+    def test_the_export_and_fit_py_read_one_aspect_grammar(self):
+        """The render hands frame.aspect to fit.py --aspect, so the export refuses what fit.py
+        refuses: it once read "16/9" and "2.39:1" and wrote a sequence for a project whose render
+        then failed with fit.py's "bad aspect"."""
+        tl_mod = self._tl()
+        for aspect in ("16:9", "4:5", "16/9", "2.39:1", "0:9", "wide"):
+            with self.subTest(aspect=aspect):
+                fit = subprocess.run([sys.executable, str(SCRIPTS / "fit.py"), str(self.dir / "a.mp4"), "--aspect", aspect,
+                                      "--dry-run", "-o", str(self.dir / "aspect.mp4")],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    tl_mod.build({"clips": [{"src": "a.mp4"}], "frame": {"aspect": aspect}},
+                                 self._probes(**{"a.mp4": 8}), lambda p: f"/m/{p}")
+                    exported = True
+                except tl_mod.TimelineError:
+                    exported = False
+                self.assertEqual(exported, fit.returncode == 0, fit.stderr[-300:])
+                self.assertEqual(exported, aspect in ("16:9", "4:5"))
+
+    def test_a_bad_time_is_an_input_failure_not_a_traceback(self):
+        """A time that does not parse, and a project object that is not an object, are `kind: input`
+        with the field named. "export": "reels" (or a string frame, a string clip, a clip with no
+        src) was an AttributeError / KeyError traceback with nothing on stdout under --json --
+        in the render and, once --export-timeline read the export preset, in the export too."""
+        cases = {
+            "bad_time": ({"clips": [{"src": "a.mp4", "in": "1:xx", "out": 5}]}, "clips[0].in"),
+            "export_str": ({"frame": {"aspect": "9:16"}, "export": "reels", "clips": [{"src": "a.mp4"}]},
+                           "export: must be an object"),
+            "frame_str": ({"frame": "16:9", "clips": [{"src": "a.mp4"}]}, "frame: must be an object"),
+            "clip_str": ({"clips": ["a.mp4"]}, "clips[0]: must be an object"),
+            "clips_obj": ({"clips": {"src": "a.mp4"}}, "clips: must be a list"),
+            "no_src": ({"clips": [{"src": "a.mp4"}, {"in": 0}]}, "clips[1]: no src"),
+        }
+        for name, (body, message) in cases.items():
+            with self.subTest(name):
+                proj = self.dir / f"{name}.json"
+                proj.write_text(json.dumps(body), encoding="utf-8")
+                out = self.dir / f"{name}.edl"
+                # the render path refuses the same project before its first stage (a bad time is
+                # cut.py's to refuse there, with its own message)
+                for argv in (("--export-timeline", out),) + ((("--dry-run",),) if name != "bad_time" else ()):
+                    proc = sh(sys.executable, SCRIPTS / "render.py", proj, *argv, "--json", expect_fail=True)
+                    self.assertNotIn("Traceback", proc.stderr)
+                    err = json.loads(proc.stdout)["error"]
+                    self.assertEqual(err["kind"], "input")
+                    self.assertIn(message, err["message"])
+                self.assertFalse(out.exists())

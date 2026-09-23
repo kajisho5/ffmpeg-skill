@@ -39,20 +39,16 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
-ASPECT_PRESETS = {"16:9": Fraction(16, 9), "9:16": Fraction(9, 16), "1:1": Fraction(1, 1), "4:5": Fraction(4, 5), "4:3": Fraction(4, 3), "21:9": Fraction(21, 9)}
 
 
 def parse_aspect(value: str) -> Fraction:
-    if value in ASPECT_PRESETS:
-        return ASPECT_PRESETS[value]
-    try:
-        w, h = value.split(":")
-        return Fraction(int(w), int(h))
-    except (ValueError, ZeroDivisionError):
+    # the one aspect grammar, shared with render.py's frame and --export-timeline's sequence
+    ratio = aspect_ratio(value)
+    if ratio is None:
         die(f"bad aspect '{value}', use W:H like 16:9")
-    return Fraction(1)  # unreachable
+    return ratio
 
 
 def atempo_chain(factor: float) -> str:
@@ -67,11 +63,6 @@ def atempo_chain(factor: float) -> str:
         remaining /= 100.0
     parts.append(f"atempo={remaining:.6f}")
     return ",".join(parts)
-
-
-def even(n: float) -> int:
-    v = int(round(n))
-    return v if v % 2 == 0 else v + 1
 
 
 def main() -> int:
@@ -192,31 +183,8 @@ def main() -> int:
 
     # ---- aspect / size
     if args.aspect or args.width or args.height:
-        src_ratio = Fraction(sw, sh) if sh else None
-        ratio = parse_aspect(args.aspect) if args.aspect else src_ratio
-        if args.width and args.height:
-            out_w, out_h = even(args.width), even(args.height)
-        elif args.width:
-            out_w = even(args.width)
-            out_h = even(out_w / ratio) if ratio else args.width
-        elif args.height:
-            out_h = even(args.height)
-            out_w = even(out_h * ratio) if ratio else args.height
-        elif ratio and src_ratio:
-            # No explicit --width/--height: size the canvas to the new aspect without exceeding
-            # the source's own resolution in either dimension. A narrower/taller target than the
-            # source (e.g. 9:16 from a 16:9 source) must be bounded by the source's HEIGHT, not
-            # its width -- bounding by width there multiplies the height by src_ratio/ratio (a
-            # 1920x1080 source asked for 9:16 used to come out 1920x3414, a ~3.16x upscale in
-            # both fit=pad and fit=crop, entirely unrequested).
-            if ratio <= src_ratio:
-                out_h = even(sh)
-                out_w = even(out_h * ratio)
-            else:
-                out_w = even(sw)
-                out_h = even(out_w / ratio)
-        else:
-            out_w, out_h = even(sw), even(sh)
+        # the one sizing rule, shared with render.py --export-timeline's sequence frame
+        out_w, out_h = frame_size(parse_aspect(args.aspect) if args.aspect else None, args.width, args.height, sw, sh)
         if args.fit == "crop":
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")

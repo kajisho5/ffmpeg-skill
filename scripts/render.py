@@ -64,7 +64,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
+from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -394,9 +394,14 @@ def render_pack(names: List[str], args) -> int:
 
 
 def check_keys(obj: Any, schema: str, label: str) -> None:
-    """Refuse an unrecognised key, naming the object, the key and the nearest valid one."""
-    if not isinstance(obj, dict):
+    """Refuse an unrecognised key, naming the object, the key and the nearest valid one -- and a
+    value that is not an object at all. Every stage reads its object with .get(), so
+    "export": "reels" was an AttributeError traceback, with nothing on stdout under --json, in
+    the render and --export-timeline alike. null, false and {} still ask for nothing."""
+    if not obj:
         return
+    if not isinstance(obj, dict):
+        die(f"{label}: must be an object {{...}}, got {type(obj).__name__} {obj!r:.60}")
     valid = OBJECT_KEYS[schema]
     for key in obj:
         if key in valid:
@@ -415,16 +420,23 @@ def validate_project(proj: Dict[str, Any]) -> None:
         # Every other project error is raised here, before the first ffmpeg call; a chapter typo
         # found inside the last stage costs a whole render and leaves an unchaptered file behind.
         for i, item in enumerate(proj["chapters"]):
-            check_keys(item, "chapters[]", f"chapters[{i}]")
+            if isinstance(item, dict):
+                check_keys(item, "chapters[]", f"chapters[{i}]")
             if not isinstance(item, dict) or item.get("at") is None or not str(item.get("title") or "").strip():
                 die(f'chapters[{i}]: needs {{"at": TIME, "title": STR}}')
     for name in ("clips", "graphics", "overlays"):
         items = proj.get(name)
-        if isinstance(items, list):
-            for i, item in enumerate(items):
-                check_keys(item, f"{name}[]", f"{name}[{i}]")
-                if name == "clips" and isinstance(item, dict) and item.get("snap") is not None:
-                    check_keys(item["snap"], "snap", f"clips[{i}].snap")
+        if items and not isinstance(items, list):
+            die(f"{name}: must be a list of objects [{{...}}], got {type(items).__name__} {items!r:.60}")
+        for i, item in enumerate(items or []):
+            if not isinstance(item, dict):
+                die(f"{name}[{i}]: must be an object {{...}}, got {type(item).__name__} {item!r:.60}")
+            check_keys(item, f"{name}[]", f"{name}[{i}]")
+            # every clip stage starts from rel(c["src"]): without one it was a KeyError traceback
+            if name == "clips" and not item.get("src"):
+                die(f"clips[{i}]: no src")
+            if name == "clips" and item.get("snap") is not None:
+                check_keys(item["snap"], "snap", f"clips[{i}].snap")
 
 
 _LAST_DOC: Dict[str, Any] = {}   # the JSON document the most recent sh() child printed
@@ -709,10 +721,8 @@ def frame_from_preset(frame: Dict[str, Any], export: Dict[str, Any]) -> None:
     preset = PRESETS.get(str(export.get("preset") or ""), {})
     if not (preset.get("w") and preset.get("h")):
         return
-    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*", str(frame["aspect"]))
-    if not m or float(m.group(2)) == 0:
-        return
-    if abs(float(m.group(1)) / float(m.group(2)) - preset["w"] / preset["h"]) > 0.01:
+    ratio = aspect_ratio(frame["aspect"])
+    if ratio is None or abs(float(ratio) - preset["w"] / preset["h"]) > 0.01:
         return
     frame["width"], frame["height"] = preset["w"], preset["h"]
     info(f"frame: {preset['w']}x{preset['h']} from the {export['preset']} export preset (captions and overlays are sized for delivery)")
@@ -733,8 +743,12 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
         if not os.path.exists(path):
             die(f"timeline source not found: {path}")
         probes[path] = probe(path)  # a timeline needs real durations and rates, dry run or not
+    # the sequence frame is the one the render would deliver: an aspect-only frame takes its size
+    # from the export preset exactly as the render's own frame does
+    frame = dict(proj.get("frame") or {})
+    frame_from_preset(frame, proj.get("export") or {})
     try:
-        tl = tlmod.build(proj, probes, rel)
+        tl = tlmod.build(dict(proj, frame=frame), probes, rel)
     except tlmod.TimelineError as exc:
         die(f"--export-timeline: {exc}", kind="input")
     text = tlmod.WRITERS[fmt](tl)
@@ -1059,9 +1073,14 @@ def main() -> int:
         fit.setdefault("aspect", frame["aspect"])
     if frame.get("fit"):
         fit.setdefault("fit", frame["fit"])
-    if frame.get("width") and len(parts) == 1:
+    # Several clips were scaled to frame.width/height by join.py, at the FIRST clip's aspect. When
+    # fit.py then reframes to an aspect it needs the frame's size too, or it bounds the new aspect
+    # by the joined picture: {aspect 9:16, width 1080} over two 16:9 clips rendered 342x608, where
+    # one clip (and --export-timeline's sequence) is 1080x1920.
+    sized = len(parts) == 1 or bool(fit.get("aspect"))
+    if frame.get("width") and sized:
         fit.setdefault("width", frame["width"])
-    if frame.get("height") and len(parts) == 1:
+    if frame.get("height") and sized:
         fit.setdefault("height", frame["height"])
     if frame.get("fps") and len(parts) == 1:
         fit.setdefault("fps", frame["fps"])
