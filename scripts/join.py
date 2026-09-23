@@ -25,12 +25,13 @@ Every input is checked before anything is joined: a missing, empty or unreadable
 refused with every problem named at once (kind input), never discovered one run at a time.
 --on-missing skip joins the usable segments instead and lists the others under `skipped`.
 Under --dry-run a segment that does not exist yet is an earlier step's output: it is planned
-on and named under `pending` (never `skipped`), whichever --on-missing was given.
+on and named under `pending` (never `skipped`), whichever --on-missing was given, and its
+extension stands in for what it will hold (an audio extension: no picture).
 """
 import argparse
 import os
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 
@@ -51,6 +52,20 @@ def reported() -> Dict[str, Any]:
     if STATE_NOTES:
         extra["notes"] = list(STATE_NOTES)
     return extra
+
+
+def unpending_length(durs: List[float], d: float) -> Optional[float]:
+    """The joined length the clip durations add up to, or None while an input is pending: its
+    dry-run stub says 0 s, which would count the clip as nothing and still subtract a transition
+    for it (a negative length when nothing exists yet)."""
+    if STATE_PENDING:
+        return None
+    return round(sum(durs) - d * (len(durs) - 1), 3)
+
+
+def expected_text(expected: Optional[float]) -> str:
+    """unpending_length() as the stderr summary line puts it."""
+    return f"expected ~{expected:.3f}s" if expected is not None else "expected length unknown until the pending inputs exist"
 
 
 def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
@@ -93,7 +108,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
             prev = out
     cmd += ["-filter_complex", ";".join(parts), "-map", "[aout]", "-vn"] + audio_codec_for(output) + [output]
     run(cmd)
-    expected = sum(durs) - d * (n - 1)
+    expected = unpending_length(durs, d)
     r = probe(output, role="output")
     a = r.get("audio") or {}
     if not STATE.dry_run:
@@ -101,9 +116,9 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
             die(f"{output} unexpectedly contains a video stream")
         if a.get("sample_rate") != rate or a.get("channels") != channels:
             die(f"{output} is {a.get('sample_rate')} Hz {a.get('channels')} ch, expected {rate} Hz {channels} ch")
-    info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, {expected_text(expected)}, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
          + ("crossfade" if d else "butt join") + ")")
-    emit(output, mode="audio", **reported(), clips=n, transition=args.transition if d else "none", expected_duration=round(expected, 3),
+    emit(output, mode="audio", **reported(), clips=n, transition=args.transition if d else "none", expected_duration=expected,
          sample_rate=rate, channels=channels, video=False)
     return 0
 
@@ -215,11 +230,19 @@ def main() -> int:
     STATE_PENDING[:] = pending
     if pending:
         # a dry run cannot know whether the file will be there: it plans on it, and says what a
-        # real run does if it still is not (the same --on-missing rule as any missing input)
-        then = "skips it" if args.on_missing == "skip" else "refuses the join"
+        # real run does if it still is not (the same --on-missing rule as any missing input --
+        # including the refusal when skipping would leave fewer than two inputs)
+        left = len(args.inputs) - len(pending)
+        if args.on_missing == "fail":
+            then = "refuses the join if one is still missing"
+        elif left >= 2:
+            then = "skips one that is still missing"
+        else:
+            then = (f"skips one that is still missing and refuses the join if that leaves fewer than two inputs "
+                    f"(only {left} exist{'s' if left == 1 else ''} now)")
         STATE_NOTES.append(f"{len(pending)} of {len(args.inputs) + len(skipped)} inputs do not exist yet and were planned on "
                            "as an earlier step's output: " + ", ".join(f"#{p['index'] + 1} {p['path']}" for p in pending)
-                           + f"; a real run {then} if one is still missing")
+                           + f"; a real run {then}")
     if len(args.inputs) < 2:
         die("give at least two clips" if not skipped else
             f"only {len(args.inputs)} usable input(s) left after skipping {len(skipped)}; nothing to join",
@@ -227,25 +250,28 @@ def main() -> int:
     validate_color(args.pad_color, "--pad-color")
     metas = [probe(p) for p in args.inputs]
     # A pending input's probe is the dry-run stub, whose (0x0) video stream says nothing about the
-    # file an earlier step will write: audio vs video is decided by the inputs that exist. When
-    # none does, the extensions decide -- a step names its output for what it holds, so all
-    # audio extensions (.wav, .m4a, ...) plan an audio join, anything else a video join.
-    measured = [m for m in metas if not m.get("dry_run")]
-    if measured:
-        audio_only = all(not m.get("video") for m in measured)
-    else:
-        audio_only = all(is_audio_output(p) for p in args.inputs)
-        STATE_NOTES.append(f"no input exists yet: {'an audio' if audio_only else 'a video'} join was planned from the file extensions")
-    if audio_only:
+    # file an earlier step will write. Its extension stands in: a step names its output for what
+    # it holds, so an audio extension (.wav, .m4a, ...) is taken for a file without a picture and
+    # any other for one with a picture. Measured and pending inputs then meet the same rules a
+    # real run applies: all without a picture is an audio join, a mix is refused.
+    pictured = [(not is_audio_output(p)) if m.get("dry_run") else bool(m.get("video")) for p, m in zip(args.inputs, metas)]
+    if all(m.get("dry_run") for m in metas):
+        STATE_NOTES.append(f"no input exists yet: {'a video' if any(pictured) else 'an audio'} join was planned from the file extensions")
+    if not any(pictured):
         for p, m in zip(args.inputs, metas):
             if not m.get("audio"):
                 die(f"{p} has neither a video nor an audio stream")
         return join_audio(args, metas)
-    for p, m in zip(args.inputs, metas):
-        if not m.get("video"):
-            # name an input measured to have a picture, never a pending one's stub
-            others = [q for q, mm in zip(args.inputs, metas) if mm.get("video") and not mm.get("dry_run")]
-            die(f"{p} has no video stream" + (f" while {others[0]} has one; join audio with audio or give every clip a picture" if others else ""))
+    for p, m, pic in zip(args.inputs, metas, pictured):
+        if not pic:
+            # name an input measured to have a picture first; a pending one only as expected to
+            measured = [q for q, mm in zip(args.inputs, metas) if mm.get("video") and not mm.get("dry_run")]
+            planned = [q for q, mm, pc in zip(args.inputs, metas, pictured) if pc and mm.get("dry_run")]
+            other = (f"{measured[0]} has one" if measured else
+                     f"{planned[0]}, which does not exist yet, is expected to have one (its extension is not an audio one)" if planned else "")
+            die((f"{p} does not exist yet, and its audio extension says it will have no video stream" if m.get("dry_run")
+                 else f"{p} has no video stream")
+                + (f" while {other}; join audio with audio or give every clip a picture" if other else ""))
     first = metas[0]["video"]
     fw, fh = first["width"], first["height"]
     if first.get("rotation") in (90, -90, 270, -270):
@@ -332,10 +358,10 @@ def main() -> int:
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     cmd += video_args(hdr_meta or metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
-    expected = sum(durs) - d * (n - 1)
+    expected = unpending_length(durs, d)
     r = probe(output, role="output")
-    info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{expected:.3f}s, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
-    emit(output, mode="video", **reported(), clips=n, transition=args.transition, expected_duration=round(expected, 3),
+    info(f"wrote {output} ({fmt_secs(r['duration'])}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
+    emit(output, mode="video", **reported(), clips=n, transition=args.transition, expected_duration=expected,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
     return 0
 

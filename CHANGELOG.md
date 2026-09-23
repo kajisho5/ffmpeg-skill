@@ -9,11 +9,16 @@
   still to come was refused as an audio/video mix ("tts_01.wav has no video stream while
   tts_03.wav has one"), a list of nothing but pending `.wav` lines planned a libx264 join into
   `voice.wav`, and a `render.py --dry-run` of an audio project with one trimmed and one untrimmed
-  clip failed at the join. Audio vs video now comes from the inputs that exist (the extensions
-  when none does), and each pending input is named -- a stderr note, the new `pending` key and
-  `notes` -- instead of being passed over in silence. With either `--on-missing` a dry run plans
-  on a pending input and never lists it under `skipped`; a real run still refuses or skips a
-  file that is missing when it runs.
+  clip failed at the join. A pending input's extension now stands in for its streams (an audio
+  extension: no picture), an audio join's rate and layout come from the inputs that exist, and
+  each pending input is named -- a stderr note, the new `pending` key and `notes` -- instead of
+  being passed over in silence. A pending `.mp4` next to a measured `.wav` is still refused as the
+  mix a real run refuses, now naming the `.wav` and the file expected to hold a picture. With
+  either `--on-missing` a dry run plans on a pending input and never lists it under `skipped`; a
+  real run still refuses or skips a file that is missing when it runs, and under `skip` the note
+  says when skipping would leave fewer than two inputs, which a real run refuses.
+  `expected_duration` is `null` while an input is pending: the placeholder's 0 s made it negative,
+  or shorter than the one clip that exists.
 
 ## 2.2.1
 

@@ -35,9 +35,17 @@ exists. When a decision changes, edit the entry in the same PR.
   says.** The file is taken for an earlier step's output (render's cut clips, a TTS line): it
   stays in the planned command and is named under `pending` and in `notes`, never under
   `skipped`, which in a dry run as in a real run holds only what the join left out. A real run
-  decides on the file as it then is: refused under `fail`, skipped under `skip`. Its probe is
-  the dry-run stub, whose video stream means nothing, so audio vs video comes from the inputs
-  that exist, and from the extensions when none does. Code: `join.preflight()`, `join.main()`.
+  decides on the file as it then is: refused under `fail`, skipped under `skip` -- and refused
+  under `skip` too when skipping leaves fewer than two inputs, which the note then says. Its
+  probe is the dry-run stub, whose video stream means nothing, so its extension stands in: an
+  audio extension (`.wav`, `.m4a`, ...) is taken for a file with no picture, any other for one
+  with a picture, and the measured and pending inputs meet the rules a real run applies (all
+  without a picture: an audio join; a mix: refused, naming a measured picture before a pending
+  one). The guess can be wrong -- an `.mp4` holding only audio is refused as a mix a real run
+  would have joined as audio -- but a plan that completes and a real run that then refuses the
+  mix, after the earlier steps ran, is the worse error. An audio join's rate and layout come
+  from the inputs that exist, and `expected_duration` is null while any input is pending: the
+  stub's 0 s would count the clip as nothing. Code: `join.preflight()`, `join.main()`, `join.unpending_length()`.
   Tests: `test_join_dry_run_plans_on_pending_segments`,
   `test_render_dry_run_joins_a_trimmed_and_an_untrimmed_audio_clip`.
 - **`verify` accepts `--dry-run` and ignores it.** Its job is to run the tools for real.
