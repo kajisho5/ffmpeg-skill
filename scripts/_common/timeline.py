@@ -23,7 +23,6 @@ import os
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import quote
 from xml.sax.saxutils import escape as _xml_escape
 
 FORMATS = {".edl": "edl", ".fcpxml": "fcpxml", ".otio": "otio"}
@@ -227,7 +226,9 @@ def _t(frames: int, rate: Fraction) -> str:
 
 
 def _url(path: str) -> str:
-    return "file://" + quote(Path(path).as_posix() if os.name != "nt" else "/" + Path(path).as_posix())
+    # pathlib builds the percent-encoded file:// URL itself (and the drive-letter form on
+    # Windows): no network-library import in scripts/, not even for quoting (see the no-fetch test)
+    return Path(os.path.abspath(path)).as_uri()
 
 
 def to_fcpxml(tl: Dict[str, Any]) -> str:
