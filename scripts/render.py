@@ -394,14 +394,10 @@ def render_pack(names: List[str], args) -> int:
 
 
 def check_keys(obj: Any, schema: str, label: str) -> None:
-    """Refuse an unrecognised key, naming the object, the key and the nearest valid one -- and a
-    value that is not an object at all. Every stage reads its object with .get(), so
-    "export": "reels" was an AttributeError traceback, with nothing on stdout under --json, in
-    the render and --export-timeline alike. null, false and {} still ask for nothing."""
-    if not obj:
-        return
+    """Refuse an unrecognised key, naming the object, the key and the nearest valid one. A value
+    that is not an object is require_object()'s to refuse, and only where the run reads it."""
     if not isinstance(obj, dict):
-        die(f"{label}: must be an object {{...}}, got {type(obj).__name__} {obj!r:.60}")
+        return
     valid = OBJECT_KEYS[schema]
     for key in obj:
         if key in valid:
@@ -411,9 +407,32 @@ def check_keys(obj: Any, schema: str, label: str) -> None:
             else f" (valid keys: {', '.join(sorted(valid))})"))
 
 
-def validate_project(proj: Dict[str, Any]) -> None:
+def require_object(obj: Any, label: str) -> None:
+    """Refuse a value that is not an object where the run reads it with .get(): "export": "reels"
+    in a render, a string frame, a clip written as a bare path. 2.2.1 died there with a traceback
+    and nothing on stdout under --json. null, false and {} still ask for nothing."""
+    if obj and not isinstance(obj, dict):
+        die(f"{label}: must be an object {{...}}, got {type(obj).__name__} {obj!r:.60}")
+
+
+def validate_project(proj: Dict[str, Any], timeline: bool = False) -> None:
+    """Every project error the run would hit, before the first ffmpeg call. A value that is not
+    an object is refused only where this run reads it (require_object()): a full render reads
+    every stage's section, a transition only between two or more clips and a clip's snap only
+    on a clip it cuts; --export-timeline (`timeline`) reads the clips, frame, audio and a
+    transition between clips, and only names the other sections in not_exported. 2.2.1 rendered
+    a single clip with "transition": "none" and exported "captions": "subs.srt", reading neither,
+    and a patch release does not refuse them."""
     check_keys(proj, "project", "project")
+    clips = proj.get("clips")
+    # the join (or the timeline's dissolves) reads the transition; an audiogram render joins nothing
+    several = isinstance(clips, list) and len(clips) > 1 and (timeline or not proj.get("audiogram"))
+    read = {"frame", "audio"} | ({"transition"} if several else set())
+    if not timeline:
+        read |= {"silence", "audiogram", "captions", "loudness", "fit", "export", "check", "snap"}
     for name in ("frame", "transition", "silence", "audiogram", "captions", "audio", "loudness", "fit", "export", "check", "snap"):
+        if name in read:
+            require_object(proj.get(name), name)
         check_keys(proj.get(name), name, name)
     check_keys((proj.get("audio") or {}).get("stems"), "audio.stems", "audio.stems")
     if isinstance(proj.get("chapters"), list):
@@ -426,16 +445,23 @@ def validate_project(proj: Dict[str, Any]) -> None:
                 die(f'chapters[{i}]: needs {{"at": TIME, "title": STR}}')
     for name in ("clips", "graphics", "overlays"):
         items = proj.get(name)
-        if items and not isinstance(items, list):
-            die(f"{name}: must be a list of objects [{{...}}], got {type(items).__name__} {items!r:.60}")
-        for i, item in enumerate(items or []):
-            if not isinstance(item, dict):
-                die(f"{name}[{i}]: must be an object {{...}}, got {type(item).__name__} {item!r:.60}")
+        if name == "clips" or not timeline:  # the export reads only the clips
+            if items and not isinstance(items, list):
+                die(f"{name}: must be a list of objects [{{...}}], got {type(items).__name__} {items!r:.60}")
+            for i, item in enumerate(items or []):
+                if not isinstance(item, dict):
+                    die(f"{name}[{i}]: must be an object {{...}}, got {type(item).__name__} {item!r:.60}")
+        for i, item in enumerate(items if isinstance(items, list) else []):
             check_keys(item, f"{name}[]", f"{name}[{i}]")
+            if name != "clips":
+                continue
             # every clip stage starts from rel(c["src"]): without one it was a KeyError traceback
-            if name == "clips" and not item.get("src"):
+            if not item.get("src"):
                 die(f"clips[{i}]: no src")
-            if name == "clips" and item.get("snap") is not None:
+            if item.get("snap") is not None:
+                # the render reads a clip's snap only on a clip it cuts (in/out), the export never
+                if not timeline and (item.get("in") is not None or item.get("out") is not None):
+                    require_object(item["snap"], f"clips[{i}].snap")
                 check_keys(item["snap"], "snap", f"clips[{i}].snap")
 
 
@@ -715,14 +741,20 @@ def frame_from_preset(frame: Dict[str, Any], export: Dict[str, Any]) -> None:
     """Fill frame.width/height from the export preset when the project gave only an aspect.
     Eval 7 (j08 twice, e01 by hand): "frame": {"aspect": "9:16"} with a reels export fitted a
     1280x720 source to 406x720, captions were burned at that size, and export.py upscaled them
-    soft. A preset that names a delivery frame of the same aspect is that frame."""
+    soft. A preset that names a delivery frame of the same aspect is that frame.
+    The match is 2.2.1's, looser than aspect_ratio(): `16/9` and `1.78:1` still take a 16:9
+    preset's size. A render that hands such a frame.aspect to fit.py fails there, as in 2.2.1;
+    one whose own fit.aspect replaces it, or that stops before fit, is sized by this match, and
+    a patch release does not change a render 2.2.1 completed."""
     if not frame.get("aspect") or frame.get("width") or frame.get("height"):
         return
     preset = PRESETS.get(str(export.get("preset") or ""), {})
     if not (preset.get("w") and preset.get("h")):
         return
-    ratio = aspect_ratio(frame["aspect"])
-    if ratio is None or abs(float(ratio) - preset["w"] / preset["h"]) > 0.01:
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*", str(frame["aspect"]))
+    if not m or float(m.group(2)) == 0:
+        return
+    if abs(float(m.group(1)) / float(m.group(2)) - preset["w"] / preset["h"]) > 0.01:
         return
     frame["width"], frame["height"] = preset["w"], preset["h"]
     info(f"frame: {preset['w']}x{preset['h']} from the {export['preset']} export preset (captions and overlays are sized for delivery)")
@@ -744,9 +776,17 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
             die(f"timeline source not found: {path}")
         probes[path] = probe(path)  # a timeline needs real durations and rates, dry run or not
     # the sequence frame is the one the render would deliver: an aspect-only frame takes its size
-    # from the export preset exactly as the render's own frame does
+    # from the export preset exactly as the render's own frame does. An export that is not an
+    # object names no preset here: 2.2.1's export never read it, and validate_project() refuses
+    # it only in the render, which reads it.
     frame = dict(proj.get("frame") or {})
-    frame_from_preset(frame, proj.get("export") or {})
+    export = proj.get("export")
+    frame_from_preset(frame, export if isinstance(export, dict) else {})
+    fit = proj.get("fit")
+    if isinstance(fit, dict) and fit.get("aspect") and frame.get("aspect") and aspect_ratio(frame["aspect"]) is None:
+        # the render hands fit.py the fit object's own aspect, never this one (only the preset
+        # match above reads it), and completes: the sequence is the frame's size without it
+        del frame["aspect"]
     try:
         tl = tlmod.build(dict(proj, frame=frame), probes, rel)
     except tlmod.TimelineError as exc:
@@ -848,7 +888,7 @@ def main() -> int:
         if "plan_version" in proj:
             return execute_plan(proj, os.path.abspath(args.project))
         base = Path(args.project).resolve().parent
-    validate_project(proj)
+    validate_project(proj, timeline=bool(args.export_timeline))
     if args.write_project:
         # Only the filled project: the point is to edit it before rendering, so nothing runs.
         try:
@@ -1073,11 +1113,18 @@ def main() -> int:
         fit.setdefault("aspect", frame["aspect"])
     if frame.get("fit"):
         fit.setdefault("fit", frame["fit"])
-    # Several clips were scaled to frame.width/height by join.py, at the FIRST clip's aspect. When
-    # fit.py then reframes to an aspect it needs the frame's size too, or it bounds the new aspect
-    # by the joined picture: {aspect 9:16, width 1080} over two 16:9 clips rendered 342x608, where
-    # one clip (and --export-timeline's sequence) is 1080x1920.
-    sized = len(parts) == 1 or bool(fit.get("aspect"))
+    # Several clips were joined by join.py: into frame.width x frame.height when the frame gives
+    # both, else at the FIRST clip's aspect. A frame of an aspect and ONE side then reached fit.py
+    # as the aspect alone, which fit.py bounds by the joined picture: {aspect 9:16, width 1080}
+    # over two 16:9 clips rendered 342x608, where one clip (and --export-timeline's sequence) is
+    # 1080x1920. Only that case gets the frame's side. A frame with both sides is already the
+    # join's size, and a project fit object with its own width, height or another aspect renders
+    # as 2.2.1 rendered it: filling the frame's sides in there overrode the fit object's aspect
+    # (fit {width 540} under a 1080x1920 frame came out 540x1920).
+    own = proj.get("fit") or {}
+    one_side = bool(frame.get("width")) != bool(frame.get("height"))
+    sized = len(parts) == 1 or bool(frame.get("aspect") and one_side and not own.get("width") and not own.get("height")
+                                    and own.get("aspect") in (None, frame.get("aspect")))
     if frame.get("width") and sized:
         fit.setdefault("width", frame["width"])
     if frame.get("height") and sized:

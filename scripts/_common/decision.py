@@ -51,10 +51,12 @@ def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
 
 def aspect_ratio(value: Any) -> Optional[Fraction]:
     """An aspect written W:H with two positive whole numbers (`16:9`, `9:16`, `4:5`) as an exact
-    ratio, or None. fit.py --aspect, render.py's frame_from_preset() and --export-timeline all
-    read an aspect through this one function, so none accepts what another refuses: `16/9` and
-    `2.39:1` are refused by all three (the timeline once took them and wrote a sequence for a
-    project whose render then failed in fit.py)."""
+    ratio, or None. fit.py --aspect and --export-timeline's sequence frame read an aspect through
+    this one function, so the export refuses `16/9` and `2.39:1` where the render hands them to
+    fit.py, which refuses them too (the timeline once took them and wrote a sequence for a
+    project whose render then failed in fit.py). render.py's frame_from_preset() keeps 2.2.1's
+    looser match: it only picks the export preset's size, and refusing there would fail renders
+    2.2.1 completed."""
     m = re.fullmatch(r"\s*(\d+)\s*:\s*(\d+)\s*", str(value))
     if not m or not int(m.group(1)) or not int(m.group(2)):
         return None

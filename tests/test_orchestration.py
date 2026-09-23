@@ -803,6 +803,25 @@ class OrchestrationTests(MediaFixtures):
         frame = {"aspect": "9:16", "width": 540}
         render.frame_from_preset(frame, {"preset": "reels"})
         self.assertEqual(frame, {"aspect": "9:16", "width": 540})
+        # 2.2.1's match, kept: fit.py refuses "16/9" and "1.78:1", but a render whose own
+        # fit.aspect replaces them (or that stops before fit) was sized for delivery by it, and
+        # 2.2.2's first draft dropped that frame without a word (captions burned at source size)
+        for aspect in ("16/9", "1.78:1", "16:9"):
+            with self.subTest(aspect=aspect):
+                frame = {"aspect": aspect}
+                render.frame_from_preset(frame, {"preset": "youtube"})
+                self.assertEqual((frame.get("width"), frame.get("height")), (1920, 1080))
+        proj = OUT / "project_aspect_slash.json"
+        proj.write_text(json.dumps({
+            "output": "render_aspect_slash.mp4",
+            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:03"}],
+            "frame": {"aspect": "16/9"}, "fit": {"aspect": "16:9"},
+            "export": {"preset": "youtube"},
+        }), encoding="utf-8")
+        proc = script("render.py", proj, "--dry-run", "--json")
+        self.assertIn("frame: 1920x1080 from the youtube export preset", proc.stderr)
+        self.assertTrue(any("--aspect 16:9 --width 1920 --height 1080" in line for line in proc.stderr.splitlines()
+                            if "fit.py" in line), proc.stderr[-2000:])
 
     def test_render_exits_nonzero_when_the_check_stage_fails(self):
         """A render whose deliverable fails its own check stage must not report success."""
@@ -2027,10 +2046,11 @@ class TimelineExportTests(unittest.TestCase):
         self.assertEqual((clip.get("format"), clip.find("adjust-conform").get("type")), (asset.get("format"), "fit"))
 
     def test_a_multi_clip_render_delivers_the_sequence_size(self):
-        """Several clips: join.py scales them to frame.width/height at the FIRST clip's aspect, then
-        fit.py reframes the join. fit.py used to get only the aspect and bound it by the joined
-        picture, so {aspect 9:16, width 72} over two 16:9 clips rendered 22x40 against a 72x128
-        sequence (render.py's own docstring project, at 1080 wide: 342x608 against 1080x1920)."""
+        """Several clips under a frame of an aspect and one side: join.py scales them to that side
+        at the FIRST clip's aspect, then fit.py reframes the join. fit.py used to get only the
+        aspect and bound it by the joined picture, so {aspect 9:16, width 72} over two 16:9 clips
+        rendered 22x40 against a 72x128 sequence (render.py's own docstring project, at 1080 wide:
+        342x608 against 1080x1920)."""
         for name, size, rate in (("w128.mp4", "128x72", 30), ("sq96.mp4", "96x96", 25)):
             if not (self.dir / name).exists():
                 sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
@@ -2048,6 +2068,24 @@ class TimelineExportTests(unittest.TestCase):
                 doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
                 m = probe(doc["output"])
                 self.assertEqual((m["video"]["width"], m["video"]["height"]), seq_size)
+        # Only that case changed. A frame with both sides is already the join's size, and a
+        # project fit object with its own width or aspect renders the size 2.2.1 rendered: the
+        # first 2.2.2 draft filled the frame's sides in there too, and fit {width 36} under a
+        # 72x128 crop frame came out 36x128 (half the picture cut away and barred by the export).
+        for i, (frame, fit, size) in enumerate((
+                ({"aspect": "9:16", "width": 72, "height": 128, "fit": "crop"}, {"width": 36}, (36, 64)),
+                ({"width": 128, "height": 72}, {"aspect": "9:16", "fit": "crop"}, (40, 72)),
+                ({"aspect": "9:16", "width": 72}, {"aspect": "4:5"}, (32, 40)))):
+            with self.subTest(frame=frame, fit=fit):
+                proj = self.dir / f"multi_own{i}.json"
+                proj.write_text(json.dumps({"output": f"multi_own{i}.mp4", "frame": frame, "fit": fit,
+                                            "transition": {"type": "none"},
+                                            "clips": [{"src": "w128.mp4", "in": 0, "out": 1}] * 2}), encoding="utf-8")
+                work = self.dir / f"multi_own{i}_work"
+                shutil.rmtree(work, ignore_errors=True)
+                doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
+                m = probe(doc["output"])
+                self.assertEqual((m["video"]["width"], m["video"]["height"]), size)
 
     def test_the_export_and_fit_py_read_one_aspect_grammar(self):
         """The render hands frame.aspect to fit.py --aspect, so the export refuses what fit.py
@@ -2067,32 +2105,77 @@ class TimelineExportTests(unittest.TestCase):
                     exported = False
                 self.assertEqual(exported, fit.returncode == 0, fit.stderr[-300:])
                 self.assertEqual(exported, aspect in ("16:9", "4:5"))
+        # ...but only an aspect the render hands to fit.py: when the project's own fit.aspect
+        # replaces it, the render completes (sized by frame_from_preset()'s 2.2.1 match) and the
+        # export writes that frame instead of refusing a project 2.2.1 exported
+        proj = self.dir / "aspect_replaced.json"
+        proj.write_text(json.dumps({"frame": {"aspect": "16/9"}, "fit": {"aspect": "16:9"}, "export": {"preset": "youtube"},
+                                    "clips": [{"src": "a.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        doc, size, _ = self._sequence(proj, "aspect_replaced.fcpxml")
+        self.assertEqual((doc["status"], size), ("completed", (1920, 1080)))
+        proj.write_text(json.dumps({"frame": {"aspect": "16/9"}, "export": {"preset": "youtube"},
+                                    "clips": [{"src": "a.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        proc = script("render.py", proj, "--export-timeline", self.dir / "aspect_refused.fcpxml", "--json", expect_fail=True)
+        self.assertIn("frame.aspect '16/9'", json.loads(proc.stdout)["error"]["message"])
 
     def test_a_bad_time_is_an_input_failure_not_a_traceback(self):
-        """A time that does not parse, and a project object that is not an object, are `kind: input`
-        with the field named. "export": "reels" (or a string frame, a string clip, a clip with no
-        src) was an AttributeError / KeyError traceback with nothing on stdout under --json --
-        in the render and, once --export-timeline read the export preset, in the export too."""
+        """A time that does not parse, and a project object that is not an object where the run
+        reads it, are `kind: input` with the field named. A string frame, a string clip, a clip
+        with no src or a transition between two clips was an AttributeError / KeyError traceback
+        with nothing on stdout under --json in the render and the export alike; "export": "reels"
+        and the other stage sections were one in the render only. A section the run never reads
+        is not refused: 2.2.1 rendered a single clip with "transition": "none" (a batch.py
+        project recipe carrying join.py's --transition none), and exported a timeline for
+        "captions": "subs.srt", listing it as not exported."""
+        both, render_only = "both", "render"
         cases = {
-            "bad_time": ({"clips": [{"src": "a.mp4", "in": "1:xx", "out": 5}]}, "clips[0].in"),
+            "bad_time": ({"clips": [{"src": "a.mp4", "in": "1:xx", "out": 5}]}, "clips[0].in", both),
+            "frame_str": ({"frame": "16:9", "clips": [{"src": "a.mp4"}]}, "frame: must be an object", both),
+            "clip_str": ({"clips": ["a.mp4"]}, "clips[0]: must be an object", both),
+            "clips_obj": ({"clips": {"src": "a.mp4"}}, "clips: must be a list", both),
+            "no_src": ({"clips": [{"src": "a.mp4"}, {"in": 0}]}, "clips[1]: no src", both),
+            "audio_str": ({"audio": "bed.m4a", "clips": [{"src": "a.mp4"}]}, "audio: must be an object", both),
+            "joined_transition_str": ({"clips": [{"src": "a.mp4"}, {"src": "b.mp4"}], "transition": "fade"},
+                                      "transition: must be an object", both),
             "export_str": ({"frame": {"aspect": "9:16"}, "export": "reels", "clips": [{"src": "a.mp4"}]},
-                           "export: must be an object"),
-            "frame_str": ({"frame": "16:9", "clips": [{"src": "a.mp4"}]}, "frame: must be an object"),
-            "clip_str": ({"clips": ["a.mp4"]}, "clips[0]: must be an object"),
-            "clips_obj": ({"clips": {"src": "a.mp4"}}, "clips: must be a list"),
-            "no_src": ({"clips": [{"src": "a.mp4"}, {"in": 0}]}, "clips[1]: no src"),
+                           "export: must be an object", render_only),
+            "captions_str": ({"captions": "subs.srt", "loudness": True, "check": "reels", "clips": [{"src": "a.mp4"}]},
+                             "captions: must be an object", render_only),
+            "cut_snap_str": ({"clips": [{"src": "a.mp4", "in": 0, "out": 2, "snap": "beats"}]},
+                             "clips[0].snap: must be an object", render_only),
         }
-        for name, (body, message) in cases.items():
+        for name, (body, message, where) in cases.items():
             with self.subTest(name):
                 proj = self.dir / f"{name}.json"
                 proj.write_text(json.dumps(body), encoding="utf-8")
                 out = self.dir / f"{name}.edl"
-                # the render path refuses the same project before its first stage (a bad time is
-                # cut.py's to refuse there, with its own message)
-                for argv in (("--export-timeline", out),) + ((("--dry-run",),) if name != "bad_time" else ()):
+                if out.exists():
+                    out.unlink()
+                # the render path refuses before its first stage (a bad time is cut.py's to refuse
+                # there, with its own message)
+                refused = ((("--dry-run",),) if name != "bad_time" else ()) + ((("--export-timeline", out),) if where == both else ())
+                for argv in refused:
                     proc = sh(sys.executable, SCRIPTS / "render.py", proj, *argv, "--json", expect_fail=True)
                     self.assertNotIn("Traceback", proc.stderr)
                     err = json.loads(proc.stdout)["error"]
                     self.assertEqual(err["kind"], "input")
                     self.assertIn(message, err["message"])
-                self.assertFalse(out.exists())
+                if where == both:
+                    self.assertFalse(out.exists())
+                else:
+                    # the export never reads the section: it writes the timeline and names it
+                    doc = json.loads(script("render.py", proj, "--export-timeline", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed")
+                    self.assertTrue(out.exists())
+        # nothing reads these, in either path: they render and export as in 2.2.1
+        for name, body in (("single_transition_str", {"clips": [{"src": "a.mp4"}], "transition": "none"}),
+                           ("uncut_snap_str", {"clips": [{"src": "a.mp4", "snap": "beats"}]})):
+            with self.subTest(name):
+                proj = self.dir / f"{name}.json"
+                proj.write_text(json.dumps(dict(body, output=f"{name}.mp4")), encoding="utf-8")
+                out = self.dir / f"{name}.edl"
+                if out.exists():
+                    out.unlink()
+                self.assertEqual(json.loads(script("render.py", proj, "--dry-run", "--json").stdout)["status"], "completed")
+                self.assertEqual(json.loads(script("render.py", proj, "--export-timeline", out, "--json").stdout)["status"],
+                                 "completed")

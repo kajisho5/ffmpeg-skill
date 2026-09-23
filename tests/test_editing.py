@@ -1050,6 +1050,32 @@ class EditingTests(MediaFixtures):
         self.assertFalse(any("libx264" in c for c in doc["commands"]), doc["commands"])
         self.assertIn("acrossfade", doc["commands"][0])
         self.assertTrue(any("file extensions" in n for n in doc["notes"]), doc["notes"])
+        # every audio extension this skill reads counts, not only the ones it writes: a pending
+        # .aiff (macOS `say -o`) was taken for a file with a picture and the plan refused as a mix
+        for i in (1, 2):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", f"sine=frequency={300 * i}:sample_rate=24000", "-t", "1.5", d / f"say_0{i}.aiff")
+        (d / "say_03.aiff").unlink(missing_ok=True)
+        (d / "say.txt").write_text("say_01.aiff\nsay_02.aiff\nsay_03.aiff\n", encoding="utf-8")
+        doc = json.loads(script("join.py", "--list", d / "say.txt", "--dry-run", "--json", "-o", d / "say.wav").stdout)
+        self.assertEqual((doc["status"], doc["mode"], len(doc["pending"])), ("completed", "audio", 1))
+        (d / "say_new.txt").write_text("new_01.aiff\nnew_02.caf\n", encoding="utf-8")
+        doc = json.loads(script("join.py", "--list", d / "say_new.txt", "--dry-run", "--json", "-o", d / "say.wav").stdout)
+        self.assertEqual(doc["mode"], "audio", "nothing written yet: .aiff and .caf plan an audio join")
+        # a pending FIRST clip of a video join: its stub is unmeasured, so the planned frame, rate
+        # and xfade offsets built on it are named as placeholders, and the audio layout comes
+        # from the clips that exist (the stub's 0 channels made a mono join stereo)
+        (d / "cam_later.mp4").unlink(missing_ok=True)
+        proc = script("join.py", d / "cam_later.mp4", self.src, self.src, "--dry-run", "--json", "-o", d / "cams.mp4")
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["mode"]), ("completed", "video"))
+        self.assertTrue(any("first input is pending" in n and "placeholders" in n for n in doc["notes"]), doc["notes"])
+        self.assertTrue(any("xfade offsets" in n for n in doc["notes"]), doc["notes"])
+        self.assertIn("channel_layouts=mono", doc["commands"][0])
+        self.assertNotIn("channel counts differ", proc.stderr)
+        doc = json.loads(script("join.py", self.src, self.src, d / "cam_later.mp4", "--dry-run", "--json", "-o", d / "cams.mp4").stdout)
+        self.assertFalse(any("placeholders" in n or "xfade offsets" in n for n in doc["notes"]),
+                         "a pending LAST clip changes neither the frame nor an offset")
         # the real run is unchanged: the missing line is skipped (or refused), never pending
         doc = json.loads(script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-missing", "skip",
                                 "--json", "-o", d / "voice.wav").stdout)

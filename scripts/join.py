@@ -33,7 +33,7 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, AUDIO_MEDIA_EXT, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -251,10 +251,12 @@ def main() -> int:
     metas = [probe(p) for p in args.inputs]
     # A pending input's probe is the dry-run stub, whose (0x0) video stream says nothing about the
     # file an earlier step will write. Its extension stands in: a step names its output for what
-    # it holds, so an audio extension (.wav, .m4a, ...) is taken for a file without a picture and
-    # any other for one with a picture. Measured and pending inputs then meet the same rules a
-    # real run applies: all without a picture is an audio join, a mix is refused.
-    pictured = [(not is_audio_output(p)) if m.get("dry_run") else bool(m.get("video")) for p, m in zip(args.inputs, metas)]
+    # it holds, so an audio extension (.wav, .m4a, .aiff, ... -- every audio file this skill
+    # reads, not only the ones it writes) is taken for a file without a picture and any other for
+    # one with a picture. Measured and pending inputs then meet the same rules a real run
+    # applies: all without a picture is an audio join, a mix is refused.
+    pictured = [(os.path.splitext(p)[1].lower() not in AUDIO_MEDIA_EXT) if m.get("dry_run") else bool(m.get("video"))
+                for p, m in zip(args.inputs, metas)]
     if all(m.get("dry_run") for m in metas):
         STATE_NOTES.append(f"no input exists yet: {'a video' if any(pictured) else 'an audio'} join was planned from the file extensions")
     if not any(pictured):
@@ -328,8 +330,9 @@ def main() -> int:
     hdr_meta = next((m for m in metas if (m.get("video") or {}).get("bt2020_or_hdr")), None)
     pixfmt = "yuv420p10le" if hdr_meta else "yuv420p"
     # the audio-only join keeps the widest layout; the video join used to force stereo and
-    # silently dropped the centre/LFE of 5.1 material
-    chans = [(m.get("audio") or {}).get("channels") or 2 for m in metas]
+    # silently dropped the centre/LFE of 5.1 material. A pending input's stub has no measured
+    # layout: plan from the inputs that exist, as join_audio() does.
+    chans = [(m.get("audio") or {}).get("channels") or 2 for m in ([m for m in metas if not m.get("dry_run")] or metas)]
     channels = args.channels or max(chans)
     layout = LAYOUTS.get(channels)
     if layout is None:
@@ -354,6 +357,14 @@ def main() -> int:
             parts.append(f"[{aprev}][a{i}]acrossfade=d={d:g}:c1=tri:c2=tri[{aout}]")
             vprev, aprev = vout, aout
 
+    # A pending input's stub is unmeasured (0x0, 0 fps, 0 s -- #77 keeps it honest rather than
+    # plausible), and the planned command is built on it: say which numbers are placeholders.
+    if metas[0].get("dry_run") and not (args.width and args.height and args.fps):
+        STATE_NOTES.append(f"the first input is pending, so the planned frame and rate ({w}x{h} @ {fps:g}fps) are "
+                           "placeholders: a real run takes them from that file")
+    if d and any(m.get("dry_run") for m in metas[:-1]):
+        STATE_NOTES.append("the planned xfade offsets count each pending input as 0 s long: a real run offsets "
+                           "by its measured length")
     output = args.output or default_output(args.inputs[0], "joined", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     cmd += video_args(hdr_meta or metas[0], args.crf, args.preset) + aac_args() + [output]

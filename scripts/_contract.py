@@ -457,7 +457,7 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "video": {"type": "boolean", "description": "false in audio mode: the output has no video stream"},
                  "skipped": {"type": "array", "description": "inputs --on-missing skip left out: [{index, path, reason}] ([] when none were)"},
                  "pending": {"type": "array", "description": "--dry-run: inputs that do not exist yet, planned on as an earlier step's output and never also under skipped: [{index, path}] ([] otherwise)"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--dry-run with pending inputs: which ones, what a real run does if one is still missing (including a skip that leaves fewer than two inputs), and whether the mode came from the extensions"}}
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--dry-run with pending inputs: which ones, what a real run does if one is still missing (including a skip that leaves fewer than two inputs), whether the mode came from the extensions, and which planned numbers are the unmeasured stub's placeholders (a pending first clip's frame and rate, xfade offsets after a pending clip)"}}
     elif name == "audio":
         extra = {"video": {"type": "boolean", "description": "true when the input's video stream was copied; false for an audio output extension (extraction)"},
                  "audio_stream": {"type": "integer", "description": "which input audio stream was processed (--audio-stream)"},

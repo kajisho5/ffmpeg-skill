@@ -566,9 +566,10 @@ are named in one refusal (`kind: input`, `problems: [{index, path, reason}]`, no
 than two inputs is refused rather than "joining" one file. Under `--dry-run` an input that does
 not exist yet is an earlier step's output, with either `--on-missing`: it stays in the plan and
 is named under `pending: [{index, path}]` and in `notes` (never `skipped`). Its extension stands
-in for its streams (an audio extension: no picture), so a pending `.mp4` next to measured audio
-is refused as the mix a real run would refuse; `expected_duration` is null while any input is
-pending.
+in for its streams (any audio extension the skill reads, `.aiff` and `.caf` included: no
+picture), so a pending `.mp4` next to measured audio is refused as the mix a real run would
+refuse; `expected_duration` is null while any input is pending, and `notes` names the planned
+frame, rate or xfade offsets that rest on a pending input's unmeasured placeholder.
 Normalises every clip to one frame size, fps, `yuv420p`, 48 kHz and one
 channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
 silent track generated for clips without audio), then chains `xfade` +
@@ -594,12 +595,13 @@ timeline is exactly as long as `join.py`'s crossfade would render it; `audio.mus
 track; inline `chapters` are markers. Times take the render's own grammar (`"0:05"`,
 `hh:mm:ss:ff` at the source's fps), and the sequence is the project's `frame` sized by
 fit.py's rule (`{aspect 16:9, width 1920}` is 1920x1080; an aspect alone takes the export
-preset's size when the preset has that aspect). A clip of another aspect gets its spatial
-conform in FCPXML (`adjust-conform`: `fill` for `frame.fit: crop`, `fit` for pad); EDL and
-OTIO cannot state one. Everything else in the project -- captions, graphics, overlays, the
-silence cut, fit, a reframe the format cannot state (and `blur`'s background), audio
-processing, loudness, export -- is listed in the result's `timeline.not_exported` and on
-stderr, never dropped silently. Media paths are absolute file URLs to the sources, nothing is
+preset's size when the preset has that aspect; an aspect fit.py refuses, such as `16/9`, is
+refused unless the project's own `fit.aspect` replaces it in the render). A clip of another
+aspect gets its spatial conform in FCPXML (`adjust-conform`: `fill` for `frame.fit: crop`,
+`fit` for pad); EDL and OTIO cannot state one. Everything else in the project -- captions,
+graphics, overlays, the silence cut, fit, a reframe the format cannot state (and `blur`'s
+background), audio processing, loudness, export -- is listed in the result's
+`timeline.not_exported` and on stderr, never dropped silently. Media paths are absolute file URLs to the sources, nothing is
 copied or encoded, and the existing-output rule applies (`--overwrite` to replace). The
 timeline follows the project's numbers exactly; a render of the same project can come out a
 few frames longer, because `join.py` offsets its crossfades by each part's container duration,
