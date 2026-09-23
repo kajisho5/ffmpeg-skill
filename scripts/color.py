@@ -169,12 +169,36 @@ def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str
     return ",".join(chain)
 
 
+def bt2020_sdr_to_bt709_chain(meta: dict) -> str:
+    """Gamut conversion only, for BT.2020 primaries on an SDR transfer (probe: `bt2020_or_hdr`
+    true, `hdr_signal` false). Such a file is already display-referred SDR: linearising it with
+    its own transfer, mapping the primaries to BT.709 and re-applying the BT.709 transfer keeps
+    white at white and grey at grey. The tone map the HDR chain adds would treat 100 % SDR white
+    as a fraction of a 1000-nit peak and darken the picture (white Y 235 -> 151, grey 126 -> 90)."""
+    v = meta["video"]
+    trc = v.get("color_transfer") or "bt709"
+    space = v.get("color_space") or "bt2020nc"
+    return ",".join([
+        f"zscale=tin={trc}:pin=bt2020:min={space}:rin={v.get('color_range') or 'tv'}:t=linear",
+        "format=gbrpf32le",
+        "zscale=p=bt709",
+        "zscale=t=bt709:m=bt709:r=tv",
+        "format=yuv420p",
+    ])
+
+
+def is_bt2020_sdr(v: dict) -> bool:
+    """BT.2020 primaries on a non-HDR transfer and no Dolby Vision: gamut-only --to-sdr."""
+    return bool(v.get("bt2020_or_hdr")) and not v.get("hdr_signal") and not v.get("dolby_vision") \
+        and v.get("color_transfer") not in ("smpte2084", "arib-std-b67")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_sdr / _lut / _retag)")
     mode = ap.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--to-sdr", action="store_true", help="tone-map HDR (PQ/HLG/BT.2020) to SDR BT.709")
+    mode.add_argument("--to-sdr", action="store_true", help="convert to SDR BT.709: tone-map HDR (PQ/HLG/Dolby Vision); BT.2020 primaries on an SDR transfer get a gamut conversion only, no tone map")
     mode.add_argument("--lut", help=".cube LUT to apply (3D)")
     mode.add_argument("--retag", choices=["bt709", "bt2020-pq", "bt2020-hlg", "bt601"], help="rewrite colour tags only (no re-encode)")
     mode.add_argument("--strip-dovi", action="store_true", help="remove the Dolby Vision RPU (profile 8.4 iPhone clips) so players use the plain HLG/HDR10 base layer; stream copy")
@@ -183,7 +207,7 @@ def main() -> int:
     ap.add_argument("--peak", type=float, default=1000.0, help="source peak brightness in nits used for PQ (default 1000)")
     ap.add_argument("--desat", type=float, default=0.0, help="tonemap desaturation strength (default 0)")
     ap.add_argument("--lut-strength", type=float, default=1.0, help="blend LUT result with the original, 0..1 (default 1)")
-    ap.add_argument("--force", action="store_true", help="run --to-sdr even if the file is not tagged as HDR (treat as PQ)")
+    ap.add_argument("--force", action="store_true", help="run --to-sdr even if the file is tagged neither HDR nor BT.2020 (tone-mapped as PQ; a BT.2020 SDR file never needs it)")
     ap.add_argument("--exposure", type=float, default=CORRECTION["exposure"][0], help="--correct: exposure in stops, -3..3 (default 0)")
     ap.add_argument("--contrast", type=float, default=CORRECTION["contrast"][0], help="--correct: contrast, 0..2, 1=unchanged (default 1)")
     ap.add_argument("--saturation", type=float, default=CORRECTION["saturation"][0], help="--correct: saturation, 0..2, 1=unchanged (default 1)")
@@ -278,10 +302,21 @@ def main() -> int:
         return 0
 
     measurements = None
+    sdr_extra: dict = {}
     if args.to_sdr:
         if not v.get("bt2020_or_hdr") and not args.force:
             die(f"{args.input} is not tagged as HDR (transfer={v.get('color_transfer')}, primaries={v.get('color_primaries')}). Use --force to tone-map anyway.")
-        vf = hdr_to_sdr_chain(meta, args.tonemap, args.peak, args.desat)
+        if is_bt2020_sdr(v):
+            vf = bt2020_sdr_to_bt709_chain(meta)
+            sdr_path = "gamut"
+            note = (f"BT.2020 primaries on an SDR transfer ({v.get('color_transfer')}): converted the gamut to BT.709 "
+                    f"without a tone map (--tonemap/--peak/--desat do not apply)")
+        else:
+            vf = hdr_to_sdr_chain(meta, args.tonemap, args.peak, args.desat)
+            sdr_path = "tonemap"
+            note = f"tone-mapped {v.get('hdr_format') or 'untagged input as PQ (--force)'} to SDR BT.709 with {args.tonemap}"
+        info(f"note: {note}")
+        sdr_extra = {"sdr_path": sdr_path, "notes": [note]}
         output = args.output or default_output(args.input, "sdr")
         tag = "sdr"
     elif args.correct:
@@ -323,7 +358,7 @@ def main() -> int:
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {r['video']['width']}x{r['video']['height']}, "
          f"{r['video']['color_transfer']}/{r['video']['color_primaries']}, {tag})")
-    extra = {"dropped_non_av_streams": dropped_streams}
+    extra = {"dropped_non_av_streams": dropped_streams, **sdr_extra}
     if measurements is not None:
         measurements["output"] = analyze_levels(output)
         extra["measurements"] = measurements

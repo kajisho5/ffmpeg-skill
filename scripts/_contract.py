@@ -443,6 +443,11 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         extra = {"measured": {"type": "object", "description": "the loudnorm measurement of the input (input_i, input_tp, input_lra, input_thresh, target_offset); with --measure-only it is the whole result"},
                  "targets": {"type": "object", "description": "the requested lufs / tp / lra"},
                  "result": {"type": "object", "description": "the written file measured again (input_i, input_tp, input_lra, ...), plus tp_ceiling_used, audio_bitrate_used and encodes"}}
+    elif name == "color":
+        extra = {"dropped_non_av_streams": {"type": "boolean"},
+                 "sdr_path": {"enum": ["tonemap", "gamut"], "description": "--to-sdr only: tonemap for PQ / HLG / Dolby Vision (and --force on an untagged file); gamut for BT.2020 primaries on an SDR transfer, converted to BT.709 without a tone map"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--to-sdr only: which path was taken and why"},
+                 "measurements": {"type": "object", "description": "--correct only: signalstats levels of input and output"}}
     elif name == "cut":
         extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},

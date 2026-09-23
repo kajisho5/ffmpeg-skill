@@ -492,6 +492,12 @@ Per-tool keys added in 1.18.0, all additive:
 | `sources` | `sync.py` | `[{path, offset_s, confidence, drift_ppm}]`, one entry per SOURCE. Present for every run, including the original single-SOURCE shape (where it mirrors the top-level `second`/`offset_seconds`/`confidence` additively). With 2+ SOURCEs it is the *only* per-source shape: there is no top-level `second`/`offset_seconds` because there is no single pair to put there |
 | `switch_mode`, `min_shot` | `multicam.py --switch energy` | `"energy"` and the `--min-shot` value used (default 1.5s), alongside the existing `cuts` (`[[start, end, camera], ...]`) which already carries the camera index for `--edl`'s companion cut list |
 
+Per-tool keys added after 2.2.2, all additive:
+
+| key | tool | what it holds |
+|---|---|---|
+| `sdr_path`, `notes` | `color.py --to-sdr` | `sdr_path` is `"tonemap"` for PQ / HLG / Dolby Vision input (and `--force` on an untagged file) or `"gamut"` for BT.2020 primaries on an SDR transfer, which is converted to BT.709 without a tone map (`--tonemap`/`--peak`/`--desat` do not apply); `notes` says which path was taken and why |
+
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one
 does not (or when there are none). Like `channels` and `chapters` it is never

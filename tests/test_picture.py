@@ -994,6 +994,33 @@ class PictureTests(MediaFixtures):
         # refuses on SDR input unless forced
         script("color.py", self.src, "--to-sdr", expect_fail=True)
 
+    def test_to_sdr_bt2020_sdr_converts_gamut_without_tonemap(self):
+        """BT.2020 primaries on an SDR transfer are not HDR: --to-sdr converts the gamut only.
+        It used to tone-map them as PQ, darkening white Y 235 -> 151 and grey 126 -> 90 while
+        still reporting verified: true. White and grey must come out where they went in."""
+        wide = OUT / "bt2020_sdr_levels.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:size=320x120:rate=30",
+           "-f", "lavfi", "-i", "color=c=0x808080:size=320x120:rate=30", "-t", "1",
+           "-filter_complex", "[0][1]vstack,format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=bt709:colormatrix=bt2020nc:log-level=error", "-tag:v", "hvc1", wide)
+
+        def luma(path, crop):
+            proc = sh("ffmpeg", "-hide_banner", "-i", str(path), "-frames:v", "1",
+                      "-vf", f"crop={crop},format=yuv420p,signalstats,metadata=print:file=-", "-f", "null", "-")
+            return float(re.search(r"lavfi\.signalstats\.YAVG=([0-9.]+)", proc.stdout).group(1))
+
+        out = OUT / "bt2020_sdr_to_sdr.mp4"
+        proc = script("color.py", wide, "--to-sdr", "--fast", "--json", "-o", out)
+        doc = json.loads(proc.stdout)
+        self.assertTrue(doc["verified"])
+        v = probe(str(out))["video"]
+        self.assertEqual((v["color_transfer"], v["color_primaries"], v["color_space"]), ("bt709", "bt709", "bt709"))
+        for crop in ("iw:ih/2-8:0:4", "iw:ih/2-8:0:ih/2+4"):  # white half, mid-grey half
+            self.assertLessEqual(abs(luma(out, crop) - luma(wide, crop)), 3, crop)
+        self.assertEqual(doc["sdr_path"], "gamut")
+        self.assertTrue(any("without a tone map" in n for n in doc["notes"]))
+        self.assertFalse(any("tonemap" in c for c in doc["commands"]), doc["commands"])
+
     def test_color_retag_is_stream_copy(self):
         out = OUT / "retag.mp4"
         proc = script("color.py", self.src, "--retag", "bt601", "-o", out)

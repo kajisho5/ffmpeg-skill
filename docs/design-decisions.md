@@ -64,10 +64,16 @@ exists. When a decision changes, edit the entry in the same PR.
 ## Colour
 
 - **A BT.2020-primaries stream is routed through the HDR (10-bit HEVC, tags preserved) path even
-  when its transfer is SDR.** `probe` reports `hdr: true` with `hdr_format: "BT.2020 SDR"` for
-  it. The alternative -- 8-bit BT.709 x264 -- would clip the wide gamut without a conversion.
-  Changing the meaning of `hdr` is a 1.x contract change and waits for 2.0. Code:
-  `_common.probe()` (`hdr = ...`), `_common.video_args()` docstring.
+  when its transfer is SDR.** `probe` reports it as `hdr: false`, `bt2020_or_hdr: true`,
+  `hdr_format: "BT.2020 SDR"` (see "`hdr` is a real HDR signal" below); the editing tools route
+  on `bt2020_or_hdr`. The alternative -- 8-bit BT.709 x264 -- would clip the wide gamut without a
+  conversion. Code: `_common.probe()`, `_common.video_args()` docstring.
+- **`color.py --to-sdr` converts such a stream's gamut without a tone map.** It is already SDR:
+  linearised with its own transfer, mapped to BT.709 primaries and re-encoded with the BT.709
+  transfer, white and grey stay where they were. The tone map is kept for PQ, HLG, Dolby Vision
+  and `--force` on an untagged file; through 2.2.2 it ran on BT.2020 SDR too and darkened white
+  from Y 235 to 151. The result says which path ran (`sdr_path`, `notes`). Code:
+  `color.is_bt2020_sdr()`. Test: `test_to_sdr_bt2020_sdr_converts_gamut_without_tonemap`.
 - **`escape_drawtext()` drops `'` and `%` from burnt-in text** instead of escaping them. Both
   characters have no reliable escape across the FFmpeg versions in CI; a missing apostrophe is a
   known limitation, a broken filter graph is not. Test: `test_drawtext_semicolon_and_quote_render_as_inert_literal_text`.

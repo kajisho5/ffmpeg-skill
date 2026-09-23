@@ -4,7 +4,13 @@
 
 ## Unreleased
 
-(nothing yet)
+- `color.py --to-sdr` no longer tone-maps BT.2020 SDR input. A file with BT.2020 primaries on
+  an SDR transfer (bt709, bt2020-10) went through the PQ tone map, which took white from Y 235
+  to 151 and mid-grey from 126 to 90 and still reported `verified: true` -- and export, check,
+  verify and the gotchas all send wide-gamut SDR files there. It now gets a gamut conversion
+  only (its own transfer to linear, BT.2020 to BT.709 primaries, back to the BT.709 transfer);
+  PQ, HLG, Dolby Vision and `--force` on an untagged file are tone-mapped as before. The result
+  says which path ran in the new `sdr_path` key (`tonemap` / `gamut`) and in `notes`.
 
 ## 2.2.2
 
