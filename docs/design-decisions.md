@@ -738,3 +738,21 @@ not a new file format this tool would have to maintain.
   changed. Tests: `test_audio_beds_without_audio_are_refused_together`,
   `test_render_real_run_names_every_unreadable_clip_source`, `test_sync_too_short_names_the_file`,
   `test_multicam_too_short_names_the_file`.
+
+
+## 2.2.6 — silence is reported, not verified
+
+- **A silent track warns by default, and refuses only on request.** `audio.py` measures the
+  whole-file peak of each `--music` / `--replace` / `--effects` file and, under `--duck`, the
+  voice. Default `--on-silent warn` still mixes it (a deliberately silent placeholder bed is a
+  real use, and join.py's `--on-silent` takes the same default and -50 dBFS peak threshold) but
+  names it under `silent` and in a note; `--on-silent fail` makes it one more `problems` entry in
+  the 2.2.4 refusal. Peak rather than mean: a sparse effects track with a quiet mean is not
+  silent. Tests: `test_audio_silent_beds_warn_by_default_and_fail_on_request`,
+  `test_audio_duck_under_a_silent_voice_is_reported`.
+- **Non-finite numbers are strings, not `-Infinity`.** `print_json` maps -inf/inf to `"-inf"` /
+  `"inf"` and NaN to `null` and serialises with `allow_nan=False`: a JSON-valid document beats a
+  numeric type for a value that has no JSON number, and `"-inf"` is what `loudness.py` already
+  reported. A silent export's note says the audio is silent; loudness.py cannot fix that, so it
+  is neither recommended nor run by `--normalize`. Test:
+  `test_audio_every_tool_json_on_silent_input_parses_strictly`.

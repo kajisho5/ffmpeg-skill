@@ -441,6 +441,20 @@ runs a shell, evaluates strings, or executes anything other than the named scrip
 
 ## JSON output
 
+Non-finite numbers never reach a `--json` document (2.2.6): every tool prints through one
+writer that turns `-inf` / `inf` into the strings `"-inf"` / `"inf"` (the spelling
+`loudness.py` already used for a silent input) and NaN into `null`, then serialises with
+`allow_nan=False`, so a strict JSON parser reads every document. A silent file's loudness is
+therefore `"lufs": "-inf"`, never `-Infinity`.
+
+`audio.py` (2.2.6) measures the whole-file peak of every `--music` / `--replace` / `--effects`
+file and, under `--duck`, of the voice: at or below `--silence-threshold` (default -50 dBFS)
+the track is silent. `--on-silent warn` (default) mixes it and adds `silent: [{flag, path,
+peak_db}]` plus a `notes` line; `--on-silent fail` names it in the single `kind: input`
+refusal's `problems` with reason `"silent (peak X dBFS)"`. `--dry-run` measures every file
+that exists. `export.py`'s `loudness` gains `silent: true` for a silent output, whose note
+says "output audio is silent" instead of recommending `loudness.py`.
+
 Per-tool keys added in 1.13: `audio` (`audio.py`) reports the mix it built — the
 `--voice` level, `stereo_widen`, whether an `--effects` bed was mixed, and with
 `--music` the `music_volume` plus a `duck` object naming the threshold (dB and

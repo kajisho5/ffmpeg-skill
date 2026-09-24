@@ -6,6 +6,7 @@
 """
 import json
 import shlex
+import subprocess
 import sys
 import unittest
 
@@ -667,6 +668,85 @@ class AudiogramTests(MediaFixtures):
             self.assertIn(str(pics[0]), doc["error"]["message"])
             self.assertIn(str(pics[1]), doc["error"]["message"])
             self.assertEqual(doc["commands"], [])
+
+    # ------------------------------------------------------------ silent tracks (2.2.6)
+    def _silent_files(self):
+        wav = OUT / "silent_bed.wav"
+        if not wav.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", "anullsrc=r=48000:cl=stereo", "-t", "3", wav)
+        clip = OUT / "silent_voice_clip.mp4"
+        if not clip.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=d=3:s=160x120",
+               "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "3", "-c:v", "libx264", "-c:a", "aac", clip)
+        return wav, clip
+
+    def test_audio_silent_beds_warn_by_default_and_fail_on_request(self):
+        """A silent --music / --effects / --replace file used to be mixed and reported as verified.
+        Default warn: mixed, named under `silent` and in a note. --on-silent fail: named in the
+        single input refusal, before ffmpeg runs, under --dry-run too."""
+        wav, _ = self._silent_files()
+        for flag in ("--music", "--effects", "--replace"):
+            doc = json.loads(script("audio.py", self.src, flag, wav, "--json",
+                                    "-o", OUT / "silent_bed_out.mp4").stdout)
+            self.assertEqual(doc["status"], "completed")
+            self.assertEqual([(t["flag"], t["path"]) for t in doc["silent"]], [(flag, str(wav))])
+            self.assertLessEqual(doc["silent"][0]["peak_db"], -50)
+            self.assertTrue(any("silent" in n for n in doc["notes"]))
+            for dry in ((), ("--dry-run",)):
+                proc = script("audio.py", self.src, flag, wav, "--on-silent", "fail", "--json",
+                              "-o", OUT / "silent_bed_out.mp4", *dry, expect_fail=True)
+                err = json.loads(proc.stdout)
+                self.assertEqual(err["error"]["kind"], "input")
+                self.assertEqual(len(err["problems"]), 1)
+                self.assertEqual(err["problems"][0]["flag"], flag)
+                self.assertRegex(err["problems"][0]["reason"], r"^silent \(peak -?[0-9.]+ dBFS\)$")
+                self.assertEqual(err["commands"], [])
+        # a real bed is never reported, and a lower threshold lets the silent one through
+        doc = json.loads(script("audio.py", self.src, "--music", self.mic, "--json", "--dry-run",
+                                "-o", OUT / "silent_bed_out.mp4").stdout)
+        self.assertNotIn("silent", doc)
+        doc = json.loads(script("audio.py", self.src, "--music", wav, "--silence-threshold", "-120",
+                                "--on-silent", "fail", "--json", "--dry-run", "-o", OUT / "silent_bed_out.mp4").stdout)
+        self.assertEqual(doc["status"], "completed")
+
+    def test_audio_duck_under_a_silent_voice_is_reported(self):
+        _, clip = self._silent_files()
+        doc = json.loads(script("audio.py", clip, "--music", self.mic, "--duck", "--json", "--dry-run",
+                                "-o", OUT / "silent_duck_out.mp4").stdout)
+        self.assertEqual([t["flag"] for t in doc["silent"]], ["input"])
+        proc = script("audio.py", clip, "--music", self.mic, "--duck", "--on-silent", "fail", "--json",
+                      "-o", OUT / "silent_duck_out.mp4", expect_fail=True)
+        self.assertEqual([p["flag"] for p in json.loads(proc.stdout)["problems"]], ["input"])
+
+    def test_audio_every_tool_json_on_silent_input_parses_strictly(self):
+        """A silent file measures -inf LUFS; json.dumps wrote it as -Infinity (export.py's
+        `loudness.lufs`), which no strict JSON parser reads. Every --json document must parse
+        with NaN/Infinity refused, and export's note must say the audio is silent."""
+        _, clip = self._silent_files()
+
+        def strict(text):
+            def refuse(c):
+                raise ValueError(f"non-standard JSON constant {c}")
+            return json.loads(text, parse_constant=refuse)
+
+        runs = [("probe.py", clip), ("check.py", clip, "--platform", "youtube"),
+                ("loudness.py", clip, "--measure-only"), ("loudness.py", clip, "-o", OUT / "silent_ln.mp4"),
+                ("export.py", clip, "--preset", "youtube", "-o", OUT / "silent_export.mp4"),
+                ("audio.py", clip, "--fade-in", "0.5", "-o", OUT / "silent_audio.mp4"),
+                ("silence.py", clip, "-o", OUT / "silent_cut.mp4")]
+        for name, *args in runs:
+            extra = ["--overwrite"] if "-o" in args else []
+            proc = subprocess.run([sys.executable, str(SCRIPTS / name), *map(str, args), "--json", *extra],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = strict(proc.stdout)  # success or refusal, either document must be strict JSON
+            self.assertIsInstance(doc, dict, name)
+            if name == "export.py":
+                self.assertEqual(doc["loudness"]["lufs"], "-inf")
+                self.assertTrue(doc["loudness"]["silent"])
+                self.assertFalse(doc["loudness"]["ok"])
+                self.assertTrue(any(n.startswith("output audio is silent") for n in doc["notes"]))
+                self.assertFalse(any("run loudness.py" in n for n in doc["notes"]))
 
 
 if __name__ == "__main__":

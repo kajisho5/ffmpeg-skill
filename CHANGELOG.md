@@ -4,7 +4,14 @@
 
 ## Unreleased
 
-(nothing yet)
+- fix: `audio.py` no longer passes a silent `--music` / `--replace` / `--effects` file, or a silent
+  voice under `--duck`, as verified. Each is peak-measured in the 2.2.4 preflight (dry run too);
+  new `--on-silent warn|fail` (default warn: `silent: [{flag, path, peak_db}]` + note; fail:
+  reason `silent (peak X dBFS)` in the one refusal) and `--silence-threshold` (default -50 dBFS).
+- fix: no `--json` document contains `-Infinity` / `NaN` any more. `print_json` writes
+  non-finite floats as `"-inf"` / `"inf"` / `null` (as `loudness.py` already did) with
+  `allow_nan=False`; `export.py` on silent audio reports `loudness.lufs: "-inf"`,
+  `silent: true`, and a note saying "output audio is silent" instead of recommending loudness.py.
 
 ## 2.2.5
 

@@ -1400,6 +1400,10 @@ threshold ducks on quieter speech, a shorter release brings the bed back faster.
 Every `--music` / `--effects` / `--replace` file is checked before ffmpeg runs (under
 `--dry-run` too): missing, empty, unreadable or with no audio stream, all of them are named in
 one refusal (`kind: input`, `problems: [{flag, path, reason}]`).
+Each of those files, and under `--duck` the voice, is also measured (whole-file peak, under
+`--dry-run` too): at or below `--silence-threshold` (default -50 dBFS) it is silent.
+`--on-silent warn` (default) mixes it anyway and reports `silent: [{flag, path, peak_db}]`
+plus a note; `--on-silent fail` adds it to the same refusal with reason `silent (peak X dBFS)`.
 `--stereo-widen 0..1` widens the stereo image (`extrastereo=m=1+2*amount`) and
 needs a real stereo source: it scales the side signal (L−R), so a mono track
 duplicated to two channels has nothing to scale. A 1-channel input is refused

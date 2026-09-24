@@ -437,7 +437,7 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     elif name == "report":
         extra = {"report": {"type": "string"}, "check": {"type": ["object", "null"]}}
     elif name == "export":
-        extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file"},
+        extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file; silent true (lufs \"-inf\", ok false, no normalize) when the written audio is silent"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "loudness":
         extra = {"measured": {"type": "object", "description": "the loudnorm measurement of the input (input_i, input_tp, input_lra, input_thresh, target_offset); with --measure-only it is the whole result"},
@@ -467,6 +467,8 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         extra = {"video": {"type": "boolean", "description": "true when the input's video stream was copied; false for an audio output extension (extraction)"},
                  "audio_stream": {"type": "integer", "description": "which input audio stream was processed (--audio-stream)"},
                  "dynamics": {"type": "array", "items": {"enum": ["agate", "acompressor", "alimiter"]}, "description": "typed dynamics filters applied, in graph order"},
+                 "silent": {"type": "array", "description": "--on-silent warn (default), only when a track was silent: [{flag, path, peak_db}] for each --music/--replace/--effects file, or under --duck the voice (flag \"input\"), whose whole-file peak is at or below --silence-threshold (default -50 dBFS); it was mixed anyway. --on-silent fail refuses instead, reason \"silent (peak X dBFS)\" in problems"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "present with `silent`: which tracks were silent and how to refuse them"},
                  "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
     props = dict(base)
     props.update(extra)

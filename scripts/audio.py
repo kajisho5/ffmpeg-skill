@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, run_keeping_subtitles, fmt_secs
+from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 
 VOICE_CHAIN = "highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
 
@@ -129,6 +129,27 @@ def preflight_beds(args: argparse.Namespace) -> List[Dict[str, Any]]:
     return problems
 
 
+def find_silent_tracks(args: argparse.Namespace, problems: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Every extra file (and, under --duck, the voice track that keys the ducking) whose whole-file
+    peak is at or below --silence-threshold dBFS: a silent --music / --replace / --effects bed
+    used to be mixed and reported as verified, and a silent voice leaves --duck with nothing to
+    duck on. Files already named in `problems`, and files an earlier stage has not written yet
+    (--dry-run), are not measured; a real file is measured under --dry-run too, like the preflight."""
+    bad = {p["path"] for p in problems}
+    tracks = [(f, v, None) for f, v in (("--replace", args.replace), ("--music", args.music),
+                                         ("--effects", args.effects)) if v and v not in bad]
+    if args.duck and not args.replace:
+        tracks.append(("input", args.input, args.audio_stream))
+    silent: List[Dict[str, Any]] = []
+    for flag, path, stream in tracks:
+        if dry_run_input_pending(path) or not os.path.isfile(path):
+            continue
+        level = measured_level_dbfs(path, seconds=None, audio_stream=stream)
+        if level is not None and level["peak_dbfs"] <= args.silence_threshold:
+            silent.append({"flag": flag, "path": path, "peak_db": level["peak_dbfs"]})
+    return silent
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -188,6 +209,11 @@ def main() -> int:
     dyn.add_argument("--gate-knee", type=float, help="knee dB 1..8 (default 2.83)")
     ap.add_argument("--audio-stream", type=int, default=0, help="which audio stream of the input to process, 0-based in file order (probe lists them under audio_streams)")
     ap.add_argument("--bitrate", default="192k")
+    ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
+                    help="a --music/--replace/--effects file (or, under --duck, the voice) whose peak is at or below "
+                         "--silence-threshold: warn (default: mix it, report it under `silent`) or fail (refuse before ffmpeg runs)")
+    ap.add_argument("--silence-threshold", type=float, default=-50.0, metavar="DBFS",
+                    help="peak level in dBFS at or below which a track counts as silent (default -50)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -216,11 +242,23 @@ def main() -> int:
         die(f"--stereo-widen must be 0..1 (0 = untouched, 1 = maximum), got {args.stereo_widen:g}")
 
     problems = preflight_beds(args)
+    silent = find_silent_tracks(args, problems)
+    if args.on_silent == "fail":
+        problems += [{"flag": t["flag"], "path": t["path"], "reason": f"silent (peak {t['peak_db']:g} dBFS)"} for t in silent]
+        silent = []
     if problems:
         die(f"{len(problems)} of the extra audio files cannot be mixed: "
             + "; ".join(f"{p['flag']} {p['path']}: {p['reason']}" for p in problems),
             kind="input", problems=problems,
-            hint="each --music / --effects / --replace file must be a readable file with an audio stream")
+            hint="each --music / --effects / --replace file must be a readable file with an audio stream"
+                 + (f" and a peak above {args.silence_threshold:g} dBFS (--on-silent warn mixes a silent one anyway)"
+                    if args.on_silent == "fail" else ""))
+    notes: List[str] = []
+    if silent:
+        notes.append("silent track(s) mixed anyway: " + "; ".join(
+            f"{t['flag']} {t['path']} peaks at {t['peak_db']:g} dBFS" for t in silent)
+            + f" (at or below --silence-threshold {args.silence_threshold:g}); pass --on-silent fail to refuse instead")
+        info("warning: " + notes[-1])
 
     meta = probe(args.input)
     dur = meta.get("duration") or 0.0
@@ -376,7 +414,8 @@ def main() -> int:
                                if args.duck else None)
     emit(output, audio=audio_block, video=bool(has_video and not audio_out), audio_stream=args.audio_stream,
          dynamics=[f for f in (args.gate and "agate", args.compress and "acompressor", args.limit and "alimiter") if f],
-         dropped_non_av_streams=dropped_streams)
+         dropped_non_av_streams=dropped_streams,
+         **({"silent": silent, "notes": notes} if silent else {}))
     return 0
 
 

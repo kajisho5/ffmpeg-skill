@@ -30,6 +30,7 @@ Examples:
 """
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -227,7 +228,14 @@ def main() -> int:
             ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"]
             extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok}
             extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform}]
-            if not ok and args.normalize:
+            if not math.isfinite(m["lufs"]):
+                # a silent output measures -inf LUFS: no gain reaches the target, so recommending
+                # (or running, under --normalize) loudness.py only returns "nothing to normalise"
+                extra["loudness"]["silent"] = True
+                notes.append(f"output audio is silent (integrated loudness -inf, {platform} expects {spec['lufs']:g} LUFS); "
+                             "check the source's audio or give the export a real track (audio.py --replace)")
+                info("warning: " + notes[-1])
+            elif not ok and args.normalize:
                 # Eval 7: every platform job ran export -> loudness.py -> export again (two video
                 # encodes). The levels pass only re-encodes audio, so do it here on the written
                 # file and the caller gets one export that meets the spec.
