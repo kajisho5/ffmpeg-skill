@@ -195,7 +195,7 @@ call happened and no file appeared. Under `--dry-run` a tool prints the command 
 it would run, reports `dry_run: true`, and never reports an output probe. The
 exceptions are stated per tool in the contract's `dry_run` field: `probe` and `check` are
 read-only (ffprobe still runs); `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`,
-`loudness` and `stabilize` still run their ffmpeg/ffprobe measurements (the analysis is the
+`loudness`, `stabilize` and `join` (its silent-input peak measurement) still run their ffmpeg/ffprobe measurements (the analysis is the
 tool's job; only the artifact is skipped, including side files such as `--edl`, `--sheet` or a
 generated `.ass`), and `verify` does not support dry-run (its steps run). `SKILL.md` and
 `references/scripts.md` repeat the same list; the contract is the authority.
@@ -497,6 +497,7 @@ Per-tool keys added after 2.2.2, all additive:
 | key | tool | what it holds |
 |---|---|---|
 | `sdr_path`, `notes` | `color.py --to-sdr` | `sdr_path` is `"tonemap"` for PQ / HLG / Dolby Vision input (and `--force` on an untagged file) or `"gamut"` for BT.2020 primaries on an SDR transfer, which is converted to BT.709 without a tone map (`--tonemap`/`--peak`/`--desat` do not apply); `notes` says which path was taken and why |
+| `silent` | `join.py` (every run) | `[{index, path, peak_db}]`: inputs whose whole-file audio peak (volumedetect) is at or below `--silence-threshold` (default -50 dBFS) and that `--on-silent warn` (default) joined anyway, with a `notes` line; `[]` otherwise. `--on-silent fail` names them in the `kind: input` refusal's `problems` (reason `silent (peak -91.0 dBFS)`), `skip` lists them under `skipped`. An input with no audio stream is never silent; `verified` is unaffected |
 
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one

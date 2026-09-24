@@ -27,13 +27,19 @@ refused with every problem named at once (kind input), never discovered one run 
 Under --dry-run a segment that does not exist yet is an earlier step's output: it is planned
 on and named under `pending` (never `skipped`), whichever --on-missing was given, and its
 extension stands in for what it will hold (an audio extension: no picture).
+
+Every input with an audio stream is also measured (one volumedetect pass): a segment whose peak
+is at or below --silence-threshold (default -50 dBFS) is silent -- the trace of a TTS call that
+wrote a valid but empty wav. --on-silent warn (default) joins it and names it under `silent`;
+fail refuses it with the other input problems; skip drops it into `skipped`. A clip with no
+audio stream is never silent.
 """
 import argparse
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, AUDIO_MEDIA_EXT, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, AUDIO_MEDIA_EXT, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -43,12 +49,14 @@ STATE_SKIPPED: List[Dict[str, Any]] = []
 # --dry-run: inputs that do not exist yet, planned on as an earlier step's output
 STATE_PENDING: List[Dict[str, Any]] = []
 STATE_NOTES: List[str] = []
+# --on-silent warn: inputs whose audio peak is at or below --silence-threshold, joined anyway
+STATE_SILENT: List[Dict[str, Any]] = []
 
 
 def reported() -> Dict[str, Any]:
     """The input bookkeeping both success documents carry: `skipped` is what the join left out,
     `pending` what a dry run planned on without it existing; `notes` says the same in words."""
-    extra: Dict[str, Any] = {"skipped": list(STATE_SKIPPED), "pending": list(STATE_PENDING)}
+    extra: Dict[str, Any] = {"skipped": list(STATE_SKIPPED), "pending": list(STATE_PENDING), "silent": list(STATE_SILENT)}
     if STATE_NOTES:
         extra["notes"] = list(STATE_NOTES)
     return extra
@@ -164,12 +172,13 @@ def read_list(path: str) -> List[str]:
     return entries
 
 
-def preflight(paths: List[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def preflight(paths: List[str], audible: Optional[List[int]] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Every problem with every input, found before anything runs: missing, empty (0 bytes,
     the usual trace of a TTS or download step that failed after creating its file), or not
     readable as media. One ffprobe per file; nothing is decoded. Under --dry-run a file that
     does not exist yet is not a problem but pending (the second list, with a note): in a
-    planned pipeline it is an earlier step's output, and the plan keeps it."""
+    planned pipeline it is an earlier step's output, and the plan keeps it. The index of every
+    readable input with an audio stream is appended to `audible` (for find_silent())."""
     ffprobe = require_tool("ffprobe")
     problems: List[Dict[str, Any]] = []
     pending: List[Dict[str, Any]] = []
@@ -192,7 +201,21 @@ def preflight(paths: List[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, An
         if proc.returncode != 0 or not kinds & {"audio", "video"}:
             first = ((proc.stderr or "").strip().splitlines() or ["no audio or video stream"])[-1]
             problems.append({"index": i, "path": p, "reason": f"unreadable: {first}"})
+        elif "audio" in kinds and audible is not None:
+            audible.append(i)
     return problems, pending
+
+
+def find_silent(paths: List[str], audible: List[int], threshold: float) -> List[Dict[str, Any]]:
+    """The audible inputs whose whole-file peak (volumedetect max_volume) is at or below
+    `threshold` dBFS: one decode of the audio per input, run under --dry-run too (a measurement,
+    not an encode). An input whose level cannot be measured is left to the join itself."""
+    silent: List[Dict[str, Any]] = []
+    for i in audible:
+        lv = measured_level_dbfs(paths[i], seconds=86400)
+        if lv is not None and lv["peak_dbfs"] <= threshold:
+            silent.append({"index": i, "path": paths[i], "peak_db": lv["peak_dbfs"]})
+    return silent
 
 
 def main() -> int:
@@ -203,6 +226,12 @@ def main() -> int:
     ap.add_argument("--on-missing", choices=["fail", "skip"], default="fail",
                     help="a missing, empty or unreadable input: fail (default; every problem named at once) or skip "
                          "(join the rest; each skipped input is reported under `skipped`)")
+    ap.add_argument("--on-silent", choices=["warn", "fail", "skip"], default="warn",
+                    help="an input whose audio peak is at or below --silence-threshold: warn (default; join it, "
+                         "name it under `silent`), fail (refuse with the other input problems) or skip (leave it out, "
+                         "under `skipped`); a clip with no audio stream is never silent")
+    ap.add_argument("--silence-threshold", type=float, default=-50.0, metavar="DB",
+                    help="peak level in dBFS at or below which an input counts as silent (default -50)")
     ap.add_argument("-o", "--output", help="output file (default: <first>_joined.mp4)")
     ap.add_argument("--transition", choices=TRANSITIONS, default="fade", help="transition between clips (default fade)")
     ap.add_argument("--duration", type=float, default=0.5, help="transition length in seconds (default 0.5)")
@@ -228,18 +257,39 @@ def main() -> int:
         args.inputs = read_list(args.list)
     if not args.inputs:
         die("give at least two clips (or --list FILE)")
+    if args.silence_threshold >= 0:
+        die(f"--silence-threshold is a peak level in dBFS and must be negative, got {args.silence_threshold:g}")
     skipped: List[Dict[str, Any]] = []
-    problems, pending = preflight(args.inputs)
-    if problems and args.on_missing == "fail":
-        listing = "; ".join(f"#{p['index'] + 1} {p['path']}: {p['reason']}" for p in problems)
-        die(f"{len(problems)} of {len(args.inputs)} inputs cannot be joined: {listing}",
-            hint="fix or regenerate them, or pass --on-missing skip to join the rest", problems=problems)
-    if problems:
-        bad = {p["index"] for p in problems}
-        skipped = problems
+    audible: List[int] = []
+    problems, pending = preflight(args.inputs, audible)
+    silent = find_silent(args.inputs, audible, args.silence_threshold)
+    silent_problems = [{"index": s["index"], "path": s["path"], "reason": f"silent (peak {s['peak_db']:.1f} dBFS)"}
+                       for s in silent]
+    refused = sorted((problems if args.on_missing == "fail" else [])
+                     + (silent_problems if args.on_silent == "fail" else []), key=lambda p: p["index"])
+    if refused:
+        listing = "; ".join(f"#{p['index'] + 1} {p['path']}: {p['reason']}" for p in refused)
+        ways = []
+        if args.on_missing == "fail" and problems:
+            ways.append("--on-missing skip")
+        if args.on_silent == "fail" and silent:
+            ways.append("--on-silent skip (or warn)")
+        die(f"{len(refused)} of {len(args.inputs)} inputs cannot be joined: {listing}",
+            hint="fix or regenerate them, or pass " + " and ".join(ways) + " to join the rest", problems=refused)
+    dropped = sorted((problems if args.on_missing == "skip" else [])
+                     + (silent_problems if args.on_silent == "skip" else []), key=lambda p: p["index"])
+    if dropped:
+        bad = {p["index"] for p in dropped}
+        skipped = dropped
         args.inputs = [p for i, p in enumerate(args.inputs) if i not in bad]
-        for p in problems:
+        for p in dropped:
             info(f"skipping #{p['index'] + 1} {p['path']}: {p['reason']}")
+    if silent and args.on_silent == "warn":
+        STATE_SILENT[:] = silent
+        listing = ", ".join(f"#{s['index'] + 1} {s['path']} (peak {s['peak_db']:.1f} dBFS)" for s in silent)
+        info(f"warning: {len(silent)} input(s) silent at or below {args.silence_threshold:g} dBFS, joined anyway: {listing}")
+        STATE_NOTES.append(f"{len(silent)} input(s) have no audible sound (peak at or below {args.silence_threshold:g} dBFS) "
+                           f"and were joined anyway: {listing}; pass --on-silent fail or skip to refuse or drop them")
     STATE_SKIPPED[:] = skipped
     STATE_PENDING[:] = pending
     if pending:

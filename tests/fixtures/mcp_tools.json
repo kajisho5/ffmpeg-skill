@@ -569,6 +569,7 @@
    "json_brief",
    "list",
    "on_missing",
+   "on_silent",
    "output",
    "overwrite",
    "pad_color",
@@ -576,6 +577,7 @@
    "preset",
    "quality",
    "sample_rate",
+   "silence_threshold",
    "timeout",
    "transition",
    "width"

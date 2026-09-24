@@ -233,6 +233,7 @@ DRY_RUN_ANALYSIS = {
     "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
     "check": "read-only tool; the loudness measurement runs under --dry-run too, so every row is present",
     "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
+    "join": "each existing input with audio is measured (volumedetect peak) for --on-silent; pending inputs are skipped; the joined output is not written",
 }
 DRY_RUN_NOTES = {
     "probe": "read-only tool; --dry-run changes nothing (ffprobe still runs)",
@@ -461,8 +462,9 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "sample_rate": {"type": "integer", "description": "audio mode only"}, "channels": {"type": "integer", "description": "audio mode only"},
                  "video": {"type": "boolean", "description": "false in audio mode: the output has no video stream"},
                  "skipped": {"type": "array", "description": "inputs --on-missing skip left out: [{index, path, reason}] ([] when none were)"},
+                 "silent": {"type": "array", "description": "inputs whose audio peak is at or below --silence-threshold (default -50 dBFS) and that --on-silent warn (default) joined anyway: [{index, path, peak_db}] ([] otherwise; fail refuses them under problems, skip lists them under skipped); an input with no audio stream is never silent"},
                  "pending": {"type": "array", "description": "--dry-run: inputs that do not exist yet, planned on as an earlier step's output and never also under skipped: [{index, path}] ([] otherwise)"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--dry-run with pending inputs: which ones, what a real run does if one is still missing (including a skip that leaves fewer than two inputs), whether the mode came from the extensions, and which planned numbers are the unmeasured stub's placeholders (a pending first clip's frame and rate, xfade offsets after a pending clip)"}}
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--on-silent warn: which silent inputs were joined anyway; --dry-run with pending inputs: which ones, what a real run does if one is still missing (including a skip that leaves fewer than two inputs), whether the mode came from the extensions, and which planned numbers are the unmeasured stub's placeholders (a pending first clip's frame and rate, xfade offsets after a pending clip)"}}
     elif name == "audio":
         extra = {"video": {"type": "boolean", "description": "true when the input's video stream was copied; false for an audio output extension (extraction)"},
                  "audio_stream": {"type": "integer", "description": "which input audio stream was processed (--audio-stream)"},

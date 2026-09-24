@@ -58,6 +58,17 @@ exists. When a decision changes, edit the entry in the same PR.
   `join.preflight()`, `join.main()`, `join.unpending_length()`.
   Tests: `test_join_dry_run_plans_on_pending_segments`,
   `test_render_dry_run_joins_a_trimmed_and_an_untrimmed_audio_clip`.
+- **`join.py --on-silent` defaults to `warn`, not `fail`, at a -50 dBFS peak.** Deliberate
+  silence exists: a beat of room tone between lines, a music bed's silent intro, a clip whose
+  camera audio is to be replaced later. Refusing those by default would break joins that worked
+  in 2.2.5, so the default only names the input (`silent`, `notes`, stderr) and a pipeline that
+  knows every segment must speak -- TTS lines -- opts into `fail` or `skip`. The measure is the
+  whole-file peak, not the mean or loudness: a failed TTS file is digital silence (volumedetect
+  reports -91 dBFS) and any real speech peaks far above -50 dBFS even when quiet, while a noisy
+  room-tone take can still peak above it and is then (correctly) not called silent; a mean or
+  LUFS gate would flag quiet but real narration. An input with no audio stream is never silent
+  (the join adds silence for it on purpose), and an unmeasurable level is left to the join.
+  Code: `join.find_silent()`, `join.main()`. Test: `test_join_on_silent_names_a_silent_segment`.
 - **`verify` accepts `--dry-run` and ignores it.** Its job is to run the tools for real.
   Contract: `_contract.DRY_RUN_NOTES["verify"]`.
 

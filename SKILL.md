@@ -9,7 +9,7 @@ Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>
 
 Shared flags, on every script: `--dry-run`; `--json` (output path, a probe of the output, the commands run); `--json-brief` (status/output/verified plus a `summary`; prefer on writing steps); `--fast` (preview quality); `--progress`; `--timeout SECONDS` (`kind: timeout`, default 1800); `--overwrite` (step 7); `--plan FILE` (the dry run as a plan `render.py FILE` runs later; refuses if an input changed). Re-encoding tools also take `--codec h264|hevc|av1|prores` and `--quality N`: unset, SDR is x264, HDR is x265 Main10; `prores` needs `-o NAME.mov`, `h264` refuses HDR (`color.py --to-sdr` first).
 
-Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `check`, `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`) may still run ffmpeg/ffprobe, skipping artifacts/side files (`--edl`, `--sheet`, a generated `.ass`); `verify` ignores the flag. Per tool: `contract --json` `dry_run`.
+Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `check`, `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`, `join`) may still run ffmpeg/ffprobe, skipping artifacts/side files (`--edl`, `--sheet`, a generated `.ass`); `verify` ignores the flag. Per tool: `contract --json` `dry_run`.
 
 ## Workflow (always follow this order)
 
@@ -23,7 +23,7 @@ Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `chec
 7. **Keep the user's originals.** Never overwrite the source; write new files next to input or where asked. An existing output path is refused (`kind: input`); `--overwrite` is the one way to say "yes, replace it".
 8. **Look at the picture.** Whenever the picture changed (captions, overlays, graphics, crop/pad, resize, colour, transitions, a `join.py` scaling a clip to the first clip's frame, `color.py --to-sdr`) run `look.py OUTPUT --tiles 3x2` (or `--at T` for one frame) and view the PNG (4x3 for whole-clip layout). Not finished until `Look:` names that PNG — a probe cannot see a caption on a face. Audio-only: `Look: not needed`. What to look for splits like `check.py`'s rows in step 5:
    - **Mechanical (this skill's own job to verify and report):** the specified text/logo is at the specified position, subtitles appear at the specified timestamps, dimensions are even. Letterboxing from `fit.py --fit pad` is the *correct* result of that mode, never a defect to flag.
-   - **Judgement (report it, don't silently pass or fail):** whether a subject or face is cut off, text sits over a face, colours look washed out, a transition lands. These need deciding what the subject *is*, which belongs to the calling agent — say what you see in one line and let them judge it.
+   - **Judgement (report it, don't silently pass or fail):** whether a subject or face is cut off, text sits over a face, colours look washed out, a transition lands. These need deciding what the subject *is*, the calling agent's call — say what you see in one line; they judge.
    With no vision capability, write `Look: PATH (pixels not inspected; agent has no image view)` — never claim a picture was inspected when it wasn't, without stalling for a capability that isn't there.
 
 ## Before you run anything: what to ask, what to assume
@@ -136,7 +136,7 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "add chapters", "chapter markers for YouTube" | `metadata.py episode.mp4 --chapters chapters.txt` (`TIME TITLE` per line; streams copied; in a project: `"chapters"`). `--auto-chapters` proposes them from measured pauses/scene cuts (`Chapter N`) |
 | "set the title / artist / comment" | `metadata.py episode.mp4 --title "Episode 12" --artist "Studio"` |
 | "put these videos in a 4x2 grid" | `grid.py t1.mp4 ... t8.mp4 --cols 4 --rows 2` |
-| "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` (TTS parts: `--list parts.txt`, `--on-missing skip`) |
+| "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` (TTS: `--list parts.txt`, `--on-missing skip`, `--on-silent fail`) |
 | "several changes to one edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
 | "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` — identical stages reused (`--from STAGE` starts there) |
 | "open it in Premiere / Resolve / Final Cut" | `render.py project.json --export-timeline edit.fcpxml\|.edl\|.otio` — renders nothing; read `not_exported`; no project? `--write-project` |

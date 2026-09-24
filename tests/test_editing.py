@@ -1063,6 +1063,60 @@ class EditingTests(MediaFixtures):
                                 "--json", "-o", d / "clean.wav").stdout)
         self.assertEqual(doc["skipped"], [])
 
+    def test_join_on_silent_names_a_silent_segment(self):
+        """Reported from the same VPS shorts pipeline: TTS sometimes writes a valid but fully
+        silent wav, which passes the missing/empty/unreadable preflight, and the video shipped
+        with no narration. Every input with audio is measured (peak dBFS): --on-silent warn
+        (default) joins it and names it under `silent`, fail refuses it in the one kind-input
+        document, skip leaves it out under `skipped`. A clip without audio is never silent."""
+        d = OUT / "join_silent"
+        d.mkdir(exist_ok=True)
+        for i in (1, 3):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", f"sine=frequency={300 * i}:sample_rate=24000", "-t", "1.5", d / f"line{i}.wav")
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "anullsrc=r=24000:cl=mono", "-t", "1.5", d / "line2.wav")
+        # a quiet but audible line: about -40 dBFS peak (sine is -18 dBFS)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "sine=frequency=500:sample_rate=24000", "-t", "1.5", "-af", "volume=-22dB", d / "quiet.wav")
+        (d / "parts.txt").write_text("line1.wav\nline2.wav\nline3.wav\n", encoding="utf-8")
+        # warn (default): joined, named, verified untouched
+        doc = json.loads(script("join.py", "--list", d / "parts.txt", "--transition", "none", "--json",
+                                "-o", d / "warn.wav").stdout)
+        self.assertEqual((doc["status"], doc["clips"], doc["verified"]), ("completed", 3, True))
+        self.assertEqual([(s["index"], Path(s["path"]).name) for s in doc["silent"]], [(1, "line2.wav")])
+        self.assertLessEqual(doc["silent"][0]["peak_db"], -50)
+        self.assertTrue(any("line2.wav" in n for n in doc["notes"]))
+        self.assertTrue((d / "warn.wav").exists())
+        # fail: one kind-input refusal naming it, nothing written
+        proc = script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-silent", "fail",
+                      "--json", "-o", d / "fail.wav", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["error"]["kind"], doc["commands"]), ("input", []))
+        self.assertEqual([Path(p["path"]).name for p in doc["problems"]], ["line2.wav"])
+        self.assertTrue(doc["problems"][0]["reason"].startswith("silent (peak -"))
+        self.assertFalse((d / "fail.wav").exists())
+        # skip: joined without it, listed under skipped
+        doc = json.loads(script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-silent", "skip",
+                                "--json", "-o", d / "skip.wav").stdout)
+        self.assertEqual((doc["clips"], doc["silent"]), (2, []))
+        self.assertEqual([Path(p["path"]).name for p in doc["skipped"]], ["line2.wav"])
+        self.assertAlmostEqual(doc["probe"]["duration"], 3.0, delta=0.05)
+        # threshold: -40 dBFS is audible at the default, silent at -35
+        doc = json.loads(script("join.py", d / "line1.wav", d / "quiet.wav", "--transition", "none",
+                                "--json", "-o", d / "q1.wav").stdout)
+        self.assertEqual(doc["silent"], [])
+        doc = json.loads(script("join.py", d / "line1.wav", d / "quiet.wav", "--transition", "none",
+                                "--silence-threshold", "-35", "--json", "-o", d / "q2.wav").stdout)
+        self.assertEqual([Path(s["path"]).name for s in doc["silent"]], ["quiet.wav"])
+        # a clip with no audio stream is never silent
+        for n in (1, 2):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               "testsrc2=size=160x120:rate=25", "-t", "1", "-an", "-pix_fmt", "yuv420p", d / f"mute{n}.mp4")
+        doc = json.loads(script("join.py", d / "mute1.mp4", d / "mute2.mp4", "--transition", "none", "--on-silent", "fail",
+                                "--json", "-o", d / "mute.mp4").stdout)
+        self.assertEqual((doc["status"], doc["silent"]), ("completed", []))
+
     def test_join_dry_run_plans_on_pending_segments(self):
         """Under --dry-run a segment that does not exist yet is an earlier step's output. Its
         probe is the dry-run stub, whose (0x0) video stream used to decide the mode: one pending
