@@ -1,0 +1,96 @@
+{
+  "iteration": "25",
+  "at_version": "2.2.4",
+  "date": "2026-09-24",
+  "status": "partial: trigger set run for real; agent prompts NOT run (harness blocked in this sandbox)",
+  "scope": "Do natural requests reach the 2.1/2.2 features: join.py --list / --on-missing skip (TTS segments) and render.py --export-timeline (editor handoff)? Four agent prompts (evals/agent_prompts_25.json) and three trigger prompts (evals/trigger/prompts_25.json).",
+  "harness": {
+    "agent_runner": "evals/run_agents_25.sh RUN_DIR [MODEL]: stages fixtures with evals/write_fixtures.py --all, links this checkout in as a project skill, runs `claude -p` once per prompt, saves transcript.jsonl and .before/.after listings",
+    "grader": "evals/grade_runs_25.py RUN_DIR: routing from the Bash commands, pass/fail from the LAST --json result document of the named tool (status, skipped[], problems[]), grader_not 'Traceback' over the whole transcript, must_not_write from .after",
+    "fixtures": "write_fixtures.py builders added for tts_NN.wav (1 s mono 24 kHz tone) and seg_NN.mp4 / a.mp4 / b.mp4 (3 s 320x180 testsrc2 + tone); parts.txt and list.txt each name one file that is not built; project.json is a 2-clip project with a fade"
+  },
+  "agent_runs": {
+    "ran": false,
+    "why": "`claude` 2.x is installed and answers `claude -p`, but launching headless tool-using agents (claude -p --permission-mode bypassPermissions in the fixture folders) was refused by this sandbox's permission classifier. Not worked around. The maintainer can run `sh evals/run_agents_25.sh <dir>` then `python3 evals/grade_runs_25.py <dir>`.",
+    "detail": [
+      {
+        "id": "tt1",
+        "verdict": "not run",
+        "expected": "join.py --list parts.txt --on-missing skip -o <x>.wav --json; skipped[] names tts_03.wav"
+      },
+      {
+        "id": "tt2",
+        "verdict": "not run",
+        "expected": "join.py --list list.txt (fail mode or --dry-run); report names seg_02.mp4; final.mp4 not written"
+      },
+      {
+        "id": "tl1",
+        "verdict": "not run",
+        "expected": "render.py project.json --export-timeline <x>.fcpxml|.otio|.edl; final.mp4 not written"
+      },
+      {
+        "id": "tl2",
+        "verdict": "not run (record-only)",
+        "expected": "multicam.py ... --write-project p.json, then render.py p.json --export-timeline <x>.edl|.fcpxml|.otio"
+      }
+    ]
+  },
+  "tool_check_not_an_eval": {
+    "note": "The expected commands were run BY HAND on the fixtures to confirm the target path works and to feed the grader self-test. This shows the tools behave; it says nothing about whether an agent routes to them.",
+    "tt1": "join.py --list parts.txt --on-missing skip --transition none -o voice.wav --json: status completed, 3.000 s, skipped[0] = {index 2, tts_03.wav, missing}",
+    "tt2": "join.py --list list.txt -o final.mp4 --json: exit 1, kind input INPUT_INVALID, problems[0] = seg_02.mp4 missing, hint names --on-missing skip, final.mp4 not written",
+    "tl1": "render.py project.json --export-timeline edit.fcpxml --json: completed, 2 clips, 3.5 s at 30 fps, fade 15 frames, not_exported [], no media rendered",
+    "tl2": "multicam.py has no timeline export of its own: its --edl writes a START-END cut list (cut.py --segments format), not a CMX 3600 EDL. The path to Premiere is multicam.py --write-project p.json, then render.py p.json --export-timeline x.edl. Under --dry-run multicam writes neither mc.json nor the cut list."
+  },
+  "grader_self_test_not_an_eval": {
+    "note": "Hand-made transcripts (real tool output from the hand runs above for the 'good' set; fabricated failures for the 'bad' set), used only to check the grader.",
+    "good": {
+      "tt1": "pass",
+      "tt2": "pass",
+      "tl1": "pass",
+      "tl2": "recorded"
+    },
+    "bad": {
+      "tt1": "fail (no --on-missing skip; Traceback; no join result doc)",
+      "tt2": "fail (--on-missing skip used; seg_02 not in result doc; report silent; final.mp4 written)",
+      "tl1": "fail (no --export-timeline; final.mp4 written)",
+      "tl2": "MISSING"
+    }
+  },
+  "trigger": {
+    "ran": true,
+    "result_file": "evals/trigger/results-2026-09-24-it25.json",
+    "correct": 3,
+    "total": 3,
+    "detail": [
+      {
+        "id": "g1",
+        "should_trigger": true,
+        "choice": "ffmpeg-skill",
+        "correct": true
+      },
+      {
+        "id": "g2",
+        "should_trigger": true,
+        "choice": "ffmpeg-skill",
+        "correct": true
+      },
+      {
+        "id": "g3",
+        "should_trigger": false,
+        "choice": "none",
+        "correct": true
+      }
+    ]
+  },
+  "findings": [
+    "Trigger: 3/3. The TTS-segment prompt and the editor-handoff prompt (neither names a media extension) both chose ffmpeg-skill; the project-management 'timeline' prompt chose none.",
+    "Routing could not be measured: no agent run happened.",
+    "tl2 risk (from reading, not from a run): SKILL.md's multicam row lists `--edl` among multicam's options, and 'EDL' is the word an agent reaches for when asked for Premiere. multicam's --edl is a cut list Premiere cannot open. The only 'Premiere' row is render.py project.json --export-timeline, which assumes a project file already exists."
+  ],
+  "proposed_fixes_not_applied": [
+    "SKILL.md, multicam row: add '(`--edl` is a cut list, not CMX; for Premiere/Resolve: `--write-project p.json`, then `render.py p.json --export-timeline x.edl`)', and trim a word elsewhere in the row to keep the budget.",
+    "SKILL.md, 'open it in Premiere / Resolve / Final Cut' row: add 'no project yet? multicam.py --write-project / render.py --write-project first'.",
+    "Optional: the description has no 'Premiere/Resolve/Final Cut timeline' or 'TTS segments' words; trigger passed without them, so no description change is proposed on this evidence."
+  ]
+}

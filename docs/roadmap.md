@@ -657,6 +657,16 @@ from the MCP schema. Two planned items were not done, deliberately:
 The 1.21.0 "2.0 freeze" above did not happen as written either: 1.21-1.26 kept shipping
 features, and the deprecation window's 90-day half was waived (docs/contract.md). Nothing else.
 
+## Eval 25 — do natural requests reach 2.1/2.2? (evals only, partial)
+
+`evals/agent_prompts_25.json` (tt1 ja TTS parts with one missing wav, tt2 a video list with one
+missing segment, tl1 hand a project to Resolve, tl2 a multicam edit for Premiere), run with
+`evals/run_agents_25.sh` and graded on each run's `--json` result document by
+`evals/grade_runs_25.py`. The trigger set (`evals/trigger/prompts_25.json`) ran: 3/3. The agent
+prompts did **not** run (the sandbox refused headless tool-using agents), so routing is still
+unmeasured; `evals/results/iteration-25.json` records the hand-run tool check, the grader
+self-test and a proposed (unapplied) SKILL.md fix for multicam's cut-list `--edl` vs a CMX EDL.
+
 ## Not planned
 
 - A feature that needs 2.0: features land in 1.x behind flags (1.4.0, 1.6.0, 1.7.0 did).

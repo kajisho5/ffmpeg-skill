@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-24",
+  "iteration": "25",
+  "skill_version": "2.2.4",
+  "judge": "claude -p --model sonnet, no tools, one call per prompt",
+  "method": "evals/trigger/README.md catalog method (skill description + four decoys: image-tools, web-research, copywriter, meeting-notes)",
+  "prompts": "evals/trigger/prompts_25.json",
+  "correct": 3,
+  "total": 3,
+  "detail": [
+    {
+      "id": "g1",
+      "should_trigger": true,
+      "choice": "ffmpeg-skill",
+      "correct": true
+    },
+    {
+      "id": "g2",
+      "should_trigger": true,
+      "choice": "ffmpeg-skill",
+      "correct": true
+    },
+    {
+      "id": "g3",
+      "should_trigger": false,
+      "choice": "none",
+      "correct": true
+    }
+  ]
+}

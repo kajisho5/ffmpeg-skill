@@ -1,0 +1,102 @@
+[
+  {
+    "id": "tt1",
+    "lang": "ja",
+    "prompt": "TTSで作った音声が parts.txt に並んでるので順番につないで1本のwavにして。1個くらい欠けてても止まらないで",
+    "expect": [
+      "join.py",
+      "--list",
+      "--on-missing skip"
+    ],
+    "fixtures": {
+      "parts.txt": "tts_01.wav\ntts_02.wav\ntts_03.wav\ntts_04.wav\n"
+    },
+    "media_fixtures": [
+      "tts_01.wav",
+      "tts_02.wav",
+      "tts_04.wav"
+    ],
+    "missing": "tts_03.wav",
+    "result_expect": {
+      "tool": "join",
+      "ok": true,
+      "skipped_names": "tts_03.wav"
+    },
+    "grader_not": [
+      "Traceback"
+    ]
+  },
+  {
+    "id": "tt2",
+    "lang": "en",
+    "prompt": "I have clips listed in list.txt from my TTS+render pipeline; join them into final.mp4 and tell me if any segment is missing before doing anything",
+    "expect": [
+      "join.py",
+      "--list"
+    ],
+    "fixtures": {
+      "list.txt": "seg_01.mp4\nseg_02.mp4\nseg_03.mp4\n"
+    },
+    "media_fixtures": [
+      "seg_01.mp4",
+      "seg_03.mp4"
+    ],
+    "missing": "seg_02.mp4",
+    "result_expect": {
+      "tool": "join",
+      "names": "seg_02.mp4"
+    },
+    "report_expect": "seg_02",
+    "must_not_write": "final.mp4",
+    "grader_not": [
+      "Traceback",
+      "--on-missing skip"
+    ]
+  },
+  {
+    "id": "tl1",
+    "lang": "en",
+    "prompt": "Hand this edit (project.json) to DaVinci Resolve so my editor can finish it",
+    "expect": [
+      "render.py",
+      "--export-timeline"
+    ],
+    "grader_expect": [
+      "--export-timeline[ =]\\S+\\.(fcpxml|otio|edl)"
+    ],
+    "fixtures": {
+      "project.json": "{\n  \"output\": \"final.mp4\",\n  \"clips\": [\n    {\n      \"src\": \"a.mp4\",\n      \"in\": 0.5,\n      \"out\": 2.5\n    },\n    {\n      \"src\": \"b.mp4\",\n      \"in\": 0,\n      \"out\": 2\n    }\n  ],\n  \"transition\": {\n    \"type\": \"fade\",\n    \"duration\": 0.5\n  }\n}\n"
+    },
+    "media_fixtures": [
+      "a.mp4",
+      "b.mp4"
+    ],
+    "result_expect": {
+      "tool": "render",
+      "ok": true
+    },
+    "must_not_write": "final.mp4",
+    "grader_not": [
+      "Traceback"
+    ]
+  },
+  {
+    "id": "tl2",
+    "lang": "en",
+    "prompt": "Make a timeline of this multicam edit (camA.mp4, camB.mp4) that I can open in Premiere",
+    "expect": [
+      "multicam.py|render.py"
+    ],
+    "grader_expect": [
+      "\\.(edl|fcpxml|otio)\\b"
+    ],
+    "media_fixtures": [
+      "camA.mp4",
+      "camB.mp4"
+    ],
+    "record_only": true,
+    "grader_not": [
+      "Traceback"
+    ]
+  }
+]

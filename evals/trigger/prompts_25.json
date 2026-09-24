@@ -1,0 +1,17 @@
+[
+  {
+    "id": "g1",
+    "should_trigger": true,
+    "prompt": "My TTS step spits out 40 numbered wav segments and sometimes one fails to generate. Can you stitch whatever's there into a single narration track?"
+  },
+  {
+    "id": "g2",
+    "should_trigger": true,
+    "prompt": "I've got a rough cut described in a JSON project; my editor wants it as something she can open in Final Cut or Resolve to finish the grade."
+  },
+  {
+    "id": "g3",
+    "should_trigger": false,
+    "prompt": "Build me a project management timeline for the Q4 website relaunch: milestones, owners and a Gantt-style view in a spreadsheet."
+  }
+]

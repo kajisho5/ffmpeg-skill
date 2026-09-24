@@ -13,6 +13,7 @@ import json
 import ntpath
 import os
 import posixpath
+import re
 import sys
 from pathlib import Path
 
@@ -140,6 +141,17 @@ def build_media_fixture(name: str, target: Path) -> None:
         # camA's audio advanced 1.180s -- sync ground truth +1.18s.
         vol_expr = "0.8*sin(2*PI*440*(t+1.18))*lt(t+1.18\\,6)+0.01*sin(2*PI*440*(t+1.18))*gt(t+1.18\\,6)"
         ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{vol_expr}':s=48000", "-t", "10.82", "-c:a", "aac", target)
+    elif re.fullmatch(r"tts_\d+\.wav", name):
+        # Eval 25: a TTS segment -- 1.0s of mono 24 kHz tone (pitch varies by index so the joined
+        # file is audibly in order). parts.txt names one more segment than is built.
+        idx = int(re.search(r"\d+", name).group())
+        ffmpeg("-f", "lavfi", "-i", f"sine=frequency={300 + 60 * idx}:sample_rate=24000",
+               "-t", "1", "-ac", "1", target)
+    elif re.fullmatch(r"(seg|cam)_?\w*\d+\.mp4|[ab]\.mp4", name):
+        # Eval 25: a short rendered segment / project clip -- 3.0s 320x180 30 fps with a tone.
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "3",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", target)
     else:
         raise SystemExit(f"no media fixture builder for {name!r}")
 
