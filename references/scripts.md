@@ -1125,6 +1125,16 @@ the honest sentence for a report, made automatic: only the line breaks, the
 timing and the type size ever move, and those do not count as a change. The key
 is burn mode only; `--mode mux` never touches the text and omits it.
 
+**Cues that can be seen (2.2.6).** A burn counts the cues it actually draws:
+`cues_burned` (non-blank, overlapping `[0, duration]`) and `cues_outside`
+(non-blank, wholly after the end or before 0) in the `caption` block, with a
+warning note naming the outside count. When no cue is visible — the only cue
+starts after the video ends, every cue is blank, or an `--ass` file has no
+`Dialogue` lines — the run is refused with `kind: input` (`no cue falls inside
+the video (0–3.0 s); first cue starts at 10.0 s`, `every cue is blank`), dry
+runs included. `waveform.py --srt` passes the refusal on. `graphics.py` and
+`overlay.py` treat whitespace-only `--title`/`--name`/`--text` as missing.
+
 Under `--dry-run`/`--plan` on an input that does not exist yet there is no
 geometry to measure. With `--platform` the destination's own frame is used —
 that frame *is* what the real run will have, so the planned `FontSize` is the

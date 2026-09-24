@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+- fix(caption): a burn whose cues are never visible is refused with `kind: input` instead of reporting `verified: true` -- every cue outside `[0, duration]`, every cue blank, or `--ass` with no `Dialogue` lines; applies to `waveform.py --srt` too. The `caption` block reports `cues_burned` and `cues_outside`, and cues partly outside get a warning note
+- fix(graphics, overlay): whitespace-only `--title`, `--name`, `--text` (and the other text flags) count as missing and are refused instead of burning an empty graphic
+- fix(caption): the "re-run without --dry-run to produce X_adjusted.srt" note appears only on dry runs
 
 ## 2.2.5
 

@@ -154,6 +154,8 @@ def main() -> int:
             args.scale = int(brand.get("logo_scale", 160))
         if args.opacity == 1.0:
             args.opacity = float(brand.get("logo_opacity", 1.0))
+    if args.text is not None and not args.text.strip():
+        die("--text is blank -- give the words to draw", kind="input")
     if not (args.image or args.text or args.video):
         die("give --image, --text, --logo or --video")
     if args.brand:
