@@ -343,11 +343,15 @@ def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
     return sorted(set(out))
 
 
-def measured_level_dbfs(path: str, seconds: float = 120.0) -> Optional[Dict[str, float]]:
+def measured_level_dbfs(path: str, seconds: Optional[float] = 120.0,
+                        audio_stream: Optional[int] = None) -> Optional[Dict[str, float]]:
     """Mean and peak level of the first `seconds` of audio (volumedetect), in dBFS; None if unmeasurable.
-    Cheap enough to run once as a hint when a threshold-based tool found nothing."""
+    Cheap enough to run once as a hint when a threshold-based tool found nothing. seconds=None
+    measures the whole file; audio_stream picks the Nth audio stream (default: ffmpeg's choice)."""
     ffmpeg = require_tool("ffmpeg")
-    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-t", f"{seconds:.0f}", "-i", path, "-vn",
+    head = ["-t", f"{seconds:.0f}"] if seconds is not None else []
+    pick = ["-map", f"0:a:{audio_stream}"] if audio_stream is not None else []
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", *head, "-i", path, *pick, "-vn",
                          "-af", "volumedetect", "-f", "null", "-"], check=False)
     m_mean = re.search(r"mean_volume:\s*(-?[0-9.]+) dB", proc.stderr)
     m_max = re.search(r"max_volume:\s*(-?[0-9.]+) dB", proc.stderr)

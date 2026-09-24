@@ -243,8 +243,21 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
     return path
 
 
+def json_safe(obj: Any) -> Any:
+    """Replace non-finite floats with the strings loudness.py already reports ("-inf" / "inf")
+    and NaN with null: json.dumps would otherwise write -Infinity / NaN, which no strict JSON
+    parser accepts (a silent file measures -inf LUFS)."""
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return None if obj != obj else ("inf" if obj > 0 else "-inf")
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    return obj
+
+
 def print_json(obj: Any) -> None:
-    sys.stdout.write(json.dumps(obj, indent=2, ensure_ascii=False) + "\n")
+    sys.stdout.write(json.dumps(json_safe(obj), indent=2, ensure_ascii=False, allow_nan=False) + "\n")
 
 
 # Deferred for the same reason as runner's import of this module: probe needs die() from here, and
