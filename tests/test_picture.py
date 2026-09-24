@@ -1666,6 +1666,71 @@ class PictureTests(MediaFixtures):
         self.assertIn("no local speech-to-text engine", proc.stderr)
         self.assertIn("whisper", proc.stderr)
 
+    def test_caption_sidecars_are_refused_like_the_video_without_overwrite(self):
+        """caption.py's .srt/.ass sidecars go through the --overwrite check the video does, before
+        speech recognition and the first write, dry runs included. Through 2.2.3 a hand-corrected
+        final.srt was replaced on a re-run with the same -o, even by a run ffmpeg then refused."""
+        def raw(name, *a, **kw):  # script() adds --overwrite whenever -o is given
+            return sh(sys.executable, SCRIPTS / name, *a, **kw)
+
+        d = OUT / "cap_sidecar_overwrite"
+        if d.exists():
+            shutil.rmtree(d)
+        d.mkdir(parents=True)
+        cues = d / "cues.txt"
+        cues.write_text("0-1.5 Hello there\n1.5-3 Second line\n", encoding="utf-8")
+        out, srt, ass = d / "final.mp4", d / "final.srt", d / "final.ass"
+        hand = "1\n00:00:00,000 --> 00:00:01,000\nHAND EDITED\n"
+
+        def reset():
+            for p in (out, ass):
+                if p.exists():
+                    p.unlink()
+            srt.write_text(hand, encoding="utf-8")
+
+        # --text burning into a new video: the existing final.srt alone is enough to refuse
+        reset()
+        proc = raw("caption.py", self.src, "--text", cues, "-o", out, "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("refusing to overwrite", doc["error"]["message"])
+        self.assertIn("final.srt", doc["error"]["message"])
+        self.assertEqual(srt.read_text(encoding="utf-8"), hand, "a refused run leaves the hand edit alone")
+        self.assertFalse(out.exists(), "refused before ffmpeg ran")
+        # the dry run predicts the same refusal and writes nothing
+        dry = raw("caption.py", self.src, "--text", cues, "-o", out, "--dry-run", "--json", expect_fail=True)
+        self.assertIn("refusing to overwrite", json.loads(dry.stdout)["error"]["message"])
+        # both sidecars and the video are named together
+        out.write_bytes(b"x")
+        ass.write_text("hand ass", encoding="utf-8")
+        proc = raw("caption.py", self.src, "--text", cues, "--animate", "pop", "-o", out, "--json", expect_fail=True)
+        msg = json.loads(proc.stdout)["error"]["message"]
+        for name in ("final.srt", "final.ass", "final.mp4"):
+            self.assertIn(name, msg)
+        self.assertEqual(ass.read_text(encoding="utf-8"), "hand ass")
+        self.assertEqual(srt.read_text(encoding="utf-8"), hand)
+        # text-only mode (--write-srt, no video)
+        reset()
+        proc = raw("caption.py", "--text", cues, "--write-srt", srt, "--json", expect_fail=True)
+        self.assertIn("refusing to overwrite", json.loads(proc.stdout)["error"]["message"])
+        self.assertEqual(srt.read_text(encoding="utf-8"), hand)
+        # --transcribe is refused before any recognition starts (with or without an engine
+        # installed: the refusal, not the engine's absence, is the answer)
+        proc = raw("caption.py", self.src, "--transcribe", "-o", out, "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertIn("refusing to overwrite", doc["error"]["message"])
+        self.assertNotIn("speech-to-text", proc.stderr)
+        self.assertEqual(doc.get("commands") or [], [])
+        self.assertEqual(srt.read_text(encoding="utf-8"), hand)
+        # --overwrite is the consent: the sidecar is replaced
+        script("caption.py", "--text", cues, "--write-srt", srt, "--overwrite")
+        self.assertIn("Hello there", srt.read_text(encoding="utf-8-sig"))
+        reset()
+        script("caption.py", self.src, "--text", cues, "-o", out, "--overwrite", "--fast")
+        self.assertIn("Hello there", srt.read_text(encoding="utf-8-sig"))
+        self.assertTrue(out.exists())
+        shutil.rmtree(d)
+
     def test_overlay_fade_without_start_end_fades_in_only(self):
         """--fade without --end fades in at 0 and stays; the fade-out belongs to --end (eval 6,
         e03-logo: every "fade in at the start" run had to caveat an unasked-for fade-out)."""

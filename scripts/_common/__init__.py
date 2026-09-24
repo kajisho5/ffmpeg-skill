@@ -52,7 +52,7 @@ for _stream in (sys.stdout, sys.stderr):
 # demos/ or evals/ has ever reached for through `_common`.
 
 from _common.runner import (
-    add_common, apply_common, _check_existing_output, _check_no_overwrite_input, _check_output_path, child_args,
+    add_common, apply_common, _check_existing_output, refuse_existing_outputs, _check_no_overwrite_input, _check_output_path, child_args,
     child_limit, _CHILDREN, _cleanup_partial_output, _cmdline, CODECS, Context, DEFAULT_TIMEOUT,
     _DRAWTEXT_PENDING, _DRAWTEXT_TMPDIR, _drawtext_tmpdir, dry_run_input_pending, _ENCODERS, _env_timeout,
     ERROR_CODE, ERROR_RETRYABLE, EVEN_SCALE, _execute, _fail, ffmpeg_base, ffmpeg_encoders, _FFMPEG_VERSION,
@@ -179,7 +179,7 @@ __all__ = [
     "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "apply_common", "detect_scenes", "detect_silences", "SCORE_RE", "SIL_RE", "_aspect_string",
     "audio_codec_for", "AUDIO_CODECS", "BIDI_SCRIPTS", "_bit_depth", "brand_caption_style", "BRAND_DEFAULTS",
     "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_tag_args", "cfr_args", "_char_em",
-    "char_script", "_check_existing_output", "_check_no_overwrite_input", "_check_output_path", "child_args",
+    "char_script", "_check_existing_output", "refuse_existing_outputs", "_check_no_overwrite_input", "_check_output_path", "child_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",
     "concat_list_line", "Context", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",
     "filler_spans", "FILLER_WORDS", "FILLER_AMBIGUOUS", "FILLER_DISCOURSE_MARKERS",

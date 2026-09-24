@@ -4,7 +4,13 @@
 
 ## Unreleased
 
-(nothing yet)
+- **caption.py: an existing `.srt`/`.ass` side file is refused without `--overwrite`**, like the
+  video. Through 2.2.3 only ffmpeg's output was checked: `--transcribe` warned and then replaced
+  a hand-corrected transcript, and `--text`, `--write-srt` alone, the generated/`--write-ass`
+  ASS, `_adjusted.srt` and `_offset.ass` were overwritten without a word -- even by a run that
+  was then refused for the existing video. Every file the run will write is now checked up
+  front (kind `input`, each existing one named), before speech recognition starts and before
+  the first write; the dry run predicts the same refusal. New `_common.refuse_existing_outputs()`.
 
 ## 2.2.3
 

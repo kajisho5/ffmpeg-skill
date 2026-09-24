@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_units,
                         resolve as resolve_platform)
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
-from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs
+from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, load_brand, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 # The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
 # shares them). They stay caption.py's public names -- every caller and test that reached for
@@ -1155,9 +1155,38 @@ def main() -> int:
         die(f"{len(missing_srt)} SRT file(s) not found: " + ", ".join(m["path"] for m in missing_srt),
             kind="input", problems=missing_srt)
     srt_path = args.srt
+    if args.transcribe and not args.input:
+        die("--transcribe needs the input video")
+    # 2.2.4: every file this run writes -- the video AND the .srt/.ass sidecars -- is checked
+    # against --overwrite here, before speech recognition and before the first write, dry runs
+    # included. Through 2.2.3 only ffmpeg's last argument was: a hand-corrected transcript or ASS
+    # next to the output was replaced on a re-run, even one ffmpeg's check then refused.
+    # Side files whose existence depends on the cues (an _adjusted.srt, an emoji-forced ASS) are
+    # checked again where they are written, still before that write.
+    claimed: set = set()
+
+    def claim(paths) -> None:
+        todo = [p for p in paths if p and os.path.realpath(p) not in claimed]
+        refuse_existing_outputs(todo)
+        claimed.update(os.path.realpath(p) for p in todo)
+
+    planned_out = args.output or (default_output(args.input, "captioned") if args.input else None)
+    up_front: List[str] = []
     if args.transcribe:
-        if not args.input:
-            die("--transcribe needs the input video")
+        up_front.append(args.write_srt or os.path.splitext(planned_out)[0] + ".srt")
+    elif args.text:
+        up_front.append(args.write_srt or (os.path.splitext(planned_out)[0] + ".srt" if args.input
+                                           else os.path.splitext(args.text)[0] + ".srt"))
+    if args.input:
+        if (args.animate != "none" or args.karaoke) and not args.ass:
+            up_front.append(args.write_ass or os.path.splitext(planned_out)[0] + ".ass")
+        if args.ass and args.offset and os.path.exists(args.ass):
+            up_front.append(os.path.splitext(planned_out)[0] + "_offset.ass")
+        # -o naming the input itself keeps its own, more specific refusal (_check_no_overwrite_input)
+        if os.path.realpath(planned_out) != os.path.realpath(args.input):
+            up_front.append(planned_out)
+    claim(up_front)
+    if args.transcribe:
         # the sidecar goes next to the output like the --text one, not into the source folder
         # where it silently replaced a hand-written <input>.srt (review 5)
         srt_path = args.write_srt or os.path.splitext(args.output or default_output(args.input, "captioned"))[0] + ".srt"
@@ -1165,8 +1194,6 @@ def main() -> int:
             cues = []
             info(f"[dry-run] would transcribe {args.input} and write {srt_path}")
         else:
-            if os.path.exists(srt_path) and not getattr(args, "overwrite", False):
-                info(f"warning: {srt_path} already exists and will be replaced by the transcript (pass --overwrite to confirm)")
             cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream)
             args._word_timings = whisper_word_timings(srt_path)
             cues, changed = lay_out(cues)
@@ -1211,6 +1238,7 @@ def main() -> int:
         adjusted, changed = lay_out(parse_srt(srt_path))
         if changed:
             new_srt = os.path.splitext(output)[0] + "_adjusted.srt"
+            claim([new_srt])
             if STATE.dry_run:
                 info(f"[dry-run] would write {new_srt} ({len(adjusted)} cues, adjusted from {os.path.basename(srt_path)})")
             else:
@@ -1393,6 +1421,7 @@ def main() -> int:
         if args.karaoke and not getattr(args, "_word_timings", None):
             args._word_timings = whisper_word_timings(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
+        claim([ass_path])
         w, h = meta["video"]["width"], meta["video"]["height"]
         if meta["video"].get("rotation") in (90, -90, 270, -270):
             w, h = h, w

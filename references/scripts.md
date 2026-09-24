@@ -1053,6 +1053,13 @@ caption.py INPUT --srt FILE[:LANG] | --ass FILE | --text CUES.txt [--write-srt O
            [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
 caption.py --text CUES.txt --write-srt OUT.srt        # generate the SRT only
 ```
+**Side files and `--overwrite` (2.2.4).** The files caption.py writes besides the
+video -- the `.srt` from `--text`/`--transcribe` (or `--write-srt`), the generated
+`.ass` (or `--write-ass`), `<output>_adjusted.srt`, `<output>_offset.ass` -- are
+refused like the video when they already exist, all named together, before speech
+recognition and before the first write, dry runs included; `--overwrite` replaces
+them. A hand-corrected transcript next to the output is never replaced silently.
+
 **Caption margins (1.17.2).** `--margin` is the **vertical** distance from the
 edge, in ASS units against the 288-line script grid (default 30; with
 `--platform` it becomes that destination's `safe.top`/`safe.bottom`, e.g. 22 %

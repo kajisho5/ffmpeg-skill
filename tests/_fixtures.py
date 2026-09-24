@@ -59,7 +59,9 @@ def script(name, *args, **kw):
     # three tests), so since 2.0 refuses an existing output the helper gives the consent. What the
     # refusal itself does is pinned by test_contract.py's own helper, which never adds the flag.
     # render.py and batch.py name their outputs in the project / recipe file, not with -o.
-    names_output = "-o" in args or "--output" in args or name in ("render.py", "batch.py")
+    # caption.py's --write-srt/--write-ass sidecars are outputs too since 2.2.4.
+    names_output = ("-o" in args or "--output" in args or "--write-srt" in args or "--write-ass" in args
+                    or name in ("render.py", "batch.py"))
     if names_output and "--overwrite" not in args and "--help" not in args:
         args = args + ("--overwrite",)
     return sh(sys.executable, SCRIPTS / name, *args, **kw)

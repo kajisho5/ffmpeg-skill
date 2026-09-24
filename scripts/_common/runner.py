@@ -542,21 +542,39 @@ def _check_existing_output(cmd: Sequence[str]) -> None:
     output = cmd[-1]
     if output in ("-",) or output.startswith("pipe:") or output.startswith("-"):
         return
-    try:
-        exists = os.path.isfile(output)
-        real = os.path.realpath(output)
-    except OSError:
+    refuse_existing_outputs([output])
+
+
+def refuse_existing_outputs(paths: Sequence[str]) -> None:
+    """_check_existing_output() for every file a run will write, named together, before the
+    first of them is written. A tool whose outputs are not all ffmpeg's last argument (caption.py's
+    .srt/.ass sidecars) calls this up front so a hand-edited sidecar is refused like the video
+    is, and a dry run predicts the same refusal."""
+    existing: List[str] = []
+    for output in paths:
+        if not output:
+            continue
+        try:
+            exists = os.path.isfile(output)
+            real = os.path.realpath(output)
+        except OSError:
+            continue
+        if not exists or real in STATE.written:
+            continue
+        try:
+            st = os.stat(output)
+            STATE.preexisting[real] = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            pass
+        if output not in existing:
+            existing.append(output)
+    if not existing or STATE.overwrite:
         return
-    if not exists or real in STATE.written:
-        return
-    try:
-        st = os.stat(output)
-        STATE.preexisting[real] = (st.st_size, st.st_mtime_ns)
-    except OSError:
-        pass
-    if STATE.overwrite:
-        return
-    die(f"refusing to overwrite existing output {output!r}: pass --overwrite to replace it, or choose another -o path",
+    if len(existing) == 1:
+        die(f"refusing to overwrite existing output {existing[0]!r}: pass --overwrite to replace it, or choose another -o path",
+            kind="input", hint="pass --overwrite, or choose another -o path")
+    die("refusing to overwrite existing outputs " + ", ".join(repr(p) for p in existing)
+        + ": pass --overwrite to replace them, or choose another -o path",
         kind="input", hint="pass --overwrite, or choose another -o path")
 
 

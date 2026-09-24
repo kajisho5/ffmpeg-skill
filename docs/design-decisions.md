@@ -95,6 +95,13 @@ exists. When a decision changes, edit the entry in the same PR.
   copy-then-re-encode fallbacks) is never someone else's file. Code:
   `_common._check_existing_output()`. Test:
   `test_existing_output_is_refused_without_overwrite_and_never_for_its_own_files`.
+  Side files count as outputs (2.2.4): caption.py checks the video and every `.srt`/`.ass` it
+  will write (`--text`/`--transcribe`/`--write-srt`, generated or `--write-ass` ASS,
+  `_offset.ass`) together before speech recognition and the first write; an `_adjusted.srt` or
+  emoji-forced ASS, known only once the cues are laid out, is checked where it is written, still
+  before that write. Through 2.2.3 a hand-corrected transcript was replaced on a re-run. Code:
+  `_common.refuse_existing_outputs()`. Test:
+  `test_caption_sidecars_are_refused_like_the_video_without_overwrite`.
 - **An existing output is written through a hidden sibling temp file and replaced only on
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the
