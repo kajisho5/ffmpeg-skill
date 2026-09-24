@@ -120,6 +120,12 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    # 2.2.6: whitespace-only text is no text -- stripped before the "needs --title" checks, which
+    # used to pass on "  " and burn an empty bar
+    for _attr in ("name", "title", "subtitle", "text", "top", "bottom"):
+        _v = getattr(args, _attr, None)
+        if isinstance(_v, str):
+            setattr(args, _attr, _v if _v.strip() else None)
 
     args.platform = resolve_platform(args.platform)
     if args.platform and not PLATFORMS[args.platform].get("frame"):

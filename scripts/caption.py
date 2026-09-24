@@ -491,6 +491,47 @@ def parse_ass_dialogue(path: str) -> str:
     return "\n".join(text)
 
 
+def parse_ass_cues(path: str) -> List[Tuple[float, float, str]]:
+    """(start, end, drawn text) of every Dialogue line of an ASS file, override blocks stripped."""
+    def secs(stamp: str) -> float:
+        h, m, rest = stamp.strip().split(":")
+        return int(h) * 3600 + int(m) * 60 + float(rest)
+
+    cues: List[Tuple[float, float, str]] = []
+    for line in read_text_or_die(path, "--ass").lstrip("\ufeff").splitlines():
+        if not line.startswith("Dialogue:"):
+            continue
+        fields = line.partition(":")[2].split(",", 9)
+        if len(fields) < 10:
+            continue
+        try:
+            start, end = secs(fields[1]), secs(fields[2])
+        except (ValueError, IndexError):
+            continue
+        text = re.sub(r"\{[^}]*\}", "", fields[9]).replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
+        cues.append((start, end, text))
+    return cues
+
+
+def cue_text_visible(text: str) -> bool:
+    return bool((text or "").strip())
+
+
+def count_visible_cues(cues, duration) -> Tuple[int, int]:
+    """(cues drawn inside [0, duration], non-blank cues entirely outside it). Blank cues count in
+    neither. With no known duration every non-blank cue is taken as drawn."""
+    burned = outside = 0
+    dur = float(duration) if duration else None
+    for start, end, text in cues:
+        if not cue_text_visible(text):
+            continue
+        if end > 0 and (dur is None or start < dur):
+            burned += 1
+        else:
+            outside += 1
+    return burned, outside
+
+
 def shift_ass_file(src: str, dst: str, offset: float) -> int:
     """Copy an ASS file with every Dialogue start/end moved by `offset` seconds."""
     def shift(stamp: str) -> str:
@@ -1247,8 +1288,8 @@ def main() -> int:
             srt_path = new_srt
             planned_cues = adjusted
             side_notes.append(f"the burned subtitles are {new_srt}, the adjusted copy of "
-                              f"{os.path.basename(args.srt)} this run writes (--offset/--max-lines/--min-duration); "
-                              "re-run this command without --dry-run to produce it")
+                              f"{os.path.basename(args.srt)} this run writes (--offset/--max-lines/--min-duration)"
+                              + ("; re-run this command without --dry-run to produce it" if STATE.dry_run else ""))
     if args.ass and args.offset and os.path.exists(args.ass):
         shifted = os.path.splitext(output)[0] + "_offset.ass"
         if STATE.dry_run:
@@ -1258,8 +1299,8 @@ def main() -> int:
             info(f"wrote {shifted} ({n} cues shifted by {args.offset:+g} s)")
         args.ass = shifted
         side_notes.append(f"the burned subtitles are {shifted}, the offset copy of "
-                          f"{os.path.basename(ass_sample_path)} this run writes; re-run this command "
-                          "without --dry-run to produce it")
+                          f"{os.path.basename(ass_sample_path)} this run writes"
+                          + ("; re-run this command without --dry-run to produce it" if STATE.dry_run else ""))
     # a side file this run has planned but (under --dry-run) not written is still the file the
     # command names, so its absence must not be reported as a missing input
     planned_only = STATE.dry_run and planned_cues is not None
@@ -1436,6 +1477,41 @@ def main() -> int:
     if args.ass:
         if not generated_ass and not os.path.exists(args.ass) and not planned_ass:
             die(f"ASS file not found: {args.ass}")
+    # 2.2.6: a burn whose cues are all blank, or all outside the video, draws nothing -- and used
+    # to report verified. Count the cues that can actually be seen; none is a refusal.
+    if generated_ass:
+        burn_cues: Optional[List[Tuple[float, float, str]]] = cues_for_ass
+    elif args.ass:
+        if planned_ass:  # dry run: the offset copy is not written yet, shift the caller's file
+            burn_cues = [(s + args.offset, e + args.offset, t) for s, e, t in parse_ass_cues(ass_sample_path)]
+        else:
+            burn_cues = parse_ass_cues(args.ass)
+        if not burn_cues:
+            die(f"no Dialogue lines found in {ass_sample_path} -- nothing would be drawn", kind="input")
+    elif planned_cues is not None:
+        burn_cues = planned_cues
+    elif args.text or args.transcribe:
+        burn_cues = cues or None  # empty under a --transcribe dry run: nothing to count yet
+    elif srt_path and os.path.exists(srt_path):
+        burn_cues = parse_srt(srt_path)
+    else:
+        burn_cues = None
+    if burn_cues:
+        burned, outside = count_visible_cues(burn_cues, meta.get("duration"))
+        if not burned and not outside:
+            die("every cue is blank -- nothing would be drawn", kind="input")
+        if not burned:
+            first = min(s for s, _e, t in burn_cues if cue_text_visible(t))
+            die(f"no cue falls inside the video (0\u2013{float(meta['duration']):.1f} s); first cue "
+                f"starts at {first:.1f} s -- check --offset or the cue file", kind="input")
+        if outside:
+            msg = (f"{outside} cue(s) fall outside the video (0\u2013{float(meta['duration']):.1f} s) "
+                   "and are not drawn")
+            info(f"warning: {msg}")
+            side_notes.append(msg)
+        caption_stats["cues_burned"] = burned
+        caption_stats["cues_outside"] = outside
+    if args.ass:
         vf = f"ass={escape_filter_path(args.ass)}"
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"

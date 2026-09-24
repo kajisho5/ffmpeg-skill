@@ -629,6 +629,18 @@ class AudiogramTests(MediaFixtures):
         self.assertEqual(doc["commands"], [], "nothing was encoded")
         self.assertFalse((OUT / "wf_nosrt_vis.mp4").exists())
 
+    def test_waveform_srt_outside_the_render_is_refused_as_input(self):
+        """2.2.6: caption.py refuses a cue file none of whose cues falls inside the video; the
+        audiogram's caption stage passes that refusal on as kind input."""
+        srt = OUT / "wf_late.srt"
+        srt.write_text("1\n00:10:00,000 --> 00:10:02,000\nLate\n", encoding="utf-8")
+        out = OUT / "wf_late.mp4"
+        proc = script("waveform.py", self.mic, "--width", "320", "--height", "180", "--srt", srt,
+                      "--json", "-o", out, expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("no cue falls inside the video", doc["error"]["message"])
+
     def test_waveform_failed_caption_stage_keeps_child_kind_and_cleans_up(self):
         """A caption stage that fails re-raises caption.py's own kind (here: an existing output
         without --overwrite is an input refusal), and the _vis intermediate is removed."""

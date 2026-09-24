@@ -736,6 +736,21 @@ not a new file format this tool would have to maintain.
   checklist.
 
 
+## Unreleased — captions that can be seen
+
+- **A burn that draws nothing is a refusal, not a warning.** `caption.py` counts the non-blank
+  cues overlapping `[0, duration]`; none (a cue file timed for a longer cut, all-blank text, an
+  `--ass` without `Dialogue` lines) is `kind: input`, because the output would be the input
+  re-encoded and `verified: true` would be false at the layer a caller reads. Some cues outside
+  is only a warning with `cues_outside`: trimming a clip out of a longer transcript is normal.
+  With no probed duration every non-blank cue counts as drawn. `--mode mux` is not checked; a
+  soft track draws nothing by itself. Tests: `test_caption_refuses_cues_that_are_never_visible`,
+  `test_caption_reports_cues_burned_and_outside`, `test_waveform_srt_outside_the_render_is_refused_as_input`.
+- **Whitespace-only text flags are missing, not text.** `graphics.py` maps a blank
+  `--title`/`--name`/`--subtitle`/`--text`/`--top`/`--bottom` to unset before the template's own
+  "needs --title" check; non-blank text is drawn exactly as given (not stripped). `overlay.py
+  --text "  "` is refused. Test: `test_graphics_and_overlay_refuse_blank_text`.
+
 ## 2.2.4 — the first bad input, named
 
 - **Every bad extra input is refused together, before ffmpeg runs.** The same rule 2.2.0/2.2.1
