@@ -20,11 +20,12 @@ Examples:
   python3 audio.py talk.wav --compress --comp-threshold -20 --comp-ratio 4 --limit --limit-ceiling -1 -o talk_dyn.wav
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, run_keeping_subtitles, fmt_secs
+from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, probe, run, run_keeping_subtitles, fmt_secs
 
 VOICE_CHAIN = "highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
 
@@ -91,6 +92,41 @@ def dynamics_filter(name: str, args: argparse.Namespace) -> str:
     if name == "alimiter":
         opts.append("level=disabled")  # keep the level: a limiter must not normalise the whole track upwards
     return name + ("=" + ":".join(opts) if opts else "")
+
+
+def preflight_beds(args: argparse.Namespace) -> List[Dict[str, Any]]:
+    """Every problem with every --replace / --music / --effects file, found before anything runs:
+    missing, a directory, empty, unreadable, or readable but with no audio stream (a picture-only
+    clip given as a bed used to reach ffmpeg's `[1:a:0]` and fail there, as kind ffmpeg, one file
+    at a time). Under --dry-run a file that does not exist yet is an earlier stage's output and is
+    left to the plan, as join.py's preflight does; a real file is checked under --dry-run too."""
+    problems: List[Dict[str, Any]] = []
+    beds = [(f, v) for f, v in (("--replace", args.replace), ("--music", args.music),
+                                ("--effects", args.effects)) if v]
+    if not beds:
+        return problems
+    ffprobe = require_tool("ffprobe")
+    for flag, path in beds:
+        if dry_run_input_pending(path):
+            continue
+        reason = None
+        if not os.path.exists(path):
+            reason = "missing"
+        elif os.path.isdir(path):
+            reason = "a directory, not a file"
+        elif os.path.getsize(path) == 0:
+            reason = "empty (0 bytes)"
+        else:
+            proc = run([ffprobe, "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+                       quiet=True, check=False)
+            kinds = {line.strip() for line in (proc.stdout or "").splitlines() if line.strip()}
+            if proc.returncode != 0 or not kinds:
+                reason = "unreadable: " + ((proc.stderr or "").strip().splitlines() or ["no streams"])[-1]
+            elif "audio" not in kinds:
+                reason = "no audio stream"
+        if reason:
+            problems.append({"flag": flag, "path": path, "reason": reason})
+    return problems
 
 
 def main() -> int:
@@ -179,6 +215,13 @@ def main() -> int:
     if args.stereo_widen is not None and not (0.0 <= args.stereo_widen <= 1.0):
         die(f"--stereo-widen must be 0..1 (0 = untouched, 1 = maximum), got {args.stereo_widen:g}")
 
+    problems = preflight_beds(args)
+    if problems:
+        die(f"{len(problems)} of the extra audio files cannot be mixed: "
+            + "; ".join(f"{p['flag']} {p['path']}: {p['reason']}" for p in problems),
+            kind="input", problems=problems,
+            hint="each --music / --effects / --replace file must be a readable file with an audio stream")
+
     meta = probe(args.input)
     dur = meta.get("duration") or 0.0
     has_video = bool(meta.get("video"))
@@ -209,7 +252,6 @@ def main() -> int:
     main_src = f"0:a:{args.audio_stream}"
     idx = 1
     if args.replace:
-        probe(args.replace)
         inputs += ["-i", args.replace]
         main_src = f"{idx}:a:0"
         idx += 1
@@ -251,7 +293,6 @@ def main() -> int:
     last = "main"
 
     if args.music:
-        probe(args.music)
         if args.music_loop:
             inputs += ["-stream_loop", "-1", "-i", args.music]
         else:
@@ -276,7 +317,6 @@ def main() -> int:
     if args.effects:
         # A third bed, mixed in at its own level and deliberately never ducked: effects are cut
         # to the picture, so dipping them under speech would move them off their own frames.
-        probe(args.effects)
         inputs += ["-i", args.effects]
         e = f"{idx}:a:0"
         idx += 1

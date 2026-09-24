@@ -30,14 +30,14 @@ invented: give an image or a colour.
   python3 waveform.py ep.m4a --image cover.png --srt ep.srt --title "Episode 12" -o ep.mp4
 """
 import argparse
+import json
 import os
-import subprocess
 import sys
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common import (add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, run, STATE, validate_color, video_args, X264_PRESETS,
-                     fmt_secs)
+                     fmt_secs, child_args, run_tool)
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -114,6 +114,11 @@ def main() -> int:
         die(f"--vis-height must be between 0 and 1, got {args.vis_height:g}")
     if args.srt and args.text:
         die("--srt and --text exclude each other (both name the cues to burn)")
+    # caption.py would refuse a missing cue file too, but only after the visualisation had been
+    # encoded: check it here, before any encode, and name the flag the caller gave
+    for flag, path in (("--srt", args.srt), ("--text", args.text)):
+        if path and not os.path.isfile(path):
+            die(f"{flag} file not found: {path}", kind="input")
 
     if args.width <= 0 or args.height <= 0:
         die(f"--width/--height must be > 0, got width={args.width} height={args.height}")
@@ -193,30 +198,40 @@ def main() -> int:
     if meta.get("duration"):
         cmd += ["-t", f"{float(meta['duration']):.3f}"]
     cmd += ["-shortest", render]
-    run(cmd)
+    stem, ext = os.path.splitext(output)
+    intermediates = [p for p in (render, stem + "_titled" + ext) if p != output]
+    try:
+        run(cmd)
 
-    stages = ["waveform"]
-    current = render
-    if args.title:
-        stem, ext = os.path.splitext(output)
-        titled = stem + "_titled" + ext if (args.srt or args.text) else output
-        _child("graphics.py", [current, "--template", "sticker", "--text", args.title,
-                               "--position", "top-left", "-o", titled]
-               + (["--brand", args.brand] if args.brand else []))
-        stages.append("title")
-        current = titled
-    if args.srt or args.text:
-        _child("caption.py", [current] + (["--srt", args.srt] if args.srt else ["--text", args.text])
-               + (["--platform", args.platform] if args.platform else []) + ["-o", output])
-        stages.append("captions")
-        current = output
-    if current != output and not STATE.dry_run:
-        os.replace(current, output)
-        current = output
-    # the intermediates exist only to keep each tool's own code path the only one there is
-    for temp in (render, os.path.splitext(output)[0] + "_titled" + os.path.splitext(output)[1]):
-        if temp != output and os.path.exists(temp) and not STATE.dry_run:
-            os.remove(temp)
+        stages = ["waveform"]
+        current = render
+        if args.title:
+            titled = stem + "_titled" + ext if (args.srt or args.text) else output
+            # a dry run rendered no _vis file for graphics.py to probe, so its default --end (the
+            # clip's end) came out 0 and the plan failed: give it the source's duration, which
+            # is what -t caps the render at. A real run is unchanged.
+            end = (["--end", f"{float(meta['duration']):.3f}"]
+                   if STATE.dry_run and meta.get("duration") else [])
+            _child("graphics.py", [current, "--template", "sticker", "--text", args.title,
+                                   "--position", "top-left"] + end + ["-o", titled]
+                   + (["--brand", args.brand] if args.brand else []))
+            stages.append("title")
+            current = titled
+        if args.srt or args.text:
+            _child("caption.py", [current] + (["--srt", args.srt] if args.srt else ["--text", args.text])
+                   + (["--platform", args.platform] if args.platform else []) + ["-o", output])
+            stages.append("captions")
+            current = output
+        if current != output and not STATE.dry_run:
+            os.replace(current, output)
+            current = output
+    finally:
+        # the intermediates exist only to keep each tool's own code path the only one there is;
+        # a failed stage removes them too, not only a finished chain
+        if not STATE.dry_run:
+            for temp in intermediates:
+                if os.path.exists(temp):
+                    os.remove(temp)
 
     result = probe(output, role="output")
     v = result["video"] or {}
@@ -268,16 +283,24 @@ def main() -> int:
 
 def _child(script_name: str, argv: "list") -> None:
     """Run one of this skill's own tools as a second process, so the code path it owns (the ASS
-    generator, the drawtext template) stays the only one there is."""
+    generator, the drawtext template) stays the only one there is. The shared flags (--overwrite,
+    --timeout, --fast, --dry-run) reach it through child_args(), as render.py's stages get them,
+    and a failure is re-raised with the child's own kind, exit code and hint."""
     here = os.path.dirname(os.path.abspath(__file__))
-    cmd = [sys.executable, os.path.join(here, script_name)] + [str(a) for a in argv]
-    if STATE.dry_run:
-        cmd.append("--dry-run")
-    info("-> " + " ".join(os.path.basename(c) if c.endswith(".py") else str(c) for c in cmd[1:]))
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    cmd = [os.path.join(here, script_name)] + [str(a) for a in argv] + child_args() + ["--json"]
+    info("-> " + " ".join(os.path.basename(c) if c.endswith(".py") else str(c) for c in cmd[:-1]))
+    proc = run_tool(cmd)
     if proc.returncode != 0:
-        die(f"{script_name} failed:\n{(proc.stderr or proc.stdout).strip()[-800:]}", kind="ffmpeg")
-
+        try:
+            doc = json.loads(proc.stdout.strip() or "{}")
+        except ValueError:
+            doc = {}
+        if not isinstance(doc, dict):
+            doc = {}
+        err = doc.get("error") or {}
+        extra = {"hint": err["hint"]} if err.get("hint") else {}
+        die(f"{script_name} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
+            code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script_name, **extra)
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -186,7 +186,11 @@ def measure_offset(ref_path: str, oth_path: str, start: float, seconds: float, s
     ref = envelope(ref_s, step)
     oth = envelope(oth_s, step)
     if len(ref) < 10 or len(oth) < 10:
-        die("not enough audio to analyse")
+        # name the file (or both): sync.py and multicam.py measure several sources, and a bare
+        # "not enough audio" left the caller to guess which one was too short
+        short = [p for p, env in ((ref_path, ref), (oth_path, oth)) if len(env) < 10]
+        die(f"not enough audio to analyse in {' and '.join(short)} "
+            f"(needs at least {10 * step_ms / 1000:g} s of audio from {start:g} s)", kind="input")
     max_lag = int(max_offset * SR / step)
     lag, score = cross_correlate(ref, oth, max_lag)
     offset = lag * step / SR
