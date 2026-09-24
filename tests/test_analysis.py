@@ -741,6 +741,15 @@ class AnalysisTests(MediaFixtures):
             self.assertIn(key, data)
 
 
+    def test_sync_too_short_names_the_file(self):
+        blip = OUT / "sync_blip.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=d=0.1", blip)
+        proc = script("sync.py", self.src, blip, "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertIn("not enough audio to analyse", doc["error"]["message"])
+        self.assertIn(str(blip), doc["error"]["message"])
+
+
 class ProposeChaptersTests(unittest.TestCase):
     """1.16: the pure half of metadata.py --auto-chapters. No media, no subprocess."""
 

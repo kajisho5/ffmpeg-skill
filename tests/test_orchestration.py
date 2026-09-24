@@ -707,6 +707,31 @@ class OrchestrationTests(MediaFixtures):
                          [(1, "missing"), (2, "empty (0 bytes)"), (3, "missing")])
         self.assertIn("3 of 4 clip sources unusable", proc.stderr)
 
+    def test_render_real_run_names_every_unreadable_clip_source(self):
+        """2.2.4: the real run probed sources one at a time and stopped at the first unreadable
+        one; it now names every one in the same refusal as the missing/empty ones."""
+        bad = []
+        for n in ("a", "b"):
+            p = OUT / f"render_unreadable_{n}.mp4"
+            p.write_bytes(b"not a video at all")
+            bad.append(p)
+        body = {"clips": [{"src": "source.mp4"}, {"src": str(bad[0])}, {"src": str(bad[1])}]}
+        proc = script("render.py", self._proj("render_unreadable.json", body), "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertEqual([p["index"] for p in doc["problems"]], [1, 2])
+        self.assertTrue(all(p["reason"].startswith("unreadable") for p in doc["problems"]))
+        self.assertIn("2 of 3 clip sources unusable", proc.stderr)
+
+    def test_multicam_too_short_names_the_file(self):
+        blip = OUT / "mc_blip.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=d=0.1", blip)
+        proc = script("multicam.py", self.src, blip, "--offsets-only", "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertIn("not enough audio to analyse", doc["error"]["message"])
+        self.assertIn(str(blip), doc["error"]["message"])
+
+
     def test_emit_and_die_use_the_ctx_they_were_given_for_the_plan(self):
         """Review 9: run()/emit()/die() took ctx= but write_plan() and the atexit hook still read
         STATE -- emit(ctx=...) wrote an empty plan while reporting one, and die(ctx=...) let the

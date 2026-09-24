@@ -602,5 +602,72 @@ class AudiogramTests(MediaFixtures):
         self.assertNotIn("audiogram", render.expand_templates("all"))
 
 
+    # ------------------------------------------------ 2.2.4: the chained stages and their inputs
+    def test_waveform_srt_and_title_rerun_with_overwrite(self):
+        """The sub-steps used to get only --dry-run: a second run with --overwrite failed in
+        caption.py/graphics.py ("refusing to overwrite") and was reported as kind ffmpeg."""
+        srt = OUT / "wf_rerun.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello\n", encoding="utf-8")
+        for name, extra in (("wf_rerun_srt.mp4", ("--srt", srt)), ("wf_rerun_title.mp4", ("--title", "Ep 1"))):
+            out = OUT / name
+            for _ in range(2):
+                doc = json.loads(script("waveform.py", self.mic, "--width", "320", "--height", "180",
+                                        *extra, "--overwrite", "--json", "-o", out).stdout)
+                self.assertEqual(doc["status"], "completed")
+            stem = str(out)[:-4]
+            self.assertFalse(Path(stem + "_vis.mp4").exists())
+            self.assertFalse(Path(stem + "_titled.mp4").exists())
+
+    def test_waveform_missing_srt_is_input_before_any_encode(self):
+        out = OUT / "wf_nosrt.mp4"
+        proc = script("waveform.py", self.mic, "--srt", OUT / "no_such_cues.srt", "--json", "-o", out,
+                      expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("no_such_cues.srt", doc["error"]["message"])
+        self.assertEqual(doc["commands"], [], "nothing was encoded")
+        self.assertFalse((OUT / "wf_nosrt_vis.mp4").exists())
+
+    def test_waveform_failed_caption_stage_keeps_child_kind_and_cleans_up(self):
+        """A caption stage that fails re-raises caption.py's own kind (here: an existing output
+        without --overwrite is an input refusal), and the _vis intermediate is removed."""
+        srt = OUT / "wf_fail.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHi\n", encoding="utf-8")
+        out = OUT / "wf_fail.mp4"
+        out.write_bytes(b"x")
+        proc = sh(sys.executable, SCRIPTS / "waveform.py", self.mic, "--width", "320", "--height", "180",
+                  "--srt", srt, "--json", "-o", out, expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertNotEqual(doc["error"]["kind"], "ffmpeg")
+        self.assertFalse((OUT / "wf_fail_vis.mp4").exists())
+
+    def test_waveform_title_dry_run_completes(self):
+        doc = json.loads(script("waveform.py", self.mic, "--title", "Ep 1", "--dry-run", "--json",
+                                "-o", OUT / "wf_title_dry.mp4").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertEqual(doc["audiogram"]["stages"], ["waveform", "title"])
+
+    def test_audio_beds_without_audio_are_refused_together(self):
+        """--music / --effects files with no audio stream: one input refusal naming both, before
+        ffmpeg runs -- the dry run included."""
+        pics = []
+        for n in ("a", "b"):
+            p = OUT / f"bed_noaudio_{n}.mp4"
+            if not p.exists():
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                   "-i", "testsrc=d=1:s=160x120", "-c:v", "libx264", p)
+            pics.append(p)
+        for dry in ((), ("--dry-run",)):
+            proc = script("audio.py", self.src, "--music", pics[0], "--effects", pics[1], "--json",
+                          "-o", OUT / "bed_noaudio_out.mp4", *dry, expect_fail=True)
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["error"]["kind"], "input")
+            self.assertEqual([(p["flag"], p["reason"]) for p in doc["problems"]],
+                             [("--music", "no audio stream"), ("--effects", "no audio stream")])
+            self.assertIn(str(pics[0]), doc["error"]["message"])
+            self.assertIn(str(pics[1]), doc["error"]["message"])
+            self.assertEqual(doc["commands"], [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

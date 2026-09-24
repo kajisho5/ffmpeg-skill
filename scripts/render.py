@@ -64,7 +64,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
+from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -1010,14 +1010,21 @@ def main() -> int:
             problems.append({"index": i, "path": src, "reason": "a directory, not a file"})
         elif os.path.getsize(src) == 0:
             problems.append({"index": i, "path": src, "reason": "empty (0 bytes)"})
+        elif not STATE.dry_run:
+            # 2.2.4: readable, too -- one ffprobe per source, nothing decoded, the same test
+            # join.py's preflight makes. Before, a real run probed the sources one by one and
+            # stopped at the first unreadable file; the dry run already named every one via join.
+            proc = run([require_tool("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type",
+                        "-of", "csv=p=0", src], quiet=True, check=False)
+            kinds = {line.strip() for line in (proc.stdout or "").splitlines() if line.strip()}
+            if proc.returncode != 0 or not kinds & {"audio", "video"}:
+                first = ((proc.stderr or "").strip().splitlines() or ["no audio or video stream"])[-1]
+                problems.append({"index": i, "path": src, "reason": f"unreadable: {first}"})
     if problems:
         die(f"{len(problems)} of {len(clips)} clip sources unusable: "
             + "; ".join(f"clip {p['index']}: {p['reason']}: {p['path']}" for p in problems),
             kind="input", problems=problems,
             hint="fix or remove these clips in the project; nothing was cut")
-    if not STATE.dry_run:
-        for c in clips:
-            probe(rel(c["src"]))  # an unreadable source stops the run before any clip is cut
 
     parts: List[str] = []
     for i, c in enumerate(clips):

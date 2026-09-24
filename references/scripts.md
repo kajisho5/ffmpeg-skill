@@ -338,8 +338,10 @@ sticker template and `--srt`/`--text` burns captions by running caption.py
 afterwards -- both as second processes, so neither of those code paths is
 re-implemented here. `--image` must be a readable local file: a URL is refused
 (`kind: input`), nothing is fetched, and the skill never invents cover art --
-give an image or a colour. Without any of these flags the command line is
-byte-identical to 1.15's. Every run's result carries an `audiogram` object (style,
+give an image or a colour. The title and caption stages receive `--overwrite`, `--timeout`,
+`--fast` and `--dry-run`, and a failed stage reports that tool's own error kind; a missing
+`--srt`/`--text` file is refused (`kind: input`) before anything is encoded. Without any of
+these flags the command line is byte-identical to 1.15's. Every run's result carries an `audiogram` object (style,
 background, image, position, vis_height, platform, captions, title, stages,
 verified). `render.py --template audiogram` is the one-call form; it is
 deliberately not part of `--template all`.
@@ -1395,6 +1397,9 @@ threshold ducks on quieter speech, a shorter release brings the bed back faster.
 `--json`'s `audio` block reports the settings the run actually used.
 `--effects FILE` mixes a third track (sound effects, atmos) at
 `--effects-volume` and is never ducked — effects are cut to the picture.
+Every `--music` / `--effects` / `--replace` file is checked before ffmpeg runs (under
+`--dry-run` too): missing, empty, unreadable or with no audio stream, all of them are named in
+one refusal (`kind: input`, `problems: [{flag, path, reason}]`).
 `--stereo-widen 0..1` widens the stereo image (`extrastereo=m=1+2*amount`) and
 needs a real stereo source: it scales the side signal (L−R), so a mono track
 duplicated to two channels has nothing to scale. A 1-channel input is refused
