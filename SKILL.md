@@ -5,11 +5,11 @@ description: 'Edit video and audio with local FFmpeg from natural-language reque
 
 # ffmpeg-skill
 
-Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`, and delivery templates in `templates/`. This file is enough to do a job: the table below routes the request, and `--help` on the script about to run is the cheapest full flag list. A reference file costs as much to read as this file; open one only for a question you have: `references/scripts.md` (every flag of all 42 scripts), `references/devices.md` (iPhone HDR, GoPro, DJI, screen recordings, Zoom), `references/gotchas.md` (the long form of the one-line rules at the end). MCP: `tools/list` shows only the core 12 by default; the other 42 (per this table) stay callable by name via `tools/call`, described by `contract --json`; set `FFMPEG_SKILL_MCP_FULL=1` for all 42.
+Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`, and delivery templates in `templates/`. This file is enough to do a job: the table below routes the request, and `--help` on the script about to run is the cheapest full flag list. A reference file costs as much as this one; open one only for a question you have: `references/scripts.md` (every flag of all 42 scripts), `references/devices.md` (iPhone HDR, GoPro, DJI, screen recordings, Zoom), `references/gotchas.md` (the long form of the one-line rules at the end). MCP: `tools/list` shows only the core 12 by default; the other 42 (per this table) stay callable by name via `tools/call`, described by `contract --json`; set `FFMPEG_SKILL_MCP_FULL=1` for all 42.
 
 Shared flags, on every script: `--dry-run`; `--json` (output path, a probe of the output, the commands run); `--json-brief` (status/output/verified plus a `summary`; prefer on writing steps); `--fast` (preview quality); `--progress`; `--timeout SECONDS` (`kind: timeout`, default 1800); `--overwrite` (step 7); `--plan FILE` (the dry run as a plan `render.py FILE` runs later; refuses if an input changed). Re-encoding tools also take `--codec h264|hevc|av1|prores` and `--quality N`: unset, SDR is x264, HDR is x265 Main10; `prores` needs `-o NAME.mov`, `h264` refuses HDR (`color.py --to-sdr` first).
 
-Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `check`, `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`) may still run ffmpeg/ffprobe — they just skip the artifact and side files (`--edl`, `--sheet`, a generated `.ass`); `verify` ignores the flag. Per-tool: `contract --json`'s `dry_run` field.
+Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `check`, `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`) may still run ffmpeg/ffprobe, skipping artifacts/side files (`--edl`, `--sheet`, a generated `.ass`); `verify` ignores the flag. Per tool: `contract --json` `dry_run`.
 
 ## Workflow (always follow this order)
 
@@ -96,7 +96,7 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "add subtitles from this SRT", "burn in captions" | `caption.py input.mp4 --srt subs.srt` |
 | "caption it with these lines" (text with times) | `caption.py input.mp4 --text cues.txt` |
 | "keep the subtitles toggleable", "mux in an SRT" | `caption.py input.mp4 --srt subs.srt --mode mux`; repeat `--srt file:lang` for several languages, `.mkv` for more than two |
-| "the captions are tiny / three lines on a Short", "don't chop the sentence" | `caption.py` shrinks the size until the cue fits `--max-lines` before splitting it (`--fit-size off` for 1.16 behaviour, `--min-size` sets the floor). Keep the template's `--max-lines` (2 on a vertical) and let the size drop; raising it to dodge a shrink stacks two words per line. A word still wider than the column at the floor is sliced at the edge (hyphen preferred), never rewritten, automatic; `broken_inside_word` in the JSON counts it |
+| "the captions are tiny / three lines on a Short", "don't chop the sentence" | `caption.py` shrinks the size until the cue fits `--max-lines` before splitting it (`--fit-size off` = 1.16 behaviour, `--min-size` the floor). Keep the template's `--max-lines` (2 on a vertical) and let the size drop; raising it to dodge a shrink stacks two words per line. A word still wider than the column at the floor is sliced at the edge (hyphen preferred), never rewritten, automatic; `broken_inside_word` in the JSON counts it |
 | "transcribe it and caption it" | `caption.py input.mp4 --transcribe --animate pop --karaoke` (needs a local whisper; else `--text`) |
 | "TikTok-style captions with the words popping" | `caption.py input.mp4 --text cues.txt --animate pop --karaoke` |
 | "our logo top-right", "a watermark" | `overlay.py input.mp4 --image logo.png --position top-right --scale 200` |
@@ -139,9 +139,9 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` (TTS parts: `--list parts.txt`, `--on-missing skip`) |
 | "several changes to one edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
 | "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` — identical stages reused (`--from STAGE` starts there) |
-| "open it in Premiere / Resolve / Final Cut" | `render.py project.json --export-timeline edit.fcpxml\|.edl\|.otio` — the cut as a timeline, nothing rendered; read `not_exported` |
+| "open it in Premiere / Resolve / Final Cut" | `render.py project.json --export-timeline edit.fcpxml\|.edl\|.otio` — renders nothing; read `not_exported`; no project? `--write-project` |
 | "do this to every file in the folder", "use all the cores" | `batch.py FOLDER --recipe batch.json --jobs auto` (steps or a render project; cached) |
-| "three cameras, cut between them" | `multicam.py camA.mp4 camB.mp4 camC.mp4 --switch "0-20:0,20-40:1,40-60:2"` (manual) or `--switch energy` (auto-cuts to the loudest camera, `--min-shot`, `--edl`) |
+| "three cameras, cut between them" | `multicam.py camA.mp4 camB.mp4 camC.mp4 --switch "0-20:0,20-40:1,40-60:2"` (manual) or `--switch energy` (`--min-shot`); `--edl` = cut list; editor: `--write-project p.json` → `--export-timeline` |
 | "what's in this file", "how long is it" | `probe.py input.mp4` |
 | "show me what it looks like", "are the captions readable" | `look.py output.mp4 --tiles 3x2`, then view the PNG |
 | "what would you run?", "don't render yet" | any script with `--dry-run` |
