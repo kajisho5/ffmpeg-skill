@@ -208,9 +208,16 @@ def preflight(paths: List[str], audible: Optional[List[int]] = None) -> Tuple[Li
 
 def find_silent(paths: List[str], audible: List[int], threshold: float) -> List[Dict[str, Any]]:
     """The audible inputs whose whole-file peak (volumedetect max_volume) is at or below
-    `threshold` dBFS: one decode of the audio per input, run under --dry-run too (a measurement,
-    not an encode). An input whose level cannot be measured is left to the join itself."""
+    `threshold` dBFS: one decode of the audio per input. Not under --dry-run: join is a writing
+    tool, and a dry run of it (or of render.py, which joins through it) runs no ffmpeg -- the plan
+    notes that silence is measured on the real run. An input whose level cannot be measured is
+    left to the join itself."""
     silent: List[Dict[str, Any]] = []
+    if STATE.dry_run:
+        if audible:
+            STATE_NOTES.append("silence is not measured under --dry-run; a real run measures every input with audio "
+                               "for --on-silent")
+        return silent
     for i in audible:
         lv = measured_level_dbfs(paths[i], seconds=86400)
         if lv is not None and lv["peak_dbfs"] <= threshold:

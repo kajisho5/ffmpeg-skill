@@ -556,7 +556,7 @@ class ContractTests(unittest.TestCase):
         tool gaining/losing an analysis-only dry-run mode is caught here instead of the docs
         silently drifting out of sync with _contract.py again (issue #82)."""
         analysis_tools = set(_contract.DRY_RUN_ANALYSIS.keys())
-        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "join"},
+        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize"},
                           "the analysis-only dry-run tool set changed -- update SKILL.md/references/scripts.md's exception list to match")
         # "the name appears somewhere in the file" was too weak: every tool name is in SKILL.md's
         # request table anyway, so the list drifted twice (#176 -> #179) with this test green.
@@ -1517,7 +1517,7 @@ class ContractTests(unittest.TestCase):
             if strict:
                 self.assertFalse(marker.exists(), f"{name} --dry-run invoked ffmpeg")
         self.assertEqual({n for n, s in self.tools.items() if s["dry_run"]["ffmpeg_execution"] == "analysis_only"},
-                         {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "join"})
+                         {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize"})
         # the read-only tools keep working under --dry-run (ffprobe still runs)
         self.assertEqual(tool("probe", self.src, "--dry-run", env=env).returncode, 0)
         self.assertEqual(tool("check", self.src, "--platform", "x", "--no-loudness", "--dry-run", env=env).returncode, 0)

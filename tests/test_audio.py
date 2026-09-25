@@ -696,7 +696,8 @@ class AudiogramTests(MediaFixtures):
     def test_audio_silent_beds_warn_by_default_and_fail_on_request(self):
         """A silent --music / --effects / --replace file used to be mixed and reported as verified.
         Default warn: mixed, named under `silent` and in a note. --on-silent fail: named in the
-        single input refusal, before ffmpeg runs, under --dry-run too."""
+        single input refusal, before ffmpeg runs. A dry run measures nothing (a writing tool's dry
+        run runs no ffmpeg), so it completes and the real run is the one that refuses."""
         wav, _ = self._silent_files()
         for flag in ("--music", "--effects", "--replace"):
             doc = json.loads(script("audio.py", self.src, flag, wav, "--json",
@@ -705,26 +706,28 @@ class AudiogramTests(MediaFixtures):
             self.assertEqual([(t["flag"], t["path"]) for t in doc["silent"]], [(flag, str(wav))])
             self.assertLessEqual(doc["silent"][0]["peak_db"], -50)
             self.assertTrue(any("silent" in n for n in doc["notes"]))
-            for dry in ((), ("--dry-run",)):
-                proc = script("audio.py", self.src, flag, wav, "--on-silent", "fail", "--json",
-                              "-o", OUT / "silent_bed_out.mp4", *dry, expect_fail=True)
-                err = json.loads(proc.stdout)
-                self.assertEqual(err["error"]["kind"], "input")
-                self.assertEqual(len(err["problems"]), 1)
-                self.assertEqual(err["problems"][0]["flag"], flag)
-                self.assertRegex(err["problems"][0]["reason"], r"^silent \(peak -?[0-9.]+ dBFS\)$")
-                self.assertEqual(err["commands"], [])
+            proc = script("audio.py", self.src, flag, wav, "--on-silent", "fail", "--json",
+                          "-o", OUT / "silent_bed_out.mp4", expect_fail=True)
+            err = json.loads(proc.stdout)
+            self.assertEqual(err["error"]["kind"], "input")
+            self.assertEqual(len(err["problems"]), 1)
+            self.assertEqual(err["problems"][0]["flag"], flag)
+            self.assertRegex(err["problems"][0]["reason"], r"^silent \(peak -?[0-9.]+ dBFS\)$")
+            self.assertEqual(err["commands"], [])
+            doc = json.loads(script("audio.py", self.src, flag, wav, "--on-silent", "fail", "--json", "--dry-run",
+                                    "-o", OUT / "silent_bed_out.mp4").stdout)
+            self.assertEqual(doc["status"], "completed")
         # a real bed is never reported, and a lower threshold lets the silent one through
         doc = json.loads(script("audio.py", self.src, "--music", self.mic, "--json", "--dry-run",
                                 "-o", OUT / "silent_bed_out.mp4").stdout)
         self.assertNotIn("silent", doc)
         doc = json.loads(script("audio.py", self.src, "--music", wav, "--silence-threshold", "-120",
-                                "--on-silent", "fail", "--json", "--dry-run", "-o", OUT / "silent_bed_out.mp4").stdout)
+                                "--on-silent", "fail", "--json", "-o", OUT / "silent_bed_out.mp4").stdout)
         self.assertEqual(doc["status"], "completed")
 
     def test_audio_duck_under_a_silent_voice_is_reported(self):
         _, clip = self._silent_files()
-        doc = json.loads(script("audio.py", clip, "--music", self.mic, "--duck", "--json", "--dry-run",
+        doc = json.loads(script("audio.py", clip, "--music", self.mic, "--duck", "--json",
                                 "-o", OUT / "silent_duck_out.mp4").stdout)
         self.assertEqual([t["flag"] for t in doc["silent"]], ["input"])
         proc = script("audio.py", clip, "--music", self.mic, "--duck", "--on-silent", "fail", "--json",

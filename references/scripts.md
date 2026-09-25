@@ -572,7 +572,7 @@ in for its streams (any audio extension the skill reads, `.aiff` and `.caf` incl
 picture), so a pending `.mp4` next to measured audio is refused as the mix a real run would
 refuse; `expected_duration` is null while any input is pending, and `notes` names the planned
 frame, rate or xfade offsets that rest on a pending input's unmeasured placeholder.
-Every existing input with an audio stream is also measured (one volumedetect pass, `--dry-run`
+Every existing input with an audio stream is also measured (one volumedetect pass; not under `--dry-run`
 too): a peak at or below `--silence-threshold` (default -50 dBFS) is silent, the trace of a TTS
 call that wrote a valid but empty file. `--on-silent warn` (default) joins it and names it under
 `silent: [{index, path, peak_db}]` and in `notes`; `fail` refuses it in the same `kind: input`
@@ -1417,7 +1417,7 @@ Every `--music` / `--effects` / `--replace` file is checked before ffmpeg runs (
 `--dry-run` too): missing, empty, unreadable or with no audio stream, all of them are named in
 one refusal (`kind: input`, `problems: [{flag, path, reason}]`).
 Each of those files, and under `--duck` the voice, is also measured (whole-file peak, under
-`--dry-run` too): at or below `--silence-threshold` (default -50 dBFS) it is silent.
+not under `--dry-run`): at or below `--silence-threshold` (default -50 dBFS) it is silent.
 `--on-silent warn` (default) mixes it anyway and reports `silent: [{flag, path, peak_db}]`
 plus a note; `--on-silent fail` adds it to the same refusal with reason `silent (peak X dBFS)`.
 `--stereo-widen 0..1` widens the stereo image (`extrastereo=m=1+2*amount`) and

@@ -195,7 +195,7 @@ call happened and no file appeared. Under `--dry-run` a tool prints the command 
 it would run, reports `dry_run: true`, and never reports an output probe. The
 exceptions are stated per tool in the contract's `dry_run` field: `probe` and `check` are
 read-only (ffprobe still runs); `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`,
-`loudness`, `stabilize` and `join` (its silent-input peak measurement) still run their ffmpeg/ffprobe measurements (the analysis is the
+`loudness` and `stabilize` still run their ffmpeg/ffprobe measurements (the analysis is the
 tool's job; only the artifact is skipped, including side files such as `--edl`, `--sheet` or a
 generated `.ass`), and `verify` does not support dry-run (its steps run). `SKILL.md` and
 `references/scripts.md` repeat the same list; the contract is the authority.
@@ -451,7 +451,7 @@ therefore `"lufs": "-inf"`, never `-Infinity`.
 file and, under `--duck`, of the voice: at or below `--silence-threshold` (default -50 dBFS)
 the track is silent. `--on-silent warn` (default) mixes it and adds `silent: [{flag, path,
 peak_db}]` plus a `notes` line; `--on-silent fail` names it in the single `kind: input`
-refusal's `problems` with reason `"silent (peak X dBFS)"`. `--dry-run` measures every file
+refusal's `problems` with reason `"silent (peak X dBFS)"`. A real run measures every file
 that exists. `export.py`'s `loudness` gains `silent: true` for a silent output, whose note
 says "output audio is silent" instead of recommending `loudness.py`.
 

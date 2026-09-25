@@ -141,6 +141,9 @@ def find_silent_tracks(args: argparse.Namespace, problems: List[Dict[str, Any]])
     if args.duck and not args.replace:
         tracks.append(("input", args.input, args.audio_stream))
     silent: List[Dict[str, Any]] = []
+    if STATE.dry_run:
+        # a writing tool's dry run runs no ffmpeg (docs/contract.md); the real run measures
+        return silent
     for flag, path, stream in tracks:
         if dry_run_input_pending(path) or not os.path.isfile(path):
             continue

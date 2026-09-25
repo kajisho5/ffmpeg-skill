@@ -233,7 +233,6 @@ DRY_RUN_ANALYSIS = {
     "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
     "check": "read-only tool; the loudness measurement runs under --dry-run too, so every row is present",
     "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
-    "join": "each existing input with audio is measured (volumedetect peak) for --on-silent; pending inputs are skipped; the joined output is not written",
 }
 DRY_RUN_NOTES = {
     "probe": "read-only tool; --dry-run changes nothing (ffprobe still runs)",
