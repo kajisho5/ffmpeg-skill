@@ -217,7 +217,9 @@ def main() -> int:
 
         def silent_audio(peak: float) -> None:
             # a present-but-silent track is the failed-TTS / muted-export case: "present" is not a pass
-            audio_row.update(status="FAIL", value=audio_row["value"] + f", silent (peak {peak:.1f} dB)",
+            # FAIL under a platform with a loudness target (it would fail loudness anyway); WARN
+            # otherwise: a muted screen recording or a b-roll clip is a legitimate silent track
+            audio_row.update(status="FAIL" if spec["lufs"] is not None else "WARN", value=audio_row["value"] + f", silent (peak {peak:.1f} dB)",
                              expected=f"present, peak above {SILENT_PEAK_DBFS:g} dBFS",
                              fix="audio.py --replace with the real track, or re-export from the master",
                              reason="the audio track exists but carries no sound: viewers hear nothing")

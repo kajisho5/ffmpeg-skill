@@ -186,7 +186,7 @@ The workflow in `SKILL.md` is "probe first, verify last". The contract states it
 (fit, caption, overlay, graphics, color, join, multicam, render). Audio-only tools and
 audio-only inputs never need `look`; the report line is `Look: not needed`. `check`
 rows carry `kind: format` (fix it) or `kind: judgement` (decide with the user).
-The `audio` row FAILs when the track is present but silent (peak at or below -50 dBFS, from
+The `audio` row FAILs (WARN when no loudness target applies) when the track is present but silent (peak at or below -50 dBFS, from
 the loudness pass or, when loudness is skipped, one volumedetect pass). `check --content`
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
 from one decode pass; without it the row set is unchanged. Thresholds:

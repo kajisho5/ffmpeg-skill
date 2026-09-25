@@ -869,7 +869,7 @@ minimum height, fps, codecs, size, LUFS, true peak, SDR-only) come from the one 
 in `scripts/_platforms.py`, which `export.py` and the `render.py` templates read too -- so the
 loudness a preset normalises to and the loudness this tool checks are the same value by
 construction, not by two lists agreeing.
-The `audio` row FAILs on a present-but-silent track (peak <= -50 dBFS, the join/audio
+The `audio` row FAILs (under a loudness target; WARN without one) on a present-but-silent track (peak <= -50 dBFS, the join/audio
 `--silence-threshold` default): measured from the loudness pass, or with one volumedetect
 pass when `--no-loudness` (or a spec with no loudness target) skips it.
 `--content` (opt-in, one decode pass) adds three rows: `black` (share of the duration that is

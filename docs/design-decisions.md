@@ -793,7 +793,7 @@ not a new file format this tool would have to maintain.
   -50 dB, FAIL at >= 95%. Only FAIL means "almost certainly a broken render". The default row
   set is byte-identical without the flag. Tests: `test_check_content_rows`,
   `test_check_default_rows_unchanged_without_content`.
-- **`check.py`'s `audio` row FAILs on a silent track even without `--content`.** A present
+- **`check.py`'s `audio` row flags a silent track even without `--content`: FAIL under a loudness target, WARN with none (a muted screen recording is legitimate).** A present
   stream at or below -50 dBFS peak (2.2.6's threshold) is the empty-TTS / muted-export case
   that "present" used to pass; it costs nothing when the loudness pass ran (its true peak is
   read) and one volumedetect pass when loudness is skipped. Test:

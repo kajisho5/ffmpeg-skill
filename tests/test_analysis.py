@@ -295,9 +295,10 @@ class AnalysisTests(MediaFixtures):
 
     def test_check_audio_row_fails_on_silent_track(self):
         silent = self._content_clip("content_silent.mp4", "testsrc2=size=160x90:rate=10", "anullsrc=r=48000:cl=mono")
-        for extra in (["--no-loudness"], ["--lufs", "-14"]):
+        # FAIL under a loudness target; WARN with none (a muted screen recording is legitimate)
+        for extra, status in ((["--lufs", "-14"], "FAIL"), (["--platform", "custom", "--no-loudness"], "WARN")):
             row = self._rows(silent, *extra)["audio"]
-            self.assertEqual(row["status"], "FAIL", (extra, row))
+            self.assertEqual(row["status"], status, (extra, row))
             self.assertIn("silent", row["value"])
 
     def test_check_podcast_reports_chapters_and_channel_count(self):
