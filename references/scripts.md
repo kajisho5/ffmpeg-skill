@@ -631,7 +631,8 @@ A plan is a single tool's dry run as an artifact: `cut.py in.mp4 --start 2 --end
 head+tail), commands, output, verify}` and runs nothing. `render.py cut.json`
 re-fingerprints the inputs (refusing, `kind: input`, if any changed since the
 plan), runs the tool with the planned argv, then the verify steps (probe; `check`
-for a `--platform` or a platform export preset), and reports `plan`, `tool`,
+for a `--platform` or a platform export preset; add `"content": true` to a check
+step for the black/frozen/silence rows), and reports `plan`, `tool`,
 `tool_result` and `check`. Show the plan to the user, get the yes, execute:
 one round trip instead of re-deriving the command.
 `"export": {"preset": "reels", "normalize": true}` forwards `export.py --normalize`

@@ -729,8 +729,11 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     check_result = None
     exit_code = 0
     for step in plan.get("verify") or []:
-        if step.get("tool") == "check" and step.get("platform") and output:
-            cp = run_tool([str(HERE / "check.py"), output, "--platform", step["platform"], "--json"] + child_args())
+        # a check step names a platform, asks for check.py --content's black/frozen/silence rows
+        # ("content": true), or both -- the same keys a project's "check" stage takes
+        if step.get("tool") == "check" and (step.get("platform") or step.get("content") is True) and output:
+            cp = run_tool([str(HERE / "check.py"), output] + (["--platform", str(step["platform"])] if step.get("platform") else [])
+                          + (["--content"] if step.get("content") is True else []) + ["--json"] + child_args())
             try:
                 check_result = json.loads(cp.stdout)
             except ValueError:
@@ -742,7 +745,7 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     # same command run by hand)
     if exit_code:
         failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
-        info(f"plan done: {output}, but the {check_result.get('platform')} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""))
+        info(f"plan done: {output}, but the {check_result.get('platform') or 'content'} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""))
     else:
         info(f"plan done: {output}")
     emit(output, plan=path, tool=tool, stages=[tool] + (["check"] if check_result else []), check=check_result, tool_result=doc,

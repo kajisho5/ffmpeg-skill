@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- fix(render): a plan's `check` verify step honours `"content": true` (`check.py --content`), with or without a `platform`, the same key a project's `check` stage takes. Before, `render.py PLAN` ran a check step only when it named a platform and never passed `--content`.
 
 ## 2.3.0
 

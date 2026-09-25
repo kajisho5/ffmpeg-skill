@@ -225,7 +225,8 @@ subtitle/LUT/font files a filter reads. Tools that print their document without 
 (`probe`, the analysis tools) still write the plan at exit; `verify.py` and `render.py`
 refuse `--plan` (their steps run for real; a project file is already a plan). `render.py FILE` executes a plan:
 it refuses (`kind: input`) when an input's size or head/tail hash differs from the plan,
-runs the tool with the planned `argv`, then the verify steps, and reports `plan`, `tool`,
+runs the tool with the planned `argv`, then the verify steps (a `check` step may also carry
+`"content": true`, added by hand, for `check.py --content`), and reports `plan`, `tool`,
 `tool_result` and `check`. `plan_version` is bumped when the document's shape changes.
 
 ### Repeatability

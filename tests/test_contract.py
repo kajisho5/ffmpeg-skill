@@ -2191,6 +2191,12 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("render", xplan, "--json", check=False).stdout)
         self.assertIn(doc["status"], ("completed", "failed"))
         self.assertEqual(doc["check"]["platform"], "x")
+        # a check step with "content": true runs check.py --content (same key as a project's check stage)
+        cp = json.loads(plan.read_text()); cp["verify"].append({"tool": "check", "content": True})
+        cplan = self.out("plan_content.json"); cplan.write_text(json.dumps(cp))
+        doc = json.loads(tool("render", cplan, "--json", "--overwrite", check=False).stdout)
+        self.assertEqual(doc["stages"], ["cut", "check"])
+        self.assertTrue({"black", "frozen"} & {r["check"].split()[0].lower() for r in doc["check"]["checks"]}, doc["check"]["checks"])
         # a changed input is refused
         ffmpeg("-i", self.src, "-t", "0.5", "-c", "copy", "-y", src)
         proc = tool("render", plan, "--json", "--overwrite", check=False)
