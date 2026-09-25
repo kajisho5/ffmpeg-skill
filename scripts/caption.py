@@ -498,17 +498,23 @@ def parse_ass_cues(path: str) -> List[Tuple[float, float, str]]:
         return int(h) * 3600 + int(m) * 60 + float(rest)
 
     cues: List[Tuple[float, float, str]] = []
+    # the [Events] Format line names the columns; Text is always last (libass reads it the same
+    # way), and a file without one gets the standard ten
+    names = ["layer", "start", "end", "style", "name", "marginl", "marginr", "marginv", "effect", "text"]
     for line in read_text_or_die(path, "--ass").lstrip("\ufeff").splitlines():
+        if line.startswith("Format:") and "text" in line.lower():
+            names = [n.strip().lower() for n in line.partition(":")[2].split(",")]
+            continue
         if not line.startswith("Dialogue:"):
             continue
-        fields = line.partition(":")[2].split(",", 9)
-        if len(fields) < 10:
+        fields = line.partition(":")[2].split(",", len(names) - 1)
+        if len(fields) < len(names) or "start" not in names or "end" not in names:
             continue
         try:
-            start, end = secs(fields[1]), secs(fields[2])
+            start, end = secs(fields[names.index("start")]), secs(fields[names.index("end")])
         except (ValueError, IndexError):
             continue
-        text = re.sub(r"\{[^}]*\}", "", fields[9]).replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
+        text = re.sub(r"\{[^}]*\}", "", fields[-1]).replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
         cues.append((start, end, text))
     return cues
 
@@ -1481,6 +1487,9 @@ def main() -> int:
     # to report verified. Count the cues that can actually be seen; none is a refusal.
     if generated_ass:
         burn_cues: Optional[List[Tuple[float, float, str]]] = cues_for_ass
+    elif args.ass and not os.path.exists(ass_sample_path):
+        # a dry run's pending --ass (an earlier step writes it): nothing to count yet
+        burn_cues = None
     elif args.ass:
         if planned_ass:  # dry run: the offset copy is not written yet, shift the caller's file
             burn_cues = [(s + args.offset, e + args.offset, t) for s, e, t in parse_ass_cues(ass_sample_path)]
