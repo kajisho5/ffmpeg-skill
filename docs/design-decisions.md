@@ -782,3 +782,19 @@ not a new file format this tool would have to maintain.
   reported. A silent export's note says the audio is silent; loudness.py cannot fix that, so it
   is neither recommended nor run by `--normalize`. Test:
   `test_audio_every_tool_json_on_silent_input_parses_strictly`.
+- **`check.py --content` is opt-in, and its thresholds are loose.** The black / frozen /
+  silence rows cost a full decode of the file (one pass, blackdetect + freezedetect +
+  silencedetect), where the default rows cost an ffprobe and one audio pass; and a black
+  intro, a held title card or a silent B-roll montage are real edits, so they would be noise on
+  every delivery. Thresholds: `black` WARN above 10% of the duration, FAIL at >= 95% (all
+  black, allowing blackdetect's last-frame shortfall); `frozen` WARN when the longest frozen
+  span exceeds max(3 s, 30% of the duration) -- a 3 s title hold is normal, a stuck third of a
+  short is not -- FAIL at >= 95% (the whole video frozen); `silence` WARN above 50% below
+  -50 dB, FAIL at >= 95%. Only FAIL means "almost certainly a broken render". The default row
+  set is byte-identical without the flag. Tests: `test_check_content_rows`,
+  `test_check_default_rows_unchanged_without_content`.
+- **`check.py`'s `audio` row FAILs on a silent track even without `--content`.** A present
+  stream at or below -50 dBFS peak (2.2.6's threshold) is the empty-TTS / muted-export case
+  that "present" used to pass; it costs nothing when the loudness pass ran (its true peak is
+  read) and one volumedetect pass when loudness is skipped. Test:
+  `test_check_audio_row_fails_on_silent_track`.

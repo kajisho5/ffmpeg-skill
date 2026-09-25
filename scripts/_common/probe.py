@@ -467,6 +467,68 @@ def detect_silences(path: str, threshold: float, min_silence: float) -> "List[Tu
     return silences
 
 
+# 2.3.0's silence threshold: a track whose whole-file peak is at or below this is digital
+# silence (join.py / audio.py --silence-threshold default, check.py's audio row).
+SILENT_PEAK_DBFS = -50.0
+
+# check.py --content thresholds (docs/design-decisions.md "check.py --content").
+CONTENT_BLACK_PIX_TH = 0.10      # blackdetect pixel threshold (share of the luma range)
+CONTENT_MIN_SPAN = 0.1           # blackdetect minimum run, seconds
+CONTENT_FREEZE_NOISE = "-60dB"   # freezedetect noise tolerance
+CONTENT_FREEZE_MIN = 0.5         # freezedetect minimum run, seconds
+CONTENT_SILENCE_MIN = 0.5        # silencedetect minimum run, seconds
+
+_BLACK_RE = re.compile(r"black_start:\s*([0-9.]+)\s+black_end:\s*([0-9.]+)")
+_FREEZE_RE = re.compile(r"lavfi\.freezedetect\.freeze_(start|end):\s*([0-9.]+)")
+
+
+def detect_content(path: str, duration: float, *, video: bool = True, audio: bool = True) -> Dict[str, Any]:
+    """One decode pass of blackdetect + freezedetect (video) and silencedetect (audio, at
+    SILENT_PEAK_DBFS). Returns {"black": [(s, e)], "frozen": [(s, e)], "silence": [(s, e)]}
+    with open-ended spans closed at `duration`; a key is absent when its stream is. {} when the
+    input is a pending dry-run placeholder."""
+    if dry_run_input_pending(path) or not (video or audio):
+        return {}
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path]
+    if video:
+        cmd += ["-map", "0:v:0", "-vf", f"blackdetect=d={CONTENT_MIN_SPAN}:pix_th={CONTENT_BLACK_PIX_TH},"
+                f"freezedetect=n={CONTENT_FREEZE_NOISE}:d={CONTENT_FREEZE_MIN}"]
+    if audio:
+        cmd += ["-map", "0:a:0", "-af", f"silencedetect=noise={SILENT_PEAK_DBFS:g}dB:d={CONTENT_SILENCE_MIN}"]
+    proc = run_analysis(cmd + ["-f", "null", "-"], check=False, record=True)
+    if proc.returncode != 0:
+        die(f"content detection failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+    end = max(duration, 0.0)
+    out: Dict[str, Any] = {}
+    if video:
+        out["black"] = [(float(a), min(float(b), end) if end else float(b)) for a, b in _BLACK_RE.findall(proc.stderr)]
+        frozen: "List[Tuple[float, float]]" = []
+        start = None
+        for kind, val in _FREEZE_RE.findall(proc.stderr):
+            if kind == "start":
+                start = float(val)
+            elif start is not None:
+                frozen.append((start, float(val)))
+                start = None
+        if start is not None:
+            frozen.append((start, end))
+        out["frozen"] = frozen
+    if audio:
+        sil: "List[Tuple[float, float]]" = []
+        start = None
+        for kind, val in SIL_RE.findall(proc.stderr):
+            if kind == "start":
+                start = float(val)
+            elif start is not None:
+                sil.append((start, min(float(val), end) if end else float(val)))
+                start = None
+        if start is not None:
+            sil.append((start, end))
+        out["silence"] = sil
+    return out
+
+
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
 
 

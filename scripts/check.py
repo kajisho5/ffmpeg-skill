@@ -18,6 +18,12 @@ Examples:
   python3 check.py reel.mp4 --platform reels --json
   python3 check.py spot.mov --platform broadcast
   python3 check.py clip.mp4 --platform custom --max-duration 30 --aspect 1:1 --lufs -16
+  python3 check.py final.mp4 --platform reels --content
+
+--content (opt-in) adds three content rows from one decode pass: black (share of the
+duration that is black: WARN > 10%, FAIL >= 95%), frozen (longest frozen span: WARN >
+max(3 s, 30% of the duration), FAIL when the whole video is frozen) and silence (share
+below -50 dBFS: WARN > 50%, FAIL >= 95%). Without it the row set is unchanged.
 """
 import argparse
 import json
@@ -27,6 +33,7 @@ from fractions import Fraction
 from typing import Any, Dict, List
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, spec_of, resolve as resolve_platform
+from _common.probe import SILENT_PEAK_DBFS, detect_content, measured_level_dbfs
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -52,6 +59,17 @@ def measure_loudness(path: str) -> Dict[str, float]:
         return {}
 
 
+# --content thresholds (docs/design-decisions.md, "check.py --content").
+BLACK_WARN, BLACK_FAIL = 0.10, 0.95        # share of the duration that is black
+FROZEN_WARN_S, FROZEN_WARN_SHARE = 3.0, 0.30  # longest frozen span: WARN above max(3 s, 30%)
+FROZEN_FAIL = 0.95                         # a frozen span covering this share = whole video frozen
+SILENCE_WARN, SILENCE_FAIL = 0.50, 0.95    # share of the duration below SILENT_PEAK_DBFS
+
+
+def _span_total(spans: Any) -> float:
+    return sum(max(0.0, e - s) for s, e in spans)
+
+
 def aspect_name(w: int, h: int) -> str:
     f = Fraction(w, h)
     for name, target in (("16:9", Fraction(16, 9)), ("9:16", Fraction(9, 16)), ("1:1", Fraction(1)), ("4:5", Fraction(4, 5)), ("4:3", Fraction(4, 3)), ("21:9", Fraction(21, 9))):
@@ -70,6 +88,8 @@ def main() -> int:
     ap.add_argument("--tp", type=float, help="override true-peak ceiling")
     ap.add_argument("--max-mb", type=float, help="override max file size in MB")
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
+    ap.add_argument("--content", action="store_true",
+                    help="also check the content (one decode pass): black, frozen and silence rows")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -193,10 +213,22 @@ def main() -> int:
                     "by number and the viewer has to guess") if untagged else "")
 
     if a:
+        audio_row = next(r for r in rows if r["check"] == "audio")
+
+        def silent_audio(peak: float) -> None:
+            # a present-but-silent track is the failed-TTS / muted-export case: "present" is not a pass
+            audio_row.update(status="FAIL", value=audio_row["value"] + f", silent (peak {peak:.1f} dB)",
+                             expected=f"present, peak above {SILENT_PEAK_DBFS:g} dBFS",
+                             fix="audio.py --replace with the real track, or re-export from the master",
+                             reason="the audio track exists but carries no sound: viewers hear nothing")
+        loudness_ran = False
         if a.get("sample_rate") and a["sample_rate"] not in (44100, 48000):
             row("sample rate", "WARN", a["sample_rate"], "44100 or 48000", "loudness.py --sample-rate 48000")
         if not args.no_loudness and spec["lufs"] is not None:
             lm = measure_loudness(args.input)
+            loudness_ran = bool(lm)
+            if lm and lm["tp"] <= SILENT_PEAK_DBFS:
+                silent_audio(lm["tp"])
             if lm:
                 diff = abs(lm["lufs"] - spec["lufs"])
                 row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g} for speech or music; leave ambience/near-silence (<= -40 LUFS) alone and say so",
@@ -210,10 +242,38 @@ def main() -> int:
                 row("loudness", "WARN", "could not measure", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", "re-run check.py, or verify loudness manually",
                     reason="ffmpeg's loudness measurement didn't produce a readable result -- this was not actually checked")
                 row("true peak", "WARN", "could not measure", f"<= {spec['tp']:g} dBTP", "re-run check.py, or verify true peak manually")
+        if not loudness_ran and not dry_run_input_pending(args.input):
+            # loudness skipped (--no-loudness, or a spec with no target): one cheap volumedetect pass
+            lv = measured_level_dbfs(args.input, seconds=None)
+            if lv and lv["peak_dbfs"] <= SILENT_PEAK_DBFS:
+                silent_audio(lv["peak_dbfs"])
     elif args.platform in ("podcast",):
         row("audio", "FAIL", "none", "audio stream", "audio.py --replace")
     else:
         row("audio", "WARN", "none", "audio stream", "audio.py --replace (silent uploads are often rejected)")
+
+    if args.content:
+        cd = detect_content(args.input, dur, video=bool(v), audio=bool(a))
+        span = dur if dur > 0 else 0.0
+        if "black" in cd and span:
+            share = _span_total(cd["black"]) / span
+            row("black", "FAIL" if share >= BLACK_FAIL else ("WARN" if share > BLACK_WARN else "PASS"),
+                f"{share * 100:.0f}% black", f"<= {BLACK_WARN * 100:.0f}% black",
+                "look.py the black spans; trim them with cut.py or re-export from the master",
+                reason="an all-black or mostly black picture is usually a failed render or a missing clip")
+        if "frozen" in cd and span:
+            longest = max((e - s for s, e in cd["frozen"]), default=0.0)
+            limit = max(FROZEN_WARN_S, FROZEN_WARN_SHARE * span)
+            row("frozen", "FAIL" if longest >= FROZEN_FAIL * span else ("WARN" if longest > limit else "PASS"),
+                f"longest {longest:.1f}s", f"<= {limit:.1f}s frozen",
+                "look.py the frozen span: a still title card is fine, a stuck decode is not",
+                reason="a picture that never changes is usually a stuck frame, not the edit")
+        if "silence" in cd and span:
+            share = _span_total(cd["silence"]) / span
+            row("silence", "FAIL" if share >= SILENCE_FAIL else ("WARN" if share > SILENCE_WARN else "PASS"),
+                f"{share * 100:.0f}% silent", f"<= {SILENCE_WARN * 100:.0f}% below {SILENT_PEAK_DBFS:g} dBFS",
+                "silence.py to cut the gaps, or audio.py --replace when the track is empty",
+                reason="most of the running time has no audible sound")
 
     failed = [r for r in rows if r["status"] == "FAIL"]
     warned = [r for r in rows if r["status"] == "WARN"]
