@@ -37,7 +37,7 @@ import sys
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common import (add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, run, STATE, validate_color, video_args, X264_PRESETS,
-                     fmt_secs, child_args, run_tool)
+                     fmt_secs, child_args, run_tool, measured_level_dbfs)
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -56,6 +56,11 @@ def main() -> int:
     ap.add_argument("--split-channels", action="store_true", help="draw each channel in its own lane instead of summing to one")
     ap.add_argument("--audio-stream", type=int, default=0,
                      help="which audio stream of the input to render, 0-based in file order (default 0)")
+    ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
+                    help="input audio whose peak is at or below --silence-threshold (the render would be a flat "
+                         "line): warn (default: render it, report `silent: true`) or fail (refuse before ffmpeg runs)")
+    ap.add_argument("--silence-threshold", type=float, default=-50.0, metavar="DBFS",
+                    help="peak level in dBFS at or below which the input counts as silent (default -50)")
     ag = ap.add_argument_group("audiogram (1.16)",
                                "The visualisation over a picture, for an episode that has no video. The image is a "
                                "local file you give: this skill has no network access and never invents cover art.")
@@ -136,6 +141,19 @@ def main() -> int:
     audio_streams = meta.get("audio_streams") or []
     if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
+    if args.silence_threshold >= 0:
+        die(f"--silence-threshold is a peak level in dBFS and must be negative, got {args.silence_threshold:g}")
+    # silent input draws a flat line that used to be reported as verified; a writing tool's dry
+    # run runs no ffmpeg (docs/contract.md), so only the real run measures
+    silent_peak = None
+    if not STATE.dry_run:
+        level = measured_level_dbfs(args.input, seconds=None, audio_stream=args.audio_stream)
+        if level is not None and level["peak_dbfs"] <= args.silence_threshold:
+            silent_peak = level["peak_dbfs"]
+            if args.on_silent == "fail":
+                die(f"{args.input} is silent (audio stream {args.audio_stream} peaks at {silent_peak:g} dBFS, at or below "
+                    f"--silence-threshold {args.silence_threshold:g}): the visualisation would be a flat line",
+                    kind="input", hint="check the audio, or pass --on-silent warn to render it anyway")
     output = args.output or default_output(args.input, "waveform")
 
     # The visualisation's own band. Without --image/--position it fills the frame, which is what
@@ -243,6 +261,10 @@ def main() -> int:
             notes.append(f"the visualisation band and {args.platform}'s bottom safe zone overlap by "
                          f"{overlap}px: the captions or the app's own UI will sit over the waveform "
                          f"(lower --vis-height to {max(0.05, (args.height - safe_px) / args.height):.2f})")
+    if silent_peak is not None:
+        info(f"warning: {args.input} is silent (peak {silent_peak:g} dBFS); the visualisation is a flat line")
+        notes.append(f"the input audio is silent (peak {silent_peak:g} dBFS, at or below --silence-threshold "
+                     f"{args.silence_threshold:g}): the visualisation is a flat line; pass --on-silent fail to refuse instead")
     duration_ok = True
     if not STATE.dry_run and meta.get("duration") and result.get("duration"):
         duration_ok = abs(float(result["duration"]) - float(meta["duration"])) <= 0.05
@@ -259,7 +281,7 @@ def main() -> int:
             notes.append(f"the render is {float(v['fps']):g} fps against the {args.fps:g} fps asked for")
     # reported on every run, not only an audiogram one: a caller that keys on `audiogram.background`
     # should not have to guess whether the key exists (`"color"` is the plain-waveform answer).
-    extra = {"audiogram": {
+    extra = {"silent": None if STATE.dry_run else silent_peak is not None, "audiogram": {
         "style": args.style,
         "background": "image" if args.image else "color",
         "image": args.image,

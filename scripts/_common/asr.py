@@ -50,6 +50,28 @@ def parse_srt(path: str) -> List[Tuple[float, float, str]]:
     return cues
 
 
+NO_SPEECH_REASON = "no_speech"
+
+
+def die_no_speech(engine: str, video: str) -> None:
+    """An engine ran and heard nothing: kind input, `reason: "no_speech"`, naming the engine and
+    the input -- not the "no engine found" refusal (one was found) and not "no cues found in"
+    the engine's own temporary SRT (a path the caller never gave and that is already deleted)."""
+    die(f"{engine} found no speech in {video}", kind="input", reason=NO_SPEECH_REASON, engine=engine,
+        hint="check that the input (and --audio-stream) carries the speech, or write the cues by hand with --text")
+
+
+def _engine_cues(srt: str, engine: str, video: str) -> List[Tuple[float, float, str]]:
+    """The cues of an SRT an engine wrote; an SRT with no cue in it is die_no_speech()."""
+    try:
+        text = Path(srt).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    if "-->" not in text:
+        die_no_speech(engine, video)
+    return parse_srt(srt)
+
+
 def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         for i, (s, e, t) in enumerate(cues, 1):
@@ -122,7 +144,7 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         proc = _asr_run(cmd, subprocess, "whisper.cpp")
         if proc.returncode == 0 and os.path.exists(base + ".srt"):
             info(f"transcribed with whisper.cpp ({os.path.basename(cli)}, model {os.path.basename(model_path)})")
-            cues = parse_srt(base + ".srt")
+            cues = _engine_cues(base + ".srt", "whisper.cpp", video)
             write_srt(cues, out_srt)
             return cues
         info("whisper.cpp found but failed: " + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
@@ -144,10 +166,11 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         if t.is_alive():
             die(f"faster-whisper exceeded the {STATE.timeout:.0f} s time limit; raise --timeout for a long recording", code=124, kind="timeout")
         cues = list(result)
-        if cues:
-            info("transcribed with faster-whisper")
-            write_srt(cues, out_srt)
-            return cues
+        if not cues:
+            die_no_speech("faster-whisper", video)
+        info("transcribed with faster-whisper")
+        write_srt(cues, out_srt)
+        return cues
     except ImportError:
         pass
     # 3. openai-whisper CLI
@@ -159,7 +182,7 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         srt = os.path.join(tmpdir, "audio.srt")
         if proc.returncode == 0 and os.path.exists(srt):
             info("transcribed with openai-whisper")
-            cues = parse_srt(srt)
+            cues = _engine_cues(srt, "openai-whisper", video)
             write_srt(cues, out_srt)
             return cues
     die_no_engine("Or write the cues by hand with --text cues.txt (see format above).")

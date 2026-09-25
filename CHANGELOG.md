@@ -18,6 +18,9 @@
 - feat(check): `--content` (opt-in) adds `black` (blackdetect share: WARN > 10%, FAIL >= 95%), `frozen` (freezedetect longest span: WARN > max(3 s, 30%), FAIL when the whole video is frozen) and `silence` (silencedetect share at -50 dB: WARN > 50%, FAIL >= 95%) rows from one decode pass. Without it the row set is unchanged. render.py's `check` section takes `"content": true` to forward it.
 - fix(check): the `audio` row FAILs instead of PASSing "present" when the track is silent (peak <= -50 dBFS) -- read off the loudness pass, or from one volumedetect pass when `--no-loudness` or a spec without a loudness target skips it.
 - fix(caption): the "re-run without --dry-run to produce X_adjusted.srt" note appears only on dry runs
+- fix(join): a segment shorter than 2 frames (audio-only: 0.05 s) and a path listed twice no longer join unremarked: new `short_segments: [{index, path, duration}]` and `duplicates: [{path, indices}]` keys (always present, `[]` when none) plus notes. Warnings only; the join command is unchanged.
+- fix(waveform): silent input audio no longer renders a flat-line audiogram without a word. A real run peak-measures the input; `--on-silent warn|fail` (default warn) and `--silence-threshold` (default -50 dBFS) as in `audio.py`; new `silent` key (`null` under `--dry-run`) and a note.
+- fix(asr): a speech engine that ran and found no speech says `<engine> found no speech in <input>` (`kind: input`, `reason: "no_speech"`, `engine`) instead of faster-whisper's "no local speech-to-text engine found" or whisper.cpp / openai-whisper's "no cues found in /tmp/ffskill_asr_*/audio.srt".
 
 ## 2.2.5
 
