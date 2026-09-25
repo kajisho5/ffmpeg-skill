@@ -15,6 +15,8 @@
   `silent: true`, and a note saying "output audio is silent" instead of recommending loudness.py.
 - fix(caption): a burn whose cues are never visible is refused with `kind: input` instead of reporting `verified: true` -- every cue outside `[0, duration]`, every cue blank, or `--ass` with no `Dialogue` lines; applies to `waveform.py --srt` too. The `caption` block reports `cues_burned` and `cues_outside`, and cues partly outside get a warning note
 - fix(graphics, overlay): whitespace-only `--title`, `--name`, `--text` (and the other text flags) count as missing and are refused instead of burning an empty graphic
+- feat(check): `--content` (opt-in) adds `black` (blackdetect share: WARN > 10%, FAIL >= 95%), `frozen` (freezedetect longest span: WARN > max(3 s, 30%), FAIL when the whole video is frozen) and `silence` (silencedetect share at -50 dB: WARN > 50%, FAIL >= 95%) rows from one decode pass. Without it the row set is unchanged. render.py's `check` section takes `"content": true` to forward it.
+- fix(check): the `audio` row FAILs instead of PASSing "present" when the track is silent (peak <= -50 dBFS) -- read off the loudness pass, or from one volumedetect pass when `--no-loudness` or a spec without a loudness target skips it.
 - fix(caption): the "re-run without --dry-run to produce X_adjusted.srt" note appears only on dry runs
 
 ## 2.2.5

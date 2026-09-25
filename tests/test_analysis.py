@@ -244,6 +244,62 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(h["bit_depth"], 10)
         self.assertEqual(h["codec"], "hevc")
 
+    # ---------------------------------------------------------------- check --content
+    def _content_clip(self, name, video, audio, seconds=6):
+        path = OUT / name
+        if not path.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", video,
+               "-f", "lavfi", "-i", audio, "-t", str(seconds), "-r", "10", "-pix_fmt", "yuv420p",
+               "-c:v", "libx264", "-c:a", "aac", "-shortest", path)
+        return path
+
+    def _rows(self, path, *extra):
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom",
+                               "--json", *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return {r["check"]: r for r in json.loads(proc.stdout)["checks"]}
+
+    def test_check_content_rows(self):
+        tone = "sine=frequency=440:sample_rate=48000"
+        normal = self._content_clip("content_normal.mp4", "testsrc2=size=160x90:rate=10", tone)
+        black = self._content_clip("content_black.mp4", "color=black:size=160x90:rate=10", tone)
+        frozen = self._content_clip("content_frozen.mp4", "color=gray:size=160x90:rate=10,drawbox=x=20:y=20:w=40:h=40:color=red:t=fill", tone)
+        # 2 s moving then 4 s held: the held span (4 s) exceeds max(3 s, 30% of 6 s) but is not the whole clip
+        part = OUT / "content_part_frozen.mp4"
+        if not part.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               "testsrc2=size=160x90:rate=10,trim=duration=2,tpad=stop_mode=clone:stop_duration=4",
+               "-f", "lavfi", "-i", tone, "-t", "6", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac", part)
+        silent = self._content_clip("content_silent.mp4", "testsrc2=size=160x90:rate=10", "anullsrc=r=48000:cl=mono")
+        # 1.5 s black then 4.5 s picture: 25% black -> WARN; tone for 2 s then 4 s silence -> 67% silent -> WARN
+        mixed = OUT / "content_mixed.mp4"
+        if not mixed.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               "testsrc2=size=160x90:rate=10,drawbox=t=fill:color=black:enable='lt(t,1.5)'",
+               "-f", "lavfi", "-i", tone + ",volume=enable='gte(t,2)':volume=0", "-t", "6",
+               "-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac", mixed)
+        r = self._rows(normal, "--content")
+        self.assertEqual([r[k]["status"] for k in ("black", "frozen", "silence")], ["PASS"] * 3, r)
+        self.assertEqual(self._rows(black, "--content")["black"]["status"], "FAIL")
+        self.assertEqual(self._rows(frozen, "--content")["frozen"]["status"], "FAIL")
+        self.assertEqual(self._rows(part, "--content")["frozen"]["status"], "WARN")
+        self.assertEqual(self._rows(silent, "--content")["silence"]["status"], "FAIL")
+        r = self._rows(mixed, "--content")
+        self.assertEqual((r["black"]["status"], r["silence"]["status"]), ("WARN", "WARN"), r)
+
+    def test_check_default_rows_unchanged_without_content(self):
+        clip = self._content_clip("content_black.mp4", "color=black:size=160x90:rate=10",
+                                  "sine=frequency=440:sample_rate=48000")
+        rows = self._rows(clip, "--no-loudness")
+        self.assertEqual(list(rows), ["duration", "aspect", "vfr", "colour", "audio", "subtitles"])
+        self.assertEqual(rows["audio"]["status"], "PASS")
+
+    def test_check_audio_row_fails_on_silent_track(self):
+        silent = self._content_clip("content_silent.mp4", "testsrc2=size=160x90:rate=10", "anullsrc=r=48000:cl=mono")
+        for extra in (["--no-loudness"], ["--lufs", "-14"]):
+            row = self._rows(silent, *extra)["audio"]
+            self.assertEqual(row["status"], "FAIL", (extra, row))
+            self.assertIn("silent", row["value"])
+
     def test_check_podcast_reports_chapters_and_channel_count(self):
         """1.13: two informational podcast rows. Neither may FAIL a delivery, and neither may
         appear for a platform that does not care."""

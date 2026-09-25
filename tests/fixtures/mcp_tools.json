@@ -195,6 +195,7 @@
   "properties": [
    "argv",
    "aspect",
+   "content",
    "dry_run",
    "fast",
    "input",

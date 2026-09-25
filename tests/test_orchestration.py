@@ -848,6 +848,21 @@ class OrchestrationTests(MediaFixtures):
         self.assertTrue(any("--aspect 16:9 --width 1920 --height 1080" in line for line in proc.stderr.splitlines()
                             if "fit.py" in line), proc.stderr[-2000:])
 
+    def test_render_check_content_forwards_the_content_rows(self):
+        """`"check": {"content": true}` forwards check.py --content; the default leaves the rows out."""
+        rows = {}
+        for flag in (True, None):
+            proj = OUT / "project_check_content.json"
+            chk = {"platform": "custom"}
+            if flag:
+                chk["content"] = True
+            proj.write_text(json.dumps({"output": "render_check_content.mp4",
+                                        "clips": [{"src": "source.mp4", "in": 0, "out": 2}], "check": chk}), encoding="utf-8")
+            data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+            rows[flag] = {r["check"] for r in data["check"]["checks"]}
+        self.assertTrue({"black", "frozen", "silence"} <= rows[True], rows)
+        self.assertFalse({"black", "frozen", "silence"} & rows[None], rows)
+
     def test_render_exits_nonzero_when_the_check_stage_fails(self):
         """A render whose deliverable fails its own check stage must not report success."""
         proj = OUT / "project_bad_check.json"

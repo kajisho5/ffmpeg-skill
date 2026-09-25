@@ -29,7 +29,7 @@ Project format (all keys optional except clips):
   "loudness": {"lufs": -14, "tp": -1},
   "fit": {"duration": 60},
   "export": {"preset": "reels", "normalize": true},   (default for platform presets; false opts out)
-  "check": {"platform": "reels"},
+  "check": {"platform": "reels"},     ("content": true adds check.py --content's black/frozen/silence rows)
   "chapters": "chapters.txt"            (or [{"at": "0:00", "title": "Intro"}, ...])
 }
 
@@ -149,7 +149,7 @@ OBJECT_KEYS: Dict[str, frozenset] = {
     "loudness": frozenset({"lufs", "tp"}),
     "fit": frozenset({"duration", "method", "aspect", "fit", "width", "height", "fps", "smooth"}),
     "export": frozenset({"preset", "fit", "crf", "normalize"}),
-    "check": frozenset({"platform"}),
+    "check": frozenset({"platform", "content"}),
 }
 # Typos difflib cannot see: a clip is trimmed with in/out, not the start/end that time a title.
 NEAR_KEYS: Dict[str, Dict[str, str]] = {"clips[]": {"start": "in", "end": "out", "from": "in", "to": "out"},
@@ -1341,7 +1341,8 @@ def main() -> int:
     check_result = None
     exit_code = 0
     if ck and ck.get("platform") and not STATE.dry_run:
-        proc = run_tool([str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"] + child_args())
+        proc = run_tool([str(HERE / "check.py"), output, "--platform", ck["platform"], "--json"]
+                        + (["--content"] if ck.get("content") is True else []) + child_args())
         try:
             check_result = json.loads(proc.stdout)
         except ValueError:

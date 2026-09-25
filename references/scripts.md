@@ -844,7 +844,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -861,6 +861,14 @@ minimum height, fps, codecs, size, LUFS, true peak, SDR-only) come from the one 
 in `scripts/_platforms.py`, which `export.py` and the `render.py` templates read too -- so the
 loudness a preset normalises to and the loudness this tool checks are the same value by
 construction, not by two lists agreeing.
+The `audio` row FAILs on a present-but-silent track (peak <= -50 dBFS, the join/audio
+`--silence-threshold` default): measured from the loudness pass, or with one volumedetect
+pass when `--no-loudness` (or a spec with no loudness target) skips it.
+`--content` (opt-in, one decode pass) adds three rows: `black` (share of the duration that is
+black: WARN > 10%, FAIL >= 95%), `frozen` (longest frozen span: WARN > max(3 s, 30% of the
+duration), FAIL when it covers >= 95%, i.e. the whole video) and `silence` (share below
+-50 dBFS: WARN > 50%, FAIL >= 95%). A render project enables it with `"check": {"platform":
+"reels", "content": true}`.
 
 ### batch.py — same recipe over a folder, cached
 ```
