@@ -954,7 +954,7 @@ def main() -> int:
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
     sty.add_argument("--fit-size", choices=["auto", "on", "off"], default="auto",
                      help="shrink the caption size until the cue fits --max-lines, BEFORE splitting it: "
-                          "'auto' (default) only when no --size was given, 'on' always, 'off' for 1.16 behaviour")
+                          "'auto' (default) only when no --size was given, 'on' always, 'off' keeps --size and splits the cue instead")
     sty.add_argument("--min-size", type=int, default=None,
                      help="smallest size --fit-size may use, in ASS points (default 13 = 4.5%% of the frame height, "
                           "the legibility floor)")

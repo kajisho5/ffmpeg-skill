@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- docs(SKILL.md): MCP line said "the other 42" stay callable (it is the other 30, as `mcp/server.py` and the tests say); `--fit-size off` described by what it does rather than "1.16 behaviour" (also in `caption.py --help`); workflow heading drops "always" (steps 0 and 8 are conditional). From a prompt audit.
 
 ## 2.3.1
 
