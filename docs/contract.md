@@ -513,6 +513,13 @@ Per-tool keys added after 2.2.2, all additive:
 |---|---|---|
 | `sdr_path`, `notes` | `color.py --to-sdr` | `sdr_path` is `"tonemap"` for PQ / HLG / Dolby Vision input (and `--force` on an untagged file) or `"gamut"` for BT.2020 primaries on an SDR transfer, which is converted to BT.709 without a tone map (`--tonemap`/`--peak`/`--desat` do not apply); `notes` says which path was taken and why |
 | `silent` | `join.py` (every run) | `[{index, path, peak_db}]`: inputs whose whole-file audio peak (volumedetect) is at or below `--silence-threshold` (default -50 dBFS) and that `--on-silent warn` (default) joined anyway, with a `notes` line; `[]` otherwise. `--on-silent fail` names them in the `kind: input` refusal's `problems` (reason `silent (peak -91.0 dBFS)`), `skip` lists them under `skipped`. An input with no audio stream is never silent; `verified` is unaffected |
+| `short_segments`, `duplicates` | `join.py` (every run) | warnings, never refusals, and the join command is unchanged: `short_segments: [{index, path, duration}]` names each measured input shorter than 2 frames at the join's fps (an audio-only join: shorter than 0.05 s); `duplicates: [{path, indices}]` names a path (compared resolved) listed more than once — repeating a clip can be intended. `[]` when none; each non-empty one adds a `notes` line |
+| `silent` | `waveform.py` (every run) | `true` when the input audio's whole-file peak is at or below `--silence-threshold` (default -50 dBFS), which draws a flat line; `--on-silent warn` (default) renders it anyway with a `notes` line, `fail` refuses (`kind: input`) before ffmpeg runs. `false` when audible, `null` under `--dry-run` (nothing measured). `verified` is unaffected |
+
+`caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
+and produced no cue, the refusal is `"<engine> found no speech in <input>"` with `kind: input`,
+`reason: "no_speech"` and `engine` in the failure document — distinct from the "no local
+speech-to-text engine found" refusal, which now only means no engine was found.
 
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one

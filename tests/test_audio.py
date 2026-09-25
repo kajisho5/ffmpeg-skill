@@ -547,6 +547,40 @@ class AudiogramTests(MediaFixtures):
         self.assertFalse(doc["verified"])
         self.assertFalse(doc["audiogram"]["verified"])
 
+    def test_waveform_silent_input_warns_or_fails(self):
+        """A silent input renders a flat line that used to be reported as verified. The real run
+        measures the input's peak (same -50 dBFS --silence-threshold and --on-silent warn|fail as
+        audio.py): warn (default) renders it with `silent: true` and a note, fail refuses as kind
+        input before ffmpeg runs; --dry-run measures nothing (`silent: null`)."""
+        src = OUT / "wave_silent.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=d=1", "-t", "1", src)
+        doc = json.loads(script("waveform.py", src, "--width", "128", "--height", "128", "--json",
+                                "-o", OUT / "wave_silent.mp4").stdout)
+        self.assertIs(doc["silent"], True)
+        self.assertTrue(any("silent" in n for n in doc["notes"]))
+        proc = script("waveform.py", src, "--on-silent", "fail", "--width", "128", "--height", "128", "--json",
+                      "-o", OUT / "wave_silent_fail.mp4", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["error"]["kind"], doc["commands"]), ("input", []))
+        self.assertIn("silent", doc["error"]["message"])
+        self.assertFalse((OUT / "wave_silent_fail.mp4").exists())
+        doc = json.loads(script("waveform.py", src, "--dry-run", "--json", "-o", OUT / "wave_silent_dry.mp4").stdout)
+        self.assertIsNone(doc["silent"])
+        doc = json.loads(script("waveform.py", self.mic, "--width", "128", "--height", "128", "--json",
+                                "-o", OUT / "wave_loud.mp4").stdout)
+        self.assertIs(doc["silent"], False)
+
+    def test_audiogram_refuses_a_zero_by_zero_image(self):
+        """A truncated PNG that ffprobe reports as 0x0 is an input refusal naming the image."""
+        full = self._plate(64, 64)
+        trunc = OUT / "ag_trunc.png"
+        trunc.write_bytes(full.read_bytes()[:30])
+        proc = script("waveform.py", self.mic, "--image", trunc, "-o", OUT / "ag_trunc.mp4",
+                      "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn(str(trunc), doc["error"]["message"])
+
     def test_audiogram_refuses_an_image_ffmpeg_cannot_decode(self):
         """Spec 2.6: a file that is not a decodable image is an input refusal naming it, before
         ffmpeg is ever started -- not a raw ffmpeg failure."""

@@ -1063,6 +1063,42 @@ class EditingTests(MediaFixtures):
                                 "--json", "-o", d / "clean.wav").stdout)
         self.assertEqual(doc["skipped"], [])
 
+    def test_join_warns_on_short_segments_and_duplicates(self):
+        """A segment shorter than 2 frames (audio-only: 0.05 s) and a path listed twice used to
+        join as verified with nothing said. Both are warnings, not refusals (repeating a clip can
+        be intended): `short_segments` [{index, path, duration}] and `duplicates` [{path,
+        indices}], always present, plus a note each. The join command is unchanged."""
+        d = OUT / "join_short_dup"
+        d.mkdir(exist_ok=True)
+        ff = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error")
+        sh(*ff, "-f", "lavfi", "-i", "testsrc=s=64x64:r=25:d=1", "-f", "lavfi", "-i", "sine=d=1",
+           "-shortest", "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", d / "a.mp4")
+        sh(*ff, "-f", "lavfi", "-i", "testsrc=s=64x64:r=25", "-f", "lavfi", "-i", "sine",
+           "-frames:v", "1", "-t", "0.04", "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", d / "b.mp4")
+        sh(*ff, "-f", "lavfi", "-i", "sine=d=1", d / "a.wav")
+        sh(*ff, "-f", "lavfi", "-i", "sine=d=0.02", d / "b.wav")
+        doc = json.loads(script("join.py", d / "a.mp4", d / "b.mp4", d / "a.mp4", "--transition", "none",
+                                "--json", "-o", d / "v.mp4").stdout)
+        self.assertEqual((doc["status"], doc["clips"]), ("completed", 3))
+        self.assertEqual([(s["index"], Path(s["path"]).name) for s in doc["short_segments"]], [(1, "b.mp4")])
+        self.assertLess(doc["short_segments"][0]["duration"], 2 / 25)
+        self.assertEqual([(Path(x["path"]).name, x["indices"]) for x in doc["duplicates"]], [("a.mp4", [0, 2])])
+        self.assertTrue(any("more than once" in n for n in doc["notes"]))
+        self.assertTrue(any("shorter than 2 frames" in n for n in doc["notes"]))
+        doc = json.loads(script("join.py", d / "a.wav", d / "b.wav", "--transition", "none",
+                                "--json", "-o", d / "o.wav").stdout)
+        self.assertEqual([Path(s["path"]).name for s in doc["short_segments"]], ["b.wav"])
+        self.assertEqual(doc["duplicates"], [])
+        # clean: both keys present and empty
+        doc = json.loads(script("join.py", d / "a.wav", d / "a.wav", "--transition", "none",
+                                "--json", "-o", d / "c.wav").stdout)
+        self.assertEqual(doc["short_segments"], [])
+        self.assertEqual(len(doc["duplicates"]), 1)
+        doc = json.loads(script("join.py", d / "a.mp4", d / "a.mp4", "--transition", "none", "--dry-run",
+                                "--json", "-o", d / "dry.mp4").stdout)
+        self.assertEqual(doc["short_segments"], [])
+        shutil.rmtree(d, ignore_errors=True)
+
     def test_join_on_silent_names_a_silent_segment(self):
         """Reported from the same VPS shorts pipeline: TTS sometimes writes a valid but fully
         silent wav, which passes the missing/empty/unreadable preflight, and the video shipped

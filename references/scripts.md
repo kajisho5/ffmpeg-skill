@@ -312,7 +312,7 @@ waveform.py INPUT [--style waveform|spectrum] [--width W] [--height H] [--fps N]
                    [--image PATH] [--image-fit cover|contain|blur]
                    [--position bottom|centre|top|strip] [--vis-height FRAC] [--opacity 0..1]
                    [--platform NAME] [--srt FILE | --text FILE] [--title TEXT] [--brand brand.json]
-                   [-o OUT]
+                   [--on-silent warn|fail] [--silence-threshold -50] [-o OUT]
 ```
 Renders the input's audio as a video: `--style waveform` (default, FFmpeg's
 `showwaves`) draws amplitude over time; `--style spectrum` (`showspectrum`)
@@ -343,7 +343,11 @@ give an image or a colour. The title and caption stages receive `--overwrite`, `
 `--srt`/`--text` file is refused (`kind: input`) before anything is encoded. Without any of
 these flags the command line is byte-identical to 1.15's. Every run's result carries an `audiogram` object (style,
 background, image, position, vis_height, platform, captions, title, stages,
-verified). `render.py --template audiogram` is the one-call form; it is
+verified). A real run peak-measures the input audio: at or below `--silence-threshold`
+(default -50 dBFS) the render is a flat line, so `--on-silent warn` (default) renders it with
+`silent: true` and a note and `fail` refuses (`kind: input`) before encoding; `silent` is
+`null` under `--dry-run`. An `--image` ffprobe reports as 0x0 is refused as undecodable.
+`render.py --template audiogram` is the one-call form; it is
 deliberately not part of `--template all`.
 
 ### freeze.py — hold a frame for N seconds
@@ -578,6 +582,10 @@ call that wrote a valid but empty file. `--on-silent warn` (default) joins it an
 `silent: [{index, path, peak_db}]` and in `notes`; `fail` refuses it in the same `kind: input`
 document (`silent (peak -91.0 dBFS)`); `skip` leaves it out under `skipped`. A clip without an
 audio stream is never silent.
+Two warnings never refuse or change the command: `short_segments: [{index, path, duration}]`
+names a clip shorter than 2 frames at the join's fps (audio-only: 0.05 s), and
+`duplicates: [{path, indices}]` a path listed more than once (a repeat can be intended); both
+are always present (`[]` when none) and noted.
 Normalises every clip to one frame size, fps, `yuv420p`, 48 kHz and one
 channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
 silent track generated for clips without audio), then chains `xfade` +

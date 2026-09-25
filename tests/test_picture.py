@@ -3441,5 +3441,89 @@ class FitSizeTests(unittest.TestCase):
             self.assertEqual(self._fit([self.CW1])["size"], 16)
 
 
+class AsrNoSpeechTests(unittest.TestCase):
+    """An engine that ran and heard nothing is `<engine> found no speech in <input>` (kind input,
+    reason no_speech). Before 2.3.0 faster-whisper fell through to "no local speech-to-text engine
+    found" and whisper.cpp / openai-whisper said "no cues found in /tmp/ffskill_asr_*/audio.srt".
+    The engines are stubbed: none is installed where this suite runs."""
+
+    def _run(self, which, write_srt=None, faster=None):
+        import tempfile
+        import types
+        import _common
+        from _common import asr
+
+        class FakeShutil:
+            @staticmethod
+            def which(name):
+                return which.get(name)
+
+        class FakeSubprocess:
+            PIPE = subprocess.PIPE
+            TimeoutExpired = subprocess.TimeoutExpired
+
+            @staticmethod
+            def run(cmd, **kw):
+                write_srt(cmd)
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        calls = []
+
+        def fake_die(msg, code=1, kind="input", **extra):
+            calls.append((msg, kind, extra))
+            raise SystemExit(code)
+
+        mods = dict(sys.modules)
+        if faster is not None:
+            mods["faster_whisper"] = faster
+        else:
+            mods["faster_whisper"] = None  # ImportError on import
+        tmp = tempfile.mkdtemp(prefix="asr_test_")
+        try:
+            with unittest.mock.patch.object(_common, "run_analysis", lambda *a, **k: None), \
+                 unittest.mock.patch.object(asr, "die", fake_die), \
+                 unittest.mock.patch.dict(sys.modules, mods), \
+                 self.assertRaises(SystemExit):
+                asr._transcribe_in(tmp, "talk.wav", os.path.join(tmp, "out.srt"), None, "base", 0,
+                                   "ffmpeg", FakeShutil, FakeSubprocess)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(len(calls), 1, calls)
+        return calls[0]
+
+    def _assert_no_speech(self, call, engine):
+        msg, kind, extra = call
+        self.assertEqual(msg, f"{engine} found no speech in talk.wav")
+        self.assertEqual(kind, "input")
+        self.assertEqual(extra.get("reason"), "no_speech")
+        self.assertEqual(extra.get("engine"), engine)
+        self.assertNotIn("/tmp", msg)
+
+    def test_whisper_cpp_empty_srt_is_no_speech(self):
+        def write(cmd):
+            Path(cmd[cmd.index("-of") + 1] + ".srt").write_text("", encoding="utf-8")
+        self._assert_no_speech(self._run({"whisper-cli": "/opt/whisper/whisper-cli"}, write), "whisper.cpp")
+
+    def test_openai_whisper_empty_srt_is_no_speech(self):
+        def write(cmd):
+            Path(cmd[cmd.index("--output_dir") + 1], "audio.srt").write_text("\n", encoding="utf-8")
+        self._assert_no_speech(self._run({"whisper": "/usr/bin/whisper"}, write), "openai-whisper")
+
+    def test_faster_whisper_no_segments_is_no_speech_not_no_engine(self):
+        import types
+        mod = types.ModuleType("faster_whisper")
+
+        class WhisperModel:
+            def __init__(self, *a, **k):
+                pass
+
+            def transcribe(self, *a, **k):
+                return iter([]), None
+        mod.WhisperModel = WhisperModel
+        call = self._run({}, faster=mod)
+        self._assert_no_speech(call, "faster-whisper")
+        self.assertNotIn("no local speech-to-text engine", call[0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -782,3 +782,19 @@ not a new file format this tool would have to maintain.
   reported. A silent export's note says the audio is silent; loudness.py cannot fix that, so it
   is neither recommended nor run by `--normalize`. Test:
   `test_audio_every_tool_json_on_silent_input_parses_strictly`.
+
+## 2.3.0 — short, repeated and silent inputs
+
+- **A short or repeated join input warns; it never refuses.** A clip under 2 frames (audio-only:
+  0.05 s) is almost always a failed earlier step, but a repeated clip (an intro used twice, a
+  loop) is a real edit, and the frame count cannot tell a deliberate one-frame flash from a bug.
+  Both are named under `short_segments` / `duplicates` and in notes; `verified` and the ffmpeg
+  command are unchanged. Test: `test_join_warns_on_short_segments_and_duplicates`.
+- **A silent waveform input warns by default, like audio.py.** `waveform.py --on-silent`
+  takes audio.py's default (`warn`) and -50 dBFS peak threshold; `verified` stays about the
+  render (size, rate, duration) so the top-level and `audiogram.verified` never disagree, and
+  `silent` is the key a caller reads. `--dry-run` measures nothing and says `null`. Test:
+  `test_waveform_silent_input_warns_or_fails`.
+- **"Found no speech" is not "no engine".** An engine that ran and returned no cue is refused
+  as `kind: input`, `reason: "no_speech"`, naming the engine and the caller's input rather than
+  the engine's deleted temporary SRT. Tests: `AsrNoSpeechTests`.

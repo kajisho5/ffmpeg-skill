@@ -408,6 +408,7 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "waveform":
         extra = {"audiogram": {"type": "object", "description": "{style, background ('image' or 'color'), image, position, vis_height, platform, captions, title, stages, verified} -- present on every run, so a plain waveform answers background 'color' (1.16)"},
+                 "silent": {"type": ["boolean", "null"], "description": "true when the input audio's whole-file peak is at or below --silence-threshold (default -50 dBFS) and --on-silent warn (default) rendered the flat line anyway, with a notes line; false when audible; null under --dry-run (nothing measured). --on-silent fail refuses as kind input instead; verified is unaffected"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "scenes":
         extra = {"file": {"type": "string"}, "duration": {"type": "number"}, "scene_count": {"type": "integer"}, "scenes": {"type": "array"}, "audio_peaks": {"type": "array"},
@@ -462,8 +463,10 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "video": {"type": "boolean", "description": "false in audio mode: the output has no video stream"},
                  "skipped": {"type": "array", "description": "inputs --on-missing skip left out: [{index, path, reason}] ([] when none were)"},
                  "silent": {"type": "array", "description": "inputs whose audio peak is at or below --silence-threshold (default -50 dBFS) and that --on-silent warn (default) joined anyway: [{index, path, peak_db}] ([] otherwise; fail refuses them under problems, skip lists them under skipped); an input with no audio stream is never silent"},
+                 "short_segments": {"type": "array", "description": "warning, never a refusal: measured inputs shorter than 2 frames at the join's fps (audio-only join: shorter than 0.05 s), [{index, path, duration}] ([] when none), each also in notes; a pending --dry-run input is not measured"},
+                 "duplicates": {"type": "array", "description": "warning, never a refusal (a repeat can be intended): a path (compared resolved) listed more than once and joined each time, [{path, indices}] with 0-based list positions ([] when none), also in notes"},
                  "pending": {"type": "array", "description": "--dry-run: inputs that do not exist yet, planned on as an earlier step's output and never also under skipped: [{index, path}] ([] otherwise)"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--on-silent warn: which silent inputs were joined anyway; --dry-run with pending inputs: which ones, what a real run does if one is still missing (including a skip that leaves fewer than two inputs), whether the mode came from the extensions, and which planned numbers are the unmeasured stub's placeholders (a pending first clip's frame and rate, xfade offsets after a pending clip)"}}
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--on-silent warn: which silent inputs were joined anyway; short_segments / duplicates: which inputs and why; --dry-run with pending inputs: which ones, what a real run does if one is still missing (including a skip that leaves fewer than two inputs), whether the mode came from the extensions, and which planned numbers are the unmeasured stub's placeholders (a pending first clip's frame and rate, xfade offsets after a pending clip)"}}
     elif name == "audio":
         extra = {"video": {"type": "boolean", "description": "true when the input's video stream was copied; false for an audio output extension (extraction)"},
                  "audio_stream": {"type": "integer", "description": "which input audio stream was processed (--audio-stream)"},
