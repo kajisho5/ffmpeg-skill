@@ -814,3 +814,12 @@ not a new file format this tool would have to maintain.
 - **"Found no speech" is not "no engine".** An engine that ran and returned no cue is refused
   as `kind: input`, `reason: "no_speech"`, naming the engine and the caller's input rather than
   the engine's deleted temporary SRT. Tests: `AsrNoSpeechTests`.
+
+## Unreleased — a second speech engine
+
+- **`auto` picks Parakeet only for English.** The default Parakeet model (tdt-0.6b-v2) is
+  English-only and transcribes other speech as English-shaped nonsense. A named `--language`
+  decides; without one whisper.cpp's detector (the smallest multilingual ggml model, a second
+  or less) decides; with no detector the input is assumed English and `transcription.routing`
+  says so. Measured on 8 min of LibriSpeech: parakeet-mlx v2 2.8% WER at ~120× real time,
+  whisper large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`.

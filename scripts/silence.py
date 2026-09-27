@@ -21,6 +21,7 @@ from typing import List, Tuple
 # same silences without importing this tool; the body is unchanged and the name still lives here.
 from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS,
                      FILLER_PAD, transcribe_words, read_text_or_die)
+from _common import asr as _asr
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
 
@@ -124,8 +125,11 @@ def resolve_filler(args, meta):
         # The engine is driven with ITS word-timestamp option (whisper.cpp --output-json-full,
         # faster-whisper word_timestamps=True, openai-whisper --word_timestamps True). An SRT
         # cannot answer this question: a cue has a start and an end, a word does not.
-        words, engine = transcribe_words(args.input, args.filler_lang if args.filler_lang != "auto" else None)
-        source = f"whisper:{engine}" if engine else "whisper"
+        # engine= only when asked for: the older call shape (no engine=) stays valid for anything wrapping it
+        words, engine = transcribe_words(args.input, args.filler_lang if args.filler_lang != "auto" else None,
+                                         **({"engine": args.engine} if args.engine else {}))
+        family = "parakeet" if engine in _asr.PARAKEET_ENGINES else "whisper"
+        source = f"{family}:{engine}" if engine else "whisper"
         if not words:
             die(f"{engine or 'the local engine'} ran but produced no word-level timings, so there "
                 "is nothing for --filler to cut on. Some builds do not support word timestamps. "
@@ -168,6 +172,7 @@ def resolve_filler(args, meta):
                             "disfluency -- this will cut real sentences.")
     block = {
         "lang": lang, "source": source, "engine": engine,
+        **({"transcription": dict(_asr.LAST_RUN)} if engine and _asr.LAST_RUN else {}),
         "words": sorted(wordlist), "removed": [dict(s) for s in spans],
         "removed_count": len(spans),
         "removed_seconds": round(sum(s["end"] - s["start"] for s in spans), 3),
@@ -237,6 +242,9 @@ def main() -> int:
     fil.add_argument("--transcribe", action="store_true",
                      help="produce the word timings with a local whisper (never required; the same "
                           "bridge caption.py uses)")
+    fil.add_argument("--engine", choices=_asr.ENGINE_CHOICES, default=None,
+                     help="speech engine for --transcribe (default: $FFMPEG_SKILL_ASR_ENGINE, else auto = Parakeet "
+                          "for English speech when installed, else whisper)")
     fil.add_argument("--filler-list", action="store_true",
                      help="report what --filler would remove and write nothing")
     fil.add_argument("--max-cuts", type=int, default=400,

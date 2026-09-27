@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- feat: Parakeet speech engines. `parakeet-mlx` and `parakeet.cpp` (`parakeet-cli` + a `.gguf`) for `caption.py --transcribe` and `silence.py --filler --transcribe`; `--engine` / `FFMPEG_SKILL_ASR_ENGINE` pick one, `auto` runs Parakeet for English speech (explicit `--language`, else whisper.cpp's language detector, else assumed English) and Whisper otherwise. Results carry `transcription` (engine, model, routing); `silence.py`'s `filler.source` is `parakeet:ENGINE` for them. New optional contract capability `external:parakeet`. `caption.py --model` defaults to `large-v3-turbo`.
+
 
 ## 2.4.0
 

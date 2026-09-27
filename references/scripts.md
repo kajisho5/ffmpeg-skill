@@ -920,9 +920,18 @@ above the cap is clamped with a note, not refused, and both `jobs` and
 - `--watch` composes: each pass is parallel, passes are sequential.
 
 ### caption.py --transcribe — optional local speech-to-text
-If `whisper-cli` (whisper.cpp), `faster-whisper` or `whisper` is installed,
-`caption.py input.mp4 --transcribe [--language ja] [--model base]` writes the
-SRT from the audio and burns it (combine with `--animate pop --karaoke`).
+If `parakeet-mlx`, `parakeet-cli` (parakeet.cpp, with a `.gguf`), `whisper-cli` (whisper.cpp),
+`faster-whisper` or `whisper` is installed,
+`caption.py input.mp4 --transcribe [--language ja] [--model large-v3-turbo] [--engine auto]` writes the
+SRT from the audio and burns it (combine with `--animate pop --karaoke`). `--engine auto` (default,
+or `FFMPEG_SKILL_ASR_ENGINE`) runs Parakeet for English speech -- an English `--language`, else
+whisper.cpp's language detector, else assumed English -- and Whisper for any other language;
+`--engine parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper` forces one (a
+missing one is `kind: missing_tool`). `--model` is the whisper model; a Parakeet engine takes it
+only when it names a Parakeet model (`mlx-community/parakeet-*` or a `.gguf`), else
+`PARAKEET_MODEL` / `PARAKEET_CPP_MODEL`, else the English `tdt-0.6b-v2`. A non-English
+`--language` on an English-only Parakeet model is refused. The result's `transcription` names the
+engine, model and routing. `silence.py --filler --transcribe` takes the same `--engine`.
 Nothing is downloaded and nothing is required: without an engine it prints
 install hints and the user can supply `--text` cues instead. Always tell the
 user which engine was used, and treat the transcript as a draft to review.

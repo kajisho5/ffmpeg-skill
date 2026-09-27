@@ -49,6 +49,8 @@ from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji
 # The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
 # shares them). They stay caption.py's public names -- every caller and test that reached for
 # caption.parse_srt / caption.transcribe / caption.whisper_word_timings before 1.17 still does.
+from _common import asr as _asr
+from _common.asr import ENGINE_CHOICES
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
@@ -914,7 +916,12 @@ def main() -> int:
                           "(default: none, so no player burns in a language the viewer did not ask for)")
     src.add_argument("--offset", default="0", help="shift every cue by TIME (seconds, mm:ss, hh:mm:ss.ms or "
                                                     "hh:mm:ss:ff; a leading - shifts earlier); works for --text, --srt and --ass")
-    src.add_argument("--model", default="base", help="whisper model name/path for --transcribe (default base)")
+    src.add_argument("--model", default="large-v3-turbo",
+                     help="speech model for --transcribe: a whisper model name/path (default large-v3-turbo), or a Parakeet "
+                          "model (an mlx-community/parakeet-* repo or a .gguf) for the Parakeet engines")
+    src.add_argument("--engine", choices=ENGINE_CHOICES, default=None,
+                     help="speech engine for --transcribe (default: $FFMPEG_SKILL_ASR_ENGINE, else auto = Parakeet "
+                          "for English speech when installed, else whisper.cpp / faster-whisper / openai-whisper)")
     src.add_argument("--write-srt", help="where to save the generated SRT (default: <text>.srt)")
     src.add_argument("--auto-seconds", type=float, default=3.0, help="duration for cues without timing (default 3)")
     src.add_argument("--gap", type=float, default=0.0, help="gap after auto-timed cues in seconds")
@@ -1241,8 +1248,10 @@ def main() -> int:
             cues = []
             info(f"[dry-run] would transcribe {args.input} and write {srt_path}")
         else:
-            cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream)
-            args._word_timings = whisper_word_timings(srt_path)
+            cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream,
+                              **({"engine": args.engine} if args.engine else {}))
+            args._asr = dict(_asr.LAST_RUN)
+            args._word_timings = whisper_word_timings(srt_path) or sorted((w["start"], w["end"], w["word"]) for w in _asr.LAST_WORDS)
             cues, changed = lay_out(cues)
             if changed:
                 write_srt(cues, srt_path)
@@ -1582,6 +1591,8 @@ def main() -> int:
         info("caption text unchanged: the cues were burned exactly as given (line breaks, timing "
              "and type size only)")
     extra["caption"] = dict(caption_stats)
+    if getattr(args, "_asr", None):
+        extra["transcription"] = args._asr
     if emoji_plan:
         notes = list(extra.get("notes") or [])
         if emoji_plan["mode"] == "mono":
