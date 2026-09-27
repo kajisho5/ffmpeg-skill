@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- feat: opt-in Apple VideoToolbox encoding. `--hw`/`--no-hw` on every re-encoding tool and `export.py`; `FFMPEG_SKILL_HW=1` makes it the default for everything but `export.py`'s delivery presets; `render.py`/`batch.py --hw` make it explicit for every stage. h264/hevc (HDR Main10 with the source's tags and HDR10 side data)/prores; AV1 stays on SVT-AV1. CRF→`-q:v` fitted by SSIM on an M4 Max; BT.709 tags through `h264_metadata`/`hevc_metadata` so FFmpeg ≥7.1 never converts an untagged source; Apple Silicon only; a job the GPU refuses is re-encoded on the CPU. Every result names its `encoder`; `hw` says what was asked and what ran. The render cache key includes the GPU setting. `doctor --json` gains `hw`.
+
 
 ## 2.4.0
 

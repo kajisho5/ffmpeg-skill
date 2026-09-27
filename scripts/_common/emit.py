@@ -63,6 +63,30 @@ def _set_current_ctx(ctx: "Context") -> None:
     _CURRENT_CTX = ctx
 
 
+def _encoder_report(ctx: "Context") -> Dict[str, Any]:
+    """`encoder`: the last video encoder this run's ffmpeg commands name (after any GPU->CPU
+    fallback, since run() rewrites the recorded command), `copy` for a stream copy; absent when no
+    command encoded video. `hw`: present whenever VideoToolbox was asked for (--hw or
+    $FFMPEG_SKILL_HW) -- requested/source, whether the encoder that ran is VideoToolbox, and why not."""
+    import re as _re
+    enc, copied = None, False
+    for c in ctx.commands:
+        for name in _re.findall(r"(?:^|\s)-(?:c:v|vcodec|codec:v)\s+(\S+)", c):
+            if name == "copy":
+                copied = True  # a later copy (loudness.py after export's encode) keeps that encode
+            else:
+                enc = name
+        if _re.search(r"(?:^|\s)-(?:c|codec)\s+copy(?:\s|$)", c):
+            copied = True
+    enc = enc or ("copy" if copied else None)
+    out: Dict[str, Any] = {"encoder": enc} if enc else {}
+    if ctx.hw:
+        # a tool whose stages encode in child processes it does not record (batch.py) cannot say
+        out["hw"] = {"requested": True, "source": ctx.hw_source,
+                     "used": None if enc is None else enc.endswith("_videotoolbox"), "notes": list(ctx.hw_notes)}
+    return out
+
+
 def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json.
 
@@ -88,6 +112,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
             steps.insert(0, {"step": "exists", "ok": True})
         doc["verified"] = not ctx.dry_run and bool(steps) and all(s.get("ok") for s in steps)
         doc["verification"] = steps
+        doc.update(_encoder_report(ctx))
         doc.update(extra)
         if ctx.plan:
             doc["plan"] = write_plan(ctx.plan, output, extra, ctx=ctx)

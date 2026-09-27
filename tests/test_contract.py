@@ -25,6 +25,13 @@ CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
 import _contract  # noqa: E402
+
+# The host's own defaults must not reach the suite (every tool subprocess inherits os.environ): a
+# machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox, and FFMPEG_SKILL_ASR_ENGINE
+# or a PARAKEET_* model would change which speech engine a --transcribe test drives. Tests that
+# exercise those opt in with an explicit env.
+for _k in ("FFMPEG_SKILL_HW", "_FFMPEG_SKILL_HW_EXPLICIT", "FFMPEG_SKILL_ASR_ENGINE", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL"):
+    os.environ.pop(_k, None)
 import _common  # noqa: E402
 import server as mcp_server  # noqa: E402
 

@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, read_text_or_die, MEDIA_EXT as _MEDIA_EXT
+from _common.runner import add_hw_orchestrator_args
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -199,6 +200,7 @@ def main() -> int:
                          "Default 1, which is 1.16's behaviour exactly.")
     ap.add_argument("--work", help="work directory for intermediates (default: <output_dir>/.work)")
     add_common(ap)
+    add_hw_orchestrator_args(ap)
     args = ap.parse_args()
     apply_common(args)
 

@@ -814,3 +814,26 @@ not a new file format this tool would have to maintain.
 - **"Found no speech" is not "no engine".** An engine that ran and returned no cue is refused
   as `kind: input`, `reason: "no_speech"`, naming the engine and the caller's input rather than
   the engine's deleted temporary SRT. Tests: `AsrNoSpeechTests`.
+
+## Unreleased — the GPU
+
+- **`--hw` is opt-in, and a delivery preset needs it explicitly.** Measured on an M4 Max
+  (FFmpeg 9.0, three 1080p clips, SSIM against x264/x265 `medium` at CRF 18/23/28):
+  VideoToolbox is 2–7× faster but needs 1.2–2.5× the bytes for the same SSIM. A draft or an
+  intermediate is the place for speed; a file that is uploaded is the place for bytes. So
+  `FFMPEG_SKILL_HW=1` changes every re-encoding tool's default but not `export.py`'s delivery
+  presets, and `render.py --hw` is the one switch that puts a whole project, export included, on
+  the GPU. Code: `_common.runner.apply_common`, `add_hw_orchestrator_args`. Tests:
+  `HwResolutionTests`, `test_export_preset_needs_an_explicit_hw`.
+- **VideoToolbox BT.709 tags go through a bitstream filter.** The ≥7.1 reason `bt709_tag_args`
+  uses encoder VUI parameters holds for VideoToolbox too, and it has no `-x264-params`; the
+  `-colorspace` output options put a real matrix conversion on an untagged source (24 dB PSNR,
+  tag-neutral). `h264_metadata`/`hevc_metadata` write the VUI after encoding (49.9 dB). Test:
+  `test_hw_encode_reports_itself_and_keeps_an_untagged_source_unconverted`.
+- **A refused GPU job is re-encoded on the CPU, and the result says so.** VideoToolbox has hard
+  limits (H.264 stops at 4096 wide) that listing the encoder cannot reveal. `run()` swaps the
+  recorded VideoToolbox arguments back to the CPU line they replaced and retries once;
+  `hw.used: false` and `hw.notes` report it, and `encoder` names what really ran. Test:
+  `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so`.
+- **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
+  on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.

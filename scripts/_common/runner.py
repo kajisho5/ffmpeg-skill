@@ -155,7 +155,8 @@ class Context:
     makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec")
+    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec",
+                 "hw", "hw_source", "hw_notes", "hw_swaps")
 
     def __init__(self) -> None:
         self.reset()
@@ -176,6 +177,10 @@ class Context:
         self.plan_written = False                    # write_plan() ran (emit or the exit hook), so the hook does not write twice
         self.plan_inputs: List[str] = []             # side inputs (srt/ass/lut/font files) a tool named through escape_filter_path
         self.codec: Optional[str] = None             # --codec: encoder for the re-encode (None = x264 for SDR, x265 for HDR)
+        self.hw = False                              # --hw / $FFMPEG_SKILL_HW: VideoToolbox encoders where they apply
+        self.hw_source: Optional[str] = None         # "flag" (--hw/--no-hw given) or "env" (FFMPEG_SKILL_HW), None = off by default
+        self.hw_notes: List[str] = []                # why an encode stayed on (or fell back to) the CPU, for the result document
+        self.hw_swaps: List[Tuple[List[str], List[str]]] = []  # (VideoToolbox args, the CPU args they replaced) for run()'s fallback
 
 
 STATE = Context()
@@ -206,6 +211,15 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
                        help="video encoder for the re-encode: h264 (x264, the default for SDR), hevc (x265, the default for HDR), av1 (SVT-AV1 or libaom), prores (422 HQ, needs a .mov/.mkv output); HDR sources keep their colour on hevc/av1/prores")
         g.add_argument("--quality", type=int, default=ap._defaults["crf"], metavar="N",
                        help="encoder quality on the CRF scale (default %(default)s; lower = better; 18 visually lossless for x264/x265, up to 63 for av1); ignored by prores")
+    if (codec and "crf" in ap._defaults) or not codec:
+        hw = g.add_mutually_exclusive_group()
+        hw.add_argument("--hw", dest="hw", action="store_true",
+                        help="encode on the GPU with Apple VideoToolbox (h264/hevc/prores; Apple Silicon only): several times faster, "
+                             "larger files at the same quality; falls back to the CPU encoder, reported, where it cannot apply"
+                             + ("" if codec else ". The only way to put a delivery preset on the GPU: $FFMPEG_SKILL_HW does not apply here"))
+        hw.add_argument("--no-hw", dest="hw", action="store_false",
+                        help="encode on the CPU (x264/x265/SVT-AV1/prores_ks) even when $FFMPEG_SKILL_HW=1")
+        ap.set_defaults(hw=None, _hw_env=bool(codec))
 
 
 def apply_common(args: "argparse.Namespace") -> None:
@@ -228,6 +242,21 @@ def apply_common(args: "argparse.Namespace") -> None:
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
     STATE.codec = getattr(args, "codec", None) or None
+    STATE.hw_notes, STATE.hw_swaps = [], []
+    flag = getattr(args, "hw", None)
+    if flag is not None:
+        STATE.hw, STATE.hw_source = bool(flag), "flag"
+        if getattr(args, "_hw_orchestrator", False):
+            # render.py / batch.py --hw|--no-hw: every stage they run inherits it as an explicit
+            # choice -- export.py's delivery presets included, which $FFMPEG_SKILL_HW never reaches
+            os.environ[HW_ENV] = "1" if flag else "0"
+            os.environ[HW_FORCED_ENV] = "1"
+    elif hasattr(args, "hw") and os.environ.get(HW_FORCED_ENV) == "1":
+        STATE.hw, STATE.hw_source = env_hw(), "flag"
+    elif hasattr(args, "hw") and getattr(args, "_hw_env", False) and env_hw():
+        STATE.hw, STATE.hw_source = True, "env"
+    else:
+        STATE.hw, STATE.hw_source = False, None
     quality = getattr(args, "quality", None)
     if quality is not None:
         top = 63 if STATE.codec == "av1" else 51
@@ -621,6 +650,54 @@ def _stage_existing_output(cmd: Sequence[str]) -> Tuple[List[str], Optional[str]
     return list(cmd[:-1]) + [tmp], output, tmp
 
 
+HW_ENV = "FFMPEG_SKILL_HW"
+# set only by render.py/batch.py --hw/--no-hw for the stages they run: "the outer command chose
+# explicitly", so a child resolves $FFMPEG_SKILL_HW as a flag (export.py included), not a default
+HW_FORCED_ENV = "_FFMPEG_SKILL_HW_EXPLICIT"
+
+
+def add_hw_orchestrator_args(ap: "argparse.ArgumentParser") -> None:
+    """--hw / --no-hw on a tool that runs other tools (render.py, batch.py) and encodes nothing itself."""
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--hw", dest="hw", action="store_true",
+                   help="run every stage's encode on Apple VideoToolbox, the final delivery export included (Apple Silicon; "
+                        "falls back to the CPU, reported, where it cannot apply). Without it, $FFMPEG_SKILL_HW=1 still "
+                        "puts the intermediate stages on the GPU and leaves the delivery export on the CPU")
+    g.add_argument("--no-hw", dest="hw", action="store_false", help="every stage on the CPU encoders, whatever $FFMPEG_SKILL_HW says")
+    ap.set_defaults(hw=None, _hw_orchestrator=True)
+
+
+def env_hw() -> bool:
+    """$FFMPEG_SKILL_HW asks for VideoToolbox by default (1/true/yes/on); anything else is off."""
+    return os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def hw_platform_reason() -> Optional[str]:
+    """None when this machine can take a VideoToolbox constant-quality encode, else why not.
+    `-q:v` on VideoToolbox is Apple-Silicon-only in FFmpeg: an Intel Mac lists the encoders but
+    rejects the quality setting, so the machine check is macOS AND arm64."""
+    import platform
+    if platform.system() != "Darwin":
+        return "VideoToolbox is macOS-only"
+    if platform.machine() != "arm64":
+        return "VideoToolbox constant-quality encoding needs Apple Silicon"
+    return None
+
+
+def _hw_fallback(cmd: List[str], ctx: "Context") -> Optional[List[str]]:
+    """`cmd` with every VideoToolbox encoder line this process built swapped back to the CPU line
+    it replaced, or None when it has none -- for run() when the GPU refused an encode."""
+    out, changed = list(cmd), False
+    for vt, cpu in ctx.hw_swaps:
+        n = len(vt)
+        for i in range(len(out) - n + 1):
+            if out[i:i + n] == vt:
+                out[i:i + n] = cpu
+                changed = True
+                break
+    return out if changed else None
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
@@ -659,6 +736,15 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                 die("the source has odd dimensions (width or height not divisible by 2) and this tool's filter graph "
                     "cannot pad them itself; make them even first, e.g. fit.py --width/--height, then retry",
                     kind="input")
+        if proc.returncode != 0 and is_ffmpeg and ctx.hw_swaps:
+            cpu_cmd = _hw_fallback(exec_cmd, ctx)
+            if cpu_cmd is not None:
+                err = (proc.stderr or "").strip().splitlines()
+                reason = "VideoToolbox refused the encode" + (f": {err[-1][:160]}" if err else "")
+                info(reason + "; retrying on the CPU encoder")
+                ctx.hw_notes.append(reason + "; re-encoded on the CPU")
+                ctx.commands[-1] = _cmdline(cpu_cmd[:-1] + [cmd[-1]])
+                proc = _execute(cpu_cmd)
         if proc.returncode != 0 and check:
             _fail(exec_cmd, proc.returncode, proc.stderr or "")
         if final and tmp:
@@ -1005,13 +1091,15 @@ def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
 
 
 def ffmpeg_encoders() -> set:
-    """Names from `ffmpeg -encoders`, read once; empty when ffmpeg is missing. Used only to pick
-    an AV1 encoder and to refuse --codec av1 / prores before ffmpeg would."""
+    """Names from `ffprobe -encoders` (the same build's list), read once; empty when it cannot be
+    read. Used to pick an AV1 encoder, to refuse --codec av1 / prores before ffmpeg would, and to
+    see whether --hw's VideoToolbox encoders are built in. ffprobe, like ffmpeg_version(), because
+    --dry-run promises never to run ffmpeg and ffprobe always may."""
     global _ENCODERS
     if _ENCODERS is None:
         _ENCODERS = set()
         try:
-            out = subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
+            out = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=PROBE_TIMEOUT).stdout
             _ENCODERS = set(re.findall(r"^\s*[VAS][.\w]{5}\s+(\S+)", out, re.M))
         except (OSError, subprocess.SubprocessError):

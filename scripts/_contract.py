@@ -389,6 +389,8 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     base = {"status": {"enum": ["completed"]}, "output": {"type": ["string", "null"], "description": "path written, or null"},
             "dry_run": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}, "description": "every ffmpeg command line planned or run"},
             "probe": {"type": "object", "description": "probe of the output when a file was written"},
+            "encoder": {"type": "string", "description": "the video encoder the last ffmpeg command used (after any GPU->CPU fallback), `copy` for a stream copy; absent when no command encoded video"},
+            "hw": {"type": "object", "description": "present when --hw or $FFMPEG_SKILL_HW asked for VideoToolbox: {requested, source: flag|env, used: true|false whether the encoder that ran is VideoToolbox, null when this process ran no encode itself (batch.py: its stages are child processes), notes: why an encode stayed on or fell back to the CPU}"},
             "plan": {"type": "string", "description": "with --plan FILE: the plan document written (the run itself is a dry run)"},
             "verified": {"type": "boolean", "description": "true only when the artifact was written, probed, and every self-check the tool ran (verification) met its target; false under --dry-run"},
             "verification": {"type": "array", "items": {"type": "object", "properties": {"step": {"type": "string"}, "ok": {"type": "boolean"}}}, "description": "what the tool itself verified: probe, plus loudness (loudness.py, export platform presets) or check (render)"}}
@@ -653,6 +655,14 @@ def _whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None or importlib.util.find_spec("whisper") is not None
 
 
+def _hw_default() -> Dict[str, Any]:
+    """--hw's machine facts, normalised (never the raw environment value): whether VideoToolbox
+    constant-quality encoding can run here, and whether $FFMPEG_SKILL_HW makes it the default."""
+    import platform
+    return {"platform_ok": platform.system() == "Darwin" and platform.machine() == "arm64",
+            "default_on": os.environ.get("FFMPEG_SKILL_HW", "").strip().lower() in ("1", "true", "yes", "on")}
+
+
 def _default_font() -> str:
     from _common import BRAND_DEFAULTS
     return str(BRAND_DEFAULTS["font"])
@@ -869,6 +879,7 @@ def doctor() -> Dict[str, Any]:
         "ok": not missing_required and not unknown_required,
         "tools": _tool_usability(state),
         "gpu_encoders": _gpu_encoders(listings["encoders"]),
+        "hw": _hw_default(),
         "fonts": _fonts_capability(probe=True),
     }
 
