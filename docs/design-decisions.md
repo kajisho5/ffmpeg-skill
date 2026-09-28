@@ -884,3 +884,12 @@ not a new file format this tool would have to maintain.
   is its own input (a file handle, demuxer and decoder), and macOS shells default to 256 open
   files. MP4/AAC chunks copy-joined put the video 23 ms behind the audio (encoder priming per
   chunk); PCM chunks carry none, and the audio is encoded once for the final file.
+- **A single MP4/MOV copy keeps its edit list; its report comes from the source's packets.**
+  `make_zero` showed the keyframe's pre-roll. The plain copy writes an edit list that hides it, and
+  its first presented frame was bit-identical to the source frame at or after `--start`. What it
+  stored is read from the source, not the output: the demuxer takes the keyframe with the largest
+  *decode* time at or before the start, so `stored_preroll_seconds` is start minus that keyframe's
+  presentation time, and a keyframe presented *after* the start (dts 9.833 for a 10.0 keyframe,
+  asked for 9.9) is a snap. Comparing the output's durations with and without the edit list was
+  tried and does not work: a B-frame composition offset makes them differ even on a keyframe
+  start. Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests: `tests/test_cut_copy.py`.

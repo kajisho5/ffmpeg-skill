@@ -74,6 +74,12 @@ Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
+A single `.mp4`/`.mov` stream copy keeps its MP4 edit list, so the picture
+starts at `--start`. `edit_list` and `stored_preroll_seconds` say so, and
+`notes` warns that a player which ignores edit lists shows the pre-roll.
+`av_start_skew_seconds` is audio start minus video start, with a note past
+max(2 frames, 0.1 s). `keyframe_snapped` is true only when the presented start
+is more than a frame from `--start`.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
 `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`); `--segments`
 adds `segment_precision`, and the top-level `precision` is the least exact one.

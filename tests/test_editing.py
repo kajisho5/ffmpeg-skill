@@ -54,7 +54,10 @@ class EditingTests(MediaFixtures):
         out = OUT / "cut_honest_copy.mp4"
         data = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out, "--json").stdout)
         self.assertEqual(data["mode"], "copy")
-        self.assertTrue(data["keyframe_snapped"])
+        # 2 s is not a keyframe of the fixture, but an .mp4 copy keeps the edit list it writes: the
+        # keyframe's pre-roll is stored and hidden, and the picture starts at 2 s
+        self.assertFalse(data["keyframe_snapped"])
+        self.assertTrue(data["edit_list"])
         self.assertEqual(data["reencode_reason"], [])
         self.assertIsNone(data["segment_precision"], "a single segment has no per-segment list")
         self.assertEqual(data["requested_start"], 2.0)
@@ -71,8 +74,9 @@ class EditingTests(MediaFixtures):
         self.assertEqual(data2["reencode_reason"], ["requested"])
 
         # a start/end that doesn't land on a keyframe, with a tight tolerance, must silently
-        # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true"
-        out3 = OUT / "cut_honest_hybrid.mp4"
+        # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true". .mkv, so
+        # the copy snaps to the keyframe (an .mp4 copy starts exactly, via its edit list)
+        out3 = OUT / "cut_honest_hybrid.mkv"
         data3 = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "0.02", "-o", out3, "--json").stdout)
         self.assertTrue(data3["reencoded"])
         self.assertEqual(data3["mode"], "hybrid")
@@ -121,10 +125,13 @@ class EditingTests(MediaFixtures):
         earlier keyframe and pulled in extra content -- output_duration and requested_duration
         genuinely diverge, and a caller must be told this happened, not left to assume the file
         starts exactly where it asked."""
-        out = OUT / "cut_copy_keyframe_snap.mp4"
+        # .mkv: Matroska has no edit lists, so the copy really starts at the keyframe before 1.13.
+        # An .mp4 copy now keeps its edit list and starts the picture at 1.13 (tests/test_cut_copy.py).
+        out = OUT / "cut_copy_keyframe_snap.mkv"
         data = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "2.0", "-o", out, "--json").stdout)
         self.assertEqual(data["mode"], "copy")
         self.assertTrue(data["keyframe_snapped"])
+        self.assertFalse(data["edit_list"])
         self.assertFalse(data["reencoded"])
         actual = probe(str(out))["duration"]
         self.assertAlmostEqual(data["output_duration"], actual, places=2)

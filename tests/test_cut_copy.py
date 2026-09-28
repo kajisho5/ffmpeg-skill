@@ -35,7 +35,7 @@ W, H = 64, 36
 
 def gray_frames(path):
     """Every frame of `path`, decoded and scaled to a 64x36 grey thumbnail."""
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-vf", f"scale={W}:{H},format=yuv420p,extractplanes=y",
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-fps_mode", "passthrough", "-vf", f"scale={W}:{H},format=yuv420p,extractplanes=y",
                           "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
     n = W * H
     return [raw[i:i + n] for i in range(0, len(raw), n)]
@@ -101,6 +101,15 @@ class CutJoinTests(unittest.TestCase):
             srt.write_text("1\n00:00:00,500 --> 00:00:09,000\nhello\n", encoding="utf-8")
             sh("ffmpeg", "-y", "-v", "error", "-i", cls.hevc, "-i", srt, "-map", "0", "-map", "1",
                "-c", "copy", "-c:s", "mov_text", cls.subs)
+        cls.noise = DIR / "hevc_noise.mp4"
+        if not cls.noise.exists():
+            # the same pictures with a non-periodic audio track, so a cross-correlation has one peak
+            sh("ffmpeg", "-y", "-v", "error", "-i", cls.hevc, "-f", "lavfi", "-i", "anoisesrc=seed=7:d=12:a=0.3:r=48000",
+               "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-shortest", cls.noise)
+        cls.offset = DIR / "hevc_offset.mp4"
+        if not cls.offset.exists():
+            # a source whose timestamps start at 10 s
+            sh("ffmpeg", "-y", "-v", "error", "-i", cls.hevc, "-c", "copy", "-output_ts_offset", "10", cls.offset)
         cls.src_frames = gray_frames(cls.hevc)
 
     def assertFrameIs(self, frame, expected, msg=""):
@@ -112,6 +121,137 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(idx, expected, f"{msg}: best match {idx} at {best:.1f} dB")
         self.assertGreaterEqual(best, 40.0, msg)
         self.assertGreaterEqual(best - second, 10.0, msg)
+
+    def assertFrameExact(self, frame, expected, msg=""):
+        """A stream copy decodes bit-identically: `frame` is source frame `expected` exactly."""
+        self.assertEqual(psnr(frame, self.src_frames[expected]), 99.0, msg)
+
+    # ------------------------------------------------------------------ single-segment copies
+    def test_an_mp4_copy_starts_its_picture_at_the_requested_time(self):
+        """Core Media HEVC once gave 3.7 s of sound with no picture: make_zero showed the keyframe's
+        pre-roll. The copy now keeps its edit list, which hides it."""
+        out = DIR / "copy_4.3.mp4"
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "-1", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertEqual(data["reencode_reason"], [])
+        self.assertTrue(data["edit_list"])
+        self.assertFalse(data["keyframe_snapped"])
+        self.assertAlmostEqual(data["stored_preroll_seconds"], 0.3, places=3, msg="4.3 s back to the keyframe at 4.0")
+        self.assertIn("edit list", " ".join(data["notes"]))
+        self.assertLessEqual(abs(data["av_start_skew_seconds"]), 1 / FPS)
+        frames = gray_frames(out)
+        self.assertFrameExact(frames[0], 129, "first presented frame is the source frame at 4.3 s")
+        # the end still lands on a packet boundary: bounded, and the last frame is the source's own
+        over = probe(str(out))["video"]["duration"] - 3.0
+        self.assertGreaterEqual(over, -1e-6)
+        self.assertLessEqual(over, 6 / FPS)
+        # the frames past the requested end are not contiguous (B-frames whose references were not
+        # copied are dropped: measured 218, 221, 223), so the last one is located by its own pts
+        last_pts = frame_pts(out)[-1]
+        self.assertFrameExact(frames[-1], 129 + round(last_pts * FPS), "last frame, at its own presented time")
+
+    def test_a_dry_run_mp4_copy_reports_the_edit_list_it_plans(self):
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "2", "--dry-run", "-o", DIR / "never.mp4")
+        self.assertTrue(data["edit_list"])
+        self.assertEqual(data["commands"][0].count("-avoid_negative_ts"), 0)
+
+    def test_an_edit_listed_copy_past_tolerance_blames_the_end_not_the_start(self):
+        """The start is exact, so offering another --start as the lossless alternative would be
+        wrong: only the end overshoots (+4 to +5 frames on this fixture)."""
+        out = DIR / "copy_tight.mp4"
+        proc = script("cut.py", self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "0.05", "-o", out, "--json")
+        data = json.loads(proc.stdout)
+        self.assertEqual(data["reencode_reason"], ["tolerance"])
+        self.assertIsNone(data["lossless_alternative"])
+        self.assertIsNone(data["nearest_keyframes"])
+        self.assertIn("starts where asked", proc.stderr)
+
+    def test_an_off_grid_start_presents_the_next_source_frame(self):
+        out = DIR / "copy_4.31.mp4"
+        cut_json(self.hevc, "--start", "4.31", "--duration", "2", "--tolerance", "-1", "-o", out)
+        self.assertFrameExact(gray_frames(out)[0], 130, "the first frame at or after 4.31 s is 4.333 s")
+
+    def test_a_start_just_before_a_keyframe_is_reported_as_snapped(self):
+        """The demuxer seeks by decode time: the keyframe at 10.0 (dts 9.833) is taken for 9.9, so
+        the copy's picture starts three frames late. That is a snap, and it says so."""
+        out = DIR / "copy_9.9.mp4"
+        data = cut_json(self.hevc, "--start", "9.9", "--duration", "1", "--tolerance", "-1", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertIsNone(data["stored_preroll_seconds"])
+        self.assertFrameExact(gray_frames(out)[0], 300)
+
+    def test_a_source_that_starts_at_ten_seconds_cuts_the_same_frame(self):
+        out = DIR / "copy_offset.mp4"
+        data = cut_json(self.offset, "--start", "4.3", "--duration", "2", "--tolerance", "-1", "-o", out)
+        self.assertTrue(data["edit_list"])
+        # --start is relative to the file's start and packet times are absolute: the report must
+        # still find the keyframe at 4.0 (14.0 in the file)
+        self.assertFalse(data["keyframe_snapped"])
+        self.assertAlmostEqual(data["stored_preroll_seconds"], 0.3, places=3)
+        self.assertFrameExact(gray_frames(out)[0], 129)
+
+    def test_an_edit_listed_source_cut_again_starts_where_asked(self):
+        first = DIR / "copy_again_1.mp4"
+        cut_json(self.hevc, "--start", "4.3", "--duration", "4", "--tolerance", "-1", "-o", first)
+        out = DIR / "copy_again_2.mp4"
+        cut_json(first, "--start", "1", "--duration", "2", "--tolerance", "-1", "-o", out)
+        self.assertFrameExact(gray_frames(out)[0], 159, "1 s into a cut that starts at 4.3 s")
+
+    def test_the_copy_keeps_audio_in_step_with_the_picture(self):
+        out = DIR / "copy_noise.mp4"
+        cut_json(self.noise, "--start", "4.3", "--duration", "2", "--tolerance", "-1", "-o", out)
+        rate = 8000
+
+        def pcm(path, *pre):
+            raw = subprocess.run(["ffmpeg", "-v", "error", *pre, "-i", str(path), "-t", "0.5", "-ac", "1", "-ar", str(rate),
+                                  "-f", "s16le", "-"], stdout=subprocess.PIPE, check=True).stdout
+            return [int.from_bytes(raw[i:i + 2], "little", signed=True) for i in range(0, len(raw) - 1, 2)]
+        # the source from 0.1 s before the cut, decoded the same way; the output's first 0.2 s
+        # should sit 0.1 s (800 samples) into it
+        ref = pcm(self.noise, "-ss", "4.2")
+        got = pcm(out)[:int(0.2 * rate)]
+
+        def corr(lag):
+            return sum(a * b for a, b in zip(got, ref[lag:lag + len(got)]))
+        lag = max(range(700, 901), key=corr)
+        self.assertLessEqual(abs(lag - 800), 8, f"audio is {lag - 800} samples off the picture (±1 ms allowed)")
+
+    def test_an_unmeasured_start_is_never_reported_as_exact(self):
+        """No packet at or after the start in the probed window: the start is unknown, so it is
+        not claimed exact and no pre-roll is reported."""
+        self.assertEqual(cut.copy_presentation(4.3, (4.0, 3.9, None), True, 30.0),
+                         {"keyframe_snapped": True, "stored_preroll_seconds": None})
+        self.assertEqual(cut.copy_presentation(4.3, (4.0, 3.9, 4.3), True, 30.0),
+                         {"keyframe_snapped": False, "stored_preroll_seconds": 0.3})
+
+    def test_judging_a_copy_by_its_video_is_noted_even_when_it_then_reencodes(self):
+        """The late-audio source's container outlasts its video by 0.379 s, so the copy is judged
+        by the video; that explanation survives the tolerance re-encode that follows (--tolerance 0
+        re-encodes every copy, since abs(delta) >= 0)."""
+        # to the end of the file, where the late audio runs 0.379 s past the video
+        data = cut_json(self.late, "--start", "0.5", "--tolerance", "0",
+                        "-o", DIR / "late_judged.mp4")
+        self.assertIn("tolerance", data["reencode_reason"])
+        self.assertTrue(any("judged by the video" in n for n in data["notes"]), data["notes"])
+
+    def test_av_skew_is_measured_and_named_past_the_threshold(self):
+        skew, note = cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0}, "audio": {"start_time": 0.5}})
+        self.assertEqual(skew, 0.5)
+        self.assertIn("--accurate", note)
+        self.assertEqual(cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0}, "audio": {"start_time": 0.02}}), (0.02, None))
+        self.assertEqual(cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0}}), (None, None))
+
+    def test_accurate_keeps_the_frames_before_a_keyframe(self):
+        """--accurate seeked straight to the start, and by decode time -ss 9.9 lands on the
+        keyframe at 10.0; the three frames before it were lost."""
+        out = DIR / "accurate_9.9.mp4"
+        data = cut_json(self.hevc, "--start", "9.9", "--end", "10.1", "--accurate", "-o", out)
+        self.assertEqual(data["mode"], "accurate")
+        frames = gray_frames(out)
+        self.assertEqual(len(frames), 6)
+        self.assertFrameIs(frames[0], 297, "first frame of 9.9-10.1")
+        self.assertFrameIs(frames[-1], 302, "last frame of 9.9-10.1")
 
     # ------------------------------------------------------------------ the join fallback
     def test_mismatched_parts_are_recut_from_the_source_with_exact_boundaries(self):

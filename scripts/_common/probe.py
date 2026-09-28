@@ -285,6 +285,9 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "nb_frames": _to_int(video.get("nb_frames")),
             # the stream's own length (a container's also counts audio priming and a longer track)
             "duration": _to_float(video.get("duration")),
+            # where the stream starts; a video stream that starts after its audio (or the reverse)
+            # is how a lossless cut's A/V skew shows up
+            "start_time": _to_float(video.get("start_time")),
             "bitrate": _to_int(video.get("bit_rate")),
         }
     if audio:
@@ -295,6 +298,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "sample_rate": _to_int(audio.get("sample_rate")),
             "bitrate": _to_int(audio.get("bit_rate")),
             "duration": _to_float(audio.get("duration")),
+            "start_time": _to_float(audio.get("start_time")),
         }
         # every audio stream in file order: index n here is `-map 0:a:n` (audio.py --audio-stream n)
         out["audio_streams"] = [{
