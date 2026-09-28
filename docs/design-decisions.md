@@ -893,3 +893,21 @@ not a new file format this tool would have to maintain.
   asked for 9.9) is a snap. Comparing the output's durations with and without the edit list was
   tried and does not work: a B-frame composition offset makes them differ even on a keyframe
   start. Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests: `tests/test_cut_copy.py`.
+- **A re-encoded cut keeps an HEVC source HEVC.** A cut is a trim, so a re-encoded segment should
+  come out in the codec of the source and of any copied segment beside it; x264 for every SDR
+  source turned an iPhone clip into H.264. `source_codec_video_args` sends an HEVC source through
+  `encoder_args("hevc")` (8-bit BT.709 for SDR, the same Main10 line as before for HDR, VideoToolbox
+  under `--hw`); other sources keep `video_args`. The chunked join re-states the chunks' `hvc1`
+  tag, because a copy out of Matroska into MP4 writes `hev1`, which Apple players refuse.
+- **VFR is measured, not inferred from an average.** `r_frame_rate` against `avg_frame_rate` is a
+  whole-file average: a phone clip at 29.98 against a nominal 30 tripped it, and one long last
+  frame does too. `measure_frame_timing` reads packet timestamps (no decoding) in up to five 6 s
+  windows and requires every interval within a tick (1 ms at least, half a frame at most) of its
+  window's median. The half-frame cap is there because a 1/fps time base makes one tick a whole
+  frame. VFR confined to the unsampled stretches is missed; that was accepted because the check it
+  replaces was coarser, a copy is lossless, and `--accurate` is always available. The reads are
+  shaped by how `-read_intervals` behaves: it resolves a seek, and a relative end, against the
+  keyframe it lands on, so windows name an absolute end and keep only frames from their own
+  start, and the first window does not seek (a seek to 0 on an edit-listed MP4 skipped its
+  negative-pts keyframe). Code: `_common/probe.py` `classify_frame_timing`,
+  `measure_frame_timing`. Tests: `FrameTimingTests`, `VfrGuardTests`.
