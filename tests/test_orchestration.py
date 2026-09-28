@@ -1474,7 +1474,12 @@ class OrchestrationTests(MediaFixtures):
         for r in data["results"]:
             self.assertEqual(r["cut_reencoded"], [True, False])
         summary = data["cut_stream_copy"]
-        self.assertEqual(summary, {"calls": 4, "stream_copy": 2, "reencoded": 2, "stream_copy_rate": 0.5})
+        # reencode_reason is rolled up too: both re-encodes were the tolerance fallback, and the
+        # stream copies contribute no reason
+        self.assertEqual(summary, {"calls": 4, "stream_copy": 2, "reencoded": 2, "stream_copy_rate": 0.5,
+                                   "reencode_reasons": {"tolerance": 2}})
+        for r in data["results"]:
+            self.assertEqual(r["cut_reencode_reasons"], ["tolerance"])
 
         # a recipe with no cut.py step reports nothing -- the key isn't invented from nowhere
         recipe2 = folder / "batch_no_cut.json"

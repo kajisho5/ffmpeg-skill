@@ -104,14 +104,34 @@ def precision_of(meta: dict, dst: str, reencoded: bool) -> str:
     return "frame"
 
 
-def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5, meta: dict = None) -> bool:
-    """Cut one segment. Returns True if the result was re-encoded."""
+# The order `precision` values rank in, least exact first. It is a conservative order for this
+# tool's segments (all cut from one source into one container), not a universal scale.
+PRECISION_ORDER = ("packet", "codec_frame", "frame", "sample")
+
+
+def least_exact(precisions: List[str]) -> str:
+    return min(precisions, key=PRECISION_ORDER.index)
+
+
+def _outcome(meta: dict, dst: str, reencoded: bool, reasons: List[str]) -> dict:
+    precision = precision_of(meta, dst, reencoded)
+    return {"reencoded": reencoded, "reasons": reasons, "precision": precision,
+            "keyframe_snapped": precision == "packet"}
+
+
+def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5, meta: dict = None,
+            _reasons: List[str] = None) -> dict:
+    """Cut one segment. Returns its outcome: {reencoded, reasons, precision, keyframe_snapped}, where
+    `reasons` lists why THIS segment re-encoded on its own (pcm_container / copy_failed / tolerance);
+    the caller adds the reasons that forced every segment (requested, codec, vfr)."""
+    reasons = list(_reasons or [])
     dur = end - start
     meta = meta or probe(src)
     audio_only = is_audio_output(dst) or not meta.get("video")
     if not reencode and audio_only and audio_codec_for(dst)[1].startswith("pcm") and not str((meta.get("audio") or {}).get("codec", "")).startswith("pcm"):
         info(f"{(meta.get('audio') or {}).get('codec')} packets cannot be copied into a PCM container; decoding to PCM")
         reencode = True
+        reasons.append("pcm_container")
     if reencode:
         # -ss before -i seeks, then decoding discards samples up to the exact start (accurate_seek);
         # atrim bounds the decoded stream to the requested length at sample resolution.
@@ -135,7 +155,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     if proc.returncode != 0:
         if not reencode:
             info("stream copy failed, falling back to re-encode")
-            return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
+            return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["copy_failed"])
         die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
     if not reencode and tolerance >= 0 and not STATE.dry_run:
         got = probe(dst).get("duration") or 0.0
@@ -149,8 +169,8 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
                 NEAREST_KEYFRAMES.extend(k for k in near if k not in NEAREST_KEYFRAMES)
             info(f"stream copy landed on a keyframe {abs(got - dur):.2f}s away from the requested cut "
                  f"(> {tolerance:.2f}s tolerance); re-encoding this segment for accuracy{alt}")
-            return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta)
-    return reencode
+            return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["tolerance"])
+    return _outcome(meta, dst, reencode, reasons)
 
 
 BEAT_RATE = 22050  # the decode rate the onset pass uses, matching scenes.py --beats
@@ -300,13 +320,20 @@ def main() -> int:
 
     meta = probe(args.input)
     total = meta.get("duration") or 0.0
+    # why every segment re-encodes, if one of these forces it; `requested` is read before the
+    # guards below overwrite args.accurate, so a forced re-encode is never reported as asked for
+    forced: List[str] = ["requested"] if args.accurate else []
     if meta.get("video", {}) and meta["video"].get("variable_frame_rate_suspected") and not args.accurate:
         info("source looks variable-frame-rate; lossless cuts on VFR are unreliable, switching to --accurate")
         args.accurate = True
-    if STATE.codec and not args.accurate:
-        # "cut this and make it HEVC": a stream copy keeps the source codec, so the request is a re-encode
-        info(f"--codec {STATE.codec} asks for a re-encode; the lossless copy path keeps the source codec, switching to --accurate")
+        forced.append("vfr")
+    if STATE.codec:
+        # "cut this and make it HEVC": a stream copy keeps the source codec, so the request is a
+        # re-encode -- and a cause of it even when --accurate or the VFR guard already forced one
+        if not args.accurate:
+            info(f"--codec {STATE.codec} asks for a re-encode; the lossless copy path keeps the source codec, switching to --accurate")
         args.accurate = True
+        forced.append("codec")
 
     fps = (meta.get("video") or {}).get("fps")
     if args.segments:
@@ -342,15 +369,16 @@ def main() -> int:
     refuse_output_is_input(output, args.input)
     ext = os.path.splitext(output)[1] or ".mp4"
 
-    reencoded = False
+    outcomes: List[dict] = []
+    join_reencoded = False
     if len(segments) == 1:
-        reencoded = cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta)
+        outcomes.append(cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta))
     else:
         with tempfile.TemporaryDirectory(prefix="ffskill_cut_") as tmp:
             parts = []
             for i, (s, e) in enumerate(segments):
                 part = os.path.join(tmp, f"part{i:03d}{ext}")
-                reencoded |= cut_one(args.input, s, e, part, args.accurate, args.crf, args.preset, args.tolerance, meta)
+                outcomes.append(cut_one(args.input, s, e, part, args.accurate, args.crf, args.preset, args.tolerance, meta))
                 parts.append(part)
             listfile = os.path.join(tmp, "list.txt")
             with open(listfile, "w", encoding="utf-8") as fh:
@@ -365,16 +393,26 @@ def main() -> int:
                 info("concat with stream copy failed, re-encoding the join")
                 cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + encode_args(meta, output, args.crf, args.preset) + [output]
                 run(cmd)
+                join_reencoded = True
 
     result = probe(output, role="output")
     expected = sum(e - s for s, e in segments)
-    precision = precision_of(meta, output, reencoded)
+    reencoded = join_reencoded or any(o["reencoded"] for o in outcomes)
+    # per segment, then the least exact of them: a join that re-encodes after the cut cannot make a
+    # segment that landed on a keyframe any more exact, so it upgrades neither value
+    precision = least_exact([o["precision"] for o in outcomes])
+    keyframe_snapped = any(o["keyframe_snapped"] for o in outcomes)
+    reencode_reason: List[str] = []
+    if reencoded:
+        for r in forced + [r for o in outcomes for r in o["reasons"]] + (["concat_fallback"] if join_reencoded else []):
+            if r not in reencode_reason:
+                reencode_reason.append(r)
     got = result.get("duration")
     error_ms = round((got - expected) * 1000, 3) if got is not None and not STATE.dry_run else None
-    # mode: "copy" (untouched lossless), "accurate" (--accurate was asked for), "hybrid" (asked for
-    # lossless but the keyframe snap exceeded --tolerance so this segment silently re-encoded instead)
+    # mode: "copy" (nothing re-encoded at any stage, the join included), "accurate" (--accurate was
+    # asked for or forced), "hybrid" (asked for lossless but a segment or the join re-encoded anyway;
+    # reencode_reason says why)
     mode = "copy" if not reencoded else ("accurate" if args.accurate else "hybrid")
-    keyframe_snapped = precision == "packet"
     info(f"wrote {output} ({fmt_secs(got)}, expected ~{expected:.3f}s, "
          + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
     emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
@@ -384,7 +422,8 @@ def main() -> int:
          requested_segments=[[round(s, 6), round(e, 6)] for s, e in segments] if len(segments) > 1 else None,
          requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
-         mode=mode, keyframe_snapped=keyframe_snapped,
+         mode=mode, keyframe_snapped=keyframe_snapped, reencode_reason=reencode_reason,
+         segment_precision=[o["precision"] for o in outcomes] if len(outcomes) > 1 else None,
          nearest_keyframes=sorted(NEAREST_KEYFRAMES) if NEAREST_KEYFRAMES else None,
          # the trade the caller can offer instead of a re-encode (eval e02: "without losing quality")
          lossless_alternative=(f"--start {min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])):.3f} lands on a keyframe: "

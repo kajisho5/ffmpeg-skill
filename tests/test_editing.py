@@ -55,6 +55,8 @@ class EditingTests(MediaFixtures):
         data = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out, "--json").stdout)
         self.assertEqual(data["mode"], "copy")
         self.assertTrue(data["keyframe_snapped"])
+        self.assertEqual(data["reencode_reason"], [])
+        self.assertIsNone(data["segment_precision"], "a single segment has no per-segment list")
         self.assertEqual(data["requested_start"], 2.0)
         self.assertEqual(data["requested_end"], 6.0)
         self.assertEqual(data["requested_duration"], 4.0)
@@ -66,6 +68,7 @@ class EditingTests(MediaFixtures):
         data2 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--accurate", "-o", out2, "--json").stdout)
         self.assertEqual(data2["mode"], "accurate")
         self.assertFalse(data2["keyframe_snapped"])
+        self.assertEqual(data2["reencode_reason"], ["requested"])
 
         # a start/end that doesn't land on a keyframe, with a tight tolerance, must silently
         # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true"
@@ -74,6 +77,7 @@ class EditingTests(MediaFixtures):
         self.assertTrue(data3["reencoded"])
         self.assertEqual(data3["mode"], "hybrid")
         self.assertFalse(data3["keyframe_snapped"])
+        self.assertEqual(data3["reencode_reason"], ["tolerance"])
         # ...and name the keyframes a lossless cut could have used instead (x264's default GOP on the
         # fixture puts the only one within 5 s of 1.13 at 0.0)
         self.assertTrue(data3["nearest_keyframes"], data3)
@@ -87,6 +91,28 @@ class EditingTests(MediaFixtures):
         self.assertIsNone(data4["requested_end"])
         self.assertEqual(data4["requested_segments"], [[1.0, 3.0], [6.0, 9.0]])
         self.assertEqual(data4["requested_duration"], 5.0)
+        self.assertEqual(data4["reencode_reason"], ["requested"])
+        self.assertEqual(data4["segment_precision"], ["frame", "frame"])
+
+        # --codec forces the re-encode, and says so rather than claiming it was asked for
+        out5 = OUT / "cut_honest_codec.mp4"
+        data5 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "4", "--codec", "hevc", "-o", out5, "--json").stdout)
+        self.assertEqual(data5["mode"], "accurate")
+        self.assertEqual(data5["reencode_reason"], ["codec"])
+        # ...and --codec is still named when --accurate already forced the re-encode
+        out6 = OUT / "cut_honest_accurate_codec.mp4"
+        data6 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "4", "--accurate", "--codec", "hevc", "-o", out6, "--json").stdout)
+        self.assertEqual(data6["reencode_reason"], ["requested", "codec"])
+
+    def test_cut_top_level_precision_is_the_least_exact_segments(self):
+        """--segments reports one precision for the whole run: the least exact segment's, so a
+        keyframe-snapped copy segment is never hidden behind a re-encoded one."""
+        sys.path.insert(0, str(SCRIPTS))
+        import cut
+        self.assertEqual(cut.least_exact(["frame", "packet"]), "packet")
+        self.assertEqual(cut.least_exact(["sample", "codec_frame"]), "codec_frame")
+        self.assertEqual(cut.least_exact(["sample", "frame"]), "frame")
+        self.assertEqual(cut.least_exact(["sample"]), "sample")
 
     def test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta(self):
         """Pins the actual failure mode `mode`/`keyframe_snapped`/`duration_delta_seconds` exist to

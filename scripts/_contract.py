@@ -251,7 +251,7 @@ DRY_RUN_NOTES = {
 # of the original audio codec never happens on those tools.
 REENCODE_META: Dict[str, Dict[str, str]] = {
     "probe":     dict(video="never", audio="never", note="analysis only, no artifact"),
-    "cut":       dict(video="conditional", audio="conditional", note="lossless -c copy preferred; re-encodes on --accurate, a VFR source, or a keyframe snap past --tolerance (see cut.py --json: mode, keyframe_snapped)"),
+    "cut":       dict(video="conditional", audio="conditional", note="lossless -c copy preferred; re-encodes on --accurate, --codec, a VFR source, a keyframe snap past --tolerance, or a --segments join the parts cannot stream-copy (see cut.py --json: mode, reencode_reason, keyframe_snapped)"),
     "fit":       dict(video="always", audio="always", note="always re-encodes to AAC when audio is present, even if only --fps or --aspect was asked for"),
     "crop":      dict(video="always", audio="always", note="the crop filter always forces a re-encode of both streams"),
     "deinterlace": dict(video="always", audio="always", note="the yadif filter always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
@@ -459,6 +459,10 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
                                "description": "packet: stream copy on a packet/keyframe boundary; sample: decoded audio trimmed to the sample, lossless output; codec_frame: sample-trimmed then framed by a lossy encoder (priming delay adds to the length); frame: re-encoded video"},
                  "reencoded": {"type": "boolean"},
+                 "reencode_reason": {"type": "array", "items": {"enum": ["requested", "codec", "vfr", "vfr_inconclusive", "pcm_container", "copy_failed", "tolerance", "concat_fallback"]},
+                                     "description": "why anything was re-encoded, distinct values in first-seen order ([] when nothing was): requested (--accurate), codec (--codec), vfr (a variable-frame-rate source forced --accurate), vfr_inconclusive (its frame timing could not be measured), pcm_container (compressed audio into a .wav), copy_failed (the stream copy errored), tolerance (a keyframe snap past --tolerance), concat_fallback (--segments parts could not be joined by stream copy)"},
+                 "segment_precision": {"type": ["array", "null"], "items": {"enum": ["packet", "sample", "codec_frame", "frame"]},
+                                       "description": "--segments only: each segment's precision in order; the top-level precision is the least exact of them (null for a single segment)"},
                  "lossless_alternative": {"type": ["string", "null"], "description": "when a lossless cut re-encoded because of the keyframe snap: the --start that would stream-copy instead, and how far it is from the request"}}
     elif name == "join":
         extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"},
