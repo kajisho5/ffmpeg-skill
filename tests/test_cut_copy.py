@@ -23,7 +23,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import OUT, SCRIPTS, script, sh  # noqa: E402
-from _common import probe  # noqa: E402
+from _common import decision, probe  # noqa: E402
 
 sys.path.insert(0, str(SCRIPTS))
 import cut  # noqa: E402
@@ -253,6 +253,25 @@ class CutJoinTests(unittest.TestCase):
         self.assertFrameIs(frames[0], 297, "first frame of 9.9-10.1")
         self.assertFrameIs(frames[-1], 302, "last frame of 9.9-10.1")
 
+    # ------------------------------------------------------------------ the source codec
+    def test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc(self):
+        """A re-encode went through x264 whatever the source, so trimming an iPhone HEVC
+        clip with --accurate handed back H.264. It now keeps HEVC, 8-bit and tagged BT.709."""
+        out = DIR / "accurate_hevc.mp4"
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--preset", "ultrafast", "-o", out)
+        self.assertTrue(data["reencoded"])
+        v = probe(str(out))["video"]
+        self.assertEqual(v["codec"], "hevc")
+        self.assertEqual(v["pix_fmt"], "yuv420p")
+        self.assertEqual((v["color_primaries"], v["color_transfer"], v["color_space"]), ("bt709", "bt709", "bt709"))
+        self.assertEqual(stderr_of_decode(out), "")
+
+    def test_codec_h264_still_overrides_the_source_codec(self):
+        out = DIR / "accurate_h264.mp4"
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--codec", "h264", "--preset", "ultrafast", "-o", out)
+        self.assertIn("codec", data["reencode_reason"])
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264")
+
     # ------------------------------------------------------------------ the join fallback
     def test_mismatched_parts_are_recut_from_the_source_with_exact_boundaries(self):
         """The live bug: a copied HEVC segment next to a re-encoded one used to be joined by the
@@ -268,6 +287,7 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(data["segment_precision"], ["frame", "frame"])
         self.assertFalse(data["keyframe_snapped"])
         self.assertEqual(stderr_of_decode(out), "")
+        self.assertEqual(probe(str(out))["video"]["codec"], "hevc", "the re-cut join keeps the source codec")
         pts = frame_pts(out)
         self.assertEqual(len(pts), 60 + 57)
         deltas = [round(b - a, 4) for a, b in zip(pts, pts[1:])]
@@ -325,6 +345,9 @@ class CutJoinTests(unittest.TestCase):
             ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "csv=p=0", str(out)],
             stdout=subprocess.PIPE, text=True, check=True).stdout.split())
         self.assertLessEqual(abs(float(starts["video"]) - float(starts["audio"])), 0.005, "chunking adds no A/V offset")
+        tag = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_tag_string",
+                              "-of", "csv=p=0", str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+        self.assertEqual(tag, "hvc1", "the Matroska chunks' HEVC keeps the tag Apple players need")
 
     def test_keyframe_aligned_bframe_segments_stay_a_lossless_copy(self):
         """The main path must stay lossless: three segments that each start on a keyframe of a
@@ -432,6 +455,57 @@ class CutJoinTests(unittest.TestCase):
         other[0]["extradata_hash"] = "SHA256:ab"
         self.assertFalse(cut.signatures_match([one, other], ".ts"), "a hash on one side only is a mismatch")
 
+
+class SourceCodecArgsTests(unittest.TestCase):
+    """source_codec_video_args routes by the source (pure: no encode runs)."""
+    SDR_HEVC = {"video": {"codec": "hevc", "bt2020_or_hdr": False}}
+    HDR_HEVC = {"video": {"codec": "hevc", "bt2020_or_hdr": True, "color_space": "bt2020nc",
+                          "color_primaries": "bt2020", "color_transfer": "smpte2084"}}
+    SDR_H264 = {"video": {"codec": "h264", "bt2020_or_hdr": False}}
+
+    def encoder(self, meta, codec=None, hw=False, swaps=None):
+        """The encoder line, run through the real VideoToolbox routing with this machine's platform
+        and encoder list mocked, so the test means the same on any host."""
+        with mock.patch.object(decision.STATE, "codec", codec), mock.patch.object(decision.STATE, "hw", hw), \
+                mock.patch.object(decision.STATE, "hw_swaps", [] if swaps is None else swaps), \
+                mock.patch.object(decision.STATE, "hw_notes", []), \
+                mock.patch.object(decision, "hw_platform_reason", lambda: None), \
+                mock.patch.object(decision, "ffmpeg_encoders", lambda: {"libx264", "libx265", "hevc_videotoolbox", "h264_videotoolbox"}):
+            args = decision.source_codec_video_args(meta, 18, "ultrafast")
+        return args[args.index("-c:v") + 1], args
+
+    def test_sdr_hevc_is_encoded_as_hevc_8bit_bt709(self):
+        enc, args = self.encoder(self.SDR_HEVC)
+        self.assertEqual(enc, "libx265")
+        self.assertEqual(args[args.index("-pix_fmt") + 1], "yuv420p")
+        self.assertEqual(args[args.index("-tag:v") + 1], "hvc1")
+
+    def test_sdr_hevc_goes_to_videotoolbox_with_a_cpu_fallback_when_hw_is_on(self):
+        swaps = []
+        enc, args = self.encoder(self.SDR_HEVC, hw=True, swaps=swaps)
+        self.assertEqual(enc, "hevc_videotoolbox")
+        self.assertEqual(args[args.index("-bsf:v") + 1],
+                         "hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1")
+        self.assertEqual(len(swaps), 1, "run() can put the CPU line back if the GPU refuses")
+        gpu, cpu = swaps[0]
+        self.assertEqual(gpu, args)
+        self.assertEqual(cpu[cpu.index("-c:v") + 1], "libx265")
+
+    def test_a_codec_flag_wins_over_the_source(self):
+        enc, _ = self.encoder(self.SDR_HEVC, codec="h264")
+        self.assertEqual(enc, "libx264")
+
+    def test_sdr_h264_is_still_encoded_as_h264(self):
+        enc, args = self.encoder(self.SDR_H264)
+        self.assertEqual(enc, "libx264")
+        self.assertNotIn("-tag:v", args)
+
+    def test_hdr_hevc_stays_main10_with_its_own_tags(self):
+        enc, args = self.encoder(self.HDR_HEVC)
+        self.assertEqual(enc, "libx265")
+        self.assertEqual(args[args.index("-pix_fmt") + 1], "yuv420p10le")
+        self.assertEqual(args[args.index("-color_trc") + 1], "smpte2084")
+        self.assertIn("hdr10-opt=1", args[args.index("-x265-params") + 1])
 
 
 if __name__ == "__main__":

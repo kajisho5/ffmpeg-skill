@@ -69,7 +69,8 @@ cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-sour
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
 `--tolerance` (0.5 s) from the request, that segment is re-encoded automatically
-(x264 CRF 18). `--accurate` always re-encodes; `--tolerance -1` never does.
+(CRF 18: x265 Main10 with the source's own tags for an HDR or BT.2020 source; x265 8-bit
+BT.709 for any other HEVC source; x264 for the rest; `--codec` overrides all three). `--accurate` always re-encodes; `--tolerance -1` never does.
 Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe

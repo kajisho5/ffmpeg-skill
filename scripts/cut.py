@@ -34,7 +34,7 @@ from typing import List, Tuple
 
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
-from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
+from _common import source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
 DROPPED_STREAMS: List[str] = []
@@ -77,7 +77,7 @@ def encode_args(meta: dict, dst: str, crf: int, preset: str) -> List[str]:
 
 
 def video_encode_args(meta: dict, crf: int, preset: str) -> List[str]:
-    return video_args(meta, crf, preset) + cfr_args(meta)
+    return source_codec_video_args(meta, crf, preset) + cfr_args(meta)
 
 
 def copy_args(meta: dict, dst: str) -> List[str]:
@@ -374,8 +374,9 @@ def signatures_match(sigs: list, ext: str) -> bool:
 
 
 def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str,
-                has_v: bool, intermediate: bool = False) -> None:
-    """Re-cut `segments` from the source into one file through the concat filter. Each segment is
+                has_v: bool, intermediate: bool = False) -> List[str]:
+    """Re-cut `segments` from the source into one file through the concat filter, returning the codec
+    arguments it encoded with. Each segment is
     its own seeked input, so both of its streams start at the segment's origin (0); neither is
     rebased on its own, which would drop a real A/V offset -- the audio is padded to the origin
     instead. Both streams are cut to the same length so the next segment starts where this ends.
@@ -415,6 +416,7 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
         codec = encode_args(meta, dst, crf, preset)
     cmd += ["-sn", "-dn"] + codec + [dst]
     run(cmd)
+    return codec
 
 
 def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str, tmp: str) -> None:
@@ -430,11 +432,17 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
     ext = os.path.splitext(dst)[1] or ".mp4"
     # Matroska chunks with PCM audio: no edit lists and no AAC priming to carry into the join (MP4
     # chunks measured the video 23 ms late against the audio after a copy concat)
+    # the chunks' codec tag (hvc1), which a stream copy out of Matroska does not carry into an MP4
+    # (it writes hev1, which Apple players refuse)
+    tag: List[str] = []
+
     def encode_chunks() -> List[str]:
         out = []
         for k in range(0, len(segments), JOIN_CHUNK):
             chunk = os.path.join(tmp, f"chunk{k // JOIN_CHUNK:03d}.mkv")
-            _join_chunk(src, segments[k:k + JOIN_CHUNK], chunk, meta, crf, preset, has_v, intermediate=True)
+            args = _join_chunk(src, segments[k:k + JOIN_CHUNK], chunk, meta, crf, preset, has_v, intermediate=True) or []
+            if "-tag:v" in args:
+                tag[:] = args[args.index("-tag:v"):args.index("-tag:v") + 2]
             out.append(chunk)
         return out
 
@@ -456,7 +464,7 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
             fh.write(concat_list_line(c) + "\n")
     audio = [] if not meta.get("audio") else (aac_args() if has_v else audio_codec_for(dst))
     run(ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
-        + (["-c:v", "copy"] if has_v else ["-vn"]) + audio
+        + (["-c:v", "copy"] + (tag if ext in (".mp4", ".mov", ".m4v") else []) if has_v else ["-vn"]) + audio
         + (["-movflags", "+faststart"] if ext in (".mp4", ".mov", ".m4v") and has_v else []) + [dst])
 
 

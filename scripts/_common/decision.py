@@ -470,6 +470,18 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     return _maybe_hw("hevc", crf, meta, True, _x265_hdr_default(v, crf, preset))
 
 
+def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium") -> List[str]:
+    """video_args(), except that an SDR HEVC source re-encodes to HEVC (8-bit, BT.709-tagged, on
+    VideoToolbox when --hw asks) instead of H.264. cut.py uses it: a cut is a trim, so a re-encoded
+    segment should come out in the codec the source (and any copied segment beside it) is in. An
+    HDR HEVC source gets the same Main10 line video_args() would give it: encoder_args("hevc")
+    builds that line for HDR."""
+    v = (meta or {}).get("video") or {}
+    if not STATE.codec and v.get("codec") == "hevc":
+        return encoder_args("hevc", crf, preset, meta)
+    return video_args(meta, crf, preset)
+
+
 def _x265_hdr_default(v: Dict[str, Any], crf: int, preset: str) -> List[str]:
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"

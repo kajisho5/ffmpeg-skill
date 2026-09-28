@@ -83,7 +83,7 @@ from _common.decision import (
     _onset_strength, _pick_onsets, _autocorrelation_peak, _grid_score,
     brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
     fmt_secs, fmt_smpte_time, fmt_srt_time, frame_size, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
-    signed_time_arg, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
+    signed_time_arg, source_codec_video_args, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
 from _common.asr import (
     ASR_ENGINES, ASR_INSTALL_HINT, _asr_run, die_no_engine, parse_srt, transcribe, _transcribe_in,
@@ -212,7 +212,7 @@ __all__ = [
     "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote",
     "_SIGNALS_INSTALLED", "signed_time_arg", "_stage_existing_output", "STATE", "SVT_PRESET", "text_width_em",
     "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "validate_color", "verify_output",
-    "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
+    "source_codec_video_args", "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
     "_x264_raw", "_ZWJ",
     "ASR_ENGINES", "ASR_INSTALL_HINT", "_asr_run", "die_no_engine", "parse_srt", "transcribe",
     "_transcribe_in", "transcribe_words", "_words_from_openai_whisper_json",

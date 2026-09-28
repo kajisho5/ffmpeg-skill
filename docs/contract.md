@@ -212,7 +212,8 @@ BT.709 for SDR; av1 is SVT-AV1 with libaom as the fallback; prores is 422 HQ and
 `.mov`/`.mkv` output; h264 refuses an HDR source (`kind: input`). `--quality` is the CRF scale;
 its default is the tool's own (18, `proxy.py` 30). 1.x also accepted `--crf` as an alias; 2.0
 removed it (`export.py` keeps its own `--crf`). Without `--codec` the encoder is what it always was (x264 for SDR, x265
-Main10 for HDR), so the flags add no behaviour to a caller that does not pass them. The
+Main10 for HDR; `cut.py` re-encodes keep HEVC for an HEVC source that would otherwise take x264,
+as x265 8-bit BT.709), so the flags add no behaviour to a caller that does not pass them. The
 encoder each value needs is listed under the tool's optional capabilities (`--codec hevc` and
 so on). `export.py` refuses `--codec`: its presets decide the codec.
 
