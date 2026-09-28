@@ -857,3 +857,30 @@ not a new file format this tool would have to maintain.
   `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so`.
 - **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
   on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.
+## Unreleased — cuts that say what they did
+
+- **A `--segments` join copies only identical parts, and otherwise re-cuts from the source.**
+  The concat demuxer takes the first part's parameters for every part, so a copied HEVC segment
+  next to a re-encoded H.264 one decoded with errors from a run that exited 0. The copy join now
+  needs matching per-stream signatures (codec parameters, rotation, colour tags, extradata hash;
+  a hash missing on both sides only counts for PCM/MP3/MP2 or an MPEG-TS output). There is no
+  length check on the result: each copied part's durations include its own start offset, which
+  the concat demuxer drops, so no sum of them predicts the join (it missed by 0.03–1.3 s across
+  five ordinary sources and sent lossless joins to a re-encode). The fallback does not join the parts at all: a copied part carries keyframe
+  pre-roll and an audio tail, and the concat filter starts each segment where its longest stream
+  ended, which left a 0.1 s hole even after a `PTS-STARTPTS` rebase. Re-cutting every segment
+  from the source (per-segment input seek, `trim`/`atrim`, concat filter) measured 120/120
+  frames with no gap. Code: `cut.signatures_match`, `cut.join_from_source`. Tests:
+  `tests/test_cut_copy.py`.
+- **Both streams of a segment shift by one constant.** A per-stream `PTS-STARTPTS` moved an
+  audio track that starts 0.379 s after its video 0.379 s early. The re-cut shifts video and
+  audio by the same seek margin and pads the audio to the segment origin
+  (`aresample=async=1:first_pts=0`). Test: `test_a_delayed_audio_track_keeps_its_offset_through_the_fallback`.
+- **The re-cut seeks a second early.** The MP4 demuxer seeks by decode time, so on a keyint-60
+  HEVC file with 4 B-frames `-ss 9.9` began at the keyframe at 10.0 and lost three frames; an
+  input `-t` likewise stops reading before late-stored B-frames. Test:
+  `test_more_segments_than_one_call_takes_are_joined_in_chunks` (it crosses that boundary).
+- **At most 32 segments per ffmpeg call, chunked through Matroska with PCM audio.** Each segment
+  is its own input (a file handle, demuxer and decoder), and macOS shells default to 256 open
+  files. MP4/AAC chunks copy-joined put the video 23 ms behind the audio (encoder priming per
+  chunk); PCM chunks carry none, and the audio is encoded once for the final file.

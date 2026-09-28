@@ -3,7 +3,8 @@
 
 Lossless stream copy (-c copy) is preferred. Cuts snap to keyframes in that
 mode, so if frame accuracy matters pass --accurate to re-encode. Multiple
-segments are cut individually and concatenated with the concat demuxer.
+segments are cut individually and joined by stream copy when the parts match in their codec
+parameters; otherwise every segment is re-cut from the source into one re-encode.
 
 Audio: a stream copy lands on a packet boundary (about 21 ms for AAC, one
 demuxer block for WAV); --accurate decodes and trims to the sample. The output
@@ -32,6 +33,7 @@ import tempfile
 from typing import List, Tuple
 
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
+from _common import require_tool
 from _common import video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -71,7 +73,11 @@ def encode_args(meta: dict, dst: str, crf: int, preset: str) -> List[str]:
     the audio extension names (PCM for .wav, FLAC, MP3, AAC...) with no video stream."""
     if is_audio_output(dst) or not meta.get("video"):
         return ["-vn"] + audio_codec_for(dst)
-    return video_args(meta, crf, preset) + cfr_args(meta) + aac_args()
+    return video_encode_args(meta, crf, preset) + aac_args()
+
+
+def video_encode_args(meta: dict, crf: int, preset: str) -> List[str]:
+    return video_args(meta, crf, preset) + cfr_args(meta)
 
 
 def copy_args(meta: dict, dst: str) -> List[str]:
@@ -171,6 +177,154 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
                  f"(> {tolerance:.2f}s tolerance); re-encoding this segment for accuracy{alt}")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["tolerance"])
     return _outcome(meta, dst, reencode, reasons)
+
+
+# The most segments one fallback ffmpeg call opens: every segment is its own input (a file handle,
+# a demuxer and a decoder each), and macOS shells default to 256 open files.
+JOIN_CHUNK = 32
+# how far before a segment the fallback seeks, so a start inside the B-frame reorder delay before a
+# keyframe still decodes from the keyframe BEFORE it
+SEEK_MARGIN = 1.0
+# codecs whose configuration travels in the packets, so a part with no extradata is not missing any
+IN_BAND_CONFIG = ("mp3", "mp2")
+TS_EXTS = (".ts", ".m2ts", ".mts")
+_SIG_FIELDS = {"video": ("codec_name", "profile", "pix_fmt", "width", "height", "r_frame_rate", "time_base",
+                         "sample_aspect_ratio", "color_transfer", "color_primaries"),
+               "audio": ("codec_name", "profile", "sample_rate", "channels", "time_base")}
+
+
+def join_signature(path: str):
+    """What a stream-copy join needs to be identical across parts: each stream's type, codec
+    parameters, rotation and extradata hash. None when ffprobe cannot read the part."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-show_data_hash", "sha256", "-show_streams",
+                "-of", "json", path], quiet=True, check=False)
+    try:
+        streams = json.loads(proc.stdout or "")["streams"] if proc.returncode == 0 else None
+    except (ValueError, KeyError, TypeError):
+        streams = None
+    if not isinstance(streams, list):
+        return None
+    sig = []
+    for st in streams:
+        kind = st.get("codec_type")
+        entry = {"type": kind, "extradata_hash": st.get("extradata_hash")}
+        entry.update({f: st.get(f) for f in _SIG_FIELDS.get(kind, ("codec_name",))})
+        if kind == "video":
+            entry["rotation"] = next((sd.get("rotation") for sd in st.get("side_data_list") or []
+                                      if "rotation" in sd), None)
+        sig.append(entry)
+    return sig
+
+
+def signatures_match(sigs: list, ext: str) -> bool:
+    """True when every part can be joined by stream copy: same streams in the same order with the
+    same parameters. A missing extradata hash only matches another missing one where the codec (or
+    an MPEG-TS output) carries its configuration in-band -- PCM has none at all."""
+    if not sigs or any(sig is None for sig in sigs):
+        return False
+    first = sigs[0]
+    for sig in sigs[1:]:
+        if len(sig) != len(first):
+            return False
+        for a, b in zip(first, sig):
+            if {k: v for k, v in a.items() if k != "extradata_hash"} != {k: v for k, v in b.items() if k != "extradata_hash"}:
+                return False
+            ha, hb = a.get("extradata_hash"), b.get("extradata_hash")
+            if ha or hb:
+                if ha != hb:
+                    return False
+            else:
+                codec = str(a.get("codec_name") or "")
+                if not (codec.startswith("pcm_") or codec in IN_BAND_CONFIG or ext in TS_EXTS):
+                    return False
+    return True
+
+
+def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str,
+                has_v: bool, intermediate: bool = False) -> None:
+    """Re-cut `segments` from the source into one file through the concat filter. Each segment is
+    its own seeked input, so both of its streams start at the segment's origin (0); neither is
+    rebased on its own, which would drop a real A/V offset -- the audio is padded to the origin
+    instead. Both streams are cut to the same length so the next segment starts where this ends.
+
+    An `intermediate` chunk keeps its audio as PCM, so the chunks join with no encoder priming
+    between them and the audio is encoded once, for the final file."""
+    has_a = bool(meta.get("audio"))
+    cmd = ffmpeg_base()
+    graph, pads = [], ""
+    for i, (s, e) in enumerate(segments):
+        d = e - s
+        # Seek SEEK_MARGIN early and trim to the exact start. The MP4 demuxer seeks by decode
+        # time, so a start just before a keyframe (within the B-frame reorder delay) lands on that
+        # keyframe and its leading frames are lost -- measured: -ss 9.9 on a keyint-60 HEVC file
+        # began at 10.0. Likewise an input -t stops reading at s+d in decode order and would drop
+        # B-frames that display inside the segment, so it reads a second past the end.
+        m = min(SEEK_MARGIN, s)
+        cmd += ["-ss", f"{s - m:.6f}", "-t", f"{m + d + 1.0:.6f}", "-i", src]
+        # both streams shift by the same m, so an offset between them (audio that starts late)
+        # survives; the audio is then padded to the segment's origin
+        if has_v:
+            graph.append(f"[{i}:v:0]trim=start={m:.6f}:end={m + d:.6f},setpts=PTS-{m:.6f}/TB[v{i}]")
+            pads += f"[v{i}]"
+        if has_a:
+            graph.append(f"[{i}:a:0]atrim=start={m:.6f}:end={m + d:.6f},asetpts=PTS-{m:.6f}/TB,"
+                         f"aresample=async=1:first_pts=0[a{i}]")
+            pads += f"[a{i}]"
+    outs = ("[v]" if has_v else "") + ("[a]" if has_a else "")
+    graph.append(f"{pads}concat=n={len(segments)}:v={int(has_v)}:a={int(has_a)}{outs}")
+    cmd += ["-filter_complex", ";".join(graph)]
+    for pad in ("[v]" if has_v else None, "[a]" if has_a else None):
+        if pad:
+            cmd += ["-map", pad]
+    if intermediate:
+        codec = (video_encode_args(meta, crf, preset) if has_v else ["-vn"]) + ["-c:a", "pcm_s24le"]
+    else:
+        codec = encode_args(meta, dst, crf, preset)
+    cmd += ["-sn", "-dn"] + codec + [dst]
+    run(cmd)
+
+
+def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str, tmp: str) -> None:
+    """The join fallback: every segment re-cut from the source and encoded once. The parts are not
+    reused -- a copied part carries keyframe pre-roll and an audio tail the concat filter would
+    turn into a gap, and a re-encode keeps nothing lossless anyway."""
+    if meta.get("subtitle_streams") or meta.get("data_streams"):
+        DROPPED_STREAMS.append(dst)
+    has_v = bool(meta.get("video")) and not is_audio_output(dst)
+    if len(segments) <= JOIN_CHUNK:
+        _join_chunk(src, segments, dst, meta, crf, preset, has_v)
+        return
+    ext = os.path.splitext(dst)[1] or ".mp4"
+    # Matroska chunks with PCM audio: no edit lists and no AAC priming to carry into the join (MP4
+    # chunks measured the video 23 ms late against the audio after a copy concat)
+    def encode_chunks() -> List[str]:
+        out = []
+        for k in range(0, len(segments), JOIN_CHUNK):
+            chunk = os.path.join(tmp, f"chunk{k // JOIN_CHUNK:03d}.mkv")
+            _join_chunk(src, segments[k:k + JOIN_CHUNK], chunk, meta, crf, preset, has_v, intermediate=True)
+            out.append(chunk)
+        return out
+
+    chunks = encode_chunks()
+    if not STATE.dry_run and STATE.hw and not signatures_match([join_signature(c) for c in chunks], ".mkv"):
+        # VideoToolbox refused some chunk and run() re-encoded that one on the CPU, so the chunks
+        # no longer match: encode them all on the CPU rather than refuse a join that can be made
+        info("the GPU refused part of this join and the chunks came out mixed; re-encoding every chunk on the CPU")
+        STATE.hw_notes.append("the --segments join fell back to the CPU for every chunk after VideoToolbox refused one")
+        STATE.hw = False
+        chunks = encode_chunks()
+    if not STATE.dry_run and not signatures_match([join_signature(c) for c in chunks], ".mkv"):
+        die("the re-encoded chunks of this join came out with different stream parameters, so they "
+            f"cannot be joined safely; cut at most {JOIN_CHUNK} segments per run and join the results "
+            "with join.py", kind="ffmpeg")
+    listfile = os.path.join(tmp, "chunks.txt")
+    with open(listfile, "w", encoding="utf-8") as fh:
+        for c in chunks:
+            fh.write(concat_list_line(c) + "\n")
+    audio = [] if not meta.get("audio") else (aac_args() if has_v else audio_codec_for(dst))
+    run(ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
+        + (["-c:v", "copy"] if has_v else ["-vn"]) + audio
+        + (["-movflags", "+faststart"] if ext in (".mp4", ".mov", ".m4v") and has_v else []) + [dst])
 
 
 BEAT_RATE = 22050  # the decode rate the onset pass uses, matching scenes.py --beats
@@ -364,6 +518,17 @@ def main() -> int:
         if total and s >= total:
             die(f"segment start {s:.3f}s is beyond the media duration {total:.3f}s")
     segments = [(s, min(e, total) if total else e) for s, e in segments]
+    video = meta.get("video") or {}
+    if video.get("fps") and not is_audio_output(args.output or ""):
+        # a video segment shorter than one frame has no picture to cut: a copy lands on a whole
+        # GOP and a re-encode on one frame or none, so the result would not be what was asked
+        frame = 1.0 / video["fps"]
+        vend = video.get("duration") or total
+        for s, e in segments:
+            if (min(e, vend) if vend else e) - s < frame - 1e-6:
+                die(f"segment {s:.3f}-{e:.3f}s is shorter than one frame ({frame:.4f}s at {video['fps']:g} fps)"
+                    + (" inside the video stream" if vend and e > vend else "")
+                    + "; give every segment at least one frame", kind="input")
 
     output = args.output or default_output(args.input, "cut")
     refuse_output_is_input(output, args.input)
@@ -380,20 +545,34 @@ def main() -> int:
                 part = os.path.join(tmp, f"part{i:03d}{ext}")
                 outcomes.append(cut_one(args.input, s, e, part, args.accurate, args.crf, args.preset, args.tolerance, meta))
                 parts.append(part)
-            listfile = os.path.join(tmp, "list.txt")
-            with open(listfile, "w", encoding="utf-8") as fh:
-                for p in parts:
-                    fh.write(concat_list_line(p) + "\n")
-            cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy"]
-            if ext in (".mp4", ".mov", ".m4v"):
-                cmd += ["-movflags", "+faststart"]
-            cmd += [output]
-            proc = run(cmd, check=False)
-            if proc.returncode != 0:
-                info("concat with stream copy failed, re-encoding the join")
-                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile] + encode_args(meta, output, args.crf, args.preset) + [output]
-                run(cmd)
+            # a stream-copy join is only safe between identical parts: the concat demuxer takes the
+            # first part's parameters for all of them, and a mismatch (a copied HEVC part next to a
+            # re-encoded one, or H.264 next to HEVC) decodes with errors from a run that exited 0
+            compatible = STATE.dry_run or signatures_match([join_signature(p) for p in parts], ext)
+            if compatible:
+                listfile = os.path.join(tmp, "list.txt")
+                with open(listfile, "w", encoding="utf-8") as fh:
+                    for p in parts:
+                        fh.write(concat_list_line(p) + "\n")
+                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy"]
+                if ext in (".mp4", ".mov", ".m4v"):
+                    cmd += ["-movflags", "+faststart"]
+                cmd += [output]
+                proc = run(cmd, check=False)
+                # no length check against the parts: each copied part's durations include its own
+                # start offset, which the concat demuxer does not carry, so no sum of them
+                # predicts the join (measured off by 0.03-1.3 s on ordinary B-frame sources)
+                if proc.returncode != 0:
+                    info("concat with stream copy failed; re-cutting every segment from the source into one re-encode")
+                    compatible = False
+            else:
+                info("the cut parts differ in codec parameters (a copied segment next to a re-encoded one); "
+                     "re-cutting every segment from the source into one re-encode instead of joining them")
+            if not compatible:
+                join_from_source(args.input, segments, output, meta, args.crf, args.preset, tmp)
                 join_reencoded = True
+                # every segment was re-cut and re-encoded: none of them keeps its copy precision
+                outcomes = [_outcome(meta, output, True, o["reasons"]) for o in outcomes]
 
     result = probe(output, role="output")
     expected = sum(e - s for s, e in segments)

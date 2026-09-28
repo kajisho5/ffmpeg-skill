@@ -74,6 +74,16 @@ Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
+`reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
+`pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`); `--segments`
+adds `segment_precision`, and the top-level `precision` is the least exact one.
+
+The parts are joined by stream copy only when they match: the same streams with
+the same codec parameters, rotation, colour tags and extradata (a copied segment
+next to a re-encoded one never does). Otherwise every segment is **re-cut from
+the source** into one re-encode (`concat_fallback`): frame-exact boundaries, the
+audio's offset from the video kept, subtitles dropped and reported, and at most
+32 segments per ffmpeg call. A segment shorter than one video frame is refused.
 
 **`--snap beats` (1.17)** moves each in/out point to the nearest *measured*
 beat within `--snap-tolerance` seconds (default 0.12, about a quarter of a beat

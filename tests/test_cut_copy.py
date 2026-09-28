@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""cut.py's stream-copy and --segments join paths, checked on the decoded frames they produce.
+
+    python3 tests/test_cut_copy.py      # this group alone
+    python3 tests/test_all.py           # every group
+
+The fixtures are small and built once here: an HEVC source with B-frames (the Core Media shape
+the carry-forward fixes are about), an H.264 source whose audio starts 0.379 s after its video,
+and a WAV. Frames are identified by PSNR against the source's own frames rather than by hash,
+because a re-encoded join cannot reproduce a frame bit for bit; testsrc2 changes on every frame,
+so the right frame and its neighbours are tens of dB apart.
+"""
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _fixtures import OUT, SCRIPTS, script, sh  # noqa: E402
+from _common import probe  # noqa: E402
+
+sys.path.insert(0, str(SCRIPTS))
+import cut  # noqa: E402
+
+DIR = OUT / "cut_copy"
+FPS = 30
+W, H = 64, 36
+
+
+def gray_frames(path):
+    """Every frame of `path`, decoded and scaled to a 64x36 grey thumbnail."""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-vf", f"scale={W}:{H},format=yuv420p,extractplanes=y",
+                          "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
+    n = W * H
+    return [raw[i:i + n] for i in range(0, len(raw), n)]
+
+
+def psnr(a, b):
+    mse = sum((x - y) ** 2 for x, y in zip(a, b)) / len(a)
+    return 99.0 if mse == 0 else 10 * math.log10(255 * 255 / mse)
+
+
+def frame_pts(path):
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                          "-of", "csv=p=0", str(path)], stdout=subprocess.PIPE, text=True, check=True).stdout
+    return [float(x.split(",")[0]) for x in out.split()]
+
+
+def stderr_of_decode(path):
+    return subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "null", "-"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr.strip()
+
+
+def cut_json(*args):
+    return json.loads(script("cut.py", *args, "--json").stdout)
+
+
+class CutJoinTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        DIR.mkdir(parents=True, exist_ok=True)
+        cls.hevc = DIR / "hevc.mp4"
+        if not cls.hevc.exists():
+            # keyframes every 2 s (keyint 60), 4 B-frames, hvc1 as Core Media writes it
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=12",
+               "-f", "lavfi", "-i", "sine=f=440:d=12", "-c:v", "libx265",
+               "-x265-params", "bframes=4:b-pyramid=1:keyint=60:min-keyint=60:scenecut=0:log-level=error",
+               "-tag:v", "hvc1", "-c:a", "aac", "-shortest", cls.hevc)
+        cls.hevc25 = DIR / "hevc25.mp4"
+        if not cls.hevc25.exists():
+            # the shape a join-length check misjudged: 25 fps, keyint 50, 4 B-frames, 48 kHz AAC
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=12",
+               "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=48000", "-c:v", "libx265",
+               "-x265-params", "bframes=4:keyint=50:min-keyint=50:scenecut=0:log-level=error",
+               "-tag:v", "hvc1", "-c:a", "aac", "-shortest", cls.hevc25)
+        cls.late = DIR / "late_audio.mp4"
+        if not cls.late.exists():
+            # baseline profile, so a re-encoded part (x264 high) can never match a copied one
+            base = DIR / "late_base.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=8",
+               "-f", "lavfi", "-i", "sine=f=440:d=8", "-c:v", "libx264", "-profile:v", "baseline", "-g", str(FPS),
+               "-c:a", "aac", base)
+            sh("ffmpeg", "-y", "-v", "error", "-i", base, "-itsoffset", "0.379", "-i", base,
+               "-map", "0:v", "-map", "1:a", "-c", "copy", cls.late)
+        cls.wav = DIR / "tone.wav"
+        if not cls.wav.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=300:d=6:sample_rate=44100",
+               "-c:a", "pcm_s16le", cls.wav)
+        cls.rot = DIR / "rot.mp4"
+        if not cls.rot.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-display_rotation", "90", "-i", cls.hevc, "-c", "copy", cls.rot)
+        cls.subs = DIR / "subs.mp4"
+        if not cls.subs.exists():
+            srt = DIR / "subs.srt"
+            srt.write_text("1\n00:00:00,500 --> 00:00:09,000\nhello\n", encoding="utf-8")
+            sh("ffmpeg", "-y", "-v", "error", "-i", cls.hevc, "-i", srt, "-map", "0", "-map", "1",
+               "-c", "copy", "-c:s", "mov_text", cls.subs)
+        cls.src_frames = gray_frames(cls.hevc)
+
+    def assertFrameIs(self, frame, expected, msg=""):
+        """`frame` is source frame `expected`: its best match within 5 frames, at 40 dB or more,
+        and 10 dB clear of the next best."""
+        lo, hi = max(0, expected - 5), min(len(self.src_frames), expected + 6)
+        scores = sorted(((psnr(frame, self.src_frames[i]), i) for i in range(lo, hi)), reverse=True)
+        (best, idx), (second, _) = scores[0], scores[1]
+        self.assertEqual(idx, expected, f"{msg}: best match {idx} at {best:.1f} dB")
+        self.assertGreaterEqual(best, 40.0, msg)
+        self.assertGreaterEqual(best - second, 10.0, msg)
+
+    # ------------------------------------------------------------------ the join fallback
+    def test_mismatched_parts_are_recut_from_the_source_with_exact_boundaries(self):
+        """The live bug: a copied HEVC segment next to a re-encoded one used to be joined by the
+        concat demuxer -- H.264 after HEVC decoded with errors from a run that exited 0. The join
+        now re-cuts both segments from the source in one encode."""
+        out = DIR / "mixed.mp4"
+        # 0-2 starts on the keyframe at 0 and copies; 5.1 snaps back to the keyframe at 4, 1.1 s
+        # past the 0.3 s tolerance, so it re-encodes
+        data = cut_json(self.hevc, "--segments", "0-2,5.1-7", "--tolerance", "0.3", "-o", out)
+        self.assertEqual(data["reencode_reason"], ["tolerance", "concat_fallback"])
+        self.assertTrue(data["reencoded"])
+        self.assertEqual(data["mode"], "hybrid")
+        self.assertEqual(data["segment_precision"], ["frame", "frame"])
+        self.assertFalse(data["keyframe_snapped"])
+        self.assertEqual(stderr_of_decode(out), "")
+        pts = frame_pts(out)
+        self.assertEqual(len(pts), 60 + 57)
+        deltas = [round(b - a, 4) for a, b in zip(pts, pts[1:])]
+        self.assertEqual(set(deltas), {round(1 / FPS, 4)}, "no pts gap at the join")
+        m = probe(str(out))
+        self.assertLessEqual(abs(m["video"]["duration"] - m["audio"]["duration"]), 1 / FPS + 0.03)
+        frames = gray_frames(out)
+        self.assertFrameIs(frames[0], 0, "first frame of segment 0")
+        self.assertFrameIs(frames[59], 59, "last frame of segment 0")
+        self.assertFrameIs(frames[60], 153, "first frame of segment 1 (5.1 s)")
+        self.assertFrameIs(frames[116], 209, "last frame of segment 1")
+
+    def test_a_delayed_audio_track_keeps_its_offset_through_the_fallback(self):
+        out = DIR / "late_join.mp4"
+        data = cut_json(self.late, "--segments", "0-2,4.5-6", "--tolerance", "0.3", "-o", out)
+        self.assertIn("concat_fallback", data["reencode_reason"], "the premise: the parts must not match")
+        log = subprocess.run(["ffmpeg", "-v", "info", "-i", str(out), "-af", "silencedetect=n=-40dB:d=0.05",
+                              "-f", "null", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+        starts = [float(v) for v in re.findall(r"silence_start: (-?[0-9.]+)", log)]
+        ends = [float(v) for v in re.findall(r"silence_end: (-?[0-9.]+)", log)]
+        self.assertTrue(starts and ends, log)
+        self.assertAlmostEqual(starts[0], 0.0, delta=0.02)
+        self.assertAlmostEqual(ends[0], 0.379, delta=0.02)
+        m = probe(str(out))
+        self.assertLessEqual(abs(m["video"]["duration"] - m["audio"]["duration"]), 1 / FPS + 0.03)
+
+    def test_a_rotated_source_joins_in_display_orientation(self):
+        out = DIR / "rot_join.mp4"
+        data = cut_json(self.rot, "--segments", "0-2,5.1-7", "--tolerance", "0.3", "-o", out)
+        self.assertIn("concat_fallback", data["reencode_reason"])
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (180, 320))
+        self.assertEqual(m["video"]["rotation"], 0)
+        self.assertEqual(len(frame_pts(out)), 60 + 57)
+        self.assertEqual(stderr_of_decode(out), "")
+
+    def test_subtitles_are_dropped_by_the_fallback_and_reported(self):
+        out = DIR / "subs_join.mp4"
+        data = cut_json(self.subs, "--segments", "0-2,5.1-7", "--tolerance", "0.3", "-o", out)
+        self.assertIn("concat_fallback", data["reencode_reason"])
+        self.assertTrue(data["dropped_non_av_streams"])
+        self.assertEqual(probe(str(out))["subtitle_streams"], 0)
+
+    def test_more_segments_than_one_call_takes_are_joined_in_chunks(self):
+        out = DIR / "many.mp4"
+        # 40 segments of 0.2 s; those not on a keyframe re-encode, so the parts are mixed
+        segs = ",".join(f"{i * 0.3:.1f}-{i * 0.3 + 0.2:.1f}" for i in range(40))
+        data = cut_json(self.hevc, "--segments", segs, "--tolerance", "0.1", "--preset", "ultrafast", "-o", out)
+        self.assertIn("concat_fallback", data["reencode_reason"])
+        self.assertEqual(sum("concat=n=32:" in c for c in data["commands"]), 1)
+        self.assertEqual(sum("concat=n=8:" in c for c in data["commands"]), 1)
+        self.assertEqual(stderr_of_decode(out), "")
+        self.assertEqual(len(frame_pts(out)), 40 * 6)
+        starts = dict(line.split(",")[:2] for line in subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "csv=p=0", str(out)],
+            stdout=subprocess.PIPE, text=True, check=True).stdout.split())
+        self.assertLessEqual(abs(float(starts["video"]) - float(starts["audio"])), 0.005, "chunking adds no A/V offset")
+
+    def test_keyframe_aligned_bframe_segments_stay_a_lossless_copy(self):
+        """The main path must stay lossless: three segments that each start on a keyframe of a
+        B-frame HEVC source copy and join by stream copy. (A join-length check once sent exactly
+        this to a re-encode on a 25 fps source, because each part's duration carries a start
+        offset the concat demuxer drops.)"""
+        out = DIR / "keyframe_join.mp4"
+        data = cut_json(self.hevc25, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertEqual(data["reencode_reason"], [])
+        self.assertEqual(data["segment_precision"], ["packet", "packet", "packet"])
+        self.assertEqual(probe(str(out))["video"]["codec"], "hevc")
+
+    def test_a_wav_join_stays_a_lossless_copy(self):
+        """PCM has no extradata at all; a "missing means incompatible" rule would have sent every
+        multi-segment WAV cut to a re-encode."""
+        out = DIR / "tone_join.wav"
+        data = cut_json(self.wav, "--segments", "1-2,3-4.5", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertEqual(data["reencode_reason"], [])
+
+    def test_the_audio_only_fallback_writes_one_pcm_stream_of_the_exact_length(self):
+        out = DIR / "tone_recut.wav"
+        if out.exists():
+            out.unlink()  # called in-process, without the CLI's --overwrite
+        with tempfile.TemporaryDirectory() as tmp:
+            cut.join_from_source(str(self.wav), [(1.0, 2.0), (3.0, 4.5)], str(out), probe(str(self.wav)), 18, "medium", tmp)
+        streams = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,duration_ts",
+                                             "-of", "json", str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout)["streams"]
+        self.assertEqual([s["codec_type"] for s in streams], ["audio"])
+        self.assertEqual(streams[0]["codec_name"], "pcm_s16le")
+        self.assertEqual(int(streams[0]["duration_ts"]), 44100 + 66150)
+
+    def test_a_segment_shorter_than_a_frame_is_refused(self):
+        out = DIR / "subframe.mp4"
+        proc = script("cut.py", self.hevc, "--segments", "1-1.01,3-4", "-o", out, expect_fail=True)
+        self.assertIn("shorter than one frame", proc.stderr)
+        self.assertFalse(out.exists())
+
+    def test_a_gpu_chunk_refusal_reencodes_every_chunk_on_the_cpu(self):
+        """Under --hw, run() retries a chunk VideoToolbox refused on the CPU; the chunks then differ,
+        and the join encodes them all on the CPU rather than refusing (no real encode here)."""
+        encodes, hw_seen = [], []
+
+        def fake_chunk(src, segs, dst, meta, crf, preset, has_v, intermediate=False):
+            encodes.append(dst)
+            hw_seen.append(cut.STATE.hw)
+
+        # first round mixed (one chunk fell back to the CPU), second round all CPU
+        sigs = iter([[{"type": "video", "codec_name": "hevc", "extradata_hash": "A"}],
+                     [{"type": "video", "codec_name": "hevc", "extradata_hash": "B"}],
+                     [{"type": "video", "codec_name": "hevc", "extradata_hash": "C"}],
+                     [{"type": "video", "codec_name": "hevc", "extradata_hash": "C"}]])
+        segs = [(i * 0.3, i * 0.3 + 0.2) for i in range(40)]
+        meta = {"video": {"fps": 30.0}, "audio": None}
+        with mock.patch.object(cut, "_join_chunk", fake_chunk), \
+                mock.patch.object(cut, "join_signature", lambda p: next(sigs)), \
+                mock.patch.object(cut, "run", lambda cmd, **kw: None), \
+                mock.patch.object(cut.STATE, "hw", True), \
+                mock.patch.object(cut.STATE, "hw_notes", []), \
+                tempfile.TemporaryDirectory() as tmp:
+            cut.join_from_source("src.mp4", segs, os.path.join(tmp, "out.mp4"), meta, 18, "medium", tmp)
+            self.assertEqual(hw_seen, [True, True, False, False], "two chunks on the GPU, then both again on the CPU")
+            self.assertEqual(len(cut.STATE.hw_notes), 1)
+
+    # ------------------------------------------------------------------ signatures (unit, prepared parts)
+    def _part(self, name, *args):
+        path = DIR / name
+        if not path.exists():
+            sh("ffmpeg", "-y", "-v", "error", *args, path)
+        return str(path)
+
+    def test_part_signatures_tell_joinable_parts_apart(self):
+        copy_a = self._part("sig_copy_a.mp4", "-ss", "0", "-i", self.hevc, "-t", "1", "-c", "copy")
+        copy_b = self._part("sig_copy_b.mp4", "-ss", "4", "-i", self.hevc, "-t", "1", "-c", "copy")
+        h264 = self._part("sig_h264.mp4", "-ss", "4", "-i", self.hevc, "-t", "1", "-c:v", "libx264", "-c:a", "aac")
+        hevc_re = self._part("sig_hevc_re.mp4", "-ss", "4", "-i", self.hevc, "-t", "1", "-c:v", "libx265",
+                             "-x265-params", "log-level=error", "-tag:v", "hvc1", "-c:a", "aac")
+        rot_copy = self._part("sig_rot_copy.mp4", "-ss", "0", "-i", self.rot, "-t", "1", "-c", "copy")
+        rot_re = self._part("sig_rot_re.mp4", "-ss", "0", "-i", self.rot, "-t", "1", "-c:v", "libx265",
+                            "-x265-params", "log-level=error", "-tag:v", "hvc1", "-c:a", "aac")
+        wav_a = self._part("sig_a.wav", "-i", self.wav, "-t", "1", "-c", "copy")
+        wav_b = self._part("sig_b.wav", "-ss", "2", "-i", self.wav, "-t", "1", "-c", "copy")
+        sig = {p: cut.join_signature(p) for p in (copy_a, copy_b, h264, hevc_re, rot_copy, rot_re, wav_a, wav_b)}
+        self.assertTrue(cut.signatures_match([sig[copy_a], sig[copy_b]], ".mp4"), "two copies of one source join")
+        self.assertFalse(cut.signatures_match([sig[copy_a], sig[h264]], ".mp4"), "HEVC then H.264")
+        # the premise of the same-codec case: the re-encode really carries different extradata
+        self.assertNotEqual(sig[copy_a][0]["extradata_hash"], sig[hevc_re][0]["extradata_hash"])
+        self.assertFalse(cut.signatures_match([sig[copy_a], sig[hevc_re]], ".mp4"), "a copy and a re-encode of one codec")
+        self.assertFalse(cut.signatures_match([sig[rot_copy], sig[rot_re]], ".mp4"), "rotated copy vs rotated re-encode")
+        self.assertIsNone(sig[wav_a][0]["extradata_hash"])
+        self.assertTrue(cut.signatures_match([sig[wav_a], sig[wav_b]], ".wav"), "PCM parts join without extradata")
+        self.assertIsNone(cut.join_signature(str(DIR / "no_such_part.mp4")))
+
+    def test_a_missing_extradata_hash_only_matches_where_the_config_is_in_band(self):
+        def sig(codec):
+            return [{"type": "audio", "codec_name": codec, "profile": None, "sample_rate": "48000", "channels": 2,
+                     "time_base": "1/48000", "extradata_hash": None}]
+        self.assertFalse(cut.signatures_match([sig("aac"), sig("aac")], ".mp4"))
+        self.assertTrue(cut.signatures_match([sig("aac"), sig("aac")], ".ts"))
+        self.assertTrue(cut.signatures_match([sig("pcm_s16le"), sig("pcm_s16le")], ".wav"))
+        self.assertTrue(cut.signatures_match([sig("mp3"), sig("mp3")], ".mp3"))
+        one = sig("aac")
+        other = sig("aac")
+        other[0]["extradata_hash"] = "SHA256:ab"
+        self.assertFalse(cut.signatures_match([one, other], ".ts"), "a hash on one side only is a mismatch")
+
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
