@@ -82,8 +82,16 @@ starts at `--start`. `edit_list` and `stored_preroll_seconds` say so, and
 max(2 frames, 0.1 s). `keyframe_snapped` is true only when the presented start
 is more than a frame from `--start`.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
-`pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`); `--segments`
-adds `segment_precision`, and the top-level `precision` is the least exact one.
+`vfr_inconclusive`, `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`);
+`--segments` adds `segment_precision`, and the top-level `precision` is the least exact one.
+
+**VFR guard.** Before a copy, `cut.py` samples the video's packet timestamps (up
+to five 6 s windows; no decoding) and reports `vfr_check` (`measured`:
+`sampled_cfr`, `vfr` or `inconclusive`). Only `sampled_cfr` keeps the copy; the
+other two re-encode as `--accurate` (reasons `vfr` / `vfr_inconclusive`) unless
+`--vfr-copy` keeps it with a note. A phone clip whose average rate is 29.98 against
+a nominal 30 is no longer taken for VFR. Irregular timing between the windows is
+not seen; `--accurate` is always available.
 
 The parts are joined by stream copy only when they match: the same streams with
 the same codec parameters, rotation, colour tags and extradata (a copied segment

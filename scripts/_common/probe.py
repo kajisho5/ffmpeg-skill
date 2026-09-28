@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import statistics
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die
@@ -345,6 +346,93 @@ def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
         except ValueError:
             continue
     return sorted(set(out))
+
+
+# frame timing: is a stream's frame rate really variable? (cut.py's VFR guard)
+TIMING_WINDOWS = 5          # sampled windows per file, fewer on a short one
+TIMING_WINDOW_SECONDS = 6
+TIMING_MIN_DELTAS = 20      # fewer measured intervals than this is no evidence either way
+
+
+def complete_pts(packets: Sequence[Dict[str, Any]]) -> List[Any]:
+    """The pts of `packets` (as read, in decode order) whose frames are all there: those at or
+    before the last dts read. A read that stops just after a frame stored ahead of the B-frames
+    shown before it has missed those B-frames, and their gap would read as a dropped frame; every
+    frame shown by the last dts was decoded by then, so it was read. (FFmpeg 9.0's interval reads
+    measured whole on MP4; this keeps a demuxer that stops elsewhere from faking VFR.)"""
+    dts = [p["dts"] for p in packets if isinstance(p.get("dts"), int)]
+    pts = [p.get("pts") for p in packets]
+    return pts if not dts else [t for t in pts if isinstance(t, int) and t <= max(dts)]
+
+
+def classify_frame_timing(windows: Sequence[Sequence[Any]], time_base: Any) -> Dict[str, Any]:
+    """Whether the frame timing in sampled windows is constant. `windows` are lists of pts in
+    `time_base` ticks, the first starting at the file's first packet.
+
+    Each window's pts are sorted (decode order stores B-frames out of sequence) and differenced,
+    with repeats and missing values dropped. The file-start window also drops its first interval:
+    an edit list or encoder priming can stretch it without the frame rate being variable.
+    `sampled_cfr` needs every interval within one tick (at least 1 ms) of its window's median and
+    the window medians to agree, so a single dropped or irregular frame is `vfr`. The tolerance
+    never exceeds half a frame: a tick that coarse (AVI's 1/fps) cannot round an interval, and one
+    tick of slack there would pass a dropped frame. Fewer than
+    TIMING_MIN_DELTAS intervals is `inconclusive`. What happens between the windows is not seen."""
+    result: Dict[str, Any] = {"measured": "inconclusive", "windows": len(windows), "deltas": 0}
+    tick = _fraction(str(time_base)) if time_base else None
+    if not tick or tick <= 0:
+        return result
+    per_window: List[List[float]] = []
+    for i, pts in enumerate(windows):
+        vals = sorted(float(p) for p in pts if isinstance(p, (int, float)) and math.isfinite(p))
+        deltas = [(b - a) * float(tick) for a, b in zip(vals, vals[1:]) if b != a]
+        per_window.append(deltas[1:] if i == 0 else deltas)
+    per_window = [d for d in per_window if d]
+    result["deltas"] = sum(len(d) for d in per_window)
+    if result["deltas"] < TIMING_MIN_DELTAS:
+        return result
+    medians = [statistics.median(d) for d in per_window]
+    tol = min(max(0.001, float(tick) + 1e-6), min(medians) / 2)
+    steady = all(abs(x - m) <= tol for d, m in zip(per_window, medians) for x in d)
+    result["measured"] = "sampled_cfr" if steady and max(medians) - min(medians) <= tol else "vfr"
+    return result
+
+
+def timing_window_starts(duration: float, start: float = 0.0) -> List[float]:
+    """Up to TIMING_WINDOWS non-overlapping window starts spread over the file, the first on its
+    first packet. -read_intervals takes timestamps, so a file that starts at 10 s is read from 10."""
+    n = max(1, min(TIMING_WINDOWS, int((duration or 0.0) // TIMING_WINDOW_SECONDS)))
+    span = (duration or 0.0) - TIMING_WINDOW_SECONDS
+    return [round(start + (span * i / (n - 1) if n > 1 else 0.0), 3) for i in range(n)]
+
+
+def measure_frame_timing(path: str, duration: Optional[float], start: float = 0.0) -> Dict[str, Any]:
+    """classify_frame_timing over sampled windows of `path`'s first video stream that is not cover
+    art (probe()'s choice): one packet-only ffprobe per window, no decoding. An interval read seeks
+    back to the keyframe before its start and, given a relative end, ends that far past the
+    keyframe -- on a long GOP every window read the file's first seconds -- so each window names
+    its absolute end and keeps only the frames from its start. The first window does not seek at
+    all: a seek to the start of an edit-listed MP4 skips its keyframe, stored before the start
+    with a negative pts, and loses the frames that depend on it (seeks near the start behave
+    erratically, so no margin is safe). The cost: a file whose video begins long after its first
+    packet is demuxed, not decoded, up to the video start. An ffprobe failure is `inconclusive`."""
+    ffprobe = require_tool("ffprobe")
+    windows: List[List[Any]] = []
+    time_base = None
+    for i, t in enumerate(timing_window_starts(duration or 0.0, start)):
+        proc = run([ffprobe, "-v", "error", "-select_streams", "V:0", "-show_packets",
+                    "-show_entries", "packet=pts,dts:stream=time_base", "-of", "json",
+                    "-read_intervals", f"{t if i else ''}%{t + TIMING_WINDOW_SECONDS:.3f}", path], quiet=True, check=False)
+        try:
+            doc = json.loads(proc.stdout) if proc.returncode == 0 else None
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            return {"measured": "inconclusive", "windows": len(windows), "deltas": 0}
+        time_base = time_base or ((doc.get("streams") or [{}])[0] or {}).get("time_base")
+        tick = float(_fraction(str(time_base)) or 0) if time_base else 0.0
+        windows.append([p for p in complete_pts(doc.get("packets") or [])
+                        if isinstance(p, int) and p * tick >= t - 1e-6])
+    return classify_frame_timing(windows, time_base)
 
 
 def measured_level_dbfs(path: str, seconds: Optional[float] = 120.0,

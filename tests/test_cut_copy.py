@@ -24,6 +24,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import OUT, SCRIPTS, script, sh  # noqa: E402
 from _common import decision, probe  # noqa: E402
+probe_mod = sys.modules["_common.probe"]  # the module (the package re-exports probe() under its name)
 
 sys.path.insert(0, str(SCRIPTS))
 import cut  # noqa: E402
@@ -190,12 +191,19 @@ class CutJoinTests(unittest.TestCase):
         self.assertFalse(data["keyframe_snapped"])
         self.assertAlmostEqual(data["stored_preroll_seconds"], 0.3, places=3)
         self.assertFrameExact(gray_frames(out)[0], 129)
+        # cutting that result again: the VFR sampler must read its stored pre-roll, or a seek to its
+        # start skips the keyframe (negative pts) and finds too few frames to judge
+        again = cut_json(out, "--start", "0.5", "--duration", "1", "--dry-run", "-o", DIR / "never_again.mp4")
+        self.assertEqual(again["vfr_check"]["measured"], "sampled_cfr")
 
     def test_an_edit_listed_source_cut_again_starts_where_asked(self):
         first = DIR / "copy_again_1.mp4"
         cut_json(self.hevc, "--start", "4.3", "--duration", "4", "--tolerance", "-1", "-o", first)
         out = DIR / "copy_again_2.mp4"
-        cut_json(first, "--start", "1", "--duration", "2", "--tolerance", "-1", "-o", out)
+        data = cut_json(first, "--start", "1", "--duration", "2", "--tolerance", "-1", "-o", out)
+        # the VFR sampler reads the stored pre-roll too (a seek to 0 skipped its keyframe and found
+        # too few frames to judge, forcing a re-encode)
+        self.assertEqual((data["vfr_check"]["measured"], data["mode"]), ("sampled_cfr", "copy"))
         self.assertFrameExact(gray_frames(out)[0], 159, "1 s into a cut that starts at 4.3 s")
 
     def test_the_copy_keeps_audio_in_step_with_the_picture(self):
@@ -506,6 +514,184 @@ class SourceCodecArgsTests(unittest.TestCase):
         self.assertEqual(args[args.index("-pix_fmt") + 1], "yuv420p10le")
         self.assertEqual(args[args.index("-color_trc") + 1], "smpte2084")
         self.assertIn("hdr10-opt=1", args[args.index("-x265-params") + 1])
+
+
+def ramp(n, step, start=0):
+    return [start + i * step for i in range(n)]
+
+
+class FrameTimingTests(unittest.TestCase):
+    """classify_frame_timing on fixed timestamps: no encodes, the rules one at a time."""
+
+    def classify(self, windows, tb="1/30"):
+        return probe_mod.classify_frame_timing(windows, tb)["measured"]
+
+    def test_exact_thirtieths_are_constant(self):
+        self.assertEqual(self.classify([ramp(60, 1), ramp(60, 1, 300)]), "sampled_cfr")
+
+    def test_ntsc_rounding_to_a_600_timescale_is_constant(self):
+        """29.97 fps in 1/600 ticks is 20.02 ticks a frame: mostly 20-tick intervals with a 21
+        about every 50 frames. That rounding is not variable timing."""
+        pts = [round(n * 600 * 1001 / 30000) for n in range(180)]
+        deltas = [b - a for a, b in zip(pts, pts[1:])]
+        self.assertEqual(set(deltas), {20, 21})
+        self.assertEqual(deltas.count(21), 4)
+        self.assertEqual(self.classify([pts[:90], pts[90:]], "1/600"), "sampled_cfr")
+
+    def test_a_stretched_first_interval_at_the_file_start_is_not_evidence(self):
+        first = [0] + ramp(59, 1, 3)       # the first frame held for three frame times
+        self.assertEqual(self.classify([first, ramp(60, 1, 300)]), "sampled_cfr")
+
+    def test_the_same_interval_second_in_the_file_is_vfr(self):
+        second = [0, 1] + ramp(58, 1, 4)
+        self.assertEqual(self.classify([second, ramp(60, 1, 300)]), "vfr")
+
+    def test_a_stretched_first_interval_in_a_later_window_is_vfr(self):
+        later = [300] + ramp(59, 1, 303)
+        self.assertEqual(self.classify([ramp(60, 1), later]), "vfr")
+
+    def test_one_dropped_frame_in_one_window_is_vfr(self):
+        dropped = ramp(30, 1, 300) + ramp(30, 1, 331)
+        self.assertEqual(self.classify([ramp(60, 1), dropped]), "vfr")
+
+    def test_one_dropped_frame_at_a_fine_time_base_is_vfr(self):
+        dropped = ramp(30, 512, 153600) + ramp(30, 512, 153600 + 31 * 512)    # 1/15360, as MP4 writes 30 fps
+        self.assertEqual(self.classify([ramp(60, 512), dropped], "1/15360"), "vfr")
+
+    def test_jitter_is_vfr(self):
+        jitter = [n * 33 + (0 if n % 2 else 7) for n in range(60)]   # 1/1000 s ticks: 26 and 40 ms
+        self.assertEqual(self.classify([jitter], "1/1000"), "vfr")
+
+    def test_windows_at_different_rates_are_vfr(self):
+        self.assertEqual(self.classify([ramp(60, 2), ramp(60, 1, 300)], "1/60"), "vfr")
+
+    def test_variable_timing_between_the_windows_is_not_seen(self):
+        """The documented limit: the clean windows are all the classifier gets."""
+        self.assertEqual(self.classify([ramp(60, 1), ramp(60, 1, 900)]), "sampled_cfr")
+
+    def test_bframe_decode_order_classifies_like_presentation_order(self):
+        shown = ramp(60, 1)
+        stored = [shown[0]] + [shown[i + d] for i in range(1, 57, 3) for d in (2, 0, 1)] + shown[58:]
+        self.assertEqual(sorted(stored), shown, "the premise: the same frames, out of order")
+        self.assertEqual(self.classify([stored, ramp(60, 1, 300)]), self.classify([shown, ramp(60, 1, 300)]))
+        self.assertEqual(self.classify([stored, ramp(60, 1, 300)]), "sampled_cfr")
+
+    def test_fewer_than_twenty_intervals_is_inconclusive(self):
+        result = probe_mod.classify_frame_timing([ramp(20, 1)], "1/30")
+        self.assertEqual((result["measured"], result["deltas"]), ("inconclusive", 18))
+
+    def test_missing_and_repeated_timestamps_are_skipped(self):
+        pts = ramp(60, 1)
+        pts[10:10] = [None, float("nan"), 10]
+        self.assertEqual(self.classify([pts, ramp(60, 1, 300)]), "sampled_cfr")
+
+    def test_a_read_that_stops_mid_reorder_keeps_only_complete_frames(self):
+        """Decode order I0 P3 B1 B2 P6 (stop): frames 4 and 5 were never read. Only the pts up to
+        the last dts read are all present."""
+        packets = [{"pts": 0, "dts": -2}, {"pts": 3, "dts": -1}, {"pts": 1, "dts": 0}, {"pts": 2, "dts": 1},
+                   {"pts": 6, "dts": 2}]
+        self.assertEqual(sorted(probe_mod.complete_pts(packets)), [0, 1, 2])
+
+    def test_windows_are_spread_over_the_file_from_its_first_packet(self):
+        self.assertEqual(probe_mod.timing_window_starts(60.0, 0.0), [0.0, 13.5, 27.0, 40.5, 54.0])
+        self.assertEqual(probe_mod.timing_window_starts(60.0, 10.0), [10.0, 23.5, 37.0, 50.5, 64.0])
+        self.assertEqual(probe_mod.timing_window_starts(13.0, 0.0), [0.0, 7.0])
+        self.assertEqual(probe_mod.timing_window_starts(4.0, 0.0), [0.0])
+
+    def test_a_window_that_seeks_back_reads_only_from_its_start(self):
+        """A long GOP: every read seeks back to the keyframe at 0, whose first interval is stretched
+        (an edit-list start). Only the file-start window may ignore that interval, so the later
+        windows must drop what precedes their own start."""
+        pts = [0] + ramp(599, 1, 3)                        # 1/30 ticks: 20 s, the first frame held 3x
+        doc = json.dumps({"packets": [{"pts": p, "dts": p} for p in pts], "streams": [{"time_base": "1/30"}]})
+        ran = subprocess.CompletedProcess([], 0, doc, "")
+        with mock.patch.object(probe_mod, "run", lambda cmd, **kw: ran):
+            result = probe_mod.measure_frame_timing("x.mp4", 20.0, 0.0)
+        self.assertEqual((result["measured"], result["windows"]), ("sampled_cfr", 3))
+
+    def test_an_ffprobe_failure_is_inconclusive(self):
+        failed = subprocess.CompletedProcess([], 1, "", "boom")
+        with mock.patch.object(probe_mod, "run", lambda cmd, **kw: failed):
+            self.assertEqual(probe_mod.measure_frame_timing("x.mp4", 30.0, 0.0)["measured"], "inconclusive")
+
+
+class VfrGuardTests(unittest.TestCase):
+    """cut.py's VFR guard on real files: measured timing, the reasons, and --vfr-copy."""
+
+    @classmethod
+    def setUpClass(cls):
+        DIR.mkdir(parents=True, exist_ok=True)
+        cls.fp = DIR / "vfr_false_positive.mp4"
+        if not cls.fp.exists():
+            # every frame 1/30 s apart, but the last one held 8x: the average rate drops to 29.3
+            # against a nominal 30, the shape that tripped the old whole-file check
+            base = DIR / "vfr_fp_base.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=10", "-f", "lavfi", "-i", "sine=d=10",
+               "-c:v", "libx264", "-bf", "0", "-g", "30", "-video_track_timescale", "600", "-c:a", "aac", base)
+            sh("ffmpeg", "-y", "-v", "error", "-i", base, "-c", "copy", "-bsf:v",
+               "setts=duration=if(eq(N\\,299)\\,DURATION*8\\,DURATION)", "-video_track_timescale", "600", cls.fp)
+        cls.drop = DIR / "vfr_dropped.mp4"
+        if not cls.drop.exists():
+            # one frame in every ten dropped, the gaps kept: genuinely variable timing
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=10", "-f", "lavfi", "-i", "sine=d=10",
+               "-vf", "select='not(eq(mod(n\\,10)\\,5))'", "-fps_mode", "vfr", "-c:v", "libx264", "-bf", "0", "-g", "30",
+               "-c:a", "aac", cls.drop)
+        cls.short = DIR / "vfr_short.mp4"
+        if not cls.short.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=0.5", "-c:v", "libx264", "-bf", "0", cls.short)
+        cls.late_drops = DIR / "vfr_late_drops.mp4"
+        if not cls.late_drops.exists():
+            # one keyframe for 20 s, frames dropped only after 14 s: every window seeks back to 0
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=20",
+               "-vf", "select='not(gt(t\\,14)*eq(mod(n\\,10)\\,5))'", "-fps_mode", "vfr",
+               "-c:v", "libx264", "-bf", "0", "-g", "1000", "-x264-params", "scenecut=0", cls.late_drops)
+        cls.tone = DIR / "vfr_tone.wav"
+        if not cls.tone.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=d=4", cls.tone)
+
+    def test_an_average_rate_below_nominal_is_not_vfr(self):
+        self.assertTrue(probe(str(self.fp))["video"]["variable_frame_rate_suspected"], "the premise: the old check trips")
+        data = cut_json(self.fp, "--start", "0", "--duration", "2", "-o", DIR / "vfr_fp_cut.mp4")
+        self.assertEqual(data["vfr_check"]["measured"], "sampled_cfr")
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+
+    def test_dropped_frames_force_a_reencode(self):
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "-o", DIR / "vfr_drop_cut.mp4")
+        self.assertEqual(data["vfr_check"]["measured"], "vfr")
+        self.assertEqual(data["reencode_reason"], ["vfr"])
+        self.assertTrue(data["reencoded"])
+        self.assertEqual(data["precision"], "frame")
+
+    def test_dropped_frames_late_in_a_long_gop_are_seen(self):
+        """Each window reads from its own start, not from the keyframe the read seeks back to."""
+        data = cut_json(self.late_drops, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "never_late.mp4")
+        self.assertEqual(data["vfr_check"]["windows"], 3)
+        self.assertEqual(data["vfr_check"]["measured"], "vfr")
+
+    def test_vfr_copy_keeps_the_copy_and_says_so(self):
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--vfr-copy", "--tolerance", "-1",
+                        "-o", DIR / "vfr_drop_copy.mp4")
+        self.assertEqual(data["vfr_check"]["measured"], "vfr")
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        self.assertTrue(any("--vfr-copy" in n for n in data["notes"]), data["notes"])
+
+    def test_too_few_frames_to_measure_reencodes(self):
+        data = cut_json(self.short, "--start", "0", "--duration", "0.3", "-o", DIR / "vfr_short_cut.mp4")
+        self.assertEqual(data["vfr_check"]["measured"], "inconclusive")
+        self.assertEqual(data["reencode_reason"], ["vfr_inconclusive"])
+        self.assertEqual(data["precision"], "frame")
+
+    def test_a_dry_run_measures_and_reports(self):
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "never_vfr.mp4")
+        self.assertEqual(data["vfr_check"]["measured"], "vfr")
+        self.assertEqual(data["reencode_reason"], ["vfr"])
+
+    def test_nothing_is_measured_when_nothing_would_copy(self):
+        audio = cut_json(self.tone, "--start", "1", "--duration", "1", "-o", DIR / "vfr_tone_cut.wav")
+        self.assertNotIn("vfr_check", audio)
+        accurate = cut_json(self.drop, "--start", "0", "--duration", "1", "--accurate", "-o", DIR / "vfr_drop_acc.mp4")
+        self.assertNotIn("vfr_check", accurate)
+        self.assertEqual(accurate["reencode_reason"], ["requested"])
 
 
 if __name__ == "__main__":

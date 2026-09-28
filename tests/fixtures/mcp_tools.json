@@ -327,7 +327,8 @@
    "snap_tolerance",
    "start",
    "timeout",
-   "tolerance"
+   "tolerance",
+   "vfr_copy"
   ],
   "required": []
  },

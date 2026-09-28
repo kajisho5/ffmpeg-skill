@@ -34,7 +34,7 @@ from typing import List, Tuple
 
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
-from _common import source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs
+from _common import source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
 DROPPED_STREAMS: List[str] = []
@@ -595,6 +595,7 @@ def main() -> int:
     g.add_argument("--duration", help="duration instead of --end")
     ap.add_argument("--segments", help="comma separated START-END list, e.g. '0:05-0:12,1:00-1:20' (joined in order)")
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
+    ap.add_argument("--vfr-copy", action="store_true", help="keep the lossless copy even when the sampled frame timing is variable or cannot be measured (default: re-encode, as --accurate)")
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
     snap = ap.add_argument_group("beat snapping")
     snap.add_argument("--snap", choices=["none", "beats"], default="none",
@@ -618,10 +619,6 @@ def main() -> int:
     # why every segment re-encodes, if one of these forces it; `requested` is read before the
     # guards below overwrite args.accurate, so a forced re-encode is never reported as asked for
     forced: List[str] = ["requested"] if args.accurate else []
-    if meta.get("video", {}) and meta["video"].get("variable_frame_rate_suspected") and not args.accurate:
-        info("source looks variable-frame-rate; lossless cuts on VFR are unreliable, switching to --accurate")
-        args.accurate = True
-        forced.append("vfr")
     if STATE.codec:
         # "cut this and make it HEVC": a stream copy keeps the source codec, so the request is a
         # re-encode -- and a cause of it even when --accurate or the VFR guard already forced one
@@ -674,6 +671,26 @@ def main() -> int:
     output = args.output or default_output(args.input, "cut")
     refuse_output_is_input(output, args.input)
     ext = os.path.splitext(output)[1] or ".mp4"
+
+    # the VFR guard: a stream copy of variable-frame-rate video cuts unreliably, so measure the frame
+    # timing (sampled packet timestamps, not the whole-file average an iPhone's 30 vs 29.98 fps
+    # trips) whenever a copy is still possible
+    vfr_check = None
+    vfr_notes: List[str] = []
+    if video and not args.accurate and not is_audio_output(output) and not dry_run_input_pending(args.input):
+        vfr_check = {"heuristic": True, **measure_frame_timing(args.input, total, video.get("start_time") or 0.0),
+                     "method": "sampled"}
+        measured = vfr_check["measured"]
+        what = ("the sampled frame timing is variable" if measured == "vfr"
+                else "the frame timing could not be measured")
+        if measured != "sampled_cfr" and args.vfr_copy:
+            vfr_notes.append(f"{what}; --vfr-copy skipped the re-encode that forces, so a stream copy of this "
+                             "source may land off its frames")
+            info(vfr_notes[-1])
+        elif measured != "sampled_cfr":
+            info(f"{what}; lossless cuts on VFR are unreliable, switching to --accurate (--vfr-copy keeps the copy)")
+            args.accurate = True
+            forced.append("vfr" if measured == "vfr" else "vfr_inconclusive")
 
     outcomes: List[dict] = []
     join_reencoded = False
@@ -734,7 +751,7 @@ def main() -> int:
     # asked for or forced), "hybrid" (asked for lossless but a segment or the join re-encoded anyway;
     # reencode_reason says why)
     mode = "copy" if not reencoded else ("accurate" if args.accurate else "hybrid")
-    notes: List[str] = [n for o in outcomes for n in o.get("notes") or []]
+    notes: List[str] = vfr_notes + [n for o in outcomes for n in o.get("notes") or []]
     single = outcomes[0] if len(outcomes) == 1 else {}
     stored = single.get("stored_preroll_seconds")
     if single.get("edit_list") and stored:
@@ -756,7 +773,7 @@ def main() -> int:
          mode=mode, keyframe_snapped=keyframe_snapped, reencode_reason=reencode_reason,
          segment_precision=[o["precision"] for o in outcomes] if len(outcomes) > 1 else None,
          edit_list=bool(single.get("edit_list")), stored_preroll_seconds=stored, av_start_skew_seconds=skew,
-         notes=notes,
+         notes=notes, **({"vfr_check": vfr_check} if vfr_check else {}),
          nearest_keyframes=sorted(NEAREST_KEYFRAMES) if NEAREST_KEYFRAMES else None,
          # the trade the caller can offer instead of a re-encode (eval e02: "without losing quality")
          lossless_alternative=(f"--start {min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])):.3f} lands on a keyframe: "

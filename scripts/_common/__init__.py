@@ -68,7 +68,7 @@ from _common.emit import (
 )
 from _common.probe import (
     analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
-    _fraction, keyframes_near, SCORE_RE, SIL_RE, decode_gray_frames,
+    _fraction, keyframes_near, classify_frame_timing, measure_frame_timing, SCORE_RE, SIL_RE, decode_gray_frames,
     measured_level_dbfs, AUDIO_MEDIA_EXT, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output
 )
 from _common.decision import (
@@ -200,7 +200,7 @@ __all__ = [
     "font_family_for_script", "font_family_of_file", "FONT_FLAG_HINT", "font_for_script", "FONT_INSTALL_HINT",
     "fonts_dir_covers_script", "_fraction", "has_emoji", "info", "INSTALL_HINTS", "install_signal_handlers",
     "is_audio_output", "_is_emoji_base", "_is_emoji_char", "_is_ffmpeg", "_is_mark", "_KEYCAP", "_KEYCAP_BASES",
-    "keyframes_near", "LANGUAGE_NAMES", "LATIN_EM", "LEADING_VOWELS", "_libass_color_probe", "_limit_for",
+    "keyframes_near", "classify_frame_timing", "measure_frame_timing", "LANGUAGE_NAMES", "LATIN_EM", "LEADING_VOWELS", "_libass_color_probe", "_limit_for",
     "load_brand", "measured_level_dbfs", "AUDIO_MEDIA_EXT", "MEDIA_EXT", "MissingFpsError", "needs_shaping", "NO_SPACE_SCRIPTS",
     "_odd_dimension_retry", "_on_signal", "_output_failed", "_OutputLock", "pad_filters", "parse_time", "_pid_dead",
     "place_output", "_plan_at_exit", "_plan_inputs", "_PLAN_STRIP", "PLAN_VERSION", "PREFERRED_FAMILIES",
