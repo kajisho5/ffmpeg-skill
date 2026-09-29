@@ -911,3 +911,12 @@ not a new file format this tool would have to maintain.
   start, and the first window does not seek (a seek to 0 on an edit-listed MP4 skipped its
   negative-pts keyframe). Code: `_common/probe.py` `classify_frame_timing`,
   `measure_frame_timing`. Tests: `FrameTimingTests`, `VfrGuardTests`.
+- **A segment past the video's end is held or trimmed, like a join.py clip; `--accurate` joins in one
+  encode.** Both concat routes start the next segment after the longer stream of this one, so a
+  segment whose sound outruns its picture opened a hole (0.355 s; and one AAC frame at every
+  `--accurate` join, because each part was encoded on its own). `clip_length`'s rule decides: under a
+  frame past the video's end, the segment ends with the video; more, its last frame is held for the
+  sound, which only the re-cut can do. The last segment keeps the source's tail. The video's end is
+  on the cut's clock: stream start + duration − the file's start_time. Tests:
+  `test_a_segment_past_the_video_end_holds_its_last_frame_in_a_copy_join` and siblings,
+  `test_an_accurate_join_has_no_hole_at_its_joins`.

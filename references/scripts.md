@@ -99,6 +99,12 @@ next to a re-encoded one never does). Otherwise every segment is **re-cut from
 the source** into one re-encode (`concat_fallback`): frame-exact boundaries, the
 audio's offset from the video kept, subtitles dropped and reported, and at most
 32 segments per ffmpeg call. A segment shorter than one video frame is refused.
+With `--accurate` the segments are always cut that way, in one encode (a part
+encoded on its own ran an AAC frame past its picture, leaving a hole at every
+join). A segment other than the last that runs past the end of the video is
+ended with the video when it runs less than a frame past it, and otherwise keeps
+its sound with the last frame held -- which forces the re-cut (`concat_fallback`,
+named in `notes`). The last segment keeps the source's own sound-only tail.
 
 **`--snap beats` (1.17)** moves each in/out point to the nearest *measured*
 beat within `--snap-tolerance` seconds (default 0.12, about a quarter of a beat

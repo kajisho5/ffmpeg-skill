@@ -111,7 +111,23 @@ class CutJoinTests(unittest.TestCase):
         if not cls.offset.exists():
             # a source whose timestamps start at 10 s
             sh("ffmpeg", "-y", "-v", "error", "-i", cls.hevc, "-c", "copy", "-output_ts_offset", "10", cls.offset)
+        cls.long = DIR / "long_audio.mp4"
+        if not cls.long.exists():
+            # sound that outlasts the picture by 0.3 s (a music bed padded to the container), g30
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6",
+               "-f", "lavfi", "-i", "sine=f=440:d=6.3:sample_rate=48000", "-c:v", "libx264", "-g", "30",
+               "-c:a", "aac", cls.long)
+        cls.tail = DIR / "tail_audio.mp4"
+        if not cls.tail.exists():
+            # the same, by 20 ms: an ordinary AAC tail, under one frame
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6",
+               "-f", "lavfi", "-i", "sine=f=440:d=6.02:sample_rate=48000", "-c:v", "libx264", "-g", "30",
+               "-c:a", "aac", cls.tail)
+        cls.long_offset = DIR / "long_audio_offset.mp4"
+        if not cls.long_offset.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-i", cls.long, "-c", "copy", "-output_ts_offset", "10", cls.long_offset)
         cls.src_frames = gray_frames(cls.hevc)
+        cls.long_frames = gray_frames(cls.long)
 
     def assertFrameIs(self, frame, expected, msg=""):
         """`frame` is source frame `expected`: its best match within 5 frames, at 40 dB or more,
@@ -322,6 +338,95 @@ class CutJoinTests(unittest.TestCase):
         m = probe(str(out))
         self.assertLessEqual(abs(m["video"]["duration"] - m["audio"]["duration"]), 1 / FPS + 0.03)
 
+    # ------------------------------------------------------------------ a segment past the video's end
+    def assertHeldJoin(self, out, data):
+        """`--segments 4-6.3,0-2` of long_audio: 2.3 s then 2 s, with no hole. Output frames 0-59
+        are source 120-179, 60-68 hold source frame 179 for the sound that runs on, and 69-128 are
+        source 0-59."""
+        pts = frame_pts(out)
+        self.assertEqual(len(pts), 69 + 60, data.get("notes"))
+        self.assertEqual({round(b - a, 4) for a, b in zip(pts, pts[1:])}, {round(1 / FPS, 4)}, "no hole in the video")
+        frames = gray_frames(out)
+
+        def best(frame, candidates):
+            return max(candidates, key=lambda i: psnr(frame, self.long_frames[i]))
+        self.assertEqual(best(frames[0], range(115, 126)), 120)
+        for i in (59, 60, 64, 68):
+            self.assertEqual(best(frames[i], range(170, 180)), 179, f"output frame {i} holds the last picture")
+            self.assertGreaterEqual(psnr(frames[i], self.long_frames[179]), 35.0)
+        self.assertEqual(best(frames[69], range(0, 6)), 0, "the next segment starts on its own first frame")
+        self.assertEqual(best(frames[128], range(54, 60)), 59)
+        self.assertIn("concat_fallback", data["reencode_reason"])
+
+    def test_a_segment_past_the_video_end_holds_its_last_frame_in_a_copy_join(self):
+        """The copy join placed the next segment after the 0.3 s of sound with no picture, leaving a
+        0.355 s hole in the video, and reported mode copy. A copy cannot add a frame, so the join
+        is re-cut from the source with the last frame held for the sound."""
+        out = DIR / "held_copy.mp4"
+        data = cut_json(self.long, "--segments", "4-6.3,0-2", "-o", out)
+        self.assertEqual(data["mode"], "hybrid")
+        self.assertTrue(any("past the end of the video" in n for n in data["notes"]), data["notes"])
+        self.assertNotIn("vfr_check", data, "a held join cannot copy, so the frame timing is not sampled")
+        self.assertHeldJoin(out, data)
+
+    def test_a_repeat_of_a_held_segment_in_last_place_is_not_held(self):
+        """The hold is decided by position: the same range twice, first and last, holds only the
+        first. 69 + 60 + 60 frames, not 69 + 60 + 69."""
+        out = DIR / "held_repeat.mp4"
+        cut_json(self.long, "--segments", "4-6.3,0-2,4-6.3", "--accurate", "-o", out)
+        self.assertEqual(len(frame_pts(out)), 69 + 60 + 60)
+
+    def test_a_segment_past_the_video_end_holds_its_last_frame_when_accurate(self):
+        """--accurate re-encoded each part and then copy-joined them, with the same hole."""
+        out = DIR / "held_accurate.mp4"
+        data = cut_json(self.long, "--segments", "4-6.3,0-2", "--accurate", "-o", out)
+        self.assertEqual(data["mode"], "accurate")
+        self.assertHeldJoin(out, data)
+
+    def test_the_video_end_is_measured_from_the_files_own_start(self):
+        """A source whose timestamps start at 10 s: stream start_time is raw, segment times are
+        relative to the file, so the video's end is 6.0 here, not 16.0."""
+        out = DIR / "held_offset.mp4"
+        data = cut_json(self.long_offset, "--segments", "4-6.3,0-2", "--accurate", "-o", out)
+        self.assertHeldJoin(out, data)
+
+    def test_a_sound_tail_under_a_frame_ends_the_segment_with_its_picture(self):
+        """20 ms of sound past the picture is trimmed, not held for: a 60 + 60 frame join with no
+        fractional hole, and the trim is named."""
+        out = DIR / "tail_trim.mp4"
+        data = cut_json(self.tail, "--segments", "4-6.02,0-2", "--accurate", "-o", out)
+        pts = frame_pts(out)
+        self.assertEqual(len(pts), 120)
+        self.assertEqual({round(b - a, 4) for a, b in zip(pts, pts[1:])}, {round(1 / FPS, 4)})
+        self.assertEqual(data["requested_segments"][0], [4.0, 6.0])
+        self.assertTrue(any("ends with the video" in n for n in data["notes"]), data["notes"])
+
+    def test_an_accurate_join_has_no_hole_at_its_joins(self):
+        """--accurate used to re-encode each part on its own and copy-join them: each part's AAC ran
+        an encoder frame past its picture and the concat demuxer placed the next part after it, a
+        23 ms hole at every join of every --accurate --segments run. One encode through the concat
+        filter has none, and it is what was asked for, not a fallback."""
+        out = DIR / "accurate_join.mp4"
+        data = cut_json(self.hevc, "--segments", "0-2,4-6", "--accurate", "-o", out)
+        self.assertEqual(data["reencode_reason"], ["requested"])
+        self.assertEqual(data["mode"], "accurate")
+        pts = frame_pts(out)
+        self.assertEqual(len(pts), 120)
+        self.assertEqual({round(b - a, 4) for a, b in zip(pts, pts[1:])}, {round(1 / FPS, 4)})
+        frames = gray_frames(out)
+        self.assertFrameIs(frames[59], 59, "last frame of segment 0")
+        self.assertFrameIs(frames[60], 120, "first frame of segment 1 (4.0 s)")
+
+    def test_the_last_segment_past_the_video_end_is_left_alone(self):
+        """No join follows the last segment, so its sound-only tail is what the source had: no hold,
+        no pre-check fallback."""
+        out = DIR / "held_last.mp4"
+        data = cut_json(self.long, "--segments", "0-2,4-6.3", "--accurate", "-o", out)
+        self.assertNotIn("concat_fallback", data["reencode_reason"])
+        self.assertFalse(any("past the end of the video" in n for n in data["notes"]))
+        self.assertEqual(data["requested_segments"][1], [4.0, 6.3])
+        self.assertEqual(len(frame_pts(out)), 60 + 60, "the picture ends where the source's does; no frame is held")
+
     def test_a_rotated_source_joins_in_display_orientation(self):
         out = DIR / "rot_join.mp4"
         data = cut_json(self.rot, "--segments", "0-2,5.1-7", "--tolerance", "0.3", "-o", out)
@@ -400,7 +505,7 @@ class CutJoinTests(unittest.TestCase):
         and the join encodes them all on the CPU rather than refusing (no real encode here)."""
         encodes, hw_seen = [], []
 
-        def fake_chunk(src, segs, dst, meta, crf, preset, has_v, intermediate=False):
+        def fake_chunk(src, segs, dst, meta, crf, preset, has_v, intermediate=False, **_hold):
             encodes.append(dst)
             hw_seen.append(cut.STATE.hw)
 
