@@ -3525,5 +3525,38 @@ class AsrNoSpeechTests(unittest.TestCase):
         self.assertNotIn("no local speech-to-text engine", call[0])
 
 
+class WhisperDefaultModelTests(unittest.TestCase):
+    """A whisper.cpp install made the way the refusal hint says (brew + ggml-base.bin) must be the
+    model caption.py --transcribe runs by default: the default became large-v3-turbo with the
+    Parakeet engines, and whisper-cli was handed a bare model name it could not open."""
+
+    def test_the_default_model_is_the_one_the_install_hint_names(self):
+        import tempfile
+        from _common import asr
+        self.assertIn("ggml-base.bin", asr.ASR_INSTALL_HINT)
+        with tempfile.TemporaryDirectory() as d:
+            home, bin_dir = Path(d, "home"), Path(d, "bin")
+            (home / ".cache" / "whisper.cpp").mkdir(parents=True)
+            model = home / ".cache" / "whisper.cpp" / "ggml-base.bin"
+            model.write_bytes(b"")
+            bin_dir.mkdir()
+            seen = Path(d, "args.txt")
+            # a whisper-cli that records its arguments and writes one cue where -of says
+            cli = bin_dir / "whisper-cli"
+            cli.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "' + str(seen) + '"\n'
+                           'while [ $# -gt 0 ]; do [ "$1" = "-of" ] && of="$2"; shift; done\n'
+                           'printf "1\\n00:00:00,000 --> 00:00:01,000\\nhello\\n" > "$of.srt"\n', encoding="utf-8")
+            cli.chmod(0o755)
+            clip = Path(d, "talk.mp4")
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=320x180:r=30:d=2",
+               "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-c:a", "aac", "-shortest", clip)
+            env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                       FFMPEG_SKILL_ASR_ENGINE="whisper.cpp")
+            env.pop("FFMPEG_SKILL_HW", None)
+            script("caption.py", clip, "--transcribe", "-o", Path(d, "out.mp4"), env=env)
+            args = seen.read_text(encoding="utf-8").split("\n")
+            self.assertEqual(args[args.index("-m") + 1], str(model))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

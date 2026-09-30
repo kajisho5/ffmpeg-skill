@@ -525,7 +525,7 @@ Three refusals, all `kind: input`, all before any encode:
 
 - `--filler` with neither `--words` nor `--transcribe` → names both flags.
 - `--transcribe` with no engine on PATH → the same message `caption.py` gives,
-  with the three install lines.
+  with its install lines (Parakeet and whisper engines).
 - `--transcribe` where the engine runs but its build produces no word-level
   timings → names that engine, says some builds do not support word timestamps,
   and points at `--words`. (`--transcribe` drives whichever engine is installed
@@ -922,7 +922,7 @@ above the cap is clamped with a note, not refused, and both `jobs` and
 ### caption.py --transcribe — optional local speech-to-text
 If `parakeet-mlx`, `parakeet-cli` (parakeet.cpp, with a `.gguf`), `whisper-cli` (whisper.cpp),
 `faster-whisper` or `whisper` is installed,
-`caption.py input.mp4 --transcribe [--language ja] [--model large-v3-turbo] [--engine auto]` writes the
+`caption.py input.mp4 --transcribe [--language ja] [--model base] [--engine auto]` writes the
 SRT from the audio and burns it (combine with `--animate pop --karaoke`). `--engine auto` (default,
 or `FFMPEG_SKILL_ASR_ENGINE`) runs Parakeet for English speech -- an English `--language`, else
 whisper.cpp's language detector, else assumed English -- and Whisper for any other language;

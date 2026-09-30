@@ -337,7 +337,7 @@ Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
 `external:whisper`, `external:parakeet`. `capabilities.required` is the union of every tool's required list;
 `optional` the union of the conditional ones. With detection (the default)
 `available`, `missing` and `missing_optional` are added from `doctor`, which reads
-`ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper. Pass `--static`
+`ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper or Parakeet. Pass `--static`
 to omit detection. Nothing from the environment other than those lists and the
 ffmpeg/ffprobe/python versions is printed; no environment variables, no paths.
 
@@ -349,7 +349,8 @@ engine present. Whisper is never a dependency of this skill.
 `external:parakeet` is the same kind of optional capability for the same two flags:
 parakeet-mlx, or parakeet-cli with a `.gguf` model it can find. Either engine family
 satisfies `--transcribe`; `--engine auto` (the default, or `FFMPEG_SKILL_ASR_ENGINE`) runs
-Parakeet for English speech and Whisper for every other language, and the result's
+Parakeet for English speech and Whisper for every other language (with no language
+detector installed and no `--language`, English is assumed and the result says so), and the result's
 `transcription` says which engine, model and routing decision produced the cues (in every
 `--mode`, `mux` included).
 

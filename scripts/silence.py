@@ -240,7 +240,7 @@ def main() -> int:
     fil.add_argument("--words", metavar="FILE",
                      help="a whisper JSON with word-level timings, for --filler")
     fil.add_argument("--transcribe", action="store_true",
-                     help="produce the word timings with a local whisper (never required; the same "
+                     help="produce the word timings with a local speech engine, Parakeet or whisper (never required; the same "
                           "bridge caption.py uses)")
     fil.add_argument("--engine", choices=_asr.ENGINE_CHOICES, default=None,
                      help="speech engine for --transcribe (default: $FFMPEG_SKILL_ASR_ENGINE, else auto = Parakeet "

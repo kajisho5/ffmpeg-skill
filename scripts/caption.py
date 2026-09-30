@@ -903,7 +903,7 @@ def main() -> int:
                           "them; .mkv is the honest multi-track container and stores the code you give verbatim")
     src.add_argument("--ass", help="ASS file to burn (styles inside the file are used)")
     src.add_argument("--text", help="plain text cue file to convert into SRT (see format above)")
-    src.add_argument("--transcribe", action="store_true", help="generate the SRT from the audio with a local speech-to-text engine if one is installed (whisper-cli / whisper / faster-whisper); never required")
+    src.add_argument("--transcribe", action="store_true", help="generate the SRT from the audio with a local speech-to-text engine if one is installed (parakeet-mlx / parakeet.cpp / whisper-cli / whisper / faster-whisper); never required")
     src.add_argument("--language", "--lang", help="language code (e.g. en, ja, zh, ko): the language for --transcribe (default auto), "
                                                   "the tag on the subtitle stream with --mode mux, and the hint that says whether Han-only "
                                                   "text is Chinese, Japanese or Korean when a font is picked by script")
@@ -916,8 +916,8 @@ def main() -> int:
                           "(default: none, so no player burns in a language the viewer did not ask for)")
     src.add_argument("--offset", default="0", help="shift every cue by TIME (seconds, mm:ss, hh:mm:ss.ms or "
                                                     "hh:mm:ss:ff; a leading - shifts earlier); works for --text, --srt and --ass")
-    src.add_argument("--model", default="large-v3-turbo",
-                     help="speech model for --transcribe: a whisper model name/path (default large-v3-turbo), or a Parakeet "
+    src.add_argument("--model", default="base",
+                     help="speech model for --transcribe: a whisper model name/path (default base), or a Parakeet "
                           "model (an mlx-community/parakeet-* repo or a .gguf) for the Parakeet engines")
     src.add_argument("--engine", choices=ENGINE_CHOICES, default=None,
                      help="speech engine for --transcribe (default: $FFMPEG_SKILL_ASR_ENGINE, else auto = Parakeet "
