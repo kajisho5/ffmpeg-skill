@@ -63,7 +63,7 @@ def _set_current_ctx(ctx: "Context") -> None:
     _CURRENT_CTX = ctx
 
 
-ENV_HW_NOTE = ("VideoToolbox chosen by FFMPEG_SKILL_HW=1 (machine default; ~1.2-2.5x the bytes of x264/x265 "
+ENV_HW_NOTE = ("VideoToolbox chosen by FFMPEG_SKILL_HW=1 (machine default; ~1.1-3.5x the bytes of x264/x265 "
                "at matched quality); rerun with --no-hw for a final deliverable")
 
 

@@ -104,8 +104,8 @@ class VtArgsTests(unittest.TestCase):
         STATE.reset()
 
     def test_quality_mapping_is_monotonic_and_bounded(self):
-        for codec in ("h264", "hevc"):
-            qs = [decision.vt_quality(codec, crf) for crf in range(0, 52)]
+        for codec, hdr in (("h264", False), ("hevc", False), ("hevc", True)):
+            qs = [decision.vt_quality(codec, crf, hdr) for crf in range(0, 52)]
             self.assertEqual(qs, sorted(qs, reverse=True))
             self.assertTrue(all(1 <= q <= 100 for q in qs))
         self.assertEqual(decision.vt_quality("h264", 18), 75)
@@ -118,6 +118,39 @@ class VtArgsTests(unittest.TestCase):
         self.assertEqual(tags[0], "-bsf:v")
         self.assertNotIn("-colorspace", tags)
         self.assertNotIn("-x264-params", tags)
+
+    def test_an_hdr_source_gets_the_hdr_quality_curve(self):
+        """HLG phone footage at the SDR curve's -q:v came out 6-8x x265's bytes at a higher SSIM
+        (tests/bench_vt.py); the Main10 line takes its own, lower curve, chosen from the source."""
+        STATE.hw = True
+        hdr = {"video": {"bt2020_or_hdr": True, "color_transfer": "arib-std-b67"}}
+        sdr = {"video": {"bt2020_or_hdr": False}}
+        with mock.patch.object(decision, "hw_platform_reason", return_value=None), \
+                mock.patch.object(decision, "ffmpeg_encoders", return_value={"hevc_videotoolbox"}):
+            for crf in (18, 23, 28):
+                q_hdr = decision._vt_args("hevc", crf, hdr, True)
+                q_sdr = decision._vt_args("hevc", crf, sdr, True)
+                q_hdr, q_sdr = int(q_hdr[q_hdr.index("-q:v") + 1]), int(q_sdr[q_sdr.index("-q:v") + 1])
+                self.assertEqual(q_hdr, decision.vt_quality("hevc", crf, True))
+                self.assertEqual(q_sdr, decision.vt_quality("hevc", crf))
+                self.assertLess(q_hdr, q_sdr - 10, crf)
+
+    def test_the_curves_keep_the_measured_values(self):
+        """The CRF 18/23/28 values tests/bench_vt.py measured (the highest -q:v that matched the CPU
+        encode's SSIM on every clip); a slope typo moves one of them."""
+        self.assertEqual([decision.vt_quality("h264", c) for c in (18, 23, 28)], [75, 64, 53])
+        self.assertEqual([decision.vt_quality("hevc", c) for c in (18, 23, 28)], [78, 68, 58])
+        self.assertEqual([decision.vt_quality("hevc", c, True) for c in (18, 23, 28)], [63, 55, 47])
+
+    def test_an_h264_line_on_an_hdr_source_keeps_the_h264_curve(self):
+        """An export preset's x264 line on an HLG source: the VideoToolbox H.264 line replaces x264
+        at the same CRF, so the HDR (Main10, CRF+2) curve does not apply."""
+        STATE.hw = True
+        hdr = {"video": {"bt2020_or_hdr": True, "color_transfer": "arib-std-b67"}}
+        with mock.patch.object(decision, "hw_platform_reason", return_value=None), \
+                mock.patch.object(decision, "ffmpeg_encoders", return_value={"h264_videotoolbox"}):
+            line = decision.hw_preset_video(["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p"], hdr)
+        self.assertEqual(line[line.index("-q:v") + 1], "75")
 
     def test_av1_and_an_intel_mac_stay_on_the_cpu_with_a_note(self):
         STATE.hw = True

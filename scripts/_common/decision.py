@@ -279,15 +279,17 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
 
 # ------------------------------------------------------- VideoToolbox (--hw)
 #
-# CRF -> VideoToolbox -q:v (1-100, higher = better), fitted by SSIM on three 1080p clips (animation,
-# natural footage, CG) against x264/x265 medium at CRF 18/23/28 on an M4 Max, FFmpeg 9.0: x264 CRF
-# 18/23/28 ~ q 75-78/67-70/55-60; hevc_videotoolbox needs ~3 more for the same SSIM. Matched
-# quality costs 1.2-2.5x the bytes of x264 -- which is why --hw is opt-in and delivery presets
-# stay on the CPU (docs/design-decisions.md).
+# CRF -> VideoToolbox -q:v (1-100, higher = better): at each CRF the highest -q:v whose SSIM matched
+# the CPU line's (x264/x265 medium) across the clips of tests/bench_vt.py -- synthetic CG, fractal
+# and grain plus iPhone 17 Pro 1080p (M3, FFmpeg 9.0.2), so a GPU encode never measures below the
+# CPU one. HDR has its own curve: its CPU line is x265 Main10 at CRF+2, and the Main10 VideoToolbox
+# line needs ~11-15 less -q:v for that SSIM (the SDR curve wrote HLG phone footage at 6-8x x265's
+# bytes). Matched quality costs 1.1-2.9x the bytes of x264/x265 on SDR and 1.9-3.5x on HDR --
+# which is why --hw is opt-in and delivery presets stay on the CPU (docs/design-decisions.md).
 
 
-def vt_quality(codec: str, crf: int) -> int:
-    base, slope = (75.0, 1.7) if codec == "h264" else (78.0, 1.8)
+def vt_quality(codec: str, crf: int, hdr: bool = False) -> int:
+    base, slope = (63.0, 1.6) if hdr else (75.0, 2.2) if codec == "h264" else (78.0, 2.0)
     return max(1, min(100, int(round(base - slope * (crf - 18)))))
 
 
@@ -321,7 +323,9 @@ def _vt_args(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: b
                 "-color_trc", v.get("color_transfer") or "arib-std-b67"]
     if codec == "prores":
         return ["-c:v", name, "-profile:v", "hq", "-pix_fmt", "p210le"] + (hdr_tags if hdr else [])
-    q = str(vt_quality(codec, crf))
+    # The HDR curve was fitted on the Main10 HEVC line; an 8-bit H.264 line (an export preset on
+    # an HDR source) replaces x264 at the same CRF and keeps the H.264 curve.
+    q = str(vt_quality(codec, crf, hdr and codec == "hevc"))
     if codec == "h264":
         return ["-c:v", name, "-q:v", q, "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart"] + \
             (_vt_bt709("h264") if keep_bt709 else [])

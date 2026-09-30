@@ -123,7 +123,7 @@ def bench_clip(name, src, meta, args, tmp):
             raise RuntimeError(f"no VideoToolbox {codec} here: {decision.STATE.hw_notes}")
         qi = vt_line.index("-q:v") + 1
         curve = []
-        for q in sorted(set(args.grid) | {decision.vt_quality(codec, crf) for crf in args.crf}):
+        for q in sorted(set(args.grid) | {decision.vt_quality(codec, crf, hdr) for crf in args.crf}):
             line = list(vt_line)
             line[qi] = str(q)
             path = os.path.join(tmp, f"vt_{q}.mp4")
@@ -139,7 +139,7 @@ def bench_clip(name, src, meta, args, tmp):
             target = ssim(src, path, seconds, fmt, ref_frames)
             os.remove(path)
             q, vt_bytes = matched_q(curve, target)
-            now = decision.vt_quality(codec, crf)
+            now = decision.vt_quality(codec, crf, hdr)
             now_pt = next((p for p in curve if p["q"] == now), None)
             rows.append({"crf": crf, "cpu_crf": int(cpu_line[cpu_line.index("-crf") + 1]), "cpu_bytes": size,
                          "cpu_ssim": target, "cpu_time": round(took, 2), "matched_q": q, "matched_vt_bytes": vt_bytes,
