@@ -69,18 +69,39 @@ class ParakeetParsingTests(unittest.TestCase):
         self.assertEqual(len(words), 5)
         self.assertEqual(asr.cues_from_words(words), [(0.2, 1.6, "So um we start."), (2.0, 2.4, "Here.")])
 
+    def test_malformed_engine_output_yields_no_words_instead_of_crashing(self):
+        """Garbage, the wrong shape, and words missing fields are skipped, never raised."""
+        for text in ("not json", "[]", "null", json.dumps({"words": "x"}), json.dumps({"words": 5}),
+                     json.dumps({"words": [5, None, []]})):
+            self.assertEqual(asr._words_from_parakeet_cpp_json(text), [], text)
+        mixed = {"words": [{"w": "ok", "start": 0.1, "end": 0.3}, {"w": "no-times"}, {"start": 1, "end": 2},
+                           {"w": "bad", "start": "x", "end": 1}, "str", {"w": "fine", "start": 1.0, "end": 1.2}]}
+        self.assertEqual([w["word"] for w in asr._words_from_parakeet_cpp_json(json.dumps(mixed))], ["ok", "fine"])
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "a.json"
+            for body in ("{truncated", "[1, 2]", json.dumps({"sentences": [{"text": "no times"}]}),
+                         json.dumps({"sentences": 5}), json.dumps({"sentences": [5, None]}),
+                         json.dumps({"sentences": [{"tokens": 5}]}), json.dumps({"sentences": [{"tokens": [5, None]}]})):
+                p.write_text(body)
+                self.assertEqual(asr._cues_from_parakeet_mlx_json(str(p)), [], body)
+                self.assertEqual(asr._words_from_parakeet_mlx_json(str(p)), [], body)
+            self.assertEqual(asr._words_from_parakeet_mlx_json(str(Path(d) / "missing.json")), [])
+
     def test_cues_split_on_a_pause_and_on_length(self):
         words = [{"word": "a", "start": 0.0, "end": 0.2}, {"word": "b", "start": 1.5, "end": 1.7}]
         self.assertEqual(len(asr.cues_from_words(words)), 2)
+        # 0.5 s apart, 0.4 s long: w13 ends at 6.9 s, w14 would stretch the cue to 7.4 s (> 7 s)
         long = [{"word": f"w{i}", "start": i * 0.5, "end": i * 0.5 + 0.4} for i in range(20)]
-        self.assertTrue(all(e - s <= asr.CUE_MAX_SECONDS for s, e, _ in asr.cues_from_words(long)))
+        self.assertEqual(asr.cues_from_words(long), [
+            (0.0, 6.9, " ".join(f"w{i}" for i in range(14))),
+            (7.0, 9.9, " ".join(f"w{i}" for i in range(14, 20)))])
 
 
 class ParakeetRoutingTests(unittest.TestCase):
     def test_auto_routes_by_language(self):
         which = mock.Mock(side_effect=lambda n: "/x/" + n if n == "parakeet-mlx" else None)
         sh_ = mock.Mock(which=which)
-        self.assertEqual(asr.parakeet_route("auto", "en", "a.wav", sh_, subprocess)[0], list(asr.PARAKEET_ENGINES))
+        self.assertEqual(asr.parakeet_route("auto", "en", "a.wav", sh_, subprocess)[0], ["parakeet-mlx", "parakeet.cpp"])
         self.assertEqual(asr.parakeet_route("auto", "fr", "a.wav", sh_, subprocess)[0], [])
         self.assertEqual(asr.parakeet_route("whisper.cpp", None, "a.wav", sh_, subprocess)[0], [])
         self.assertEqual(asr.parakeet_route("parakeet.cpp", "de", "a.wav", sh_, subprocess)[0], ["parakeet.cpp"])
@@ -88,7 +109,7 @@ class ParakeetRoutingTests(unittest.TestCase):
             self.assertEqual(asr.parakeet_route("auto", None, "a.wav", sh_, subprocess)[0], [])
         with mock.patch.object(asr, "detect_language", return_value=None):
             eng, route = asr.parakeet_route("auto", None, "a.wav", sh_, subprocess)
-            self.assertEqual(eng, list(asr.PARAKEET_ENGINES))
+            self.assertEqual(eng, ["parakeet-mlx", "parakeet.cpp"])
             self.assertIn("assumed English", route["routing"])
 
     def test_english_only_model_refuses_another_language(self):
@@ -103,6 +124,14 @@ class ParakeetRoutingTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {asr.ASR_ENGINE_ENV: "vosk"}):
             with self.assertRaises(SystemExit):
                 asr.requested_engine(None)
+
+    def test_engine_flag_beats_the_environment_which_beats_auto(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(asr.ASR_ENGINE_ENV, None)
+            self.assertEqual(asr.requested_engine(None), "auto")
+            os.environ[asr.ASR_ENGINE_ENV] = "parakeet.cpp"
+            self.assertEqual(asr.requested_engine(None), "parakeet.cpp")
+            self.assertEqual(asr.requested_engine("whisper.cpp"), "whisper.cpp")
 
 
 class ParakeetEngineTests(MediaFixtures):
@@ -149,13 +178,40 @@ class ParakeetEngineTests(MediaFixtures):
         self.assertEqual(doc["transcription"]["model"], asr.PARAKEET_MLX_DEFAULT_MODEL)
         self.assertIn("So um we start.", (OUT / "pk_auto.srt").read_text())
 
-    def test_caption_engine_flag_and_env_pick_parakeet_cpp(self):
+    def test_caption_engine_flag_picks_parakeet_cpp(self):
+        """One end-to-end parakeet.cpp run; flag-over-env precedence is a unit test above."""
         doc = json.loads(script("caption.py", self.src, "--transcribe", "--engine", "parakeet.cpp", "--fast", "--json",
                                 "-o", OUT / "pk_cpp.mp4", env=self.env()).stdout)
         self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
+        self.assertIn("So um we start.", (OUT / "pk_cpp.srt").read_text())
+
+    def test_caption_takes_the_engine_from_the_environment(self):
+        """$FFMPEG_SKILL_ASR_ENGINE reaches caption.py through its real parser (no --engine given)."""
         doc = json.loads(script("caption.py", self.src, "--transcribe", "--fast", "--json", "-o", OUT / "pk_cpp_env.mp4",
                                 env=self.env(FFMPEG_SKILL_ASR_ENGINE="parakeet.cpp")).stdout)
         self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
+
+    def test_auto_falls_through_a_failing_parakeet_mlx_to_parakeet_cpp(self):
+        """parakeet-mlx is installed but crashes: auto moves on to the next Parakeet engine."""
+        broken = Path(tempfile.mkdtemp(prefix="ffskill_brokenasr_"))
+        try:
+            for name in os.listdir(self.bin):
+                if name != "parakeet-mlx":
+                    os.symlink(self.bin / name, broken / name)
+            ran = broken / "mlx-ran"
+            mlx = broken / "parakeet-mlx"
+            mlx.write_text(f"#!/bin/sh\n: > '{ran}'\necho 'Metal device lost' >&2\nexit 3\n")
+            mlx.chmod(0o755)
+            # only the fakes and ffmpeg on PATH: no host whisper can detect a language or take over,
+            # so auto assumes English and the order is parakeet-mlx, then parakeet.cpp
+            doc = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--json",
+                                    env=self.env(PATH=str(broken))).stdout)
+            mlx_ran = ran.exists()
+        finally:
+            shutil.rmtree(broken, ignore_errors=True)
+        self.assertTrue(mlx_ran, "the crashing parakeet-mlx was never run, so nothing fell through")
+        self.assertEqual(doc["filler"]["source"], "parakeet:parakeet.cpp")
+        self.assertEqual([r["word"] for r in doc["filler"]["removed"]], ["um"])
 
     def test_caption_another_language_skips_parakeet(self):
         proc = script("caption.py", self.src, "--transcribe", "--language", "fr", "--fast", "--json",

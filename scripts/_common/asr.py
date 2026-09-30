@@ -341,9 +341,9 @@ def _words_from_parakeet_mlx_json(path: str) -> "List[Dict[str, Any]]":
     except (OSError, ValueError):
         return []
     out: "List[Dict[str, Any]]" = []
-    for sent in (doc.get("sentences") or []) if isinstance(doc, dict) else []:
+    for sent in _dicts(doc.get("sentences")) if isinstance(doc, dict) else []:
         brk = True  # every sentence starts a new word
-        for tok in (sent.get("tokens") or []):
+        for tok in _dicts(sent.get("tokens")):
             text = str(tok.get("text") or "")
             try:
                 start, end = float(tok["start"]), float(tok["end"])
@@ -368,7 +368,7 @@ def _cues_from_parakeet_mlx_json(path: str) -> List[Tuple[float, float, str]]:
     except (OSError, ValueError):
         return []
     cues: List[Tuple[float, float, str]] = []
-    for sent in (doc.get("sentences") or []) if isinstance(doc, dict) else []:
+    for sent in _dicts(doc.get("sentences")) if isinstance(doc, dict) else []:
         try:
             text = str(sent.get("text") or "").strip()
             if text:
@@ -378,6 +378,12 @@ def _cues_from_parakeet_mlx_json(path: str) -> List[Tuple[float, float, str]]:
     return cues
 
 
+def _dicts(value: Any) -> "List[Dict[str, Any]]":
+    """The dict items of a JSON list; anything else (a number, a string, null) is no items. The
+    engines' JSON is parsed defensively: a wrong shape yields no words, never a traceback."""
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
 def _words_from_parakeet_cpp_json(text: str) -> "List[Dict[str, Any]]":
     """parakeet-cli transcribe --json: {"words": [{"w", "start", "end", "conf"}]}, times in seconds."""
     try:
@@ -385,7 +391,7 @@ def _words_from_parakeet_cpp_json(text: str) -> "List[Dict[str, Any]]":
     except ValueError:
         return []
     out: "List[Dict[str, Any]]" = []
-    for w in (doc.get("words") or []) if isinstance(doc, dict) else []:
+    for w in _dicts(doc.get("words")) if isinstance(doc, dict) else []:
         try:
             word = str(w.get("w") or w.get("word") or "").strip()
             if word:
