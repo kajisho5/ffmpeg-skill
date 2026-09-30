@@ -40,10 +40,14 @@ A single-segment `.mp4`/`.mov` copy keeps the MP4 edit list: the pre-roll back
 to the keyframe is stored but hidden, so the picture starts at the requested
 time (`edit_list`, `stored_preroll_seconds`). A player or tool that ignores
 edit lists shows that pre-roll. The **end** still lands on a packet boundary, a
-few frames long, and those extra frames can skip. `.mkv` output and
-`--segments` parts have no edit list: they may start up to one GOP (often 1–10
-s) earlier than requested, and the script re-encodes automatically when the
-deviation exceeds 0.5 s. If the user insists on lossless output, pass
+few frames long, and those extra frames can skip. `.mkv` output has no edit
+list, and a `--segments` join shows each part from its keyframe: they may start
+up to one GOP (often 1–10 s) earlier than requested, and the script re-encodes
+automatically when the deviation exceeds 0.5 s. An `.mp4`/`.mov` `--segments`
+part's end moves to the nearest keyframe within the same tolerance
+(`segment_end_snap_seconds`); `.mkv`/`.ts` parts are not snapped, and their join
+is checked and re-cut when wrong. Open-GOP HEVC (iPhone "High Efficiency")
+always re-encodes a `--segments` join, even with `--tolerance -1`. If the user insists on lossless output, pass
 `--tolerance -1` and tell them the cut lands on the nearest earlier keyframe.
 The MP4 demuxer seeks by *decode* time, so a start a few frames before a
 keyframe begins at that keyframe (`keyframe_snapped: true`).

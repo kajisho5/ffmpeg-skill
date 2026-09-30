@@ -1011,9 +1011,10 @@ def ffmpeg_base(overwrite: bool = True) -> List[str]:
 
 def place_output(src: str, dst: str) -> None:
     """Deliver an already-rendered file to `dst` under the same rules as an ffmpeg output:
-    the path is checked, an existing file is only replaced through a sibling temp so a
-    failed copy never costs the caller what was there, and the result is remembered as ours.
-    render.py's final `copyfile()` used to bypass all three."""
+    the path is checked, the output's lock is held (as run() holds it for an ffmpeg write), an
+    existing file is only replaced through a sibling temp so a failed copy never costs the
+    caller what was there, and the result is remembered as ours. render.py's final
+    `copyfile()` used to bypass all of them."""
     import shutil
     cmd = ["ffmpeg", dst]
     _check_output_path(cmd)
@@ -1021,15 +1022,16 @@ def place_output(src: str, dst: str) -> None:
     d, base = os.path.split(dst)
     stem, ext = os.path.splitext(base)
     tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
-    try:
-        shutil.copyfile(src, tmp)
-        os.replace(tmp, dst)
-    except OSError as e:
+    with _OutputLock(dst):
         try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        die(f"could not place {dst}: {e}", kind="output")
+            shutil.copyfile(src, tmp)
+            os.replace(tmp, dst)
+        except OSError as e:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            die(f"could not place {dst}: {e}", kind="output")
     _remember_output(cmd)
 
 

@@ -53,6 +53,18 @@ def frame_pts(path):
     return [float(x.split(",")[0]) for x in out.split()]
 
 
+def md5_frames(path):
+    """Every decoded frame's MD5, in presentation order: a stream copy reproduces them exactly."""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-fps_mode", "passthrough",
+                          "-f", "framemd5", "-"], stdout=subprocess.PIPE, text=True, check=True).stdout
+    return [line.split(",")[-1].strip() for line in raw.splitlines() if line and not line.startswith("#")]
+
+
+def steps(path):
+    pts = sorted(frame_pts(path))
+    return {round(b - a, 4) for a, b in zip(pts, pts[1:])}
+
+
 def stderr_of_decode(path):
     return subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "null", "-"],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr.strip()
@@ -126,14 +138,49 @@ class CutJoinTests(unittest.TestCase):
         cls.long_offset = DIR / "long_audio_offset.mp4"
         if not cls.long_offset.exists():
             sh("ffmpeg", "-y", "-v", "error", "-i", cls.long, "-c", "copy", "-output_ts_offset", "10", cls.long_offset)
+        # the copy-join sources:
+        # x264 B-frames (a closed GOP), x265 with open-gop=0, and x265's default open GOP in HLG
+        x264bf = ("-c:v", "libx264", "-g", "60", "-bf", "3", "-x264-params", "scenecut=0")
+        cls.h264bf = DIR / "h264bf.mp4"
+        if not cls.h264bf.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=12",
+               "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=48000", *x264bf, "-c:a", "aac", "-shortest", cls.h264bf)
+        cls.hevc25c = DIR / "hevc25c.mp4"
+        if not cls.hevc25c.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=12",
+               "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=48000", "-c:v", "libx265",
+               "-x265-params", "bframes=4:keyint=50:min-keyint=50:scenecut=0:open-gop=0:log-level=error",
+               "-tag:v", "hvc1", "-c:a", "aac", "-shortest", cls.hevc25c)
+        cls.beep = DIR / "beep_bf.mp4"
+        if not cls.beep.exists():
+            # a 40 ms beep at every k + 0.5 s, so every onset has silence before it to measure from
+            beep = "aevalsrc='if(between(mod(t\\,1)\\,0.5\\,0.54)\\,0.8*sin(2*PI*1000*t)\\,0)':s=48000:d=12"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=12",
+               "-f", "lavfi", "-i", beep, *x264bf, "-c:a", "aac", "-shortest", cls.beep)
+        cls.hlg = DIR / "hlg_open.mp4"
+        if not cls.hlg.exists():
+            # the iPhone "High Efficiency" shape: 10-bit HLG HEVC with an open GOP at every keyframe
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6",
+               "-f", "lavfi", "-i", "sine=f=440:d=6:sample_rate=48000", "-pix_fmt", "yuv420p10le", "-c:v", "libx265",
+               "-x265-params", "bframes=4:keyint=60:min-keyint=60:scenecut=0:log-level=error:"
+                               "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc",
+               "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
+               "-tag:v", "hvc1", "-c:a", "aac", "-shortest", cls.hlg)
+        cls.nob60 = DIR / "nob60.mp4"
+        if not cls.nob60.exists():
+            # the iPhone "Most Compatible" shape: H.264 with no B-frames, here at 60 fps and 44.1 kHz
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=60:d=12",
+               "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=44100", "-c:v", "libx264", "-bf", "0", "-g", "120",
+               "-x264-params", "scenecut=0", "-c:a", "aac", "-shortest", cls.nob60)
         cls.src_frames = gray_frames(cls.hevc)
         cls.long_frames = gray_frames(cls.long)
 
-    def assertFrameIs(self, frame, expected, msg=""):
+    def assertFrameIs(self, frame, expected, msg="", src_frames=None):
         """`frame` is source frame `expected`: its best match within 5 frames, at 40 dB or more,
         and 10 dB clear of the next best."""
-        lo, hi = max(0, expected - 5), min(len(self.src_frames), expected + 6)
-        scores = sorted(((psnr(frame, self.src_frames[i]), i) for i in range(lo, hi)), reverse=True)
+        src_frames = self.src_frames if src_frames is None else src_frames
+        lo, hi = max(0, expected - 5), min(len(src_frames), expected + 6)
+        scores = sorted(((psnr(frame, src_frames[i]), i) for i in range(lo, hi)), reverse=True)
         (best, idx), (second, _) = scores[0], scores[1]
         self.assertEqual(idx, expected, f"{msg}: best match {idx} at {best:.1f} dB")
         self.assertGreaterEqual(best, 40.0, msg)
@@ -462,17 +509,165 @@ class CutJoinTests(unittest.TestCase):
                               "-of", "csv=p=0", str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
         self.assertEqual(tag, "hvc1", "the Matroska chunks' HEVC keeps the tag Apple players need")
 
-    def test_keyframe_aligned_bframe_segments_stay_a_lossless_copy(self):
-        """The main path must stay lossless: three segments that each start on a keyframe of a
-        B-frame HEVC source copy and join by stream copy. (A join-length check once sent exactly
-        this to a re-encode on a 25 fps source, because each part's duration carries a start
-        offset the concat demuxer drops.)"""
+    # ------------------------------------------------------------------ an exact stream-copy join
+    def test_keyframe_aligned_bframe_segments_join_frame_exact(self):
+        """The copy join used to add the next GOP's keyframe and P-frame to every part (an
+        input -t stops in decode order) and show them: 186 frames for 180, with holes, reported as
+        mode copy. Each part now ends at its end keyframe's dts and keeps its edit list."""
         out = DIR / "keyframe_join.mp4"
-        data = cut_json(self.hevc25, "--segments", "0-2,4-6,8-10", "-o", out)
-        self.assertEqual(data["mode"], "copy")
-        self.assertEqual(data["reencode_reason"], [])
+        data = cut_json(self.h264bf, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
         self.assertEqual(data["segment_precision"], ["packet", "packet", "packet"])
+        src = md5_frames(self.h264bf)
+        self.assertEqual(md5_frames(out), src[0:60] + src[120:180] + src[240:300])
+        self.assertEqual(steps(out), {round(1 / FPS, 4)})
+        self.assertEqual((data["join_check"]["packets"], data["join_check"]["expected_packets"]), (180, 180))
+        self.assertTrue(data["join_check"]["ok"])
+        self.assertEqual(data["segment_end_snap_seconds"], [0.0, 0.0, 0.0])
+
+    def test_closed_gop_hevc_segments_join_frame_exact(self):
+        """The same on HEVC with a closed GOP: 150 frames, each the source's own."""
+        out = DIR / "keyframe_join_hevc.mp4"
+        data = cut_json(self.hevc25c, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
         self.assertEqual(probe(str(out))["video"]["codec"], "hevc")
+        src = md5_frames(self.hevc25c)
+        self.assertEqual(md5_frames(out), src[0:50] + src[100:150] + src[200:250])
+        self.assertEqual(steps(out), {0.04})
+        self.assertTrue(data["join_check"]["ok"])
+
+    def test_a_60fps_source_without_bframes_stays_an_exact_copy(self):
+        """With no B-frames each part's AAC runs up to one audio frame (23 ms at 44.1 kHz) past its
+        picture, and the concat demuxer places the next part after it, so the frame before a join
+        shows longer than 1/60 s -- past half a frame, which a stricter check would have sent to a
+        re-encode. The frames are the source's own, as a copy join of this footage always was."""
+        out = DIR / "nob60_join.mp4"
+        data = cut_json(self.nob60, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        src = md5_frames(self.nob60)
+        self.assertEqual(md5_frames(out), src[0:120] + src[240:360] + src[480:600])
+        self.assertTrue(data["join_check"]["ok"])
+        self.assertGreater(data["join_check"]["max_step_seconds"], 1.5 / 60, "the premise: a step past half a frame")
+
+    def test_a_matroska_join_is_checked_and_recut_when_it_is_wrong(self):
+        """Matroska parts keep the old cut (make_zero, -t end-start, no end snap), which carries the
+        next GOP's keyframe and P-frame into each part. Nothing predicts that; the join check
+        measures it, and the join is re-cut, keeping the failed measurement."""
+        out = DIR / "mkv_join.mkv"
+        data = cut_json(self.h264bf, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertIn("concat_fallback", data["reencode_reason"])
+        self.assertFalse(data["join_check"]["ok"])
+        self.assertEqual(data["join_check"]["expected_packets"], 180)
+        self.assertTrue(any("checked and failed" in n for n in data["notes"]), data["notes"])
+        self.assertIsNone(data["segment_end_snap_seconds"])
+        self.assertEqual(len(frame_pts(out)), 180)
+        for step in steps(out):  # Matroska stores whole milliseconds: 33 or 34
+            self.assertAlmostEqual(step, 1 / FPS, delta=0.001)
+
+    def test_an_open_gop_source_is_joined_by_one_reencode(self):
+        """In an open GOP the frames just before a keyframe decode after it, so a part cut in
+        decode order loses them (144 frames for 150). The join was 672 ms long and said mode
+        copy; it is now re-cut from the source, with the right frames and no gaps."""
+        out = DIR / "open_gop_join.mp4"
+        data = cut_json(self.hevc25, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertTrue(data["reencoded"])
+        self.assertIn("concat_fallback", data["reencode_reason"])
+        self.assertTrue(any("open GOP" in n for n in data["notes"]), data["notes"])
+        self.assertIsNone(data["segment_end_snap_seconds"])
+        self.assertEqual(len(frame_pts(out)), 150)
+        self.assertEqual(steps(out), {0.04})
+        frames, src = gray_frames(out), gray_frames(self.hevc25)
+        for got, want in ((0, 0), (49, 49), (50, 100), (99, 149), (100, 200), (149, 249)):
+            self.assertFrameIs(frames[got], want, f"output frame {got}", src_frames=src)
+
+    def test_an_exact_copy_join_keeps_every_beep_on_its_picture(self):
+        """The old join put the beep 67 ms, then 133 ms, after its picture in the second and
+        third segments. Each beep (at k + 0.5 s) now starts on the pts of output frame
+        (k + 0.5) * 30."""
+        out = DIR / "beep_join.mp4"
+        data = cut_json(self.beep, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        log = subprocess.run(["ffmpeg", "-v", "info", "-i", str(out), "-af", "silencedetect=n=-30dB:d=0.3",
+                              "-f", "null", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+        onsets = [float(v) for v in re.findall(r"silence_end: (-?[0-9.]+)", log)][:6]
+        pts = sorted(frame_pts(out))
+        self.assertEqual(len(onsets), 6, log)
+        for onset, frame in zip(onsets, (15, 45, 75, 105, 135, 165)):
+            self.assertAlmostEqual(onset, pts[frame], delta=0.005, msg=f"beep at frame {frame}")
+
+    def test_an_end_within_tolerance_snaps_to_the_keyframe_after_it(self):
+        """0-1.8 ends 0.2 s before the keyframe at 2.0: the part runs to that keyframe, so the
+        join is 60 + 60 of the source's frames. keyframe_snapped describes the start only; the
+        end's move is reported per segment."""
+        out = DIR / "end_snap_join.mp4"
+        data = cut_json(self.h264bf, "--segments", "0-1.8,4-6", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertFalse(data["keyframe_snapped"])
+        self.assertEqual(data["segment_end_snap_seconds"], [0.2, 0.0])
+        src = md5_frames(self.h264bf)
+        self.assertEqual(md5_frames(out), src[0:60] + src[120:180])
+
+    def test_an_end_past_tolerance_reencodes_and_the_join_falls_back(self):
+        """0-1.0 is 1.0 s from the next keyframe, past a 0.3 s tolerance: that part
+        re-encodes, the parts differ, and the join is re-cut with exact boundaries."""
+        out = DIR / "end_far_join.mp4"
+        data = cut_json(self.h264bf, "--segments", "0-1.0,4-6", "--tolerance", "0.3", "-o", out)
+        self.assertEqual(data["reencode_reason"], ["tolerance", "concat_fallback"])
+        self.assertIsNone(data["segment_end_snap_seconds"])
+        self.assertEqual(len(frame_pts(out)), 30 + 60)
+        self.assertEqual(steps(out), {round(1 / FPS, 4)})
+        frames, src = gray_frames(out), gray_frames(self.h264bf)
+        for got, want in ((29, 29), (30, 120), (89, 179)):
+            self.assertFrameIs(frames[got], want, f"output frame {got}", src_frames=src)
+
+    def test_a_short_segment_across_a_bframe_keyframe_never_cuts_a_negative_length(self):
+        """-ss 1.95 lands on the keyframe at 2.0 (its dts, 1.933, is before 1.95). That
+        keyframe cannot also end the part: its dts is before the start, so -t would be negative.
+        The end is snapped among keyframes decoded after the landing, and none is near 2.1."""
+        out = DIR / "short_across_key.mp4"
+        data = cut_json(self.h264bf, "--segments", "1.95-2.1,4-6", "-o", out)
+        self.assertEqual(data["reencode_reason"], ["tolerance", "concat_fallback"])
+        self.assertEqual(stderr_of_decode(out), "")
+        frames = gray_frames(out)
+        self.assertEqual(len(frames), 4 + 60)
+        self.assertFrameIs(frames[0], 59, "the first frame at or after 1.95", src_frames=gray_frames(self.h264bf))
+
+    def test_an_hdr_open_gop_join_is_reencoded_as_hdr(self):
+        """iPhone HEVC is open-GOP HLG. A detector that let it through would
+        stream-copy it, so the re-encode is asserted first; then that it kept HEVC, 10 bits and
+        the HLG transfer rather than flattening the picture."""
+        out = DIR / "hlg_join.mp4"
+        data = cut_json(self.hlg, "--segments", "0-2,4-6", "-o", out)
+        self.assertTrue(data["reencoded"])
+        self.assertIn("concat_fallback", data["reencode_reason"])
+        stream = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                            "stream=codec_name,pix_fmt,color_transfer", "-of", "json", str(out)],
+                                           stdout=subprocess.PIPE, text=True, check=True).stdout)["streams"][0]
+        self.assertEqual((stream["codec_name"], stream["pix_fmt"], stream["color_transfer"]),
+                         ("hevc", "yuv420p10le", "arib-std-b67"))
+
+    def test_the_last_segment_past_the_video_end_stays_an_exact_copy(self):
+        """On the copy path, the last part runs to the end of the file (-t e-s, nothing after it
+        to leak), and the join is the source's own 60 + 60 frames."""
+        out = DIR / "held_last_copy.mp4"
+        data = cut_json(self.long, "--segments", "0-2,4-6.3", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        src = md5_frames(self.long)
+        self.assertEqual(md5_frames(out), src[0:60] + src[120:180])
+        self.assertAlmostEqual(probe(str(out))["video"]["duration"], 4.0, delta=0.001)
+        self.assertEqual(data["segment_end_snap_seconds"], [0.0, None])
+
+    def test_a_sound_tail_under_a_frame_stays_an_exact_copy(self):
+        """On the copy path, the first part ends at the end of the file with its sound one AAC
+        frame at most past its picture; the concat demuxer places the next part after the sound,
+        so its last frame shows up to that long. The frames are exact and the check accepts it."""
+        out = DIR / "tail_copy.mp4"
+        data = cut_json(self.tail, "--segments", "4-6.02,0-2", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        src = md5_frames(self.tail)
+        self.assertEqual(md5_frames(out), src[120:180] + src[0:60])
+        self.assertTrue(data["join_check"]["ok"])
+        self.assertLess(data["join_check"]["max_step_seconds"], 1 / FPS + 1024 / 48000)
 
     def test_a_wav_join_stays_a_lossless_copy(self):
         """PCM has no extradata at all; a "missing means incompatible" rule would have sent every
@@ -720,6 +915,154 @@ class FrameTimingTests(unittest.TestCase):
             self.assertEqual(probe_mod.measure_frame_timing("x.mp4", 30.0, 0.0)["measured"], "inconclusive")
 
 
+def gop_packets(fps=30, keyint=60, gops=6, delay=2, leading=0):
+    """Synthetic packets in decode order, as (pts, dts, key): each GOP's keyframe first, then its
+    other frames by pts; dts runs `delay` frames behind. `leading` frames before each keyframe
+    after the first decode after it (an open GOP's leading pictures)."""
+    order = []
+    for g in range(gops):
+        k = g * keyint
+        order.append((k, True))
+        if g and leading:
+            order += [(k - leading + j, False) for j in range(leading)]
+        last = k + keyint - (leading if g < gops - 1 else 0)
+        order += [(n, False) for n in range(k + 1, last)]
+    return [(n / fps, (i - delay) / fps, key) for i, (n, key) in enumerate(order)]
+
+
+class CopyJoinPlanTests(unittest.TestCase):
+    """The copy-join helpers on synthetic packet lists: where a copied part ends, open-GOP detection,
+    and the check of the joined file."""
+
+    def test_a_closed_gop_keyframe_is_not_open(self):
+        packets = gop_packets()
+        self.assertFalse(cut.gop_is_open(packets, 60))
+        self.assertFalse(cut.gop_is_open(packets, 0))
+
+    def test_leading_pictures_after_a_keyframe_make_it_open(self):
+        packets = gop_packets(leading=3)
+        i = next(i for i, p in enumerate(packets) if p[2] and abs(p[0] - 2.0) < 1e-9)
+        self.assertTrue(cut.gop_is_open(packets, i))
+        self.assertFalse(cut.gop_is_open(packets, 0), "the first keyframe has nothing before it")
+
+    def test_a_keyframe_at_the_end_of_the_file_is_not_open(self):
+        packets = gop_packets()[:61]
+        self.assertTrue(packets[60][2])
+        self.assertFalse(cut.gop_is_open(packets, 60))
+
+    def test_a_missing_timestamp_in_the_gop_counts_as_open(self):
+        packets = gop_packets()
+        packets[62] = (None, packets[62][1], False)
+        self.assertTrue(cut.gop_is_open(packets, 60))
+        packets = gop_packets()
+        packets[62] = (packets[62][0], None, False)
+        self.assertTrue(cut.gop_is_open(packets, 60))
+
+    def test_the_part_ends_at_the_end_keyframes_dts(self):
+        packets = gop_packets()
+        plan = cut.plan_part(packets, 0.0, 1.8, 0.5, 12.0, 30)
+        self.assertIsNone(plan["reason"])
+        self.assertEqual((plan["start_pts"], plan["end_pts"]), (0.0, 2.0))
+        self.assertAlmostEqual(plan["t"], 2.0 - 2 / 30, delta=0.001)
+        self.assertLess(plan["t"], 2.0 - 2 / 30, "the keyframe's own packet stays out of the part")
+
+    def test_an_end_keyframe_decoded_before_the_start_is_not_a_candidate(self):
+        """-ss 1.95 lands on the keyframe at 2.0 (dts 1.933): that keyframe would give -t < 0, and
+        the next one (4.0) is 1.9 s from the end, past tolerance."""
+        packets = gop_packets()
+        plan = cut.plan_part(packets, 1.95, 2.1, 0.5, 12.0, 30)
+        self.assertEqual(plan["start_pts"], 2.0)
+        self.assertEqual(plan["reason"], "tolerance")
+        plan = cut.plan_part(packets, 1.95, 3.9, 0.5, 12.0, 30)
+        self.assertEqual(plan["end_pts"], 4.0)
+        self.assertGreater(plan["t"], 0)
+        # 2.0 is nearer 2.3, but the copy starts from it: the end is the keyframe after
+        plan = cut.plan_part(packets, 1.95, 2.3, 1.8, 12.0, 30)
+        self.assertEqual((plan["reason"], plan["end_pts"]), (None, 4.0))
+
+    def test_a_start_just_before_the_end_keyframes_dts_is_not_cut(self):
+        """Keyframes 5 ms apart: a start 0.05 ms before the next keyframe's dts lands on the one
+        before, and -t to that dts would round to nothing."""
+        packets = [(0.0, 0.0, True), (0.005, 0.005, True), (0.010, 0.010, False)]
+        plan = cut.plan_part(packets, 0.00495, 0.005, -1, 1.0, 200)
+        self.assertEqual(plan["reason"], "tolerance")
+
+    def test_each_end_is_judged_on_its_own(self):
+        """A start 0.4 s early and an end 0.4 s early used to cancel out in the part's length."""
+        packets = gop_packets()
+        self.assertEqual(cut.plan_part(packets, 2.4, 5.9, 0.3, 12.0, 30)["reason"], "tolerance")
+        self.assertEqual(cut.plan_part(packets, 2.0, 5.6, 0.3, 12.0, 30)["reason"], "tolerance")
+        self.assertIsNone(cut.plan_part(packets, 2.0, 5.8, 0.3, 12.0, 30)["reason"])
+
+    def test_a_part_that_ends_with_the_video_is_cut_to_its_length(self):
+        packets = gop_packets()
+        plan = cut.plan_part(packets, 10.0, 12.0, 0.5, 12.0, 30)
+        self.assertIsNone(plan["reason"])
+        self.assertIsNone(plan["end_pts"])
+        self.assertEqual(plan["t"], 2.0)
+
+    def test_the_expected_packets_are_the_sources_in_each_range(self):
+        packets = gop_packets()
+        self.assertEqual(cut.expected_packets(packets, [(0.0, 2.0), (4.0, 6.0), (10.0, None)]), 60 + 60 + 60)
+
+    def test_an_exact_join_passes_the_check(self):
+        pts = [n / 30 for n in range(180)]
+        check = cut.check_join(pts, 180, 30, 1024 / 48000, True)
+        self.assertTrue(check["ok"])
+        self.assertAlmostEqual(check["max_step_seconds"], 1 / 30, places=6)
+
+    def test_bframe_packet_order_sorts_to_an_exact_join(self):
+        # I P B B, as decoded: every P before the two B-frames it references
+        pts = [n / 30 for i in range(0, 180, 3) for n in (i + 2, i, i + 1)]
+        self.assertNotEqual(pts, sorted(pts))
+        self.assertTrue(cut.check_join(pts, 180, 30, 0.0, True)["ok"])
+
+    def test_one_extra_packet_fails_the_check(self):
+        pts = [n / 30 for n in range(180)] + [2.0]
+        check = cut.check_join(pts, 180, 30, 0.0, True)
+        self.assertFalse(check["ok"])
+        self.assertEqual((check["packets"], check["expected_packets"]), (181, 180))
+
+    def test_one_missing_frame_fails_the_check(self):
+        pts = [n / 30 for n in range(180) if n != 90]
+        self.assertFalse(cut.check_join(pts, 180, 30, 0.0, True)["ok"])
+
+    def test_a_hole_up_to_one_audio_frame_passes_and_more_fails(self):
+        """With no B-frames a part's sound runs up to one AAC frame past its picture, and the next
+        part is placed after it: the frames are all there, one of them shown longer."""
+        audio = 1024 / 48000
+        within = [n / 30 + (0.02 if n >= 60 else 0) for n in range(120)]
+        self.assertTrue(cut.check_join(within, 120, 30, audio, True)["ok"])
+        beyond = [n / 30 + (0.03 if n >= 60 else 0) for n in range(120)]
+        check = cut.check_join(beyond, 120, 30, audio, True)
+        self.assertFalse(check["ok"])
+        self.assertAlmostEqual(check["max_step_seconds"], 1 / 30 + 0.03, places=6)
+        self.assertFalse(cut.check_join(within, 120, 30, 0.0, True)["ok"], "no audio: half a frame is the bound")
+
+    def test_a_checked_join_is_placed_under_the_outputs_lock(self):
+        """The checked join is written beside the parts and placed afterwards; placing it must
+        respect another run's lock on the output, as an ffmpeg write does."""
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "joined.mp4"), os.path.join(tmp, "out.mp4")
+            Path(src).write_bytes(b"new")
+            Path(dst).write_bytes(b"theirs")
+            Path(tmp, ".out.mp4.ffskill-lock").write_text(str(os.getpid()))
+            with mock.patch.object(cut.STATE, "overwrite", True), self.assertRaises(SystemExit):
+                cut.place_output(src, dst)
+            self.assertEqual(Path(dst).read_bytes(), b"theirs")
+
+    def test_the_audio_frame_is_the_most_common_packet_not_the_longest(self):
+        """One long packet (a codec with variable frames) must not widen every join's bound."""
+        self.assertAlmostEqual(cut.typical_duration([0.021333] * 10 + [0.5, 0.005333]), 0.021333, places=6)
+        self.assertEqual(cut.typical_duration([None, 0.0]), 0.0)
+
+    def test_without_constant_timing_only_the_count_is_checked(self):
+        pts = [n / 30 + (0.5 if n >= 60 else 0) for n in range(120)]
+        check = cut.check_join(pts, 120, 30, 0.0, False)
+        self.assertTrue(check["ok"])
+        self.assertIsNone(check["max_step_seconds"])
+
+
 class VfrGuardTests(unittest.TestCase):
     """cut.py's VFR guard on real files: measured timing, the reasons, and --vfr-copy."""
 
@@ -779,6 +1122,16 @@ class VfrGuardTests(unittest.TestCase):
         self.assertEqual(data["vfr_check"]["measured"], "vfr")
         self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
         self.assertTrue(any("--vfr-copy" in n for n in data["notes"]), data["notes"])
+
+    def test_a_vfr_copy_join_is_checked_by_its_packet_count_only(self):
+        """Variable timing has no step to hold a join to, so --vfr-copy keeps the copy and the
+        join check counts packets only."""
+        data = cut_json(self.drop, "--segments", "0-2,4-6", "--vfr-copy", "--tolerance", "-1",
+                        "-o", DIR / "vfr_drop_join.mp4")
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        self.assertIsNone(data["join_check"]["max_step_seconds"])
+        self.assertTrue(data["join_check"]["ok"])
+        self.assertEqual(data["join_check"]["packets"], data["join_check"]["expected_packets"])
 
     def test_too_few_frames_to_measure_reencodes(self):
         data = cut_json(self.short, "--start", "0", "--duration", "0.3", "-o", DIR / "vfr_short_cut.mp4")

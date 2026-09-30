@@ -34,7 +34,7 @@ from typing import List, Tuple
 
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
-from _common import source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
+from _common import source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
 DROPPED_STREAMS: List[str] = []
@@ -236,11 +236,177 @@ def av_skew(out_meta: dict):
                   "for a cut whose picture and sound start together")
 
 
+_PACKETS: dict = {}
+
+
+def _packet_time(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def video_packets(src: str):
+    """Every video packet of `src` in decode order, as (pts, dts, keyframe) on the cut's clock (a
+    missing timestamp is None), or None when ffprobe cannot read them. One demux per source: the
+    --segments copy join plans its parts and checks its result against these."""
+    if src not in _PACKETS:
+        proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                    "packet=pts_time,dts_time,flags", "-of", "csv=p=0", src], quiet=True, check=False)
+        packets = None
+        if proc.returncode == 0:
+            origin = file_origin(src)
+            packets = []
+            for line in (proc.stdout or "").split():
+                fields = line.split(",")
+                if len(fields) < 3:
+                    continue
+                pts, dts = _packet_time(fields[0]), _packet_time(fields[1])
+                packets.append((None if pts is None else pts - origin, None if dts is None else dts - origin,
+                                "K" in fields[2]))
+        _PACKETS[src] = packets or None
+    return _PACKETS[src]
+
+
+def gop_is_open(packets, i: int) -> bool:
+    """True when keyframe packets[i] starts an open GOP: a packet decoded after it, before the next
+    keyframe, is presented before it (a leading picture, which needs the GOP before to decode). A
+    missing timestamp there counts as open. `packets` is the whole file (video_packets), so a GOP
+    the file ends in has been read to its last packet and is judged on those."""
+    key = packets[i][0]
+    if key is None:
+        return True
+    for pts, dts, is_key in packets[i + 1:]:
+        if is_key:
+            return False
+        if pts is None or dts is None or pts < key - 1e-6:
+            return True
+    return False
+
+
+# a copied part stops before its end keyframe's packet by this much: -t compares decode
+# timestamps, and ffprobe prints them rounded to the microsecond
+_DTS_MARGIN = 1e-4
+
+
+def plan_part(packets, start: float, end: float, tolerance: float, vend, fps, snap_end: bool = True) -> dict:
+    """How the --segments part start-end is stream-copied for a concat-demuxer join.
+
+    The copy begins at the keyframe the demuxer seeks to (the largest dts at or before `start`),
+    and the join presents from that keyframe: the concat demuxer does not apply the part's edit
+    list start. The part ends at its end keyframe's DTS: an input -t stops in decode order, so
+    ending at the keyframe's pts would carry that keyframe and the P-frame after it into the part.
+    The end keyframe is the one nearest `end` among those decoded after the landing (any earlier
+    one would give -t <= 0). Each end is judged against `tolerance` on its own; reason
+    "tolerance" means this part re-encodes. A part that reaches the end of the video keeps
+    -t end-start: nothing follows it to leak in. Without `snap_end` (Matroska, MPEG-TS parts) the
+    end is left where asked, as before."""
+    frame = 1.0 / fps if fps else 0.001
+    keys = [(i, p[0], p[1]) for i, p in enumerate(packets) if p[2] and p[0] is not None and p[1] is not None]
+    landed = [k for k in keys if k[2] <= start + 1e-6]
+    plan = {"reason": None, "t": end - start, "start_index": None, "start_pts": None, "end_index": None,
+            "end_pts": None, "end_bound": end}
+    if not landed:
+        plan["reason"] = "tolerance"
+        return plan
+    si, s_pts, s_dts = max(landed, key=lambda k: k[2])
+    plan.update(start_index=si, start_pts=s_pts)
+    within = (lambda off: True) if tolerance < 0 else (lambda off: off < tolerance)
+    if not within(abs(s_pts - start)):
+        plan["reason"] = "tolerance"
+        return plan
+    if vend is not None and end >= vend - frame / 2:
+        plan["end_bound"] = None
+        return plan
+    if not snap_end:
+        return plan
+    later = [k for k in keys if k[2] > s_dts + 1e-9]
+    if not later:
+        plan["reason"] = "tolerance"
+        return plan
+    ei, e_pts, e_dts = min(later, key=lambda k: abs(k[1] - end))
+    if not within(abs(e_pts - end)):
+        plan["reason"] = "tolerance"
+        return plan
+    t = e_dts - start - _DTS_MARGIN
+    if t < 0.001:
+        # the start sits within a millisecond of the end keyframe's dts: no packet to copy
+        plan["reason"] = "tolerance"
+        return plan
+    plan.update(t=t, end_index=ei, end_pts=e_pts, end_bound=e_pts)
+    return plan
+
+
+def open_join_key(packets, plans):
+    """The pts of the first keyframe a stream-copy join of the planned parts cannot cross, or None.
+    An open END keyframe: its leading pictures belong to the part but decode after the keyframe,
+    so a part cut in decode order loses them. An open START keyframe after the first part: the
+    decoder drops leading pictures only at the start of a stream, so after a join they would decode
+    against the previous part's frames. Parts that re-encode anyway are skipped."""
+    for i, plan in enumerate(plans):
+        if plan["reason"]:
+            continue
+        if i and gop_is_open(packets, plan["start_index"]):
+            return plan["start_pts"]
+        if plan["end_index"] is not None and gop_is_open(packets, plan["end_index"]):
+            return plan["end_pts"]
+    return None
+
+
+def stream_packet_times(path: str, stream: str, entry: str, limit: int = None) -> list:
+    """One timestamp field (pts_time, duration_time) of every packet of the first `stream` ("v" or
+    "a") in `path`, or of its first `limit` packets; a missing value is None. [] when there is no
+    such stream or ffprobe fails."""
+    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", f"{stream}:0", "-show_entries", f"packet={entry}",
+           "-of", "csv=p=0"] + (["-read_intervals", f"%+#{limit}"] if limit else []) + [path]
+    proc = run(cmd, quiet=True, check=False)
+    if proc.returncode != 0:
+        return []
+    return [_packet_time(line.split(",")[0]) for line in (proc.stdout or "").split()]
+
+
+def expected_packets(packets, ranges) -> int:
+    """How many source video packets the join's parts present: those with lo <= pts < hi in each
+    (lo, hi) range, hi None for a part that runs to the end of the video."""
+    return sum(1 for lo, hi in ranges for pts, _, _ in packets
+               if pts is not None and pts >= lo - 1e-6 and (hi is None or pts < hi - 1e-6))
+
+
+def typical_duration(durations) -> float:
+    """The most common of these packet durations (an audio codec's frame; a part's last packet is
+    shorter), 0.0 when there are none."""
+    known = [round(d, 6) for d in durations if d]
+    return max(set(known), key=lambda d: (known.count(d), -d)) if known else 0.0
+
+
+def check_join(out_pts, expected: int, fps, audio_frame: float, cfr: bool) -> dict:
+    """The joined file measured, not predicted: its video packet count against the source's
+    (`expected`), and with constant frame timing every presentation step. A step may run past a
+    frame by half a frame, or by one audio frame where that is longer: with no B-frames each part's
+    sound ends up to one codec frame after its picture, and the concat demuxer places the next part
+    after the sound, so the frame before a join is shown that much longer (the frames themselves
+    are all there, which the count checks)."""
+    pts = sorted(p for p in out_pts if p is not None)
+    ok = len(out_pts) == expected and len(pts) == len(out_pts)
+    max_step = None
+    if cfr and fps:
+        frame = 1.0 / fps
+        gaps = [b - a for a, b in zip(pts, pts[1:])]
+        if gaps:
+            max_step = round(max(gaps), 6)
+            ok = ok and all(frame / 2 < g < frame + max(frame / 2, audio_frame) for g in gaps)
+    return {"packets": len(out_pts), "expected_packets": expected, "max_step_seconds": max_step, "ok": ok}
+
+
 def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5, meta: dict = None,
-            _reasons: List[str] = None, edit_list_ok: bool = True) -> dict:
+            _reasons: List[str] = None, edit_list_ok: bool = True, copy_t: float = None) -> dict:
     """Cut one segment. Returns its outcome: {reencoded, reasons, precision, keyframe_snapped}, where
     `reasons` lists why THIS segment re-encoded on its own (pcm_container / copy_failed / tolerance);
-    the caller adds the reasons that forced every segment (requested, codec, vfr)."""
+    the caller adds the reasons that forced every segment (requested, codec, vfr).
+
+    `copy_t` is a --segments part planned by plan_part: copied for -t copy_t (to its end
+    keyframe's dts), keeping the edit list an MP4/MOV copy writes, and not judged by its length
+    here, since plan_part judged each of its ends."""
     reasons = list(_reasons or [])
     dur = end - start
     meta = meta or probe(src)
@@ -280,18 +446,20 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         # A single MP4/MOV output keeps the edit list the plain copy writes: the keyframe's pre-roll
         # is stored but hidden, so the picture and the sound start at `start`. make_zero shifts the
         # timestamps instead and shows the pre-roll -- on Core Media HEVC, 3.7 s of sound with no
-        # picture from a run that exited 0. Concat parts keep make_zero: the demuxer that joins
-        # them does not carry edit lists.
-        edit_list = edit_list_ok and os.path.splitext(dst)[1].lower() in EDIT_LIST_EXTS
-        cmd = (ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"] + copy_args(meta, dst)
-               + ([] if edit_list else ["-avoid_negative_ts", "make_zero"]) + [dst])
+        # picture from a run that exited 0. A planned concat part keeps it too: the concat
+        # demuxer ignores where the edit list starts (it shows the pre-roll) but places the next
+        # part by its length, which make_zero parts got wrong by the B-frame reorder delay.
+        # Other concat parts (Matroska, MPEG-TS) keep make_zero.
+        edit_list = (edit_list_ok or copy_t is not None) and os.path.splitext(dst)[1].lower() in EDIT_LIST_EXTS
+        cmd = (ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur if copy_t is None else copy_t:.6f}"]
+               + copy_args(meta, dst) + ([] if edit_list else ["-avoid_negative_ts", "make_zero"]) + [dst])
     proc = run(cmd, check=False)
     if proc.returncode != 0:
         if not reencode:
             info("stream copy failed, falling back to re-encode")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["copy_failed"], edit_list_ok)
         die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
-    if not reencode and tolerance >= 0 and not STATE.dry_run:
+    if not reencode and tolerance >= 0 and not STATE.dry_run and copy_t is None:
         out_meta = probe(dst)
         got = out_meta.get("duration") or 0.0
         vdur, fps = (out_meta.get("video") or {}).get("duration"), (meta.get("video") or {}).get("fps")
@@ -322,10 +490,12 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         return _outcome(meta, dst, reencode, reasons)
     if STATE.dry_run:
         # the planned copy: whether it keeps an edit list is known; where it lands is not
-        return _outcome(meta, dst, False, reasons, edit_list=edit_list)
+        return _outcome(meta, dst, False, reasons, edit_list=edit_list and edit_list_ok)
     fps = (meta.get("video") or {}).get("fps")
-    return _outcome(meta, dst, False, reasons, edit_list=edit_list, notes=notes,
-                    **copy_presentation(start, seek_keyframe(src, start), edit_list, fps))
+    # a concat part's edit list does not hide its pre-roll in the join, so it presents from the keyframe
+    shown = edit_list and edit_list_ok
+    return _outcome(meta, dst, False, reasons, edit_list=shown, notes=notes,
+                    **copy_presentation(start, seek_keyframe(src, start), shown, fps))
 
 
 # The most segments one fallback ffmpeg call opens: every segment is its own input (a file handle,
@@ -747,6 +917,7 @@ def main() -> int:
 
     outcomes: List[dict] = []
     join_reencoded = False
+    join_check = None
     if len(segments) == 1:
         outcomes.append(cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta))
     elif hold_needed or args.accurate:
@@ -761,35 +932,93 @@ def main() -> int:
         outcomes = [_outcome(meta, output, True, []) for _ in segments]
     else:
         with tempfile.TemporaryDirectory(prefix="ffskill_cut_") as tmp:
-            parts = []
-            for i, (s, e) in enumerate(segments):
-                part = os.path.join(tmp, f"part{i:03d}{ext}")
-                outcomes.append(cut_one(args.input, s, e, part, args.accurate, args.crf, args.preset, args.tolerance, meta,
-                                        edit_list_ok=False))
-                parts.append(part)
-            # a stream-copy join is only safe between identical parts: the concat demuxer takes the
-            # first part's parameters for all of them, and a mismatch (a copied HEVC part next to a
-            # re-encoded one, or H.264 next to HEVC) decodes with errors from a run that exited 0
-            compatible = STATE.dry_run or signatures_match([join_signature(p) for p in parts], ext)
-            if compatible:
-                listfile = os.path.join(tmp, "list.txt")
-                with open(listfile, "w", encoding="utf-8") as fh:
-                    for p in parts:
-                        fh.write(concat_list_line(p) + "\n")
-                cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy"]
-                if ext in (".mp4", ".mov", ".m4v"):
-                    cmd += ["-movflags", "+faststart"]
-                cmd += [output]
-                proc = run(cmd, check=False)
-                # no length check against the parts: each copied part's durations include its own
-                # start offset, which the concat demuxer does not carry, so no sum of them
-                # predicts the join (measured off by 0.03-1.3 s on ordinary B-frame sources)
-                if proc.returncode != 0:
-                    info("concat with stream copy failed; re-cutting every segment from the source into one re-encode")
-                    compatible = False
+            # A video join is planned from the source's own packets (plan_part: each part from its
+            # start keyframe to its end keyframe's dts) and measured against them once written
+            # (check_join). An audio-only join keeps the plain cut.
+            join_video = bool(video) and not is_audio_output(output) and not dry_run_input_pending(args.input)
+            packets = video_packets(args.input) if join_video else None
+            snap_end = ext.lower() in EDIT_LIST_EXTS
+            plans = ([plan_part(packets, s, e, args.tolerance, video_end(args.input, meta), fps, snap_end)
+                      for s, e in segments] if packets else None)
+            open_key = open_join_key(packets, plans) if plans else None
+            recut = None  # why the parts are not joined by stream copy, when that is known before cutting them
+            if join_video and not packets:
+                recut = ("the source's video packets could not be read, so a stream-copy join could not be checked; "
+                         "every segment was re-cut from the source")
+            elif open_key is not None:
+                recut = (f"the source uses open GOPs: frames before the keyframe at {open_key:.3f}s decode after it, so a "
+                         "stream-copy join would drop them; every segment was re-cut from the source")
+            compatible = False
+            if recut:
+                info(recut)
+                join_notes.append(recut)
+            elif plans and any(p["reason"] for p in plans):
+                # a segment with no keyframe near its start or end re-encodes, and only copied parts are
+                # joined by copy (parts encoded one by one leave an AAC frame's hole at every join), so
+                # every segment is re-cut into one encode, without encoding the parts first
+                late = [str(i + 1) for i, p in enumerate(plans) if p["reason"]]
+                info(f"segment{'s' if len(late) > 1 else ''} {', '.join(late)} {'have' if len(late) > 1 else 'has'} no keyframe "
+                     f"within {args.tolerance:.2f}s of {'their' if len(late) > 1 else 'its'} start or end to copy from; "
+                     "re-cutting every segment from the source into one re-encode")
+                recut = "tolerance"
+            if recut:
+                outcomes = [_outcome(meta, output, True, ["tolerance"] if plans and plans[i]["reason"] else [])
+                            for i in range(len(segments))]
             else:
-                info("the cut parts differ in codec parameters (a copied segment next to a re-encoded one); "
-                     "re-cutting every segment from the source into one re-encode instead of joining them")
+                parts = []
+                for i, (s, e) in enumerate(segments):
+                    part = os.path.join(tmp, f"part{i:03d}{ext}")
+                    plan = plans[i] if plans else None
+                    outcomes.append(cut_one(args.input, s, e, part, False, args.crf, args.preset, args.tolerance, meta,
+                                            edit_list_ok=False, copy_t=plan["t"] if plan and snap_end else None))
+                    parts.append(part)
+                # a stream-copy join is only safe between identical copied parts: the concat demuxer
+                # takes the first part's parameters for all of them, and a mismatch (a copied HEVC part
+                # next to a re-encoded one, or H.264 next to HEVC) decodes with errors from a run that
+                # exited 0; video parts that all re-encoded match, but leave an AAC frame's hole at each
+                # join (audio decoded to PCM has no encoder priming, so those parts still join)
+                compatible = (not (join_video and any(o["reencoded"] for o in outcomes))
+                              and (STATE.dry_run or signatures_match([join_signature(p) for p in parts], ext)))
+                if compatible:
+                    listfile = os.path.join(tmp, "list.txt")
+                    with open(listfile, "w", encoding="utf-8") as fh:
+                        for p in parts:
+                            fh.write(concat_list_line(p) + "\n")
+                    # a join that is checked is written beside the parts and placed only once it passes:
+                    # a failed check re-cuts, and a re-cut that then failed must not cost the caller
+                    # the file --overwrite would have replaced
+                    checked = bool(plans) and not STATE.dry_run
+                    joined = os.path.join(tmp, f"joined{ext}") if checked else output
+                    cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy"]
+                    if ext in (".mp4", ".mov", ".m4v"):
+                        cmd += ["-movflags", "+faststart"]
+                    cmd += [joined]
+                    proc = run(cmd, check=False)
+                    if proc.returncode != 0:
+                        info("concat with stream copy failed; re-cutting every segment from the source into one re-encode")
+                        compatible = False
+                    elif checked:
+                        # measured, not predicted: the joined file against the source packets its parts hold
+                        cfr = bool(vfr_check) and vfr_check.get("measured") == "sampled_cfr"
+                        # the audio's codec frame: how far past its picture a part's sound can run
+                        audio_frame = typical_duration(stream_packet_times(joined, "a", "duration_time", 50))
+                        join_check = check_join(stream_packet_times(joined, "v", "pts_time"),
+                                                expected_packets(packets, [(p["start_pts"], p["end_bound"]) for p in plans]),
+                                                fps, audio_frame, cfr)
+                        if not join_check["ok"]:
+                            step = join_check["max_step_seconds"]
+                            msg = (f"the stream-copy join was checked and failed: {join_check['packets']} video packets where "
+                                   f"the segments hold {join_check['expected_packets']} in the source"
+                                   + (f", largest step {step:.3f}s" if step is not None else "")
+                                   + "; every segment was re-cut from the source")
+                            info(msg)
+                            join_notes.append(msg)
+                            compatible = False
+                        else:
+                            place_output(joined, output)
+                else:
+                    info("the cut parts cannot be joined by stream copy (a segment re-encoded, or the parts differ in "
+                         "codec parameters); re-cutting every segment from the source into one re-encode")
             if not compatible:
                 join_from_source(args.input, segments, output, meta, args.crf, args.preset, tmp)
                 join_reencoded = True
@@ -820,6 +1049,11 @@ def main() -> int:
     if single.get("edit_list") and stored:
         notes.append(f"{stored:.3f}s of pre-roll is stored, hidden by the MP4 edit list; a player or "
                      "tool that ignores edit lists will show it")
+    # where each copied part's end moved to its keyframe; only for a join that is those parts
+    end_snaps = None
+    if join_check and join_check["ok"] and not join_reencoded:
+        end_snaps = [None if o["reencoded"] or p["end_pts"] is None else round(p["end_pts"] - e, 3) + 0.0
+                     for o, p, (_, e) in zip(outcomes, plans, segments)]
     skew, skew_note = av_skew(result) if not STATE.dry_run else (None, None)
     if skew_note:
         info(skew_note)
@@ -836,6 +1070,7 @@ def main() -> int:
          mode=mode, keyframe_snapped=keyframe_snapped, reencode_reason=reencode_reason,
          segment_precision=[o["precision"] for o in outcomes] if len(outcomes) > 1 else None,
          edit_list=bool(single.get("edit_list")), stored_preroll_seconds=stored, av_start_skew_seconds=skew,
+         join_check=join_check, segment_end_snap_seconds=end_snaps,
          notes=notes, **({"vfr_check": vfr_check} if vfr_check else {}),
          nearest_keyframes=sorted(NEAREST_KEYFRAMES) if NEAREST_KEYFRAMES else None,
          # the trade the caller can offer instead of a re-encode (eval e02: "without losing quality")
