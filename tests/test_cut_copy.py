@@ -10,6 +10,7 @@ and a WAV. Frames are identified by PSNR against the source's own frames rather 
 because a re-encoded join cannot reproduce a frame bit for bit; testsrc2 changes on every frame,
 so the right frame and its neighbours are tens of dB apart.
 """
+import importlib
 import json
 import math
 import os
@@ -620,6 +621,20 @@ class CutJoinTests(unittest.TestCase):
         for got, want in ((29, 29), (30, 120), (89, 179)):
             self.assertFrameIs(frames[got], want, f"output frame {got}", src_frames=src)
 
+    def test_a_segment_in_the_last_gop_is_not_a_tolerance_reencode(self):
+        """10-11 starts on the last keyframe (10.0) and ends before the video does: no
+        keyframe follows it to snap the end to. That is not a tolerance miss (it was reported as
+        one, even under --tolerance -1, "no keyframe within -1.00s"): the end stays where asked
+        and the join check judges the copy. On B-frame video a part cut mid-GOP in decode order
+        is not exact (main's copy showed 82 frames for 78), so the join is re-cut from source."""
+        for extra in ((), ("--tolerance", "-1")):
+            with self.subTest(tolerance=extra):
+                out = DIR / f"last_gop_join{len(extra)}.mp4"
+                data = cut_json(self.h264bf, "--segments", "0-2,10-11", *extra, "-o", out)
+                self.assertEqual(data["reencode_reason"], ["concat_fallback"])
+                self.assertEqual(len(frame_pts(out)), 60 + 30)
+                self.assertEqual(steps(out), {round(1 / FPS, 4)})
+
     def test_a_short_segment_across_a_bframe_keyframe_never_cuts_a_negative_length(self):
         """-ss 1.95 lands on the keyframe at 2.0 (its dts, 1.933, is before 1.95). That
         keyframe cannot also end the part: its dts is before the start, so -t would be negative.
@@ -716,10 +731,16 @@ class CutJoinTests(unittest.TestCase):
                 mock.patch.object(cut, "run", lambda cmd, **kw: None), \
                 mock.patch.object(cut.STATE, "hw", True), \
                 mock.patch.object(cut.STATE, "hw_notes", []), \
+                mock.patch.object(cut.STATE, "hw_source", "flag"), \
+                mock.patch.object(cut.STATE, "commands", ["ffmpeg -i src.mp4 -c:v libx265 -crf 18 chunk.mkv"]), \
                 tempfile.TemporaryDirectory() as tmp:
             cut.join_from_source("src.mp4", segs, os.path.join(tmp, "out.mp4"), meta, 18, "medium", tmp)
             self.assertEqual(hw_seen, [True, True, False, False], "two chunks on the GPU, then both again on the CPU")
             self.assertEqual(len(cut.STATE.hw_notes), 1)
+            # the result still says the GPU was asked for and why it was not used
+            rep = importlib.import_module("_common.emit")._encoder_report(cut.STATE)
+            self.assertEqual((rep["hw"]["requested"], rep["hw"]["used"]), (True, False), rep)
+            self.assertIn("fell back to the CPU", " ".join(rep["hw"]["notes"]))
 
     # ------------------------------------------------------------------ signatures (unit, prepared parts)
     def _part(self, name, *args):

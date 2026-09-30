@@ -322,7 +322,8 @@ def plan_part(packets, start: float, end: float, tolerance: float, vend, fps, sn
         return plan
     later = [k for k in keys if k[2] > s_dts + 1e-9]
     if not later:
-        plan["reason"] = "tolerance"
+        # the start is in the video's last GOP: no keyframe to snap the end to, and none to leak
+        # into the part either, so the end stays where asked and check_join judges the copy
         return plan
     ei, e_pts, e_dts = min(later, key=lambda k: abs(k[1] - end))
     if not within(abs(e_pts - end)):
@@ -649,8 +650,12 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
         # no longer match: encode them all on the CPU rather than refuse a join that can be made
         info("the GPU refused part of this join and the chunks came out mixed; re-encoding every chunk on the CPU")
         STATE.hw_notes.append("the --segments join fell back to the CPU for every chunk after VideoToolbox refused one")
+        # off for these encodes only: the result still reports that the GPU was asked for
         STATE.hw = False
-        chunks = encode_chunks()
+        try:
+            chunks = encode_chunks()
+        finally:
+            STATE.hw = True
     if not STATE.dry_run and not signatures_match([join_signature(c) for c in chunks], ".mkv"):
         die("the re-encoded chunks of this join came out with different stream parameters, so they "
             f"cannot be joined safely; cut at most {JOIN_CHUNK} segments per run and join the results "
