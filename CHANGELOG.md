@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- feat(loop): `--boomerang` plays the clip forward then backward (frames 0..N-1, then N-2..1, repeated), so any clip loops without a jump. Each turnaround frame is shown once, unlike the common split/reverse/concat recipe, which shows the last frame twice and, on every repeat, the first frame twice. `--times` counts round trips (1 is allowed) and `--duration` still hits its target. The output is constant-rate at the source's nominal frame rate: a variable-frame-rate source (phone footage) is retimed by frame index, because a CFR conform after the reverse duplicated a turnaround frame. The audio is dropped, with a `notes` line (reversed sound plays backwards). The result gains `boomerang`. It warns when the decoded frames it holds would pass ~2 GiB and refuses clips under 3 frames or cycles over the `loop` filter's 32767 frames.
 
 ## 2.4.0
 
