@@ -185,6 +185,14 @@ class ParakeetEngineTests(MediaFixtures):
         self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
         self.assertIn("So um we start.", (OUT / "pk_cpp.srt").read_text())
 
+    def test_caption_mux_reports_the_transcription_too(self):
+        """--mode mux wrote a soft subtitle track from the transcript but left `transcription` out of
+        its result, so a caller could not tell which engine made it."""
+        doc = json.loads(script("caption.py", self.src, "--transcribe", "--engine", "parakeet.cpp", "--mode", "mux",
+                                "--json", "-o", OUT / "pk_mux.mp4", env=self.env()).stdout)
+        self.assertEqual(doc["subtitle_tracks"], 1)
+        self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
+
     def test_caption_takes_the_engine_from_the_environment(self):
         """$FFMPEG_SKILL_ASR_ENGINE reaches caption.py through its real parser (no --engine given)."""
         doc = json.loads(script("caption.py", self.src, "--transcribe", "--fast", "--json", "-o", OUT / "pk_cpp_env.mp4",

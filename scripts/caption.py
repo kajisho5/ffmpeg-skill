@@ -1425,7 +1425,8 @@ def main() -> int:
         result = probe(output, role="output")
         info(f"wrote {output} ({fmt_secs(result.get('duration'))}, mux, {len(added)} "
              f"subtitle track(s) added, codec {codec})")
-        emit(output, tracks=tracks, subtitle_tracks=total, **({"notes": notes} if notes else {}))
+        emit(output, tracks=tracks, subtitle_tracks=total, **({"notes": notes} if notes else {}),
+             **({"transcription": args._asr} if getattr(args, "_asr", None) else {}))
         return 0
 
     # A font that covers the text, before anything is rendered: non-Latin cues in a Latin-only

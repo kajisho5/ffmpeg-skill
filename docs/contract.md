@@ -350,7 +350,8 @@ engine present. Whisper is never a dependency of this skill.
 parakeet-mlx, or parakeet-cli with a `.gguf` model it can find. Either engine family
 satisfies `--transcribe`; `--engine auto` (the default, or `FFMPEG_SKILL_ASR_ENGINE`) runs
 Parakeet for English speech and Whisper for every other language, and the result's
-`transcription` says which engine, model and routing decision produced the cues.
+`transcription` says which engine, model and routing decision produced the cues (in every
+`--mode`, `mux` included).
 
 `doctor` has three states per capability. `available` and `missing` come from a listing
 that was read; `unknown` means the listing that would prove the capability could not be
