@@ -199,6 +199,55 @@ class ParakeetEngineTests(MediaFixtures):
                                 env=self.env(FFMPEG_SKILL_ASR_ENGINE="parakeet.cpp")).stdout)
         self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
 
+    def _run_with_mlx_writing(self, body, tool, *args, expect_fail=False):
+        """`tool` with a parakeet-mlx that exits 0 after writing `body` as its JSON."""
+        fake = Path(tempfile.mkdtemp(prefix="ffskill_oddasr_"))
+        try:
+            for name in os.listdir(self.bin):
+                if name != "parakeet-mlx":
+                    os.symlink(self.bin / name, fake / name)
+            mlx = fake / "parakeet-mlx"
+            mlx.write_text(f"#!{sys.executable}\nimport os, sys\na = sys.argv[1:]; out = a[a.index('--output-dir') + 1]\n"
+                           "os.makedirs(out, exist_ok=True)\n"
+                           "open(os.path.join(out, os.path.splitext(os.path.basename(a[0]))[0] + '.json'), 'w')"
+                           f".write({body!r})\n")
+            mlx.chmod(0o755)
+            proc = script(tool, self.src, *args, "--json", env=self.env(PATH=str(fake)), expect_fail=expect_fail)
+        finally:
+            shutil.rmtree(fake, ignore_errors=True)
+        return json.loads(proc.stdout)
+
+    def test_unreadable_engine_output_falls_through_instead_of_claiming_silence(self):
+        """parakeet-mlx exited 0 but wrote something that is not a transcript: that is a failed
+        run, so auto moves on to parakeet.cpp instead of reporting "no speech" in the video."""
+        doc = self._run_with_mlx_writing('{"sentences": 5}', "caption.py", "--transcribe", "--fast", "-o", OUT / "pk_garbage.mp4")
+        self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
+
+    def test_filler_words_fall_through_an_engine_with_sentences_but_no_word_times(self):
+        """Sentences whose text and times read but whose tokens do not: cues for a caption, but no
+        word timings, which is all silence.py --filler needs -- so the next engine is tried."""
+        body = json.dumps({"text": "So um we start.", "sentences": [{"text": "So um we start.", "start": 0.2, "end": 1.6,
+                                                                     "tokens": [{"text": " So"}, 5]}]})
+        doc = self._run_with_mlx_writing(body, "silence.py", "--filler", "--transcribe", "--filler-list")
+        self.assertEqual(doc["filler"]["source"], "parakeet:parakeet.cpp")
+        self.assertEqual([r["word"] for r in doc["filler"]["removed"]], ["um"])
+
+    def test_a_named_engine_with_no_word_times_is_refused_by_name(self):
+        """--engine parakeet-mlx ran and gave no word timings: say that, not "install it"."""
+        body = json.dumps({"text": "So um we start.", "sentences": [{"text": "So um we start.", "start": 0.2, "end": 1.6,
+                                                                     "tokens": [{"text": " So"}, 5]}]})
+        doc = self._run_with_mlx_writing(body, "silence.py", "--filler", "--transcribe", "--filler-list",
+                                         "--engine", "parakeet-mlx", expect_fail=True)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("parakeet-mlx ran but produced no word-level timings", doc["error"]["message"])
+
+    def test_an_engine_that_heard_nothing_still_reports_no_speech(self):
+        """What both real engines write for 3 s of silence (measured): an empty list. That is an
+        answer, not a failure, so it is still the no-speech refusal and nothing else is tried."""
+        doc = self._run_with_mlx_writing('{"text": "", "sentences": []}', "caption.py", "--transcribe", "--fast",
+                                         "-o", OUT / "pk_silent.mp4", expect_fail=True)
+        self.assertEqual((doc["error"]["kind"], doc.get("reason"), doc.get("engine")), ("input", "no_speech", "parakeet-mlx"))
+
     def test_auto_falls_through_a_failing_parakeet_mlx_to_parakeet_cpp(self):
         """parakeet-mlx is installed but crashes: auto moves on to the next Parakeet engine."""
         broken = Path(tempfile.mkdtemp(prefix="ffskill_brokenasr_"))

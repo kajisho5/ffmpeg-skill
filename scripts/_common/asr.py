@@ -553,7 +553,9 @@ def _parakeet_model_for(engine: str, model: Optional[str], language: Optional[st
 def run_parakeet(engine: str, wav: str, tmpdir: str, model: Optional[str], language: Optional[str], shutil, subprocess,
                  video: str) -> Optional[Tuple[List[Tuple[float, float, str]], "List[Dict[str, Any]]", str]]:
     """(cues, words, model) from one Parakeet engine, or None when it is not installed or failed
-    (an info line says which), so the caller moves on to the next engine."""
+    (an info line says which), so the caller moves on to the next engine. Output that yields no
+    words is only "no speech" when it is the engine's own empty answer; anything else it could not
+    be read, which is a failed run too."""
     if not _parakeet_available(engine, shutil, model):
         info(f"{engine} not available" + (" (no readable .gguf: --model, PARAKEET_CPP_MODEL, or tdt-0.6b-v2 in ~/.cache/parakeet.cpp)"
                                           if engine == "parakeet.cpp" and shutil.which("parakeet-cli") else ""))
@@ -569,6 +571,10 @@ def run_parakeet(engine: str, wav: str, tmpdir: str, model: Optional[str], langu
             info("parakeet-mlx found but failed: " + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
             return None
         cues, words = _cues_from_parakeet_mlx_json(doc), _words_from_parakeet_mlx_json(doc)
+        try:
+            raw, key = Path(doc).read_text(encoding="utf-8", errors="replace"), "sentences"
+        except OSError:
+            raw, key = "", "sentences"
     else:
         cmd = ["parakeet-cli", "transcribe", "--model", chosen, "--input", wav, "--json"]
         proc = _asr_run(cmd, subprocess, "parakeet.cpp")
@@ -577,9 +583,26 @@ def run_parakeet(engine: str, wav: str, tmpdir: str, model: Optional[str], langu
             return None
         words = _words_from_parakeet_cpp_json(proc.stdout)
         cues = cues_from_words(words)
+        raw, key = proc.stdout or "", "words"
     if not cues:
-        die_no_speech(engine, video)
+        if _heard_nothing(raw, key):
+            die_no_speech(engine, video)
+        info(f"{engine} ran but wrote output this skill cannot read as a transcript "
+             f"({(raw.strip() or 'nothing')[:80]!r}); trying the next engine")
+        return None
     return cues, words, chosen
+
+
+def _heard_nothing(text: str, key: str) -> bool:
+    """True when an engine's JSON is its well-formed empty answer, {key: []}: what parakeet-cli
+    ("words") and parakeet-mlx ("sentences") both write for silence (measured on 3 s of it).
+    Anything else that yields no words -- not JSON, the wrong shape, entries that do not parse --
+    is output that could not be read, not a finding that nobody spoke."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(doc, dict) and doc.get(key) == []
 
 
 def transcribe_words(video: str, language: "Optional[str]" = None, model: str = "base",
@@ -614,6 +637,11 @@ def transcribe_words(video: str, language: "Optional[str]" = None, model: str = 
         LAST_RUN.update(route)
         for eng in first:
             got = run_parakeet(eng, wav, tmpdir, None if model == "base" else model, language, _shutil, _subprocess, video)
+            if got and not got[1] and wanted not in PARAKEET_ENGINES:
+                # cues read but no word times (a caption could use them; this caller cannot); a
+                # named engine keeps its own "no word-level timings" refusal instead
+                info(f"{eng} gave cues but no readable word timings; trying the next engine")
+                got = None
             if got:
                 _cues, words, chosen = got
                 info(f"word timings from {eng} ({len(words)} words, model {os.path.basename(chosen)})")
