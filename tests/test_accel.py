@@ -108,16 +108,6 @@ class VtArgsTests(unittest.TestCase):
             qs = [decision.vt_quality(codec, crf, hdr) for crf in range(0, 52)]
             self.assertEqual(qs, sorted(qs, reverse=True))
             self.assertTrue(all(1 <= q <= 100 for q in qs))
-        self.assertEqual(decision.vt_quality("h264", 18), 75)
-
-    def test_bt709_tags_never_go_through_the_filter_graph_on_71(self):
-        """On FFmpeg >= 7.1 the -colorspace output options insert a real matrix conversion on an
-        untagged source; VideoToolbox gets its tags from a bitstream filter instead."""
-        with mock.patch.object(decision, "ffmpeg_version", return_value=(9, 0)):
-            tags = decision._vt_bt709("h264")
-        self.assertEqual(tags[0], "-bsf:v")
-        self.assertNotIn("-colorspace", tags)
-        self.assertNotIn("-x264-params", tags)
 
     def test_an_hdr_source_gets_the_hdr_quality_curve(self):
         """HLG phone footage at the SDR curve's -q:v came out 6-8x x265's bytes at a higher SSIM
@@ -222,11 +212,41 @@ class HwReviewRegressionTests(unittest.TestCase):
         cpu = STATE.hw_swaps[-1][1]
         self.assertTrue("-x264-params" in cpu or "-colorspace" in cpu, cpu)
 
-    def test_vt_tags_never_depend_on_the_version_guess(self):
-        """A git build of 7.1 reads as (7, 0); the VideoToolbox tag path must not change with it."""
-        for v in ((6, 1), (7, 0), (7, 1), (9, 0)):
-            with mock.patch.object(decision, "ffmpeg_version", return_value=v):
-                self.assertEqual(decision._vt_bt709("hevc")[0], "-bsf:v")
+    def test_vt_bt709_tags_come_from_a_bitstream_filter_on_every_version(self):
+        """On FFmpeg >= 7.1 the -colorspace output options insert a real matrix conversion on an
+        untagged source, so VideoToolbox gets its tags from a bitstream filter instead. A git build
+        of 7.1 reads as (7, 0), so the tag path must not change with the version guess either."""
+        for codec in ("h264", "hevc"):
+            for v in ((6, 1), (7, 0), (7, 1), (9, 0)):
+                with mock.patch.object(decision, "ffmpeg_version", return_value=v):
+                    tags = decision._vt_bt709(codec)
+                self.assertEqual(tags[0], "-bsf:v", (codec, v))
+                self.assertNotIn("-colorspace", tags)
+                self.assertNotIn("-x264-params", tags)
+
+    def test_run_retries_a_refused_videotoolbox_encode_on_the_cpu_and_reports_it(self):
+        """run() itself: a failed VT encode is re-run once with the recorded CPU line, the note and
+        the recorded command follow, and the result reports the CPU encoder."""
+        import importlib
+        emit = importlib.import_module("_common.emit")
+        STATE.hw, STATE.hw_source = True, "flag"
+        STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
+        refused = subprocess.CompletedProcess([], 1, "", "[vt] Error: cannot encode 8192x4608\n")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(runner, "_execute", side_effect=[refused, ok]) as execute:
+            out = str(Path(d) / "o.mp4")
+            proc = runner.run(["ffmpeg", "-i", "a.mp4", "-c:v", "h264_videotoolbox", "-q:v", "75", out], quiet=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(execute.call_count, 2)
+        retried = execute.call_args_list[1][0][0]
+        self.assertIn("libx264", retried)
+        self.assertNotIn("h264_videotoolbox", retried)
+        self.assertIn("libx264", STATE.commands[-1])
+        self.assertTrue(any("VideoToolbox refused" in n and "8192x4608" in n for n in STATE.hw_notes), STATE.hw_notes)
+        rep = emit._encoder_report(STATE)
+        self.assertEqual(rep["encoder"], "libx264")
+        self.assertFalse(rep["hw"]["used"])
 
     def test_the_cpu_fallback_keeps_the_even_dimension_scale_of_a_retry(self):
         """An odd-sized source under --hw: the encode is retried with an even scale, and when
@@ -334,20 +354,26 @@ class VtEncodeTests(MediaFixtures):
         self.assertIn("Content light level metadata", side)
 
     def test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so(self):
-        """H.264 on VideoToolbox stops at 4096 wide; an 8K frame is re-encoded on x264, reported."""
+        """H.264 on VideoToolbox stops at 4096 wide; an 8K frame is re-encoded on x264, reported.
+        Half a second is enough for the real refusal (the full clip took ~26 s of x264 at 8K)."""
         out = OUT / "vt_8k.mp4"
-        doc = json.loads(script("fit.py", self.src, "--width", "8192", "--height", "4608", "--hw", "--fast",
-                                "--json", "-o", out).stdout)
+        doc = json.loads(script("fit.py", self.src, "--duration", "0.5", "--method", "trim", "--width", "8192",
+                                "--height", "4608", "--hw", "--fast", "--json", "-o", out).stdout)
         self.assertEqual(doc["encoder"], "libx264")
         self.assertFalse(doc["hw"]["used"])
         self.assertTrue(any("VideoToolbox refused" in n for n in doc["hw"]["notes"]), doc["hw"])
 
     def test_export_preset_needs_an_explicit_hw(self):
+        """The env default leaves a delivery preset on the CPU (a dry run: encoder choice only);
+        an explicit --hw export really runs on VideoToolbox and keeps the preset's frame rate."""
         env = dict(os.environ, FFMPEG_SKILL_HW="1")
-        doc = json.loads(script("export.py", self.src, "--preset", "x", "--json", "-o", OUT / "vt_x_env.mp4", env=env).stdout)
+        doc = json.loads(script("export.py", self.src, "--preset", "x", "--dry-run", "--json",
+                                "-o", OUT / "vt_x_env.mp4", env=env).stdout)
         self.assertEqual(doc["encoder"], "libx264")
-        doc = json.loads(script("export.py", self.src, "--preset", "x", "--hw", "--json", "-o", OUT / "vt_x_hw.mp4").stdout)
+        doc = json.loads(script("export.py", self.src, "--preset", "x", "--hw", "--json",
+                                "-o", OUT / "vt_x_hw.mp4").stdout)
         self.assertEqual(doc["encoder"], "h264_videotoolbox")
+        self.assertTrue(doc["hw"]["used"])
         self.assertEqual(round(doc["probe"]["video"]["fps"]), 30)
 
 
