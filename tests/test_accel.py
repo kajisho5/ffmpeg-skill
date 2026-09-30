@@ -228,6 +228,25 @@ class HwReviewRegressionTests(unittest.TestCase):
             with mock.patch.object(decision, "ffmpeg_version", return_value=v):
                 self.assertEqual(decision._vt_bt709("hevc")[0], "-bsf:v")
 
+    def test_the_cpu_fallback_keeps_the_even_dimension_scale_of_a_retry(self):
+        """An odd-sized source under --hw: the encode is retried with an even scale, and when
+        VideoToolbox refuses that retry the CPU line is swapped into the retry, not into the
+        first command (x264 then failed on the same odd frame)."""
+        STATE.hw, STATE.hw_source = True, "flag"
+        STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
+        odd = subprocess.CompletedProcess([], 1, "", "width not divisible by 2 (641x359)\n")
+        refused = subprocess.CompletedProcess([], 1, "", "[vt] Error: session refused\n")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(runner, "_execute", side_effect=[odd, refused, ok]) as execute:
+            out = str(Path(d) / "o.mp4")
+            proc = runner.run(["ffmpeg", "-i", "a.mp4", "-c:v", "h264_videotoolbox", "-q:v", "75", out], quiet=True)
+        self.assertEqual(proc.returncode, 0)
+        cpu = execute.call_args_list[2][0][0]
+        self.assertIn("libx264", cpu)
+        self.assertTrue(any("scale" in a for a in cpu), cpu)
+        self.assertIn("scale", STATE.commands[-1])
+
     def test_encoder_report_keeps_the_encode_behind_a_later_copy(self):
         import importlib
         emit = importlib.import_module("_common.emit")

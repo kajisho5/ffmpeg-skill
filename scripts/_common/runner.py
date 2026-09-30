@@ -726,18 +726,19 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
     with _OutputLock(cmd[-1] if is_ffmpeg else "-"):
         exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
         proc = _execute(exec_cmd)
+        tried = exec_cmd  # the last command run: the CPU fallback swaps its encoder line in
         if proc.returncode != 0 and is_ffmpeg:
             retry = _odd_dimension_retry(exec_cmd, proc.stderr or "")
             if retry is not None:
                 info("source has odd dimensions; scaling to even before encoding (yuv420p needs it)")
                 ctx.commands[-1] = _cmdline(retry[:-1] + [cmd[-1]])
-                proc = _execute(retry)
+                proc, tried = _execute(retry), retry
             elif "not divisible by 2" in (proc.stderr or ""):
                 die("the source has odd dimensions (width or height not divisible by 2) and this tool's filter graph "
                     "cannot pad them itself; make them even first, e.g. fit.py --width/--height, then retry",
                     kind="input")
         if proc.returncode != 0 and is_ffmpeg and ctx.hw_swaps:
-            cpu_cmd = _hw_fallback(exec_cmd, ctx)
+            cpu_cmd = _hw_fallback(tried, ctx)
             if cpu_cmd is not None:
                 err = (proc.stderr or "").strip().splitlines()
                 reason = "VideoToolbox refused the encode" + (f": {err[-1][:160]}" if err else "")

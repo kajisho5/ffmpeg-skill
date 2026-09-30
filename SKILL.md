@@ -216,4 +216,4 @@ One line each; open the linked `references/gotchas.md` section when the job is i
 - `--fit crop` 16:9→9:16 throws away 70% of the width; "60 seconds" by speed or by trim are different answers — say which and why. -> [#reframing-fps-and-duration](references/gotchas.md#reframing-fps-and-duration)
 - TikTok/Reels cover the bottom fifth and right column with their own UI — templates keep text out of those zones; `look.py --safe tiktok` shows them. -> [#platform-safe-zones](references/gotchas.md#platform-safe-zones)
 - `scenes.py --highlights` ranks by loudness (or duration), never by meaning: check the sheet before trusting picks. -> [#highlights](references/gotchas.md#highlights)
-- Re-encodes use x264 `medium`; chain 3+ in one `render.py` project. -> [#chaining-and-speed](references/gotchas.md#chaining-and-speed)
+- CPU re-encodes: x264 `medium`; chain 3+ in one `render.py` project. -> [#chaining-and-speed](references/gotchas.md#chaining-and-speed)
