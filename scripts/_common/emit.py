@@ -63,6 +63,10 @@ def _set_current_ctx(ctx: "Context") -> None:
     _CURRENT_CTX = ctx
 
 
+ENV_HW_NOTE = ("VideoToolbox chosen by FFMPEG_SKILL_HW=1 (machine default; ~1.2-2.5x the bytes of x264/x265 "
+               "at matched quality); rerun with --no-hw for a final deliverable")
+
+
 def _encoder_report(ctx: "Context") -> Dict[str, Any]:
     """`encoder`: the last video encoder this run's ffmpeg commands name (after any GPU->CPU
     fallback, since run() rewrites the recorded command), `copy` for a stream copy; absent when no
@@ -82,8 +86,12 @@ def _encoder_report(ctx: "Context") -> Dict[str, Any]:
     out: Dict[str, Any] = {"encoder": enc} if enc else {}
     if ctx.hw:
         # a tool whose stages encode in child processes it does not record (batch.py) cannot say
-        out["hw"] = {"requested": True, "source": ctx.hw_source,
-                     "used": None if enc is None else enc.endswith("_videotoolbox"), "notes": list(ctx.hw_notes)}
+        used = None if enc is None else enc.endswith("_videotoolbox")
+        notes = list(ctx.hw_notes)
+        if used and ctx.hw_source == "env":
+            # the machine default, not this call, chose the GPU: say what it costs and how to opt out
+            notes.append(ENV_HW_NOTE)
+        out["hw"] = {"requested": True, "source": ctx.hw_source, "used": used, "notes": notes}
     return out
 
 
