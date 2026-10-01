@@ -1124,6 +1124,18 @@ class EditingTests(MediaFixtures):
         self.assertLessEqual(doc["silent"][0]["peak_db"], -50)
         self.assertTrue(any("line2.wav" in n for n in doc["notes"]))
         self.assertTrue((d / "warn.wav").exists())
+        # where it sits in the output: after line1 (1.5 s), 1.5 s long
+        self.assertEqual((doc["silent"][0]["at"], doc["silent"][0]["end"]), (1.5, 3.0))
+        self.assertNotIn("intended", doc["silent"][0])
+        # --allow-silent: a planned pause, joined even under fail, marked intended, no note
+        doc = json.loads(script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-silent", "fail",
+                                "--allow-silent", "2", "--json", "-o", d / "allow.wav").stdout)
+        self.assertEqual((doc["status"], doc["clips"]), ("completed", 3))
+        self.assertEqual([(s["index"], s["intended"], s["at"]) for s in doc["silent"]], [(1, True, 1.5)])
+        self.assertFalse(any("line2.wav" in n for n in doc.get("notes", [])))
+        proc = script("join.py", "--list", d / "parts.txt", "--allow-silent", "4", "--json",
+                      "-o", d / "bad.wav", expect_fail=True)
+        self.assertIn("--allow-silent", json.loads(proc.stdout)["error"]["message"])
         # fail: one kind-input refusal naming it, nothing written
         proc = script("join.py", "--list", d / "parts.txt", "--transition", "none", "--on-silent", "fail",
                       "--json", "-o", d / "fail.wav", expect_fail=True)

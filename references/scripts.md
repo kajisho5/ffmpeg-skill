@@ -560,7 +560,7 @@ writes the resulting cut list exactly as it does today.
 ```
 join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen|none]
         [--duration 0.5] [--width W --height H] [--fps N] [--fit pad|crop] [-o OUT]
-join.py --list parts.txt [--on-missing fail|skip] [--on-silent warn|fail|skip] [--silence-threshold -50] [...]
+join.py --list parts.txt [--on-missing fail|skip] [--on-silent warn|fail|skip] [--allow-silent N[,N]] [--silence-threshold -50] [...]
 ```
 `--list FILE` (2.2) reads the clips from a file, one per line in order, paths relative to the
 file (blank lines and `#` comments ignored; ffmpeg's `file 'x.wav'` lines accepted), for the
@@ -579,9 +579,11 @@ frame, rate or xfade offsets that rest on a pending input's unmeasured placehold
 Every existing input with an audio stream is also measured (one volumedetect pass; not under `--dry-run`
 too): a peak at or below `--silence-threshold` (default -50 dBFS) is silent, the trace of a TTS
 call that wrote a valid but empty file. `--on-silent warn` (default) joins it and names it under
-`silent: [{index, path, peak_db}]` and in `notes`; `fail` refuses it in the same `kind: input`
-document (`silent (peak -91.0 dBFS)`); `skip` leaves it out under `skipped`. A clip without an
-audio stream is never silent.
+`silent: [{index, path, peak_db, at, end}]` (`at`/`end`: where it sits in the output, seconds)
+and in `notes`; `fail` refuses it in the same `kind: input` document (`silent (peak -91.0 dBFS)`);
+`skip` leaves it out under `skipped`. A pause that is meant to be silent: `--allow-silent 3,7`
+(1-based) joins those inputs whatever `--on-silent` says and lists them with `intended: true`,
+no warning. A clip without an audio stream is never silent.
 Two warnings never refuse or change the command: `short_segments: [{index, path, duration}]`
 names a clip shorter than 2 frames at the join's fps (audio-only: 0.05 s), and
 `duplicates: [{path, indices}]` a path listed more than once (a repeat can be intended); both

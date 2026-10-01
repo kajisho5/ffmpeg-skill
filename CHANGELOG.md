@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- feat(join): each `silent` entry carries `at`/`end`, where that input sits in the output (seconds, transition overlap included), and `--allow-silent N[,N]` (1-based) marks a planned pause: always joined, listed with `intended: true`, no warning or note, whatever `--on-silent` says.
 (nothing yet)
 
 ## 2.3.2

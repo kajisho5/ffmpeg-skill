@@ -127,6 +127,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     n = len(args.inputs)
     durs = [m.get("duration") or 0.0 for m in metas]
     d = args.duration if args.transition != "none" else 0.0
+    place_silent(durs, d)
     note_short_segments(args.inputs, metas, MIN_AUDIO_SEGMENT, f"{MIN_AUDIO_SEGMENT:g}s")
     for p, dur in zip(args.inputs, durs):
         if d and dur <= d * 2 and not STATE.dry_run:
@@ -258,6 +259,32 @@ def find_silent(paths: List[str], audible: List[int], threshold: float) -> List[
     return silent
 
 
+def place_silent(lens: List[float], d: float) -> None:
+    """Where each joined silent input sits in the output: `at`/`end` in output seconds. Input k
+    (in kept order) starts after the kept inputs before it, each overlapped by the transition d."""
+    for sil in STATE_SILENT:
+        if sil["index"] not in STATE_KEPT:
+            continue
+        k = STATE_KEPT.index(sil["index"])
+        if k >= len(lens):
+            continue
+        at = sum(lens[:k]) - k * d
+        sil["at"], sil["end"] = round(at, 3), round(at + lens[k], 3)
+
+
+def parse_allow_silent(value: Optional[str], n: int) -> List[int]:
+    """--allow-silent 3,7 -> 0-based indices; each must name an input (1..n)."""
+    if not value:
+        return []
+    out = []
+    for tok in value.split(","):
+        tok = tok.strip()
+        if not tok.isdigit() or not 1 <= int(tok) <= n:
+            die(f"--allow-silent takes input numbers 1..{n} separated by commas, got {tok!r}")
+        out.append(int(tok) - 1)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="*", help="two or more clips in order (or --list FILE)")
@@ -270,6 +297,9 @@ def main() -> int:
                     help="an input whose audio peak is at or below --silence-threshold: warn (default; join it, "
                          "name it under `silent`), fail (refuse with the other input problems) or skip (leave it out, "
                          "under `skipped`); a clip with no audio stream is never silent")
+    ap.add_argument("--allow-silent", metavar="N[,N...]",
+                    help="input numbers (1-based) whose silence is intended, e.g. a planned pause: always joined, "
+                         "listed under `silent` with intended: true, no warning, whatever --on-silent says")
     ap.add_argument("--silence-threshold", type=float, default=-50.0, metavar="DB",
                     help="peak level in dBFS at or below which an input counts as silent (default -50)")
     ap.add_argument("-o", "--output", help="output file (default: <first>_joined.mp4)")
@@ -303,7 +333,10 @@ def main() -> int:
     orig_inputs = list(args.inputs)
     audible: List[int] = []
     problems, pending = preflight(args.inputs, audible)
-    silent = find_silent(args.inputs, audible, args.silence_threshold)
+    allowed = parse_allow_silent(args.allow_silent, len(args.inputs))
+    found = find_silent(args.inputs, audible, args.silence_threshold)
+    intended = [dict(s, intended=True) for s in found if s["index"] in allowed]
+    silent = [s for s in found if s["index"] not in allowed]
     silent_problems = [{"index": s["index"], "path": s["path"], "reason": f"silent (peak {s['peak_db']:.1f} dBFS)"}
                        for s in silent]
     refused = sorted((problems if args.on_missing == "fail" else [])
@@ -325,8 +358,8 @@ def main() -> int:
         args.inputs = [p for i, p in enumerate(args.inputs) if i not in bad]
         for p in dropped:
             info(f"skipping #{p['index'] + 1} {p['path']}: {p['reason']}")
+    STATE_SILENT[:] = sorted(intended + (silent if args.on_silent == "warn" else []), key=lambda s: s["index"])
     if silent and args.on_silent == "warn":
-        STATE_SILENT[:] = silent
         listing = ", ".join(f"#{s['index'] + 1} {s['path']} (peak {s['peak_db']:.1f} dBFS)" for s in silent)
         info(f"warning: {len(silent)} input(s) silent at or below {args.silence_threshold:g} dBFS, joined anyway: {listing}")
         STATE_NOTES.append(f"{len(silent)} input(s) have no audible sound (peak at or below {args.silence_threshold:g} dBFS) "
@@ -413,6 +446,7 @@ def main() -> int:
     # a crossfaded join gives each clip one length for both streams, so the offsets that place
     # every picture also place its sound; the plain cut (concat) keeps the streams paired itself
     lens = [clip_length(m, fps) for m in metas] if d else durs
+    place_silent(lens, d)
     for p, dur in zip(args.inputs, lens):
         if d and dur <= d * 2 and not STATE.dry_run:
             die(f"{p} is only {dur:.2f}s, too short for a {d:.2f}s transition; shorten --duration")
