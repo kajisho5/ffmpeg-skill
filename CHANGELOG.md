@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- fix(doctor): `filter:drawtext` is probed with the `fontfile=` the tools pass by default, so a build whose fontconfig lookup crashes (winget's gyan.dev 9.x) is no longer reported as missing a required capability while every drawtext tool renders; the fontconfig-only crash is a `notes` entry instead (#298).
+- fix: docstrings in `_common/drawtext.py` and `_ass_overlay.py` are raw strings, so Python 3.12+ no longer prints `SyntaxWarning: invalid escape sequence` on import, and `-W error` no longer fails it (#297). A test compiles every tracked `.py` with warnings as errors.
 - docs(SKILL.md): MCP line said "the other 42" stay callable (it is the other 30, as `mcp/server.py` and the tests say); `--fit-size off` described by what it does rather than "1.16 behaviour" (also in `caption.py --help`); workflow heading drops "always" (steps 0 and 8 are conditional). From a prompt audit.
 
 ## 2.3.1

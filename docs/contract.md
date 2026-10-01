@@ -353,7 +353,10 @@ read (`ffmpeg -filters` in a layout the parser does not recognise, or ffmpeg exi
 non-zero), and it is never folded into `missing`, so an installed filter is not reported
 absent, nor into `available`, so a failed detection is not a pass. `detection` gives the
 status (`parsed`, `unparsed`, `failed`, `missing`), row count and detail of each listing;
-`errors` lists the unreadable ones. The filter parser recognises the FFmpeg 6/7 layout
+`errors` lists the unreadable ones. `filter:drawtext` is also rendered once, with the
+`fontfile=` the tools pass by default: a crash there makes it `missing`; a crash only on a
+bare fontconfig lookup leaves it `available` and adds a `notes` entry (`--font-file`, not a
+bare `--font <family>`, on that machine). The filter parser recognises the FFmpeg 6/7 layout
 (three flag characters, `..C acompressor A->A`) and the FFmpeg 8 layout (two, `T.
 acompressor A->A`) by the io-spec token, so the flag width does not matter; fixtures for
 both live in `tests/fixtures/`.

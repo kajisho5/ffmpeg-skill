@@ -29,7 +29,7 @@ EMOJI_SENTINEL = "\ue000"
 
 
 def emoji_placeholder(box_px: float) -> str:
-    """The ASS override that reserves exactly `box_px` of advance and draws nothing.
+    r"""The ASS override that reserves exactly `box_px` of advance and draws nothing.
 
     Measured, not assumed (1.15 spec, open question 2). U+2588 FULL BLOCK is NOT 1.0 em: its
     advance measured 0.83 em in FreeSans, 0.79 in WenQuanYi Zen Hei and 0.66 in DejaVu Sans,

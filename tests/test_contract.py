@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1905,7 +1906,7 @@ class ContractTests(unittest.TestCase):
         self.assertTrue((bdir / "out").is_dir(), "default outdir is <folder>/out")
 
     def test_fifth_audit_regressions(self):
-        """Pins from the fifth audit (100 items, 2026-09-12). Confirmed and fixed here: yuv410p
+        r"""Pins from the fifth audit (100 items, 2026-09-12). Confirmed and fixed here: yuv410p
         read as 10-bit (#2); audio --mono halved an already-mono track (#3); sync --replace-audio
         cut the reference to the shorter second (#4); 25+ tools raised TypeError formatting a
         None duration after a successful encode (#5); energy karaoke gave the last word a
@@ -2785,7 +2786,7 @@ class DoctorDetectionTests(unittest.TestCase):
         # simulate the real Windows crash: killed by a signal, so subprocess.run reports a negative
         # returncode (the only portable way to reproduce "crashed" from a POSIX shell shim -- the
         # real bug is a huge positive exit code on Windows, but this class only runs on POSIX)
-        script += "case \"$*\" in *drawtext=text=x*) kill -s SEGV $$;; esac\nexit 1\n"
+        script += "case \"$*\" in *drawtext=*) kill -s SEGV $$;; esac\nexit 1\n"
         (shim / "ffmpeg").write_text(script)
         (shim / "ffmpeg").chmod(0o755)
         env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
@@ -2796,6 +2797,42 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertTrue(any("filter:drawtext" in e and "crashed" in e for e in d["errors"]), d["errors"])
         self.assertFalse(d["ok"])
         self.assertEqual(proc.returncode, 1)
+
+    def test_drawtext_fontconfig_crash_alone_keeps_drawtext_available(self):
+        """#298: on gyan.dev 9.x only a fontconfig lookup crashes; the fontfile= the tools pass
+        renders. doctor probes the way the tools call drawtext, so drawtext stays available and
+        the fontconfig crash is a note, not a missing required capability."""
+        if not shutil.which("fc-match"):
+            self.skipTest("default_font_file() resolves no fontfile= without fc-match off Windows")
+        shim = self.work / "shim_fc"
+        shim.mkdir(exist_ok=True)
+        script = "#!/bin/sh\ncase \"$2\" in\n"
+        for flag, name in (("-filters", "ffmpeg_filters_6.1.txt"), ("-encoders", "ffmpeg_encoders_6.1.txt"), ("-bsfs", "ffmpeg_bsfs_6.1.txt")):
+            script += f"  {flag}) cat '{self.FIX / name}'; exit 0;;\n"
+        script += "esac\ncase \"$1\" in -version) echo 'ffmpeg version 8.0-fixture'; exit 0;; esac\n"
+        script += "case \"$*\" in *drawtext=fontfile=*) exit 0;; *drawtext=text=x*) kill -s SEGV $$;; esac\nexit 1\n"
+        (shim / "ffmpeg").write_text(script)
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+        d = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", env=env, check=False).stdout)
+        self.assertIn("filter:drawtext", d["available"])
+        self.assertNotIn("filter:drawtext", d["missing"])
+        self.assertFalse(any("drawtext" in e for e in d["errors"]), d["errors"])
+        self.assertTrue(any("fontconfig" in n and "--font-file" in n for n in d.get("notes", [])), d.get("notes"))
+
+    def test_python_sources_have_no_invalid_escapes(self):
+        """#297: an invalid escape in a docstring (`\\%`) is a SyntaxWarning on Python 3.12+ and
+        an import failure under -W error; every tracked .py must compile clean."""
+        root = SCRIPTS.parent
+        bad = []
+        for path in sorted(list(root.glob("scripts/**/*.py")) + list(root.glob("mcp/*.py")) + list(root.glob("tests/*.py"))):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                try:
+                    compile(path.read_text(encoding="utf-8"), str(path), "exec")
+                except (SyntaxError, SyntaxWarning, DeprecationWarning) as exc:
+                    bad.append(f"{path.relative_to(root)}: {exc}")
+        self.assertEqual(bad, [])
 
     def test_drawtext_ordinary_failure_does_not_downgrade_a_listed_filter(self):
         """An ordinary nonzero exit from the drawtext probe -- not a crash -- proves nothing either

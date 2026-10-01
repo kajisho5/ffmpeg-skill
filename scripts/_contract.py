@@ -668,22 +668,42 @@ def _drawtext_probe() -> Dict[str, Any]:
     present and doctor used to report the capability `available` anyway; every tool that actually
     used it (look, scenes --sheet, overlay --text, graphics) then crashed on first real use (#100).
 
-    This runs the cheapest real drawtext render there is: a one-frame synthetic clip, no font=
-    given at all (ffmpeg's own default resolution -- the same path that crashed). A clean exit
-    means drawtext genuinely works here. Anything that could not prove either way (no ffmpeg,
-    timeout, an ordinary nonzero exit with a real ffmpeg error) is `unknown`, same "unknown is not
-    missing" principle as every other capability here. A crash specifically -- killed by signal on
-    POSIX, or an unhandled access violation surfacing as a huge unsigned exit code on Windows -- is
-    the one case this function exists to catch, and folds into `missing`: the filter is present in
-    the build but cannot actually be used as ffmpeg's own default would use it.
+    This runs the cheapest real drawtext render there is: a one-frame synthetic clip, with the
+    fontfile= the tools themselves pass by default (_common.fonts.default_font_file), or no font
+    at all where none resolves. A clean exit means drawtext genuinely works for the tools here.
+    Anything that could not prove either way (no ffmpeg, timeout, an ordinary nonzero exit with a
+    real ffmpeg error) is `unknown`, same "unknown is not missing" principle as every other
+    capability here. A crash specifically -- killed by signal on POSIX, or an unhandled access
+    violation surfacing as a huge unsigned exit code on Windows -- folds into `missing`. When the
+    fontfile= render works but a bare one crashes, drawtext stays available and the result
+    carries a `note`: only a fontconfig lookup (`--font <family>` with no file) would crash.
     """
     exe = shutil.which("ffmpeg")
     if not exe:
         return {"status": "unknown", "detail": "ffmpeg not on PATH"}
+    # Probe the way the tools call drawtext: with the fontfile= they pick by default (#298). On a
+    # build whose fontconfig lookup crashes (#100) the tools still render, because they never ask
+    # fontconfig; probing only the bare `drawtext=text=x` reported such a machine as missing
+    # drawtext altogether. The bare render still runs, and its crash is reported as a note: it is
+    # the path `--font <family>` without a file would take.
+    from _common.fonts import default_font_file
+    from _common.decision import escape_filter_path
+    font_file = default_font_file(_default_font())
+    result = _drawtext_render(exe, f"drawtext=fontfile={escape_filter_path(font_file)}:text=x" if font_file else "drawtext=text=x")
+    if font_file and result["status"] == "available":
+        bare = _drawtext_render(exe, "drawtext=text=x")
+        if bare["status"] == "missing":
+            result["note"] = ("drawtext renders with fontfile= (what every drawtext tool passes by default) but crashes "
+                              "when it has to resolve a font through fontconfig: pass --font-file, not a bare --font "
+                              "<family>, on this machine (https://github.com/kajisho5/ffmpeg-skill/issues/100)")
+    return result
+
+
+def _drawtext_render(exe: str, vf: str) -> Dict[str, Any]:
     try:
         proc = subprocess.run(
             [exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
-             "-vf", "drawtext=text=x", "-frames:v", "1", "-f", "null", "-"],
+             "-vf", vf, "-frames:v", "1", "-f", "null", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=_DETECT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -695,9 +715,8 @@ def _drawtext_probe() -> Dict[str, Any]:
     if proc.returncode < 0 or proc.returncode >= 0x80000000:
         return {"status": "missing",
                 "detail": f"drawtext render crashed (exit {proc.returncode}) instead of failing cleanly -- "
-                           "the filter is present in this build but cannot be used as-is, likely a fontconfig "
-                           "resolution crash (see https://github.com/kajisho5/ffmpeg-skill/issues/100); "
-                           "pass an explicit --font-file to every drawtext tool as a workaround"}
+                           "the filter is present in this build but cannot render even with the fontfile= the "
+                           "tools pass (see https://github.com/kajisho5/ffmpeg-skill/issues/100)"}
     tail = " ".join(proc.stderr.strip().splitlines()[-2:])
     return {"status": "unknown", "detail": f"drawtext probe exited {proc.returncode}: {tail}"}
 
@@ -809,6 +828,8 @@ def doctor() -> Dict[str, Any]:
                 # than downgrading it; see _drawtext_probe()'s own docstring for why a crash alone
                 # is the one case this exists to catch.
                 probe = _drawtext_probe()
+                if probe.get("note"):
+                    drawtext_probe = probe
                 if probe["status"] == "missing":
                     drawtext_probe = probe
                     state[cap] = "missing"
@@ -832,6 +853,7 @@ def doctor() -> Dict[str, Any]:
     errors = [f"{k}: {v['detail']}" for k, v in listings.items() if v["status"] in ("unparsed", "failed")]
     if drawtext_probe is not None and drawtext_probe["status"] != "available":
         errors.append(f"filter:drawtext: {drawtext_probe['detail']}")
+    notes = [f"filter:drawtext: {drawtext_probe['note']}"] if drawtext_probe and drawtext_probe.get("note") else []
     return {
         "version": skill_version(),
         "python": ".".join(str(x) for x in sys.version_info[:3]),
@@ -843,6 +865,7 @@ def doctor() -> Dict[str, Any]:
         "unknown": unknown,
         "detection": {k: {"status": v["status"], "count": len(v["names"]), "detail": v["detail"]} for k, v in listings.items()},
         "errors": errors,
+        **({"notes": notes} if notes else {}),
         "ok": not missing_required and not unknown_required,
         "tools": _tool_usability(state),
         "gpu_encoders": _gpu_encoders(listings["encoders"]),

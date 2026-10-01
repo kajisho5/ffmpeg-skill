@@ -98,7 +98,7 @@ def escape_drawtext(text: str) -> str:
 
 
 def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
-    """`textfile=<path>:expansion=none` for drawtext -- the one route that is provably safe for
+    r"""`textfile=<path>:expansion=none` for drawtext -- the one route that is provably safe for
     every character on every build shape this repo uses.
 
     The filter-graph parser never sees the text at all: only the PATH is parsed, and
