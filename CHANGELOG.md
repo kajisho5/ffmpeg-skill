@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- fix(graphics): a wrapped title is drawn on its lines. `graphics.py` wrapped a title that did not fit and sized its card for two lines, but the drawtext text file had every control character stripped, newline included, so "WHO SHOWS UP?", wrapped as "WHO\nSHOWS UP?", lost its line break and rendered on one line as "WHOSHOWS UP?", off both edges of the frame. Newlines are kept (`\r\n` and `\r` become `\n`; a tab, vertical tab or form feed becomes a space; other control characters are still stripped), and the centred templates (`title`, `hook`, `meme`) centre each line with drawtext's `text_align` on FFmpeg ≥ 6.1; on 5.1 and 6.0 the block is centred with its lines left-aligned. `overlay.py --text` keeps a user's newline too.
 
 ## 2.4.0
 

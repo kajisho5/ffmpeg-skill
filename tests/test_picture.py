@@ -2962,6 +2962,81 @@ class ApostropheAndPercentTests(unittest.TestCase):
         self.assertIn("it's 100% done", ass)
 
 
+class MultiLineDrawtextTests(unittest.TestCase):
+    """graphics.py wrapped a title that did not fit ("WHO SHOWS UP?" at 1.4x on a
+    1080x1920 frame) and sized its band for two lines, but the drawtext sanitiser stripped the
+    newline, so the title ran off both edges as "WHOSHOWS UP?"."""
+
+    W, H = 1080, 1920
+
+    def test_the_drawn_text_keeps_its_line_breaks_and_loses_other_control_characters(self):
+        import _common
+        for text, drawn in (("A\nB", "A\nB"), ("A\r\nB", "A\nB"), ("A\rB", "A\nB"), ("A\x07B\x00", "AB"),
+                            ("tab\there\x0cnow", "tab here now")):
+            opts = _common.drawtext_text_opts(text, tmpdir=str(OUT))
+            path = re.search(r"textfile=(.+?\.txt)", opts.replace("\\", "")).group(1)
+            self.assertEqual(_common._DRAWTEXT_PENDING[path], drawn, repr(text))
+
+    def test_centred_lines_are_aligned_where_ffmpeg_can(self):
+        """drawtext's text_align arrived in FFmpeg 6.1; 5.x and 6.0 would reject it, and centre
+        the block as a whole with its lines left-aligned."""
+        import _common
+        saved = _common._FFMPEG_VERSION
+        try:
+            for version, expected in (((5, 1), ""), ((6, 0), ""), ((6, 1), ":text_align=C"), ((9, 0), ":text_align=C")):
+                _common._FFMPEG_VERSION = version
+                self.assertEqual(_common.drawtext_center_align(), expected, version)
+        finally:
+            _common._FFMPEG_VERSION = saved
+
+    def _gray(self, path, at):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(at), "-i", str(path), "-frames:v", "1",
+                              "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, check=True).stdout
+        self.assertEqual(len(raw), self.W * self.H)
+        return raw
+
+    def _bands(self, raw, top):
+        """(first row, last row, leftmost column, rightmost column) of each run of rows with
+        bright ink below `top`; a blank gap of more than 8 rows separates two lines."""
+        W = self.W
+        lit = [y for y in range(top, self.H) if sum(1 for v in raw[y * W:(y + 1) * W] if v > 200) > 2]
+        bands = []
+        for y in lit:
+            if bands and y - bands[-1][1] <= 8:
+                bands[-1][1] = y
+            else:
+                bands.append([y, y])
+        out = []
+        for y0, y1 in bands:
+            cols = [x for x in range(W) if any(raw[y * W + x] > 200 for y in range(y0, y1 + 1))]
+            out.append((y0, y1, min(cols), max(cols)))
+        return out
+
+    def test_a_wrapped_hook_title_is_drawn_on_two_centred_lines(self):
+        import _common
+        if not default_font_file("DejaVu Sans") and not default_font_file(""):
+            self.skipTest("no concrete font file on this machine for drawtext")
+        OUT.mkdir(parents=True, exist_ok=True)
+        bg = OUT / "t1_bg.mp4"
+        if not bg.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c=0x202020:s={self.W}x{self.H}:r=30:d=4",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", str(bg))
+        out = OUT / "t1_hook.mp4"
+        script("graphics.py", bg, "--template", "hook", "--title", "WHO SHOWS UP?", "--scale", "1.4",
+               "--duration", "2", "-o", out)
+        top = 40  # below the progress bar along the top edge
+        bands = self._bands(self._gray(out, 1.0), top)
+        self.assertEqual(len(bands), 2, f"two lines of text, got {bands}")
+        widths = [b[3] - b[2] for b in bands]
+        self.assertGreater(abs(widths[0] - widths[1]), 50, "the premise: lines of unequal width")
+        for band in bands:
+            self.assertLess(band[3], self.W - 1, "no line runs off the right edge")
+            self.assertGreater(band[2], 0, "no line runs off the left edge")
+            if _common.ffmpeg_version() >= (6, 1):
+                self.assertAlmostEqual((band[2] + band[3]) / 2, self.W / 2, delta=6, msg=f"line {band} is centred")
+        self.assertEqual(self._bands(self._gray(out, 3.0), top), [], "no text after the card's --duration")
+
+
 class WrapReadabilityTests(unittest.TestCase):
     """1.15: no one-character orphan line, and a balanced break for spaced scripts."""
 
