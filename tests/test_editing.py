@@ -7,6 +7,7 @@
 import os
 import platform
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -860,6 +861,74 @@ class EditingTests(MediaFixtures):
         self.assertTrue(doc["verified"], doc["verification"])
         self.assertClose(probe(str(out))["video"]["duration"], 4.5, 0.05)
         self.assertClose(self._tone_onset(out, 1900), 2.5, 0.1)
+
+    def _moving_clip(self, out, picture, tone, freq, fps=30):
+        """Like _av_clip, but every pixel changes on every frame (a luma ramp stepped by the frame
+        number), so a held frame is told apart from the next one by its content, not assumed.
+        testsrc2 is not enough at this size: its moving parts are a few pixels, and two adjacent
+        frames measured 65 dB apart."""
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           f"nullsrc=s=64x48:r={fps}:d={picture},geq=lum='mod(N*23+X*2,256)':cb=128:cr=128",
+           "-f", "lavfi", "-i", f"sine=f={freq}:d={tone}", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", out)
+        return out
+
+    @staticmethod
+    def _gray_frames(path):
+        """Every frame of `path`, decoded to 64x48 luma bytes."""
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-fps_mode", "passthrough", "-vf",
+                              "scale=64:48,format=gray", "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
+        return [raw[i:i + 64 * 48] for i in range(0, len(raw), 64 * 48)]
+
+    @staticmethod
+    def _frame_psnr(a, b):
+        """PSNR of two decoded luma frames (bytes), 99 when identical. MediaFixtures._psnr compares files."""
+        mse = sum((x - y) ** 2 for x, y in zip(a, b)) / len(a)
+        return 99.0 if mse == 0 else 10 * math.log10(255 * 255 / mse)
+
+    @staticmethod
+    def _pts_steps(path):
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                              "-of", "csv=p=0", str(path)], stdout=subprocess.PIPE, text=True, check=True).stdout
+        pts = [float(x.strip(",")) for x in out.split()]
+        return {round(b - a, 4) for a, b in zip(pts, pts[1:])}
+
+    def test_join_none_holds_a_picture_shorter_than_its_sound(self):
+        """A plain cut (--transition none) of a clip whose sound runs 0.3 s past its
+        picture. The concat filter starts the next clip after the longer stream, so the video had
+        a 0.3 s hole (an odd average rate downstream) and the run still succeeded. Each clip now
+        lasts as long as its sound, its last frame held, as the crossfade path already does."""
+        d = OUT / "join_none_hold"
+        d.mkdir(exist_ok=True)
+        a = self._moving_clip(d / "a.mp4", 3, 3.3, 700)
+        b = self._moving_clip(d / "b.mp4", 3, 3.3, 1900)
+        out = d / "held.mp4"
+        doc = json.loads(script("join.py", a, b, "--transition", "none", "--preset", "ultrafast", "--json",
+                                "-o", out).stdout)
+        self.assertEqual(doc["expected_duration"], 6.6, "two clips of 3.3 s: each lasts as long as its sound")
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(self._pts_steps(out), {0.0333}, "no hole in the video timeline")
+        frames = self._gray_frames(out)
+        self.assertEqual(len(frames), 2 * 99, "3.3 s per clip at 30 fps")
+        for i in range(90, 99):
+            self.assertGreaterEqual(self._frame_psnr(frames[i], frames[89]), 45.0, f"frame {i} holds clip a's last frame")
+        self.assertLess(self._frame_psnr(frames[89], frames[88]), 35.0, "the premise: the picture moves every frame")
+        self.assertLess(self._frame_psnr(frames[99], frames[89]), 35.0, "clip b starts with its own picture")
+        self.assertClose(self._tone_onset(out, 1900), 3.3, 0.1)
+
+    def test_join_none_trims_a_sound_tail_under_a_frame(self):
+        """The other side of the hold rule: an AAC tail of 20 ms is not held for -- each clip keeps its
+        90 frames and nothing is inserted between them."""
+        d = OUT / "join_none_tail"
+        d.mkdir(exist_ok=True)
+        a = self._moving_clip(d / "a.mp4", 3, 3.02, 700)
+        b = self._moving_clip(d / "b.mp4", 3, 3.02, 1900)
+        out = d / "tail.mp4"
+        doc = json.loads(script("join.py", a, b, "--transition", "none", "--preset", "ultrafast", "--json",
+                                "-o", out).stdout)
+        self.assertEqual(doc["expected_duration"], 6.0, "the 20 ms tails are trimmed, not counted")
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(self._pts_steps(out), {0.0333})
+        self.assertEqual(len(self._gray_frames(out)), 2 * 90)
 
     def test_join_dissolve_of_short_parts_keeps_the_frame_count(self):
         """Two 1 s parts at 30 fps whose AAC sound runs 20 ms past the picture (a cut part) dissolved
