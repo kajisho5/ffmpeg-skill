@@ -394,7 +394,7 @@ output; the result says so with `dropped_non_av_streams: true`.
 
 ### loop.py — repeat a clip
 ```
-loop.py INPUT --times N | --duration T [-o OUT]
+loop.py INPUT --times N | --duration T [--boomerang] [-o OUT]
 ```
 `--times` repeats the whole clip that many times back to back (2 =
 original + 1 repeat). `--duration` instead loops (and trims the last
@@ -403,6 +403,14 @@ bed, or filling a fixed slot length with a short clip. Does not smooth the
 loop point (no crossfade at the seam) -- a clip that doesn't already loop
 cleanly will show a visible cut/pop at each repeat, which is a property of
 the source material this tool cannot fix.
+`--boomerang` plays the clip forward, then backward (frames 0..N-1, then
+N-2..1, repeated), so any clip loops without a jump and neither turnaround
+frame is shown twice. `--times` then counts round trips (1 is allowed), and
+`--duration` trims the last one. A boomerang is silent (reversed sound plays
+backwards; a source's audio is dropped with a `notes` line), so add a bed with
+`audio.py`. It holds the decoded clip in memory like `reverse.py` and warns
+above ~2 GiB; a clip needs 3 frames at least, and one cycle at most 32767
+(ffmpeg's `loop` filter).
 
 ### broll.py — cut away to a B-roll clip and come back
 ```

@@ -543,6 +543,94 @@ class EditingTests(MediaFixtures):
     def test_loop_duration_shorter_than_source_refused(self):
         script("loop.py", self.src, "--duration", "3", expect_fail=True)
 
+    def _ramp(self, name, frames, audio=False):
+        """A lossless 10 fps clip whose every frame is a different flat grey, so each output frame
+        can be named by its source index; --quality 0 keeps a re-encode bit-exact."""
+        path = OUT / name
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=black:s=64x64:r=10:d={frames / 10},format=gray,geq=lum='20+30*N',format=yuv420p"]
+        if audio:
+            cmd += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-shortest", "-c:a", "aac"]
+        sh(*cmd, "-c:v", "libx264", "-qp", "0", path)
+        return path
+
+    @staticmethod
+    def _frame_md5s(path):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-fps_mode", "passthrough",
+                              "-f", "framemd5", "-"], stdout=subprocess.PIPE, text=True, check=True).stdout
+        return [line.split(",")[-1].strip() for line in raw.splitlines() if line and not line.startswith("#")]
+
+    def _source_indices(self, src, out):
+        """The output's frames as source frame indices (framemd5); fails on a frame that is no source frame."""
+        index = {md5: i for i, md5 in enumerate(self._frame_md5s(src))}
+        got = self._frame_md5s(out)
+        self.assertTrue(all(md5 in index for md5 in got), "every boomerang frame must be a source frame")
+        return [index[md5] for md5 in got]
+
+    def test_loop_boomerang_times_plays_forward_then_back_without_repeating_turnarounds(self):
+        src = self._ramp("ramp6.mp4", 6)
+        self.assertEqual(len(set(self._frame_md5s(src))), 6, "the ramp's frames must be distinct")
+        out = OUT / "loop_boom_times.mp4"
+        script("loop.py", src, "--boomerang", "--times", "2", "--quality", "0", "-o", out)
+        # 0..N-1 then N-2..1: neither frame 5 nor frame 0 is shown twice in a row, even across a cycle
+        self.assertEqual(self._source_indices(src, out), [0, 1, 2, 3, 4, 5, 4, 3, 2, 1] * 2)
+        self.assertClose(probe(str(out))["duration"], 2.0, 0.05)
+
+    def test_loop_boomerang_times_one_is_a_single_round_trip(self):
+        src = self._ramp("ramp6.mp4", 6)
+        out = OUT / "loop_boom_once.mp4"
+        script("loop.py", src, "--boomerang", "--times", "1", "--quality", "0", "-o", out)
+        self.assertEqual(self._source_indices(src, out), [0, 1, 2, 3, 4, 5, 4, 3, 2, 1])
+
+    def test_loop_boomerang_duration_hits_target(self):
+        src = self._ramp("ramp6.mp4", 6)
+        out = OUT / "loop_boom_dur.mp4"
+        script("loop.py", src, "--boomerang", "--duration", "1.7", "--quality", "0", "-o", out)
+        self.assertEqual(self._source_indices(src, out), ([0, 1, 2, 3, 4, 5, 4, 3, 2, 1] * 2)[:17])
+        self.assertClose(probe(str(out))["duration"], 1.7, 0.05)
+
+    def test_loop_boomerang_drops_audio_and_says_so(self):
+        src = self._ramp("ramp6_audio.mp4", 6, audio=True)
+        self.assertIsNotNone(probe(str(src))["audio"])
+        out = OUT / "loop_boom_audio.mp4"
+        data = json.loads(script("loop.py", src, "--boomerang", "--times", "2", "-o", out, "--json").stdout)
+        self.assertIsNone(probe(str(out))["audio"], "reversed audio sounds wrong; a boomerang is silent")
+        self.assertTrue(any("audio" in n for n in data["notes"]), data)
+
+    def test_loop_boomerang_vfr_source_shows_each_frame_once(self):
+        """A VFR source (phone footage) must not go through -fps_mode cfr after the graph: the CFR
+        conform duplicates frames against the reversed timestamps, doubling a turnaround."""
+        ramp = self._ramp("ramp6.mp4", 6)
+        src = OUT / "ramp6_vfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ramp,
+           "-vf", "setpts='(N*0.1+gte(N,3)*0.05)/TB'", "-fps_mode", "passthrough", "-c:v", "libx264", "-qp", "0", src)
+        self.assertTrue(probe(str(src))["video"]["variable_frame_rate_suspected"], "the fixture must read as VFR")
+        out = OUT / "loop_boom_vfr.mp4"
+        script("loop.py", src, "--boomerang", "--times", "2", "--quality", "0", "-o", out)
+        self.assertEqual(self._source_indices(src, out), [0, 1, 2, 3, 4, 5, 4, 3, 2, 1] * 2)
+        # and constant-rate: every frame lasts as long (the encoder's time base follows the graph's
+        # rate, not the source's r_frame_rate, which is 10/1 here against an average of 60/7)
+        durations = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=duration",
+                                    "-of", "csv=p=0", str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout.split()
+        self.assertEqual(len(set(durations)), 1, durations)
+        v = probe(str(out))["video"]
+        self.assertEqual(v["r_frame_rate"], v["avg_frame_rate"])
+
+    def test_loop_boomerang_rate_is_the_nominal_fraction_and_never_a_timebase(self):
+        import loop  # scripts/ is on sys.path via _fixtures
+        rate = lambda **v: loop._nominal_rate(v)
+        self.assertEqual(rate(r_frame_rate="60/1", avg_frame_rate="72000/1201"), "60/1")  # iPhone 1/600
+        self.assertEqual(rate(r_frame_rate="50/1", avg_frame_rate="75/8"), "75/8")  # VFR: the average
+        self.assertEqual(rate(r_frame_rate="1000/1", avg_frame_rate="30/1"), "30/1")
+        # no usable average: a time-base r_frame_rate would squeeze the clip to milliseconds
+        self.assertEqual(rate(r_frame_rate="90000/1", avg_frame_rate="0/0", nb_frames=250, duration=10.0), "25")
+        self.assertEqual(rate(r_frame_rate="90000/1", avg_frame_rate="0/0"), "30")
+        self.assertEqual(rate(r_frame_rate="24000/1001", avg_frame_rate="0/0"), "24000/1001")
+
+    def test_loop_boomerang_too_few_frames_refused(self):
+        src = self._ramp("ramp2.mp4", 2)
+        script("loop.py", src, "--boomerang", "--times", "2", "-o", OUT / "loop_boom_short.mp4", expect_fail=True)
+
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
         out = OUT / "insert1.mp4"
