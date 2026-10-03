@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-(nothing yet)
+- fix(hw): VideoToolbox `-q:v` re-fitted with `tests/bench_vt.py`, and HDR gets its own curve. Under `--hw`, HLG iPhone footage was written at 6–8× x265's bytes (a 9 s clip came out at 112 MB, where the source was 22 MB and x265 wrote 16 MB) at a higher SSIM than the CPU encode: the mapping had been fitted on SDR clips only. HDR now maps CRF 18/23/28 to `-q:v` 63/55/47 (was 78/69/60). SDR H.264 maps to 75/64/53 (was 75/66/58), and SDR HEVC to 78/68/58 (was 78/69/60). Each value is the highest that matched the CPU encode's SSIM across the bench's clips. An export preset's H.264 line on an HDR source keeps the H.264 curve. Matched quality now costs 1.1–2.9× the CPU bytes on SDR and 1.9–3.5× on HDR, and the `FFMPEG_SKILL_HW` note says ~1.1–3.5×. The bench pairs frames by index with `settb=1/1000,setpts=N`, because `setpts=N/FRAME_RATE/TB` mispairs two frames in three on a 1/1000 or 1/600 time base.
+- feat: opt-in Apple VideoToolbox encoding. `--hw`/`--no-hw` on every re-encoding tool and `export.py`; `FFMPEG_SKILL_HW=1` makes it the default for everything but `export.py`'s delivery presets; `render.py`/`batch.py --hw` make it explicit for every stage. h264/hevc (HDR Main10 with the source's tags and HDR10 side data)/prores; AV1 stays on SVT-AV1. CRF→`-q:v` fitted by SSIM (`tests/bench_vt.py`, a separate HDR curve); BT.709 tags through `h264_metadata`/`hevc_metadata` so FFmpeg ≥7.1 never converts an untagged source; Apple Silicon only; a job the GPU refuses is re-encoded on the CPU. Every result names its `encoder`; `hw` says what was asked and what ran. The render cache key includes the GPU setting. `doctor --json` gains `hw`.
+- feat: a GPU encode chosen by `FFMPEG_SKILL_HW=1` (not by `--hw`) adds a note to `hw.notes`: VideoToolbox files run ~1.1-3.5x the bytes of x264/x265 at matched quality, and `--no-hw` gives the CPU encode for a final deliverable.
+
 
 ## 2.4.0
 

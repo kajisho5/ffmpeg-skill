@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import bt709_tag_args, _sdr_bt709
 from _common.emit import die
-from _common.runner import CODECS, STATE, ffmpeg_encoders
+from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_version, hw_platform_reason
 
 
 def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken: float = 0.0) -> str:
@@ -277,7 +277,118 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
     return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
+# ------------------------------------------------------- VideoToolbox (--hw)
+#
+# CRF -> VideoToolbox -q:v (1-100, higher = better): at each CRF the highest -q:v whose SSIM matched
+# the CPU line's (x264/x265 medium) across the clips of tests/bench_vt.py -- synthetic CG, fractal
+# and grain plus iPhone 17 Pro 1080p (M3, FFmpeg 9.0.2), so a GPU encode never measures below the
+# CPU one. HDR has its own curve: its CPU line is x265 Main10 at CRF+2, and the Main10 VideoToolbox
+# line needs ~11-15 less -q:v for that SSIM (the SDR curve wrote HLG phone footage at 6-8x x265's
+# bytes). Matched quality costs 1.1-2.9x the bytes of x264/x265 on SDR and 1.9-3.5x on HDR --
+# which is why --hw is opt-in and delivery presets stay on the CPU (docs/design-decisions.md).
+
+
+def vt_quality(codec: str, crf: int, hdr: bool = False) -> int:
+    base, slope = (63.0, 1.6) if hdr else (75.0, 2.2) if codec == "h264" else (78.0, 2.0)
+    return max(1, min(100, int(round(base - slope * (crf - 18)))))
+
+
+def _vt_bt709(codec: str) -> List[str]:
+    """BT.709 tags for a VideoToolbox SDR encode. From FFmpeg 7.1 the -colorspace output options
+    drive a real matrix conversion on an untagged source (see bt709_tag_args), and VideoToolbox has
+    no -x264-params VUI route; a bitstream filter writes the VUI after encoding, which the filter
+    graph never sees (measured: 49.9 dB PSNR tag-neutral vs 23.8 dB through the output options).
+    It is used on every version, not only >= 7.1: it is tag-only everywhere, and a git build of
+    7.1 reads as (7, 0) from its libavutil major, which would otherwise take the converting path."""
+    return ["-bsf:v", f"{codec}_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"]
+
+
+def _vt_args(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: bool) -> Optional[List[str]]:
+    """VideoToolbox encoder options for `codec`, or None (with a note in STATE.hw_notes) when the
+    request stays on the CPU: no VideoToolbox encoder for the codec, this machine cannot, or the
+    ffmpeg build lacks it."""
+    name = {"h264": "h264_videotoolbox", "hevc": "hevc_videotoolbox", "prores": "prores_videotoolbox"}.get(codec)
+    reason = None if name else f"no VideoToolbox encoder for {codec}"
+    reason = reason or hw_platform_reason()
+    if not reason and name not in ffmpeg_encoders():
+        reason = f"this ffmpeg build has no {name}"
+    if reason:
+        note = f"{reason}; encoded on the CPU"
+        if note not in STATE.hw_notes:
+            STATE.hw_notes.append(note)
+        return None
+    v = (meta or {}).get("video") or {}
+    hdr = bool(v.get("bt2020_or_hdr"))
+    hdr_tags = ["-colorspace", v.get("color_space") or "bt2020nc", "-color_primaries", v.get("color_primaries") or "bt2020",
+                "-color_trc", v.get("color_transfer") or "arib-std-b67"]
+    if codec == "prores":
+        return ["-c:v", name, "-profile:v", "hq", "-pix_fmt", "p210le"] + (hdr_tags if hdr else [])
+    # The HDR curve was fitted on the Main10 HEVC line; an 8-bit H.264 line (an export preset on
+    # an HDR source) replaces x264 at the same CRF and keeps the H.264 curve.
+    q = str(vt_quality(codec, crf, hdr and codec == "hevc"))
+    if codec == "h264":
+        return ["-c:v", name, "-q:v", q, "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart"] + \
+            (_vt_bt709("h264") if keep_bt709 else [])
+    if hdr:
+        # Measured on FFmpeg 9.0: HDR10 mastering-display and content-light side data carry through
+        # hevc_videotoolbox exactly as through libx265 (test_hw_hdr10_side_data_survives).
+        return ["-c:v", name, "-q:v", q, "-profile:v", "main10", "-pix_fmt", "p010le", "-tag:v", "hvc1"] + hdr_tags + ["-movflags", "+faststart"]
+    return ["-c:v", name, "-q:v", q, "-pix_fmt", "yuv420p", "-tag:v", "hvc1", "-movflags", "+faststart"] + \
+        (_vt_bt709("hevc") if keep_bt709 else [])
+
+
+def _maybe_hw(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: bool, cpu: List[str]) -> List[str]:
+    """`cpu` unchanged unless --hw / $FFMPEG_SKILL_HW is on and VideoToolbox can take `codec`; the
+    swap is remembered so run() can put the CPU line back if the GPU refuses the job."""
+    if not STATE.hw:
+        return cpu
+    vt = _vt_args(codec, crf, meta, keep_bt709)
+    if vt is None:
+        return cpu
+    STATE.hw_swaps.append((vt, cpu))
+    return vt
+
+
+_CPU_TO_CODEC = {"libx264": "h264", "libx265": "hevc", "prores_ks": "prores"}
+
+
+def hw_preset_video(video: List[str], meta: Optional[Dict[str, Any]]) -> List[str]:
+    """export.py's fixed-preset encoder line moved to VideoToolbox (same codec, the preset's -crf
+    mapped to -q:v, its -r kept); unchanged -- with the reason noted -- when that cannot apply."""
+    enc = video[video.index("-c:v") + 1] if "-c:v" in video else None
+    codec = _CPU_TO_CODEC.get(enc or "")
+    if codec is None:
+        return video
+    crf = int(video[video.index("-crf") + 1]) if "-crf" in video else 18
+    vt = _vt_args(codec, crf, meta, True)
+    if vt is None:
+        return video
+    vt = strip_movflags(vt)  # export adds it
+    if "-r" in video:
+        vt += ["-r", video[video.index("-r") + 1]]
+    # the CPU line export would have written: the preset's own options plus the BT.709 tags export
+    # adds only when the line is not VideoToolbox, so a GPU->CPU fallback is tagged like a CPU run
+    STATE.hw_swaps.append((vt, list(video) + bt709_tag_args(enc)))
+    return vt
+
+
+def strip_movflags(args: List[str]) -> List[str]:
+    return [a for i, a in enumerate(args) if not (a == "-movflags" or (i and args[i - 1] == "-movflags"))]
+
+
+def restate_last_swap(before: List[str], after: List[str]) -> None:
+    """A caller that edits an encoder line after encoder_args() returned it (export.py strips
+    -movflags) restates the recorded swap, so run()'s GPU->CPU fallback still finds the slice."""
+    if STATE.hw_swaps and STATE.hw_swaps[-1][0] == before:
+        STATE.hw_swaps[-1] = (list(after), strip_movflags(STATE.hw_swaps[-1][1]))
+
+
 def encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str, Any]] = None, keep_bt709: bool = True) -> List[str]:
+    """encoder options for `codec` (_cpu_encoder_args), on VideoToolbox when --hw asks and it can."""
+    return _maybe_hw(codec, crf, meta, keep_bt709, _cpu_encoder_args(codec, crf, preset, meta, keep_bt709))
+
+
+def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str, Any]] = None, keep_bt709: bool = True) -> List[str]:
     """The one place that turns (--codec, --quality, --preset, source) into encoder options.
 
     h264 -> x264 8-bit BT.709 (refuses HDR: 8-bit H.264 cannot carry it); hevc -> x265, Main10
@@ -340,7 +451,7 @@ def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True) ->
     (color.py's --to-sdr path builds its own H.264 line; the flag still has to reach it)."""
     if STATE.codec and STATE.codec != "h264":
         return encoder_args(STATE.codec, crf, preset, None, keep_bt709)
-    return _x264_raw(crf, preset, keep_bt709)
+    return _maybe_hw("h264", crf, None, keep_bt709, _x264_raw(crf, preset, keep_bt709))
 
 
 def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium") -> List[str]:
@@ -356,6 +467,10 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     v = (meta or {}).get("video") or {}
     if not v.get("bt2020_or_hdr"):
         return x264_args(crf, preset)
+    return _maybe_hw("hevc", crf, meta, True, _x265_hdr_default(v, crf, preset))
+
+
+def _x265_hdr_default(v: Dict[str, Any], crf: int, preset: str) -> List[str]:
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"
     trc = v.get("color_transfer") or "arib-std-b67"

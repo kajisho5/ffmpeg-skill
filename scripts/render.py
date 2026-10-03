@@ -65,6 +65,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -623,6 +624,10 @@ def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[
         "inputs": [{"hash": _content_hash(p)} for p in inputs],
         "child": [a for a in child_args() if a != "--dry-run"],
         "codec": STATE.codec, "ext": Path(dest).suffix if dest else None,
+        # what a stage's encoder resolves from: $FFMPEG_SKILL_HW (inherited) and whether the outer
+        # command made it explicit (--hw/--no-hw, which reaches export.py too). A GPU encode is not
+        # the CPU's bytes, so a --hw artifact is never served to a CPU run or the other way round.
+        "hw": [os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on"), os.environ.get(HW_FORCED_ENV) == "1"],
         "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -863,6 +868,7 @@ def main() -> int:
                                             "or 'all' its directory is where the pack is written")
     tpl.add_argument("--write-project", metavar="FILE", help="write the filled project.json for editing and stop (no render)")
     add_common(ap)
+    add_hw_orchestrator_args(ap)
     args = ap.parse_args()
     apply_common(args)
 

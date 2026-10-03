@@ -339,7 +339,8 @@ Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
 `available`, `missing` and `missing_optional` are added from `doctor`, which reads
 `ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper. Pass `--static`
 to omit detection. Nothing from the environment other than those lists and the
-ffmpeg/ffprobe/python versions is printed; no environment variables, no paths.
+ffmpeg/ffprobe/python versions is printed; no environment variables, no paths (`doctor`'s
+`hw.default_on` is a boolean derived from `FFMPEG_SKILL_HW`, never its value).
 
 `external:whisper` is **optional** for two tools since 1.17: `caption.py`
 (`--transcribe`) and `silence.py` (`--filler --transcribe`). Neither requires
@@ -380,9 +381,13 @@ for tools that don't need `subtitles`/`drawtext`/`zscale`, but `caption.usable` 
 "parsed"|"unparsed"|"failed"|"missing", "present": [...]}`. It proves the build shipped the
 capability, not that the GPU/driver on this machine will accept a job (that needs a real
 encode, which this introspection never runs). No tool declares or requires a GPU encoder, so
-`gpu_encoders` never affects `ok` or any tool's `usable` — it exists purely so a caller can ask
-the same honest yes/no/unknown question about GPU support that filter/encoder detection already
-answers for everything else, without a tool here needing to use one.
+`gpu_encoders` never affects `ok` or any tool's `usable`. `--hw` (and
+`FFMPEG_SKILL_HW=1`, which `export.py`'s delivery presets ignore) puts h264/hevc/prores encodes on
+VideoToolbox on Apple Silicon only; a job the GPU refuses is re-encoded on the CPU and said so in
+the result's `hw.notes`. When `FFMPEG_SKILL_HW=1` rather than `--hw` chose the GPU and the GPU ran,
+`hw.notes` also says so, with the file-size cost and `--no-hw` as the remedy for a final
+deliverable. `doctor`'s `hw` field is `{platform_ok, default_on}` — normalised
+booleans, never the environment value.
 
 `doctor`'s `fonts` field reports whether the default drawtext font (`caption.py`'s
 `--animate`/`--karaoke`, `graphics.py`'s templates — `BRAND_DEFAULTS["font"]`, `"DejaVu Sans"`)
@@ -493,7 +498,8 @@ Per-tool keys added in 1.17, all additive:
 | `filler`, `removed_seconds_total` | `silence.py --filler` | `{lang, source, engine, words, removed, removed_count, removed_seconds, removed_words, word_timings, list, warnings}`. The existing `removed_seconds` is unchanged in name and meaning — the seconds of *silence* removed, which is what it has always held — and `removed_seconds_total` is the additive sibling covering silence plus filler |
 | `jobs`, `jobs_requested`, `wall_seconds`, `item_seconds_total`, `timed_out` | `batch.py` | the parallelism actually applied and the number asked for, the batch's wall clock, the sum of the per-item times (so the speed-up can be quoted), and whether the shared timeout budget ran out. A timed-out item carries `"skipped": "timeout"` in its result row |
 | `timeline` | `render.py --export-timeline FILE` | `{format, rate, duration, frames, clips, transition, transition_frames, music, markers, notes, not_exported}`: the written timeline's own numbers (`rate` is exact, `"30000/1001"` for 29.97) and what the project asked for that an editor timeline cannot carry. Nothing is encoded (`commands: []`); `verified` means the file was written and reads back as its format (`verification` step `parse`) -- not that an editor opened it |
-| `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
+| `encoder`, `hw` | every re-encoding tool | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback), `copy` for a stream copy. `hw`, only when VideoToolbox was asked for: `{requested, source: flag\|env, used, notes}` — `used` is `true`/`false`, or `null` when the tool encoded nothing itself (`batch.py`, whose stages are child processes) |
+| `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …), the GPU setting (`FFMPEG_SKILL_HW` and whether `--hw`/`--no-hw` made it explicit) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
 
 Per-tool keys added in 1.17.1, all additive:
 

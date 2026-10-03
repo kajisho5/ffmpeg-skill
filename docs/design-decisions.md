@@ -814,3 +814,46 @@ not a new file format this tool would have to maintain.
 - **"Found no speech" is not "no engine".** An engine that ran and returned no cue is refused
   as `kind: input`, `reason: "no_speech"`, naming the engine and the caller's input rather than
   the engine's deleted temporary SRT. Tests: `AsrNoSpeechTests`.
+
+## Unreleased — the GPU
+
+- **`--hw` is opt-in, and a delivery preset needs it explicitly.** Measured first on an M4 Max
+  (FFmpeg 9.0, three 1080p SDR clips) and re-measured with `tests/bench_vt.py` on an M3 (FFmpeg
+  9.0.2, SSIM against x264/x265 `medium` at CRF 18/23/28, iPhone footage included): VideoToolbox
+  is 2–7× faster but needs 1.1–2.9× the bytes for the same SSIM on SDR and 1.9–3.5× on HDR. A draft or an
+  intermediate is the place for speed; a file that is uploaded is the place for bytes. So
+  `FFMPEG_SKILL_HW=1` changes every re-encoding tool's default but not `export.py`'s delivery
+  presets, and `render.py --hw` is the one switch that puts a whole project, export included, on
+  the GPU. Code: `_common.runner.apply_common`, `add_hw_orchestrator_args`. Tests:
+  `HwResolutionTests`, `test_export_preset_needs_an_explicit_hw`.
+- **CRF maps to VideoToolbox `-q:v` on the safe side, with a separate HDR curve.**
+  `vt_quality` takes, at each CRF, the highest `-q:v` whose SSIM matched the CPU encode across
+  `tests/bench_vt.py`'s clips (synthetic CG, fractal and grain, iPhone 17 Pro SDR and HLG at 30
+  and 60 fps), so a GPU encode never measures below the CPU one; the other clips pay in bytes.
+  HDR has its own curve (63 − 1.6 per CRF step against SDR H.264's 75 − 2.2 and HEVC's 78 − 2.0).
+  Its CPU line is x265 Main10 at CRF+2, and the Main10 VideoToolbox line needs ~11–15 less
+  `-q:v` for that SSIM. On the first fit's SDR curve, HLG phone footage came out at 6–8× x265's
+  bytes at a higher SSIM (0.998 against 0.989). The split is on `bt2020_or_hdr`, a probe fact,
+  and only the HEVC line takes it: an export preset's H.264 line on an HDR source replaces x264
+  at the same CRF. The HDR clips' matches spread by 6.6 at CRF 18 and ~10 at 23/28, 60 fps
+  lowest. One curve set by the 30 fps clip covers them, and the 60 fps clips pay 2.6–3.5× x265's
+  bytes; a content class or a bitrate ceiling was not worth that. Three rows match within 0.3
+  `-q:v`, inside VideoToolbox's run-to-run noise, so "never below" means within noise. SSIM is the
+  metric the first fit used: x264/x265 psy tuning lowers their SSIM at equal visual quality, so a
+  matched `-q:v` leans low. Frames are paired by index (`settb=1/1000,setpts=N`), because
+  `setpts=N/FRAME_RATE/TB` rounds in a 1/1000 or 1/600 time base and pairs two frames in three
+  with a neighbour. Tests: `test_quality_mapping_is_monotonic_and_bounded`,
+  `test_the_curves_keep_the_measured_values`, `test_an_hdr_source_gets_the_hdr_quality_curve`,
+  `test_an_h264_line_on_an_hdr_source_keeps_the_h264_curve`.
+- **VideoToolbox BT.709 tags go through a bitstream filter.** The ≥7.1 reason `bt709_tag_args`
+  uses encoder VUI parameters holds for VideoToolbox too, and it has no `-x264-params`; the
+  `-colorspace` output options put a real matrix conversion on an untagged source (24 dB PSNR,
+  tag-neutral). `h264_metadata`/`hevc_metadata` write the VUI after encoding (49.9 dB). Test:
+  `test_hw_encode_reports_itself_and_keeps_an_untagged_source_unconverted`.
+- **A refused GPU job is re-encoded on the CPU, and the result says so.** VideoToolbox has hard
+  limits (H.264 stops at 4096 wide) that listing the encoder cannot reveal. `run()` swaps the
+  recorded VideoToolbox arguments back to the CPU line they replaced and retries once;
+  `hw.used: false` and `hw.notes` report it, and `encoder` names what really ran. Test:
+  `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so`.
+- **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
+  on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.
