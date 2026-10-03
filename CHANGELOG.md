@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- fix(join): a `--dry-run` plain cut (`--transition none`) with a pending input now notes that the planned `trim` lengths are the stub's 0 s placeholders, as the crossfade path already did for its offsets.
+- note (2.4.1): a plain cut's `expected_duration` is now the sum of each clip's `clip_length` (the length both streams are trimmed or held to), not the container durations. A value that callers see changed; the old one could not be met, so `verified` was false.
 
 ## 2.4.1
 

@@ -529,6 +529,11 @@ def main() -> int:
     if d and any(m.get("dry_run") for m in metas[:-1]):
         STATE_NOTES.append("the planned xfade offsets count each pending input as 0 s long: a real run offsets "
                            "by its measured length")
+    elif not d and any(m.get("dry_run") for m in metas):
+        # the plain cut trims/holds every clip to clip_length too (2.4.1), so a pending clip's
+        # planned trim=duration=0.000 is the stub's placeholder, not the cut
+        STATE_NOTES.append("the planned trim lengths count each pending input as 0 s long: a real run trims "
+                           "or holds it to its measured length")
     output = args.output or default_output(args.inputs[0], "joined", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     # the fps filter already made the picture constant-rate, and the per-clip trims (then xfade or

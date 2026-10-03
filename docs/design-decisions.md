@@ -815,7 +815,7 @@ not a new file format this tool would have to maintain.
   as `kind: input`, `reason: "no_speech"`, naming the engine and the caller's input rather than
   the engine's deleted temporary SRT. Tests: `AsrNoSpeechTests`.
 
-## Unreleased
+## 2.4.1 — a plain join keeps its picture
 
 - **A plain `join.py` cut gives each clip one length, as a crossfade does.** The concat filter
   starts the next clip after the *longer* stream of this one, so the picture of a clip whose sound

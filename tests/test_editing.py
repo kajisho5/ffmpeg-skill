@@ -1234,6 +1234,20 @@ class EditingTests(MediaFixtures):
                                 "--json", "-o", d / "mute.mp4").stdout)
         self.assertEqual((doc["status"], doc["silent"]), ("completed", []))
 
+    def test_join_plain_cut_dry_run_names_a_pending_clips_trim_as_a_placeholder(self):
+        """2.4.1 trims/holds every plain-cut clip to clip_length, so a pending clip's planned
+        `trim=duration=0.000` is the unmeasured stub's 0 s, not the cut. The plan says so (#77),
+        as the crossfade path already does for its offsets."""
+        d = OUT / "join_pending_video"
+        d.mkdir(exist_ok=True)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
+           "-f", "lavfi", "-i", "sine=frequency=440", "-t", "1", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           d / "a.mp4")
+        doc = json.loads(script("join.py", d / "a.mp4", d / "later.mp4", "--transition", "none", "--dry-run", "--json",
+                                "-o", d / "plan.mp4").stdout)
+        self.assertTrue(any("planned trim lengths count each pending input as 0 s" in n for n in doc["notes"]), doc["notes"])
+        self.assertFalse((d / "plan.mp4").exists())
+
     def test_join_dry_run_plans_on_pending_segments(self):
         """Under --dry-run a segment that does not exist yet is an earlier step's output. Its
         probe is the dry-run stub, whose (0x0) video stream used to decide the mode: one pending
