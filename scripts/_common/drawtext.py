@@ -97,6 +97,13 @@ def escape_drawtext(text: str) -> str:
     )
 
 
+def drawtext_center_align() -> str:
+    """`:text_align=C` for a centred drawtext, so each line of a multi-line label is centred on
+    its own. The option arrived in FFmpeg 6.1 (5.x and 6.0 reject it); there the block is still
+    centred as a whole by its x expression, with its lines left-aligned inside it."""
+    return ":text_align=C" if ffmpeg_version() >= (6, 1) else ""
+
+
 def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
     r"""`textfile=<path>:expansion=none` for drawtext -- the one route that is provably safe for
     every character on every build shape this repo uses.
@@ -106,8 +113,11 @@ def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
     `%{...}` scanner, which is the reason `%` was unsafe (a bare `\%` logs "Stray %" on one build
     and fails the whole filter chain on another). With the scanner off, `'`, `%`, `:`, `,`, `[`,
     `]`, `;` and `\` all reach the picture verbatim -- 1.15 fixes `overlay.py --text "it's 100%
-    done"` losing both characters. Control characters are still stripped: a one-line burnt-in
-    label has no use for them.
+    done"` losing both characters. A newline is kept (`\r\n` and `\r` become `\n`): drawtext
+    draws it as a line break, and graphics.py's wrap puts them there on purpose (stripping them
+    ran a wrapped title off both edges of the frame). A tab, vertical tab or form
+    feed becomes a space, as the wrap measures it; other control characters are stripped (that
+    dates from the inline-escape route, where they broke the graph parser).
 
     The file is UTF-8, mode 0600, in a private per-run directory (see _drawtext_tmpdir) that is
     removed when the process ends. It is *registered* here and written by run() only if the
@@ -115,7 +125,8 @@ def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
     printed plan therefore names a path that no longer exists once the run is over, which is the
     same promise every other temp file in this skill makes.
     """
-    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", text or "")
+    cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = re.sub(r"[\x00-\x08\x0e-\x1f\x7f]", "", re.sub(r"[\t\x0b\x0c]", " ", cleaned))
     import hashlib
     name = "t_" + hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16] + ".txt"
     if tmpdir is None:

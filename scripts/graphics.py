@@ -35,7 +35,7 @@ from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as 
 from _common import (aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_font_file, default_output, die, emit, escape_drawtext, escape_filter_path,
                      ffmpeg_base, info, load_brand, parse_time, probe, run, run_keeping_subtitles, video_args,
-                     drawtext_boxborderw, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
+                     drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
                      LANGUAGE_NAMES, needs_shaping, detect_script, BIDI_SCRIPTS, font_family_of_file, font_family_for_script, has_emoji,
                      emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
                      EMOJI_ASSET_HINT, text_width_em, drawtext_shaping, wrap_text, WRAP_MODES,
@@ -356,14 +356,14 @@ def main() -> int:
         h2 = int(base * 0.045)
         filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:color={ff_color(bg, 0.55)}:t=fill:{en}")
         add_text(args.title,
-                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if args.subtitle else 0}:alpha='{fade_a}':{en}",
+                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if args.subtitle else 0}:alpha='{fade_a}':{en}",
                  size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2,
                  y=H / 2 - (h2 if args.subtitle else 0), outline=max(1.0, h1 / 20.0),
                  outline_color="000000", start=s, end=e, fade=(300, 300))
         filters.append(f"drawbox=x=(iw-{int(base * 0.12)})/2:y=(ih)/2+{h1 // 2 + (0 if args.subtitle else 0)}:w={int(base * 0.12)}:h={max(2, int(base * 0.006))}:color={ff_color(primary)}:t=fill:{en}")
         if args.subtitle:
             add_text(args.subtitle,
-                     f"drawtext={drawtext_text_opts(args.subtitle)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}:x=(w-text_w)/2:y=(h-text_h)/2+{h1 // 2 + int(base * 0.03)}:alpha='{fade_a}':{en}",
+                     f"drawtext={drawtext_text_opts(args.subtitle)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2+{h1 // 2 + int(base * 0.03)}:alpha='{fade_a}':{en}",
                      size=h2, color=primary, font=ass_font_family(), align=5, x=W / 2,
                      y=H / 2 + h1 // 2 + int(base * 0.03), outline=max(1.0, h2 / 20.0),
                      outline_color="000000", start=s, end=e, fade=(300, 300))
@@ -444,8 +444,8 @@ def main() -> int:
         filters.append(f"drawbox=x=0:y={y0}:w=iw:h={band_h}:color={ff_color(bg, 0.78)}:t=fill:{hen}")
         hook_title = wrapped(args.title, h1)
         add_text(hook_title,
-                 f"drawtext={drawtext_text_opts(hook_title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}:"
-                 f"x=(w-text_w)/2:y=(h-text_h)/2:{hen}",
+                 f"drawtext={drawtext_text_opts(hook_title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}"
+                 f"{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2:{hen}",
                  size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2, y=H / 2,
                  outline=max(1.0, h1 / 20.0), outline_color="000000", start=s, end=he)
         filters.append(f"drawbox=x=0:y=0:w='iw*max(0,1-(t-{s:.3f})/{max(0.001, he - s):.3f})':h={bar_h}:"
@@ -466,7 +466,7 @@ def main() -> int:
             meme_line = wrapped(text.upper(), fs)
             add_text(meme_line,
                      f"drawtext={drawtext_text_opts(meme_line)}:{fo}:fontsize={fs}:fontcolor={white}:"
-                     f"borderw={bw}:bordercolor={black}:x=(w-text_w)/2:y={y}:{en}",
+                     f"borderw={bw}:bordercolor={black}{drawtext_center_align()}:x=(w-text_w)/2:y={y}:{en}",
                      size=fs, color="FFFFFF", font=ass_font_family(), bold=True,
                      align=(8 if y == f"{m_top}" else 2), x=W / 2,
                      y=(m_top if y == f"{m_top}" else H - m_bottom),
