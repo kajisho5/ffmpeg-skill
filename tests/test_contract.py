@@ -25,6 +25,13 @@ CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
 import _contract  # noqa: E402
+
+# The host's own defaults must not reach the suite (every tool subprocess inherits os.environ): a
+# machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox, and FFMPEG_SKILL_ASR_ENGINE
+# or a PARAKEET_* model would change which speech engine a --transcribe test drives. Tests that
+# exercise those opt in with an explicit env.
+for _k in ("FFMPEG_SKILL_HW", "_FFMPEG_SKILL_HW_EXPLICIT", "FFMPEG_SKILL_ASR_ENGINE", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL"):
+    os.environ.pop(_k, None)
 import _common  # noqa: E402
 import server as mcp_server  # noqa: E402
 
@@ -2106,9 +2113,14 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(doc["loudness"]["ok"]); self.assertNotIn("notes", doc)
         doc = json.loads(tool("export", self.src, "--preset", "x", "--dry-run", "--json", "-o", self.out("e6_xd.mp4")).stdout)
         self.assertNotIn("loudness", doc)
-        doc = json.loads(tool("cut", self.src, "--start", "2", "--end", "4", "--fast", "--json", "-o", self.out("e6_cut.mp4")).stdout)
+        # .mkv: no edit list, so the copy snaps back to the keyframe at 0 and the lossless
+        # alternative is offered; an .mp4 copy keeps its edit list and starts at 2 s losslessly
+        doc = json.loads(tool("cut", self.src, "--start", "2", "--end", "4", "--fast", "--json", "-o", self.out("e6_cut.mkv")).stdout)
         self.assertEqual(doc["mode"], "hybrid")
         self.assertIn("--start 0.000", doc["lossless_alternative"])
+        doc = json.loads(tool("cut", self.src, "--start", "2", "--end", "4", "--fast", "--json", "-o", self.out("e6_cut.mp4")).stdout)
+        self.assertEqual(doc["mode"], "copy")
+        self.assertTrue(doc["edit_list"])
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "--json", "-o", self.out("e6_cut0.mp4")).stdout)
         self.assertIsNone(doc["lossless_alternative"])
 

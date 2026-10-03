@@ -1,6 +1,6 @@
 # Script reference
 
-Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--json-brief` (since 1.11.0: the same JSON result trimmed to `status`, `output`, `dry_run`, `verified`, a compact `summary` of the output probe -- duration_s, width, height, fps, vcodec, acodec, channels, and lufs when measured -- the tool's own keys, and the count of commands instead of the command lines; it implies `--json`, leaves `--json`'s own output untouched, and failures print the usual full failure document), `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `--plan FILE` (the dry run written as a plan document that `render.py FILE` executes later; see render.py), `-o OUT`; every editing tool that re-encodes (not `export.py`, whose preset decides the codec) also takes `--codec h264|hevc|av1|prores` (the encoder for the re-encode; default x264 for SDR, x265 Main10 for HDR, unchanged) and `--quality N` (CRF scale, default 18 -- 30 for `proxy.py`; up to 63 for av1; ignored by prores). 2.0 removed `--crf` from these tools (it was `--quality`'s alias); `export.py` keeps its own `--crf`, which is not an alias. Every tool refuses (`kind: input`, before anything runs) to replace an existing output unless `--overwrite` is given. `--codec hevc` on SDR writes 8-bit BT.709 HEVC (`hvc1`), `av1` uses SVT-AV1 (libaom fallback), `prores` is 422 HQ and needs an explicit `-o NAME.mov` (or `.mkv`), `h264` refuses an HDR source (`kind: input`, run `color.py --to-sdr` first). `export.py` keeps choosing the codec from its preset and has neither flag; a `render.py` project cannot choose a codec either -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) still runs ffprobe, `check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report`/`silence`/`loudness`/`stabilize`/`join` still run their ffmpeg/ffprobe measurements (a dry-run plan rests on real numbers; they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
+Every script prints the same information with `--help`; this file exists so the agent can read several at once. All scripts accept `--dry-run`, `--json`, `--json-brief` (since 1.11.0: the same JSON result trimmed to `status`, `output`, `dry_run`, `verified`, a compact `summary` of the output probe -- duration_s, width, height, fps, vcodec, acodec, channels, and lufs when measured -- the tool's own keys, and the count of commands instead of the command lines; it implies `--json`, leaves `--json`'s own output untouched, and failures print the usual full failure document), `--fast`, `--progress`, `--timeout SECONDS`, `--overwrite`, `--plan FILE` (the dry run written as a plan document that `render.py FILE` executes later; see render.py), `-o OUT`; every re-encoding tool and `export.py` also take `--hw`/`--no-hw` (h264/hevc/prores on Apple VideoToolbox, Apple Silicon only, CRF mapped to `-q:v`; AV1 stays on the CPU; a job the GPU refuses is re-encoded on the CPU and reported in `hw.notes`; `FFMPEG_SKILL_HW=1` makes it the default for every tool except `export.py`, whose delivery presets need `--hw` itself; `render.py`/`batch.py --hw`/`--no-hw` apply to every stage, export included; results name the `encoder` that ran); every editing tool that re-encodes (not `export.py`, whose preset decides the codec) also takes `--codec h264|hevc|av1|prores` (the encoder for the re-encode; default x264 for SDR, x265 Main10 for HDR, unchanged) and `--quality N` (CRF scale, default 18 -- 30 for `proxy.py`; up to 63 for av1; ignored by prores). 2.0 removed `--crf` from these tools (it was `--quality`'s alias); `export.py` keeps its own `--crf`, which is not an alias. Every tool refuses (`kind: input`, before anything runs) to replace an existing output unless `--overwrite` is given. `--codec hevc` on SDR writes 8-bit BT.709 HEVC (`hvc1`), `av1` uses SVT-AV1 (libaom fallback), `prores` is 422 HQ and needs an explicit `-o NAME.mov` (or `.mkv`), `h264` refuses an HDR source (`kind: input`, run `color.py --to-sdr` first). `export.py` keeps choosing the codec from its preset and has neither `--codec` nor `--quality`; a `render.py` project cannot choose a codec either -- but `--dry-run` only guarantees nothing is written for writing tools: `probe` (read-only, `--dry-run` changes nothing) still runs ffprobe, `check`/`sync`/`multicam`/`scenes`/`cropdetect`/`report`/`silence`/`loudness`/`stabilize`/`join` still run their ffmpeg/ffprobe measurements (a dry-run plan rests on real numbers; they just don't write the final artifact), and `verify` accepts the flag but ignores it entirely. Exact per-tool semantics: `contract --json`'s `dry_run` field (or `docs/contract.md`).
 
 ## Time grammar (every time-taking flag, 1.9)
 
@@ -69,11 +69,53 @@ cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-sour
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
 `--tolerance` (0.5 s) from the request, that segment is re-encoded automatically
-(x264 CRF 18). `--accurate` always re-encodes; `--tolerance -1` never does.
+(CRF 18: x265 Main10 with the source's own tags for an HDR or BT.2020 source; x265 8-bit
+BT.709 for any other HEVC source; x264 for the rest; `--codec` overrides all three). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
+(a `--segments` join of open-GOP video, or one that fails its check, still re-cuts).
 Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
+A single `.mp4`/`.mov` stream copy keeps its MP4 edit list, so the picture
+starts at `--start`. `edit_list` and `stored_preroll_seconds` say so, and
+`notes` warns that a player which ignores edit lists shows the pre-roll.
+`av_start_skew_seconds` is audio start minus video start, with a note past
+max(2 frames, 0.1 s). `keyframe_snapped` is true only when the presented start
+is more than a frame from `--start`.
+`reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
+`vfr_inconclusive`, `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`);
+`--segments` adds `segment_precision`, and the top-level `precision` is the least exact one.
+A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
+`max_step_seconds`, `ok`: the written file measured against the source) and
+`segment_end_snap_seconds` (where each part's end moved to its keyframe).
+
+**VFR guard.** Before a copy, `cut.py` samples the video's packet timestamps (up
+to five 6 s windows; no decoding) and reports `vfr_check` (`measured`:
+`sampled_cfr`, `vfr` or `inconclusive`). Only `sampled_cfr` keeps the copy; the
+other two re-encode as `--accurate` (reasons `vfr` / `vfr_inconclusive`) unless
+`--vfr-copy` keeps it with a note. A phone clip whose average rate is 29.98 against
+a nominal 30 is no longer taken for VFR. Irregular timing between the windows is
+not seen; `--accurate` is always available.
+
+A copied `.mp4`/`.mov` part runs from the keyframe at (or before) its start to
+the keyframe nearest its end, each end within `--tolerance`, so the join is the
+source's own frames with no gaps. A source with **open GOPs** (x265's default,
+iPhone "High Efficiency" HEVC) cannot be copied exactly across a join and is
+re-cut (`concat_fallback`, named in `notes`); iPhone "Most Compatible" H.264
+stays a copy. Every copy join is measured after it is written (`join_check`),
+and one that fails is re-cut.
+The parts are joined by stream copy only when they all copied and match: the
+same streams with the same codec parameters, rotation, colour tags and
+extradata. Otherwise every segment is **re-cut from
+the source** into one re-encode (`concat_fallback`): frame-exact boundaries, the
+audio's offset from the video kept, subtitles dropped and reported, and at most
+32 segments per ffmpeg call. A segment shorter than one video frame is refused.
+With `--accurate` the segments are always cut that way, in one encode (a part
+encoded on its own ran an AAC frame past its picture, leaving a hole at every
+join). A segment other than the last that runs past the end of the video is
+ended with the video when it runs less than a frame past it, and otherwise keeps
+its sound with the last frame held -- which forces the re-cut (`concat_fallback`,
+named in `notes`). The last segment keeps the source's own sound-only tail.
 
 **`--snap beats` (1.17)** moves each in/out point to the nearest *measured*
 beat within `--snap-tolerance` seconds (default 0.12, about a quarter of a beat

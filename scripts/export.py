@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from _common import STATE, add_common, apply_common, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
+from _common.decision import hw_preset_video, restate_last_swap
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
@@ -190,20 +191,26 @@ def main() -> int:
                              "veryfast" if STATE.fast else "medium", meta)
         # encoder_args() already applied --fast (its own preset scale per encoder: SVT-AV1 counts
         # 1..12, not x264's names) and appends +faststart, which this tool adds again for mp4
+        as_built = list(video)
         while "-movflags" in video:
             i = video.index("-movflags")
             del video[i:i + 2]
+        restate_last_swap(as_built, video)
     if args.crf is not None and "-crf" in video:
         video[video.index("-crf") + 1] = str(args.crf)
     if STATE.fast and "-preset" in video and not p.get("codec"):
         video[video.index("-preset") + 1] = "veryfast"
+    if STATE.hw and not p.get("codec") and video:
+        # --hw (never $FFMPEG_SKILL_HW here) puts a fixed preset on VideoToolbox: the same codec,
+        # its CRF mapped to -q:v, the preset's frame rate kept; tags come with the VT line itself
+        video = hw_preset_video(video, meta)
     cmd += video
     if args.preset != "copy":
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
         # no longer be a copy, and would silently mislabel colour the agent never actually looked at
         if "-r" not in video:
             cmd += cfr_args(meta)
-        if args.preset not in ("prores",) and not p.get("codec"):
+        if args.preset not in ("prores",) and not p.get("codec") and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
     if out_ext == "mp4":
         cmd += ["-movflags", "+faststart"]

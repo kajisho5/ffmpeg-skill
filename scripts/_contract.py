@@ -76,7 +76,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                   required=["ffprobe"], optional=[{"capability": "ffmpeg", "when": "--analyze"}, {"capability": "filter:signalstats", "when": "--analyze"}],
                   video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=False, idempotency="bit_exact", deterministic=True),
     "cut": dict(role="execution", inputs=["video or audio asset"], outputs=["cut video/audio artifact (same container family, or audio extracted when -o has an audio extension)"],
-                required=FF, optional=[{"capability": X264, "when": "re-encode: --accurate, VFR source, or a keyframe farther than --tolerance"}, HDR_X265, {"capability": AAC, "when": "re-encode of a video container"}] + AUDIO_OUT,
+                required=FF, optional=[{"capability": X264, "when": "re-encode (--accurate, a VFR source, or a keyframe farther than --tolerance) of an SDR source that is neither HEVC nor BT.2020; any --codec h264"},
+                         {"capability": X265, "when": "re-encode of an HDR or BT.2020 source (HEVC Main10 with its tags) or of any other HEVC source (8-bit BT.709), unless --codec names another encoder"}, {"capability": AAC, "when": "re-encode of a video container"}] + AUDIO_OUT,
                 video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "fit": dict(role="execution", inputs=["video asset"], outputs=["video artifact at the requested duration / aspect / fps"],
                 required=FF + [X264, AAC], optional=[HDR_X265, {"capability": "filter:minterpolate", "when": "--smooth interpolate"},
@@ -251,7 +252,7 @@ DRY_RUN_NOTES = {
 # of the original audio codec never happens on those tools.
 REENCODE_META: Dict[str, Dict[str, str]] = {
     "probe":     dict(video="never", audio="never", note="analysis only, no artifact"),
-    "cut":       dict(video="conditional", audio="conditional", note="lossless -c copy preferred; re-encodes on --accurate, a VFR source, or a keyframe snap past --tolerance (see cut.py --json: mode, keyframe_snapped)"),
+    "cut":       dict(video="conditional", audio="conditional", note="lossless -c copy preferred; re-encodes on --accurate, --codec, a VFR source, a keyframe snap past --tolerance, or a --segments join the parts cannot stream-copy (see cut.py --json: mode, reencode_reason, keyframe_snapped)"),
     "fit":       dict(video="always", audio="always", note="always re-encodes to AAC when audio is present, even if only --fps or --aspect was asked for"),
     "crop":      dict(video="always", audio="always", note="the crop filter always forces a re-encode of both streams"),
     "deinterlace": dict(video="always", audio="always", note="the yadif filter always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
@@ -389,6 +390,8 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     base = {"status": {"enum": ["completed"]}, "output": {"type": ["string", "null"], "description": "path written, or null"},
             "dry_run": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}, "description": "every ffmpeg command line planned or run"},
             "probe": {"type": "object", "description": "probe of the output when a file was written"},
+            "encoder": {"type": "string", "description": "the video encoder the last ffmpeg command used (after any GPU->CPU fallback), `copy` for a stream copy; absent when no command encoded video"},
+            "hw": {"type": "object", "description": "present when --hw or $FFMPEG_SKILL_HW asked for VideoToolbox: {requested, source: flag|env, used: true|false whether the encoder that ran is VideoToolbox, null when this process ran no encode itself (batch.py: its stages are child processes), notes: why an encode stayed on or fell back to the CPU, and, when $FFMPEG_SKILL_HW chose the GPU and it ran, what that costs and that --no-hw opts out}"},
             "plan": {"type": "string", "description": "with --plan FILE: the plan document written (the run itself is a dry run)"},
             "verified": {"type": "boolean", "description": "true only when the artifact was written, probed, and every self-check the tool ran (verification) met its target; false under --dry-run"},
             "verification": {"type": "array", "items": {"type": "object", "properties": {"step": {"type": "string"}, "ok": {"type": "boolean"}}}, "description": "what the tool itself verified: probe, plus loudness (loudness.py, export platform presets) or check (render)"}}
@@ -457,7 +460,18 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
                                "description": "packet: stream copy on a packet/keyframe boundary; sample: decoded audio trimmed to the sample, lossless output; codec_frame: sample-trimmed then framed by a lossy encoder (priming delay adds to the length); frame: re-encoded video"},
                  "reencoded": {"type": "boolean"},
-                 "lossless_alternative": {"type": ["string", "null"], "description": "when a lossless cut re-encoded because of the keyframe snap: the --start that would stream-copy instead, and how far it is from the request"}}
+                 "reencode_reason": {"type": "array", "items": {"enum": ["requested", "codec", "vfr", "vfr_inconclusive", "pcm_container", "copy_failed", "tolerance", "concat_fallback"]},
+                                     "description": "why anything was re-encoded, distinct values in first-seen order ([] when nothing was): requested (--accurate), codec (--codec), vfr (a variable-frame-rate source forced --accurate), vfr_inconclusive (its frame timing could not be measured), pcm_container (compressed audio into a .wav), copy_failed (the stream copy errored), tolerance (a keyframe snap past --tolerance), concat_fallback (--segments parts could not be joined by stream copy)"},
+                 "segment_precision": {"type": ["array", "null"], "items": {"enum": ["packet", "sample", "codec_frame", "frame"]},
+                                       "description": "--segments only: each segment's precision in order; the top-level precision is the least exact of them (null for a single segment)"},
+                 "edit_list": {"type": "boolean", "description": "a single MP4/MOV stream copy kept the edit list it wrote: the keyframe's pre-roll is stored but hidden, so the picture and the sound start at the requested time (false for every other path)"},
+                 "stored_preroll_seconds": {"type": ["number", "null"], "description": "with edit_list: seconds decoded from the keyframe before the requested start and hidden by the edit list (a player that ignores edit lists shows them); null otherwise"},
+                 "av_start_skew_seconds": {"type": ["number", "null"], "description": "the output's audio start minus its video start (null when either is missing or under --dry-run); a warning in notes past max(2 frames, 0.1 s)"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "stored pre-roll behind an edit list; an A/V start skew with the --accurate remedy; a VFR measurement that forced or (--vfr-copy) skipped a re-encode; a --segments segment ended with the video, or held on its last frame for its sound; a --segments join re-cut because the source uses open GOPs or because its join check failed"},
+                 "vfr_check": {"type": "object", "description": "video input that could still stream-copy (absent for audio-only input or output, --accurate, --codec, or a --dry-run input a plan has not written yet): {heuristic: true, measured, method: \"sampled\", windows, deltas}. measured is sampled_cfr (every packet interval in up to five 6 s windows within a tick, at least 1 ms and at most half a frame, of its window's median, and the windows agree; the file-start window's first interval is ignored), vfr (forces a re-encode, reason vfr) or inconclusive (fewer than 20 intervals or ffprobe failed; reason vfr_inconclusive). --vfr-copy keeps the copy either way, with a note. Variable timing between the windows is not seen"},
+                 "lossless_alternative": {"type": ["string", "null"], "description": "when a lossless cut re-encoded because of the keyframe snap: the --start that would stream-copy instead, and how far it is from the request"},
+                 "join_check": {"type": ["object", "null"], "description": "--segments video stream-copy join: the written file measured by demuxing, {packets, expected_packets, max_step_seconds, ok}. expected_packets counts the source's video packets from each part's start keyframe to its end keyframe (or the end of the video); max_step_seconds is the largest presentation step (null unless vfr_check measured sampled_cfr, e.g. a --vfr-copy join of variable timing, which checks the count only); ok false means the join was re-cut from the source (concat_fallback) and this is the failed measurement. null for a single segment, audio, --dry-run, --accurate/--codec/a forced re-encode, a segment that re-encoded, or a join that fell back before a copy join was attempted (open GOPs, parts that differ, a concat error)"},
+                 "segment_end_snap_seconds": {"type": ["array", "null"], "items": {"type": ["number", "null"]}, "description": "--segments stream-copy join: per segment, the signed seconds its end moved to the keyframe the copied part stops at (null for a part that runs to the end of the video, or a Matroska/MPEG-TS part, which is not snapped). null as a whole unless the output is those copied parts: a single segment, audio, --dry-run, or any re-encode or fallback"}}
     elif name == "join":
         extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"},
                  "expected_duration": {"type": ["number", "null"], "description": "clip lengths minus the transitions; null under --dry-run while an input is pending (its length is unknown)"},
@@ -651,6 +665,14 @@ def _whisper_available() -> bool:
     if shutil.which("whisper-cli") or shutil.which("whisper-cpp") or shutil.which("whisper"):
         return True
     return importlib.util.find_spec("faster_whisper") is not None or importlib.util.find_spec("whisper") is not None
+
+
+def _hw_default() -> Dict[str, Any]:
+    """--hw's machine facts, normalised (never the raw environment value): whether VideoToolbox
+    constant-quality encoding can run here, and whether $FFMPEG_SKILL_HW makes it the default."""
+    import platform
+    return {"platform_ok": platform.system() == "Darwin" and platform.machine() == "arm64",
+            "default_on": os.environ.get("FFMPEG_SKILL_HW", "").strip().lower() in ("1", "true", "yes", "on")}
 
 
 def _default_font() -> str:
@@ -869,6 +891,7 @@ def doctor() -> Dict[str, Any]:
         "ok": not missing_required and not unknown_required,
         "tools": _tool_usability(state),
         "gpu_encoders": _gpu_encoders(listings["encoders"]),
+        "hw": _hw_default(),
         "fonts": _fonts_capability(probe=True),
     }
 

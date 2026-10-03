@@ -68,7 +68,7 @@ from _common.emit import (
 )
 from _common.probe import (
     analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
-    _fraction, keyframes_near, SCORE_RE, SIL_RE, decode_gray_frames,
+    _fraction, keyframes_near, classify_frame_timing, measure_frame_timing, SCORE_RE, SIL_RE, decode_gray_frames,
     measured_level_dbfs, AUDIO_MEDIA_EXT, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output
 )
 from _common.decision import (
@@ -83,7 +83,7 @@ from _common.decision import (
     _onset_strength, _pick_onsets, _autocorrelation_peak, _grid_score,
     brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
     fmt_secs, fmt_smpte_time, fmt_srt_time, frame_size, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
-    signed_time_arg, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
+    signed_time_arg, source_codec_video_args, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
 from _common.asr import (
     ASR_ENGINES, ASR_INSTALL_HINT, _asr_run, die_no_engine, parse_srt, transcribe, _transcribe_in,
@@ -200,7 +200,7 @@ __all__ = [
     "font_family_for_script", "font_family_of_file", "FONT_FLAG_HINT", "font_for_script", "FONT_INSTALL_HINT",
     "fonts_dir_covers_script", "_fraction", "has_emoji", "info", "INSTALL_HINTS", "install_signal_handlers",
     "is_audio_output", "_is_emoji_base", "_is_emoji_char", "_is_ffmpeg", "_is_mark", "_KEYCAP", "_KEYCAP_BASES",
-    "keyframes_near", "LANGUAGE_NAMES", "LATIN_EM", "LEADING_VOWELS", "_libass_color_probe", "_limit_for",
+    "keyframes_near", "classify_frame_timing", "measure_frame_timing", "LANGUAGE_NAMES", "LATIN_EM", "LEADING_VOWELS", "_libass_color_probe", "_limit_for",
     "load_brand", "measured_level_dbfs", "AUDIO_MEDIA_EXT", "MEDIA_EXT", "MissingFpsError", "needs_shaping", "NO_SPACE_SCRIPTS",
     "_odd_dimension_retry", "_on_signal", "_output_failed", "_OutputLock", "pad_filters", "parse_time", "_pid_dead",
     "place_output", "_plan_at_exit", "_plan_inputs", "_PLAN_STRIP", "PLAN_VERSION", "PREFERRED_FAMILIES",
@@ -212,7 +212,7 @@ __all__ = [
     "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote",
     "_SIGNALS_INSTALLED", "signed_time_arg", "_stage_existing_output", "STATE", "SVT_PRESET", "text_width_em",
     "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "validate_color", "verify_output",
-    "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
+    "source_codec_video_args", "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
     "_x264_raw", "_ZWJ",
     "ASR_ENGINES", "ASR_INSTALL_HINT", "_asr_run", "die_no_engine", "parse_srt", "transcribe",
     "_transcribe_in", "transcribe_words", "_words_from_openai_whisper_json",
