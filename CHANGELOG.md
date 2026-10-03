@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-(nothing yet)
+- feat: Parakeet speech engines. `parakeet-mlx` and `parakeet.cpp` (`parakeet-cli` + a `.gguf`) for `caption.py --transcribe` and `silence.py --filler --transcribe`; `--engine` / `FFMPEG_SKILL_ASR_ENGINE` pick one, `auto` runs Parakeet for English speech (explicit `--language`, else whisper.cpp's language detector, else assumed English) and Whisper otherwise. Results carry `transcription` (engine, model, routing); `silence.py`'s `filler.source` is `parakeet:ENGINE` for them. New optional contract capability `external:parakeet`.
+- fix: a Parakeet engine that exits 0 but writes output that is not a transcript (not JSON, the wrong shape, entries that do not parse) is a failed run: `auto` logs it and moves on to the next engine instead of refusing with "found no speech". The engine's own empty answer (`{"words": []}` / `{"sentences": []}`, what both write for silence) is still the no-speech refusal. For `silence.py --filler`, an engine whose cues read but whose word timings do not is also passed over.
+- fix(caption): `--mode mux --transcribe` reports `transcription` (engine, model, routing), as the burn and sidecar modes do.
+- fix: the Parakeet output parsers skip JSON of the wrong shape (`{"words": 5}`, `{"sentences": 5}`, a number or null where a sentence or token object belongs) instead of raising `TypeError`/`AttributeError`; a malformed engine document yields no words, never a traceback.
+
 
 ## 2.4.0
 
