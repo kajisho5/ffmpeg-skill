@@ -2975,7 +2975,8 @@ class MultiLineDrawtextTests(unittest.TestCase):
                             ("tab\there\x0cnow", "tab here now")):
             opts = _common.drawtext_text_opts(text, tmpdir=str(OUT))
             path = re.search(r"textfile=(.+?\.txt)", opts.replace("\\", "")).group(1)
-            self.assertEqual(_common._DRAWTEXT_PENDING[path], drawn, repr(text))
+            pending = {os.path.normpath(k): v for k, v in _common._DRAWTEXT_PENDING.items()}
+            self.assertEqual(pending[os.path.normpath(path)], drawn, repr(text))
 
     def test_centred_lines_are_aligned_where_ffmpeg_can(self):
         """drawtext's text_align arrived in FFmpeg 6.1; 5.x and 6.0 would reject it, and centre
