@@ -602,7 +602,9 @@ class EditingTests(MediaFixtures):
         ramp = self._ramp("ramp6.mp4", 6)
         src = OUT / "ramp6_vfr.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ramp,
-           "-vf", "setpts='(N*0.1+gte(N,3)*0.05)/TB'", "-fps_mode", "passthrough", "-c:v", "libx264", "-qp", "0", src)
+           "-vf", "setpts='(N*0.1+gte(N,3)*0.05)/TB'", "-fps_mode", "passthrough", "-use_editlist", "0", "-c:v", "libx264", "-qp", "0", src)
+        # -use_editlist 0: FFmpeg 7's mp4 muxer otherwise writes an edit list that hides the last
+        # frame (setpts leaves it no duration), so the fixture itself would read as 5 frames
         self.assertTrue(probe(str(src))["video"]["variable_frame_rate_suspected"], "the fixture must read as VFR")
         out = OUT / "loop_boom_vfr.mp4"
         script("loop.py", src, "--boomerang", "--times", "2", "--quality", "0", "-o", out)
