@@ -5,7 +5,13 @@
 ## Unreleased
 
 - fix(graphics): a wrapped title is drawn on its lines. `graphics.py` wrapped a title that did not fit and sized its card for two lines, but the drawtext text file had every control character stripped, newline included, so "WHO SHOWS UP?", wrapped as "WHO\nSHOWS UP?", lost its line break and rendered on one line as "WHOSHOWS UP?", off both edges of the frame. Newlines are kept (`\r\n` and `\r` become `\n`; a tab, vertical tab or form feed becomes a space; other control characters are still stripped), and the centred templates (`title`, `hook`, `meme`) centre each line with drawtext's `text_align` on FFmpeg ≥ 6.1; on 5.1 and 6.0 the block is centred with its lines left-aligned. `overlay.py --text` keeps a user's newline too.
+
+## 2.5.0
+
+_Automated release: version and notes generated from pull requests merged since 2.4.2._
+
 - feat(loop): `--boomerang` plays the clip forward then backward (frames 0..N-1, then N-2..1, repeated), so any clip loops without a jump. Each turnaround frame is shown once, unlike the common split/reverse/concat recipe, which shows the last frame twice and, on every repeat, the first frame twice. `--times` counts round trips (1 is allowed) and `--duration` still hits its target. The output is constant-rate at the source's nominal frame rate: a variable-frame-rate source (phone footage) is retimed by frame index, because a CFR conform after the reverse duplicated a turnaround frame. The audio is dropped, with a `notes` line (reversed sound plays backwards). The result gains `boomerang`. It warns when the decoded frames it holds would pass ~2 GiB and refuses clips under 3 frames or cycles over the `loop` filter's 32767 frames.
+- feat(loop): --boomerang plays a clip forward then backward (#310)
 
 ## 2.4.2
 
