@@ -17,7 +17,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
 - **planned** — not released. Nothing below a *planned* heading exists in any published version;
   the feature lines are the intent, not a description of the code.
 
-The released version today is **2.4.0** (notes in CHANGELOG.md); **2.2.1** — `render.py`, `caption.py --mode mux` and
+The released version today is **2.4.2** (notes in CHANGELOG.md); **2.2.1** — `render.py`, `caption.py --mode mux` and
 `sequence.py` now check every input before any work, as `join.py --list` (2.2.0) does: every
 missing or broken TTS/render segment is named at once (`--on-missing skip` joins the rest). 2.1.0: `render.py --export-timeline` hands the cut to an
 editor as FCPXML, CMX 3600 EDL or OpenTimelineIO (clips, speed, dissolves, music bed, chapter
