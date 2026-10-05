@@ -222,7 +222,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | `freeze.py` | Hold a frame for N seconds (`--at`, `--hold`, `--mode insert/extend`) — an end-card hold or a comedic beat |
 | `pad.py` | Add black/silent padding at the start and/or end of the timeline (`--start`, `--end`) — distinct from `fit.py --fit pad`'s per-frame letterbox bars |
 | `speedramp.py` | Step through different constant speeds across a clip via `--segment START-END:FACTOR` (repeatable) — distinct from `fit.py`'s single whole-clip speed factor |
-| `loop.py` | Repeat a clip `--times` N or to a target `--duration` — for background loops and filling a fixed slot length |
+| `loop.py` | Repeat a clip `--times` N or to a target `--duration` — for background loops and filling a fixed slot length; `--boomerang` plays it forward then backward |
 | `broll.py` | Cut away to a B-roll clip over the A-roll for a window (`--insert B --at T --duration D`, repeatable) and come back; A's length and audio untouched by default |
 | `metadata.py` | Write container chapter markers from a `TIME TITLE` text file and title/artist/comment tags, every stream copied bit for bit; `--auto-chapters` proposes the markers from measured pauses and scene cuts and names them `Chapter N` for you to rename |
 | `grid.py` | Composite `--cols`x`--rows` clips into one grid, each cell letterboxed and labelled with its filename by default (`--label none` to skip) |
