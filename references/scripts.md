@@ -80,11 +80,12 @@ A single `.mp4`/`.mov` stream copy keeps its MP4 edit list, so the picture
 starts at `--start`. `edit_list` and `stored_preroll_seconds` say so, and
 `notes` warns that a player which ignores edit lists shows the pre-roll.
 `av_start_skew_seconds` is audio start minus video start, with a note past
-max(2 frames, 0.1 s). `keyframe_snapped` is true only when the presented start
-is more than a frame from `--start`.
+max(2 frames, 0.1 s). `keyframe_snapped` is true for every stream copy (`precision`
+`packet`); `start_snapped` is measured: true only when a copied picture starts more
+than a frame from `--start` (`null` under `--dry-run`).
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
 `vfr_inconclusive`, `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`);
-`--segments` adds `segment_precision`, and the top-level `precision` is the least exact one.
+`--segments` adds `segment_precision`, and `least_exact_precision` is the least exact one.
 A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
 `max_step_seconds`, `ok`: the written file measured against the source) and
 `segment_end_snap_seconds` (where each part's end moved to its keyframe).

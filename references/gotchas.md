@@ -50,7 +50,7 @@ is checked and re-cut when wrong. Open-GOP HEVC (iPhone "High Efficiency")
 always re-encodes a `--segments` join, even with `--tolerance -1`. If the user insists on lossless output, pass
 `--tolerance -1` and tell them the cut lands on the nearest earlier keyframe.
 The MP4 demuxer seeks by *decode* time, so a start a few frames before a
-keyframe begins at that keyframe (`keyframe_snapped: true`).
+keyframe begins at that keyframe (`start_snapped: true`).
 `av_start_skew_seconds` warns when a copy's sound and picture start apart
 (Core Media HEVC once gave 3.7 s of sound with no picture); `--accurate` is the
 fix. A `-c copy` cut on VFR or a

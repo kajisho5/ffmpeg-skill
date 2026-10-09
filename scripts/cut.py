@@ -13,8 +13,9 @@ WAV), -o out.m4a writes AAC; an audio extension on a video input drops the
 picture (mp4 -> wav extraction). The result reports `precision`
 (packet / sample / codec_frame / frame) and the measured duration error, plus
 `mode` (copy / accurate / hybrid -- "hybrid" means a lossless cut silently
-re-encoded because the keyframe snap exceeded --tolerance), `keyframe_snapped`,
-`requested_start`/`requested_end` (or `requested_segments` for --segments),
+re-encoded because the keyframe snap exceeded --tolerance), `keyframe_snapped`
+(a stream copy end to end), `start_snapped` (measured: a copied start moved past a frame),
+`reencode_reason`, `requested_start`/`requested_end` (or `requested_segments` for --segments),
 `requested_duration`, `output_duration` and `duration_delta_seconds` -- so a
 caller never has to trust "it probably cut where I asked" on faith.
 
@@ -119,10 +120,41 @@ def least_exact(precisions: List[str]) -> str:
     return min(precisions, key=PRECISION_ORDER.index)
 
 
-def _outcome(meta: dict, dst: str, reencoded: bool, reasons: List[str], **copy) -> dict:
+def report_precision(meta: dict, dst: str, reencoded: bool, outcomes: List[dict]) -> dict:
+    """The run's precision keys from its segments' outcomes.
+
+    precision         main's formula, unchanged: precision_of() for the whole run, so `packet` only
+                      when nothing re-encoded (the join included)
+    keyframe_snapped  precision == "packet": the run is a stream copy end to end, which lands on
+                      keyframes and packets. Kept with its 2.x meaning; whether a copied START
+                      really moved is start_snapped
+    start_snapped     measured: true when a copied segment's picture starts more than a frame from
+                      its requested start; false when every start is where asked (an edit list, a
+                      start on a keyframe, an audio-only copy's packet seek) or everything
+                      re-encoded; null when a copied start was not measured (--dry-run)
+    least_exact_precision  the least exact segment's precision; differs from `precision` only for
+                      an audio-only --segments join of copied and re-encoded parts (a video join
+                      re-cuts every segment when any part re-encodes)
+    segment_precision each segment's, for --segments (null for one segment)"""
     precision = precision_of(meta, dst, reencoded)
-    out = {"reencoded": reencoded, "reasons": reasons, "precision": precision,
-           "keyframe_snapped": precision == "packet", "edit_list": False, "stored_preroll_seconds": None}
+    snaps = [o.get("start_snapped") for o in outcomes]
+    if any(s is True for s in snaps):
+        start_snapped = True
+    elif any(s is None for s in snaps):
+        start_snapped = None
+    else:
+        start_snapped = False
+    return {"precision": precision, "keyframe_snapped": precision == "packet", "start_snapped": start_snapped,
+            "least_exact_precision": least_exact([o["precision"] for o in outcomes]),
+            "segment_precision": [o["precision"] for o in outcomes] if len(outcomes) > 1 else None}
+
+
+def _outcome(meta: dict, dst: str, reencoded: bool, reasons: List[str], **copy) -> dict:
+    """One segment's outcome. start_snapped defaults to false: a re-encode starts where asked, and
+    an audio-only copy seeks on the output side, to the packet; a video copy passes the measured
+    value (copy_presentation), a --dry-run copy None."""
+    out = {"reencoded": reencoded, "reasons": reasons, "precision": precision_of(meta, dst, reencoded),
+           "start_snapped": False, "edit_list": False, "stored_preroll_seconds": None}
     out.update(copy)
     return out
 
@@ -203,19 +235,19 @@ def copy_presentation(t: float, key, edit_list: bool, fps) -> dict:
     """What a stream copy starting at `t` presents, from the keyframe it began at (seek_keyframe).
     With an MP4 edit list a keyframe at or before t is decoded but hidden (stored pre-roll) and the
     picture starts at t; a keyframe after t starts the picture late. Without one (Matroska, or a
-    concat part cut with make_zero) the picture starts at the keyframe. keyframe_snapped: the
-    presented start is more than a frame from t."""
+    concat part cut with make_zero) the picture starts at the keyframe. start_snapped: the
+    presented start is more than a frame from t (an unmeasured start counts as snapped)."""
     frame = 1.0 / fps if fps else 0.0
     if key is None:
-        return {"keyframe_snapped": True, "stored_preroll_seconds": None}
+        return {"start_snapped": True, "stored_preroll_seconds": None}
     k_pts, first = key[0], key[2]
     if first is None:
         # no packet at or after t in the probed window: where the picture starts is unmeasured
-        return {"keyframe_snapped": True, "stored_preroll_seconds": None}
+        return {"start_snapped": True, "stored_preroll_seconds": None}
     if edit_list and k_pts <= t + 1e-6:
         # hidden: the pictures decoded from the keyframe up to the first one presented
-        return {"keyframe_snapped": False, "stored_preroll_seconds": round(max(0.0, first - k_pts), 6)}
-    return {"keyframe_snapped": abs(k_pts - t) > frame + 1e-6, "stored_preroll_seconds": None}
+        return {"start_snapped": False, "stored_preroll_seconds": round(max(0.0, first - k_pts), 6)}
+    return {"start_snapped": abs(k_pts - t) > frame + 1e-6, "stored_preroll_seconds": None}
 
 
 def av_skew(out_meta: dict):
@@ -401,7 +433,7 @@ def check_join(out_pts, expected: int, fps, audio_frame: float, cfr: bool) -> di
 
 def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5, meta: dict = None,
             _reasons: List[str] = None, edit_list_ok: bool = True, copy_t: float = None) -> dict:
-    """Cut one segment. Returns its outcome: {reencoded, reasons, precision, keyframe_snapped}, where
+    """Cut one segment. Returns its outcome: {reencoded, reasons, precision, start_snapped, ...}, where
     `reasons` lists why THIS segment re-encoded on its own (pcm_container / copy_failed / tolerance);
     the caller adds the reasons that forced every segment (requested, codec, vfr).
 
@@ -491,7 +523,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         return _outcome(meta, dst, reencode, reasons)
     if STATE.dry_run:
         # the planned copy: whether it keeps an edit list is known; where it lands is not
-        return _outcome(meta, dst, False, reasons, edit_list=edit_list and edit_list_ok)
+        return _outcome(meta, dst, False, reasons, edit_list=edit_list and edit_list_ok, start_snapped=None)
     fps = (meta.get("video") or {}).get("fps")
     # a concat part's edit list does not hide its pre-roll in the join, so it presents from the keyframe
     shown = edit_list and edit_list_ok
@@ -858,6 +890,10 @@ def main() -> int:
         if total and s >= total:
             die(f"segment start {s:.3f}s is beyond the media duration {total:.3f}s")
     segments = [(s, min(e, total) if total else e) for s, e in segments]
+    # what was asked for, clamped to the media duration as in every 2.x release: requested_* and
+    # expected_duration report this, and a segment the join below ends with the video (less than a
+    # frame of sound trimmed) shows that trim in duration_delta_seconds and a note instead
+    requested = list(segments)
     video = meta.get("video") or {}
     if video.get("fps") and not is_audio_output(args.output or ""):
         # a video segment shorter than one frame has no picture to cut: a copy lands on a whole
@@ -1031,12 +1067,12 @@ def main() -> int:
                 outcomes = [_outcome(meta, output, True, o["reasons"]) for o in outcomes]
 
     result = probe(output, role="output")
-    expected = sum(e - s for s, e in segments)
+    expected = sum(e - s for s, e in requested)
+    # the join counts: a copy join that fell back to a re-encode is not a stream copy (2.x reported
+    # it as mode copy, precision packet)
     reencoded = join_reencoded or any(o["reencoded"] for o in outcomes)
-    # per segment, then the least exact of them: a join that re-encodes after the cut cannot make a
-    # segment that landed on a keyframe any more exact, so it upgrades neither value
-    precision = least_exact([o["precision"] for o in outcomes])
-    keyframe_snapped = any(o["keyframe_snapped"] for o in outcomes)
+    report = report_precision(meta, output, reencoded, outcomes)
+    precision = report["precision"]
     reencode_reason: List[str] = []
     if reencoded:
         for r in forced + [r for o in outcomes for r in o["reasons"]] + (["concat_fallback"] if join_reencoded else []):
@@ -1067,13 +1103,14 @@ def main() -> int:
          + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
     emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
          dropped_non_av_streams=bool(DROPPED_STREAMS),
-         requested_start=round(segments[0][0], 6) if len(segments) == 1 else None,
-         requested_end=round(segments[0][1], 6) if len(segments) == 1 else None,
-         requested_segments=[[round(s, 6), round(e, 6)] for s, e in segments] if len(segments) > 1 else None,
+         requested_start=round(requested[0][0], 6) if len(requested) == 1 else None,
+         requested_end=round(requested[0][1], 6) if len(requested) == 1 else None,
+         requested_segments=[[round(s, 6), round(e, 6)] for s, e in requested] if len(requested) > 1 else None,
          requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
-         mode=mode, keyframe_snapped=keyframe_snapped, reencode_reason=reencode_reason,
-         segment_precision=[o["precision"] for o in outcomes] if len(outcomes) > 1 else None,
+         mode=mode, keyframe_snapped=report["keyframe_snapped"], start_snapped=report["start_snapped"],
+         reencode_reason=reencode_reason, least_exact_precision=report["least_exact_precision"],
+         segment_precision=report["segment_precision"],
          edit_list=bool(single.get("edit_list")), stored_preroll_seconds=stored, av_start_skew_seconds=skew,
          join_check=join_check, segment_end_snap_seconds=end_snaps,
          notes=notes, **({"vfr_check": vfr_check} if vfr_check else {}),

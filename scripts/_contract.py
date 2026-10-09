@@ -448,7 +448,10 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "verify":
         extra = {"report": {"type": ["string", "null"]}, "files": {"type": "array"}, "failed": {"type": "integer"}, "total": {"type": "integer"}}
     elif name == "batch":
-        extra = {"results": {"type": "array"}, "processed": {"type": "integer"}, "total": {"type": "integer"}}
+        extra = {"results": {"type": "array", "description": "one row per input; a row whose recipe ran cut.py carries cut_reencoded (each cut.py call's reencoded) and cut_reencode_reasons (each reason those calls named, once per call)"},
+                 "processed": {"type": "integer"}, "total": {"type": "integer"},
+                 "cut_stream_copy": {"type": ["object", "null"], "description": "cut.py calls across the folder: {calls, stream_copy, reencoded, stream_copy_rate}; null when no cut.py step ran"},
+                 "cut_reencode_reasons": {"type": ["object", "null"], "description": "how many cut.py calls named each reencode_reason ({} when none re-encoded); null when no cut.py step ran"}}
     elif name == "report":
         extra = {"report": {"type": "string"}, "check": {"type": ["object", "null"]}}
     elif name == "export":
@@ -470,12 +473,16 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
         extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},
                  "precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
-                               "description": "packet: stream copy on a packet/keyframe boundary; sample: decoded audio trimmed to the sample, lossless output; codec_frame: sample-trimmed then framed by a lossy encoder (priming delay adds to the length); frame: re-encoded video"},
+                               "description": "the whole run's: packet only when nothing re-encoded, the --segments join included (stream copy on a packet/keyframe boundary); sample: decoded audio trimmed to the sample, lossless output; codec_frame: sample-trimmed then framed by a lossy encoder (priming delay adds to the length); frame: re-encoded video"},
+                 "least_exact_precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
+                                           "description": "the least exact segment's precision (the order packet, codec_frame, frame, sample); differs from precision only for an audio-only --segments join of copied and re-encoded parts"},
+                 "keyframe_snapped": {"type": "boolean", "description": "precision is packet: the run is a stream copy end to end, which lands on keyframes and packets. Whether a copied start really moved is start_snapped"},
+                 "start_snapped": {"type": ["boolean", "null"], "description": "measured: true when a copied segment's picture starts more than one frame from its requested start (the keyframe the demuxer seeks to, by decode time); false when every start is where asked (an MP4 edit list hides the pre-roll, the start is a keyframe, an audio-only copy, or everything re-encoded); null when a copied start was not measured (--dry-run)"},
                  "reencoded": {"type": "boolean"},
                  "reencode_reason": {"type": "array", "items": {"enum": ["requested", "codec", "vfr", "vfr_inconclusive", "pcm_container", "copy_failed", "tolerance", "concat_fallback"]},
                                      "description": "why anything was re-encoded, distinct values in first-seen order ([] when nothing was): requested (--accurate), codec (--codec), vfr (a variable-frame-rate source forced --accurate), vfr_inconclusive (its frame timing could not be measured), pcm_container (compressed audio into a .wav), copy_failed (the stream copy errored), tolerance (a keyframe snap past --tolerance), concat_fallback (--segments parts could not be joined by stream copy)"},
                  "segment_precision": {"type": ["array", "null"], "items": {"enum": ["packet", "sample", "codec_frame", "frame"]},
-                                       "description": "--segments only: each segment's precision in order; the top-level precision is the least exact of them (null for a single segment)"},
+                                       "description": "--segments only: each segment's precision in order; least_exact_precision is the least exact of them (null for a single segment)"},
                  "edit_list": {"type": "boolean", "description": "a single MP4/MOV stream copy kept the edit list it wrote: the keyframe's pre-roll is stored but hidden, so the picture and the sound start at the requested time (false for every other path)"},
                  "stored_preroll_seconds": {"type": ["number", "null"], "description": "with edit_list: seconds decoded from the keyframe before the requested start and hidden by the edit list (a player that ignores edit lists shows them); null otherwise"},
                  "av_start_skew_seconds": {"type": ["number", "null"], "description": "the output's audio start minus its video start (null when either is missing or under --dry-run); a warning in notes past max(2 frames, 0.1 s)"},

@@ -200,7 +200,8 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(data["mode"], "copy")
         self.assertEqual(data["reencode_reason"], [])
         self.assertTrue(data["edit_list"])
-        self.assertFalse(data["keyframe_snapped"])
+        self.assertTrue(data["keyframe_snapped"], "a stream copy end to end")
+        self.assertFalse(data["start_snapped"])
         self.assertAlmostEqual(data["stored_preroll_seconds"], 0.3, places=3, msg="4.3 s back to the keyframe at 4.0")
         self.assertIn("edit list", " ".join(data["notes"]))
         self.assertLessEqual(abs(data["av_start_skew_seconds"]), 1 / FPS)
@@ -242,7 +243,7 @@ class CutJoinTests(unittest.TestCase):
         out = DIR / "copy_9.9.mp4"
         data = cut_json(self.hevc, "--start", "9.9", "--duration", "1", "--tolerance", "-1", "-o", out)
         self.assertEqual(data["mode"], "copy")
-        self.assertTrue(data["keyframe_snapped"])
+        self.assertTrue(data["start_snapped"])
         self.assertIsNone(data["stored_preroll_seconds"])
         self.assertFrameExact(gray_frames(out)[0], 300)
 
@@ -252,7 +253,7 @@ class CutJoinTests(unittest.TestCase):
         self.assertTrue(data["edit_list"])
         # --start is relative to the file's start and packet times are absolute: the report must
         # still find the keyframe at 4.0 (14.0 in the file)
-        self.assertFalse(data["keyframe_snapped"])
+        self.assertFalse(data["start_snapped"])
         self.assertAlmostEqual(data["stored_preroll_seconds"], 0.3, places=3)
         self.assertFrameExact(gray_frames(out)[0], 129)
         # cutting that result again: the VFR sampler must read its stored pre-roll, or a seek to its
@@ -293,9 +294,9 @@ class CutJoinTests(unittest.TestCase):
         """No packet at or after the start in the probed window: the start is unknown, so it is
         not claimed exact and no pre-roll is reported."""
         self.assertEqual(cut.copy_presentation(4.3, (4.0, 3.9, None), True, 30.0),
-                         {"keyframe_snapped": True, "stored_preroll_seconds": None})
+                         {"start_snapped": True, "stored_preroll_seconds": None})
         self.assertEqual(cut.copy_presentation(4.3, (4.0, 3.9, 4.3), True, 30.0),
-                         {"keyframe_snapped": False, "stored_preroll_seconds": 0.3})
+                         {"start_snapped": False, "stored_preroll_seconds": 0.3})
 
     def test_judging_a_copy_by_its_video_is_noted_even_when_it_then_reencodes(self):
         """The late-audio source's container outlasts its video by 0.379 s, so the copy is judged
@@ -357,7 +358,9 @@ class CutJoinTests(unittest.TestCase):
         self.assertTrue(data["reencoded"])
         self.assertEqual(data["mode"], "hybrid")
         self.assertEqual(data["segment_precision"], ["frame", "frame"])
+        self.assertEqual((data["precision"], data["least_exact_precision"]), ("frame", "frame"))
         self.assertFalse(data["keyframe_snapped"])
+        self.assertFalse(data["start_snapped"], "every segment was re-cut, so every start is where asked")
         self.assertEqual(stderr_of_decode(out), "")
         self.assertEqual(probe(str(out))["video"]["codec"], "hevc", "the re-cut join keeps the source codec")
         pts = frame_pts(out)
@@ -440,13 +443,20 @@ class CutJoinTests(unittest.TestCase):
 
     def test_a_sound_tail_under_a_frame_ends_the_segment_with_its_picture(self):
         """20 ms of sound past the picture is trimmed, not held for: a 60 + 60 frame join with no
-        fractional hole, and the trim is named."""
+        fractional hole, and the trim is named. requested_segments keeps what was asked (clamped
+        to the media's duration, as in every 2.x release); duration_delta_seconds shows the trim."""
         out = DIR / "tail_trim.mp4"
         data = cut_json(self.tail, "--segments", "4-6.02,0-2", "--accurate", "-o", out)
         pts = frame_pts(out)
         self.assertEqual(len(pts), 120)
         self.assertEqual({round(b - a, 4) for a, b in zip(pts, pts[1:])}, {round(1 / FPS, 4)})
-        self.assertEqual(data["requested_segments"][0], [4.0, 6.0])
+        self.assertEqual(data["requested_segments"][0], [4.0, 6.02])
+        self.assertAlmostEqual(data["requested_duration"], 4.02, places=6)
+        self.assertAlmostEqual(data["expected_duration"], 4.02, places=6)
+        # the trim shows in the delta against the request (120 frames are 4.0 s against 4.02 s
+        # asked), give or take an AAC frame of the joined sound, which FFmpeg versions pad differently
+        self.assertAlmostEqual(data["duration_delta_seconds"], data["output_duration"] - 4.02, places=6)
+        self.assertLess(abs(data["duration_delta_seconds"]), 1 / FPS + 1024 / 48000)
         self.assertTrue(any("ends with the video" in n for n in data["notes"]), data["notes"])
 
     def test_an_accurate_join_has_no_hole_at_its_joins(self):
@@ -598,12 +608,12 @@ class CutJoinTests(unittest.TestCase):
 
     def test_an_end_within_tolerance_snaps_to_the_keyframe_after_it(self):
         """0-1.8 ends 0.2 s before the keyframe at 2.0: the part runs to that keyframe, so the
-        join is 60 + 60 of the source's frames. keyframe_snapped describes the start only; the
+        join is 60 + 60 of the source's frames. start_snapped describes the starts only; the
         end's move is reported per segment."""
         out = DIR / "end_snap_join.mp4"
         data = cut_json(self.h264bf, "--segments", "0-1.8,4-6", "-o", out)
         self.assertEqual(data["mode"], "copy")
-        self.assertFalse(data["keyframe_snapped"])
+        self.assertFalse(data["start_snapped"])
         self.assertEqual(data["segment_end_snap_seconds"], [0.2, 0.0])
         src = md5_frames(self.h264bf)
         self.assertEqual(md5_frames(out), src[0:60] + src[120:180])
@@ -683,6 +693,37 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(md5_frames(out), src[120:180] + src[0:60])
         self.assertTrue(data["join_check"]["ok"])
         self.assertLess(data["join_check"]["max_step_seconds"], 1 / FPS + 1024 / 48000)
+
+    def test_a_failed_concat_copy_is_reported_as_the_reencode_it_became(self):
+        """2.x re-encoded the join when the concat demuxer's stream copy failed but still reported
+        mode copy, reencoded false and packet precision. The failure is simulated (cut.py run
+        with its concat-copy command failing): a keyframe-aligned video join and a WAV join, both
+        of which copy when nothing fails."""
+        mock_concat = (
+            "import subprocess, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import cut\n"
+            "real = cut.run\n"
+            "def run(cmd, *a, **k):\n"
+            "    cmd = [str(c) for c in cmd]\n"
+            "    if '-f' in cmd and cmd[cmd.index('-f') + 1] == 'concat' and '-c' in cmd and cmd[cmd.index('-c') + 1] == 'copy':\n"
+            "        return subprocess.CompletedProcess(cmd, 1, '', 'simulated concat failure')\n"
+            "    return real(cmd, *a, **k)\n"
+            "cut.run = run\n"
+            "sys.argv = ['cut.py'] + sys.argv[2:]\n"
+            "sys.exit(cut.main())\n")
+        for src, segs, out, precision in ((self.h264bf, "0-2,4-6", DIR / "concat_failed.mp4", "frame"),
+                                          (self.wav, "1-2,3-4.5", DIR / "concat_failed.wav", "sample")):
+            with self.subTest(out=out.name):
+                proc = sh(sys.executable, "-c", mock_concat, SCRIPTS, src, "--segments", segs, "-o", out,
+                          "--overwrite", "--json")
+                data = json.loads(proc.stdout)
+                self.assertIn("concat with stream copy failed", proc.stderr, "the premise: the copy join failed")
+                self.assertEqual((data["mode"], data["reencoded"]), ("hybrid", True))
+                self.assertEqual(data["reencode_reason"], ["concat_fallback"])
+                self.assertEqual(data["precision"], precision)
+                self.assertFalse(data["keyframe_snapped"])
+                self.assertFalse(data["start_snapped"])
 
     def test_a_wav_join_stays_a_lossless_copy(self):
         """PCM has no extradata at all; a "missing means incompatible" rule would have sent every

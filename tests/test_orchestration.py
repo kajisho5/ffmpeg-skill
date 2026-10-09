@@ -1474,12 +1474,7 @@ class OrchestrationTests(MediaFixtures):
         for r in data["results"]:
             self.assertEqual(r["cut_reencoded"], [True, False])
         summary = data["cut_stream_copy"]
-        # reencode_reason is rolled up too: both re-encodes were the tolerance fallback, and the
-        # stream copies contribute no reason
-        self.assertEqual(summary, {"calls": 4, "stream_copy": 2, "reencoded": 2, "stream_copy_rate": 0.5,
-                                   "reencode_reasons": {"tolerance": 2}})
-        for r in data["results"]:
-            self.assertEqual(r["cut_reencode_reasons"], ["tolerance"])
+        self.assertEqual(summary, {"calls": 4, "stream_copy": 2, "reencoded": 2, "stream_copy_rate": 0.5})
 
         # a recipe with no cut.py step reports nothing -- the key isn't invented from nowhere
         recipe2 = folder / "batch_no_cut.json"
@@ -1488,6 +1483,33 @@ class OrchestrationTests(MediaFixtures):
         data2 = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
         self.assertIsNone(data2["cut_stream_copy"])
         self.assertNotIn("cut_reencoded", data2["results"][0])
+
+    def test_batch_counts_cut_reencode_reasons_beside_the_stream_copy_rate(self):
+        """cut.py's `reencode_reason` reaches batch.py's caller without changing cut_stream_copy:
+        each results row lists the reasons its cut.py calls named (once per call), and the
+        top-level cut_reencode_reasons counts them across the folder (null when no cut.py step
+        ran)."""
+        folder = OUT / "batch_cut_reasons"
+        folder.mkdir(exist_ok=True)
+        (folder / "a.mp4").write_bytes(Path(self.src).read_bytes())
+        recipe = folder / "batch.json"
+        # the same two steps as the stream-copy rate test: a tolerance re-encode, then a copy
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_cut",
+                                      "steps": [["cut.py", "{in}", "--start", "1.13", "--end", "5.71",
+                                                 "--tolerance", "0.02", "-o", "{out}"],
+                                                ["cut.py", "{in}", "--start", "0", "--end", "2",
+                                                 "--tolerance", "-1", "-o", "{out}"]]}))
+        data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertEqual(data["results"][0]["cut_reencoded"], [True, False])
+        self.assertEqual(data["results"][0]["cut_reencode_reasons"], ["tolerance"])
+        self.assertEqual(data["cut_reencode_reasons"], {"tolerance": 1})
+        self.assertNotIn("reencode_reasons", data["cut_stream_copy"], "cut_stream_copy keeps its 2.x shape")
+        recipe2 = folder / "batch_no_cut.json"
+        recipe2.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out2", "suffix": "_nc",
+                                       "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+        data2 = json.loads(script("batch.py", folder, "--recipe", recipe2, "--dry-run", "--json").stdout)
+        self.assertIsNone(data2["cut_reencode_reasons"])
+        self.assertIsNone(data2["cut_stream_copy"])
 
     def test_batch_project_recipe_cache_invalidates_on_project_json_content_change(self):
         """A "project" recipe is just {"project": "<path>", "clip_key": N} -- the real settings

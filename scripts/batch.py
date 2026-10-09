@@ -190,8 +190,9 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             step_ok, doc = run_step(argv, budget())
             step_docs.append((Path(str(argv[0])).stem if argv else "step", doc))
             # only cut.py's own doc carries `reencoded` -- true if ANY range this call cut (or its
-            # --segments join) re-encoded, for the reasons in its `reencode_reason`. Per cut.py
-            # call, not per --segments range.
+            # --segments join) re-encoded, for the reasons in its `reencode_reason` (distinct per
+            # call, so cut_reencode_reasons lists each reason once per cut.py call that named it).
+            # Per cut.py call, not per --segments range.
             if step_ok and argv and argv[0] == "cut.py" and isinstance(doc, dict) and "reencoded" in doc:
                 cut_reencoded.append(bool(doc["reencoded"]))
                 cut_reasons.extend(r for r in (doc.get("reencode_reason") or []) if isinstance(r, str))
@@ -572,22 +573,24 @@ def main() -> int:
     # one cause. Per cut.py call, not per --segments range.
     all_cuts = [r for res in results for r in (res.get("cut_reencoded") or [])]
     cut_summary = None
+    # how many cut.py calls named each reason, beside cut_stream_copy (whose shape is 2.x's,
+    # unchanged); null when no cut.py step ran
+    reasons: Optional[Dict[str, int]] = None
     if all_cuts:
         copied = sum(1 for r in all_cuts if not r)
         cut_summary = {"calls": len(all_cuts), "stream_copy": copied, "reencoded": len(all_cuts) - copied,
                         "stream_copy_rate": round(copied / len(all_cuts), 3)}
-        reasons: Dict[str, int] = {}
+        reasons = {}
         for res in results:
             for r in res.get("cut_reencode_reasons") or []:
                 reasons[r] = reasons.get(r, 0) + 1
-        cut_summary["reencode_reasons"] = reasons
         why = (" (reencode_reason: " + ", ".join(f"{k} x{v}" for k, v in reasons.items()) + ")") if reasons else ""
         info(f"cut.py: {copied}/{len(all_cuts)} call(s) stayed fully lossless stream-copy "
              f"({cut_summary['stream_copy_rate']:.0%}), {len(all_cuts) - copied} re-encoded a range or its --segments join{why}")
     emit(None, results=results, processed=done, total=len(results),
          jobs=jobs, jobs_requested=requested, wall_seconds=round(time.time() - started, 1),
          item_seconds_total=round(sum(float(r.get("seconds") or 0) for r in results), 1),
-         timed_out=timed_out["hit"], cut_stream_copy=cut_summary)
+         timed_out=timed_out["hit"], cut_stream_copy=cut_summary, cut_reencode_reasons=reasons)
     return 0
 
 

@@ -55,12 +55,7 @@ class EditingTests(MediaFixtures):
         out = OUT / "cut_honest_copy.mp4"
         data = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out, "--json").stdout)
         self.assertEqual(data["mode"], "copy")
-        # 2 s is not a keyframe of the fixture, but an .mp4 copy keeps the edit list it writes: the
-        # keyframe's pre-roll is stored and hidden, and the picture starts at 2 s
-        self.assertFalse(data["keyframe_snapped"])
-        self.assertTrue(data["edit_list"])
-        self.assertEqual(data["reencode_reason"], [])
-        self.assertIsNone(data["segment_precision"], "a single segment has no per-segment list")
+        self.assertTrue(data["keyframe_snapped"])
         self.assertEqual(data["requested_start"], 2.0)
         self.assertEqual(data["requested_end"], 6.0)
         self.assertEqual(data["requested_duration"], 4.0)
@@ -72,17 +67,14 @@ class EditingTests(MediaFixtures):
         data2 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--accurate", "-o", out2, "--json").stdout)
         self.assertEqual(data2["mode"], "accurate")
         self.assertFalse(data2["keyframe_snapped"])
-        self.assertEqual(data2["reencode_reason"], ["requested"])
 
         # a start/end that doesn't land on a keyframe, with a tight tolerance, must silently
-        # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true". .mkv, so
-        # the copy snaps to the keyframe (an .mp4 copy starts exactly, via its edit list)
-        out3 = OUT / "cut_honest_hybrid.mkv"
+        # upgrade from copy to re-encode -- and say "hybrid", not just "reencoded: true"
+        out3 = OUT / "cut_honest_hybrid.mp4"
         data3 = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "0.02", "-o", out3, "--json").stdout)
         self.assertTrue(data3["reencoded"])
         self.assertEqual(data3["mode"], "hybrid")
         self.assertFalse(data3["keyframe_snapped"])
-        self.assertEqual(data3["reencode_reason"], ["tolerance"])
         # ...and name the keyframes a lossless cut could have used instead (x264's default GOP on the
         # fixture puts the only one within 5 s of 1.13 at 0.0)
         self.assertTrue(data3["nearest_keyframes"], data3)
@@ -96,9 +88,50 @@ class EditingTests(MediaFixtures):
         self.assertIsNone(data4["requested_end"])
         self.assertEqual(data4["requested_segments"], [[1.0, 3.0], [6.0, 9.0]])
         self.assertEqual(data4["requested_duration"], 5.0)
+
+    def test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta(self):
+        """Pins the actual failure mode `mode`/`keyframe_snapped`/`duration_delta_seconds` exist to
+        surface: a non-keyframe-aligned request that stays within --tolerance keeps the fast
+        stream copy (mode=copy) rather than upgrading to hybrid, but the copy still snapped to an
+        earlier keyframe and pulled in extra content -- output_duration and requested_duration
+        genuinely diverge, and a caller must be told this happened, not left to assume the file
+        starts exactly where it asked."""
+        out = OUT / "cut_copy_keyframe_snap.mp4"
+        data = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "2.0", "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertFalse(data["reencoded"])
+        actual = probe(str(out))["duration"]
+        self.assertAlmostEqual(data["output_duration"], actual, places=2)
+        self.assertGreater(abs(data["duration_delta_seconds"]), 0.05, "this scenario must produce a real, visible divergence, not a rounding artefact")
+        self.assertAlmostEqual(data["duration_delta_seconds"], data["output_duration"] - data["requested_duration"], places=6)
+
+    def test_cut_json_says_why_it_reencoded_and_how_exact_each_segment_is(self):
+        """reencode_reason names every cause, and --codec is named even when --accurate already
+        forced the re-encode; segment_precision and least_exact_precision describe the segments."""
+        # a clean copy: nothing re-encoded, one segment
+        out = OUT / "cut_reasons_copy.mkv"
+        data = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "--tolerance", "-1", "-o", out, "--json").stdout)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        self.assertIsNone(data["segment_precision"], "a single segment has no per-segment list")
+        self.assertEqual(data["least_exact_precision"], "packet")
+        out2 = OUT / "cut_reasons_accurate.mp4"
+        data2 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--accurate", "-o", out2, "--json").stdout)
+        self.assertEqual(data2["reencode_reason"], ["requested"])
+        self.assertFalse(data2["start_snapped"], "a re-encode starts where asked")
+        # .mkv: no edit list can hide the pre-roll, so this copy snaps its start to the keyframe at 0
+        # and misses the tight tolerance
+        out3 = OUT / "cut_honest_hybrid.mkv"
+        data3 = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "0.02", "-o", out3, "--json").stdout)
+        self.assertEqual(data3["mode"], "hybrid")
+        self.assertEqual(data3["reencode_reason"], ["tolerance"])
+        self.assertFalse(data3["keyframe_snapped"])
+        self.assertIn(0.0, data3["nearest_keyframes"])
+        out4 = OUT / "cut_reasons_segments.mp4"
+        data4 = json.loads(script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out4, "--json").stdout)
         self.assertEqual(data4["reencode_reason"], ["requested"])
         self.assertEqual(data4["segment_precision"], ["frame", "frame"])
-
+        self.assertEqual((data4["precision"], data4["least_exact_precision"]), ("frame", "frame"))
         # --codec forces the re-encode, and says so rather than claiming it was asked for
         out5 = OUT / "cut_honest_codec.mp4"
         data5 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "4", "--codec", "hevc", "-o", out5, "--json").stdout)
@@ -110,8 +143,8 @@ class EditingTests(MediaFixtures):
         self.assertEqual(data6["reencode_reason"], ["requested", "codec"])
 
     def test_cut_top_level_precision_is_the_least_exact_segments(self):
-        """--segments reports one precision for the whole run: the least exact segment's, so a
-        keyframe-snapped copy segment is never hidden behind a re-encoded one."""
+        """least_exact_precision is the least exact segment's precision, so a keyframe-snapped copy
+        segment is never hidden behind a re-encoded one."""
         sys.path.insert(0, str(SCRIPTS))
         import cut
         self.assertEqual(cut.least_exact(["frame", "packet"]), "packet")
@@ -119,24 +152,61 @@ class EditingTests(MediaFixtures):
         self.assertEqual(cut.least_exact(["sample", "frame"]), "frame")
         self.assertEqual(cut.least_exact(["sample"]), "sample")
 
-    def test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta(self):
-        """Pins the actual failure mode `mode`/`keyframe_snapped`/`duration_delta_seconds` exist to
-        surface: a non-keyframe-aligned request that stays within --tolerance keeps the fast
-        stream copy (mode=copy) rather than upgrading to hybrid, but the copy still snapped to an
-        earlier keyframe and pulled in extra content -- output_duration and requested_duration
-        genuinely diverge, and a caller must be told this happened, not left to assume the file
-        starts exactly where it asked."""
-        # .mkv: Matroska has no edit lists, so the copy really starts at the keyframe before 1.13.
-        # An .mp4 copy now keeps its edit list and starts the picture at 1.13 (tests/test_cut_copy.py).
+    def test_cut_precision_keeps_its_formula_and_least_exact_precision_is_beside_it(self):
+        """`precision` and `keyframe_snapped` keep their 2.x formula (precision_of() for the run;
+        keyframe_snapped is precision == packet). The one run where the least exact segment differs
+        is an audio-only join of a copied and a re-encoded part: precision says the run re-encoded,
+        least_exact_precision that one part is only packet-exact. start_snapped is true when any
+        copied start moved, null while one is unmeasured (--dry-run), false otherwise."""
+        sys.path.insert(0, str(SCRIPTS))
+        import cut
+        wav = {"audio": {"codec": "pcm_s16le"}}
+
+        def part(precision, reencoded, snapped):
+            return {"precision": precision, "reencoded": reencoded, "start_snapped": snapped}
+        mixed = cut.report_precision(wav, "out.wav", True, [part("packet", False, False), part("sample", True, False)])
+        self.assertEqual((mixed["precision"], mixed["least_exact_precision"]), ("sample", "packet"))
+        self.assertEqual(mixed["segment_precision"], ["packet", "sample"])
+        self.assertFalse(mixed["keyframe_snapped"])
+        copy = cut.report_precision(wav, "out.wav", False, [part("packet", False, False)])
+        self.assertEqual((copy["precision"], copy["least_exact_precision"], copy["keyframe_snapped"]), ("packet", "packet", True))
+        self.assertIsNone(copy["segment_precision"])
+        video = {"video": {"codec": "h264"}}
+        self.assertIs(cut.report_precision(video, "o.mp4", False, [part("packet", False, None), part("packet", False, True)])["start_snapped"], True)
+        self.assertIsNone(cut.report_precision(video, "o.mp4", False, [part("packet", False, None), part("packet", False, False)])["start_snapped"])
+        self.assertIs(cut.report_precision(video, "o.mp4", True, [part("frame", True, False)])["start_snapped"], False)
+
+    def test_cut_start_snapped_is_measured_and_null_under_dry_run(self):
+        """keyframe_snapped is true for every stream copy; start_snapped says whether the copied
+        picture really starts away from --start. Matroska keeps no edit list, so a copy from 2 s
+        starts at the keyframe at 0; a copy from 0 starts where asked; a dry run measures nothing."""
+        out = OUT / "cut_start_snapped.mkv"
+        data = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--tolerance", "-1", "-o", out, "--json").stdout)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(data["keyframe_snapped"])
+        self.assertTrue(data["start_snapped"])
+        self.assertFalse(data["edit_list"])
+        out2 = OUT / "cut_start_exact.mkv"
+        data2 = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "--tolerance", "-1", "-o", out2, "--json").stdout)
+        self.assertTrue(data2["keyframe_snapped"])
+        self.assertFalse(data2["start_snapped"])
+        data3 = json.loads(script("cut.py", self.src, "--start", "2", "--end", "6", "--dry-run", "-o", OUT / "never_snapped.mkv", "--json").stdout)
+        self.assertTrue(data3["keyframe_snapped"], "a planned stream copy")
+        self.assertIsNone(data3["start_snapped"], "nothing was cut, so nothing was measured")
+
+    def test_cut_matroska_copy_keyframe_snap_reports_a_real_nonzero_delta(self):
+        """The same divergence in Matroska, which has no edit lists: the copy really starts at the
+        keyframe before 1.13, and start_snapped says so."""
         out = OUT / "cut_copy_keyframe_snap.mkv"
         data = json.loads(script("cut.py", self.src, "--start", "1.13", "--end", "5.71", "--tolerance", "2.0", "-o", out, "--json").stdout)
         self.assertEqual(data["mode"], "copy")
         self.assertTrue(data["keyframe_snapped"])
+        self.assertTrue(data["start_snapped"])
         self.assertFalse(data["edit_list"])
         self.assertFalse(data["reencoded"])
         actual = probe(str(out))["duration"]
         self.assertAlmostEqual(data["output_duration"], actual, places=2)
-        self.assertGreater(abs(data["duration_delta_seconds"]), 0.05, "this scenario must produce a real, visible divergence, not a rounding artefact")
+        self.assertGreater(abs(data["duration_delta_seconds"]), 0.05)
         self.assertAlmostEqual(data["duration_delta_seconds"], data["output_duration"] - data["requested_duration"], places=6)
 
     def test_cut_bad_range_fails(self):

@@ -949,7 +949,40 @@ not a new file format this tool would have to maintain.
   re-encoded on the CPU by the fallback above, with ffmpeg's line in the note. Code:
   `_common.runner.apple_silicon`; `doctor`'s `hw.platform_ok` uses the same check. Test:
   `test_hw_runs_on_apple_silicon_hardware_under_a_rosetta_python`.
+
 ## Unreleased — cuts that say what they did
+
+- **`precision`, `keyframe_snapped` and `requested_*` keep their 2.x meanings; what is measured
+  per segment gets new keys.** No 2.x key changes meaning. `precision` stays `precision_of()` for
+  the whole run and `keyframe_snapped` stays `precision == "packet"` (a stream copy end to end):
+  `demos/build.py`'s `demo_cut_accurate` and `docs/demos.md` read it that way. What #306 measured
+  goes beside them. `start_snapped` is true when a copied picture starts more than a frame from
+  its requested start (the keyframe the demuxer seeks to, by decode time), and `null` under
+  `--dry-run`, because a planned copy has not landed anywhere yet. `least_exact_precision` is the
+  least exact segment's precision, and `segment_precision` lists them all. The two precisions
+  differ only for an audio-only join of copied and re-encoded parts, because a video join re-cuts
+  every segment when one part re-encodes. `requested_segments`/`requested_duration` and
+  `expected_duration` stay the request clamped to the media's duration. A segment that ends with
+  the video (less than a frame of sound trimmed) shows in `duration_delta_seconds` and a note,
+  not in a changed request. Tests (main's, restored verbatim):
+  `test_cut_json_reports_requested_vs_actual_and_mode`,
+  `test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta`, `test_eval6_followups`; new:
+  `test_cut_precision_keeps_its_formula_and_least_exact_precision_is_beside_it`,
+  `test_cut_start_snapped_is_measured_and_null_under_dry_run`,
+  `test_a_sound_tail_under_a_frame_ends_the_segment_with_its_picture`.
+- **A join that re-encoded is not reported as a copy (defect fix, on by default).** When the
+  concat demuxer's stream copy failed, 2.x re-encoded the join and still reported `mode: copy`,
+  `reencoded: false` and `precision: packet`. The join now counts toward `reencoded`, so such a
+  run reports `hybrid` and `concat_fallback`. `reencode_reason` lists every cause, and `--codec`
+  is named even when `--accurate` already forced the re-encode. Tests:
+  `test_a_failed_concat_copy_is_reported_as_the_reencode_it_became`,
+  `test_cut_json_says_why_it_reencoded_and_how_exact_each_segment_is`.
+- **`batch.py`'s `cut_stream_copy` keeps its shape; the reasons are a sibling key.** Callers
+  compare that object whole: main's test does, with `assertEqual`. Each row gains
+  `cut_reencode_reasons` (each reason once per `cut.py` call that named it), and the top level
+  gains `cut_reencode_reasons` counts. They are `{}` when no call re-encoded and `null` when no
+  `cut.py` step ran. Tests: `test_batch_reports_cuts_stream_copy_vs_hybrid_rate_across_the_folder`
+  (main's, verbatim), `test_batch_counts_cut_reencode_reasons_beside_the_stream_copy_rate`.
 
 - **A `--segments` join copies only identical parts, and otherwise re-cuts from the source.**
   The concat demuxer takes the first part's parameters for every part, so a copied HEVC segment
