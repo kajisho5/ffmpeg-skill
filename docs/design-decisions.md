@@ -845,3 +845,8 @@ not a new file format this tool would have to maintain.
   engine, the `transcription` facts, notes), so two transcriptions in one process never read each
   other's engine or words. `transcribe()` and `transcribe_words()` keep their old return shapes
   for existing callers. Test: `TranscriptionStateTests`.
+- **The skill downloads nothing; an engine may fetch its model once.** parakeet-mlx's default
+  `mlx-community/parakeet-tdt-0.6b-v2` comes from Hugging Face on first use, as faster-whisper's
+  and openai-whisper's models do. The audio never leaves the machine and inference is local, so
+  "no cloud" and `execution.network: false` (the skill's own process) stay true; the install hint,
+  doctor's fix line and references/scripts.md say so. Test: `InstallHintTests`.

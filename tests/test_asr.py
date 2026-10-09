@@ -289,6 +289,36 @@ class TranscriptionStateTests(unittest.TestCase):
             self.assertEqual((len(words), engine), (5, "parakeet-mlx"))
 
 
+class InstallHintTests(unittest.TestCase):
+    """Review of #305: parakeet-mlx fetches its default model from Hugging Face on first use. The
+    hints say so, and say the audio stays on the machine, so "no cloud" stays a true sentence."""
+
+    def test_the_refusal_hint_names_the_first_run_download_and_keeps_audio_local(self):
+        hint = asr.ASR_INSTALL_HINT
+        line = next(ln for ln in hint.splitlines() if ln.strip().startswith("parakeet-mlx:"))
+        rest = hint[hint.index(line):].split("parakeet.cpp:")[0]
+        self.assertIn("first run", rest)
+        self.assertIn("Hugging Face", rest)
+        self.assertIn(asr.PARAKEET_MLX_DEFAULT_MODEL, rest)
+        self.assertIn("never leaves", hint.splitlines()[0])
+        self.assertNotIn("offline", hint, "a first run that downloads is not offline")
+
+    def test_doctors_fix_line_says_the_same(self):
+        import _contract
+        fix = _contract._capability_fix_hint("external:parakeet")
+        for words in ("first run", "Hugging Face", asr.PARAKEET_MLX_DEFAULT_MODEL, "never uploaded"):
+            self.assertIn(words, fix)
+
+    def test_the_reference_page_no_longer_says_nothing_is_downloaded(self):
+        root = Path(__file__).resolve().parent.parent
+        page = (root / "references" / "scripts.md").read_text(encoding="utf-8")
+        section = page[page.index("### caption.py --transcribe"):]
+        section = section[:section.index("\n### ", 5)]
+        self.assertNotIn("Nothing is downloaded", section)
+        for words in ("Hugging Face", "never uploaded", "first time it runs"):
+            self.assertIn(words, section)
+
+
 class ParakeetEngineTests(MediaFixtures):
     """caption.py / silence.py drive fake Parakeet binaries on a PATH that holds only them and ffmpeg."""
 

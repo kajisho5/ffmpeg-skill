@@ -29,14 +29,18 @@ ASR_ENGINES = PARAKEET_ENGINES + WHISPER_ENGINES
 ENGINE_CHOICES = ("auto",) + ASR_ENGINES
 ASR_ENGINE_ENV = "FFMPEG_SKILL_ASR_ENGINE"
 PARAKEET_MLX_DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v2"
+# Every engine transcribes on this machine: the audio is never uploaded. Three of them fetch
+# their model weights the first time they run (the skill itself downloads nothing), which the
+# hint says, so "offline" is never promised for a first run that is not.
 ASR_INSTALL_HINT = (
-    "Install one (all run offline):\n"
-    "  parakeet-mlx:   uv tool install parakeet-mlx   (Apple Silicon; English)\n"
+    "Install one (each transcribes on this machine; the audio never leaves it):\n"
+    "  parakeet-mlx:   uv tool install parakeet-mlx   (Apple Silicon; English; the first run\n"
+    "                  downloads the model from Hugging Face, " + PARAKEET_MLX_DEFAULT_MODEL + ")\n"
     "  parakeet.cpp:   parakeet-cli from github.com/mudler/parakeet.cpp releases, plus a\n"
     "                  tdt-0.6b-v2 .gguf in ~/.cache/parakeet.cpp/ (English)\n"
     "  whisper.cpp:    brew install whisper-cpp   (then download a model: ggml-base.bin)\n"
-    "  faster-whisper: pip install faster-whisper\n"
-    "  openai-whisper: pip install openai-whisper")
+    "  faster-whisper: pip install faster-whisper   (the first run downloads its model)\n"
+    "  openai-whisper: pip install openai-whisper   (the first run downloads its model)")
 
 
 class Transcription:

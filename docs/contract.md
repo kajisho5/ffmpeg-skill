@@ -355,6 +355,11 @@ Whisper engine fails); with only Parakeet installed, English is assumed and the 
 top-level `notes` says the transcript is wrong if the speech is not English. The result's
 `transcription` says which engine, model and routing decision produced the cues (in every
 `--mode`, `mux` included).
+Every engine transcribes on the machine running the skill; the audio is never uploaded, and the
+skill itself opens no network connection (`execution.network: false`). An engine may fetch its
+model weights on first use: parakeet-mlx downloads its default `mlx-community/parakeet-tdt-0.6b-v2`
+from Hugging Face, as faster-whisper and openai-whisper download theirs. parakeet.cpp and
+whisper.cpp read a model file the user downloaded.
 
 `doctor` has three states per capability. `available` and `missing` come from a listing
 that was read; `unknown` means the listing that would prove the capability could not be

@@ -987,10 +987,15 @@ def _capability_fix_hint(cap: str) -> str:
         return (f"no installed font covers {LANGUAGE_NAMES.get(script, script)} text on this machine; "
                 f"{FONT_INSTALL_HINT} (doctor --json .fonts.scripts lists every script)")
     if cap == "external:whisper":
-        return "install a local whisper (whisper-cli, whisper-cpp, faster-whisper or openai-whisper) for --transcribe"
+        return ("install a local whisper (whisper-cli, whisper-cpp, faster-whisper or openai-whisper) for --transcribe; "
+                "faster-whisper and openai-whisper download their model on first use, and every engine transcribes "
+                "on this machine (the audio is never uploaded)")
     if cap == "external:parakeet":
-        return ("for English --transcribe, install parakeet-mlx (uv tool install parakeet-mlx) or parakeet-cli with a "
-                "tdt-0.6b-v2 .gguf in ~/.cache/parakeet.cpp; a local whisper covers every language")
+        from _common.asr import PARAKEET_MLX_DEFAULT_MODEL
+        return ("for English --transcribe, install parakeet-mlx (uv tool install parakeet-mlx; its first run downloads "
+                f"{PARAKEET_MLX_DEFAULT_MODEL} from Hugging Face, then it transcribes on this machine and the audio is "
+                "never uploaded) or parakeet-cli with a tdt-0.6b-v2 .gguf in ~/.cache/parakeet.cpp; a local whisper "
+                "covers every language")
     return f"'{cap}' is not available; see docs/contract.md"
 
 

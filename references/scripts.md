@@ -944,8 +944,13 @@ only when it names a Parakeet model (`mlx-community/parakeet-*` or a `.gguf`), e
 `PARAKEET_MODEL` / `PARAKEET_CPP_MODEL`, else the English `tdt-0.6b-v2`. A non-English
 `--language` on an English-only Parakeet model is refused. The result's `transcription` names the
 engine, model and routing. `silence.py --filler --transcribe` takes the same `--engine`.
-Nothing is downloaded and nothing is required: without an engine it prints
-install hints and the user can supply `--text` cues instead. Always tell the
+Nothing is required: without an engine it prints install hints and the user can supply `--text`
+cues instead. The skill downloads nothing, and every engine transcribes on this machine -- the
+audio is never uploaded. An engine may fetch its *model weights* the first time it runs:
+parakeet-mlx downloads `mlx-community/parakeet-tdt-0.6b-v2` (or the `--model` /
+`PARAKEET_MODEL` repo) from Hugging Face into its cache, and faster-whisper and openai-whisper
+fetch theirs the same way; `HF_HUB_OFFLINE=1` keeps the Hugging Face ones on the cached copy
+afterwards. parakeet.cpp and whisper.cpp only read a model file you downloaded. Always tell the
 user which engine was used, and treat the transcript as a draft to review.
 
 ### MCP server — the toolkit for any MCP client
