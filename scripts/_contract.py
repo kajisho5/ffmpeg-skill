@@ -425,7 +425,7 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         extra = {"silences": {"type": "array"}, "keep": {"type": "array"}, "input_duration": {"type": "number"}, "kept_duration": {"type": "number"}, "removed_seconds": {"type": "number"},
                  "speech_aware": {"type": "object", "description": "--speech-aware (1.18): {min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}"},
                  "filler": {"type": "object", "description": "--filler: {lang, source (whisper-json:FILE | whisper:ENGINE | parakeet:ENGINE), engine, transcription (with --transcribe: {engine, model, language, routing}), removed, removed_count, ...}"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--filler --transcribe under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detector, no Whisper engine); the transcript is wrong if the speech is not English"}}
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--filler --transcribe under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
     elif name == "sync":
         extra = {"reference": {"type": "string"}, "second": {"type": "string"}, "offset_seconds": {"type": "number"}, "confidence": {"type": "number"}, "meaning": {"type": "string"}, "drift": {"type": "object"},
                  "sources": {"type": "array", "description": "1.18: [{path, offset_s, confidence, drift_ppm}], one per SOURCE; the only per-source shape once more than one SOURCE is given"}}

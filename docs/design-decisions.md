@@ -833,9 +833,10 @@ not a new file format this tool would have to maintain.
   decides; without one whisper.cpp's detector (the smallest multilingual ggml model, a second
   or less) decides. When neither can name the language, a Whisper engine that can run goes first
   (Parakeet only if every Whisper engine fails): a fast English transcript is not worth a
-  confidently wrong one. Only with no Whisper engine at all does Parakeet run on English
-  assumed, and then the result's top-level `notes` says the transcript is wrong if the speech is
-  not English -- `transcription.routing` alone was too quiet for a caller that reads `verified`.
+  confidently wrong one. Only when no Whisper engine is installed, or every one failed, does
+  Parakeet run on English assumed, and then the result's top-level `notes` says the transcript is
+  wrong if the speech is not English -- `transcription.routing` alone was too quiet for a caller
+  that reads `verified`.
   A named `--engine parakeet-*` runs as asked, with no note. Measured on 8 min of LibriSpeech
   (contributor's figures, Apple Silicon): parakeet-mlx v2 2.8% WER at ~120× real time, whisper
   large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`,
