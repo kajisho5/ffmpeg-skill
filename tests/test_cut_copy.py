@@ -1032,6 +1032,22 @@ class CutJoinTests(unittest.TestCase):
         self.assertIn("shorter than one frame", proc.stderr)
         self.assertFalse(out.exists())
 
+    def test_a_single_cut_shorter_than_a_frame_is_refused_but_not_to_audio(self):
+        """2.5.1 wrote one whole frame for --start 1 --end 1.01 and reported success. The refusal
+        is a kind: input before ffmpeg runs; sound has no frame, so an audio output still cuts."""
+        out = DIR / "subframe_single.mp4"
+        if out.exists():
+            out.unlink()
+        proc = script("cut.py", self.hevc, "--start", "1", "--end", "1.01", "-o", out, "--json", expect_fail=True)
+        self.assertIn("shorter than one frame", proc.stderr)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertEqual(doc["commands"], [])
+        self.assertFalse(out.exists())
+        data = cut_json(self.hevc, "--start", "1", "--end", "1.01", "-o", DIR / "subframe_single.wav")
+        self.assertEqual(data["status"], "completed")
+        self.assertAlmostEqual(data["expected_duration"], 0.01, places=3)
+
     def test_a_gpu_chunk_refusal_reencodes_every_chunk_on_the_cpu(self):
         """Under --hw, run() retries a chunk VideoToolbox refused on the CPU; the chunks then differ,
         and the join encodes them all on the CPU rather than refusing (no real encode here)."""

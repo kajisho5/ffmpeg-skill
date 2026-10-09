@@ -56,10 +56,11 @@ between tools.
 ```
 probe.py INPUT... [--compact] [--field duration|video.fps|...]
 ```
-JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected,hdr,hdr_signal,bt2020_or_hdr,hdr_format}`
+JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected,hdr,hdr_signal,bt2020_or_hdr,hdr_format,start_time}`
 (`hdr`, and `hdr_signal` equal to it, is true only for a PQ / HLG transfer or Dolby Vision -- since 2.0;
 `bt2020_or_hdr` also counts BT.2020 primaries on an SDR transfer, which `hdr_format` names "BT.2020 SDR"),
-`audio{codec,channels,sample_rate}`. `--compact` gives one line per file.
+`audio{codec,channels,sample_rate,start_time}` (`start_time`: where the stream starts on the file's
+own clock, `null` when unknown). `--compact` gives one line per file.
 
 ### cut.py — cut / join segments
 ```
@@ -959,6 +960,12 @@ batch.py FOLDER --recipe batch.json [--force] [--watch SECONDS] [--jobs N|auto] 
 placeholders, chained) or `project` (a render project applied per file).
 Outputs land in `output_dir` with `suffix`; a content-hash cache skips files
 already done with the same recipe. Use `--dry-run` to preview the plan.
+A recipe that runs `cut.py` rolls its calls up: each of those `results` rows carries
+`cut_reencoded` (each call's `reencoded`) and `cut_reencode_reasons` (each
+`reencode_reason` its calls named, once per call),
+and the top level `cut_stream_copy` (`{calls, stream_copy, reencoded,
+stream_copy_rate}`) and `cut_reencode_reasons` (counts per reason); both are `null`
+when no `cut.py` step ran.
 
 **`--jobs N` (1.17)** processes N files at once (threads: the work is
 subprocess waiting). Capped at `min(N, cpu_count, 8)` — every item is itself an

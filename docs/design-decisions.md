@@ -1123,6 +1123,14 @@ not a new file format this tool would have to maintain.
   is its own input (a file handle, demuxer and decoder), and macOS shells default to 256 open
   files. MP4/AAC chunks copy-joined put the video 23 ms behind the audio (encoder priming per
   chunk); PCM chunks carry none, and the audio is encoded once for the final file.
+- **A video cut or segment shorter than one frame is refused (defect fix, on by default).** There
+  is no picture to cut: on 2.5.1 `--start 1 --end 1.01` on 30 fps video wrote one whole frame
+  (44 ms longer than asked) and `--segments 1-1.01,3-4` wrote 31 frames, both reported
+  `completed`. A copy lands on a whole GOP and a re-encode on one frame or none, so neither is what
+  was asked; the refusal (`kind: input`, before ffmpeg runs) follows 2.x's refusals of a caption
+  burn that draws nothing and of blank graphics text. A cut to an audio output is not refused: sound has no frame.
+  Code: `cut.main()`. Tests: `test_a_segment_shorter_than_a_frame_is_refused`,
+  `test_a_single_cut_shorter_than_a_frame_is_refused_but_not_to_audio`.
 - **A single MP4/MOV copy keeps its edit list only with `--edit-list`; its report comes from the
   source's packets.** `make_zero` shows the keyframe's pre-roll. The plain copy writes an edit
   list that hides it, and its first presented frame was bit-identical to the source frame at or
@@ -1188,9 +1196,11 @@ not a new file format this tool would have to maintain.
   `test_cut_passes_keep_hevc_to_the_encoder_and_composes_with_hw`).
 - **A chunked join restates `hvc1`, by default.** A `--segments` re-cut of more than 32 segments
   encodes Matroska chunks and copies them into the output; out of Matroska into MP4 that copy
-  writes `hev1`, which Apple players refuse. That is a defect on 2.5.1 for every HDR source (its
-  re-encode is HEVC Main10 with no flag), so the fix is on by default: `_join_chunk` returns its
-  codec arguments and the final copy into `.mp4`/`.mov`/`.m4v` repeats their `-tag:v`. Tests:
+  writes `hev1`, which Apple players refuse. 2.5.1 had no chunks (its re-encodes wrote `hvc1`
+  directly), so this is a defect in #306's chunking, not in a release; it is fixed by default
+  because every HDR source's re-cut is HEVC Main10 with no flag, and a chunked join of it would
+  otherwise be the first 2.x output tagged `hev1`: `_join_chunk` returns its codec arguments and
+  the final copy into `.mp4`/`.mov`/`.m4v` repeats their `-tag:v`. Tests:
   `test_a_chunked_hdr_join_keeps_the_hvc1_tag_by_default` (HLG, no flag),
   `test_more_segments_than_one_call_takes_are_joined_in_chunks` (`--keep-hevc`).
 - **The VFR guard stays the average check by default; the sampled measurement is `--vfr-guard
