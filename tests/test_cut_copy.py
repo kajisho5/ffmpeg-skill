@@ -108,7 +108,14 @@ class CutJoinTests(unittest.TestCase):
                "-c:a", "pcm_s16le", cls.wav)
         cls.rot = DIR / "rot.mp4"
         if not cls.rot.exists():
-            sh("ffmpeg", "-y", "-v", "error", "-display_rotation", "90", "-i", cls.hevc, "-c", "copy", cls.rot)
+            # -display_rotation arrived in FFmpeg 6.0; 5.x writes the rotation as the stream's
+            # rotate tag, which every probe reads the same (tests/_fixtures.py does the same)
+            if subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-f", "lavfi",
+                               "-i", "color=c=black:s=16x16:d=0.1", "-f", "null", "-"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+                sh("ffmpeg", "-y", "-v", "error", "-display_rotation", "90", "-i", cls.hevc, "-c", "copy", cls.rot)
+            else:
+                sh("ffmpeg", "-y", "-v", "error", "-i", cls.hevc, "-c", "copy", "-metadata:s:v:0", "rotate=90", cls.rot)
         cls.subs = DIR / "subs.mp4"
         if not cls.subs.exists():
             srt = DIR / "subs.srt"
