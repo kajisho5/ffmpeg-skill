@@ -490,7 +490,8 @@ each shorter clip's last frame (with silence) out to the longest.
 silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.15] [--min-keep 0.2] [--list] [--edl keep.txt] [--speech-aware] [-o OUT]
 silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|es|de|fr|pt|it]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
-           [--transcribe] [--filler-list] [--max-cuts 400]
+           [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
+           [--filler-list] [--max-cuts 400]
 ```
 Runs `silencedetect`, keeps `--margin` seconds of air around speech, drops
 gaps shorter than `--min-silence`, and re-encodes once with `select`/`aselect`
@@ -533,7 +534,10 @@ Three refusals, all `kind: input`, all before any encode:
 
 - `--filler` with neither `--words` nor `--transcribe` → names both flags.
 - `--transcribe` with no engine on PATH → the same message `caption.py` gives,
-  with its install lines (Parakeet and whisper engines).
+  with its install lines (Parakeet and whisper engines). Engines that were found
+  but did not transcribe are named instead, with why (`reason: engine_failed`,
+  or `english_only` for a Parakeet engine auto passed over for `--filler-lang`
+  that is not English; see `caption.py --transcribe` below).
 - `--transcribe` where the engine runs but its build produces no word-level
   timings → names that engine, says some builds do not support word timestamps,
   and points at `--words`. (`--transcribe` drives whichever engine is installed
@@ -546,7 +550,11 @@ Three refusals, all `kind: input`, all before any encode:
 
 Results: `filler.removed_count`, `filler.removed_seconds`, `filler.removed`
 (one entry per span), `filler.lang`, `filler.list`, `filler.word_timings` and
-`filler.warnings`. The existing `removed_seconds` keeps exactly the meaning it
+`filler.warnings`. With `--transcribe`, `filler.source` is `whisper:ENGINE` or
+`parakeet:ENGINE` and `filler.transcription` says which engine, model, language
+and routing made the words; a top-level `notes` line says when `--engine auto`
+ran the English-only Parakeet model on English assumed (no `--filler-lang`, and
+no Whisper engine that could take it). The existing `removed_seconds` keeps exactly the meaning it
 has always had — the seconds of **silence** this run removed, the figure the
 same run would report without `--filler` — and `removed_seconds_total` is the
 additive sibling covering everything that went. A filler word quiet enough to
@@ -939,20 +947,27 @@ can name the language, a Whisper engine that can run goes first; Parakeet runs o
 top-level `notes` then says so: that transcript is wrong for non-English speech, so pass `--language`
 (`--filler-lang` for `silence.py`) when the speech may not be English.
 `--engine parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper` forces one (a
-missing one is `kind: missing_tool`). `--model` is the whisper model; a Parakeet engine takes it
-only when it names a Parakeet model (`mlx-community/parakeet-*` or a `.gguf`), else
-`PARAKEET_MODEL` / `PARAKEET_CPP_MODEL`, else the English `tdt-0.6b-v2`. A non-English
-`--language` on an English-only Parakeet model is refused. The result's `transcription` names the
-engine, model and routing. `silence.py --filler --transcribe` takes the same `--engine`.
+missing one is `kind: missing_tool`; an installed one that fails is `kind: input`, `reason:
+engine_failed`, with its own error line in `detail`). Without a language whisper.cpp is passed
+`-l auto` (its own default is English), else the named or detected language. `--model` is the
+whisper model; a Parakeet engine takes it only when it names a Parakeet model
+(`mlx-community/parakeet-*` or a `.gguf`), else `PARAKEET_MODEL` / `PARAKEET_CPP_MODEL`, else the
+English `tdt-0.6b-v2`. A non-English `--language` on an English-only Parakeet model is refused; a
+multilingual (v3) model assumes no language, so it gets no English-assumed note. The result's
+`transcription` names the engine, model and routing. `silence.py --filler --transcribe` takes
+the same `--engine`.
 Nothing is required: without an engine it prints install hints and the user can supply `--text`
-cues instead. The skill downloads nothing, and every engine transcribes on this machine -- the
-audio is never uploaded. An engine may fetch its *model weights* the first time it runs:
-parakeet-mlx downloads `mlx-community/parakeet-tdt-0.6b-v2` (or the `--model` /
+cues instead. When engines are installed but none transcribed, the refusal names each and why
+instead (`reason: engine_failed`, or `english_only` for a Parakeet engine auto passed over for
+another language). The skill's own code downloads nothing, and every engine transcribes on this
+machine -- the audio is never uploaded. An engine may fetch its *model weights* the
+first time it runs: parakeet-mlx downloads `mlx-community/parakeet-tdt-0.6b-v2` (or the `--model` /
 `PARAKEET_MODEL` repo) from Hugging Face into its cache; faster-whisper (also from Hugging Face)
-and openai-whisper (from OpenAI) fetch theirs on first use too. `HF_HUB_OFFLINE=1` keeps the
-Hugging Face ones on the cached copy afterwards. parakeet.cpp and whisper.cpp only read a model
-file you downloaded. Always tell the user which engine was used, and treat the transcript as a
-draft to review.
+and openai-whisper (from OpenAI) fetch theirs on first use too. faster-whisper is a library that
+runs inside the skill's own process, so its download is made from that process.
+`HF_HUB_OFFLINE=1` keeps the Hugging Face ones on the cached copy afterwards. parakeet.cpp and
+whisper.cpp only read a model file you downloaded. Always tell the user which engine was used,
+and treat the transcript as a draft to review.
 
 ### MCP server — the toolkit for any MCP client
 `python3 mcp/server.py` speaks MCP over stdio; each script is a tool taking

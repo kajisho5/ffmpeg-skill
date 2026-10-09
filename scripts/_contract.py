@@ -1387,7 +1387,9 @@ def build(detect: bool = True) -> Dict[str, Any]:
         "execution": {
             "shell": False,
             "arbitrary_executables": False,
-            "subprocess": "argv list only: [python3, scripts/<tool>.py, ...] and [ffmpeg|ffprobe, ...] resolved from PATH",
+            "subprocess": "argv list only: [python3, scripts/<tool>.py, ...] and [ffmpeg|ffprobe, ...] resolved from PATH; "
+                          "with --transcribe, a local speech engine's CLI (whisper.cpp's whisper-cli / whisper-cpp / main, "
+                          "openai-whisper's whisper, parakeet-mlx, parakeet-cli) resolved from PATH",
             "network": False,
             "input_mutation": False,
         },

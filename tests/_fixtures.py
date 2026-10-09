@@ -21,11 +21,10 @@ SCRIPTS = ROOT / "scripts"
 HERE = Path(__file__).resolve().parent
 OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 
-# The host's own defaults must not reach the suite (every tool subprocess inherits os.environ): a
-# machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox, and FFMPEG_SKILL_ASR_ENGINE
-# or a PARAKEET_* model would change which speech engine a --transcribe test drives. Tests that
-# exercise those opt in with an explicit env.
-for _k in ("FFMPEG_SKILL_HW", "_FFMPEG_SKILL_HW_EXPLICIT", "FFMPEG_SKILL_ASR_ENGINE", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL"):
+# The host's own defaults must not reach the suite (every tool subprocess inherits os.environ):
+# FFMPEG_SKILL_ASR_ENGINE or a PARAKEET_* setting would change which speech engine a --transcribe
+# test drives, or where parakeet-mlx writes. Tests that exercise those opt in with an explicit env.
+for _k in ("FFMPEG_SKILL_ASR_ENGINE", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL", "PARAKEET_OUTPUT_TEMPLATE"):
     os.environ.pop(_k, None)
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HERE))

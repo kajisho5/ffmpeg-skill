@@ -3629,7 +3629,6 @@ class WhisperDefaultModelTests(unittest.TestCase):
                "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-c:a", "aac", "-shortest", clip)
             env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                        FFMPEG_SKILL_ASR_ENGINE="whisper.cpp")
-            env.pop("FFMPEG_SKILL_HW", None)
             script("caption.py", clip, "--transcribe", "-o", Path(d, "out.mp4"), env=env)
             args = seen.read_text(encoding="utf-8").split("\n")
             self.assertEqual(args[args.index("-m") + 1], str(model))

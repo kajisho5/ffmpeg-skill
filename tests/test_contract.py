@@ -26,11 +26,10 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
 import _contract  # noqa: E402
 
-# The host's own defaults must not reach the suite (every tool subprocess inherits os.environ): a
-# machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox, and FFMPEG_SKILL_ASR_ENGINE
-# or a PARAKEET_* model would change which speech engine a --transcribe test drives. Tests that
-# exercise those opt in with an explicit env.
-for _k in ("FFMPEG_SKILL_HW", "_FFMPEG_SKILL_HW_EXPLICIT", "FFMPEG_SKILL_ASR_ENGINE", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL"):
+# The host's own defaults must not reach the suite (every tool subprocess inherits os.environ):
+# FFMPEG_SKILL_ASR_ENGINE or a PARAKEET_* setting would change which speech engine a --transcribe
+# test drives, or where parakeet-mlx writes. Tests that exercise those opt in with an explicit env.
+for _k in ("FFMPEG_SKILL_ASR_ENGINE", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL", "PARAKEET_OUTPUT_TEMPLATE"):
     os.environ.pop(_k, None)
 import _common  # noqa: E402
 import server as mcp_server  # noqa: E402
@@ -260,6 +259,20 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(m.group(1), pkg["version"],
                           f"docs/roadmap.md says the released version is {m.group(1)!r}, "
                           f"but package.json is {pkg['version']!r} -- update the roadmap sentence")
+
+    def test_contract_md_names_only_environment_variables_the_code_reads(self):
+        """docs/contract.md is the authority on flags; a review of #305 found its `cache` row naming
+        FFMPEG_SKILL_HW, carried over from an unmerged branch, which nothing in this tree read.
+        Every FFMPEG_SKILL_* variable it names must be read by a script, the MCP server or the
+        installer."""
+        text = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        code = "".join(p.read_text(encoding="utf-8", errors="replace")
+                       for d in ("scripts", "mcp", "bin") for p in sorted((ROOT / d).rglob("*"))
+                       if p.suffix in (".py", ".js") and "__pycache__" not in p.parts)
+        named = sorted(set(re.findall(r"\bFFMPEG_SKILL_[A-Z0-9_]*[A-Z0-9]", text)))
+        self.assertTrue(named, "docs/contract.md names no FFMPEG_SKILL_* variable at all")
+        self.assertEqual([v for v in named if v not in code], [],
+                         "docs/contract.md names environment variables nothing in scripts/, mcp/ or bin/ reads")
 
     def test_docs_failure_json_example_keys_match_the_real_error_shape(self):
         """docs/contract.md's illustrative failure-JSON example listed only kind/message under
