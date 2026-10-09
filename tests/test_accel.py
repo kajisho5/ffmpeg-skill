@@ -316,6 +316,37 @@ class HwReviewRegressionTests(unittest.TestCase):
             self.assertFalse(log.exists(), log.read_text() if log.exists() else "")
 
 
+class EncoderListTests(unittest.TestCase):
+    """ffmpeg_encoders() reads the build that encodes (`ffmpeg -encoders`); `ffprobe -encoders`
+    only under --dry-run, which promises never to run ffmpeg (review of #304: on a mixed install
+    ffprobe's list is another build's, and the AV1/ProRes checks read it too)."""
+
+    def setUp(self):
+        runner._ENCODERS = None
+
+    def tearDown(self):
+        runner._ENCODERS = None
+        STATE.reset()
+
+    def _read(self, dry_run):
+        STATE.dry_run = dry_run
+        listing = " V....D libsvtav1            SVT-AV1\n V....D h264_videotoolbox    VideoToolbox H.264 Encoder\n"
+        with mock.patch.object(runner.shutil, "which", side_effect=lambda name: os.path.join("bin", name)), \
+                mock.patch.object(runner.subprocess, "run",
+                                  return_value=subprocess.CompletedProcess([], 0, listing, "")) as call:
+            names = runner.ffmpeg_encoders()
+        return os.path.basename(call.call_args[0][0][0]), names
+
+    def test_a_real_run_reads_ffmpeg_s_own_list(self):
+        tool, names = self._read(dry_run=False)
+        self.assertEqual(tool, "ffmpeg")
+        self.assertEqual(names, {"libsvtav1", "h264_videotoolbox"})
+
+    def test_only_a_dry_run_reads_ffprobe_s(self):
+        tool, _names = self._read(dry_run=True)
+        self.assertEqual(tool, "ffprobe")
+
+
 @unittest.skipUnless(_vt_here(), "VideoToolbox encoders need Apple Silicon and an ffmpeg that lists them")
 class VtEncodeTests(MediaFixtures):
     """Real VideoToolbox encodes, probed."""

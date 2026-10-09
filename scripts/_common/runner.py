@@ -1092,15 +1092,22 @@ def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
 
 
 def ffmpeg_encoders() -> set:
-    """Names from `ffprobe -encoders` (the same build's list), read once; empty when it cannot be
-    read. Used to pick an AV1 encoder, to refuse --codec av1 / prores before ffmpeg would, and to
-    see whether --hw's VideoToolbox encoders are built in. ffprobe, like ffmpeg_version(), because
-    --dry-run promises never to run ffmpeg and ffprobe always may."""
+    """Names from `ffmpeg -encoders` -- the build that will run the encode -- read once; empty when
+    it cannot be read. Used to pick an AV1 encoder, to refuse --codec av1 / prores before ffmpeg
+    would, and to see whether --hw's VideoToolbox encoders are built in.
+
+    Under --dry-run only, the list comes from `ffprobe -encoders` instead: a dry run promises
+    never to run ffmpeg (docs/contract.md: ffmpeg_execution "none") while ffprobe always may, as in
+    ffmpeg_version(). That is the one case for ffprobe. On a mixed install (a Homebrew ffprobe next
+    to a static ffmpeg) its list is another build's, so a real run never uses it: the AV1/ProRes
+    refusals and the VideoToolbox check must describe the binary that encodes, and a plan that
+    read ffprobe's list is re-decided against ffmpeg's when it runs."""
     global _ENCODERS
     if _ENCODERS is None:
         _ENCODERS = set()
+        tool = "ffprobe" if STATE.dry_run else "ffmpeg"
         try:
-            out = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
+            out = subprocess.run([shutil.which(tool) or tool, "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=PROBE_TIMEOUT).stdout
             _ENCODERS = set(re.findall(r"^\s*[VAS][.\w]{5}\s+(\S+)", out, re.M))
         except (OSError, subprocess.SubprocessError):
