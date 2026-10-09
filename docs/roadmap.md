@@ -616,9 +616,19 @@ truth-up. No further action was needed there.
   issue #143.
 - ffmpeg 8 / 9: filter and encoder fixtures refreshed, `bt709_tag_args` and the colour
   negotiation path re-verified on each; a compatibility table in `references/devices.md`.
-- `--hwaccel auto` (opt-in): videotoolbox / vaapi / nvenc for previews (`--fast`) only,
-  never for the final encode unless `--hwaccel final` is given, with the encoder named in the
-  result so a difference is traceable.
+- GPU encoding -- **shipped differently than planned, after 2.5.1 (#304).** The plan was
+  `--hwaccel auto` over videotoolbox / vaapi / nvenc, for `--fast` previews only unless
+  `--hwaccel final`. What ships is Apple VideoToolbox only (Apple Silicon; h264/hevc/prores,
+  AV1 stays on SVT-AV1), as `--hw`/`--no-hw` on every re-encoding tool and `export.py`. It is
+  never automatic and not tied to `--fast`: `--hw` asks for it on one call, `FFMPEG_SKILL_HW=1`
+  makes it a machine's default for every re-encoding tool except `export.py`'s delivery presets,
+  which take only an explicit `--hw` (or `render.py`/`batch.py --hw`, explicit for every stage).
+  A job VideoToolbox itself refuses is re-encoded on the CPU; nothing else is retried. Every
+  result names the `encoder` that ran and carries `hw` (`requested`, `source`, `used`,
+  `fallback`, `notes`), and a GPU encode notes that its quality is not CRF-equivalent: `--quality`
+  maps to `-q:v` by an approximate SSIM fit, at 1.1-3.5x the bytes. vaapi / nvenc / qsv are not
+  planned: each needs a real-hardware-verified quality mapping and refusal list, as VideoToolbox
+  got (`tests/bench_vt.py`, docs/design-decisions.md "Unreleased -- the GPU").
 - Eval 20 on the Windows and macOS runners; it also grades whether agents quote the metrics
   rather than re-probe.
 

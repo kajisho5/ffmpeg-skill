@@ -835,8 +835,12 @@ not a new file format this tool would have to maintain.
   intermediate is the place for speed; a file that is uploaded is the place for bytes. So
   `FFMPEG_SKILL_HW=1` changes every re-encoding tool's default but not `export.py`'s delivery
   presets, and `render.py --hw` is the one switch that puts a whole project, export included, on
-  the GPU. Code: `_common.runner.apply_common`, `add_hw_orchestrator_args`. Tests:
-  `HwResolutionTests`, `test_export_preset_needs_an_explicit_hw`.
+  the GPU. It is never switched on by anything else (not `--fast`, not a detected GPU). An
+  `export.py` run under the variable says in `hw` (`requested: false`, `source: env`, a note) that
+  the preset stayed on the CPU and that `--hw` moves it. Code: `_common.runner.apply_common`,
+  `add_hw_orchestrator_args`. Tests: `HwResolutionTests`, `test_export_preset_needs_an_explicit_hw`
+  (a dry run with VideoToolbox stood in, so it runs on every CI runner),
+  `test_the_env_default_reaches_the_other_re_encoding_tools`.
 - **CRF maps to VideoToolbox `-q:v` on the safe side, with a separate HDR curve.**
   `vt_quality` takes, at each CRF, the highest `-q:v` whose SSIM matched the CPU encode across
   `tests/bench_vt.py`'s clips (synthetic CG, fractal and grain, iPhone 17 Pro SDR and HLG at 30
@@ -856,15 +860,50 @@ not a new file format this tool would have to maintain.
   with a neighbour. Tests: `test_quality_mapping_is_monotonic_and_bounded`,
   `test_the_curves_keep_the_measured_values`, `test_an_hdr_source_gets_the_hdr_quality_curve`,
   `test_an_h264_line_on_an_hdr_source_keeps_the_h264_curve`.
+- **`--quality` on the GPU is an approximation of the CRF encode, said so, and `verified` does not
+  change meaning.** `-q:v` is not a CRF: VideoToolbox has no rate-distortion model that x264/x265's
+  CRF promises a quality from, and the curves above are a fit at three CRFs on a handful of clips,
+  pinned to the measured values, not derived. A content type the bench did not hold can land above
+  or below the CPU encode's quality, and the bytes differ by 1.1–3.5×. So every VideoToolbox
+  encode adds a top-level `notes` line naming the encoder and its `-q:v`, saying it is not
+  CRF-equivalent and that `--no-hw` gives the CRF encode. `verified` stays what it is for every
+  tool, the output's measured properties (written, probed, the tool's own measured steps: loudness,
+  duration, a platform check); none of them reads the encoder line or assumes x264/CRF, so a GPU
+  file verifies exactly as the same file from the CPU would. Tests:
+  `test_a_gpu_encode_notes_that_its_quality_is_not_crf_equivalent`,
+  `test_verified_is_the_measured_output_whatever_the_encoder`,
+  `test_the_curves_keep_the_measured_values`.
 - **VideoToolbox BT.709 tags go through a bitstream filter.** The ≥7.1 reason `bt709_tag_args`
   uses encoder VUI parameters holds for VideoToolbox too, and it has no `-x264-params`; the
   `-colorspace` output options put a real matrix conversion on an untagged source (24 dB PSNR,
   tag-neutral). `h264_metadata`/`hevc_metadata` write the VUI after encoding (49.9 dB). Test:
   `test_hw_encode_reports_itself_and_keeps_an_untagged_source_unconverted`.
-- **A refused GPU job is re-encoded on the CPU, and the result says so.** VideoToolbox has hard
-  limits (H.264 stops at 4096 wide) that listing the encoder cannot reveal. `run()` swaps the
-  recorded VideoToolbox arguments back to the CPU line they replaced and retries once;
-  `hw.used: false` and `hw.notes` report it, and `encoder` names what really ran. Test:
-  `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so`.
+- **A job VideoToolbox refuses is re-encoded on the CPU, and the result says so; no other failure
+  is retried.** VideoToolbox has hard limits (H.264 stops at 4096 wide) that listing the encoder
+  cannot reveal. `run()` swaps the recorded VideoToolbox arguments back to the CPU line they
+  replaced and retries once; `hw.used: false`, `hw.fallback: true` and `hw.notes` (with the line
+  ffmpeg printed) report it, and `encoder` names what really ran. It retries only when stderr shows
+  VideoToolbox's own failure, read from the FFmpeg 5.1–8.0 and master sources: "Error while opening
+  encoder" on a line naming a `*_videotoolbox` encoder (6.0+ log contexts `[vost#N:M/<encoder>]`,
+  8.0+ `[enc:<encoder>]`; 5.1's line names no encoder, so there it counts beside an error the
+  encoder logged in its own `[<encoder> @ …]` context), or the encoder's compression-session
+  failures in that context ("create compression session", "prepare encoder", "encode frame",
+  "encoding frame", matched without case because master drops the "Error: " prefix). A bad filter
+  graph, a missing font (7.0+ then prints "Could not open encoder before EOF", which names the
+  encoder but means it never got a frame) or a full disk is the same failure on the CPU: retrying
+  ran the job twice and reported the GPU as its cause. Those fail once, and the failure document
+  names the encoder of the command that ran, says it was not retried, and carries `encoder`/`hw`;
+  when the CPU retry fails too, the message and stderr are the CPU command's. Code:
+  `_common.runner.videotoolbox_failure`, `run`, `_fail`. Tests: `VideoToolboxFailureTests`,
+  `test_a_videotoolbox_open_failure_is_re_encoded_on_the_cpu_and_reported`,
+  `test_a_failure_that_is_not_videotoolbox_s_is_not_retried_and_names_the_command_that_ran`,
+  `test_when_the_cpu_retry_fails_too_the_error_is_the_cpu_command_s` (a fake ffmpeg, every CI
+  runner); `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so` (real hardware).
+- **The encoder list is `ffmpeg -encoders`; `ffprobe -encoders` only under `--dry-run`.** The
+  AV1/ProRes refusals and the VideoToolbox check must describe the binary that encodes, and on a
+  mixed install (a Homebrew ffprobe next to a static ffmpeg) ffprobe's list is another build's. A
+  dry run promises never to run ffmpeg, so it reads ffprobe's, as `ffmpeg_version()` always does;
+  the real run re-decides against ffmpeg's. Code: `_common.runner.ffmpeg_encoders`. Tests:
+  `EncoderListTests`, `test_hw_dry_run_runs_no_ffmpeg`.
 - **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
   on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.
