@@ -262,11 +262,15 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         from faster_whisper import WhisperModel  # type: ignore
         import threading
         result: list = []
+        crashed: list = []
 
         def work() -> None:
-            m = WhisperModel(model, device="cpu", compute_type="int8")
-            segments, _ = m.transcribe(wav, language=language, word_timestamps=False)
-            result.extend((seg.start, seg.end, seg.text.strip()) for seg in segments if seg.text.strip())
+            try:
+                m = WhisperModel(model, device="cpu", compute_type="int8")
+                segments, _ = m.transcribe(wav, language=language, word_timestamps=False)
+                result.extend((seg.start, seg.end, seg.text.strip()) for seg in segments if seg.text.strip())
+            except Exception as exc:  # noqa: BLE001 -- a model that would not load or run: a failed engine
+                crashed.append(exc)
 
         # An in-process engine gets the same wall-clock limit as the CLI engines and ffmpeg.
         t = threading.Thread(target=work, daemon=True)
@@ -274,13 +278,18 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         t.join(STATE.timeout or None)
         if t.is_alive():
             die(f"faster-whisper exceeded the {STATE.timeout:.0f} s time limit; raise --timeout for a long recording", code=124, kind="timeout")
-        cues = list(result)
-        if not cues:
-            die_no_speech("faster-whisper", video)
-        info("transcribed with faster-whisper")
-        write_srt(cues, out_srt)
-        return Transcription(cues=cues, engine="faster-whisper",
-                             facts=dict(facts, engine="faster-whisper", model=model, language=language))
+        if crashed:
+            # it failed (a model it could not fetch or load), which is not "found no speech":
+            # move on to the next engine, as a failed whisper.cpp does
+            info(f"faster-whisper found but failed: {crashed[0]!s}"[:240])
+        else:
+            cues = list(result)
+            if not cues:
+                die_no_speech("faster-whisper", video)
+            info("transcribed with faster-whisper")
+            write_srt(cues, out_srt)
+            return Transcription(cues=cues, engine="faster-whisper",
+                                 facts=dict(facts, engine="faster-whisper", model=model, language=language))
     except ImportError:
         pass
     # 3. openai-whisper CLI
@@ -814,14 +823,18 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             from faster_whisper import WhisperModel  # type: ignore
             import threading
             collected: list = []
+            crashed: list = []
 
             def work() -> None:
-                m = WhisperModel(model, device="cpu", compute_type="int8")
-                segments, _ = m.transcribe(wav, language=language, word_timestamps=True)
-                for seg in segments:
-                    for w in (getattr(seg, "words", None) or []):
-                        collected.append({"word": str(w.word).strip(),
-                                          "start": float(w.start), "end": float(w.end)})
+                try:
+                    m = WhisperModel(model, device="cpu", compute_type="int8")
+                    segments, _ = m.transcribe(wav, language=language, word_timestamps=True)
+                    for seg in segments:
+                        for w in (getattr(seg, "words", None) or []):
+                            collected.append({"word": str(w.word).strip(),
+                                              "start": float(w.start), "end": float(w.end)})
+                except Exception as exc:  # noqa: BLE001 -- a model that would not load or run
+                    crashed.append(exc)
 
             t = threading.Thread(target=work, daemon=True)
             t.start()
@@ -829,9 +842,13 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             if t.is_alive():
                 die(f"faster-whisper exceeded the {STATE.timeout:.0f} s time limit; raise "
                     "--timeout for a long recording", code=124, kind="timeout")
-            info(f"word timings from faster-whisper ({len(collected)} words)")
-            return Transcription(words=[w for w in collected if w["word"]], engine="faster-whisper",
-                                 facts=dict(facts, engine="faster-whisper", model=model, language=language))
+            if crashed:
+                info(f"faster-whisper found but failed: {crashed[0]!s}"[:240])
+                failed = "faster-whisper"
+            else:
+                info(f"word timings from faster-whisper ({len(collected)} words)")
+                return Transcription(words=[w for w in collected if w["word"]], engine="faster-whisper",
+                                     facts=dict(facts, engine="faster-whisper", model=model, language=language))
         except ImportError:
             pass
 

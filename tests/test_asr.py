@@ -223,25 +223,20 @@ class _FakeEngines:
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
 
-class TranscriptionStateTests(unittest.TestCase):
-    """Review of #305: the engine, routing and Parakeet word timings were handed back through
-    module-level LAST_RUN / LAST_WORDS, which every call in one process shared (mcp/server.py,
-    batch.py, a test). The calls now return them; nothing is kept in the module."""
+class _BridgeHarness:
+    """Runs the real bridge in process against _FakeEngines: no binary, no ffmpeg, every OS."""
 
-    def _patched(self, engines):
+    def _with(self, engines, call, faster_whisper=None):
         import _common
         fake = _FakeEngines(engines)
         stack = [mock.patch.object(_common, "run_analysis", lambda *a, **k: None),
                  mock.patch.object(shutil, "which", fake.which),
                  mock.patch.object(subprocess, "run", fake.run),
-                 mock.patch.dict(sys.modules, {"faster_whisper": None}),
+                 # None makes `import faster_whisper` fail; a stub module stands in for an install
+                 mock.patch.dict(sys.modules, {"faster_whisper": faster_whisper}),
                  # a host ggml model in ~/.cache/whisper.cpp must not change the model named below
                  mock.patch.object(asr, "_whisper_cpp_model", lambda m: m),
                  mock.patch.dict(os.environ, {"PARAKEET_MODEL": "", "PARAKEET_CPP_MODEL": "", asr.ASR_ENGINE_ENV: ""})]
-        return stack
-
-    def _with(self, engines, call):
-        stack = self._patched(engines)
         for p in stack:
             p.start()
         try:
@@ -249,6 +244,61 @@ class TranscriptionStateTests(unittest.TestCase):
         finally:
             for p in reversed(stack):
                 p.stop()
+
+
+def _crashing_faster_whisper():
+    """A faster_whisper whose model cannot be loaded -- what an offline first run looks like."""
+    mod = type(sys)("faster_whisper")
+
+    class WhisperModel:
+        def __init__(self, *a, **k):
+            raise RuntimeError("cannot fetch Systran/faster-whisper-base: offline")
+    mod.WhisperModel = WhisperModel
+    return mod
+
+
+class WhisperFailureTests(_BridgeHarness, unittest.TestCase):
+    """Undetected speech goes to Whisper first, so a Whisper engine that fails must read as a
+    failure: a faster-whisper whose model would not load used to be swallowed in its thread and
+    reported as "found no speech", which also kept Parakeet from ever being tried."""
+
+    def test_a_crashed_faster_whisper_is_not_no_speech(self):
+        calls = []
+
+        def fake_die(msg, code=1, kind="input", **extra):
+            calls.append((msg, kind, extra))
+            raise SystemExit(code)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(asr, "die", fake_die), \
+                self.assertRaises(SystemExit):
+            self._with([], lambda: asr.transcribe_result("talk.mp4", os.path.join(d, "a.srt"), None, "base"),
+                       faster_whisper=_crashing_faster_whisper())
+        self.assertEqual(len(calls), 1, calls)
+        self.assertNotEqual(calls[0][2].get("reason"), asr.NO_SPEECH_REASON)
+        self.assertIn("no local speech-to-text engine", calls[0][0])
+
+    def test_parakeet_runs_last_after_a_crashed_faster_whisper(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = self._with(["parakeet-mlx"], lambda: asr.transcribe_result("talk.mp4", os.path.join(d, "a.srt"), None, "base"),
+                             faster_whisper=_crashing_faster_whisper())
+        self.assertEqual(run.engine, "parakeet-mlx")
+        self.assertEqual(run.facts["routing"], asr.ROUTING_LAST_RESORT)
+        self.assertEqual(run.notes, [asr.assumed_english_note(whisper_failed=True)])
+        words = self._with(["parakeet-mlx"], lambda: asr.transcribe_words_result("talk.mp4"),
+                           faster_whisper=_crashing_faster_whisper())
+        self.assertEqual((words.engine, len(words.words)), ("parakeet-mlx", 5))
+        self.assertEqual(words.notes, [asr.assumed_english_note("--filler-lang", whisper_failed=True)])
+
+    def test_a_crashed_faster_whisper_word_run_is_still_refused_by_name_without_parakeet(self):
+        """No Parakeet to fall back on: silence.py keeps its "<engine> ran but produced no
+        word-level timings" refusal, naming faster-whisper, as before."""
+        run = self._with([], lambda: asr.transcribe_words_result("talk.mp4"), faster_whisper=_crashing_faster_whisper())
+        self.assertEqual((run.engine, run.words), ("faster-whisper", []))
+
+
+class TranscriptionStateTests(_BridgeHarness, unittest.TestCase):
+    """Review of #305: the engine, routing and Parakeet word timings were handed back through
+    module-level LAST_RUN / LAST_WORDS, which every call in one process shared (mcp/server.py,
+    batch.py, a test). The calls now return them; nothing is kept in the module."""
 
     def test_two_transcriptions_in_one_process_do_not_share_state(self):
         self.assertFalse(hasattr(asr, "LAST_RUN") or hasattr(asr, "LAST_WORDS"),

@@ -840,6 +840,13 @@ not a new file format this tool would have to maintain.
   (contributor's figures, Apple Silicon): parakeet-mlx v2 2.8% WER at ~120× real time, whisper
   large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`,
   `UndetectedLanguageTests`.
+- **A Whisper engine that failed is a failure, not silence.** Undetected speech goes to Whisper
+  first, so a Whisper failure has to read as one for Parakeet to be tried after it. A
+  faster-whisper whose model would not load (an offline first run) raised inside its worker
+  thread, the exception was swallowed and the run was refused as "found no speech"; it now logs
+  "found but failed" and the next engine is tried, as a failed whisper.cpp always was. An engine
+  that ran and returned no segment is still `no_speech` (`AsrNoSpeechTests`). Test:
+  `WhisperFailureTests`.
 - **The transcribe call returns what it used; nothing is left in module state.**
   `transcribe_result()` / `transcribe_words_result()` return a `Transcription` (cues, words,
   engine, the `transcription` facts, notes), so two transcriptions in one process never read each
