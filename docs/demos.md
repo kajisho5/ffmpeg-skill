@@ -261,6 +261,17 @@ python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 -
 
 **Look for:** Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.
 
+### Lossless cut that starts where asked
+
+![Lossless cut that starts where asked](demos/cut_edit_list.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 --tolerance 5 --json -o demos/out/cut_edit_list_before.mp4
+python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 --tolerance 5 --edit-list --json -o demos/out/cut_edit_list_after.mp4
+```
+
+**Look for:** Both sides are stream copies of the same 2.05 s request. The default shifts the copy's timestamps to zero, so the keyframe's pre-roll plays first (start_snapped: true); --edit-list keeps the MP4 edit list that hides it, so the picture starts at 2.05 s (start_snapped: false, stored_preroll_seconds says how much is hidden). A player that ignores edit lists shows the pre-roll.
+
 ### Cuts that land on the beat
 
 ![Cuts that land on the beat](demos/beats_snap.gif)

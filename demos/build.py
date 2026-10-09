@@ -803,6 +803,26 @@ def demo_cut_accurate(ctx):
     return before, after
 
 
+def demo_cut_edit_list(ctx):
+    """Two lossless copies of the same request: the default one shifts its timestamps to zero and
+    shows the keyframe's pre-roll, the --edit-list one keeps the MP4 edit list that hides it, so
+    its picture starts where asked. Both are stream copies; neither re-encodes."""
+    src = FIX / "mandel.mp4"
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    # --tolerance 5 keeps both on the stream copy, which is what this demo compares
+    plain = ctx.script("cut.py", src, "--start", "2.05", "--duration", "3", "--tolerance", "5",
+                       "--json", "-o", before, capture=True)
+    listed = ctx.script("cut.py", src, "--start", "2.05", "--duration", "3", "--tolerance", "5",
+                        "--edit-list", "--json", "-o", after, capture=True)
+    if plain and listed:
+        a, b = json.loads(plain), json.loads(listed)
+        ctx.note("default: mode=%s, start_snapped=%s; --edit-list: mode=%s, start_snapped=%s, "
+                 "stored_preroll_seconds=%s" % (a.get("mode"), a.get("start_snapped"), b.get("mode"),
+                                                b.get("start_snapped"), b.get("stored_preroll_seconds")))
+    return before, after
+
+
 def demo_crop_rect(ctx):
     before = FIX / "mandel.mp4"
     after = ctx.path("after.mp4")
@@ -1462,6 +1482,9 @@ _ROWS = [
     ("cut_accurate", PICTURE, "Lossless cut vs. accurate cut",
      "Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.",
      demo_cut_accurate, "video", None, ("LOSSLESS", "--ACCURATE")),
+    ("cut_edit_list", PICTURE, "Lossless cut that starts where asked",
+     "Both sides are stream copies of the same 2.05 s request. The default shifts the copy's timestamps to zero, so the keyframe's pre-roll plays first (start_snapped: true); --edit-list keeps the MP4 edit list that hides it, so the picture starts at 2.05 s (start_snapped: false, stored_preroll_seconds says how much is hidden). A player that ignores edit lists shows the pre-roll.",
+     demo_cut_edit_list, "video", None, ("DEFAULT COPY", "--EDIT-LIST")),
     ("beats_snap", PICTURE, "Cuts that land on the beat",
      "Both cuts asked for 2.03 s. The right one moved 30 ms to the nearest measured onset, so its first frame lands on a click instead of just after one; the waveform is the evidence. The tempo, the beat list and the confidence are in the JSON -- nothing is snapped to a grid the audio does not support, and below --min-confidence the cut refuses rather than inventing one.",
      demo_beats_snap, "wave", None, ("--snap none", "--snap beats")),
