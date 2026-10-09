@@ -394,7 +394,7 @@ output; the result says so with `dropped_non_av_streams: true`.
 
 ### loop.py — repeat a clip
 ```
-loop.py INPUT --times N | --duration T [-o OUT]
+loop.py INPUT --times N | --duration T [--boomerang] [-o OUT]
 ```
 `--times` repeats the whole clip that many times back to back (2 =
 original + 1 repeat). `--duration` instead loops (and trims the last
@@ -403,6 +403,14 @@ bed, or filling a fixed slot length with a short clip. Does not smooth the
 loop point (no crossfade at the seam) -- a clip that doesn't already loop
 cleanly will show a visible cut/pop at each repeat, which is a property of
 the source material this tool cannot fix.
+`--boomerang` plays the clip forward, then backward (frames 0..N-1, then
+N-2..1, repeated), so any clip loops without a jump and neither turnaround
+frame is shown twice. `--times` then counts round trips (1 is allowed), and
+`--duration` trims the last one. A boomerang is silent (reversed sound plays
+backwards; a source's audio is dropped with a `notes` line), so add a bed with
+`audio.py`. It holds the decoded clip in memory like `reverse.py` and warns
+above ~2 GiB; a clip needs 3 frames at least, and one cycle at most 32767
+(ffmpeg's `loop` filter).
 
 ### broll.py — cut away to a B-roll clip and come back
 ```
@@ -591,10 +599,10 @@ are always present (`[]` when none) and noted.
 Normalises every clip to one frame size, fps, `yuv420p`, 48 kHz and one
 channel layout (the widest clip's -- a 5.1 clip keeps 5.1 -- or `--channels`;
 silent track generated for clips without audio), then chains `xfade` +
-`acrossfade`. With a transition each clip has one length for picture and sound
+`acrossfade` (or `concat` for `--transition none`). Every clip has one length for picture and sound
 -- the video stream's, or the audio's when it runs more than a frame longer --
 and the shorter stream is padded (silence / last frame held), so every clip's
-sound stays with its picture. Output length = sum of clip lengths −
+sound stays with its picture and a plain cut leaves no hole in the video. Output length = sum of clip lengths −
 transition × (n−1); `verified` checks the output's video-stream length against it. Clips must be
 longer than 2 × the transition. Use `--transition none` for a plain cut.
 A subtitle/data track in the source is not carried into the retimed/concatenated

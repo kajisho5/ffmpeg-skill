@@ -81,7 +81,7 @@ def unpending_length(durs: List[float], d: float) -> Optional[float]:
 
 
 def clip_length(meta: Dict[str, Any], fps: float) -> float:
-    """The one length a clip holds in a crossfaded join, for its picture and its sound alike: the
+    """The one length a clip holds in a join, for its picture and its sound alike: the
     video stream's, or the audio stream's when the sound runs more than a frame past the picture
     (narration is never cut; an AAC tail adds no frame). The container duration (audio priming,
     a longer track) is only the fallback when a stream length is unknown (a pending input)."""
@@ -443,9 +443,12 @@ def main() -> int:
     note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
     durs = [m.get("duration") or 0.0 for m in metas]
     d = args.duration if args.transition != "none" else 0.0
-    # a crossfaded join gives each clip one length for both streams, so the offsets that place
-    # every picture also place its sound; the plain cut (concat) keeps the streams paired itself
-    lens = [clip_length(m, fps) for m in metas] if d else durs
+    # every clip gets one length for both streams, so whatever places the next clip -- xfade's
+    # offsets, or the concat filter, which starts it after the LONGER stream of this one -- places
+    # its picture and its sound together. The plain cut used to take the raw streams, and a sound
+    # past the picture (a music bed padded to the container, even a 20 ms AAC tail) left a hole in
+    # the video there.
+    lens = [clip_length(m, fps) for m in metas]
     place_silent(lens, d)
     for p, dur in zip(args.inputs, lens):
         if d and dur <= d * 2 and not STATE.dry_run:
@@ -497,18 +500,17 @@ def main() -> int:
         parts.append(f"[{i}:v]{geo},setsar=1,fps={fps:g},format={pixfmt},settb=AVTB[v{i}]")
         parts.append(f"[{audio_src[i]}]aformat=sample_rates=48000:channel_layouts={layout},asetpts=PTS-STARTPTS[a{i}]")
 
+    # pad the shorter stream to the clip's length: the audio with silence, the picture by holding
+    # its last frame, then cut both there -- each clip boundary is then the same for both chains
+    for i in range(n):
+        vlen = (metas[i].get("video") or {}).get("duration") or lens[i]
+        hold = f"tpad=stop_mode=clone:stop_duration={lens[i] - vlen:.3f}," if lens[i] > vlen else ""
+        parts.append(f"[v{i}]{hold}trim=duration={lens[i]:.3f}[vp{i}]")
+        parts.append(f"[a{i}]apad=whole_dur={lens[i]:.3f},atrim=duration={lens[i]:.3f}[ap{i}]")
     if args.transition == "none":
-        chain = "".join(f"[v{i}][a{i}]" for i in range(n))
+        chain = "".join(f"[vp{i}][ap{i}]" for i in range(n))
         parts.append(f"{chain}concat=n={n}:v=1:a=1[vout][aout]")
     else:
-        # pad the shorter stream to the clip's length: the audio with silence, the picture by
-        # holding its last frame, then cut both there -- each xfade and acrossfade then starts
-        # at the same clip boundary instead of the audio chain drifting by every clip's gap
-        for i in range(n):
-            vlen = (metas[i].get("video") or {}).get("duration") or lens[i]
-            hold = f"tpad=stop_mode=clone:stop_duration={lens[i] - vlen:.3f}," if lens[i] > vlen else ""
-            parts.append(f"[v{i}]{hold}trim=duration={lens[i]:.3f}[vp{i}]")
-            parts.append(f"[a{i}]apad=whole_dur={lens[i]:.3f},atrim=duration={lens[i]:.3f}[ap{i}]")
         vprev, aprev = "vp0", "ap0"
         offset = 0.0
         for i in range(1, n):
@@ -527,13 +529,18 @@ def main() -> int:
     if d and any(m.get("dry_run") for m in metas[:-1]):
         STATE_NOTES.append("the planned xfade offsets count each pending input as 0 s long: a real run offsets "
                            "by its measured length")
+    elif not d and any(m.get("dry_run") for m in metas):
+        # the plain cut trims/holds every clip to clip_length too (2.4.1), so a pending clip's
+        # planned trim=duration=0.000 is the stub's placeholder, not the cut
+        STATE_NOTES.append("the planned trim lengths count each pending input as 0 s long: a real run trims "
+                           "or holds it to its measured length")
     output = args.output or default_output(args.inputs[0], "joined", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
-    if d:
-        # the fps filter already made the picture constant-rate and xfade places every frame: FFmpeg
-        # 5.1's default cfr output mode still duplicated the last one to meet the AAC tail (a 51-frame
-        # dissolve came out 52), which newer builds no longer do -- pass the frames through as built
-        cmd += ["-fps_mode", "passthrough"]
+    # the fps filter already made the picture constant-rate, and the per-clip trims (then xfade or
+    # concat) place every frame: FFmpeg 5.1's default cfr output mode still duplicated the last one
+    # to meet the AAC tail (a 51-frame dissolve came out 52), which newer builds no longer do -- pass
+    # the frames through as built, for a plain cut as much as for a transition
+    cmd += ["-fps_mode", "passthrough"]
     cmd += video_args(hdr_meta or metas[0], args.crf, args.preset) + aac_args() + [output]
     run(cmd)
     expected = unpending_length(lens, d)

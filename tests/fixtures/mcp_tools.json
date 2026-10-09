@@ -615,6 +615,7 @@
   "name": "loop",
   "properties": [
    "argv",
+   "boomerang",
    "codec",
    "dry_run",
    "duration",

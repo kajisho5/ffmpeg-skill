@@ -10,6 +10,36 @@
 - fix: the Parakeet output parsers skip JSON of the wrong shape (`{"words": 5}`, `{"sentences": 5}`, a number or null where a sentence or token object belongs) instead of raising `TypeError`/`AttributeError`; a malformed engine document yields no words, never a traceback.
 
 
+## 2.5.1
+
+_Automated release: version and notes generated from pull requests merged since 2.5.0._
+
+- fix(graphics): a wrapped title is drawn on its lines. `graphics.py` wrapped a title that did not fit and sized its card for two lines, but the drawtext text file had every control character stripped, newline included, so "WHO SHOWS UP?", wrapped as "WHO\nSHOWS UP?", lost its line break and rendered on one line as "WHOSHOWS UP?", off both edges of the frame. Newlines are kept (`\r\n` and `\r` become `\n`; a tab, vertical tab or form feed becomes a space; other control characters are still stripped), and the centred templates (`title`, `hook`, `meme`) centre each line with drawtext's `text_align` on FFmpeg ≥ 6.1; on 5.1 and 6.0 the block is centred with its lines left-aligned. `overlay.py --text` keeps a user's newline too.
+- fix(graphics): a wrapped title is drawn on its lines (#309)
+
+## 2.5.0
+
+_Automated release: version and notes generated from pull requests merged since 2.4.2._
+
+- feat(loop): `--boomerang` plays the clip forward then backward (frames 0..N-1, then N-2..1, repeated), so any clip loops without a jump. Each turnaround frame is shown once, unlike the common split/reverse/concat recipe, which shows the last frame twice and, on every repeat, the first frame twice. `--times` counts round trips (1 is allowed) and `--duration` still hits its target. The output is constant-rate at the source's nominal frame rate: a variable-frame-rate source (phone footage) is retimed by frame index, because a CFR conform after the reverse duplicated a turnaround frame. The audio is dropped, with a `notes` line (reversed sound plays backwards). The result gains `boomerang`. It warns when the decoded frames it holds would pass ~2 GiB and refuses clips under 3 frames or cycles over the `loop` filter's 32767 frames.
+- feat(loop): --boomerang plays a clip forward then backward (#310)
+
+## 2.4.2
+
+_Automated release: version and notes generated from pull requests merged since 2.4.1._
+
+- fix(join): a `--dry-run` plain cut (`--transition none`) with a pending input now notes that the planned `trim` lengths are the stub's 0 s placeholders, as the crossfade path already did for its offsets.
+- note (2.4.1): a plain cut's `expected_duration` is now the sum of each clip's `clip_length` (the length both streams are trimmed or held to), not the container durations. A value that callers see changed; the old one could not be met, so `verified` was false.
+- fix(join): plain-cut dry run names a pending clip's trim as a placeholder; #302 follow-ups (#308)
+
+## 2.4.1
+
+_Automated release: version and notes generated from pull requests merged since 2.4.0._
+
+- fix(join): a plain cut (`--transition none`) no longer leaves a hole in the video where a clip's sound runs past its picture. The concat filter starts each clip after the *longer* stream of the one before, so a music bed padded to the container left 0.3 s of missing video (an odd average rate downstream), and even a 20 ms AAC tail left a one-frame gap; the run succeeded with `verified` false. Every clip now gets the crossfade path's one length for both streams: the last frame held when the sound runs more than a frame past the picture, the sound trimmed when it runs less. `expected_duration` counts those lengths, not container durations.
+- fix(join): a plain cut leaves no hole where a clip's sound outruns its picture (#302)
+- chore(deps): Bump github/codeql-action from 3 to 4 (#307)
+
 ## 2.4.0
 
 _Automated release: version and notes generated from pull requests merged since 2.3.2._
