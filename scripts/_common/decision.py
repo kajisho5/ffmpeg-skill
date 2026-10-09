@@ -345,30 +345,38 @@ def _maybe_hw(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: 
     vt = _vt_args(codec, crf, meta, keep_bt709)
     if vt is None:
         return cpu
-    STATE.hw_swaps.append((vt, cpu))
+    # a copy: a caller that edits the returned line in place (export.py strips -movflags) must
+    # not edit the recorded slice with it, or restate_last_swap() never sees the line as built
+    STATE.hw_swaps.append((list(vt), cpu))
     return vt
 
 
 _CPU_TO_CODEC = {"libx264": "h264", "libx265": "hevc", "prores_ks": "prores"}
 
 
-def hw_preset_video(video: List[str], meta: Optional[Dict[str, Any]]) -> List[str]:
+def hw_preset_video(video: List[str], meta: Optional[Dict[str, Any]], *, bt709: bool) -> List[str]:
     """export.py's fixed-preset encoder line moved to VideoToolbox (same codec, the preset's -crf
-    mapped to -q:v, its -r kept); unchanged -- with the reason noted -- when that cannot apply."""
+    mapped to -q:v, its -r kept); unchanged -- with the reason noted -- when that cannot apply.
+
+    `bt709`: whether export.py tags this preset's CPU line BT.709 (every fixed preset but prores,
+    whose master keeps the source's tags). The VideoToolbox line writes the format the CPU preset
+    writes: an h264/hevc preset is 8-bit with BT.709 tags whatever the source (on an HDR source it
+    says so in a note, as without --hw), so it is built as for an SDR source -- not the Main10 HDR
+    line, which would make the GPU file and its CPU fallback different formats."""
     enc = video[video.index("-c:v") + 1] if "-c:v" in video else None
     codec = _CPU_TO_CODEC.get(enc or "")
     if codec is None:
         return video
     crf = int(video[video.index("-crf") + 1]) if "-crf" in video else 18
-    vt = _vt_args(codec, crf, meta, True)
+    vt = _vt_args(codec, crf, meta if codec == "prores" else None, bt709)
     if vt is None:
         return video
     vt = strip_movflags(vt)  # export adds it
     if "-r" in video:
         vt += ["-r", video[video.index("-r") + 1]]
     # the CPU line export would have written: the preset's own options plus the BT.709 tags export
-    # adds only when the line is not VideoToolbox, so a GPU->CPU fallback is tagged like a CPU run
-    STATE.hw_swaps.append((vt, list(video) + bt709_tag_args(enc)))
+    # adds to it (only to the CPU line), so a GPU->CPU fallback is tagged exactly like a CPU run
+    STATE.hw_swaps.append((list(vt), list(video) + (bt709_tag_args(enc) if bt709 else [])))
     return vt
 
 

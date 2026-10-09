@@ -544,6 +544,7 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         # needs (a timeout inside audio.py is a timeout, not an "input" error of render.py).
         err = doc.get("error") or {}
         extra_fields = {"hint": err["hint"]} if err.get("hint") else {}
+        extra_fields.update(_stage_failure_hw(Path(script).stem, doc))
         die(f"{script} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, **extra_fields)
     _LAST_DOC.clear()
@@ -553,6 +554,17 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
     if key:
         cache_store(stage, key, out_path or (dest or ""), time.time() - started)
     return out_path
+
+
+def _stage_failure_hw(stage: str, doc: Any) -> Dict[str, Any]:
+    """A failed stage's GPU facts, for render's own failure document: the stage's `hw` joins the
+    earlier stages' (a fallback before the failure is not lost), and its `encoder` -- the command
+    that failed -- is forwarded. die() then adds `hw` for a kind: ffmpeg failure, as a tool's own
+    run() failure carries it."""
+    if not isinstance(doc, dict):
+        return {}
+    absorb_stage_hw(stage, doc)
+    return {"encoder": doc["encoder"]} if doc.get("encoder") else {}
 
 
 # ------------------------------------------------------------------ the stage cache (1.17)
@@ -732,7 +744,8 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     if proc.returncode != 0 or doc.get("status") != "completed":
         err = doc.get("error") or {}
         die(f"{tool} failed while executing the plan: {err.get('message') or proc.stderr.strip()[-300:]}",
-            kind=err.get("kind", "ffmpeg"), plan=path, tool=tool)
+            kind=err.get("kind", "ffmpeg"), plan=path, tool=tool, **_stage_failure_hw(tool, doc))
+    absorb_stage_hw(tool, doc)  # the tool's GPU facts (fell back and why, ran on VideoToolbox) reach this result
     output = doc.get("output") or plan.get("output")
     check_result = None
     exit_code = 0

@@ -295,7 +295,8 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
 }
 
 IDEMPOTENCY = {
-    "bit_exact": "same inputs and flags give byte-identical output",
+    "bit_exact": "same inputs and flags give byte-identical output (with the CPU encoders: under --hw / $FFMPEG_SKILL_HW a "
+                 "VideoToolbox encode is content_equivalent at best)",
     "content_equivalent": "same inputs and flags give the same media content; bytes may differ between encoder builds",
     "cached": "re-runs skip inputs whose content hash and recipe are unchanged",
     "environment_dependent": "output includes timings or machine state and differs between runs",
@@ -348,7 +349,7 @@ def input_schema(parser: argparse.ArgumentParser) -> Dict[str, Any]:
     props: Dict[str, Any] = {}
     required: List[str] = []
     positional: List[str] = []
-    common = {"dry_run", "json", "progress", "fast", "timeout", "overwrite", "plan", "codec", "quality"}
+    common = {"dry_run", "json", "progress", "fast", "timeout", "overwrite", "plan", "codec", "quality", "hw", "no_hw"}
     for action in parser._actions:
         if isinstance(action, argparse._HelpAction):
             continue
@@ -371,6 +372,13 @@ def input_schema(parser: argparse.ArgumentParser) -> Dict[str, Any]:
                 required.append(action.dest)
         if action.dest in common:
             prop["common"] = True
+        if action.dest in props:
+            # one property per dest: a second action (a store_false --no-x beside a store_true --x)
+            # would replace the first, and the contract and MCP would publish only the second flag
+            # under the first one's name -- an MCP `x: true` would then send --no-x
+            first = props[action.dest]["cli"]
+            raise RuntimeError(f"{parser.prog}: {'/'.join(action.option_strings) or action.dest} shares dest {action.dest!r} "
+                               f"with {'/'.join(first) if isinstance(first, list) else 'a positional'}; give each flag its own dest")
         props[action.dest] = prop
     groups = [g for g in getattr(parser, "_mutually_exclusive_groups", []) if g._group_actions]
     schema: Dict[str, Any] = {"type": "object", "properties": props, "required": required, "positional": positional, "additionalProperties": False}
@@ -380,8 +388,9 @@ def input_schema(parser: argparse.ArgumentParser) -> Dict[str, Any]:
     return schema
 
 
-def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
-    """What the tool prints on stdout with --json (keys observed in the implementation)."""
+def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str, Any]:
+    """What the tool prints on stdout with --json (keys observed in the implementation). `hw`: the
+    tool takes --hw, so its `notes` can also carry a VideoToolbox encode's quality line."""
     if name == "probe":
         return {"type": "object", "description": "one probe document, or an array of them for several inputs",
                 "properties": {"file": {"type": "string"}, "format": {"type": "string"}, "duration": {"type": "number"}, "size_bytes": {"type": "integer"},
@@ -389,8 +398,8 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     base = {"status": {"enum": ["completed"]}, "output": {"type": ["string", "null"], "description": "path written, or null"},
             "dry_run": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}, "description": "every ffmpeg command line planned or run"},
             "probe": {"type": "object", "description": "probe of the output when a file was written"},
-            "encoder": {"type": "string", "description": "the video encoder the last ffmpeg command used (after any GPU->CPU fallback), `copy` for a stream copy; absent when no command encoded video"},
-            "hw": {"type": "object", "description": "present when VideoToolbox was asked for (--hw, $FFMPEG_SKILL_HW, a render.py stage) and on export.py when $FFMPEG_SKILL_HW=1 is set but its delivery preset does not take it: {requested: whether this run's encodes were asked onto VideoToolbox (false for that export), source: flag|env, used: true|false whether the encoder that ran last is VideoToolbox, null when this process ran no encode itself (batch.py: its stages are child processes; each results row carries its item's encoder and hw), fallback: a job VideoToolbox refused (encoder open or compression session failure; nothing else is retried) was re-encoded on the CPU, notes: why an encode stayed on or fell back to the CPU, and, when $FFMPEG_SKILL_HW chose the GPU and it ran, what that costs and that --no-hw opts out}. A VideoToolbox encode also adds a top-level notes line: its quality is not CRF-equivalent"},
+            "encoder": {"type": "string", "description": "the video encoder the last ffmpeg command used (after any GPU->CPU fallback; under --dry-run the planned one; render.py and waveform.py: their stages' commands included), `copy` for a stream copy; absent when no command encoded video"},
+            "hw": {"type": "object", "description": "present when VideoToolbox was asked for (--hw, $FFMPEG_SKILL_HW, a render.py stage, a batch.py item) and on export.py when $FFMPEG_SKILL_HW=1 is set but its delivery preset does not take it: {requested: whether this run's encodes were asked onto VideoToolbox (false for that export), source: flag|env, used: true|false whether the encoder that ran last is VideoToolbox, null under --dry-run (nothing ran) and when this process ran no encode itself (batch.py: its stages are child processes; its top-level hw gathers the items' requested/source/fallback/notes and each results row carries its item's encoder and hw), fallback: a job VideoToolbox refused (encoder open or compression session failure; nothing else is retried) was re-encoded on the CPU, notes: why an encode stayed on or fell back to the CPU, and, when $FFMPEG_SKILL_HW chose the GPU and it ran, what that costs and that --no-hw opts out}. A VideoToolbox encode also adds a top-level notes line: its quality is not CRF-equivalent. A kind: ffmpeg failure under --hw / $FFMPEG_SKILL_HW carries encoder and hw too"},
             "plan": {"type": "string", "description": "with --plan FILE: the plan document written (the run itself is a dry run)"},
             "verified": {"type": "boolean", "description": "true only when the artifact was written, probed, and every self-check the tool ran (verification) met its target; false under --dry-run"},
             "verification": {"type": "array", "items": {"type": "object", "properties": {"step": {"type": "string"}, "ok": {"type": "boolean"}}}, "description": "what the tool itself verified: probe, plus loudness (loudness.py, export platform presets) or check (render)"}}
@@ -483,6 +492,11 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
     props = dict(base)
     props.update(extra)
+    notes = props.get("notes")
+    if hw and isinstance(notes, dict) and notes.get("description"):
+        # a tool-specific condition is not the only one: emit() adds the GPU line to any tool
+        props["notes"] = dict(notes, description=notes["description"] + "; also, on a VideoToolbox encode (--hw / "
+                              "$FFMPEG_SKILL_HW), a line that its quality is not CRF-equivalent (see hw)")
     required = ["status", "output", "dry_run", "commands"]
     return {"type": "object", "properties": props, "required": required, "additionalProperties": True}
 
@@ -660,10 +674,10 @@ def _whisper_available() -> bool:
 
 def _hw_default() -> Dict[str, Any]:
     """--hw's machine facts, normalised (never the raw environment value): whether VideoToolbox
-    constant-quality encoding can run here, and whether $FFMPEG_SKILL_HW makes it the default."""
-    import platform
-    return {"platform_ok": platform.system() == "Darwin" and platform.machine() == "arm64",
-            "default_on": os.environ.get("FFMPEG_SKILL_HW", "").strip().lower() in ("1", "true", "yes", "on")}
+    constant-quality encoding can run here (the tools' own check: Apple Silicon hardware, also
+    under a Rosetta Python), and whether $FFMPEG_SKILL_HW makes it the default."""
+    from _common.runner import env_hw, hw_platform_reason
+    return {"platform_ok": hw_platform_reason() is None, "default_on": env_hw()}
 
 
 def _default_font() -> str:
@@ -1112,7 +1126,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "inputs": list(meta["inputs"]),
         "outputs": list(meta["outputs"]),
         "input_schema": schema,
-        "output_schema": output_schema(name, meta),
+        "output_schema": output_schema(name, meta, hw="hw" in schema["properties"]),
         "supports_dry_run": supports_dry_run,
         "dry_run": {"supported": supports_dry_run,
                     "ffmpeg_execution": "full" if not supports_dry_run else "analysis_only" if name in DRY_RUN_ANALYSIS else "none",

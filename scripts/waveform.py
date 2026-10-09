@@ -38,6 +38,7 @@ from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common import (add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs)
+from _common.emit import absorb_stage_hw
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -307,20 +308,30 @@ def _child(script_name: str, argv: "list") -> None:
     """Run one of this skill's own tools as a second process, so the code path it owns (the ASS
     generator, the drawtext template) stays the only one there is. The shared flags (--overwrite,
     --timeout, --fast, --dry-run) reach it through child_args(), as render.py's stages get them,
-    and a failure is re-raised with the child's own kind, exit code and hint."""
+    and a failure is re-raised with the child's own kind, exit code and hint.
+
+    The GPU choice reaches it too: an explicit --hw/--no-hw is passed on (the child would
+    otherwise resolve $FFMPEG_SKILL_HW for itself, and the last stage writes the deliverable),
+    and the child's commands and `hw` facts join this result, so `encoder`/`hw` describe the
+    file delivered rather than the intermediate render."""
     here = os.path.dirname(os.path.abspath(__file__))
-    cmd = [os.path.join(here, script_name)] + [str(a) for a in argv] + child_args() + ["--json"]
+    hw = (["--hw"] if STATE.hw else ["--no-hw"]) if STATE.hw_source == "flag" else []
+    cmd = [os.path.join(here, script_name)] + [str(a) for a in argv] + hw + child_args() + ["--json"]
     info("-> " + " ".join(os.path.basename(c) if c.endswith(".py") else str(c) for c in cmd[:-1]))
     proc = run_tool(cmd)
+    try:
+        doc = json.loads(proc.stdout.strip() or "{}")
+    except ValueError:
+        doc = {}
+    if not isinstance(doc, dict):
+        doc = {}
+    STATE.commands.extend(str(c) for c in (doc.get("commands") or []))
+    absorb_stage_hw(os.path.splitext(script_name)[0], doc)
     if proc.returncode != 0:
-        try:
-            doc = json.loads(proc.stdout.strip() or "{}")
-        except ValueError:
-            doc = {}
-        if not isinstance(doc, dict):
-            doc = {}
         err = doc.get("error") or {}
         extra = {"hint": err["hint"]} if err.get("hint") else {}
+        if doc.get("encoder"):
+            extra["encoder"] = doc["encoder"]
         die(f"{script_name} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script_name, **extra)
 

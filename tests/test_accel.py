@@ -108,6 +108,10 @@ NOT_VT = {
         "[h264_videotoolbox @ 0x9000] Error setting entropy property: -12900\n"
         "[aost#0:1/aac @ 0x9001] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, "
         "width or height.\n",
+    "the audio encoder failed to open (5.1: no stream context, a non-fatal VideoToolbox line before it)":
+        "[h264_videotoolbox @ 0x9000] Error setting entropy property: -12900\n"
+        "Error initializing output stream 0:1 -- Error while opening encoder for output stream #0:1 - maybe "
+        "incorrect parameters such as bit_rate, rate, width or height\n",
     "a missing input": "a.mp4: No such file or directory\n",
 }
 
@@ -255,7 +259,7 @@ class VtArgsTests(unittest.TestCase):
         hdr = {"video": {"bt2020_or_hdr": True, "color_transfer": "arib-std-b67"}}
         with mock.patch.object(decision, "hw_platform_reason", return_value=None), \
                 mock.patch.object(decision, "ffmpeg_encoders", return_value={"h264_videotoolbox"}):
-            line = decision.hw_preset_video(["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p"], hdr)
+            line = decision.hw_preset_video(["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p"], hdr, bt709=True)
         self.assertEqual(line[line.index("-q:v") + 1], "75")
 
     def test_av1_and_an_intel_mac_stay_on_the_cpu_with_a_note(self):
@@ -278,7 +282,7 @@ class VtArgsTests(unittest.TestCase):
         with mock.patch.object(decision, "hw_platform_reason", return_value=None), \
                 mock.patch.object(decision, "ffmpeg_encoders", return_value={"h264_videotoolbox"}):
             vt = decision.hw_preset_video(["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-profile:v", "high",
-                                           "-pix_fmt", "yuv420p", "-r", "30"], None)
+                                           "-pix_fmt", "yuv420p", "-r", "30"], None, bt709=True)
         self.assertEqual(vt[vt.index("-c:v") + 1], "h264_videotoolbox")
         self.assertEqual(vt[vt.index("-r") + 1], "30")
         self.assertNotIn("-movflags", vt)
@@ -324,7 +328,7 @@ class HwReviewRegressionTests(unittest.TestCase):
         STATE.hw = True
         a, b = self._vt_ok()
         with a, b:
-            decision.hw_preset_video(["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], None)
+            decision.hw_preset_video(["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"], None, bt709=True)
         cpu = STATE.hw_swaps[-1][1]
         self.assertTrue("-x264-params" in cpu or "-colorspace" in cpu, cpu)
 
@@ -479,10 +483,8 @@ class EncoderListTests(unittest.TestCase):
         self.assertEqual(tool, "ffprobe")
 
 
-class HwEverywhereTests(unittest.TestCase):
-    """The --hw decisions on every CI runner, VideoToolbox or not: the platform check and the
-    encoder list are stood in for (_vt_available), the encodes are a fake ffmpeg that fails the
-    VideoToolbox command the way FFmpeg does and hands the CPU one to the real ffmpeg."""
+class _RealFfmpegCase(unittest.TestCase):
+    """A 1 s source made with the real ffmpeg, a work directory, and no GPU variables leaking in."""
 
     @classmethod
     def setUpClass(cls):
@@ -525,6 +527,12 @@ class HwEverywhereTests(unittest.TestCase):
                 self.assertEqual(e.code, 0, err.getvalue())
         return json.loads(out.getvalue())
 
+
+class HwEverywhereTests(_RealFfmpegCase):
+    """The --hw decisions on every CI runner, VideoToolbox or not: the platform check and the
+    encoder list are stood in for (_vt_available), the encodes are a fake ffmpeg that fails the
+    VideoToolbox command the way FFmpeg does and hands the CPU one to the real ffmpeg."""
+
     def test_export_preset_needs_an_explicit_hw(self):
         """docs/design-decisions.md: FFMPEG_SKILL_HW=1 leaves export.py's delivery presets on x264 (a
         dry run: the encoder choice), says so, and --hw -- or render.py --hw's explicit marker --
@@ -534,20 +542,20 @@ class HwEverywhereTests(unittest.TestCase):
         self.assertEqual(doc["encoder"], "libx264")
         self.assertNotIn("videotoolbox", " ".join(doc["commands"]))
         self.assertEqual({k: doc["hw"][k] for k in ("requested", "source", "used", "fallback")},
-                         {"requested": False, "source": "env", "used": False, "fallback": False})
+                         {"requested": False, "source": "env", "used": None, "fallback": False}, "a dry run: nothing ran")
         self.assertTrue(any("--hw" in n and "FFMPEG_SKILL_HW=1" in n for n in doc["hw"]["notes"]), doc["hw"])
         self.assertFalse(any("CRF-equivalent" in n for n in doc.get("notes") or []))
         for argv, env in ((["--hw"], {}), ([], {runner.HW_ENV: "1", runner.HW_FORCED_ENV: "1"})):
             with self.subTest(argv=argv, env=env):
                 doc = self._tool("export", self.src, "--preset", "x", "--dry-run", "-o", out, *argv, env=env)
-                self.assertEqual(doc["encoder"], "h264_videotoolbox")
-                self.assertTrue(doc["hw"]["used"])
+                self.assertEqual(doc["encoder"], "h264_videotoolbox", "the planned encoder")
+                self.assertIsNone(doc["hw"]["used"], "a dry run ran nothing")
                 self.assertTrue(any("not CRF-equivalent" in n for n in doc["notes"]), doc.get("notes"))
 
     def test_the_env_default_reaches_the_other_re_encoding_tools(self):
         doc = self._tool("fit", self.src, "--height", "120", "--dry-run", "-o", self.work / "f.mp4", env={runner.HW_ENV: "1"})
         self.assertEqual(doc["encoder"], "h264_videotoolbox")
-        self.assertEqual((doc["hw"]["requested"], doc["hw"]["source"], doc["hw"]["used"]), (True, "env", True))
+        self.assertEqual((doc["hw"]["requested"], doc["hw"]["source"], doc["hw"]["used"]), (True, "env", None))
         self.assertTrue(any("--no-hw" in n for n in doc["hw"]["notes"]))
         doc = self._tool("fit", self.src, "--height", "120", "--dry-run", "-o", self.work / "f.mp4")
         self.assertEqual(doc["encoder"], "libx264", "never automatic: no flag, no variable, no GPU")
@@ -701,7 +709,7 @@ class HwResultTests(unittest.TestCase):
         """render.py runs each stage as a child process and keeps only its command lines; the
         stage's `hw` facts (fell back and why, ran on VideoToolbox) reach render's own result."""
         STATE.reset()
-        STATE.json, STATE.dry_run = True, True
+        STATE.json = True
         fit = {"encoder": "libx264", "commands": ["ffmpeg -i a -c:v libx264 -crf 18 b.mp4"],
                "hw": {"requested": True, "source": "env", "used": False, "fallback": True,
                       "notes": ["VideoToolbox refused the encode: [h264_videotoolbox] Error: cannot create compression session: -12902; re-encoded on the CPU"]}}
@@ -714,7 +722,7 @@ class HwResultTests(unittest.TestCase):
             STATE.commands += doc["commands"]
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            emit_module.emit("d.mp4")
+            emit_module.emit(None)  # a real run's document (no file here to probe)
         doc = json.loads(out.getvalue())
         self.assertEqual(doc["encoder"], "libx264")
         self.assertEqual({k: doc["hw"][k] for k in ("requested", "source", "used", "fallback")},
@@ -722,6 +730,308 @@ class HwResultTests(unittest.TestCase):
         self.assertTrue(any(n.startswith("fit: VideoToolbox refused") for n in doc["hw"]["notes"]), doc["hw"])
         self.assertTrue(any(n.startswith("caption: ") and "FFMPEG_SKILL_HW=1" in n for n in doc["hw"]["notes"]))
         self.assertTrue(any("h264_videotoolbox -q:v 75 is not CRF-equivalent" in n for n in doc["notes"]), doc.get("notes"))
+
+
+class TakeoverReviewTests(unittest.TestCase):
+    """Cases the reviews of the #304 takeover found, at the unit level."""
+
+    def setUp(self):
+        STATE.reset()
+
+    def tearDown(self):
+        STATE.reset()
+
+    def test_the_prores_preset_s_cpu_fallback_keeps_the_source_s_tags(self):
+        """export.py tags every fixed preset's CPU line BT.709 except prores, whose master keeps
+        the source's tags; the CPU line recorded for a refused VideoToolbox job must be the one
+        export would have written (it tagged an HLG master BT.709 and still verified)."""
+        STATE.hw = True
+        prores = ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"]
+        hdr = {"video": {"bt2020_or_hdr": True, "color_space": "bt2020nc", "color_primaries": "bt2020",
+                         "color_transfer": "arib-std-b67"}}
+        a, b = _vt_available()
+        with a, b:
+            vt = decision.hw_preset_video(list(prores), hdr, bt709=False)
+        self.assertEqual(vt[vt.index("-c:v") + 1], "prores_videotoolbox")
+        self.assertEqual(STATE.hw_swaps[-1][1], prores)
+
+    def test_an_h265_preset_on_an_hdr_source_stays_the_preset_s_8_bit_bt709_format(self):
+        """The CPU h265 preset writes 8-bit with BT.709 tags whatever the source (and notes that
+        it did not convert HDR); the VideoToolbox line must write the same format, not the Main10
+        HLG line, so the GPU file and its CPU fallback are the same kind of file."""
+        STATE.hw = True
+        h265 = ["-c:v", "libx265", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"]
+        hdr = {"video": {"bt2020_or_hdr": True, "color_space": "bt2020nc", "color_primaries": "bt2020",
+                         "color_transfer": "arib-std-b67"}}
+        a, b = _vt_available()
+        with a, b:
+            vt = decision.hw_preset_video(list(h265), hdr, bt709=True)
+        self.assertEqual(vt[vt.index("-c:v") + 1], "hevc_videotoolbox")
+        self.assertEqual(vt[vt.index("-pix_fmt") + 1], "yuv420p")
+        self.assertNotIn("main10", vt)
+        self.assertNotIn("arib-std-b67", vt)
+        self.assertIn("hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1", vt)
+        self.assertEqual(vt[vt.index("-q:v") + 1], str(decision.vt_quality("hevc", 24)), "the SDR HEVC curve: x265 8-bit at CRF 24")
+
+    def test_export_s_in_place_movflags_edit_is_restated_in_the_recorded_swap(self):
+        """export.py deletes -movflags from encoder_args()'s list in place; the recorded VideoToolbox
+        slice is a copy, so restate_last_swap() sees the line as built and the CPU fallback line
+        loses its -movflags too (export adds +faststart once, after the encoder line)."""
+        STATE.hw = True
+        a, b = _vt_available()
+        with a, b:
+            video = decision.encoder_args("hevc", 20, "medium", {"video": {"bt2020_or_hdr": True, "color_transfer": "smpte2084"}})
+        as_built = list(video)
+        while "-movflags" in video:                      # export.py's own edit, in place
+            i = video.index("-movflags")
+            del video[i:i + 2]
+        decision.restate_last_swap(as_built, video)
+        vt, cpu = STATE.hw_swaps[-1]
+        self.assertEqual(vt, video)
+        self.assertNotIn("-movflags", cpu)
+        back = runner._hw_fallback(["ffmpeg", "-i", "in.mov"] + video + ["-movflags", "+faststart", "out.mp4"], STATE)
+        self.assertIn("libx265", back)
+        self.assertEqual(back.count("-movflags"), 1, back)
+
+    def test_an_odd_sized_job_videotoolbox_refused_gets_the_even_scale_on_the_cpu(self):
+        """VideoToolbox refused the job before anything reported the odd size; the CPU retry then
+        fails with x264's "not divisible by 2", and gets the even scale a CPU-only run gets."""
+        STATE.hw, STATE.hw_source = True, "flag"
+        STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
+        refused = subprocess.CompletedProcess([], 1, "", VT_OPEN_FAILED["6.1"])
+        odd = subprocess.CompletedProcess([], 1, "", "[libx264 @ 0x1] width not divisible by 2 (321x241)\n")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(runner, "_execute", side_effect=[refused, odd, ok]) as execute:
+            proc = runner.run(["ffmpeg", "-i", "a.mp4", "-c:v", "h264_videotoolbox", "-q:v", "75", str(Path(d) / "o.mp4")], quiet=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(execute.call_count, 3)
+        last = execute.call_args_list[2][0][0]
+        self.assertIn("libx264", last)
+        self.assertTrue(any(runner.EVEN_SCALE in a for a in last), last)
+        self.assertIn("libx264", STATE.commands[-1])
+        self.assertIn(runner.EVEN_SCALE, STATE.commands[-1])
+        self.assertTrue(STATE.hw_fallback)
+
+    def test_a_dry_run_reports_the_planned_encoder_and_no_used(self):
+        """`used` says what ran; under --dry-run nothing did, so it is null while `encoder` names
+        the planned encoder. The FFMPEG_SKILL_HW note still tells a planner what the GPU costs."""
+        STATE.hw, STATE.hw_source, STATE.dry_run = True, "env", True
+        STATE.commands = ["ffmpeg -i a -c:v h264_videotoolbox -q:v 75 b.mp4"]
+        rep = emit_module._encoder_report(STATE)
+        self.assertEqual(rep["encoder"], "h264_videotoolbox")
+        self.assertIsNone(rep["hw"]["used"])
+        self.assertFalse(rep["hw"]["fallback"])
+        self.assertTrue(any(n.endswith(emit_module.ENV_HW_NOTE) for n in rep["hw"]["notes"]))
+        STATE.dry_run = False
+        self.assertTrue(emit_module._encoder_report(STATE)["hw"]["used"])
+        STATE.dry_run = True                       # batch.py's rows: the steps' documents, re-read
+        rows = emit_module.steps_encoder_report([("fit", {"encoder": "h264_videotoolbox", "hw": {
+            "requested": True, "source": "env", "used": None, "fallback": False, "notes": []}})])
+        self.assertIsNone(rows["hw"]["used"])
+
+    def test_an_export_only_row_names_the_variable_as_its_source(self):
+        """A batch row whose only step is export.py under FFMPEG_SKILL_HW=1 (requested false,
+        source env): the row's `source` is the stage's, not null."""
+        exp = {"encoder": "libx264", "hw": {"requested": False, "source": "env", "used": False, "fallback": False,
+                                            "notes": [emit_module.ENV_NOT_FOR_DELIVERY_NOTE]}}
+        rep = emit_module.steps_encoder_report([("export", exp)])
+        self.assertEqual((rep["hw"]["requested"], rep["hw"]["source"]), (False, "env"))
+
+    def test_a_tool_s_own_ffmpeg_failure_carries_encoder_and_hw(self):
+        """cut.py runs run(check=False) and dies itself (kind ffmpeg): under --hw that failure carries
+        `encoder` and `hw` like run()'s own, and without --hw it carries neither (unchanged)."""
+        for hw in (True, False):
+            with self.subTest(hw=hw):
+                STATE.reset()
+                STATE.hw, STATE.hw_source, STATE.json = hw, ("flag" if hw else None), True
+                STATE.commands = ["ffmpeg -i a -c:v h264_videotoolbox -q:v 75 b.mp4" if hw else "ffmpeg -i a -c:v libx264 b.mp4"]
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()), \
+                        self.assertRaises(SystemExit):
+                    emit_module.die("ffmpeg failed:\nboom", kind="ffmpeg")
+                doc = json.loads(out.getvalue())
+                if hw:
+                    self.assertEqual(doc["encoder"], "h264_videotoolbox")
+                    self.assertEqual((doc["hw"]["requested"], doc["hw"]["used"]), (True, True))
+                else:
+                    self.assertNotIn("encoder", doc)
+                    self.assertNotIn("hw", doc)
+        STATE.reset()
+        STATE.hw, STATE.hw_source, STATE.json = True, "flag", True
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            emit_module.die("bad input", kind="input")
+        self.assertNotIn("hw", json.loads(out.getvalue()), "only a kind: ffmpeg failure carries it")
+
+    def test_render_s_failed_stage_keeps_its_encoder_and_the_earlier_stages_fallback(self):
+        """render.py re-raises a failed stage: the stage's `encoder` and `hw`, and a fallback an
+        earlier stage reported, reach render's own failure document."""
+        import render
+        STATE.json = True
+        emit_module.absorb_stage_hw("fit", {"encoder": "libx264", "hw": {
+            "requested": True, "source": "flag", "used": False, "fallback": True,
+            "notes": ["VideoToolbox refused the encode: [h264_videotoolbox] Error: cannot create compression session: -12902; re-encoded on the CPU"]}})
+        failed = {"status": "failed", "exit_code": 1, "commands": ["ffmpeg -i b.mp4 -c:v h264_videotoolbox -q:v 75 c.mp4"],
+                  "error": {"kind": "ffmpeg", "message": "command failed (1): ffmpeg (video encoder h264_videotoolbox; not retried on the CPU: ...)"},
+                  "encoder": "h264_videotoolbox",
+                  "hw": {"requested": True, "source": "flag", "used": True, "fallback": False, "notes": []}}
+        proc = subprocess.CompletedProcess([], 1, json.dumps(failed), "")
+        out = io.StringIO()
+        with mock.patch.object(render, "run_tool", return_value=proc), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            render.sh("caption.py", "b.mp4", "-o", "c.mp4")
+        doc = json.loads(out.getvalue())
+        self.assertEqual(doc["error"]["kind"], "ffmpeg")
+        self.assertEqual(doc["encoder"], "h264_videotoolbox")
+        self.assertEqual((doc["hw"]["requested"], doc["hw"]["used"], doc["hw"]["fallback"]), (True, True, True))
+        self.assertTrue(any(n.startswith("fit: VideoToolbox refused") for n in doc["hw"]["notes"]), doc["hw"])
+
+    def test_hw_runs_on_apple_silicon_hardware_under_a_rosetta_python(self):
+        """An x86_64 Python under Rosetta reports platform.machine() "x86_64" on an M-series Mac;
+        the hardware (sysctl hw.optional.arm64) decides, and doctor's platform_ok agrees."""
+        import _contract
+
+        def sysctl(argv, **_kw):
+            self.assertEqual(argv[1:], ["-n", "hw.optional.arm64"])
+            return subprocess.CompletedProcess(argv, 0, answer, "")
+        for answer, expected in (("1\n", None), ("", "VideoToolbox constant-quality encoding needs Apple Silicon")):
+            with self.subTest(sysctl=answer), \
+                    mock.patch("platform.system", return_value="Darwin"), \
+                    mock.patch("platform.machine", return_value="x86_64"), \
+                    mock.patch.object(runner.subprocess, "run", side_effect=sysctl), \
+                    mock.patch.object(runner, "_APPLE_SILICON", None):
+                self.assertEqual(runner.hw_platform_reason(), expected)
+                runner._APPLE_SILICON = None
+                self.assertEqual(_contract._hw_default()["platform_ok"], expected is None)
+        with mock.patch("platform.system", return_value="Linux"), mock.patch.object(runner, "_APPLE_SILICON", None):
+            self.assertEqual(runner.hw_platform_reason(), "VideoToolbox is macOS-only")
+
+
+class HwChildStageTests(_RealFfmpegCase):
+    """The tools that run other tools pass the GPU choice on and report what their stages did
+    (reviews of the #304 takeover). Real ffmpeg; VideoToolbox is stood in only in-process."""
+
+    def _recipe(self, folder):
+        folder.mkdir()
+        (folder / "a.mp4").write_bytes(self.src.read_bytes())
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_b",
+                                      "steps": [["fit.py", "{in}", "--height", "120", "-o", "{out}"]]}), encoding="utf-8")
+        return recipe
+
+    def test_batch_never_serves_a_cached_item_across_the_gpu_setting(self):
+        """The item cache key folds in the GPU setting, as render.py's does: --no-hw after --hw
+        (the remedy an env-chosen GPU row prints) re-encodes; and a run that overwrote an output
+        drops the other setting's entry, so switching back re-encodes too."""
+        folder = self.work / "cache"
+        recipe = self._recipe(folder)
+
+        def run(*flags):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "batch.py"), str(folder), "--recipe", str(recipe),
+                                   "--fast", "--overwrite", "--json", *flags],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return json.loads(proc.stdout)
+        cached = [bool(run(*f)["results"][0].get("cached")) for f in (["--hw"], ["--no-hw"], ["--hw"], ["--hw"], [])]
+        self.assertEqual(cached, [False, False, False, True, False])
+
+    def test_batch_s_top_level_hw_carries_its_items(self):
+        """batch.py's own `hw` aggregates its rows: an item's fallback shows at the top level, and
+        FFMPEG_SKILL_HW=1 alone (no flag) still gives a top-level `hw`, with `used` null."""
+        import batch
+        folder = self.work / "agg"
+        recipe = self._recipe(folder)
+        step = {"status": "completed", "encoder": "libx264", "commands": ["ffmpeg -i a -c:v libx264 -crf 18 b.mp4"],
+                "hw": {"requested": True, "source": "flag", "used": False, "fallback": True,
+                       "notes": ["VideoToolbox refused the encode: [h264_videotoolbox] Error: cannot create compression session: -12902; re-encoded on the CPU"]}}
+        env_step = {"status": "completed", "encoder": "h264_videotoolbox", "commands": ["ffmpeg -i a -c:v h264_videotoolbox -q:v 75 b.mp4"],
+                    "hw": {"requested": True, "source": "env", "used": True, "fallback": False, "notes": [emit_module.ENV_HW_NOTE]}}
+        for argv, env, doc, expected in ((["--hw"], {}, step, {"requested": True, "source": "flag", "used": None, "fallback": True}),
+                                         ([], {runner.HW_ENV: "1"}, env_step, {"requested": True, "source": "env", "used": None, "fallback": False})):
+            with self.subTest(argv=argv, env=env):
+                out = io.StringIO()
+                with mock.patch.object(batch, "run_step", return_value=(True, doc)), mock.patch.dict(os.environ, env), \
+                        mock.patch.object(sys, "argv", ["batch.py", str(folder), "--recipe", str(recipe), "--force", "--json"] + argv), \
+                        contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                    STATE.reset()
+                    batch.main()
+                res = json.loads(out.getvalue())
+                self.assertEqual({k: res["hw"][k] for k in expected}, expected, res["hw"])
+                self.assertEqual(res["results"][0]["hw"]["fallback"], expected["fallback"])
+                if expected["fallback"]:
+                    self.assertTrue(any(n.startswith("a.mp4: fit: VideoToolbox refused") for n in res["hw"]["notes"]), res["hw"])
+
+    def test_a_hw_plan_executed_by_render_reports_hw(self):
+        """`render.py plan.json` runs the planned tool as a child: its `hw` facts reach the result,
+        as a direct `fit.py --hw` reports them."""
+        plan = self.work / "plan.json"
+        out = self.work / "planned.mp4"
+        subprocess.run([sys.executable, str(SCRIPTS / "fit.py"), str(self.src), "--height", "120", "--hw", "--fast",
+                        "--plan", str(plan), "-o", str(out)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "render.py"), str(plan), "--json"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["hw"]["requested"], doc["hw"]["source"]), (True, "flag"), doc.get("hw"))
+        self.assertEqual(doc["encoder"], doc["tool_result"]["encoder"])
+        self.assertEqual(doc["hw"]["used"], doc["tool_result"]["hw"]["used"])
+
+    def test_a_cut_ffmpeg_failure_under_hw_names_its_encoder(self):
+        """cut.py --accurate under --hw: its own kind: ffmpeg failure carries `encoder` and `hw`."""
+        fake = FakeFfmpeg(self.work, {"vt": {"rc": 1, "stderr": "[enc @ 0x55d] broken encode\n"},
+                                      "cpu": {"rc": 1, "stderr": "[enc @ 0x55d] broken encode\n"}})
+        env = dict(os.environ, PATH=f"{fake.dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "cut.py"), str(self.src), "--start", "0.1", "--end", "0.7",
+                               "--accurate", "--hw", "--json", "-o", str(self.work / "c.mp4")], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "ffmpeg")
+        self.assertIn(doc["encoder"], ("libx264", "h264_videotoolbox"))
+        self.assertEqual((doc["hw"]["requested"], doc["hw"]["source"]), (True, "flag"))
+
+    def _waveform(self, *argv, env=None):
+        """waveform.py in this process (its own encode sees VideoToolbox stood in), its caption.py
+        stage a real child: (the document, the child's argv, the child's own document)."""
+        import waveform
+        wav = self.work / "tone.wav"
+        if not wav.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=2", "-c:a", "pcm_s16le", wav)
+        srt = self.work / "s.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello\n", encoding="utf-8")
+        seen = []
+
+        def spy(cmd, **kw):
+            proc = runner.run_tool(cmd, **kw)
+            seen.append((list(cmd), json.loads(proc.stdout)))
+            return proc
+        out = io.StringIO()
+        a, b = _vt_available()
+        with a, b, mock.patch.object(waveform, "run_tool", side_effect=spy), mock.patch.dict(os.environ, env or {}), \
+                mock.patch.object(sys, "argv", ["waveform.py", str(wav), "--width", "320", "--height", "180", "--srt", str(srt),
+                                                "--dry-run", "--json", "-o", str(self.work / "w.mp4")] + list(argv)), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            STATE.reset()
+            waveform.main()
+        (child_argv, child_doc), = seen
+        return json.loads(out.getvalue()), child_argv, child_doc
+
+    def test_waveform_passes_its_gpu_choice_to_the_stage_that_writes_the_file(self):
+        """caption.py writes waveform.py's deliverable: --hw reaches it, and the result's
+        `encoder` is the encoder of the file delivered, not of the intermediate render."""
+        doc, child_argv, child_doc = self._waveform("--hw")
+        self.assertIn("--hw", child_argv)
+        self.assertEqual(child_doc["hw"]["requested"], True)
+        self.assertEqual(doc["encoder"], child_doc["encoder"])
+        self.assertEqual(doc["commands"][-1], child_doc["commands"][-1])
+
+    def test_waveform_s_no_hw_overrides_the_variable_for_its_stage_too(self):
+        doc, child_argv, child_doc = self._waveform("--no-hw", env={runner.HW_ENV: "1"})
+        self.assertIn("--no-hw", child_argv)
+        self.assertNotIn("hw", child_doc, "the caption stage ran on the CPU, as asked")
+        self.assertNotIn("hw", doc)
+        self.assertEqual(doc["encoder"], "libx264")
 
 
 @unittest.skipUnless(_vt_here(), "VideoToolbox encoders need Apple Silicon and an ffmpeg that lists them")

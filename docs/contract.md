@@ -216,6 +216,15 @@ Main10 for HDR), so the flags add no behaviour to a caller that does not pass th
 encoder each value needs is listed under the tool's optional capabilities (`--codec hevc` and
 so on). `export.py` refuses `--codec`: its presets decide the codec.
 
+`--hw` / `--no-hw` are on the same tools and on `export.py`, marked `common`;
+`render.py` and `batch.py` take them for every stage they run. They are two booleans in the
+input schema (`hw`, `no_hw`; MCP sends `--hw` for `hw: true` and `--no-hw` for `no_hw: true`),
+mutually exclusive. `--hw` moves an h264/hevc/prores encode to Apple VideoToolbox (Apple Silicon
+only; AV1 stays on the CPU); `--no-hw` keeps it on the CPU even when `FFMPEG_SKILL_HW=1` makes the
+GPU this machine's default. Neither changes anything for a caller that passes neither on a
+machine without the variable. What ran is in the result's `encoder` and `hw` (see the keys added
+after 2.2.2, and `doctor`'s `gpu_encoders` below).
+
 `--plan FILE` (1.6) is a dry run that also writes a plan document: `{"plan_version": 1,
 "tool", "argv", "cwd", "inputs": [{"path", "size", "sha256_head_tail"}], "commands",
 "output", "verify": [{"tool": "probe"}, {"tool": "check", "platform"}], "notes"}`. It
@@ -237,10 +246,16 @@ gives you:
 
 | Hint | Tools |
 |---|---|
-| `bit_exact` | probe, check, scenes, look |
+| `bit_exact` | probe, check, scenes, look, metadata, background |
 | `content_equivalent` (same media, bytes may differ between encoder builds) | every encoding tool, cut, sync, report |
 | `cached` | batch (content-hash cache, re-runs skip unchanged inputs); render **when `--cache DIR` is given** — the hint stays `content_equivalent` because that is what render is without the flag, and the cache is opt-in |
 | `environment_dependent` | verify |
+
+The hints describe the CPU encoders. Under `--hw`, or `FFMPEG_SKILL_HW=1` on the machine, a tool
+that encodes video runs VideoToolbox, whose bytes are not promised identical from run to run:
+treat such a result as `content_equivalent` at best. That includes `background`, whose hint stays
+`bit_exact` within 2.x. The variable belongs to the machine, so the same flags can give x264 bytes
+on one machine and VideoToolbox bytes on another; `encoder` in the result says which.
 
 ## `provides`
 
@@ -530,7 +545,7 @@ Per-tool keys added after 2.2.2, all additive:
 | `silent` | `join.py` (every run) | `[{index, path, peak_db, at, end}]`: inputs whose whole-file audio peak (volumedetect) is at or below `--silence-threshold` (default -50 dBFS) and that `--on-silent warn` (default) joined anyway, with a `notes` line; `at`/`end` are where the input sits in the output, in seconds (a transition overlaps its neighbours). An input named by `--allow-silent N[,N]` (1-based) is a planned pause: always joined, listed with `intended: true`, no warning or note, whatever `--on-silent` says. `[]` otherwise. `--on-silent fail` names them in the `kind: input` refusal's `problems` (reason `silent (peak -91.0 dBFS)`), `skip` lists them under `skipped`. An input with no audio stream is never silent; `verified` is unaffected |
 | `short_segments`, `duplicates` | `join.py` (every run) | warnings, never refusals, and the join command is unchanged: `short_segments: [{index, path, duration}]` names each measured input shorter than 2 frames at the join's fps (an audio-only join: shorter than 0.05 s); `duplicates: [{path, indices}]` names a path (compared resolved) listed more than once — repeating a clip can be intended. `[]` when none; each non-empty one adds a `notes` line |
 | `silent` | `waveform.py` (every run) | `true` when the input audio's whole-file peak is at or below `--silence-threshold` (default -50 dBFS), which draws a flat line; `--on-silent warn` (default) renders it anyway with a `notes` line, `fail` refuses (`kind: input`) before ffmpeg runs. `false` when audible, `null` under `--dry-run` (nothing measured). `verified` is unaffected |
-| `encoder`, `hw`, `notes` | every re-encoding tool, `export.py`, `render.py`, `batch.py` rows | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback), `copy` for a stream copy; absent when no command encoded video. `hw` is present when VideoToolbox was asked for (`--hw`, `FFMPEG_SKILL_HW=1`, or a `render.py` stage that reported it) and on `export.py` when `FFMPEG_SKILL_HW=1` is set but its delivery preset does not take it: `{requested, source: flag\|env, used, fallback, notes}`. `requested` says whether this run's encodes were asked onto VideoToolbox (`false` for that export), `used` whether the encoder that ran last is VideoToolbox (`null` when the tool encoded nothing itself: `batch.py`, whose stages are child processes; each of its `results` rows carries the item's own `encoder`, and `hw`/`notes` when VideoToolbox was asked for), `fallback` whether a job VideoToolbox refused was re-encoded on the CPU, and `notes` why. Only a VideoToolbox failure (the encoder could not open, or its compression session failed) is retried on the CPU; any other failure is reported as it happened, once. Every VideoToolbox encode adds a top-level `notes` line: its quality is not CRF-equivalent (`--quality` / a preset's CRF maps to `-q:v` approximately), and `verified` stays what it is for every tool, the measured properties of the output. A `kind: ffmpeg` failure under `--hw` / `FFMPEG_SKILL_HW` carries `encoder` and `hw` for the command that ran last, and its message names that encoder |
+| `encoder`, `hw`, `notes` | every re-encoding tool, `export.py`, `render.py`, `batch.py` (and its rows), `waveform.py` | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback; under `--dry-run`, the planned one), `copy` for a stream copy; absent when no command encoded video. A tool that runs other tools reports its stages': `render.py` its stages and an executed plan's tool, `waveform.py` the title/caption stage that writes its file (its `commands` include that stage's). `hw` is present when VideoToolbox was asked for (`--hw`, `FFMPEG_SKILL_HW=1`, or a stage or `batch.py` item that reported it) and on `export.py` when `FFMPEG_SKILL_HW=1` is set but its delivery preset does not take it: `{requested, source: flag\|env, used, fallback, notes}`. `requested` says whether this run's encodes were asked onto VideoToolbox (`false` for that export), `used` whether the encoder that ran last is VideoToolbox (`null` under `--dry-run`, which ran nothing, and when the tool encoded nothing itself: `batch.py`, whose top-level `hw` gathers its items' `requested`/`source`/`fallback`/`notes` while each `results` row carries the item's own `encoder`, and `hw`/`notes` when VideoToolbox was asked for), `fallback` whether a job VideoToolbox refused was re-encoded on the CPU, and `notes` why. Only a VideoToolbox failure (the encoder could not open, or its compression session failed) is retried on the CPU; any other failure is reported as it happened, once. Every VideoToolbox encode adds a top-level `notes` line: its quality is not CRF-equivalent (`--quality` / a preset's CRF maps to `-q:v` approximately), and `verified` stays what it is for every tool, the measured properties of the output. A `kind: ffmpeg` failure under `--hw` / `FFMPEG_SKILL_HW` carries `encoder` and `hw` for the command that ran last (a stage's, when `render.py`/`waveform.py` re-raise it); when the command itself failed inside the run (not a tool's own check afterwards, such as `cut.py`'s), its message also names that encoder |
 
 `caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
 and produced no cue, the refusal is `"<engine> found no speech in <input>"` with `kind: input`,

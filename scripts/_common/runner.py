@@ -215,14 +215,30 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         g.add_argument("--quality", type=int, default=ap._defaults["crf"], metavar="N",
                        help="encoder quality on the CRF scale (default %(default)s; lower = better; 18 visually lossless for x264/x265, up to 63 for av1); ignored by prores")
     if (codec and "crf" in ap._defaults) or not codec:
-        hw = g.add_mutually_exclusive_group()
-        hw.add_argument("--hw", dest="hw", action="store_true",
-                        help="encode on the GPU with Apple VideoToolbox (h264/hevc/prores; Apple Silicon only): several times faster, "
-                             "larger files at the same quality; falls back to the CPU encoder, reported, where it cannot apply"
-                             + ("" if codec else ". The only way to put a delivery preset on the GPU: $FFMPEG_SKILL_HW does not apply here"))
-        hw.add_argument("--no-hw", dest="hw", action="store_false",
-                        help="encode on the CPU (x264/x265/SVT-AV1/prores_ks) even when $FFMPEG_SKILL_HW=1")
-        ap.set_defaults(hw=None, _hw_env=bool(codec))
+        _add_hw_flags(g, "encode on the GPU with Apple VideoToolbox (h264/hevc/prores; Apple Silicon only): several times faster, "
+                         "larger files at the same quality; falls back to the CPU encoder, reported, where it cannot apply"
+                         + ("" if codec else ". The only way to put a delivery preset on the GPU: $FFMPEG_SKILL_HW does not apply here"),
+                      "encode on the CPU (x264/x265/SVT-AV1/prores_ks) even when $FFMPEG_SKILL_HW=1")
+        ap.set_defaults(_hw_env=bool(codec))
+
+
+def _add_hw_flags(g: Any, hw_help: str, no_hw_help: str) -> None:
+    """--hw and --no-hw, each its own boolean (dests `hw` and `no_hw`). They are not one dest
+    with store_true/store_false: the contract's input_schema keeps one property per dest and the
+    MCP transport turns `true` into the flag, so a shared dest published --no-hw under the name
+    `hw` and an MCP `hw: true` ran on the CPU. hw_flag() reads the pair back as True/False/None."""
+    hw = g.add_mutually_exclusive_group()
+    hw.add_argument("--hw", action="store_true", help=hw_help)
+    hw.add_argument("--no-hw", action="store_true", help=no_hw_help)
+
+
+def hw_flag(args: "argparse.Namespace") -> Optional[bool]:
+    """--hw -> True, --no-hw -> False, neither (or a tool without the flags) -> None."""
+    if getattr(args, "hw", False):
+        return True
+    if getattr(args, "no_hw", False):
+        return False
+    return None
 
 
 def apply_common(args: "argparse.Namespace") -> None:
@@ -246,7 +262,7 @@ def apply_common(args: "argparse.Namespace") -> None:
         args.preset = "veryfast"
     STATE.codec = getattr(args, "codec", None) or None
     STATE.hw_notes, STATE.hw_swaps, STATE.hw_fallback, STATE.hw_env_ignored, STATE.hw_stages = [], [], False, False, []
-    flag = getattr(args, "hw", None)
+    flag = hw_flag(args)
     if flag is not None:
         STATE.hw, STATE.hw_source = bool(flag), "flag"
         if getattr(args, "_hw_orchestrator", False):
@@ -698,13 +714,11 @@ HW_FORCED_ENV = "_FFMPEG_SKILL_HW_EXPLICIT"
 
 def add_hw_orchestrator_args(ap: "argparse.ArgumentParser") -> None:
     """--hw / --no-hw on a tool that runs other tools (render.py, batch.py) and encodes nothing itself."""
-    g = ap.add_mutually_exclusive_group()
-    g.add_argument("--hw", dest="hw", action="store_true",
-                   help="run every stage's encode on Apple VideoToolbox, the final delivery export included (Apple Silicon; "
-                        "falls back to the CPU, reported, where it cannot apply). Without it, $FFMPEG_SKILL_HW=1 still "
-                        "puts the intermediate stages on the GPU and leaves the delivery export on the CPU")
-    g.add_argument("--no-hw", dest="hw", action="store_false", help="every stage on the CPU encoders, whatever $FFMPEG_SKILL_HW says")
-    ap.set_defaults(hw=None, _hw_orchestrator=True)
+    _add_hw_flags(ap, "run every stage's encode on Apple VideoToolbox, the final delivery export included (Apple Silicon; "
+                      "falls back to the CPU, reported, where it cannot apply). Without it, $FFMPEG_SKILL_HW=1 still "
+                      "puts the intermediate stages on the GPU and leaves the delivery export on the CPU",
+                  "every stage on the CPU encoders, whatever $FFMPEG_SKILL_HW says")
+    ap.set_defaults(_hw_orchestrator=True)
 
 
 def env_hw() -> bool:
@@ -715,13 +729,35 @@ def env_hw() -> bool:
 def hw_platform_reason() -> Optional[str]:
     """None when this machine can take a VideoToolbox constant-quality encode, else why not.
     `-q:v` on VideoToolbox is Apple-Silicon-only in FFmpeg: an Intel Mac lists the encoders but
-    rejects the quality setting, so the machine check is macOS AND arm64."""
-    import platform
+    rejects the quality setting, so the machine check is macOS AND Apple Silicon hardware."""
     if platform.system() != "Darwin":
         return "VideoToolbox is macOS-only"
-    if platform.machine() != "arm64":
+    if not apple_silicon():
         return "VideoToolbox constant-quality encoding needs Apple Silicon"
     return None
+
+
+_APPLE_SILICON: Optional[bool] = None
+
+
+def apple_silicon() -> bool:
+    """Whether this Mac's hardware is Apple Silicon -- not this interpreter's architecture: an
+    x86_64 Python under Rosetta reports platform.machine() "x86_64" on an M-series Mac, where
+    `sysctl -n hw.optional.arm64` still reads 1 (an Intel Mac has no such key). What decides -q:v
+    is the ffmpeg binary's own build; an x86_64 ffmpeg there refuses it, and run() re-encodes that
+    job on the CPU with ffmpeg's line in the note. Read once."""
+    global _APPLE_SILICON
+    if _APPLE_SILICON is None:
+        _APPLE_SILICON = platform.machine() == "arm64"
+        if not _APPLE_SILICON and platform.system() == "Darwin":
+            try:
+                out = subprocess.run([shutil.which("sysctl") or "/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                                     errors="replace", timeout=10).stdout
+                _APPLE_SILICON = out.strip() == "1"
+            except (OSError, subprocess.SubprocessError):
+                _APPLE_SILICON = False
+    return _APPLE_SILICON
 
 
 # What FFmpeg prints when a VideoToolbox encoder cannot take a job, read from the sources of 5.1,
@@ -747,6 +783,8 @@ def hw_platform_reason() -> Optional[str]:
 _VT_ENCODER_RE = re.compile(r"(?:h264|hevc|prores)_videotoolbox")
 _VT_OWN_CONTEXT_RE = re.compile(r"\[(?:h264|hevc|prores)_videotoolbox @ [^\]]*\]")
 _VT_SESSION_RE = re.compile(r"create compression session|prepare encoder|encode frame|encoding frame", re.I)
+# the encoder's own ERROR-level lines that do not fail the encode (listed above)
+_VT_NONFATAL_RE = re.compile(r"profile/level|entropy|frames_before|frames_after|realtime|pixel aspect|aspect ratio", re.I)
 _STREAM_CONTEXT_RE = re.compile(r"\[[a-z]ost#\d+:\d+")
 _ENCODER_OPEN_FAILED = "Error while opening encoder"
 
@@ -757,16 +795,19 @@ def videotoolbox_failure(stderr: str) -> Optional[str]:
     is something else. Only such a failure is retried on the CPU (see the notes above)."""
     lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
     own = [ln for ln in lines if _VT_OWN_CONTEXT_RE.search(ln)]
+    # the lines that can explain a refusal: not the non-fatal property errors, which a job that
+    # failed elsewhere (5.1: an audio encoder that could not open) still carries
+    fatal = [ln for ln in own if not _VT_NONFATAL_RE.search(ln)]
     found = next((ln for ln in own if _VT_SESSION_RE.search(ln)), None)
     if found is None:
         for ln in lines:
             if _ENCODER_OPEN_FAILED not in ln:
                 continue
             if _VT_ENCODER_RE.search(ln):            # 6.0+: the line names the encoder that failed to open
-                found = own[-1] if own else ln
+                found = fatal[-1] if fatal else ln
                 break
-            if own and not _STREAM_CONTEXT_RE.search(ln):  # 5.1: no encoder named; the encoder's own error line is
-                found = own[-1]
+            if fatal and not _STREAM_CONTEXT_RE.search(ln):  # 5.1: no encoder named; the encoder's own error line is
+                found = fatal[-1]
                 break
     return re.sub(r" @ 0x[0-9a-fA-F]+", "", found)[:200] if found else None
 
@@ -812,18 +853,25 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         flush_drawtext_textfiles(cmd)
     with _OutputLock(cmd[-1] if is_ffmpeg else "-"):
         exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
-        proc = _execute(exec_cmd)
-        tried = exec_cmd  # the last command run: the CPU fallback swaps its encoder line in
-        if proc.returncode != 0 and is_ffmpeg:
-            retry = _odd_dimension_retry(exec_cmd, proc.stderr or "")
+        def even_retry(proc: subprocess.CompletedProcess, ran: List[str]) -> "Tuple[subprocess.CompletedProcess, List[str]]":
+            """An attempt that failed on odd dimensions, run again with an even scale: after the
+            first attempt, and after a GPU->CPU retry (VideoToolbox may refuse an odd-sized job
+            for another reason before x264 ever reports the size)."""
+            if proc.returncode == 0 or not is_ffmpeg:
+                return proc, ran
+            retry = _odd_dimension_retry(ran, proc.stderr or "")
             if retry is not None:
                 info("source has odd dimensions; scaling to even before encoding (yuv420p needs it)")
                 ctx.commands[-1] = _cmdline(retry[:-1] + [cmd[-1]])
-                proc, tried = _execute(retry), retry
-            elif "not divisible by 2" in (proc.stderr or ""):
+                return _execute(retry), retry
+            if "not divisible by 2" in (proc.stderr or ""):
                 die("the source has odd dimensions (width or height not divisible by 2) and this tool's filter graph "
                     "cannot pad them itself; make them even first, e.g. fit.py --width/--height, then retry",
                     kind="input")
+            return proc, ran
+
+        # `tried` is the last command run: the CPU fallback swaps its encoder line in
+        proc, tried = even_retry(_execute(exec_cmd), exec_cmd)
         retried = False
         if proc.returncode != 0 and is_ffmpeg and ctx.hw_swaps:
             cpu_cmd = _hw_fallback(tried, ctx)
@@ -845,7 +893,8 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                         # echoed like the first attempt, so a caller that reads the "$ " lines
                         # (render.py's stages) records the command that really ran
                         info("$ " + ctx.commands[-1], ctx=ctx)
-                    proc, tried, retried = _execute(cpu_cmd), cpu_cmd, True
+                    proc, tried = even_retry(_execute(cpu_cmd), cpu_cmd)
+                    retried = True
         if proc.returncode != 0 and check:
             _fail(tried, proc.returncode, proc.stderr or "", ctx=ctx, retried=retried)
         if final and tmp:

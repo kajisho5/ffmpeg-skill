@@ -200,17 +200,19 @@ def main() -> int:
         video[video.index("-crf") + 1] = str(args.crf)
     if STATE.fast and "-preset" in video and not p.get("codec"):
         video[video.index("-preset") + 1] = "veryfast"
+    # a fixed preset's line is tagged BT.709 (prores, an editing master, keeps the source's tags)
+    tag_bt709 = args.preset not in ("prores",) and not p.get("codec")
     if STATE.hw and not p.get("codec") and video:
         # --hw (never $FFMPEG_SKILL_HW here) puts a fixed preset on VideoToolbox: the same codec,
         # its CRF mapped to -q:v, the preset's frame rate kept; tags come with the VT line itself
-        video = hw_preset_video(video, meta)
+        video = hw_preset_video(video, meta, bt709=tag_bt709)
     cmd += video
     if args.preset != "copy":
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
         # no longer be a copy, and would silently mislabel colour the agent never actually looked at
         if "-r" not in video:
             cmd += cfr_args(meta)
-        if args.preset not in ("prores",) and not p.get("codec") and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
+        if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
     if out_ext == "mp4":
         cmd += ["-movflags", "+faststart"]

@@ -188,7 +188,7 @@ These are the rules the skill file gives the agent and the code enforces.
 
 ## Tools
 
-42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.11.0) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
+42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.11.0) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8) and, with `export.py`, `--hw`/`--no-hw` (Apple VideoToolbox on Apple Silicon, opt-in; see `doctor` below), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
 
 **Analysis and inspection**
 

@@ -28,6 +28,14 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
     ctx.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
     STATE.plan = None  # the hook falls back to STATE when nothing passed a ctx; a failed run plans nothing there either
     sys.stderr.write(f"error: {msg}\n" + (f"hint: {hint}\n" if hint else ""))
+    if kind == "ffmpeg" and "hw" not in extra and (ctx.hw or ctx.hw_stages or ctx.hw_env_ignored):
+        # a tool's own ffmpeg failure (cut.py runs run(check=False) and dies itself; render.py
+        # re-raises a stage's) carries `encoder` and `hw` as run()'s _fail() does: under --hw /
+        # $FFMPEG_SKILL_HW two encoders may have run, and a caller must know whose failure it is
+        enc = extra.get("encoder") or _video_encoders(ctx.commands)[0]
+        if enc and "encoder" not in extra:
+            extra["encoder"] = enc
+        extra["hw"] = hw_report(ctx, enc)
     if ctx.json:
         doc: Dict[str, Any] = {
             "status": "failed", "exit_code": code,
@@ -92,15 +100,22 @@ def hw_report(ctx: "Context", enc: Optional[str]) -> Dict[str, Any]:
     no encode -- batch.py, whose stages are child processes). `requested`: VideoToolbox was asked
     for this run's encodes (by --hw, by $FFMPEG_SKILL_HW where it applies, or for a stage);
     `source`: flag|env; `used`: the encoder that ran last is VideoToolbox; `fallback`: a job
-    VideoToolbox refused was re-encoded on the CPU, here or in a stage; `notes`: why."""
+    VideoToolbox refused was re-encoded on the CPU, here or in a stage; `notes`: why. Under
+    --dry-run `used` is null and `fallback` false: nothing ran."""
     stages = list(ctx.hw_stages)
     requested = bool(ctx.hw) or any(st.get("requested") for st in stages)
     source = ctx.hw_source if ctx.hw else next((st.get("source") for st in stages if st.get("requested")), None)
     if not requested and ctx.hw_env_ignored:
         source = "env"
-    used = None if enc is None else enc.endswith("_videotoolbox")
+    # a stage that reported its source without asking (export.py under the variable: requested
+    # false, source env) still names where the request came from
+    source = source or next((st.get("source") for st in stages if st.get("source")), None)
+    vt = enc is not None and enc.endswith("_videotoolbox")
+    # `used` is what ran; a dry run ran nothing (the planned encoder is `encoder`), so null --
+    # as waveform.py's `silent` is null when nothing was measured
+    used = None if enc is None or ctx.dry_run else vt
     notes = list(ctx.hw_notes)
-    if used and source == "env" and not any(n.endswith(ENV_HW_NOTE) for n in notes):
+    if vt and source == "env" and not any(n.endswith(ENV_HW_NOTE) for n in notes):
         # the machine default, not this call, chose the GPU: say what it costs and how to opt out
         # (once: a stage that ran on it already said so)
         notes.append(ENV_HW_NOTE)
@@ -158,7 +173,8 @@ def absorb_stage_hw(stage: str, doc: Any, ctx: "Optional[Context]" = None) -> No
     if not isinstance(hw, dict):
         return
     for n in hw.get("notes") or []:
-        if not any(existing.endswith(": " + n) for existing in ctx.hw_notes):
+        # once: this process may have said it already (waveform.py's own encode), or another stage
+        if n not in ctx.hw_notes and not any(existing.endswith(": " + n) for existing in ctx.hw_notes):
             ctx.hw_notes.append(f"{stage}: {n}")
     enc, line = _video_encoders([str(c) for c in (doc.get("commands") or [])])
     quality = hw_quality_note(enc, line) if hw.get("used") else None
@@ -171,6 +187,7 @@ def steps_encoder_report(steps: Sequence["Tuple[str, Any]"]) -> Dict[str, Any]:
     (child processes) that made the item: the last encoder a step ran (a later stream copy keeps
     the encode before it), and their GPU facts as render.py's result carries its stages'."""
     ctx = Context()
+    ctx.dry_run = STATE.dry_run
     enc: Optional[str] = None
     for name, doc in steps:
         step_enc = doc.get("encoder") if isinstance(doc, dict) else None

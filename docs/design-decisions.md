@@ -899,6 +899,10 @@ not a new file format this tool would have to maintain.
   `test_a_failure_that_is_not_videotoolbox_s_is_not_retried_and_names_the_command_that_ran`,
   `test_when_the_cpu_retry_fails_too_the_error_is_the_cpu_command_s` (a fake ffmpeg, every CI
   runner); `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so` (real hardware).
+  The CPU retry gets the odd-dimension retry a CPU-only run gets
+  (`test_an_odd_sized_job_videotoolbox_refused_gets_the_even_scale_on_the_cpu`), and on 5.1 the
+  encoder's non-fatal property lines do not count as its refusal beside another stream's open
+  failure (`NOT_VT`, the 5.1 audio-encoder case).
 - **The encoder list is `ffmpeg -encoders`; `ffprobe -encoders` only under `--dry-run`.** The
   AV1/ProRes refusals and the VideoToolbox check must describe the binary that encodes, and on a
   mixed install (a Homebrew ffprobe next to a static ffmpeg) ffprobe's list is another build's. A
@@ -907,3 +911,41 @@ not a new file format this tool would have to maintain.
   `EncoderListTests`, `test_hw_dry_run_runs_no_ffmpeg`.
 - **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
   on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.
+- **An `export.py` preset on the GPU writes the preset's format, and its CPU fallback is the
+  preset's own line.** A fixed h264/h265 preset is 8-bit with BT.709 tags whatever the source (on
+  an HDR source it says so in a note, as without `--hw`), so its VideoToolbox line is built as for
+  an SDR source, on the SDR curve, rather than as the Main10 HDR line the re-encoding tools use;
+  otherwise `--hw` changed the delivered format and a GPU→CPU fallback changed it back. The CPU
+  line recorded for that fallback carries the BT.709 tags only where `export.py` adds them (not
+  `prores`, a master that keeps the source's). Code: `_common.decision.hw_preset_video`. Tests:
+  `test_an_h265_preset_on_an_hdr_source_stays_the_preset_s_8_bit_bt709_format`,
+  `test_the_prores_preset_s_cpu_fallback_keeps_the_source_s_tags`.
+- **`--hw` and `--no-hw` are two booleans, not one dest.** The contract's `input_schema` keeps one
+  property per argparse dest, and the MCP transport turns `true` into the property's flag, so a
+  store_true/store_false pair on one dest published only `--no-hw`, under the name `hw`. Each flag
+  has its own dest (`hw`, `no_hw`, mutually exclusive), `hw_flag()` reads the pair back, and the
+  generator refuses any parser whose actions share a dest. Tests:
+  `test_every_flag_of_every_parser_is_published_once_under_its_own_name`.
+- **Under `--dry-run`, `hw.used` is null; `encoder` is the planned encoder.** `used` says what ran,
+  and a dry run ran nothing (the same rule as `waveform.py`'s `silent`). `encoder` keeps naming the
+  encoder of the planned command, as `commands` lists planned commands, and the
+  `FFMPEG_SKILL_HW` note still says what the GPU will cost. Test:
+  `test_a_dry_run_reports_the_planned_encoder_and_no_used`.
+- **A tool that runs other tools passes the GPU choice on and reports its stages.** `render.py`
+  and `batch.py` export `--hw`/`--no-hw` to their stages; `waveform.py` passes its explicit flag to
+  the caption/title stage, which writes its deliverable, and folds that stage's commands and `hw`
+  into its own result. `render.py` (stages and an executed plan) and `batch.py` (items, into its
+  top-level `hw`, `used` null) carry what their children reported, a failed stage's `encoder` and
+  `hw` included. `batch.py`'s item cache, like `render.py --cache`, keys on the GPU setting (the
+  suffix is empty when every step is on the CPU, so older caches still hit), and an entry whose
+  output a later run rewrote is dropped. Tests: `test_batch_never_serves_a_cached_item_across_the_gpu_setting`,
+  `test_batch_s_top_level_hw_carries_its_items`, `test_a_hw_plan_executed_by_render_reports_hw`,
+  `test_render_s_failed_stage_keeps_its_encoder_and_the_earlier_stages_fallback`,
+  `test_waveform_passes_its_gpu_choice_to_the_stage_that_writes_the_file`,
+  `test_waveform_s_no_hw_overrides_the_variable_for_its_stage_too`.
+- **Apple Silicon is the hardware, not the interpreter.** An x86_64 Python under Rosetta reports
+  `platform.machine()` as `x86_64` on an M-series Mac; `sysctl -n hw.optional.arm64` still reads 1
+  there. Whether `-q:v` works is the ffmpeg binary's build, and an x86_64 ffmpeg that refuses it is
+  re-encoded on the CPU by the fallback above, with ffmpeg's line in the note. Code:
+  `_common.runner.apple_silicon`; `doctor`'s `hw.platform_ok` uses the same check. Test:
+  `test_hw_runs_on_apple_silicon_hardware_under_a_rosetta_python`.
