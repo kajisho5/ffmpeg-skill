@@ -65,6 +65,8 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args
+from _common.emit import absorb_stage_hw
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -354,6 +356,7 @@ def render_pack(names: List[str], args) -> int:
             if line.startswith("$ ") or line.startswith("[dry-run]"):
                 STATE.commands.append(line[2:] if line.startswith("$ ") else line)
         STATE.commands.extend(str(c) for c in (doc.get("commands") or []))
+        absorb_stage_hw(name, doc)
         out = doc.get("output") or dest_out
         chk = doc.get("check") or {}
         ok = proc.returncode == 0 and doc.get("status") == "completed"
@@ -541,14 +544,27 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         # needs (a timeout inside audio.py is a timeout, not an "input" error of render.py).
         err = doc.get("error") or {}
         extra_fields = {"hint": err["hint"]} if err.get("hint") else {}
+        extra_fields.update(_stage_failure_hw(Path(script).stem, doc))
         die(f"{script} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, **extra_fields)
     _LAST_DOC.clear()
     _LAST_DOC.update(doc if isinstance(doc, dict) else {})
+    absorb_stage_hw(Path(script).stem, doc)  # a stage's GPU facts (ran on VideoToolbox, fell back and why) reach this result
     out_path = str(doc.get("output") or "")
     if key:
         cache_store(stage, key, out_path or (dest or ""), time.time() - started)
     return out_path
+
+
+def _stage_failure_hw(stage: str, doc: Any) -> Dict[str, Any]:
+    """A failed stage's GPU facts, for render's own failure document: the stage's `hw` joins the
+    earlier stages' (a fallback before the failure is not lost), and its `encoder` -- the command
+    that failed -- is forwarded. die() then adds `hw` for a kind: ffmpeg failure, as a tool's own
+    run() failure carries it."""
+    if not isinstance(doc, dict):
+        return {}
+    absorb_stage_hw(stage, doc)
+    return {"encoder": doc["encoder"]} if doc.get("encoder") else {}
 
 
 # ------------------------------------------------------------------ the stage cache (1.17)
@@ -623,6 +639,10 @@ def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[
         "inputs": [{"hash": _content_hash(p)} for p in inputs],
         "child": [a for a in child_args() if a != "--dry-run"],
         "codec": STATE.codec, "ext": Path(dest).suffix if dest else None,
+        # what a stage's encoder resolves from: $FFMPEG_SKILL_HW (inherited) and whether the outer
+        # command made it explicit (--hw/--no-hw, which reaches export.py too). A GPU encode is not
+        # the CPU's bytes, so a --hw artifact is never served to a CPU run or the other way round.
+        "hw": [os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on"), os.environ.get(HW_FORCED_ENV) == "1"],
         "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -724,7 +744,8 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     if proc.returncode != 0 or doc.get("status") != "completed":
         err = doc.get("error") or {}
         die(f"{tool} failed while executing the plan: {err.get('message') or proc.stderr.strip()[-300:]}",
-            kind=err.get("kind", "ffmpeg"), plan=path, tool=tool)
+            kind=err.get("kind", "ffmpeg"), plan=path, tool=tool, **_stage_failure_hw(tool, doc))
+    absorb_stage_hw(tool, doc)  # the tool's GPU facts (fell back and why, ran on VideoToolbox) reach this result
     output = doc.get("output") or plan.get("output")
     check_result = None
     exit_code = 0
@@ -863,6 +884,7 @@ def main() -> int:
                                             "or 'all' its directory is where the pack is written")
     tpl.add_argument("--write-project", metavar="FILE", help="write the filled project.json for editing and stop (no render)")
     add_common(ap)
+    add_hw_orchestrator_args(ap)
     args = ap.parse_args()
     apply_common(args)
 

@@ -826,6 +826,130 @@ not a new file format this tool would have to maintain.
   `test_join_none_holds_a_picture_shorter_than_its_sound`,
   `test_join_none_trims_a_sound_tail_under_a_frame`.
 
+## Unreleased — the GPU
+
+- **`--hw` is opt-in, and a delivery preset needs it explicitly.** Measured first on an M4 Max
+  (FFmpeg 9.0, three 1080p SDR clips) and re-measured with `tests/bench_vt.py` on an M3 (FFmpeg
+  9.0.2, SSIM against x264/x265 `medium` at CRF 18/23/28, iPhone footage included): VideoToolbox
+  is 2–7× faster but needs 1.1–2.9× the bytes for the same SSIM on SDR and 1.9–3.5× on HDR. A draft or an
+  intermediate is the place for speed; a file that is uploaded is the place for bytes. So
+  `FFMPEG_SKILL_HW=1` changes every re-encoding tool's default but not `export.py`'s delivery
+  presets, and `render.py --hw` is the one switch that puts a whole project, export included, on
+  the GPU. It is never switched on by anything else (not `--fast`, not a detected GPU). An
+  `export.py` run under the variable says in `hw` (`requested: false`, `source: env`, a note) that
+  the preset stayed on the CPU and that `--hw` moves it. Code: `_common.runner.apply_common`,
+  `add_hw_orchestrator_args`. Tests: `HwResolutionTests`, `test_export_preset_needs_an_explicit_hw`
+  (a dry run with VideoToolbox stood in, so it runs on every CI runner),
+  `test_the_env_default_reaches_the_other_re_encoding_tools`.
+- **CRF maps to VideoToolbox `-q:v` on the safe side, with a separate HDR curve.**
+  `vt_quality` takes, at each CRF, the highest `-q:v` whose SSIM matched the CPU encode across
+  `tests/bench_vt.py`'s clips (synthetic CG, fractal and grain, iPhone 17 Pro SDR and HLG at 30
+  and 60 fps), so a GPU encode never measures below the CPU one; the other clips pay in bytes.
+  HDR has its own curve (63 − 1.6 per CRF step against SDR H.264's 75 − 2.2 and HEVC's 78 − 2.0).
+  Its CPU line is x265 Main10 at CRF+2, and the Main10 VideoToolbox line needs ~11–15 less
+  `-q:v` for that SSIM. On the first fit's SDR curve, HLG phone footage came out at 6–8× x265's
+  bytes at a higher SSIM (0.998 against 0.989). The split is on `bt2020_or_hdr`, a probe fact,
+  and only the HEVC line takes it: an export preset's H.264 line on an HDR source replaces x264
+  at the same CRF. The HDR clips' matches spread by 6.6 at CRF 18 and ~10 at 23/28, 60 fps
+  lowest. One curve set by the 30 fps clip covers them, and the 60 fps clips pay 2.6–3.5× x265's
+  bytes; a content class or a bitrate ceiling was not worth that. Three rows match within 0.3
+  `-q:v`, inside VideoToolbox's run-to-run noise, so "never below" means within noise. SSIM is the
+  metric the first fit used: x264/x265 psy tuning lowers their SSIM at equal visual quality, so a
+  matched `-q:v` leans low. Frames are paired by index (`settb=1/1000,setpts=N`), because
+  `setpts=N/FRAME_RATE/TB` rounds in a 1/1000 or 1/600 time base and pairs two frames in three
+  with a neighbour. Tests: `test_quality_mapping_is_monotonic_and_bounded`,
+  `test_the_curves_keep_the_measured_values`, `test_an_hdr_source_gets_the_hdr_quality_curve`,
+  `test_an_h264_line_on_an_hdr_source_keeps_the_h264_curve`.
+- **`--quality` on the GPU is an approximation of the CRF encode, said so, and `verified` does not
+  change meaning.** `-q:v` is not a CRF: VideoToolbox has no rate-distortion model that x264/x265's
+  CRF promises a quality from, and the curves above are a fit at three CRFs on a handful of clips,
+  pinned to the measured values, not derived. A content type the bench did not hold can land above
+  or below the CPU encode's quality, and the bytes differ by 1.1–3.5×. So every VideoToolbox
+  encode adds a top-level `notes` line naming the encoder and its `-q:v`, saying it is not
+  CRF-equivalent and that `--no-hw` gives the CRF encode. `verified` stays what it is for every
+  tool, the output's measured properties (written, probed, the tool's own measured steps: loudness,
+  duration, a platform check); none of them reads the encoder line or assumes x264/CRF, so a GPU
+  file verifies exactly as the same file from the CPU would. Tests:
+  `test_a_gpu_encode_notes_that_its_quality_is_not_crf_equivalent`,
+  `test_verified_is_the_measured_output_whatever_the_encoder`,
+  `test_the_curves_keep_the_measured_values`.
+- **VideoToolbox BT.709 tags go through a bitstream filter.** The ≥7.1 reason `bt709_tag_args`
+  uses encoder VUI parameters holds for VideoToolbox too, and it has no `-x264-params`; the
+  `-colorspace` output options put a real matrix conversion on an untagged source (24 dB PSNR,
+  tag-neutral). `h264_metadata`/`hevc_metadata` write the VUI after encoding (49.9 dB). Test:
+  `test_hw_encode_reports_itself_and_keeps_an_untagged_source_unconverted`.
+- **A job VideoToolbox refuses is re-encoded on the CPU, and the result says so; no other failure
+  is retried.** VideoToolbox has hard limits (H.264 stops at 4096 wide) that listing the encoder
+  cannot reveal. `run()` swaps the recorded VideoToolbox arguments back to the CPU line they
+  replaced and retries once; `hw.used: false`, `hw.fallback: true` and `hw.notes` (with the line
+  ffmpeg printed) report it, and `encoder` names what really ran. It retries only when stderr shows
+  VideoToolbox's own failure, read from the FFmpeg 5.1–8.0 and master sources: "Error while opening
+  encoder" on a line naming a `*_videotoolbox` encoder (6.0+ log contexts `[vost#N:M/<encoder>]`,
+  8.0+ `[enc:<encoder>]`; 5.1's line names no encoder, so there it counts beside an error the
+  encoder logged in its own `[<encoder> @ …]` context), or the encoder's compression-session
+  failures in that context ("create compression session", "prepare encoder", "encode frame",
+  "encoding frame", matched without case because master drops the "Error: " prefix). A bad filter
+  graph, a missing font (7.0+ then prints "Could not open encoder before EOF", which names the
+  encoder but means it never got a frame) or a full disk is the same failure on the CPU: retrying
+  ran the job twice and reported the GPU as its cause. Those fail once, and the failure document
+  names the encoder of the command that ran, says it was not retried, and carries `encoder`/`hw`;
+  when the CPU retry fails too, the message and stderr are the CPU command's. Code:
+  `_common.runner.videotoolbox_failure`, `run`, `_fail`. Tests: `VideoToolboxFailureTests`,
+  `test_a_videotoolbox_open_failure_is_re_encoded_on_the_cpu_and_reported`,
+  `test_a_failure_that_is_not_videotoolbox_s_is_not_retried_and_names_the_command_that_ran`,
+  `test_when_the_cpu_retry_fails_too_the_error_is_the_cpu_command_s` (a fake ffmpeg, every CI
+  runner); `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so` (real hardware).
+  The CPU retry gets the odd-dimension retry a CPU-only run gets
+  (`test_an_odd_sized_job_videotoolbox_refused_gets_the_even_scale_on_the_cpu`), and on 5.1 the
+  encoder's non-fatal property lines do not count as its refusal beside another stream's open
+  failure (`NOT_VT`, the 5.1 audio-encoder case).
+- **The encoder list is `ffmpeg -encoders`; `ffprobe -encoders` only under `--dry-run`.** The
+  AV1/ProRes refusals and the VideoToolbox check must describe the binary that encodes, and on a
+  mixed install (a Homebrew ffprobe next to a static ffmpeg) ffprobe's list is another build's. A
+  dry run promises never to run ffmpeg, so it reads ffprobe's, as `ffmpeg_version()` always does;
+  the real run re-decides against ffmpeg's. Code: `_common.runner.ffmpeg_encoders`. Tests:
+  `EncoderListTests`, `test_hw_dry_run_runs_no_ffmpeg`.
+- **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
+  on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.
+- **An `export.py` preset on the GPU writes the preset's format, and its CPU fallback is the
+  preset's own line.** A fixed h264/h265 preset is 8-bit with BT.709 tags whatever the source (on
+  an HDR source it says so in a note, as without `--hw`), so its VideoToolbox line is built as for
+  an SDR source, on the SDR curve, rather than as the Main10 HDR line the re-encoding tools use;
+  otherwise `--hw` changed the delivered format and a GPU→CPU fallback changed it back. The CPU
+  line recorded for that fallback carries the BT.709 tags only where `export.py` adds them (not
+  `prores`, a master that keeps the source's). Code: `_common.decision.hw_preset_video`. Tests:
+  `test_an_h265_preset_on_an_hdr_source_stays_the_preset_s_8_bit_bt709_format`,
+  `test_the_prores_preset_s_cpu_fallback_keeps_the_source_s_tags`.
+- **`--hw` and `--no-hw` are two booleans, not one dest.** The contract's `input_schema` keeps one
+  property per argparse dest, and the MCP transport turns `true` into the property's flag, so a
+  store_true/store_false pair on one dest published only `--no-hw`, under the name `hw`. Each flag
+  has its own dest (`hw`, `no_hw`, mutually exclusive), `hw_flag()` reads the pair back, and the
+  generator refuses any parser whose actions share a dest. Tests:
+  `test_every_flag_of_every_parser_is_published_once_under_its_own_name`.
+- **Under `--dry-run`, `hw.used` is null; `encoder` is the planned encoder.** `used` says what ran,
+  and a dry run ran nothing (the same rule as `waveform.py`'s `silent`). `encoder` keeps naming the
+  encoder of the planned command, as `commands` lists planned commands, and the
+  `FFMPEG_SKILL_HW` note still says what the GPU will cost. Test:
+  `test_a_dry_run_reports_the_planned_encoder_and_no_used`.
+- **A tool that runs other tools passes the GPU choice on and reports its stages.** `render.py`
+  and `batch.py` export `--hw`/`--no-hw` to their stages; `waveform.py` passes its explicit flag to
+  the caption/title stage, which writes its deliverable, and folds that stage's commands and `hw`
+  into its own result. `render.py` (stages and an executed plan) and `batch.py` (items, into its
+  top-level `hw`, `used` null) carry what their children reported, a failed stage's `encoder` and
+  `hw` included. `batch.py`'s item cache, like `render.py --cache`, keys on the GPU setting (the
+  suffix is empty when every step is on the CPU, so older caches still hit), and an entry whose
+  output a later run rewrote is dropped. Tests: `test_batch_never_serves_a_cached_item_across_the_gpu_setting`,
+  `test_batch_s_top_level_hw_carries_its_items`, `test_a_hw_plan_executed_by_render_reports_hw`,
+  `test_render_s_failed_stage_keeps_its_encoder_and_the_earlier_stages_fallback`,
+  `test_waveform_passes_its_gpu_choice_to_the_stage_that_writes_the_file`,
+  `test_waveform_s_no_hw_overrides_the_variable_for_its_stage_too`.
+- **Apple Silicon is the hardware, not the interpreter.** An x86_64 Python under Rosetta reports
+  `platform.machine()` as `x86_64` on an M-series Mac; `sysctl -n hw.optional.arm64` still reads 1
+  there. Whether `-q:v` works is the ffmpeg binary's build, and an x86_64 ffmpeg that refuses it is
+  re-encoded on the CPU by the fallback above, with ffmpeg's line in the note. Code:
+  `_common.runner.apple_silicon`; `doctor`'s `hw.platform_ok` uses the same check. Test:
+  `test_hw_runs_on_apple_silicon_hardware_under_a_rosetta_python`.
+
 ## Unreleased — a second speech engine
 
 - **`auto` picks Parakeet only for English.** The default Parakeet model (tdt-0.6b-v2) is

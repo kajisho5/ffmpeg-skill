@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, read_text_or_die, MEDIA_EXT as _MEDIA_EXT
+from _common.runner import HW_FORCED_ENV, add_hw_orchestrator_args, env_hw
+from _common.emit import absorb_stage_hw, steps_encoder_report
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -71,6 +73,18 @@ def recipe_key(recipe: Dict[str, Any]) -> str:
         except OSError:
             pass
     return hashlib.sha1((json.dumps(recipe, sort_keys=True) + "\0" + project_content).encode()).hexdigest()[:12]
+
+
+def gpu_key() -> str:
+    """The GPU setting the steps resolve, as a suffix for the item cache key: a VideoToolbox file is
+    not the CPU's bytes, so a --hw output is never served to a --no-hw run or the other way round
+    (render.py's cache_key folds the same two variables in). Read after apply_common(), which has
+    exported --hw/--no-hw to the steps. '' when every step encodes on the CPU -- no flag and no
+    $FFMPEG_SKILL_HW, or --no-hw -- so the keys of a cache written before --hw existed still hit."""
+    if not env_hw():
+        return ""
+    # the variable alone leaves export.py's delivery presets on the CPU; --hw puts them on the GPU
+    return ":hw" if os.environ.get(HW_FORCED_ENV) == "1" else ":hw-env"
 
 
 JOBS_CAP = 8   # beyond this, concurrent encodes contend for the same cores and memory
@@ -157,6 +171,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         pj = work / f"{src.stem}_project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
         ok, _doc = run_step(["render.py", str(pj)], budget())
+        step_docs = [("render", _doc)]
         cut_reencoded: List[bool] = []
     else:
         steps = recipe.get("steps") or []
@@ -165,11 +180,13 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         cur = str(src)
         ok = True
         cut_reencoded = []
+        step_docs = []
         for i, step in enumerate(steps):
             last = i == len(steps) - 1
             out = str(final) if last else str(work / f"{src.stem}_step{i}.{'mp4' if src.suffix.lower() not in ('.wav', '.mp3', '.m4a', '.flac') else src.suffix.lstrip('.')}")
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
             step_ok, doc = run_step(argv, budget())
+            step_docs.append((Path(str(argv[0])).stem if argv else "step", doc))
             # only cut.py's own doc carries `reencoded` -- true if ANY range this call cut needed
             # the tolerance-triggered hybrid re-encode fallback (cut.py ORs its per-segment results
             # into one top-level field; it doesn't report which range, so this is per cut.py call,
@@ -183,6 +200,9 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
     result: Dict[str, Any] = {"file": str(src), "output": str(final), "ok": ok, "seconds": round(time.time() - t0, 1)}
     if cut_reencoded:
         result["cut_reencoded"] = cut_reencoded
+    # the encoder each item really ran and its GPU facts (--hw / FFMPEG_SKILL_HW: on VideoToolbox,
+    # fell back and why): this process encodes nothing itself, so its top-level hw.used is null
+    result.update(steps_encoder_report(step_docs))
     return result
 
 
@@ -199,6 +219,7 @@ def main() -> int:
                          "Default 1, which is 1.16's behaviour exactly.")
     ap.add_argument("--work", help="work directory for intermediates (default: <output_dir>/.work)")
     add_common(ap)
+    add_hw_orchestrator_args(ap)
     args = ap.parse_args()
     apply_common(args)
 
@@ -240,7 +261,7 @@ def main() -> int:
             cache = json.loads(cache_path.read_text(encoding="utf-8"))
         except ValueError:
             cache = {}
-    rkey = recipe_key(recipe)
+    rkey = recipe_key(recipe) + gpu_key()
     glob = recipe.get("glob") or "*"
 
     # --jobs: every item is itself an ffmpeg that already threads across cores, so beyond a few
@@ -303,6 +324,10 @@ def main() -> int:
             # write is already atomic: two finishers could otherwise serialise from two different
             # snapshots and lose an entry.
             with cache_lock:
+                # this run just rewrote r["output"]: an entry under another key (another recipe,
+                # the other GPU setting) that names the same file now describes bytes that are gone
+                for stale in [k for k, v in cache.items() if k != key and isinstance(v, dict) and v.get("output") == r["output"]]:
+                    del cache[stale]
                 cache[key] = r
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above
@@ -507,6 +532,10 @@ def main() -> int:
                 results = one_pass()
         except KeyboardInterrupt:
             info("watch stopped")
+    # the items' GPU facts (asked for, fell back and why) reach the top-level `hw`, as render.py's
+    # stages' do; `used` stays null there, because this process encoded nothing itself
+    for r in results:
+        absorb_stage_hw(Path(r["file"]).name, r)
     done = sum(1 for r in results if r["ok"])
     info(f"{done}/{len(results)} processed, {sum(1 for r in results if r.get('cached'))} from cache")
     if not args.json:

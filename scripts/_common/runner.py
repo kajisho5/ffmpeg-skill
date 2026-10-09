@@ -155,7 +155,8 @@ class Context:
     makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec")
+    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec",
+                 "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages")
 
     def __init__(self) -> None:
         self.reset()
@@ -176,6 +177,13 @@ class Context:
         self.plan_written = False                    # write_plan() ran (emit or the exit hook), so the hook does not write twice
         self.plan_inputs: List[str] = []             # side inputs (srt/ass/lut/font files) a tool named through escape_filter_path
         self.codec: Optional[str] = None             # --codec: encoder for the re-encode (None = x264 for SDR, x265 for HDR)
+        self.hw = False                              # --hw / $FFMPEG_SKILL_HW: VideoToolbox encoders where they apply
+        self.hw_source: Optional[str] = None         # "flag" (--hw/--no-hw given) or "env" (FFMPEG_SKILL_HW), None = off by default
+        self.hw_notes: List[str] = []                # why an encode stayed on (or fell back to) the CPU, for the result document
+        self.hw_swaps: List[Tuple[List[str], List[str]]] = []  # (VideoToolbox args, the CPU args they replaced) for run()'s fallback
+        self.hw_fallback = False                     # run() re-encoded a job VideoToolbox refused on the CPU (or a stage reported one)
+        self.hw_env_ignored = False                  # $FFMPEG_SKILL_HW=1 was set but this tool's delivery preset does not take it (export.py)
+        self.hw_stages: List[Dict[str, Any]] = []    # render.py: the `hw` facts each stage (a child process) reported
 
 
 STATE = Context()
@@ -206,6 +214,31 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
                        help="video encoder for the re-encode: h264 (x264, the default for SDR), hevc (x265, the default for HDR), av1 (SVT-AV1 or libaom), prores (422 HQ, needs a .mov/.mkv output); HDR sources keep their colour on hevc/av1/prores")
         g.add_argument("--quality", type=int, default=ap._defaults["crf"], metavar="N",
                        help="encoder quality on the CRF scale (default %(default)s; lower = better; 18 visually lossless for x264/x265, up to 63 for av1); ignored by prores")
+    if (codec and "crf" in ap._defaults) or not codec:
+        _add_hw_flags(g, "encode on the GPU with Apple VideoToolbox (h264/hevc/prores; Apple Silicon only): several times faster, "
+                         "larger files at the same quality; falls back to the CPU encoder, reported, where it cannot apply"
+                         + ("" if codec else ". The only way to put a delivery preset on the GPU: $FFMPEG_SKILL_HW does not apply here"),
+                      "encode on the CPU (x264/x265/SVT-AV1/prores_ks) even when $FFMPEG_SKILL_HW=1")
+        ap.set_defaults(_hw_env=bool(codec))
+
+
+def _add_hw_flags(g: Any, hw_help: str, no_hw_help: str) -> None:
+    """--hw and --no-hw, each its own boolean (dests `hw` and `no_hw`). They are not one dest
+    with store_true/store_false: the contract's input_schema keeps one property per dest and the
+    MCP transport turns `true` into the flag, so a shared dest published --no-hw under the name
+    `hw` and an MCP `hw: true` ran on the CPU. hw_flag() reads the pair back as True/False/None."""
+    hw = g.add_mutually_exclusive_group()
+    hw.add_argument("--hw", action="store_true", help=hw_help)
+    hw.add_argument("--no-hw", action="store_true", help=no_hw_help)
+
+
+def hw_flag(args: "argparse.Namespace") -> Optional[bool]:
+    """--hw -> True, --no-hw -> False, neither (or a tool without the flags) -> None."""
+    if getattr(args, "hw", False):
+        return True
+    if getattr(args, "no_hw", False):
+        return False
+    return None
 
 
 def apply_common(args: "argparse.Namespace") -> None:
@@ -228,6 +261,25 @@ def apply_common(args: "argparse.Namespace") -> None:
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
     STATE.codec = getattr(args, "codec", None) or None
+    STATE.hw_notes, STATE.hw_swaps, STATE.hw_fallback, STATE.hw_env_ignored, STATE.hw_stages = [], [], False, False, []
+    flag = hw_flag(args)
+    if flag is not None:
+        STATE.hw, STATE.hw_source = bool(flag), "flag"
+        if getattr(args, "_hw_orchestrator", False):
+            # render.py / batch.py --hw|--no-hw: every stage they run inherits it as an explicit
+            # choice -- export.py's delivery presets included, which $FFMPEG_SKILL_HW never reaches
+            os.environ[HW_ENV] = "1" if flag else "0"
+            os.environ[HW_FORCED_ENV] = "1"
+    elif hasattr(args, "hw") and os.environ.get(HW_FORCED_ENV) == "1":
+        STATE.hw, STATE.hw_source = env_hw(), "flag"
+    elif hasattr(args, "hw") and getattr(args, "_hw_env", False) and env_hw():
+        STATE.hw, STATE.hw_source = True, "env"
+    else:
+        STATE.hw, STATE.hw_source = False, None
+        # export.py (a delivery preset decides the encoder): the machine default is not applied,
+        # and the result says so rather than leaving a caller to wonder why the GPU was not used
+        STATE.hw_env_ignored = (hasattr(args, "hw") and env_hw() and not getattr(args, "_hw_env", False)
+                                and not getattr(args, "_hw_orchestrator", False))
     quality = getattr(args, "quality", None)
     if quality is not None:
         top = 63 if STATE.codec == "av1" else 51
@@ -354,15 +406,48 @@ def _cleanup_partial_output(cmd: Sequence[str]) -> None:
         pass
 
 
-def _fail(cmd: Sequence[str], returncode: int, stderr: str) -> None:
+def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Context]" = None, retried: bool = False) -> None:
     # Partial-output cleanup already ran in the caller (_run_captured/_run_with_progress) for
     # every failed ffmpeg invocation, not just this check=True path -- see _cleanup_partial_output.
     # The process exit code is always 1 for an ffmpeg failure: ffmpeg's own code (1, 69, 218, 234,
     # a negative signal number...) varies by build and by the failing stage, and 124/127/130/143
     # are reserved for timeout, missing tool and interrupts. The raw code is kept in the JSON
     # document as `ffmpeg_returncode` for a caller that wants it. docs/design-decisions.md.
+    #
+    # `cmd` is the command that ran last: after run()'s GPU->CPU retry (`retried`), the CPU one.
+    # Under --hw / $FFMPEG_SKILL_HW the message names its video encoder and the document carries
+    # `encoder` and `hw`, because two encoders may have run and a caller must know whose stderr
+    # this is.
+    ctx = ctx or STATE
     tail = "\n".join(stderr.strip().splitlines()[-15:])
-    die(f"command failed ({returncode}): {cmd[0]}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode)
+    what, extra = str(cmd[0]), {}
+    enc = video_encoder_of(cmd) if ctx.hw else None
+    if enc:
+        on_gpu = enc.endswith("_videotoolbox")
+        why = videotoolbox_failure(stderr) if on_gpu else None
+        if not on_gpu and retried:
+            what += f" (video encoder {enc}, the CPU retry after VideoToolbox refused the job)"
+        elif on_gpu and why is None:
+            what += f" (video encoder {enc}; not retried on the CPU: ffmpeg reported no VideoToolbox error)"
+        else:
+            what += f" (video encoder {enc})"
+        report = hw_report(ctx, enc)
+        if on_gpu:
+            report["notes"].append(
+                "the VideoToolbox encode failed and was not retried on the CPU: " +
+                ("ffmpeg reported no encoder-open or compression-session error, so the cause is not the GPU (see the message)"
+                 if why is None else f"VideoToolbox refused it ({why}) and no CPU encoder line was recorded to retry with"))
+        extra = {"encoder": enc, "hw": report}
+    die(f"command failed ({returncode}): {what}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode, **extra)
+
+
+def video_encoder_of(cmd: Sequence[str]) -> Optional[str]:
+    """The video encoder an ffmpeg argv names last (-c:v / -vcodec / -codec:v), or None."""
+    enc = None
+    for i, a in enumerate(cmd[:-1]):
+        if a in ("-c:v", "-vcodec", "-codec:v"):
+            enc = str(cmd[i + 1])
+    return enc
 
 
 def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
@@ -621,6 +706,126 @@ def _stage_existing_output(cmd: Sequence[str]) -> Tuple[List[str], Optional[str]
     return list(cmd[:-1]) + [tmp], output, tmp
 
 
+HW_ENV = "FFMPEG_SKILL_HW"
+# set only by render.py/batch.py --hw/--no-hw for the stages they run: "the outer command chose
+# explicitly", so a child resolves $FFMPEG_SKILL_HW as a flag (export.py included), not a default
+HW_FORCED_ENV = "_FFMPEG_SKILL_HW_EXPLICIT"
+
+
+def add_hw_orchestrator_args(ap: "argparse.ArgumentParser") -> None:
+    """--hw / --no-hw on a tool that runs other tools (render.py, batch.py) and encodes nothing itself."""
+    _add_hw_flags(ap, "run every stage's encode on Apple VideoToolbox, the final delivery export included (Apple Silicon; "
+                      "falls back to the CPU, reported, where it cannot apply). Without it, $FFMPEG_SKILL_HW=1 still "
+                      "puts the intermediate stages on the GPU and leaves the delivery export on the CPU",
+                  "every stage on the CPU encoders, whatever $FFMPEG_SKILL_HW says")
+    ap.set_defaults(_hw_orchestrator=True)
+
+
+def env_hw() -> bool:
+    """$FFMPEG_SKILL_HW asks for VideoToolbox by default (1/true/yes/on); anything else is off."""
+    return os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def hw_platform_reason() -> Optional[str]:
+    """None when this machine can take a VideoToolbox constant-quality encode, else why not.
+    `-q:v` on VideoToolbox is Apple-Silicon-only in FFmpeg: an Intel Mac lists the encoders but
+    rejects the quality setting, so the machine check is macOS AND Apple Silicon hardware."""
+    if platform.system() != "Darwin":
+        return "VideoToolbox is macOS-only"
+    if not apple_silicon():
+        return "VideoToolbox constant-quality encoding needs Apple Silicon"
+    return None
+
+
+_APPLE_SILICON: Optional[bool] = None
+
+
+def apple_silicon() -> bool:
+    """Whether this Mac's hardware is Apple Silicon -- not this interpreter's architecture: an
+    x86_64 Python under Rosetta reports platform.machine() "x86_64" on an M-series Mac, where
+    `sysctl -n hw.optional.arm64` still reads 1 (an Intel Mac has no such key). What decides -q:v
+    is the ffmpeg binary's own build; an x86_64 ffmpeg there refuses it, and run() re-encodes that
+    job on the CPU with ffmpeg's line in the note. Read once."""
+    global _APPLE_SILICON
+    if _APPLE_SILICON is None:
+        _APPLE_SILICON = platform.machine() == "arm64"
+        if not _APPLE_SILICON and platform.system() == "Darwin":
+            try:
+                out = subprocess.run([shutil.which("sysctl") or "/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                                     errors="replace", timeout=10).stdout
+                _APPLE_SILICON = out.strip() == "1"
+            except (OSError, subprocess.SubprocessError):
+                _APPLE_SILICON = False
+    return _APPLE_SILICON
+
+
+# What FFmpeg prints when a VideoToolbox encoder cannot take a job, read from the sources of 5.1,
+# 6.0, 6.1, 7.0, 7.1, 8.0 and master (fftools/ffmpeg*.c, libavcodec/videotoolboxenc.c):
+#  - the CLI's encoder-open failure, "Error while opening encoder", on every version. From 6.0 the
+#    line carries the output stream's log context, which names the encoder ("[vost#0:0/
+#    h264_videotoolbox @ 0x...]", from 8.0 followed by "[enc:h264_videotoolbox @ 0x...]"). 5.1
+#    prints "Error initializing output stream 0:0 -- Error while opening encoder for output stream
+#    #0:0 ...", which names no encoder, so there it counts only beside an error line the
+#    VideoToolbox encoder logged in its own context;
+#  - the encoder's own session failures, logged in its codec context ("[h264_videotoolbox @
+#    0x...]"): "cannot create compression session", "cannot prepare encoder", "cannot encode
+#    frame", "Error encoding frame". Each of them fails the encode. Matched without case and
+#    without the "Error: " prefix, which master drops ("Cannot create compression session").
+# Deliberately not counted, so the job is not run twice and the GPU is not blamed:
+#  - "Could not open encoder before EOF" (7.0+). It names the encoder, but it follows a filter
+#    graph that failed before the first frame -- a missing font, a bad filter argument -- so the
+#    encoder never got as far as opening;
+#  - the encoder's ERROR-level lines that do not fail the encode ("Error setting profile/level
+#    property ... Output will be encoded using a supported profile/level combination", the
+#    frames_before/frames_after/entropy/realtime/pixel-aspect properties), which a job that fails
+#    for another reason (a full disk: "Error submitting a packet to the muxer") can still carry.
+_VT_ENCODER_RE = re.compile(r"(?:h264|hevc|prores)_videotoolbox")
+_VT_OWN_CONTEXT_RE = re.compile(r"\[(?:h264|hevc|prores)_videotoolbox @ [^\]]*\]")
+_VT_SESSION_RE = re.compile(r"create compression session|prepare encoder|encode frame|encoding frame", re.I)
+# the encoder's own ERROR-level lines that do not fail the encode (listed above)
+_VT_NONFATAL_RE = re.compile(r"profile/level|entropy|frames_before|frames_after|realtime|pixel aspect|aspect ratio", re.I)
+_STREAM_CONTEXT_RE = re.compile(r"\[[a-z]ost#\d+:\d+")
+_ENCODER_OPEN_FAILED = "Error while opening encoder"
+
+
+def videotoolbox_failure(stderr: str) -> Optional[str]:
+    """The stderr line that shows a VideoToolbox encoder refused the job (could not open, or its
+    compression session failed), with the log contexts' pointers dropped; None when the failure
+    is something else. Only such a failure is retried on the CPU (see the notes above)."""
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    own = [ln for ln in lines if _VT_OWN_CONTEXT_RE.search(ln)]
+    # the lines that can explain a refusal: not the non-fatal property errors, which a job that
+    # failed elsewhere (5.1: an audio encoder that could not open) still carries
+    fatal = [ln for ln in own if not _VT_NONFATAL_RE.search(ln)]
+    found = next((ln for ln in own if _VT_SESSION_RE.search(ln)), None)
+    if found is None:
+        for ln in lines:
+            if _ENCODER_OPEN_FAILED not in ln:
+                continue
+            if _VT_ENCODER_RE.search(ln):            # 6.0+: the line names the encoder that failed to open
+                found = fatal[-1] if fatal else ln
+                break
+            if fatal and not _STREAM_CONTEXT_RE.search(ln):  # 5.1: no encoder named; the encoder's own error line is
+                found = fatal[-1]
+                break
+    return re.sub(r" @ 0x[0-9a-fA-F]+", "", found)[:200] if found else None
+
+
+def _hw_fallback(cmd: List[str], ctx: "Context") -> Optional[List[str]]:
+    """`cmd` with every VideoToolbox encoder line this process built swapped back to the CPU line
+    it replaced, or None when it has none -- for run() when the GPU refused an encode."""
+    out, changed = list(cmd), False
+    for vt, cpu in ctx.hw_swaps:
+        n = len(vt)
+        for i in range(len(out) - n + 1):
+            if out[i:i + n] == vt:
+                out[i:i + n] = cpu
+                changed = True
+                break
+    return out if changed else None
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
@@ -648,19 +853,50 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         flush_drawtext_textfiles(cmd)
     with _OutputLock(cmd[-1] if is_ffmpeg else "-"):
         exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
-        proc = _execute(exec_cmd)
-        if proc.returncode != 0 and is_ffmpeg:
-            retry = _odd_dimension_retry(exec_cmd, proc.stderr or "")
+        def even_retry(proc: subprocess.CompletedProcess, ran: List[str]) -> "Tuple[subprocess.CompletedProcess, List[str]]":
+            """An attempt that failed on odd dimensions, run again with an even scale: after the
+            first attempt, and after a GPU->CPU retry (VideoToolbox may refuse an odd-sized job
+            for another reason before x264 ever reports the size)."""
+            if proc.returncode == 0 or not is_ffmpeg:
+                return proc, ran
+            retry = _odd_dimension_retry(ran, proc.stderr or "")
             if retry is not None:
                 info("source has odd dimensions; scaling to even before encoding (yuv420p needs it)")
                 ctx.commands[-1] = _cmdline(retry[:-1] + [cmd[-1]])
-                proc = _execute(retry)
-            elif "not divisible by 2" in (proc.stderr or ""):
+                return _execute(retry), retry
+            if "not divisible by 2" in (proc.stderr or ""):
                 die("the source has odd dimensions (width or height not divisible by 2) and this tool's filter graph "
                     "cannot pad them itself; make them even first, e.g. fit.py --width/--height, then retry",
                     kind="input")
+            return proc, ran
+
+        # `tried` is the last command run: the CPU fallback swaps its encoder line in
+        proc, tried = even_retry(_execute(exec_cmd), exec_cmd)
+        retried = False
+        if proc.returncode != 0 and is_ffmpeg and ctx.hw_swaps:
+            cpu_cmd = _hw_fallback(tried, ctx)
+            if cpu_cmd is not None:
+                # Only a failure VideoToolbox itself reported is retried on the CPU: a bad filter
+                # graph, a missing font or a full disk would fail the same way twice and be
+                # reported as the GPU's fault (videotoolbox_failure() has the strings and why).
+                # A failure that is not one stays a failure of this command: with check=True,
+                # _fail() names it; with check=False the caller's own retry decides (a success
+                # after that must not carry a note about it).
+                why = videotoolbox_failure(proc.stderr or "")
+                if why is not None:
+                    reason = f"VideoToolbox refused the encode: {why}"
+                    info(reason + "; retrying on the CPU encoder")
+                    ctx.hw_notes.append(reason + "; re-encoded on the CPU")
+                    ctx.hw_fallback = True
+                    ctx.commands[-1] = _cmdline(cpu_cmd[:-1] + [cmd[-1]])
+                    if not quiet:
+                        # echoed like the first attempt, so a caller that reads the "$ " lines
+                        # (render.py's stages) records the command that really ran
+                        info("$ " + ctx.commands[-1], ctx=ctx)
+                    proc, tried = even_retry(_execute(cpu_cmd), cpu_cmd)
+                    retried = True
         if proc.returncode != 0 and check:
-            _fail(exec_cmd, proc.returncode, proc.stderr or "")
+            _fail(tried, proc.returncode, proc.stderr or "", ctx=ctx, retried=retried)
         if final and tmp:
             if proc.returncode == 0:
                 try:
@@ -1005,13 +1241,22 @@ def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
 
 
 def ffmpeg_encoders() -> set:
-    """Names from `ffmpeg -encoders`, read once; empty when ffmpeg is missing. Used only to pick
-    an AV1 encoder and to refuse --codec av1 / prores before ffmpeg would."""
+    """Names from `ffmpeg -encoders` -- the build that will run the encode -- read once; empty when
+    it cannot be read. Used to pick an AV1 encoder, to refuse --codec av1 / prores before ffmpeg
+    would, and to see whether --hw's VideoToolbox encoders are built in.
+
+    Under --dry-run only, the list comes from `ffprobe -encoders` instead: a dry run promises
+    never to run ffmpeg (docs/contract.md: ffmpeg_execution "none") while ffprobe always may, as in
+    ffmpeg_version(). That is the one case for ffprobe. On a mixed install (a Homebrew ffprobe next
+    to a static ffmpeg) its list is another build's, so a real run never uses it: the AV1/ProRes
+    refusals and the VideoToolbox check must describe the binary that encodes, and a plan that
+    read ffprobe's list is re-decided against ffmpeg's when it runs."""
     global _ENCODERS
     if _ENCODERS is None:
         _ENCODERS = set()
+        tool = "ffprobe" if STATE.dry_run else "ffmpeg"
         try:
-            out = subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
+            out = subprocess.run([shutil.which(tool) or tool, "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=PROBE_TIMEOUT).stdout
             _ENCODERS = set(re.findall(r"^\s*[VAS][.\w]{5}\s+(\S+)", out, re.M))
         except (OSError, subprocess.SubprocessError):
@@ -1043,4 +1288,4 @@ def read_text_or_die(path: str, flag: str) -> str:
 # emit needs runner's Context/STATE/ERROR_CODE, so the two form a cycle that has to be cut
 # somewhere: by the time this line runs every name emit reads from runner above is defined, and
 # every name runner reads from emit is only ever read inside a function body, never at import.
-from _common.emit import _plan_at_exit, die, info  # noqa: E402
+from _common.emit import _plan_at_exit, die, hw_report, info  # noqa: E402

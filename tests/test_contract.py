@@ -25,10 +25,18 @@ CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
 import _contract  # noqa: E402
+from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
 
-# The host's own defaults must not reach the suite (every tool subprocess inherits os.environ):
-# FFMPEG_SKILL_ASR_ENGINE or a PARAKEET_* setting would change which speech engine a --transcribe
-# test drives, or where parakeet-mlx writes. Tests that exercise those opt in with an explicit env.
+# The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
+# a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
+# opt in with an explicit env. The names come from the runner, so this scrub and the one in
+# tests/_fixtures.py cannot drift from what the tools read.
+for _k in (HW_ENV, HW_FORCED_ENV):
+    os.environ.pop(_k, None)
+
+# The host's own speech defaults must not reach the suite either: FFMPEG_SKILL_ASR_ENGINE or a
+# PARAKEET_* setting would change which speech engine a --transcribe test drives, or where
+# parakeet-mlx writes. Tests that exercise those opt in with an explicit env.
 for _k in ("FFMPEG_SKILL_ASR_ENGINE", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL", "PARAKEET_OUTPUT_TEMPLATE"):
     os.environ.pop(_k, None)
 import _common  # noqa: E402
@@ -440,6 +448,65 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("crf", cut, "2.0 removed --crf where --quality exists")
         self.assertEqual(self.tools["export"]["input_schema"]["properties"]["crf"]["type"], "integer")
         self.assertEqual(self.tools["export"]["input_schema"]["properties"]["preset"]["enum"], sorted(self.tools["export"]["input_schema"]["properties"]["preset"]["enum"]))
+
+    def test_every_flag_of_every_parser_is_published_once_under_its_own_name(self):
+        """Review of #304: --hw (store_true) and --no-hw (store_false) once shared the dest `hw`.
+        input_schema keeps one property per dest, so the contract published only --no-hw, typed
+        string, under `hw`; mutually_exclusive read [["hw", "hw"]]; and an MCP `hw: true` sent
+        --no-hw. Every option string of every parser must sit in exactly one property's cli, and
+        the generator refuses a parser whose actions share a dest."""
+        import argparse
+        for name, spec in self.tools.items():
+            with self.subTest(tool=name):
+                parser = _contract._capture_parser(SCRIPTS / f"{name}.py")
+                published = [f for p in spec["input_schema"]["properties"].values() if p["cli"] != "positional" for f in p["cli"]]
+                for action in parser._actions:
+                    for flag in action.option_strings:
+                        if not isinstance(action, argparse._HelpAction):
+                            self.assertEqual(published.count(flag), 1, f"{name}: {flag}")
+                for group in spec["input_schema"].get("mutually_exclusive", []):
+                    self.assertEqual(len(group), len(set(group)), f"{name}: {group}")
+        ap = argparse.ArgumentParser(prog="t")
+        ap.add_argument("--x", dest="x", action="store_true")
+        ap.add_argument("--no-x", dest="x", action="store_false")
+        with self.assertRaisesRegex(RuntimeError, "shares dest 'x'"):
+            _contract.input_schema(ap)
+        for name in ("fit", "export", "render", "batch"):
+            props = self.tools[name]["input_schema"]["properties"]
+            self.assertEqual((props["hw"]["type"], props["hw"]["cli"]), ("boolean", ["--hw"]), name)
+            self.assertEqual((props["no_hw"]["type"], props["no_hw"]["cli"]), ("boolean", ["--no-hw"]), name)
+            self.assertIn(["hw", "no_hw"], self.tools[name]["input_schema"]["mutually_exclusive"])
+        on = mcp_server.build_argv("fit", {"input": "a.mp4", "hw": True})
+        self.assertIn("--hw", on)
+        self.assertNotIn("--no-hw", on)
+        self.assertIn("--no-hw", mcp_server.build_argv("fit", {"input": "a.mp4", "no_hw": True}))
+        self.assertNotIn("--hw", mcp_server.build_argv("render", {"project": "p.json", "no_hw": True}))
+        self.assertIn("--hw", mcp_server.build_argv("render", {"project": "p.json", "hw": True}))
+
+        def required_lists(node):
+            if isinstance(node, dict):
+                if isinstance(node.get("required"), list):
+                    yield node["required"]
+                for v in node.values():
+                    yield from required_lists(v)
+            elif isinstance(node, list):
+                for v in node:
+                    yield from required_lists(v)
+        for t in _contract.mcp_tools():
+            for req in required_lists(t["inputSchema"]):
+                self.assertEqual(len(req), len(set(req)), f"{t['name']}: JSON Schema `required` items must be unique: {req}")
+
+    def test_a_conditional_notes_description_also_names_the_gpu_line(self):
+        """emit() adds the VideoToolbox quality line to `notes` on any tool that takes --hw, so a
+        tool whose `notes` description names its own condition (loop: "--boomerang ... the audio
+        was dropped") must not read as if that were the only one."""
+        for name, spec in self.tools.items():
+            notes = spec["output_schema"]["properties"].get("notes") or {}
+            if "hw" in spec["input_schema"]["properties"] and notes.get("description"):
+                with self.subTest(tool=name):
+                    self.assertIn("VideoToolbox", notes["description"])
+        self.assertIn("VideoToolbox", self.tools["loop"]["output_schema"]["properties"]["notes"]["description"])
+        self.assertIn("VideoToolbox", self.contract["idempotency_hints"]["bit_exact"])
 
     def test_response_schema(self):
         for t in self.contract["tools"]:
