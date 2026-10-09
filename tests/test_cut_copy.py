@@ -401,6 +401,26 @@ class CutJoinTests(unittest.TestCase):
         self.assertIn("in the source there", cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0},
                                                           "audio": {"start_time": 0.0}}, expected=0.5)[1])
 
+    def test_a_reencode_never_carries_the_copy_skew_note(self):
+        """The note is about a stream copy that began on packets the two streams do not share. A
+        re-encode starts both streams where the source has them (the re-cut pads the audio to each
+        segment's origin), so its skew is reported without the note -- which told an --accurate
+        run to re-run with --accurate."""
+        data = cut_json(self.late, "--segments", "0-2,4-6", "--accurate", "-o", DIR / "late_accurate_join.mp4")
+        self.assertEqual(data["mode"], "accurate")
+        self.assertIsNotNone(data["av_start_skew_seconds"])
+        self.assertFalse(any("do not share" in n for n in data["notes"]), data["notes"])
+
+    def test_a_snapped_copy_is_compared_with_the_source_where_it_landed(self):
+        """--start 0.3 snaps back to the keyframe at 0 and writes the copy --start 0 writes, sound
+        0.379 s after the picture as in the source there: no note. It was compared with the source
+        at 0.3 s and told it began on packets the streams do not share."""
+        a = cut_json(self.late, "--start", "0", "--end", "4", "-o", DIR / "late_from0.mp4")
+        b = cut_json(self.late, "--start", "0.3", "--end", "4", "-o", DIR / "late_from03.mp4")
+        self.assertEqual((b["mode"], b["start_snapped"]), ("copy", True))
+        self.assertAlmostEqual(a["av_start_skew_seconds"], b["av_start_skew_seconds"], delta=0.001)
+        self.assertFalse(any("do not share" in n for n in a["notes"] + b["notes"]), (a["notes"], b["notes"]))
+
     def test_av_skew_is_measured_and_named_past_the_threshold(self):
         skew, note = cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0}, "audio": {"start_time": 0.5}})
         self.assertEqual(skew, 0.5)
@@ -695,6 +715,10 @@ class CutJoinTests(unittest.TestCase):
         self.assertIn("concat_fallback", data["reencode_reason"])
         self.assertFalse(data["join_check"]["ok"])
         self.assertEqual(data["join_check"]["expected_packets"], 180)
+        # the documented keys only: no internal audio_ok left behind when the audio was not checked
+        self.assertEqual(set(data["join_check"]), {"packets", "expected_packets", "max_step_seconds", "audio_offset_ms",
+                                                    "audio_parts_checked", "ok"})
+        self.assertIsNone(data["join_check"]["audio_offset_ms"])
         self.assertTrue(any("checked and failed" in n for n in data["notes"]), data["notes"])
         self.assertIsNone(data["segment_end_snap_seconds"])
         self.assertEqual(len(frame_pts(out)), 180)
@@ -765,6 +789,91 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(data["join_check"]["audio_parts_checked"], 3)
         for off in data["join_check"]["audio_offset_ms"]:
             self.assertLess(abs(off), 1.0)
+
+    def test_the_audio_check_hashes_the_stream_the_join_copied(self):
+        """FFmpeg's default selection copies the audio stream with the most channels: here a
+        6-channel PCM a:1 beside a stereo AAC a:0. The check hashed a:0, matched nothing, and
+        passed a join whose sound drifted (16 and 53 ms in the PCM .mov) as an exact copy. It now
+        hashes the source stream shaped like the joined file's audio, so every part is measured."""
+        src = DIR / "beep_two_audio.mov"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-i", self.beep, "-map", "0:v", "-map", "0:a", "-map", "0:a", "-c:v", "copy",
+               "-c:a:0", "aac", "-ac:a:0", "2", "-c:a:1", "pcm_s16le", "-ac:a:1", "6", src)
+        data = cut_json(src, "--segments", "0-2,4-6,8-10", "-o", DIR / "beep_two_audio_join.mov")
+        check = data["join_check"]
+        self.assertEqual(check["audio_parts_checked"], 3, check)
+        self.assertEqual(check["ok"], data["mode"] == "copy")
+
+    def test_the_audio_check_measures_aac_out_of_mpeg_ts(self):
+        """MPEG-TS carries AAC with a 7-byte ADTS header that the copy into MP4 strips, so no source
+        packet hash ever matched and every part was silently unmeasured. The source's packets are
+        hashed without the header."""
+        mp4, ts = DIR / "bf_noise.mp4", DIR / "bf_noise.ts"
+        if not ts.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=12", "-f", "lavfi",
+               "-i", "anoisesrc=seed=7:d=12:a=0.3:r=48000", "-c:v", "libx264", "-g", "60", "-bf", "3",
+               "-x264-params", "scenecut=0", "-c:a", "aac", "-shortest", mp4)
+            sh("ffmpeg", "-y", "-v", "error", "-i", mp4, "-c", "copy", ts)
+        if subprocess.run(["ffprobe", "-v", "error", "-show_format", str(ts)], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE).returncode != 0:
+            # the johnvansickle static ffprobe builds (5.1.1, 7.0.2) segfault on any MPEG-TS file
+            self.skipTest("this ffprobe cannot read MPEG-TS")
+        data = cut_json(ts, "--segments", "0-2,4-6,8-10", "-o", DIR / "bf_noise_ts_join.mp4")
+        check = data["join_check"]
+        self.assertIsNotNone(check, data["notes"])
+        self.assertEqual(check["audio_parts_checked"], 3, check)
+        self.assertTrue(all(abs(o) < 1.0 for o in check["audio_offset_ms"]), check)
+
+    def test_an_adts_header_is_left_out_of_the_hashed_payload(self):
+        dump = "\n00000000: fff1 5080 2a5f fc21 0a0b 0c                 ...\n"
+        self.assertEqual(cut._adts_payload(dump), bytes([0x21, 0x0A, 0x0B, 0x0C]))
+        with_crc = "\n00000000: fff0 5080 2a5f fc00 0021 0a                 ...\n"
+        self.assertEqual(cut._adts_payload(with_crc), bytes([0x21, 0x0A]))
+        self.assertEqual(cut._adts_payload("\n00000000: 2111 0a0b                 ..\n"), bytes([0x21, 0x11, 0x0A, 0x0B]))
+
+    def test_a_start_inside_the_reorder_delay_lands_where_ffmpeg_seeks(self):
+        """The MP4 demuxer seeks over raw decode times (ffprobe's dts plus the reorder delay), so
+        -ss 3.99 on B-frame H.264 began at the keyframe at 2.0, not at the one at 4.0 (dts 3.933)
+        that "the largest dts at or before the start" predicted: the copy was reported unsnapped
+        with its picture 2 s early. seek_keyframe measures the landing with the seek ffmpeg makes."""
+        landing = cut.seek_keyframe(str(self.h264bf), 3.99)
+        self.assertEqual(landing[0], 2.0, "the premise: the seek lands a GOP early")
+        self.assertEqual(cut.seek_keyframe(str(self.h264bf), 4.0)[0], 4.0)
+        src = md5_frames(self.h264bf)
+        out = DIR / "bf_3.99.mp4"
+        data = cut_json(self.h264bf, "--start", "3.99", "--end", "8", "--tolerance", "3", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertEqual(md5_frames(out)[0], src[60], "the copy begins at the keyframe at 2.0")
+        self.assertTrue(data["start_snapped"])
+        out = DIR / "bf_3.99_el.mp4"
+        data = cut_json(self.h264bf, "--start", "3.99", "--end", "8", "--tolerance", "3", "--edit-list", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertFalse(data["start_snapped"])
+        self.assertAlmostEqual(data["stored_preroll_seconds"], 2.0, delta=0.001)
+        self.assertTrue(any("pre-roll is stored" in n for n in data["notes"]), data["notes"])
+
+    def test_a_later_start_inside_the_reorder_delay_is_planned_not_tried(self):
+        """The same landing in a join: 3.95 lands on the keyframe at 2.0, which the plan now knows,
+        so the join is re-cut before a copy is tried (the copy failed its check with 180 packets
+        for 120), and a tolerance re-cut names the keyframes it could have used."""
+        data = cut_json(self.h264bf, "--segments", "0-2,3.95-6", "-o", DIR / "bf_join_3.95.mp4")
+        self.assertEqual((data["mode"], data["join_check"]), ("hybrid", None))
+        self.assertEqual(data["reencode_reason"], ["tolerance", "concat_fallback"])
+        self.assertIn(4.0, data["nearest_keyframes"])
+        data = cut_json(self.h264bf, "--segments", "0-2,3.95-6", "--tolerance", "3", "-o", DIR / "bf_join_3.95t.mp4")
+        self.assertEqual((data["mode"], data["join_check"]), ("hybrid", None))
+        self.assertTrue(any("segment 2 starts between keyframes" in n for n in data["notes"]), data["notes"])
+
+    def test_a_segments_tolerance_reencode_names_the_nearest_keyframes(self):
+        """As every 2.x release did, a --segments cut that re-encodes because a keyframe was too far
+        lists the keyframes near each such segment's start (nearest_keyframes), so the caller can
+        move the cut; the plan judged the starts before any part was cut, and listed none."""
+        data = cut_json(self.nob, "--segments", "1-3.5,5-7.2", "-o", DIR / "nob_far.mp4")
+        self.assertEqual(data["mode"], "hybrid")
+        self.assertIn("tolerance", data["reencode_reason"])
+        for k in (0.0, 2.0, 4.0, 6.0):
+            self.assertIn(k, data["nearest_keyframes"])
+        self.assertIsNone(data["lossless_alternative"], "a single cut's key, as in 2.x")
 
     def test_the_packets_read_around_segments_plan_as_the_whole_file_does(self):
         """A minute of B-frame video, segments in its middle: video_packets reads one window
@@ -1592,7 +1701,7 @@ class CopyJoinPlanTests(unittest.TestCase):
                  + [(p - 2.0 + drift, h) for p, h in src_a if 4 - 1e-9 <= p < 6 - 1e-9])
         vpts = [n / 30 for n in range(120)]
 
-        def hashes(path, lo=None, hi=None):
+        def hashes(path, lo=None, hi=None, **_):
             if path == "out.mp4":
                 return out_a
             return [(p, h) for p, h in src_a if (lo is None or p >= lo) and (hi is None or p <= hi)]

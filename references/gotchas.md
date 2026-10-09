@@ -49,10 +49,12 @@ join shows each part from its keyframe. On B-frame video an `.mp4`/`.mov`
 same tolerance (`segment_end_snap_seconds`); no-B-frame and `.mkv`/`.ts` parts
 are not snapped. Every copy join is checked (frames, steps, each part's sound
 against its picture) and re-cut when wrong. Open-GOP HEVC (iPhone "High Efficiency")
-always re-encodes a `--segments` join, even with `--tolerance -1`. If the user insists on lossless output, pass
+always re-encodes a `--segments` join, even with `--tolerance -1`, and so does a B-frame `.mp4`/`.mov`
+join whose later segment starts between keyframes (start it on a keyframe, or write `.mkv`). If the user insists on lossless output, pass
 `--tolerance -1` and tell them the cut lands on the nearest earlier keyframe.
-The MP4 demuxer seeks by *decode* time, so a start a few frames before a
-keyframe begins at that keyframe (`start_snapped: true`).
+Where a copy begins is measured with the seek ffmpeg makes: on B-frame `.mp4`/`.mov`
+a start a few frames before a keyframe can begin at that keyframe or one GOP
+earlier (`start_snapped: true` either way).
 `av_start_skew_seconds` warns when a copy's sound and picture start apart
 (Core Media HEVC once gave 3.7 s of sound with no picture); it is reported, not
 repaired: `--accurate` is the fix, or `--edit-list` for a lossless `.mp4`/`.mov`. A `-c copy` cut on VFR or a

@@ -1491,6 +1491,8 @@ class OrchestrationTests(MediaFixtures):
         ran)."""
         folder = OUT / "batch_cut_reasons"
         folder.mkdir(exist_ok=True)
+        # this test edits the cache below, so a rerun starts without one
+        (folder / "out" / ".ffskill_cache.json").unlink(missing_ok=True)
         (folder / "a.mp4").write_bytes(Path(self.src).read_bytes())
         recipe = folder / "batch.json"
         # the same two steps as the stream-copy rate test: a tolerance re-encode, then a copy
@@ -1504,6 +1506,17 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(data["results"][0]["cut_reencode_reasons"], ["tolerance"])
         self.assertEqual(data["cut_reencode_reasons"], {"tolerance": 1})
         self.assertNotIn("reencode_reasons", data["cut_stream_copy"], "cut_stream_copy keeps its 2.x shape")
+        # a row served from a cache an earlier 2.x batch wrote has cut_reencoded but no reasons:
+        # its re-encoded call counts as "unknown", never as {} ("none re-encoded")
+        cache_path = folder / "out" / ".ffskill_cache.json"
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        for row in cache.values():
+            row.pop("cut_reencode_reasons", None)
+        cache_path.write_text(json.dumps(cache), encoding="utf-8")
+        cached = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
+        self.assertTrue(cached["results"][0]["cached"])
+        self.assertEqual(cached["cut_stream_copy"]["reencoded"], 1)
+        self.assertEqual(cached["cut_reencode_reasons"], {"unknown": 1})
         recipe2 = folder / "batch_no_cut.json"
         recipe2.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out2", "suffix": "_nc",
                                        "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))

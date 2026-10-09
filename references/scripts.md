@@ -73,7 +73,8 @@ keyframes, instant, lossless); if the snapped result deviates more than
 (CRF 18: x264, or x265 Main10 with the source's own tags for an HDR or BT.2020 source;
 `--keep-hevc` re-encodes an SDR HEVC source as x265 8-bit BT.709, on VideoToolbox under `--hw`;
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
-(a `--segments` join of open-GOP video, or one that fails its check, still re-cuts).
+(a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
+between keyframes, or one that fails its check, still re-cuts).
 Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
@@ -85,7 +86,9 @@ A single `.mp4`/`.mov` stream copy shifts its timestamps to zero
 player which ignores edit lists shows the pre-roll, and the copy's length is
 judged by its video (a copy that starts where asked but ends past `--tolerance`
 re-encodes without offering another `--start`). `av_start_skew_seconds` is
-audio start minus video start, with a note past max(2 frames, 0.1 s); it is
+audio start minus video start; a stream copy gets a note when it is more than
+max(2 frames, 0.1 s) away from the source's own offset where the picture starts
+(the keyframe the copy began from; `--start` under `--edit-list`). It is
 reported, not repaired. `-ss`/`-t` are passed to the microsecond; `--accurate`
 seeks a second early and trims on the output side, so frames just before a
 keyframe are kept. `keyframe_snapped` is true for every stream copy (`precision`
@@ -964,7 +967,8 @@ A recipe that runs `cut.py` rolls its calls up: each of those `results` rows car
 `cut_reencoded` (each call's `reencoded`) and `cut_reencode_reasons` (each
 `reencode_reason` its calls named, once per call),
 and the top level `cut_stream_copy` (`{calls, stream_copy, reencoded,
-stream_copy_rate}`) and `cut_reencode_reasons` (counts per reason); both are `null`
+stream_copy_rate}`) and `cut_reencode_reasons` (counts per reason; `unknown` for a
+re-encoded call cached by an earlier 2.x batch); both are `null`
 when no `cut.py` step ran.
 
 **`--jobs N` (1.17)** processes N files at once (threads: the work is

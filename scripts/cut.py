@@ -45,6 +45,7 @@ import json
 import os
 import sys
 import tempfile
+import zlib
 from typing import List, Tuple
 
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
@@ -219,45 +220,78 @@ def video_end(src: str, meta: dict):
     return (v.get("start_time") or 0.0) + v["duration"] - file_origin(src)
 
 
-def seek_keyframe(src: str, t: float):
-    """The keyframe a stream copy starting at `t` begins from, as (pts, dts, first presented pts) in seconds, or None.
-    The MP4 demuxer seeks by DECODE time: it takes the keyframe with the largest dts <= t, which with
-    B-frames can be a keyframe whose picture comes AFTER t (measured: -ss 9.9 on a keyint-60 HEVC
-    file with 4 B-frames began at the keyframe at 10.0, whose dts is 9.833).
-    `t` is relative to the file's start, as -ss is; packet timestamps are absolute, so the file's
-    start_time is added before comparing and taken off the result."""
-    ffprobe = require_tool("ffprobe")
-    origin = file_origin(src)
-    for back in (10.0, 120.0):
-        # -read_intervals takes absolute timestamps, like the packets it returns. A window that
-        # reaches the file's start does not seek: a seek to it skips an edit-listed MP4's
-        # negative-pts keyframe (a copy cut with --edit-list, cut again), and the start was then
-        # reported as snapped although the copy began on that keyframe
-        lo = "" if t - back <= 0 else f"{origin + t - back:.6f}"
-        proc = run([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,dts_time,flags",
-                    "-of", "json", "-read_intervals", f"{lo}%{origin + t + 1.0:.6f}", src], quiet=True, check=False)
+_SEEK_SHIFTS: dict = {}
+# ffmpeg's dts heuristic: before a demuxer that does not seek by presentation time, an input -ss
+# seeks this much earlier when a stream has a decode delay (B-frames); fftools ffmpeg_demux.c
+DTS_HEURISTIC = 3.0 / 23
+
+
+def seek_shift(src: str) -> float:
+    """How much earlier than `-ss t` ffmpeg's input seek asks the demuxer for: DTS_HEURISTIC for a
+    demuxer that does not seek by pts (Matroska, MPEG-TS...) when a stream has a decode delay, 0
+    for MP4/MOV (AVFMT_SEEK_TO_PTS) or a source with no delay. One probe per source."""
+    if src not in _SEEK_SHIFTS:
+        proc = run([require_tool("ffprobe"), "-v", "error", "-show_entries", "format=format_name:stream=has_b_frames",
+                    "-of", "json", src], quiet=True, check=False)
         try:
-            packets = json.loads(proc.stdout or "")["packets"] if proc.returncode == 0 else []
-        except (ValueError, KeyError, TypeError):
-            packets = []
-        keys, pts_all = [], []
-        for p in packets if isinstance(packets, list) else []:
+            doc = json.loads(proc.stdout or "") if proc.returncode == 0 else {}
+            name = str((doc.get("format") or {}).get("format_name") or "")
+            delay = any(int(st.get("has_b_frames") or 0) > 0 for st in doc.get("streams") or [])
+        except (ValueError, TypeError, AttributeError):
+            name, delay = "", False
+        _SEEK_SHIFTS[src] = 0.0 if ("mov" in name.split(",") or not delay) else DTS_HEURISTIC
+    return _SEEK_SHIFTS[src]
+
+
+_LANDINGS: dict = {}
+
+
+def seek_keyframe(src: str, t: float):
+    """The keyframe a stream copy starting at `-ss t` begins from, as (pts, dts, first presented
+    pts at or after t) in seconds on the cut's clock, or None when it cannot be read.
+
+    Measured, not modelled: ffprobe -read_intervals seeks with the same avformat_seek_file call as
+    ffmpeg's input -ss (to the file's start_time + t, less seek_shift()), and the copy starts at
+    the first keyframe read after it, as ffmpeg drops the packets before it. A model ("the
+    keyframe with the largest dts at or before t") was wrong both ways: the MP4 demuxer seeks
+    over its raw decode times, ffprobe's dts plus the reorder delay, so on B-frame H.264 -ss 3.99
+    landed on the keyframe at 2.0, not on the one at 4.0 (dts 3.933), while on a keyint-60 HEVC
+    file -ss 9.9 began at the keyframe at 10.0 (dts 9.833). The read does not seek earlier than
+    ffmpeg does: a seek before the file's start skips an edit-listed MP4's negative-pts keyframe.
+    Cached on (src, t)."""
+    key = (src, round(t, 6))
+    if key in _LANDINGS:
+        return _LANDINGS[key]
+    origin = file_origin(src)
+    target = origin + t - seek_shift(src)
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                "packet=pts_time,dts_time,flags", "-of", "json", "-read_intervals",
+                f"{target:.6f}%{origin + t + 1.0:.6f}", src], quiet=True, check=False)
+    try:
+        packets = json.loads(proc.stdout or "")["packets"] if proc.returncode == 0 else []
+    except (ValueError, KeyError, TypeError):
+        packets = []
+    landed, pts_all = None, []
+    for p in packets if isinstance(packets, list) else []:
+        try:
+            pts = float(p["pts_time"]) - origin
+        except (KeyError, TypeError, ValueError):
+            continue
+        if landed is None:
+            if "K" not in str(p.get("flags", "")):
+                continue   # ffmpeg's copy drops what comes before the first keyframe
             try:
-                pts = float(p["pts_time"]) - origin
-                pts_all.append(pts)
-                if "K" in str(p.get("flags", "")):
-                    keys.append((pts, float(p.get("dts_time", p["pts_time"])) - origin))
-            except (KeyError, TypeError, ValueError):
-                continue
-        eligible = [k for k in keys if k[1] <= t + 1e-6]
-        if eligible:
-            k_pts, k_dts = max(eligible, key=lambda k: k[1])
-            # the first picture an edit list starting at t presents: the first frame at or after t
-            later = [x for x in pts_all if x >= t - 1e-6]
-            return k_pts, k_dts, (min(later) if later else None)
-        if t - back <= 0:
-            return None
-    return None
+                landed = (pts, float(p.get("dts_time", p["pts_time"])) - origin)
+            except (TypeError, ValueError):
+                landed = (pts, pts)
+        pts_all.append(pts)
+    if landed is None:
+        _LANDINGS[key] = None
+        return None
+    # the first picture an edit list starting at t presents: the first frame at or after t
+    later = [x for x in pts_all if x >= t - 1e-6]
+    _LANDINGS[key] = (landed[0], landed[1], min(later) if later else None)
+    return _LANDINGS[key]
 
 
 def copy_presentation(t: float, key, edit_list: bool, fps) -> dict:
@@ -478,11 +512,14 @@ def reorders(packets) -> bool:
     return False
 
 
-def plan_part(packets, start: float, end: float, tolerance: float, vend, fps, snap_end: bool = True) -> dict:
+def plan_part(packets, start: float, end: float, tolerance: float, vend, fps, snap_end: bool = True,
+              landing=None) -> dict:
     """How the --segments part start-end is stream-copied for a concat-demuxer join.
 
-    The copy begins at the keyframe the demuxer seeks to (the largest dts at or before `start`),
-    and the join presents from that keyframe: the concat demuxer does not apply the part's edit
+    The copy begins at the keyframe `-ss start` lands on: `landing`, seek_keyframe()'s measurement,
+    when it is one of `packets`' keyframes, otherwise the one with the largest dts at or before
+    `start` (which the MP4 demuxer's seek over raw decode times does not always take: the join
+    check is the backstop). The join presents from that keyframe: the concat demuxer does not apply the part's edit
     list start. The part ends at its end keyframe's DTS: an input -t stops in decode order, so
     ending at the keyframe's pts would carry that keyframe and the P-frame after it into the part.
     The end keyframe is the first one presented at or after `end` among those decoded after the
@@ -494,7 +531,8 @@ def plan_part(packets, start: float, end: float, tolerance: float, vend, fps, sn
     parts) the end is left where asked, as in every 2.x release; only the start is judged."""
     frame = 1.0 / fps if fps else 0.001
     keys = [(i, p[0], p[1]) for i, p in enumerate(packets) if p[2] and p[0] is not None and p[1] is not None]
-    landed = [k for k in keys if k[2] <= start + 1e-6]
+    measured = ([k for k in keys if abs(k[1] - landing[0]) < 1e-5] if landing else [])
+    landed = measured[:1] or [k for k in keys if k[2] <= start + 1e-6]
     if not landed and keys and (not getattr(packets, "spans", None) or packets.spans[0][0] is None):
         # a video stream that starts after `start` (its sound leads it): the seek lands on its
         # first keyframe, which the tolerance judges like any other
@@ -614,17 +652,47 @@ def check_join(out_pts, counts, fps, cfr: bool, predicted=None) -> dict:
     return {"packets": len(out_pts), "expected_packets": expected, "max_step_seconds": max_step, "ok": ok}
 
 
-def audio_packet_hashes(path: str, lo=None, hi=None) -> list:
-    """(pts, CRC32) of the first audio stream's packets of `path`, on its own raw clock, from `lo`
-    to `hi` (absolute seconds; None = the file's start or end: a read from the start never
-    seeks). [] when there is none or ffprobe fails."""
-    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", "a:0", "-show_entries", "packet=pts_time,data_hash",
-           "-show_data_hash", "CRC32", "-of", "csv=p=0"]
+def _adts_payload(data: str) -> bytes:
+    """A packet's bytes from ffprobe's -show_data hex dump, without the ADTS header an MPEG-TS AAC
+    packet carries (7 bytes, 9 with a CRC): what aac_adtstoasc leaves when the packet is copied
+    into MP4, MOV or Matroska."""
+    raw = bytearray()
+    for line in str(data or "").strip().splitlines():
+        _, _, rest = line.partition(":")
+        raw += bytes.fromhex(rest.strip().split("  ")[0].replace(" ", ""))
+    if len(raw) >= 7 and raw[0] == 0xFF and (raw[1] & 0xF6) == 0xF0:
+        return bytes(raw[7 if raw[1] & 1 else 9:])
+    return bytes(raw)
+
+
+def audio_packet_hashes(path: str, lo=None, hi=None, stream: str = "a:0", strip_adts: bool = False) -> list:
+    """(pts, CRC32) of the `stream` audio packets of `path`, on its own raw clock, from `lo` to `hi`
+    (absolute seconds; None = the file's start or end: a read from the start never seeks). With
+    `strip_adts` each packet is hashed without its ADTS header (_adts_payload; zlib's CRC32 is
+    ffprobe's), so an MPEG-TS source's AAC matches the same packets copied out of it. [] when
+    there is no such stream or ffprobe fails."""
+    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", stream]
+    if strip_adts:
+        cmd += ["-show_entries", "packet=pts_time,data", "-show_data", "-of", "json"]
+    else:
+        cmd += ["-show_entries", "packet=pts_time,data_hash", "-show_data_hash", "CRC32", "-of", "csv=p=0"]
     if lo is not None or hi is not None:
         cmd += ["-read_intervals", ("" if lo is None else f"{lo:.6f}") + "%" + ("" if hi is None else f"{hi:.6f}")]
     proc = run(cmd + [path], quiet=True, check=False)
     out = []
-    for line in (proc.stdout or "").split() if proc.returncode == 0 else []:
+    if proc.returncode != 0:
+        return out
+    if strip_adts:
+        try:
+            packets = json.loads(proc.stdout or "").get("packets") or []
+        except (ValueError, AttributeError):
+            return out
+        for p in packets:
+            pts = _packet_time(p.get("pts_time")) if isinstance(p, dict) else None
+            if pts is not None and p.get("data"):
+                out.append((pts, "CRC32:%08x" % zlib.crc32(_adts_payload(p["data"]))))
+        return out
+    for line in (proc.stdout or "").split():
         fields = line.split(",")
         pts = _packet_time(fields[0])
         crc = next((f for f in fields[1:] if f.startswith("CRC32:")), None)
@@ -633,13 +701,31 @@ def audio_packet_hashes(path: str, lo=None, hi=None) -> list:
     return out
 
 
+def copied_audio_streams(meta: dict, joined: str) -> List[str]:
+    """The source audio streams (`a:N`) a join's sound may have been copied from: those with the
+    codec, channel count and sample rate of the joined file's audio. FFmpeg's default selection
+    copies the stream with the most channels, which need not be a:0 (a stereo AAC a:0 beside a
+    6-channel PCM a:1 copied a:1), so the check must hash the stream that was copied."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "a:0", "-show_entries",
+                "stream=codec_name,channels,sample_rate", "-of", "json", joined], quiet=True, check=False)
+    try:
+        st = (json.loads(proc.stdout or "").get("streams") or [{}])[0] if proc.returncode == 0 else {}
+        shape = (st.get("codec_name"), int(st.get("channels") or 0), int(st.get("sample_rate") or 0))
+    except (ValueError, TypeError, AttributeError, IndexError):
+        return ["a:0"]
+    found = [f"a:{a['index']}" for a in meta.get("audio_streams") or []
+             if (a.get("codec"), a.get("channels") or 0, a.get("sample_rate") or 0) == shape]
+    return found or ["a:0"]
+
+
 # check_join_audio: a run of AUDIO_RUN packets, from AUDIO_SKIP seconds into a part and starting
 # within AUDIO_REACH of it, is looked for within AUDIO_SEARCH of where it belongs in the source; a
 # part whose sound is more than AUDIO_SYNC_LIMIT off its picture fails the join
 AUDIO_RUN, AUDIO_SKIP, AUDIO_REACH, AUDIO_SEARCH, AUDIO_SYNC_LIMIT = 8, 0.25, 2.0, 0.5, 0.005
 
 
-def check_join_audio(src: str, joined: str, starts, counts, out_pts=None) -> dict:
+def check_join_audio(src: str, joined: str, starts, counts, out_pts=None, streams=("a:0",),
+                     strip_adts: bool = False) -> dict:
     """Each copied part's sound against its picture in the joined file, by matching audio packets
     with the source's (CRC32). A part's video moved by (its first frame in the join - its start
     keyframe in the source), and its sound by (an audio packet's time in the join - the same
@@ -648,7 +734,9 @@ def check_join_audio(src: str, joined: str, starts, counts, out_pts=None) -> dic
     once within AUDIO_SEARCH of where the video's move puts it. A part with no such run (digital
     silence, a periodic tone, a part too short) is unmeasured, not failed. `starts` are the
     parts' start keyframes (pts on the cut's clock), `counts` their video packets in the join,
-    `out_pts` the join's video packet times when the caller has read them.
+    `out_pts` the join's video packet times when the caller has read them. `streams` are the
+    source streams the sound may have come from (copied_audio_streams), tried in turn until one
+    measures a part; `strip_adts` hashes the source's packets without their ADTS headers.
     Returns {audio_offset_ms: per part, sound minus picture (+ = sound late, null = unmeasured),
     audio_parts_checked, audio_ok}. A B-frame H.264 + PCM .mov join measured 0 / +16.0 / +53.3 ms
     and passed the video check; clean joins measure under 1 ms."""
@@ -659,30 +747,35 @@ def check_join_audio(src: str, joined: str, starts, counts, out_pts=None) -> dic
     if not out_a or len(vpts) != sum(counts):
         return {"audio_offset_ms": None, "audio_parts_checked": 0, "audio_ok": True}
     origin = file_origin(src)
-    offsets, first = [], 0
-    for k, n in zip(starts, counts):
-        v_out = vpts[first]
-        nxt = vpts[first + n] if first + n < len(vpts) else float("inf")
-        first += n
-        vshift = v_out - (k + origin)
-        lo = k + origin - 1.0
-        src_a = audio_packet_hashes(src, None if lo <= origin else lo, k + origin + AUDIO_REACH + 2 * AUDIO_SEARCH)
-        by_hash: dict = {}
-        for j, (_, crc) in enumerate(src_a):
-            by_hash.setdefault(crc, []).append(j)
-        found = None
-        for m, (p, crc) in enumerate(out_a):
-            if p < v_out + AUDIO_SKIP:
-                continue
-            if p > v_out + AUDIO_REACH or m + AUDIO_RUN > len(out_a) or out_a[m + AUDIO_RUN - 1][0] >= nxt:
-                break
-            run_ = [h for _, h in out_a[m:m + AUDIO_RUN]]
-            hits = [j for j in by_hash.get(crc, ()) if abs(src_a[j][0] - (p - vshift)) <= AUDIO_SEARCH
-                    and [h for _, h in src_a[j:j + AUDIO_RUN]] == run_]
-            if len(hits) == 1:
-                found = (p - src_a[hits[0]][0]) - vshift
-                break
-        offsets.append(None if found is None else round(found * 1000, 2) + 0.0)
+    offsets: list = []
+    for stream in streams:
+        offsets, first = [], 0
+        for k, n in zip(starts, counts):
+            v_out = vpts[first]
+            nxt = vpts[first + n] if first + n < len(vpts) else float("inf")
+            first += n
+            vshift = v_out - (k + origin)
+            lo = k + origin - 1.0
+            src_a = audio_packet_hashes(src, None if lo <= origin else lo, k + origin + AUDIO_REACH + 2 * AUDIO_SEARCH,
+                                        stream=stream, strip_adts=strip_adts)
+            by_hash: dict = {}
+            for j, (_, crc) in enumerate(src_a):
+                by_hash.setdefault(crc, []).append(j)
+            found = None
+            for m, (p, crc) in enumerate(out_a):
+                if p < v_out + AUDIO_SKIP:
+                    continue
+                if p > v_out + AUDIO_REACH or m + AUDIO_RUN > len(out_a) or out_a[m + AUDIO_RUN - 1][0] >= nxt:
+                    break
+                run_ = [h for _, h in out_a[m:m + AUDIO_RUN]]
+                hits = [j for j in by_hash.get(crc, ()) if abs(src_a[j][0] - (p - vshift)) <= AUDIO_SEARCH
+                        and [h for _, h in src_a[j:j + AUDIO_RUN]] == run_]
+                if len(hits) == 1:
+                    found = (p - src_a[hits[0]][0]) - vshift
+                    break
+            offsets.append(None if found is None else round(found * 1000, 2) + 0.0)
+        if any(o is not None for o in offsets):
+            break
     measured = [o for o in offsets if o is not None]
     return {"audio_offset_ms": offsets, "audio_parts_checked": len(measured),
             "audio_ok": all(abs(o) <= AUDIO_SYNC_LIMIT * 1000 for o in measured)}
@@ -719,9 +812,9 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             cmd += ["-af", f"atrim=end={dur:.6f},asetpts=PTS-STARTPTS"]
         else:
             # Seek SEEK_MARGIN early, then drop the margin on the output side, which decodes and
-            # discards it from both streams alike. An input seek straight to `start` lands, by
-            # decode time, on a keyframe whose picture can come after `start` and loses the frames
-            # before it (-ss 9.9 on a B-frame HEVC file began at 10.0).
+            # discards it from both streams alike. An input seek straight to `start` can land (the
+            # MP4 demuxer seeks over its raw decode times) on a keyframe whose picture comes after
+            # `start` and lose the frames before it (-ss 9.9 on a B-frame HEVC file began at 10.0).
             m = min(SEEK_MARGIN, start)
             cmd = ffmpeg_base() + ["-ss", f"{start - m:.6f}", "-i", src, "-ss", f"{m:.6f}", "-t", f"{dur:.6f}"]
         # ffmpeg's default stream selection also picks one subtitle stream; a re-encode cannot
@@ -789,8 +882,9 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     fps = (meta.get("video") or {}).get("fps")
     # a concat part's edit list does not hide its pre-roll in the join, so it presents from the keyframe
     shown = edit_list and edit_list_ok
-    return _outcome(meta, dst, False, reasons, edit_list=shown, notes=notes,
-                    **copy_presentation(start, seek_keyframe(src, start), shown, fps))
+    key = seek_keyframe(src, start)
+    return _outcome(meta, dst, False, reasons, edit_list=shown, notes=notes, landed_pts=key[0] if key else None,
+                    **copy_presentation(start, key, shown, fps))
 
 
 # The most segments one fallback ffmpeg call opens: every segment is its own input (a file handle,
@@ -926,10 +1020,10 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
     v0 = (video.get("start_time") or 0.0) - file_origin(src) if has_v and rate else 0.0
     for i, (s, e) in enumerate(segments):
         d = e - s
-        # Seek SEEK_MARGIN early and trim to the exact start. The MP4 demuxer seeks by decode
-        # time, so a start just before a keyframe (within the B-frame reorder delay) lands on that
-        # keyframe and its leading frames are lost -- measured: -ss 9.9 on a keyint-60 HEVC file
-        # began at 10.0. Likewise an input -t stops reading at s+d in decode order and would drop
+        # Seek SEEK_MARGIN early and trim to the exact start. The MP4 demuxer seeks over its raw
+        # decode times, so a start just before a keyframe (within the B-frame reorder delay) can
+        # land on that keyframe and lose its leading frames -- measured: -ss 9.9 on a keyint-60
+        # HEVC file began at 10.0 (seek_keyframe measures where a copy lands). Likewise an input -t stops reading at s+d in decode order and would drop
         # B-frames that display inside the segment, so it reads a second past the end.
         m = min(SEEK_MARGIN, s)
         cmd += ["-ss", f"{s - m:.6f}", "-t", f"{m + d + 1.0:.6f}", "-i", src]
@@ -1186,7 +1280,9 @@ def main() -> int:
                          "that differs from the average re-encodes, as --accurate, and the sampled frame timing is "
                          "reported; sampled: re-encode only when sampled packet timestamps are variable or too few "
                          "to judge; off: measure and keep the copy, with a note)")
-    ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
+    ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never for a "
+                         "keyframe snap; a --segments join is still re-cut for open GOPs, a later B-frame .mp4/.mov "
+                         "segment starting between keyframes, or a failed join check)")
     snap = ap.add_argument_group("beat snapping")
     snap.add_argument("--snap", choices=["none", "beats"], default="none",
                       help="move each in/out point to the nearest measured beat (default none)")
@@ -1359,10 +1455,14 @@ def main() -> int:
             # reorder keeps .mp4/.mov parts' edit lists and cuts each from its start keyframe to
             # its end keyframe's dts (plan_part). An audio-only join keeps the plain cut.
             join_video = bool(video) and not is_audio_output(output) and not dry_run_input_pending(args.input)
-            packets = video_packets(args.input, segments, args.tolerance, total) if join_video else None
+            # where each part's -ss lands, measured (seek_keyframe); the packets read around the
+            # segments reach back to it
+            landings = [seek_keyframe(args.input, s) for s, _ in segments] if join_video else None
+            packets = (video_packets(args.input, [(min(s, k[0]) if k else s, e) for (s, e), k in zip(segments, landings)],
+                                     args.tolerance, total) if join_video else None)
             snap_end = bool(packets) and reorders(packets) and ext.lower() in EDIT_LIST_EXTS
-            plans = ([plan_part(packets, s, e, args.tolerance, video_end(args.input, meta), fps, snap_end)
-                      for s, e in segments] if packets else None)
+            plans = ([plan_part(packets, s, e, args.tolerance, video_end(args.input, meta), fps, snap_end, k)
+                      for (s, e), k in zip(segments, landings)] if packets else None)
             open_key = open_join_key(packets, plans) if plans else None
             preroll = hidden_preroll_start(packets, plans, snap_end) if plans else None
             recut = None  # why the parts are not joined by stream copy, when that is known before cutting them
@@ -1385,6 +1485,11 @@ def main() -> int:
                 # joined by copy (parts encoded one by one leave an AAC frame's hole at every join), so
                 # every segment is re-cut into one encode, without encoding the parts first
                 late = [str(i + 1) for i, p in enumerate(plans) if p["reason"]]
+                # the keyframes near each such segment's start, as a part judged on its own named them
+                # in every 2.x release, so the caller can move the cut instead
+                for (s, _), p in zip(segments, plans):
+                    if p["reason"]:
+                        NEAREST_KEYFRAMES.extend(k for k in keyframes_near(args.input, s) if k not in NEAREST_KEYFRAMES)
                 info(f"segment{'s' if len(late) > 1 else ''} {', '.join(late)} {'have' if len(late) > 1 else 'has'} no keyframe "
                      f"within {args.tolerance:.2f}s of {'their' if len(late) > 1 else 'its'} start or end to copy from; "
                      "re-cutting every segment from the source into one re-encode")
@@ -1440,10 +1545,14 @@ def main() -> int:
                         # the sound of each part against its picture (only once the pictures are right: the
                         # parts are located in the join by their packet counts)
                         video_ok = join_check["ok"]
-                        audio = (check_join_audio(args.input, joined, [p["start_pts"] for p in plans], counts, out_pts)
+                        audio = (check_join_audio(args.input, joined, [p["start_pts"] for p in plans], counts, out_pts,
+                                                  copied_audio_streams(meta, joined),
+                                                  strip_adts=("mpegts" in str(meta.get("format") or "").split(",")
+                                                              and ext.lower() not in TS_EXTS))
                                  if video_ok and meta.get("audio") else
                                  {"audio_offset_ms": None, "audio_parts_checked": 0, "audio_ok": True})
-                        join_check["ok"] = video_ok and audio.pop("audio_ok")
+                        audio_ok = audio.pop("audio_ok")
+                        join_check["ok"] = video_ok and audio_ok
                         join_check.update(audio)
                         if not join_check["ok"]:
                             step = join_check["max_step_seconds"]
@@ -1502,8 +1611,17 @@ def main() -> int:
     # a single MP4/MOV copy without --edit-list shows the pre-roll the edit list would hide
     remedy = (len(outcomes) == 1 and not reencoded and not single.get("edit_list") and single.get("start_snapped")
               and ext.lower() in EDIT_LIST_EXTS and not is_audio_output(output))
+    # the source's own skew where the output's picture starts: at the keyframe the first copy
+    # landed on, or at the start when an edit list hides the pre-roll (or a re-encode starts there)
+    first = outcomes[0] if outcomes else {}
+    at = (first["landed_pts"] if not reencoded and not first.get("edit_list") and first.get("landed_pts") is not None
+          else segments[0][0])
     skew, skew_note = ((None, None) if STATE.dry_run
-                       else av_skew(result, bool(remedy), source_skew(args.input, meta, segments[0][0])))
+                       else av_skew(result, bool(remedy), source_skew(args.input, meta, at)))
+    if reencoded:
+        # a re-encode starts both streams where the source had them at the start (the re-cut pads the
+        # audio to each segment's origin): the skew is reported, but no copy began on unshared packets
+        skew_note = None
     if skew_note:
         info(skew_note)
         notes.append(skew_note)

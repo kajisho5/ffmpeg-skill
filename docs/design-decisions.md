@@ -957,7 +957,8 @@ not a new file format this tool would have to maintain.
   the whole run and `keyframe_snapped` stays `precision == "packet"` (a stream copy end to end):
   `demos/build.py`'s `demo_cut_accurate` and `docs/demos.md` read it that way. What #306 measured
   goes beside them. `start_snapped` is true when a copied picture starts more than a frame from
-  its requested start (the keyframe the demuxer seeks to, by decode time), and `null` under
+  its requested start (the keyframe the copy's seek lands on, measured: see the entry on where a
+  copy begins), and `null` under
   `--dry-run`, because a planned copy has not landed anywhere yet. `least_exact_precision` is the
   least exact segment's precision, and `segment_precision` lists them all. The two precisions
   differ only for an audio-only join of copied and re-encoded parts, because a video join re-cuts
@@ -981,7 +982,9 @@ not a new file format this tool would have to maintain.
   compare that object whole: main's test does, with `assertEqual`. Each row gains
   `cut_reencode_reasons` (each reason once per `cut.py` call that named it), and the top level
   gains `cut_reencode_reasons` counts. They are `{}` when no call re-encoded and `null` when no
-  `cut.py` step ran. Tests: `test_batch_reports_cuts_stream_copy_vs_hybrid_rate_across_the_folder`
+  `cut.py` step ran. A row served from a cache an earlier 2.x batch wrote has `cut_reencoded`
+  but no reasons; its re-encoded calls count as `unknown`, so the counts never read "none
+  re-encoded" beside `cut_stream_copy.reencoded: 1`. Tests: `test_batch_reports_cuts_stream_copy_vs_hybrid_rate_across_the_folder`
   (main's, verbatim), `test_batch_counts_cut_reencode_reasons_beside_the_stream_copy_rate`.
 
 - **A `--segments` join copies only identical parts, and otherwise re-cuts from the source.**
@@ -1039,8 +1042,10 @@ not a new file format this tool would have to maintain.
   Its edit-listed part stores the frames from the keyframe to the start as hidden pre-roll, and the
   concat demuxer crushes them into steps of about 0.07 ms at the join, so the copy failed its check
   on every source shape tried (`0.3-2,4.4-6`, `0-2,4.1-6`, `0-2,4.4-12` on H.264, `0-2,4.2-6` on
-  closed-GOP HEVC). Only edit-listed parts hide pre-roll; the first part's is not at a join. Code:
-  `cut.hidden_preroll_start`. Tests:
+  closed-GOP HEVC). Only edit-listed parts hide pre-roll; the first part's is not at a join. It
+  holds under `--tolerance -1` too, so `--tolerance -1` is "never for a keyframe snap", not "never":
+  README, `references/gotchas.md`, `references/scripts.md` and `cut.py --help` say so, and advise a
+  keyframe start or an `.mkv` output. Code: `cut.hidden_preroll_start`. Tests:
   `test_a_later_start_between_bframe_keyframes_is_recut_without_a_copy`,
   `test_only_a_later_edit_listed_part_starting_between_keyframes_hides_pre_roll`.
 - **The step at a join is the one its parts predict, within 1 ms.** #306 allowed a frame plus
@@ -1065,9 +1070,19 @@ not a new file format this tool would have to maintain.
   appears exactly once in the source within ±0.5 s of where the video's shift puts it gives the
   audio shift. More than 5 ms from the video's shift fails the check and re-cuts the join. A part
   with no unique run (digital silence, a periodic tone, a part too short) is unmeasured
-  (`null`), not failed, so silence makes the check blind there; only `a:0` is checked, as only it
-  is copied. `ok` is the conjunction. Cost: about 0.5 s on a 3-minute join. Code:
-  `cut.check_join_audio`. Tests:
+  (`null`), not failed, so silence makes the check blind there. The source stream hashed is the
+  one the join copied: FFmpeg's default selection copies the audio stream with the most channels,
+  not always `a:0` (a 6-channel PCM `a:1` beside a stereo AAC `a:0` was copied, every part went
+  unmeasured, and a join 16 and 53 ms off passed), so the check hashes the source streams with
+  the joined audio's codec, channels and sample rate, in turn, until one measures a part. An
+  MPEG-TS source's AAC carries an ADTS header that the copy into MP4/MOV/Matroska strips, so no
+  hash matched; its packets are hashed without it (from `-show_data`; zlib's CRC32 is ffprobe's).
+  `ok` is the conjunction, and `join_check` carries only its documented keys. Cost: about 0.5 s
+  on a 3-minute join. Code: `cut.check_join_audio`, `cut.copied_audio_streams`,
+  `cut.audio_packet_hashes`. Tests: `test_the_audio_check_hashes_the_stream_the_join_copied`,
+  `test_the_audio_check_measures_aac_out_of_mpeg_ts`,
+  `test_an_adts_header_is_left_out_of_the_hashed_payload`,
+  `test_a_matroska_join_is_checked_and_recut_when_it_is_wrong` (the key set),
   `test_a_join_whose_sound_drifts_off_its_picture_fails_the_check_and_is_recut`,
   `test_a_clean_join_passes_the_audio_check_part_by_part`,
   `test_the_audio_check_measures_each_parts_sound_against_its_picture`,
@@ -1115,7 +1130,7 @@ not a new file format this tool would have to maintain.
   audio track that starts 0.379 s after its video 0.379 s early. The re-cut shifts video and
   audio by the same seek margin and pads the audio to the segment origin
   (`aresample=async=1:first_pts=0`). Test: `test_a_delayed_audio_track_keeps_its_offset_through_the_fallback`.
-- **The re-cut seeks a second early.** The MP4 demuxer seeks by decode time, so on a keyint-60
+- **The re-cut seeks a second early.** The MP4 demuxer seeks over its raw decode times, so on a keyint-60
   HEVC file with 4 B-frames `-ss 9.9` began at the keyframe at 10.0 and lost three frames; an
   input `-t` likewise stops reading before late-stored B-frames. Test:
   `test_more_segments_than_one_call_takes_are_joined_in_chunks` (it crosses that boundary).
@@ -1144,26 +1159,52 @@ not a new file format this tool would have to maintain.
   release; `edit_list` is `false` and `stored_preroll_seconds` `null`. Two rules apply only under
   `--edit-list`: the copy is judged by its video (the container also counts a longer track), and
   a copy that starts where asked but ends past `--tolerance` re-encodes without offering another
-  `--start`. What a copy stored is read from the source, not the output: the demuxer takes the
-  keyframe with the largest *decode* time at or before the start, so `stored_preroll_seconds` is
-  start minus that keyframe's presentation time, and a keyframe presented *after* the start (dts
-  9.833 for a 10.0 keyframe, asked for 9.9) is a snap. Comparing the output's durations with and
-  without the edit list was tried and does not work: a B-frame composition offset makes them
-  differ even on a keyframe start. The keyframe read does not seek when its window reaches the
-  file's start: a seek there skips an edit-listed file's negative-pts keyframe, and an
-  `--edit-list` copy cut again was reported as snapped although its picture started where asked.
-  Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests:
+  `--start`. What a copy stored is read from the source, not the output: `stored_preroll_seconds`
+  is the first presented frame minus the presentation time of the keyframe the copy's seek lands
+  on (measured: next entry), and a keyframe presented *after* the start (10.0, asked for 9.9 on
+  the HEVC fixture) is a snap. Comparing the output's durations with and without the edit list
+  was tried and does not work: a B-frame composition offset makes them differ even on a keyframe
+  start. Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests:
   `test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for` (the default),
   `test_an_mp4_copy_starts_its_picture_at_the_requested_time`,
   `test_an_edit_listed_source_cut_again_starts_where_asked`,
   `test_judging_a_copy_by_its_video_is_noted_even_when_it_then_reencodes`; main's
   `test_cut_json_reports_requested_vs_actual_and_mode` and `test_eval6_followups`, verbatim.
+- **Where a stream copy begins is measured with the seek ffmpeg makes, not modelled.** #306
+  predicted the landing as the keyframe with the largest ffprobe dts at or before the start. The
+  MP4 demuxer seeks over its raw decode times, which are ffprobe's dts plus the reorder delay, so
+  on B-frame H.264 (FFmpeg 6.1.1 and 7.0.2) `-ss 3.99` landed on the keyframe at 2.0, not on the
+  one at 4.0 (dts 3.933), and only `-ss 4.0` reached 4.0; on the HEVC fixture `-ss 9.85` landed on
+  8.0 and `-ss 9.9` on 10.0. The model got the second right and the first wrong: a single copy
+  from 3.97 reported `start_snapped: false` with its picture 1.97 s early, its `--edit-list`
+  variant reported no stored pre-roll, and a join from 3.95 failed its check (180 packets for 120)
+  and was re-encoded after the copy was tried. `seek_keyframe` now runs `ffprobe -read_intervals`
+  from the file's start_time + t, the same `avformat_seek_file` call as ffmpeg's input `-ss`, and
+  takes the first keyframe it reads (ffmpeg's copy drops what comes before it). For a demuxer
+  without `AVFMT_SEEK_TO_PTS` (Matroska, MPEG-TS) ffmpeg seeks 3/23 s earlier when a stream has
+  a decode delay (`fftools` `ffmpeg_demux.c`), and so does the probe (`cut.seek_shift`): on a
+  B-frame `.mkv` `-ss 4.05` lands on 2.0 and `-ss 4.2` on 4.0, as the probe says. A `--segments`
+  plan starts each part at its measured landing, so a later start in the reorder delay is
+  planned (a tolerance re-cut, or the hidden pre-roll re-cut) instead of failing its check. One
+  ffprobe per segment start; the read never seeks earlier than ffmpeg does (a seek before the
+  file's start skipped an edit-listed MP4's negative-pts keyframe). Code: `cut.seek_keyframe`,
+  `cut.seek_shift`, `cut.plan_part`. Tests:
+  `test_a_start_inside_the_reorder_delay_lands_where_ffmpeg_seeks`,
+  `test_a_later_start_inside_the_reorder_delay_is_planned_not_tried`,
+  `test_an_edit_listed_source_cut_again_starts_where_asked`.
+- **A `--segments` tolerance re-cut names the nearest keyframes, as in 2.x.** 2.5.1 cut every part
+  and the part that missed `--tolerance` filled `nearest_keyframes`. #306 judges every start in
+  `plan_part` before any part is cut and re-cuts without `cut_one`, so the key was `null` for
+  those runs (67 harness cases). The re-cut branch now lists `keyframes_near` each such segment's
+  start, the same values 2.5.1 gave. `lossless_alternative` stays single-segment, as in 2.x.
+  Test: `test_a_segments_tolerance_reencode_names_the_nearest_keyframes`.
 - **Microsecond `-ss`/`-t` and the `--accurate` seek margin are defect fixes, on by default.**
   Both change what the default writes, and both only make it what was asked. `-ss` rounded to the
   millisecond missed a keyframe at 61/30 = 2.0333 s: `--start 00:00:02:01@30` seeked to 2.033,
   snapped back to the keyframe at 0 and re-encoded; it now copies from that keyframe. A video
   `--accurate` cut seeks a second early and drops the margin on the output side, because a seek
-  straight to a start a few frames before a keyframe landed, by decode time, on that keyframe and
+  straight to a start a few frames before a keyframe could land (the MP4 demuxer seeks over its raw
+  decode times) on that keyframe and
   lost those frames. Tests: `test_a_millisecond_off_keyframe_start_is_seeked_to_the_microsecond`,
   `test_accurate_keeps_the_frames_before_a_keyframe`.
 - **An A/V start skew on the default path is reported, not repaired.** Without `--edit-list` a
@@ -1171,13 +1212,19 @@ not a new file format this tool would have to maintain.
   with no picture) and the B-frame reorder delay (0.12 s on the HEVC fixture). Re-copying with
   the edit list when the skew is large was considered and rejected for 2.x: it would change the
   default output's timestamps, the thing `--edit-list` is opt-in to avoid. `av_start_skew_seconds`
-  is always reported. A `notes` line names `--accurate` (and `--edit-list` for an `.mp4`/`.mov`
-  copy whose start snapped) when the skew is more than max(2 frames, 0.1 s) away from the
-  source's own skew at the start: a track that starts late by design (the 0.355 s late-audio
-  fixture cut from 0) is what was asked for, not a copy that began on packets the streams do not
-  share. Code: `cut.av_skew`, `cut.source_skew`. Tests:
+  is always reported. On a stream copy only, a `notes` line names `--accurate` (and `--edit-list`
+  for a single `.mp4`/`.mov` copy whose start snapped) when the skew is more than max(2 frames,
+  0.1 s) away from the source's own skew where the copy's picture starts: at the keyframe the copy
+  began from, or at `--start` under `--edit-list`. A track that starts late by design (the 0.355 s
+  late-audio fixture cut from 0, or from 0.3, which snaps back to the same keyframe and writes the
+  same copy) is what was asked for, not a copy that began on packets the streams do not share. A
+  re-encode gets no note: it starts both streams where the source has them (the re-cut pads the
+  audio to each segment's origin), and the note told `--accurate` runs to re-run with
+  `--accurate`. Code: `cut.av_skew`, `cut.source_skew`. Tests:
   `test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for`,
   `test_a_source_whose_audio_starts_late_is_not_reported_as_a_skewed_cut`,
+  `test_a_snapped_copy_is_compared_with_the_source_where_it_landed`,
+  `test_a_reencode_never_carries_the_copy_skew_note`,
   `test_av_skew_names_the_edit_list_only_where_it_would_help`.
 - **A re-encoded cut keeps an SDR HEVC source HEVC only with `--keep-hevc`.** A cut is a trim, so
   a re-encoded segment could come out in the codec of the source and of any copied segment beside

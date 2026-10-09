@@ -582,6 +582,12 @@ def main() -> int:
                         "stream_copy_rate": round(copied / len(all_cuts), 3)}
         reasons = {}
         for res in results:
+            if "cut_reencode_reasons" not in res:
+                # a row from a cache an earlier 2.x batch wrote: it says which calls re-encoded,
+                # not why, so they count as "unknown" rather than leaving {} ("none re-encoded")
+                unknown = sum(1 for r in res.get("cut_reencoded") or [] if r)
+                if unknown:
+                    reasons["unknown"] = reasons.get("unknown", 0) + unknown
             for r in res.get("cut_reencode_reasons") or []:
                 reasons[r] = reasons.get(r, 0) + 1
         why = (" (reencode_reason: " + ", ".join(f"{k} x{v}" for k, v in reasons.items()) + ")") if reasons else ""
