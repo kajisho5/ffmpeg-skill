@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`2.5.1`) | any release |
+| `skill.version` | the npm / package.json version (`2.7.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -119,11 +119,15 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "contract_version": "1.0",
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "2.5.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "2.7.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0"},
-  "execution": {"shell": false, "arbitrary_executables": false, "network": false, "input_mutation": false}
+  "execution": {"shell": false, "arbitrary_executables": false, "network": false,
+                "model_downloads": {"when": "...", "in_process": {"faster-whisper": "..."},
+                                    "child_process": {"parakeet-mlx": "...", "openai-whisper": "..."},
+                                    "none": ["whisper.cpp", "parakeet.cpp"], "offline": "..."},
+                "input_mutation": false}
 }
 ```
 
@@ -350,10 +354,10 @@ A project may now carry `"template"` (the name it was filled from) and `"frame":
 ## Capabilities
 
 Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
-`external:whisper`. `capabilities.required` is the union of every tool's required list;
+`external:whisper`, `external:parakeet`. `capabilities.required` is the union of every tool's required list;
 `optional` the union of the conditional ones. With detection (the default)
 `available`, `missing` and `missing_optional` are added from `doctor`, which reads
-`ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper. Pass `--static`
+`ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper or Parakeet. Pass `--static`
 to omit detection. Nothing from the environment other than those lists and the
 ffmpeg/ffprobe/python versions is printed; no environment variables, no paths (`doctor`'s
 `hw.default_on` is a boolean derived from `FFMPEG_SKILL_HW`, never its value).
@@ -361,8 +365,29 @@ ffmpeg/ffprobe/python versions is printed; no environment variables, no paths (`
 `external:whisper` is **optional** for two tools since 1.17: `caption.py`
 (`--transcribe`) and `silence.py` (`--filler --transcribe`). Neither requires
 it — both take a transcript the caller already has (`--srt`/`--words`), and
-both refuse with the same three install lines when asked to make one with no
+both refuse with the same install lines when asked to make one with no
 engine present. Whisper is never a dependency of this skill.
+`external:parakeet` is the same kind of optional capability for the same two flags:
+parakeet-mlx, or parakeet-cli with a `.gguf` model it can find. Either engine family
+satisfies `--transcribe`; `--engine auto` (the default, or `FFMPEG_SKILL_ASR_ENGINE`) runs
+Parakeet for English speech and Whisper for every other language. When no `--language` is given
+and no detector can name it, a Whisper engine that can run takes it (whisper.cpp is passed
+`-l auto`: its own default is English). Parakeet then runs only on English *assumed* -- when no
+Whisper engine is installed, or every one failed, or `--model` names an English-only Parakeet
+model -- and the result's top-level `notes` says the transcript is wrong if the speech is not
+English; a multilingual (v3) Parakeet model assumes nothing and gets no note. The result's
+`transcription` says which engine, model and routing decision produced the cues (in every
+`--mode`, `mux` included).
+Every engine transcribes on the machine running the skill, and the audio is never uploaded. The
+skill's own code opens no network connection (`execution.network: false`), but an engine may
+fetch its model weights on first use: parakeet-mlx downloads its default
+`mlx-community/parakeet-tdt-0.6b-v2` from Hugging Face and openai-whisper its model from OpenAI,
+each in its own child process. faster-whisper is a Python library the skill runs inside its own
+process, so its first-run download from Hugging Face is made by the skill's process;
+`HF_HUB_OFFLINE=1` keeps it (and parakeet-mlx) on the cached copy after that. parakeet.cpp and
+whisper.cpp read a model file the user downloaded. `execution.model_downloads` says the same in the
+contract, engine by engine, so a caller that sandboxes the network can tell before a first
+`--transcribe` that faster-whisper's fetch comes from the skill's own process.
 
 `doctor` has three states per capability. `available` and `missing` come from a listing
 that was read; `unknown` means the listing that would prove the capability could not be
@@ -547,6 +572,8 @@ Per-tool keys added after 2.2.2, all additive:
 | `short_segments`, `duplicates` | `join.py` (every run) | warnings, never refusals, and the join command is unchanged: `short_segments: [{index, path, duration}]` names each measured input shorter than 2 frames at the join's fps (an audio-only join: shorter than 0.05 s); `duplicates: [{path, indices}]` names a path (compared resolved) listed more than once — repeating a clip can be intended. `[]` when none; each non-empty one adds a `notes` line |
 | `silent` | `waveform.py` (every run) | `true` when the input audio's whole-file peak is at or below `--silence-threshold` (default -50 dBFS), which draws a flat line; `--on-silent warn` (default) renders it anyway with a `notes` line, `fail` refuses (`kind: input`) before ffmpeg runs. `false` when audible, `null` under `--dry-run` (nothing measured). `verified` is unaffected |
 | `encoder`, `hw`, `notes` | every re-encoding tool, `export.py`, `render.py`, `batch.py` (and its rows), `waveform.py` | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback; under `--dry-run`, the planned one), `copy` for a stream copy; absent when no command encoded video. A tool that runs other tools reports its stages': `render.py` its stages and an executed plan's tool, `waveform.py` the title/caption stage that writes its file (its `commands` include that stage's). `hw` is present when VideoToolbox was asked for (`--hw`, `FFMPEG_SKILL_HW=1`, or a stage or `batch.py` item that reported it) and on `export.py` when `FFMPEG_SKILL_HW=1` is set but its delivery preset does not take it: `{requested, source: flag\|env, used, fallback, notes}`. `requested` says whether this run's encodes were asked onto VideoToolbox (`false` for that export), `used` whether the encoder that ran last is VideoToolbox (`null` under `--dry-run`, which ran nothing, and when the tool encoded nothing itself: `batch.py`, whose top-level `hw` gathers its items' `requested`/`source`/`fallback`/`notes` while each `results` row carries the item's own `encoder`, and `hw`/`notes` when VideoToolbox was asked for), `fallback` whether a job VideoToolbox refused was re-encoded on the CPU, and `notes` why. Only a VideoToolbox failure (the encoder could not open, or its compression session failed) is retried on the CPU; any other failure is reported as it happened, once. Every VideoToolbox encode adds a top-level `notes` line: its quality is not CRF-equivalent (`--quality` / a preset's CRF maps to `-q:v` approximately), and `verified` stays what it is for every tool, the measured properties of the output. A `kind: ffmpeg` failure under `--hw` / `FFMPEG_SKILL_HW` carries `encoder` and `hw` for the command that ran last (a stage's, when `render.py`/`waveform.py` re-raise it); when the command itself failed inside the run (not a tool's own check afterwards, such as `cut.py`'s), its message also names that encoder |
+| `transcription` | `caption.py --transcribe` (every `--mode`); inside `filler` for `silence.py --filler --transcribe` | `{routing, detected_language?, engine, model, language}`: the engine and model that made the transcript; `language` is the language the engine was told -- the one named (`--language`, `--filler-lang`), else the one auto's detector named -- and `null` when the engine identified it itself; `detected_language` is present when auto's whisper.cpp detector named one; `routing` says why `--engine auto` chose the engine (`"requested"` for a named engine), ending `, no Parakeet engine transcribed it` when auto chose Parakeet and a Whisper engine made the transcript after every Parakeet engine failed |
+| `notes` | `silence.py --filler --transcribe` (new for `silence.py`; `caption.py` already had it) | present when `--engine auto` ran the English-only Parakeet model on English *assumed* (no language given or detectable, and no Whisper engine installed or none that succeeded): the transcript is wrong if the speech is not English. `caption.py --transcribe` puts the same line in its `notes` |
 | `reencode_reason`, `segment_precision`, `least_exact_precision`, `start_snapped` | `cut.py` (every run) | `reencode_reason`: why anything was re-encoded, distinct values in first-seen order, `[]` for a clean copy: `requested` (`--accurate`), `codec` (`--codec`), `vfr`, `vfr_inconclusive`, `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback` (a `--segments` join that could not stay a stream copy, which now also sets `reencoded: true` and `mode: hybrid`; it reported `copy` before). `segment_precision`: each `--segments` segment's precision (`null` for one segment); `least_exact_precision`: the least exact of them, on every run. `precision` and `keyframe_snapped` keep their meaning (`keyframe_snapped` is `precision == "packet"`, a stream copy end to end); `least_exact_precision` differs from `precision` only for an audio-only join of copied and re-encoded parts. `start_snapped`: measured, `true` when a copied segment's picture starts more than one frame from its requested start, `false` when every start is where asked or everything re-encoded, `null` under `--dry-run`. `requested_segments`/`requested_duration` keep their meaning, the request clamped to the media's duration: a segment ended with the video (less than a frame of sound trimmed) shows in `duration_delta_seconds` and a `notes` line |
 | `edit_list`, `stored_preroll_seconds`, `av_start_skew_seconds`, `notes` | `cut.py` (every run) | `edit_list`: `true` only for a single-segment `.mp4`/`.mov` stream copy run with `--edit-list`, which keeps the MP4 edit list the copy writes instead of `-avoid_negative_ts make_zero` (the default, unchanged): the keyframe's pre-roll is stored but hidden, so the picture starts at `--start`. `stored_preroll_seconds`: with `edit_list`, the seconds decoded from the keyframe the copy's seek lands on (measured with the seek ffmpeg makes) up to the first presented frame; `null` otherwise. Under `--edit-list` a copy is judged by its video's length (a `notes` line says so when the container is longer), and one that starts where asked but ends past `--tolerance` re-encodes (`tolerance`) without a `lossless_alternative`. `av_start_skew_seconds`: the output's audio start minus its video start (`null` when either is missing or under `--dry-run`); on a stream copy, when it is more than max(2 frames, 0.1 s) away from the source's own audio/video offset where the copy's picture starts (the keyframe it began from; `--start` under `--edit-list`), a `notes` line names `--accurate`, and `--edit-list` for a single `.mp4`/`.mov` copy whose start snapped. A re-encode carries no such note. The skew is reported, never repaired. `notes`: what the run did that a caller should know, in plain sentences (`[]` when nothing) |
 | `video.start_time`, `audio.start_time` | `probe.py` (and every `probe` block a tool returns) | where each stream starts, in seconds on the file's own clock (ffprobe's stream `start_time`; `null` when unknown). A video stream that starts after its audio, or the reverse, is how a lossless cut's A/V skew shows; `cut.py` reads them for `av_start_skew_seconds` |
@@ -557,7 +584,13 @@ Per-tool keys added after 2.2.2, all additive:
 `caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
 and produced no cue, the refusal is `"<engine> found no speech in <input>"` with `kind: input`,
 `reason: "no_speech"` and `engine` in the failure document — distinct from the "no local
-speech-to-text engine found" refusal, which now only means no engine was found.
+speech-to-text engine found" refusal, which now only means no engine was found. When `--engine
+auto` found engines and none transcribed, the refusal is `kind: input` with `reason:
+"engine_failed"` (one ran and failed) or `"english_only"` (the only engines found were Parakeet
+engines auto passed over for a language that is not English), `engine` (the first one it names)
+and `engines: [{engine, reason, detail}]`, where `detail` carries an engine's own error line. A
+named `--engine` that is not installed is `kind: missing_tool`; one that is installed and failed
+is `kind: input`, `reason: "engine_failed"`, with `engine` and `detail`.
 
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one

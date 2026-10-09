@@ -1999,14 +1999,13 @@ class EditingTests(MediaFixtures):
         (shim / "sitecustomize.py").write_text(
             "import sys, os\n"
             "sys.path.insert(0, os.environ['FFSKILL_SCRIPTS'])\n"
-            "import _common.asr as asr, _common as c\n"
-            "def fake(video, language=None, model='base', audio_stream=0):\n"
-            "    return ([{'word': 'So', 'start': 0.2, 'end': 0.5},\n"
+            "import _common.asr as asr\n"
+            "def fake(video, language=None, model='base', audio_stream=0, engine=None, **kw):\n"
+            "    return asr.Transcription(words=[{'word': 'So', 'start': 0.2, 'end': 0.5},\n"
             "             {'word': 'um', 'start': 0.6, 'end': 0.8},\n"
             "             {'word': 'this', 'start': 1.0, 'end': 1.3},\n"
-            "             {'word': 'uh', 'start': 2.2, 'end': 2.45}], 'faster-whisper')\n"
-            "asr.transcribe_words = fake\n"
-            "c.transcribe_words = fake\n",
+            "             {'word': 'uh', 'start': 2.2, 'end': 2.45}], engine='faster-whisper')\n"
+            "asr.transcribe_words_result = fake\n",
             encoding="utf-8")
         env = dict(os.environ, PYTHONPATH=str(shim), FFSKILL_SCRIPTS=str(SCRIPTS))
         r = sh(sys.executable, SCRIPTS / "silence.py", self._gappy(), "--filler",
@@ -2026,11 +2025,10 @@ class EditingTests(MediaFixtures):
         (shim / "sitecustomize.py").write_text(
             "import sys, os\n"
             "sys.path.insert(0, os.environ['FFSKILL_SCRIPTS'])\n"
-            "import _common.asr as asr, _common as c\n"
-            "def fake(video, language=None, model='base', audio_stream=0):\n"
-            "    return ([], 'whisper.cpp')\n"
-            "asr.transcribe_words = fake\n"
-            "c.transcribe_words = fake\n",
+            "import _common.asr as asr\n"
+            "def fake(video, language=None, model='base', audio_stream=0, engine=None, **kw):\n"
+            "    return asr.Transcription(engine='whisper.cpp')\n"
+            "asr.transcribe_words_result = fake\n",
             encoding="utf-8")
         env = dict(os.environ, PYTHONPATH=str(shim), FFSKILL_SCRIPTS=str(SCRIPTS))
         out = OUT / "filler_nowords.mp4"

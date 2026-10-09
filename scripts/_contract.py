@@ -54,6 +54,8 @@ ROLES = {
 #   filter:<name>               `ffmpeg -filters`
 #   bsf:<name>                  `ffmpeg -bsfs`
 #   external:whisper            a local whisper engine (whisper.cpp / faster-whisper / openai-whisper)
+#   external:parakeet           a local Parakeet engine (parakeet-mlx, or parakeet-cli with a .gguf model);
+#                               English. Either external engine satisfies --transcribe.
 # "optional" entries name the flag or condition under which the capability is needed.
 FF = ["ffmpeg", "ffprobe"]
 X264 = "encoder:libx264"
@@ -146,7 +148,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                       required=FF + [X264], optional=[],
                       video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "caption": dict(role="execution", inputs=["video asset", "SRT/ASS file or timed text (--text)"], outputs=["video artifact with burnt-in captions (--mode burn)", "video artifact with one or several language-tagged soft subtitle streams (--mode mux, --srt file:lang repeated)", "generated .srt / .ass sidecar"],
-                    required=FF + [X264, AAC, "filter:subtitles"], optional=[{"capability": "filter:ass", "when": "--animate / --karaoke"}, HDR_X265, {"capability": "external:whisper", "when": "--transcribe"},
+                    required=FF + [X264, AAC, "filter:subtitles"], optional=[{"capability": "filter:ass", "when": "--animate / --karaoke"}, HDR_X265, {"capability": "external:whisper", "when": "--transcribe"}, {"capability": "external:parakeet", "when": "--transcribe (English; either engine family satisfies it)"},
                                             {"capability": "encoder:mov_text", "when": "--mode mux with a .mp4/.m4v/.mov output"}, {"capability": "encoder:webvtt", "when": "--mode mux with a .webm output"}, {"capability": "encoder:srt", "when": "--mode mux with a .mkv output"}],
                     video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "overlay": dict(role="execution", inputs=["video asset", "image (--image / --logo), text (--text), or a second video (--video) to composite"], outputs=["video artifact with the overlay composited"],
@@ -173,7 +175,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": X264, "when": "removing silences from a video"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},
-                                                                    {"capability": "external:whisper", "when": "--filler --transcribe"}] + AUDIO_OUT,
+                                                                    {"capability": "external:whisper", "when": "--filler --transcribe"},
+                                                                    {"capability": "external:parakeet", "when": "--filler --transcribe (English; either engine family satisfies it)"}] + AUDIO_OUT,
                     video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "join": dict(role="execution", inputs=["two or more video assets, or two or more audio-only assets"], outputs=["concatenated video artifact", "concatenated audio artifact (audio-only inputs, audio output extension)"],
                  required=FF + ["filter:xfade", "filter:acrossfade"],
@@ -410,7 +413,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "present when no --platform was named: youtube was assumed and judgement rows are WARN"},
                  "checks": {"type": "array", "items": {"type": "object", "properties": {"check": {"type": "string", "description": "row name; --content adds black, frozen and silence; audio FAILs when the track is present but silent (peak <= -50 dBFS)"}, "status": {"enum": ["PASS", "WARN", "FAIL"]}, "value": {}, "expected": {}, "fix": {"type": "string"}, "kind": {"enum": ["format", "judgement"]}}}}}
     elif name == "caption":
-        extra = {"caption": {"type": "object", "description": "cue layout: shifted / wrapped / rebalanced / split / extended / dropped counts, plus wrap ('phrase' or 'measured'), phrase_breaks (1.16), broken_inside_word -- atoms hard-sliced at the column edge because they did not fit alone even at the size floor (1.18.4) -- and overlong -- now residual: a single character alone wider than the column. Burn mode: cues_burned -- non-blank cues that overlap [0, duration] and are drawn -- and cues_outside -- non-blank cues wholly outside it (2.2.6); a burn with no visible cue is refused, kind input"},
+        extra = {"transcription": {"type": "object", "description": "with --transcribe: {engine, model, language, routing (why auto chose it), detected_language when auto detected it}; when auto ran the English-only Parakeet model on English assumed, notes says so"},
+                 "caption": {"type": "object", "description": "cue layout: shifted / wrapped / rebalanced / split / extended / dropped counts, plus wrap ('phrase' or 'measured'), phrase_breaks (1.16), broken_inside_word -- atoms hard-sliced at the column edge because they did not fit alone even at the size floor (1.18.4) -- and overlong -- now residual: a single character alone wider than the column. Burn mode: cues_burned -- non-blank cues that overlap [0, duration] and are drawn -- and cues_outside -- non-blank cues wholly outside it (2.2.6); a burn with no visible cue is refused, kind input"},
                  "tracks": {"type": "array", "description": "--mode mux: one entry per subtitle stream in the output ({index, file, language, title, codec, default, cues, kept_from_input}); a stream the input already carried has file null and kept_from_input true (1.16)"},
                  "subtitle_tracks": {"type": "integer", "description": "--mode mux: how many subtitle streams the output carries"},
                  "emoji": {"type": "object", "description": "how the emoji in the text were drawn (mode, overlays, missing)"},
@@ -431,7 +435,9 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "speech": {"type": "array", "description": "--speech (1.18): [{time, speech_music_ratio}]"}}
     elif name == "silence":
         extra = {"silences": {"type": "array"}, "keep": {"type": "array"}, "input_duration": {"type": "number"}, "kept_duration": {"type": "number"}, "removed_seconds": {"type": "number"},
-                 "speech_aware": {"type": "object", "description": "--speech-aware (1.18): {min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}"}}
+                 "speech_aware": {"type": "object", "description": "--speech-aware (1.18): {min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}"},
+                 "filler": {"type": "object", "description": "--filler: {lang, source (whisper-json:FILE | whisper:ENGINE | parakeet:ENGINE), engine, transcription (with --transcribe: {engine, model, language, routing}), removed, removed_count, ...}"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--filler --transcribe under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
     elif name == "sync":
         extra = {"reference": {"type": "string"}, "second": {"type": "string"}, "offset_seconds": {"type": "number"}, "confidence": {"type": "number"}, "meaning": {"type": "string"}, "drift": {"type": "object"},
                  "sources": {"type": "array", "description": "1.18: [{path, offset_s, confidence, drift_ppm}], one per SOURCE; the only per-source shape once more than one SOURCE is given"}}
@@ -691,6 +697,13 @@ def _whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None or importlib.util.find_spec("whisper") is not None
 
 
+def _parakeet_available() -> bool:
+    """parakeet-mlx on PATH, or parakeet-cli with a model it can find (PARAKEET_CPP_MODEL or a
+    .gguf in ~/.cache/parakeet.cpp) -- the same test the speech bridge applies before running it."""
+    from _common.asr import _parakeet_available as runtime_check  # the bridge's own test, not a copy of it
+    return any(runtime_check(e, shutil) for e in ("parakeet-mlx", "parakeet.cpp"))
+
+
 def _hw_default() -> Dict[str, Any]:
     """--hw's machine facts, normalised (never the raw environment value): whether VideoToolbox
     constant-quality encoding can run here (the tools' own check: Apple Silicon hardware, also
@@ -889,6 +902,8 @@ def doctor() -> Dict[str, Any]:
             state[cap] = _from("bsfs", cap[4:])
         elif cap == "external:whisper":
             state[cap] = "available" if _whisper_available() else "missing"
+        elif cap == "external:parakeet":
+            state[cap] = "available" if _parakeet_available() else "missing"
         else:
             state[cap] = "missing"
     available = sorted(c for c, st in state.items() if st == "available")
@@ -1016,7 +1031,15 @@ def _capability_fix_hint(cap: str) -> str:
         return (f"no installed font covers {LANGUAGE_NAMES.get(script, script)} text on this machine; "
                 f"{FONT_INSTALL_HINT} (doctor --json .fonts.scripts lists every script)")
     if cap == "external:whisper":
-        return "install a local whisper (whisper-cli, whisper-cpp, faster-whisper or openai-whisper) for --transcribe"
+        return ("install a local whisper (whisper-cli, whisper-cpp, faster-whisper or openai-whisper) for --transcribe; "
+                "faster-whisper and openai-whisper download their model on first use, and every engine transcribes "
+                "on this machine (the audio is never uploaded)")
+    if cap == "external:parakeet":
+        from _common.asr import PARAKEET_MLX_DEFAULT_MODEL
+        return ("for English --transcribe, install parakeet-mlx (uv tool install parakeet-mlx; its first run downloads "
+                f"{PARAKEET_MLX_DEFAULT_MODEL} from Hugging Face, then it transcribes on this machine and the audio is "
+                "never uploaded) or parakeet-cli with a tdt-0.6b-v2 .gguf in ~/.cache/parakeet.cpp; a local whisper "
+                "covers every language")
     return f"'{cap}' is not available; see docs/contract.md"
 
 
@@ -1381,7 +1404,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
     version = skill_version()
     tools = [tool_spec(n, version) for n in public_tools()]
     wanted = required_capabilities()
-    caps: Dict[str, Any] = {"required": wanted["required"], "optional": wanted["optional"], "naming": "ffmpeg | ffprobe | encoder:<name> | filter:<name> | bsf:<name> | external:whisper"}
+    caps: Dict[str, Any] = {"required": wanted["required"], "optional": wanted["optional"], "naming": "ffmpeg | ffprobe | encoder:<name> | filter:<name> | bsf:<name> | external:whisper | external:parakeet"}
     if detect:
         d = doctor()
         caps.update({"available": d["available"], "missing": d["missing"], "missing_optional": d["missing_optional"],
@@ -1408,8 +1431,21 @@ def build(detect: bool = True) -> Dict[str, Any]:
         "execution": {
             "shell": False,
             "arbitrary_executables": False,
-            "subprocess": "argv list only: [python3, scripts/<tool>.py, ...] and [ffmpeg|ffprobe, ...] resolved from PATH",
+            "subprocess": "argv list only: [python3, scripts/<tool>.py, ...] and [ffmpeg|ffprobe, ...] resolved from PATH; "
+                          "with --transcribe, a local speech engine's CLI (whisper.cpp's whisper-cli / whisper-cpp / main, "
+                          "openai-whisper's whisper, parakeet-mlx, parakeet-cli) resolved from PATH",
             "network": False,
+            # `network` is about the skill's own code. A speech engine may fetch its model weights the
+            # first time it runs; faster-whisper is a library, so its fetch is made from the skill's own
+            # process. A caller that sandboxes the network must know that before a first --transcribe.
+            "model_downloads": {
+                "when": "first use of a speech engine (--transcribe) whose model is not cached yet; media is never uploaded",
+                "in_process": {"faster-whisper": "Hugging Face (Systran/faster-whisper-<model>)"},
+                "child_process": {"parakeet-mlx": "Hugging Face (mlx-community/parakeet-*)",
+                                  "openai-whisper": "OpenAI (its model checkpoint)"},
+                "none": ["whisper.cpp", "parakeet.cpp"],
+                "offline": "HF_HUB_OFFLINE=1 keeps faster-whisper and parakeet-mlx on the cached copy",
+            },
             "input_mutation": False,
         },
         "invocation": {

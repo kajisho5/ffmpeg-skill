@@ -950,6 +950,63 @@ not a new file format this tool would have to maintain.
   `_common.runner.apple_silicon`; `doctor`'s `hw.platform_ok` uses the same check. Test:
   `test_hw_runs_on_apple_silicon_hardware_under_a_rosetta_python`.
 
+## Unreleased — a second speech engine
+
+- **`auto` picks Parakeet only for English.** The default Parakeet model (tdt-0.6b-v2) is
+  English-only and transcribes other speech as English-shaped nonsense. A named `--language`
+  decides; without one whisper.cpp's detector (the smallest multilingual ggml model, a second
+  or less) decides. When neither can name the language, a Whisper engine that can run goes first
+  (Parakeet only if every Whisper engine fails): a fast English transcript is not worth a
+  confidently wrong one. Only when no Whisper engine is installed, or every one failed, does
+  Parakeet run on English assumed, and then the result's top-level `notes` says the transcript is
+  wrong if the speech is not English -- `transcription.routing` alone was too quiet for a caller
+  that reads `verified`. "Goes first" means a Whisper engine that detects the language: whisper.cpp
+  is passed `-l auto` when nothing named the language (its own default is `-l en`, which decoded
+  every unnamed language as English, in 2.5.1 too), else the named or detected one, and an
+  English-only Whisper model (`base.en`, `ggml-*.en.bin`) does not count as one.
+  A named `--engine parakeet-*` runs as asked, with no note, and so does a Parakeet model named
+  with `--model` or `PARAKEET_MODEL`: a multilingual (v3) one assumes nothing and gets no note; an
+  English-only one named with `--model` gets the note, pointing at a v3 model rather than at a
+  Whisper engine, which cannot load it. Measured on 8 min of LibriSpeech
+  (contributor's figures, Apple Silicon): parakeet-mlx v2 2.8% WER at ~120× real time, whisper
+  large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`,
+  `UndetectedLanguageTests`, `WhisperLanguageTests`, `AutoRoutingFallbackTests`.
+- **A Whisper engine that failed is a failure, not silence.** Undetected speech goes to Whisper
+  first, so a Whisper failure has to read as one for Parakeet to be tried after it. A
+  faster-whisper whose model would not load (an offline first run) raised inside its worker
+  thread, the exception was swallowed and the run was refused as "found no speech"; it now logs
+  "found but failed" and the next engine is tried, as a failed whisper.cpp always was. An engine
+  that ran and returned no segment is still `no_speech` (`AsrNoSpeechTests`). For word timings,
+  undetected speech gives every Whisper engine its turn before Parakeet, as captions do; with no
+  Parakeet waiting, the first Whisper engine that ran and failed is still the one silence.py's
+  "no word-level timings" refusal names, as in 2.5.1. Tests: `WhisperFailureTests`,
+  `AutoRoutingFallbackTests`.
+- **"No engine found" means none was found.** Its install lines are for a machine with no engine;
+  2.5.1 also gave it when an installed whisper.cpp failed, and auto would have given it after
+  passing over an installed Parakeet engine for French. When engines were found and none
+  transcribed, the refusal names each and why (`kind: input`, `reason` `engine_failed` or
+  `english_only`, `engines[].detail` with the engine's own error line). A named `--engine` is `kind: missing_tool`
+  only when it is not installed; an installed one that failed is `kind: input`, `engine_failed`.
+  The line comes from stderr, or for parakeet-mlx from its stdout, where it prints its errors.
+  Test: `EngineRefusalTests`.
+- **The transcribe call returns what it used; nothing is left in module state.**
+  `transcribe_result()` / `transcribe_words_result()` return a `Transcription` (cues, words,
+  engine, the `transcription` facts, notes), so two transcriptions in one process never read each
+  other's engine or words. `transcribe()` and `transcribe_words()` keep their old return shapes
+  for existing callers. Test: `TranscriptionStateTests`.
+- **The skill's code downloads nothing; an engine may fetch its model once.** parakeet-mlx's
+  default `mlx-community/parakeet-tdt-0.6b-v2` comes from Hugging Face on first use, as
+  faster-whisper's does, and openai-whisper's from OpenAI. The audio never leaves the machine and
+  inference is local, so "no cloud" stays true. `execution.network: false` is about the skill's
+  own code: parakeet-mlx and openai-whisper fetch in their own child processes, but faster-whisper
+  is a library the skill runs in its own process, so its first-run fetch is made from that process
+  (`HF_HUB_OFFLINE=1` keeps it on the cached copy afterwards). Loading it with `local_files_only`
+  by default would break the first run 2.5.1 users rely on. The install hint, docs/contract.md and
+  references/scripts.md say so, and the contract's `execution.model_downloads` names
+  each engine's source and process, so `network: false` cannot be read as "a first
+  `--transcribe` is network-free". Tests: `InstallHintTests`,
+  `test_the_network_claim_matches_where_each_engine_runs`.
+
 ## Unreleased — cuts that say what they did
 
 - **`precision`, `keyframe_snapped` and `requested_*` keep their 2.x meanings; what is measured
