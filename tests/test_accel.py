@@ -733,7 +733,8 @@ class VtEncodeTests(MediaFixtures):
         out = OUT / "vt_fit.mp4"
         doc = json.loads(script("fit.py", src, "--height", "360", "--hw", "--json", "-o", out).stdout)
         self.assertEqual(doc["encoder"], "h264_videotoolbox")
-        self.assertEqual(doc["hw"], {"requested": True, "source": "flag", "used": True, "notes": []})
+        self.assertEqual(doc["hw"], {"requested": True, "source": "flag", "used": True, "fallback": False, "notes": []})
+        self.assertTrue(any("h264_videotoolbox -q:v" in n and "not CRF-equivalent" in n for n in doc["notes"]), doc.get("notes"))
         v = doc["probe"]["video"]
         self.assertEqual((v["color_space"], v["color_primaries"], v["color_transfer"]), ("bt709", "bt709", "bt709"))
         neutral = "setparams=colorspace=unknown:color_primaries=unknown:color_trc=unknown"
@@ -767,6 +768,7 @@ class VtEncodeTests(MediaFixtures):
                                 "--height", "4608", "--hw", "--fast", "--json", "-o", out).stdout)
         self.assertEqual(doc["encoder"], "libx264")
         self.assertFalse(doc["hw"]["used"])
+        self.assertTrue(doc["hw"]["fallback"])
         self.assertTrue(any("VideoToolbox refused" in n for n in doc["hw"]["notes"]), doc["hw"])
 
     def test_export_with_hw_really_runs_on_videotoolbox(self):
