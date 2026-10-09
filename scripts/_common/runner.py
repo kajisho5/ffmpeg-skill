@@ -1158,12 +1158,17 @@ def ffmpeg_base(overwrite: bool = True) -> List[str]:
     return cmd
 
 
-def place_output(src: str, dst: str) -> None:
+def place_output(src: str, dst: str, move: bool = False) -> None:
     """Deliver an already-rendered file to `dst` under the same rules as an ffmpeg output:
     the path is checked, the output's lock is held (as run() holds it for an ffmpeg write), an
     existing file is only replaced through a sibling temp so a failed copy never costs the
     caller what was there, and the result is remembered as ours. render.py's final
-    `copyfile()` used to bypass all of them."""
+    `copyfile()` used to bypass all of them.
+
+    `move`: `src` is a temp file the caller wrote next to `dst` (sibling_temp), renamed into place
+    with os.replace() under the lock instead of copied -- a checked `cut.py --segments` join was
+    copied whole, about 2 s for 240 MB. A rename that fails (another filesystem) falls back to
+    the copy."""
     import shutil
     cmd = ["ffmpeg", dst]
     _check_output_path(cmd)
@@ -1172,6 +1177,13 @@ def place_output(src: str, dst: str) -> None:
     stem, ext = os.path.splitext(base)
     tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
     with _OutputLock(dst):
+        if move:
+            try:
+                os.replace(src, dst)
+                _remember_output(cmd)
+                return
+            except OSError:
+                pass
         try:
             shutil.copyfile(src, tmp)
             os.replace(tmp, dst)
@@ -1182,6 +1194,15 @@ def place_output(src: str, dst: str) -> None:
                 pass
             die(f"could not place {dst}: {e}", kind="output")
     _remember_output(cmd)
+
+
+def sibling_temp(dst: str, tag: str) -> str:
+    """A hidden path next to `dst`, with its extension (the muxer is chosen by it), for a file
+    place_output(..., move=True) renames into place: same directory, so the rename never
+    crosses a filesystem."""
+    d, base = os.path.split(dst)
+    stem, ext = os.path.splitext(base)
+    return os.path.join(d, f".{stem}.ffskill-{tag}-{os.getpid()}{ext}")
 
 
 _DRAWTEXT_TMPDIR: "Optional[str]" = None

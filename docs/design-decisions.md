@@ -997,29 +997,120 @@ not a new file format this tool would have to maintain.
   from the source (per-segment input seek, `trim`/`atrim`, concat filter) measured 120/120
   frames with no gap. Code: `cut.signatures_match`, `cut.join_from_source`. Tests:
   `tests/test_cut_copy.py`.
-- **A copy join snaps both ends of every part to keyframes, and verifies by demuxing.** Measured
-  on lavfi fixtures, frame by frame with `framemd5`, then on
-  real iPhone footage. An input `-t` stops in decode order, so a part ended at a
-  keyframe's pts carried that keyframe and the P-frame after it; `make_zero` parts started at
-  the reorder delay. Of five designs only one was exact: `.mp4`/`.mov` parts that keep their
-  edit list (the concat demuxer ignores where it starts, so the pre-roll is shown, but places the
-  next part by its length) and end at the end keyframe's **dts**. The end keyframe is the one
-  nearest the requested end among those decoded after the copy's start, so `-t` is positive;
-  each end is judged against `--tolerance` on its own. **Open GOPs** cannot be cut this way: the
-  frames just before a keyframe decode after it, so they are lost (144/150 in every design). An
-  open end keyframe, or an open start keyframe after the first part, re-cuts the join. iPhone
-  "High Efficiency" HEVC is open at every keyframe, so its joins re-encode; "Most Compatible"
-  H.264 has no B-frames and stays a copy. Smart rendering (copy the interior, re-encode the
-  joins) was deferred. The join is then **measured, not predicted** (`cut.check_join`): its video
-  packet count against the source packets its parts hold, and, for constant frame timing, every
-  presentation step. A step may exceed a frame by half a frame **or by one audio frame**: with no
-  B-frames a part's AAC ends up to one codec frame after its picture and the demuxer places the
-  next part after it (32.7 ms steps at 60 fps against a 25 ms half-frame bound, frames exact, A/V
-  in sync), and a stricter bound would re-encode footage that copies exactly. The check is the
-  backstop for what the design does not model: Matroska parts (still the old cut), unusual GOP
-  shapes. Only copied parts are copy-joined; parts encoded one by one leave an AAC frame's hole
-  at every join. Code: `cut.plan_part`, `cut.gop_is_open`, `cut.check_join`. Tests:
+- **A copy join of B-frame video snaps both ends of every part to keyframes, and verifies by
+  demuxing.** Measured on lavfi fixtures, frame by frame with `framemd5`, then on real iPhone
+  footage. An input `-t` stops in decode order, so a part ended at a keyframe's pts carried that
+  keyframe and the P-frame after it; `make_zero` parts started at the reorder delay. Of five
+  designs only one was exact: `.mp4`/`.mov` parts that keep their edit list (the concat demuxer
+  ignores where it starts, so the pre-roll is shown, but places the next part by its length) and
+  end at the end keyframe's **dts**. Each end is judged against `--tolerance` on its own. **Open
+  GOPs** cannot be cut this way: the frames just before a keyframe decode after it, so they are
+  lost (144/150 in every design). An open end keyframe, or an open start keyframe after the first
+  part, re-cuts the join. iPhone "High Efficiency" HEVC is open at every keyframe, so its joins
+  re-encode. Smart rendering (copy the interior, re-encode the joins) was deferred. The check is
+  the backstop for what the design does not model: Matroska parts (still the old cut), unusual GOP
+  shapes. Only copied parts are copy-joined; parts encoded one by one leave an AAC frame's hole at
+  every join. Code: `cut.plan_part`, `cut.gop_is_open`, `cut.check_join`. Tests:
   `CopyJoinPlanTests`, `CutJoinTests` in `tests/test_cut_copy.py`.
+- **A source whose frames do not reorder cuts its parts as 2.5.1 did.** #306's keyframe plan was
+  written for B-frames, and on H.264 with no B-frames (`-g 60`, AAC; iPhone "Most Compatible") it
+  regressed joins 2.5.1 copied frame-exactly: `0-1.0,4-6` re-encoded (`tolerance`,
+  `concat_fallback`) where 2.5.1 copied 90 frames; `0-1.8,4-6` gave 120 frames (end moved
+  +0.2 s) for 2.5.1's 114; `0-2.4,4-6` gave 120 (end moved −0.4 s: requested frames dropped under
+  `mode: copy`) for 132; and `0.3-2,4.4-6`, which 2.5.1 copied as 120 frames, failed the check
+  and re-encoded. Without reordering a cut in decode order is already exact, so
+  `cut.reorders(packets)` (a packet presented before one decoded ahead of it) decides: when
+  nothing reorders, each part is cut as in every 2.x release (`make_zero`, `-t end-start`, no end
+  snap, judged against `--tolerance` by its length) and the join is still checked. All four came
+  out bit-identical to 2.5.1's outputs. Tests:
+  `test_a_source_without_bframes_cuts_its_parts_as_2x_did`,
+  `test_a_60fps_source_without_bframes_stays_an_exact_copy`,
+  `test_reorders_is_true_only_when_a_frame_is_presented_before_one_decoded_ahead`.
+- **An end snaps to the keyframe at or after it, never earlier.** #306 took the keyframe nearest
+  the requested end, so `0-2.4` ended at 2.0 and dropped requested frames under `mode: copy`. A
+  start snap only ever adds material, and so does an end snap now: the part runs to the first
+  keyframe at or after the end, and if that one is past `--tolerance` the join is re-cut. An end in
+  the video's last GOP has no keyframe after it; it stays where asked and the join check judges it
+  (#306's rule, not a tolerance miss, even under `--tolerance -1`). Tests:
+  `test_an_end_snaps_to_the_keyframe_after_it_never_before`,
+  `test_an_end_snaps_to_the_first_keyframe_at_or_after_it`,
+  `test_a_segment_in_the_last_gop_is_not_a_tolerance_reencode`.
+- **A later B-frame segment that starts between keyframes is re-cut without trying the copy.**
+  Its edit-listed part stores the frames from the keyframe to the start as hidden pre-roll, and the
+  concat demuxer crushes them into steps of about 0.07 ms at the join, so the copy failed its check
+  on every source shape tried (`0.3-2,4.4-6`, `0-2,4.1-6`, `0-2,4.4-12` on H.264, `0-2,4.2-6` on
+  closed-GOP HEVC). Only edit-listed parts hide pre-roll; the first part's is not at a join. Code:
+  `cut.hidden_preroll_start`. Tests:
+  `test_a_later_start_between_bframe_keyframes_is_recut_without_a_copy`,
+  `test_only_a_later_edit_listed_part_starting_between_keyframes_hides_pre_roll`.
+- **The step at a join is the one its parts predict, within 1 ms.** #306 allowed a frame plus
+  `max(frame/2, one audio frame)` at every step. That rejected exact joins (no-B `0-1.8,4-6` steps
+  56.7 ms at the join, past its 54.7 ms bound) and let through a hole of up to one audio packet,
+  which grows without limit with large PCM packets. The concat demuxer places each part where the
+  previous part's container ends, so the step is (that container's end − its last picture) + (the
+  next part's first picture − its container start), read from each part's format and video
+  packets (Matroska stores no stream durations): 33.3 + 13.3 + 10.0 = 56.7 ms there, what the
+  joined file showed, and within 1 ms on every MP4, MOV, Matroska and MPEG-TS join measured.
+  Steps inside a part stay within (frame/2, 1.5 × frame). Code: `cut.predicted_join_steps`,
+  `cut.check_join`. Tests: `test_each_join_step_is_held_to_the_step_its_parts_predict`,
+  `test_a_join_step_is_predicted_from_the_parts_containers_and_pictures`,
+  `test_a_no_bframe_join_one_frame_plus_its_gap_long_passes_the_check`.
+- **A copy join's sound is checked against its picture, part by part.** Matching audio packet
+  hashes to the source on keyframe-aligned `0-2,4-6,8-10` copy joins, each part's sound minus
+  picture shift measured 0.3 ms (B-frame H.264, AAC; closed-GOP HEVC), 0–0.64 ms (no-B H.264),
+  0 (audio 0.379 s late; audio leading by 0.2 s), and 0 / +16.0 / +53.3 ms for B-frame H.264 with
+  `pcm_s16le` in a `.mov`, which #306 passed as `ok: true` with 180/180 frames. `check_join_audio`
+  reads `a:0` packets with `-show_data_hash CRC32` for the join and for source windows around each
+  part's start keyframe; for each part, the first run of 8 packets from 0.25 s into it that
+  appears exactly once in the source within ±0.5 s of where the video's shift puts it gives the
+  audio shift. More than 5 ms from the video's shift fails the check and re-cuts the join. A part
+  with no unique run (digital silence, a periodic tone, a part too short) is unmeasured
+  (`null`), not failed, so silence makes the check blind there; only `a:0` is checked, as only it
+  is copied. `ok` is the conjunction. Cost: about 0.5 s on a 3-minute join. Code:
+  `cut.check_join_audio`. Tests:
+  `test_a_join_whose_sound_drifts_off_its_picture_fails_the_check_and_is_recut`,
+  `test_a_clean_join_passes_the_audio_check_part_by_part`,
+  `test_the_audio_check_measures_each_parts_sound_against_its_picture`,
+  `test_a_part_whose_packets_repeat_is_unmeasured_not_failed`.
+- **The join reads the source's packets only around the segments.** #306 read every video packet
+  of the source for each `--segments` run, so the cost followed the source's length: on a
+  25-minute 720p30 H.264 source (`-g 60 -bf 3`, AAC, 954 MB, 45,000 video packets, 4 vCPU,
+  FFmpeg 6.1) the whole read took 2.9 s with the page cache dropped and 1.1 s warm. Now one ffprobe
+  per merged window `[start − M, end + M]`, M = max(10 s, 2 × `--tolerance`), absolute times; for
+  `60-120,600-660,1200-1260` the three windows read 7,200 packets in 0.5 s cold or warm; the
+  whole join took 4.9–5.1 s against 5.2–5.7 s (it now also checks the audio), and its `--dry-run`
+  0.7 s against 1.4 s. A window that lacks the landing keyframe, a whole GOP after it, or the first
+  keyframe at or after the end with a whole GOP after that is widened ×4, up to three times, and
+  then the whole file is read. The window at the file's start does not seek (a seek there skips an
+  edit-listed MP4's negative-pts keyframe, as `measure_frame_timing` found); packets a later
+  window's seek reads again are dropped; `gop_is_open` and `reorders` do not take a window's end
+  for the file's end or the next packet; the cache key is (source, windows). Code:
+  `cut.video_packets`, `cut.packet_windows`, `cut._windows_cover`. Tests:
+  `test_the_packets_read_around_segments_plan_as_the_whole_file_does`,
+  `test_packets_are_read_in_windows_widened_until_the_plan_has_its_gops`,
+  `test_a_gop_longer_than_every_window_reads_the_whole_file`,
+  `test_the_first_window_never_seeks_and_windows_merge`,
+  `test_a_gop_cut_off_by_a_read_window_is_not_judged_closed`,
+  `test_reorders_is_judged_within_each_read_window`.
+- **A checked join is written beside the output and renamed into place.** #306 wrote it in the
+  temp directory and copied it (about 2 s for a 240 MB join). It is now a hidden sibling of the
+  output (`.<name>.ffskill-join-<pid>.<ext>`), renamed with `os.replace` under the output's lock
+  by `place_output(..., move=True)` (a rename that fails falls back to the copy), and removed
+  whatever happens. A failed check still never costs an `--overwrite` target. Code:
+  `runner.place_output`, `runner.sibling_temp`. Tests:
+  `test_a_checked_join_is_renamed_into_place_under_the_outputs_lock`,
+  `test_a_checked_join_is_placed_under_the_outputs_lock`,
+  `test_a_checked_join_is_renamed_into_place_not_copied`.
+- **The re-cut cuts on the source's frame grid and states its frame rate.** Each segment runs, for
+  both streams, from the first frame at or after its start to the first at or after its end (the
+  frames it holds); the video trim sits half a frame before those points, so no FFmpeg version
+  rounds a boundary frame in or out. A start between frames placed the segment's pictures half a
+  frame off the output's grid, and FFmpeg 6.1's constant-rate output duplicated one (65 frames for
+  64). `-r` is the source's `r_frame_rate`: FFmpeg 7.0 encoded the trimmed, concatenated pictures
+  at 25 fps and dropped frames (98 for 117). Both streams still shift by one constant. Tests:
+  `test_a_short_segment_across_a_bframe_keyframe_never_cuts_a_negative_length`,
+  `test_the_recut_cuts_on_the_frame_grid_and_states_the_sources_rate`,
+  `test_mismatched_parts_are_recut_from_the_source_with_exact_boundaries` (on 7.0).
 - **Both streams of a segment shift by one constant.** A per-stream `PTS-STARTPTS` moved an
   audio track that starts 0.379 s after its video 0.379 s early. The re-cut shifts video and
   audio by the same seek margin and pads the audio to the segment origin
@@ -1134,7 +1225,9 @@ not a new file format this tool would have to maintain.
   `--accurate` join, because each part was encoded on its own). `clip_length`'s rule decides: under a
   frame past the video's end, the segment ends with the video; more, its last frame is held for the
   sound, which only the re-cut can do. The last segment keeps the source's tail. The video's end is
-  on the cut's clock: stream start + duration − the file's start_time. Tests:
+  on the cut's clock: stream start + duration − the file's start_time. Its test source starts both
+  streams at 10 s with PCM audio: a copied AAC track's priming started the file 21 ms before its
+  video on FFmpeg 6.1 and not on later versions, which changed the frame count. Tests:
   `test_a_segment_past_the_video_end_holds_its_last_frame_in_a_copy_join` and siblings,
   `test_an_accurate_join_has_no_hole_at_its_joins`.
 - **Decided for 3.0: the defaults #306 measured better, and the meanings it wanted.** 2.x keeps

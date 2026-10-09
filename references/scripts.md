@@ -94,8 +94,9 @@ than a frame from `--start` (`null` under `--dry-run`).
 `vfr_inconclusive`, `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`);
 `--segments` adds `segment_precision`, and `least_exact_precision` is the least exact one.
 A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
-`max_step_seconds`, `ok`: the written file measured against the source) and
-`segment_end_snap_seconds` (where each part's end moved to its keyframe).
+`max_step_seconds`, `audio_offset_ms` per part, `audio_parts_checked`, `ok`: the
+written file measured against the source) and `segment_end_snap_seconds` (where
+each part's end moved to its keyframe).
 
 **VFR guard (`--vfr-guard`).** `average` (default): a source whose nominal and
 average frame rates differ (`variable_frame_rate_suspected`) re-encodes as
@@ -107,13 +108,22 @@ to five 6 s windows; no decoding) into `vfr_check` (`measured`: `sampled_cfr`,
 29.98 against a nominal 30 copies; `off` samples and keeps the copy with a note.
 Irregular timing between the windows is not seen; `--accurate` is always available.
 
-A copied `.mp4`/`.mov` part runs from the keyframe at (or before) its start to
-the keyframe nearest its end, each end within `--tolerance`, so the join is the
-source's own frames with no gaps. A source with **open GOPs** (x265's default,
-iPhone "High Efficiency" HEVC) cannot be copied exactly across a join and is
-re-cut (`concat_fallback`, named in `notes`); iPhone "Most Compatible" H.264
-stays a copy. Every copy join is measured after it is written (`join_check`),
-and one that fails is re-cut.
+A source with no B-frames (iPhone "Most Compatible" H.264) cuts its parts as
+every 2.x release did: from the keyframe at (or before) each start to the end
+asked for, each part within `--tolerance`. On B-frame video a copied
+`.mp4`/`.mov` part runs from the keyframe at (or before) its start to the first
+keyframe at or after its end (never an earlier one), each end within
+`--tolerance`, so the join is the source's own frames with no gaps; a later
+segment that starts between keyframes there is re-cut (its hidden pre-roll
+cannot cross a join). A source with **open GOPs** (x265's default, iPhone "High
+Efficiency" HEVC) cannot be copied exactly across a join and is re-cut
+(`concat_fallback`, named in `notes`). Every copy join is measured after it is
+written (`join_check`): the frame count, each step at a join against the step
+its parts predict, and each part's sound against its picture (audio packets
+matched to the source; more than 5 ms off fails, a part with no unique match
+is unmeasured). One that fails is re-cut. Only windows around the segments
+(about 10 s each side, widened as needed) are read from the source, so a long
+source costs what its segments do.
 The parts are joined by stream copy only when they all copied and match: the
 same streams with the same codec parameters, rotation, colour tags and
 extradata. Otherwise every segment is **re-cut from

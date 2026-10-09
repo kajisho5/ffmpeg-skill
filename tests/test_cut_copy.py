@@ -136,9 +136,12 @@ class CutJoinTests(unittest.TestCase):
             sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6",
                "-f", "lavfi", "-i", "sine=f=440:d=6.02:sample_rate=48000", "-c:v", "libx264", "-g", "30",
                "-c:a", "aac", cls.tail)
-        cls.long_offset = DIR / "long_audio_offset.mp4"
+        cls.long_offset = DIR / "long_audio_offset.mov"
         if not cls.long_offset.exists():
-            sh("ffmpeg", "-y", "-v", "error", "-i", cls.long, "-c", "copy", "-output_ts_offset", "10", cls.long_offset)
+            # PCM, so both streams start at 10 s on every FFmpeg: a copied AAC track's priming
+            # starts the file 21 ms before its video on 6.1 and not on later versions
+            sh("ffmpeg", "-y", "-v", "error", "-i", cls.long, "-c:v", "copy", "-c:a", "pcm_s16le",
+               "-output_ts_offset", "10", cls.long_offset)
         # the copy-join sources:
         # x264 B-frames (a closed GOP), x265 with open-gop=0, and x265's default open GOP in HLG
         x264bf = ("-c:v", "libx264", "-g", "60", "-bf", "3", "-x264-params", "scenecut=0")
@@ -158,6 +161,16 @@ class CutJoinTests(unittest.TestCase):
             beep = "aevalsrc='if(between(mod(t\\,1)\\,0.5\\,0.54)\\,0.8*sin(2*PI*1000*t)\\,0)':s=48000:d=12"
             sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=12",
                "-f", "lavfi", "-i", beep, *x264bf, "-c:a", "aac", "-shortest", cls.beep)
+        cls.beep_pcm = DIR / "beep_pcm.mov"
+        if not cls.beep_pcm.exists():
+            # the same pictures with the beeps as PCM in a .mov: a copy join of it put the sound of
+            # each later part off its picture (16 and 53 ms) with every frame exact
+            sh("ffmpeg", "-y", "-v", "error", "-i", cls.beep, "-c:v", "copy", "-c:a", "pcm_s16le", cls.beep_pcm)
+        cls.long60 = DIR / "long60.mp4"
+        if not cls.long60.exists():
+            # a minute of B-frame H.264, so the packet reads around a segment seek
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=64x36:r={FPS}:d=60",
+               "-f", "lavfi", "-i", "sine=f=440:d=60:sample_rate=48000", *x264bf, "-c:a", "aac", "-shortest", cls.long60)
         cls.hlg = DIR / "hlg_open.mp4"
         if not cls.hlg.exists():
             # the iPhone "High Efficiency" shape: 10-bit HLG HEVC with an open GOP at every keyframe
@@ -167,6 +180,12 @@ class CutJoinTests(unittest.TestCase):
                                "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc",
                "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
                "-tag:v", "hvc1", "-c:a", "aac", "-shortest", cls.hlg)
+        cls.nob = DIR / "nob.mp4"
+        if not cls.nob.exists():
+            # H.264 with no B-frames at 30 fps, keyframes every 2 s: a copy cut in decode order is exact
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=12",
+               "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=48000", "-c:v", "libx264", "-bf", "0", "-g", "60",
+               "-x264-params", "scenecut=0", "-c:a", "aac", "-shortest", cls.nob)
         cls.nob60 = DIR / "nob60.mp4"
         if not cls.nob60.exists():
             # the iPhone "Most Compatible" shape: H.264 with no B-frames, here at 60 fps and 44.1 kHz
@@ -706,6 +725,86 @@ class CutJoinTests(unittest.TestCase):
         for onset, frame in zip(onsets, (15, 45, 75, 105, 135, 165)):
             self.assertAlmostEqual(onset, pts[frame], delta=0.005, msg=f"beep at frame {frame}")
 
+    def test_a_join_whose_sound_drifts_off_its_picture_fails_the_check_and_is_recut(self):
+        """B-frame H.264 with PCM in a .mov: every frame of the copy join was the source's own and
+        the video check passed, but the sound of the second and third parts landed 16 and 53 ms
+        after their pictures (reported mode copy). The audio check matches each part's audio
+        packets to the source's and fails the join; the re-cut keeps every beep on its picture."""
+        out = DIR / "beep_pcm_join.mov"
+        data = cut_json(self.beep_pcm, "--segments", "0-2,4-6,8-10", "-o", out)
+        check = data["join_check"]
+        self.assertEqual((check["packets"], check["expected_packets"]), (180, 180), "the pictures were right")
+        self.assertFalse(check["ok"])
+        self.assertEqual(check["audio_parts_checked"], 3)
+        self.assertLess(abs(check["audio_offset_ms"][0]), 1.0)
+        self.assertGreater(max(abs(o) for o in check["audio_offset_ms"]), 10.0)
+        self.assertEqual(data["reencode_reason"], ["concat_fallback"])
+        self.assertTrue(any("sound is" in n and "against its picture" in n for n in data["notes"]), data["notes"])
+        log = subprocess.run(["ffmpeg", "-v", "info", "-i", str(out), "-af", "silencedetect=n=-30dB:d=0.3",
+                              "-f", "null", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+        onsets = [float(v) for v in re.findall(r"silence_end: (-?[0-9.]+)", log)][:6]
+        pts = sorted(frame_pts(out))
+        self.assertEqual(len(onsets), 6, log)
+        for onset, frame in zip(onsets, (15, 45, 75, 105, 135, 165)):
+            self.assertAlmostEqual(onset, pts[frame], delta=0.005, msg=f"beep at frame {frame}")
+
+    def test_a_clean_join_passes_the_audio_check_part_by_part(self):
+        """The same pictures with AAC: each part's sound is within a millisecond of its picture
+        (0.3 ms of AAC framing), so the copy stands, and every part was measured."""
+        out = DIR / "beep_join_audio.mp4"
+        data = cut_json(self.beep, "--segments", "0-2,4-6,8-10", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        self.assertTrue(data["join_check"]["ok"])
+        self.assertEqual(data["join_check"]["audio_parts_checked"], 3)
+        for off in data["join_check"]["audio_offset_ms"]:
+            self.assertLess(abs(off), 1.0)
+
+    def test_the_packets_read_around_segments_plan_as_the_whole_file_does(self):
+        """A minute of B-frame video, segments in its middle: video_packets reads one window
+        around them (seeking to it), and every plan it gives is the whole-file read's."""
+        segs = [(30.0, 32.0), (40.0, 41.9)]
+        src = str(self.long60)
+        windowed = cut.video_packets(src, segs, 0.5, 60.0)
+        whole = cut.video_packets(src)
+        self.assertEqual(windowed.spans[0][:2], (20.0, 51.9), "one merged window, [start - 10, end + 10]")
+        self.assertLess(len(windowed), len(whole) * 0.6)
+        self.assertTrue(set(windowed) <= set(whole), "the window's packets are the file's")
+        fps = probe(src)["video"]["fps"]
+        for s, e in segs:
+            want = cut.plan_part(whole, s, e, 0.5, 60.0, fps)
+            got = cut.plan_part(windowed, s, e, 0.5, 60.0, fps)
+            for key in ("reason", "start_pts", "end_pts", "t"):
+                self.assertEqual(got[key], want[key], key)
+        out = DIR / "long60_join.mp4"
+        data = cut_json(self.long60, "--segments", "30-32,40-41.9", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        frames = md5_frames(self.long60)
+        self.assertEqual(md5_frames(out), frames[900:960] + frames[1200:1260])
+        self.assertEqual(data["segment_end_snap_seconds"], [0.0, 0.1])
+        self.assertEqual([p.name for p in DIR.iterdir() if ".ffskill-" in p.name], [],
+                         "the checked join was renamed into place, nothing left beside it")
+
+    def test_a_checked_join_is_renamed_into_place_not_copied(self):
+        """cut.py run with shutil.copyfile failing: the checked join is renamed into place, so the
+        run still writes the source's own frames and leaves nothing beside the output."""
+        no_copy = (
+            "import shutil, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "def refuse(*a, **k):\n"
+            "    raise OSError('copied')\n"
+            "shutil.copyfile = refuse\n"
+            "import cut\n"
+            "sys.argv = ['cut.py'] + sys.argv[2:]\n"
+            "sys.exit(cut.main())\n")
+        out = DIR / "renamed_join.mp4"
+        proc = sh(sys.executable, "-c", no_copy, SCRIPTS, self.h264bf, "--segments", "0-2,4-6", "-o", out,
+                  "--overwrite", "--json")
+        data = json.loads(proc.stdout)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        src = md5_frames(self.h264bf)
+        self.assertEqual(md5_frames(out), src[0:60] + src[120:180])
+        self.assertEqual([p.name for p in DIR.iterdir() if p.name.startswith(".renamed_join")], [])
+
     def test_an_end_within_tolerance_snaps_to_the_keyframe_after_it(self):
         """0-1.8 ends 0.2 s before the keyframe at 2.0: the part runs to that keyframe, so the
         join is 60 + 60 of the source's frames. start_snapped describes the starts only; the
@@ -748,14 +847,77 @@ class CutJoinTests(unittest.TestCase):
     def test_a_short_segment_across_a_bframe_keyframe_never_cuts_a_negative_length(self):
         """-ss 1.95 lands on the keyframe at 2.0 (its dts, 1.933, is before 1.95). That
         keyframe cannot also end the part: its dts is before the start, so -t would be negative.
-        The end is snapped among keyframes decoded after the landing, and none is near 2.1."""
+        The end is snapped among keyframes decoded after the landing, and none is near 2.085.
+        The re-cut starts between frames: cut off the frame grid, its pictures sat half a frame
+        off the output's and FFmpeg 6.1 duplicated one (65 frames); FFmpeg 7.0 encoded at 25 fps."""
         out = DIR / "short_across_key.mp4"
-        data = cut_json(self.h264bf, "--segments", "1.95-2.1,4-6", "-o", out)
+        data = cut_json(self.h264bf, "--segments", "1.95-2.085,3.985-5.985", "-o", out)
         self.assertEqual(data["reencode_reason"], ["tolerance", "concat_fallback"])
         self.assertEqual(stderr_of_decode(out), "")
         frames = gray_frames(out)
         self.assertEqual(len(frames), 4 + 60)
         self.assertFrameIs(frames[0], 59, "the first frame at or after 1.95", src_frames=gray_frames(self.h264bf))
+
+    def test_a_source_without_bframes_cuts_its_parts_as_2x_did(self):
+        """No-B-frame H.264 cuts exactly in decode order, so its parts are cut as in every 2.x
+        release (make_zero, -t end-start, no end snap) and the join is the frames 2.5.1 wrote:
+        #306's keyframe plan re-encoded 0-1.0, moved the end of 0-1.8 to 2.0 and of 0-2.4 back
+        to 2.0, and re-cut a mid-GOP second start. Each part starts at the keyframe at or before
+        its start; each end is where asked (ends half a frame off the frame grid)."""
+        src = md5_frames(self.nob)
+        for segs, want in (("0-0.985,4-5.985", src[0:30] + src[120:180]),
+                           ("0-1.785,4-5.985", src[0:54] + src[120:180]),
+                           ("0-2.385,4-5.985", src[0:72] + src[120:180]),
+                           ("0.315-1.985,4.415-5.985", src[0:60] + src[120:180])):
+            with self.subTest(segments=segs):
+                out = DIR / f"nob_{segs}.mp4"
+                data = cut_json(self.nob, "--segments", segs, "-o", out)
+                self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []), data["notes"])
+                self.assertEqual(md5_frames(out), want)
+                self.assertTrue(data["join_check"]["ok"])
+                self.assertEqual(data["join_check"]["expected_packets"], len(want))
+                self.assertEqual(data["segment_end_snap_seconds"], [None, None], "a no-B part's end is not snapped")
+
+    def test_a_no_bframe_join_one_frame_plus_its_gap_long_passes_the_check(self):
+        """0-1.795: the part's sound runs past its last frame and the next part's picture starts
+        after its sound, so the step at the join is 56.7 ms at 30 fps -- past #306's fixed bound
+        (a frame + one AAC frame, 54.7 ms), which re-encoded a join 2.5.1 copied exactly. The
+        step predicted from the parts is what the joined file shows."""
+        out = DIR / "nob_step_join.mp4"
+        data = cut_json(self.nob, "--segments", "0-1.795,4-5.985", "-o", out)
+        self.assertEqual(data["mode"], "copy")
+        self.assertGreater(data["join_check"]["max_step_seconds"], 1 / FPS + 1024 / 48000, "the premise")
+        self.assertTrue(data["join_check"]["ok"])
+
+    def test_an_end_snaps_to_the_keyframe_after_it_never_before(self):
+        """B-frame H.264: 0-2.385 ends 0.385 s past the keyframe at 2.0 and 1.615 s before the
+        one at 4.0. #306 snapped it back to 2.0, dropping requested frames under mode copy; an end
+        only moves forward, so with the default 0.5 s tolerance the join is re-cut, and with
+        --tolerance 2 the part runs to 4.0."""
+        out = DIR / "end_forward_recut.mp4"
+        data = cut_json(self.h264bf, "--segments", "0-2.385,6-7.985", "-o", out)
+        self.assertEqual(data["reencode_reason"], ["tolerance", "concat_fallback"])
+        self.assertEqual(len(frame_pts(out)), 72 + 60)
+        out = DIR / "end_forward_copy.mp4"
+        data = cut_json(self.h264bf, "--segments", "0-2.385,6-7.985", "--tolerance", "2", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        self.assertEqual(data["segment_end_snap_seconds"], [1.615, 0.015])
+        src = md5_frames(self.h264bf)
+        self.assertEqual(md5_frames(out), src[0:120] + src[180:240])
+
+    def test_a_later_start_between_bframe_keyframes_is_recut_without_a_copy(self):
+        """An edit-listed part that starts between keyframes stores the frames before its start as
+        hidden pre-roll, and the concat demuxer crushes them into sub-millisecond steps at the
+        join: the copy always failed its check. It is re-cut directly, with exact boundaries."""
+        out = DIR / "mid_gop_second_start.mp4"
+        data = cut_json(self.h264bf, "--segments", "0-1.985,4.415-5.985", "-o", out)
+        self.assertEqual(data["reencode_reason"], ["concat_fallback"])
+        self.assertTrue(any("starts between keyframes" in n for n in data["notes"]), data["notes"])
+        self.assertIsNone(data["join_check"], "no copy join was tried")
+        self.assertEqual(len(frame_pts(out)), 60 + 47)
+        frames, src = gray_frames(out), gray_frames(self.h264bf)
+        for got, want in ((59, 59), (60, 133), (106, 179)):
+            self.assertFrameIs(frames[got], want, f"output frame {got}", src_frames=src)
 
     def test_an_hdr_open_gop_join_is_reencoded_as_hdr(self):
         """iPhone HEVC is open-GOP HLG. A detector that let it through would
@@ -824,6 +986,25 @@ class CutJoinTests(unittest.TestCase):
                 self.assertEqual(data["precision"], precision)
                 self.assertFalse(data["keyframe_snapped"])
                 self.assertFalse(data["start_snapped"])
+
+    def test_the_recut_cuts_on_the_frame_grid_and_states_the_sources_rate(self):
+        """Each segment of the re-cut runs from the first frame at or after its start to the first
+        at or after its end, for both streams; the video trim sits half a frame before those
+        points; and the output rate is the source's r_frame_rate (FFmpeg 7.0 otherwise wrote 25
+        fps). No encode runs: the command is read."""
+        cmds = []
+        meta = {"video": {"fps": 29.97, "r_frame_rate": "30000/1001", "start_time": 0.0}, "audio": {"codec": "aac"}}
+        with mock.patch.object(cut, "run", lambda cmd, **kw: cmds.append([str(c) for c in cmd])), \
+                mock.patch.object(cut, "file_origin", lambda src: 0.0), tempfile.TemporaryDirectory() as tmp:
+            cut.join_from_source("src.mp4", [(1.0, 2.0)], os.path.join(tmp, "out.mp4"), meta, 18, "medium", tmp)
+        (cmd,) = cmds
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        # seeked to 0 with a 1 s margin: frame 30 (1.001 s) starts it, frame 60 (2.002 s) ends it
+        a, b = 30 * 1001 / 30000, 60 * 1001 / 30000
+        half = 0.5 * 1001 / 30000
+        self.assertIn(f"trim=start={a - half:.6f}:end={b - half:.6f},setpts=PTS-{a:.6f}/TB", graph)
+        self.assertIn(f"atrim=start={a:.6f}:end={b:.6f},asetpts=PTS-{a:.6f}/TB", graph)
+        self.assertEqual(cmd[cmd.index("-r") + 1], "30000/1001")
 
     def test_a_wav_join_stays_a_lossless_copy(self):
         """PCM has no extradata at all; a "missing means incompatible" rule would have sent every
@@ -1194,6 +1375,47 @@ class CopyJoinPlanTests(unittest.TestCase):
         self.assertEqual(cut.plan_part(packets, 2.0, 5.6, 0.3, 12.0, 30)["reason"], "tolerance")
         self.assertIsNone(cut.plan_part(packets, 2.0, 5.8, 0.3, 12.0, 30)["reason"])
 
+    def test_an_end_snaps_to_the_first_keyframe_at_or_after_it(self):
+        """Never to an earlier one, which would drop requested frames: 2.4 is nearer 2.0 than 4.0,
+        and the part still runs to 4.0, or re-encodes when 4.0 is past the tolerance."""
+        packets = gop_packets()
+        plan = cut.plan_part(packets, 0.0, 2.4, 2.0, 12.0, 30)
+        self.assertEqual((plan["reason"], plan["end_pts"]), (None, 4.0))
+        self.assertEqual(cut.plan_part(packets, 0.0, 2.4, 0.5, 12.0, 30)["reason"], "tolerance")
+        self.assertEqual(cut.plan_part(packets, 0.0, 2.0, 0.5, 12.0, 30)["end_pts"], 2.0, "a keyframe at the end is the end")
+        plan = cut.plan_part(packets, 0.0, 11.0, 0.5, 12.0, 30)
+        self.assertEqual((plan["reason"], plan["end_pts"], plan["t"]), (None, None, 11.0), "no keyframe after it: as asked")
+
+    def test_without_an_end_snap_only_the_start_is_judged(self):
+        packets = gop_packets()
+        plan = cut.plan_part(packets, 4.3, 5.1, 0.5, 12.0, 30, snap_end=False)
+        self.assertEqual((plan["reason"], plan["start_pts"], plan["end_pts"], plan["t"]), (None, 4.0, None, 5.1 - 4.3))
+        self.assertEqual(plan["end_bound"], 5.1)
+        self.assertEqual(cut.plan_part(packets, 4.6, 5.1, 0.5, 12.0, 30, snap_end=False)["reason"], "tolerance")
+
+    def test_reorders_is_true_only_when_a_frame_is_presented_before_one_decoded_ahead(self):
+        self.assertFalse(cut.reorders(gop_packets()), "dts behind pts, but presented in decode order")
+        ipbb = [(n / 30, (i - 1) / 30, n == 0) for i, n in enumerate((0, 3, 1, 2, 6, 4, 5))]
+        self.assertTrue(cut.reorders(ipbb))
+        self.assertFalse(cut.reorders([(None, 0.0, True), (0.1, 0.1, False)]))
+
+    def test_reorders_is_judged_within_each_read_window(self):
+        """Two windows of a no-B source: the second starts later, and an overlap a seek re-read is
+        not a reorder either -- video_packets drops it -- but the order across a gap is not
+        compared at all."""
+        packets = cut._Packets([(1.0, 1.0, True), (1.1, 1.1, False), (0.5, 0.5, True), (0.6, 0.6, False)])
+        packets.breaks = {1}
+        self.assertFalse(cut.reorders(packets))
+        self.assertTrue(cut.reorders(list(packets)))
+
+    def test_only_a_later_edit_listed_part_starting_between_keyframes_hides_pre_roll(self):
+        packets = gop_packets()
+        plans = [cut.plan_part(packets, s, e, 0.5, 12.0, 30) for s, e in ((0.3, 2.0), (4.0, 6.0), (8.2, 10.0))]
+        self.assertEqual(cut.hidden_preroll_start(packets, plans, True), 3, "the first part's pre-roll is not at a join")
+        self.assertIsNone(cut.hidden_preroll_start(packets, plans, False), "make_zero parts show it")
+        plans = [cut.plan_part(packets, s, e, 0.5, 12.0, 30) for s, e in ((0.3, 2.0), (4.0, 6.0))]
+        self.assertIsNone(cut.hidden_preroll_start(packets, plans, True))
+
     def test_a_part_that_ends_with_the_video_is_cut_to_its_length(self):
         packets = gop_packets()
         plan = cut.plan_part(packets, 10.0, 12.0, 0.5, 12.0, 30)
@@ -1201,13 +1423,79 @@ class CopyJoinPlanTests(unittest.TestCase):
         self.assertIsNone(plan["end_pts"])
         self.assertEqual(plan["t"], 2.0)
 
+    def fake_ffprobe(self, keys, fps=30, length=600.0):
+        """A run() that answers video_packets' ffprobe for a closed-GOP source with keyframes at
+        `keys` (seconds): a -read_intervals window seeks to the keyframe at or before its start
+        and reads up to its end. Returns (run, the intervals asked for)."""
+        n_frames = int(length * fps)
+        key_frames = {int(round(k * fps)) for k in keys}
+        packets = [(n / fps, n / fps, n in key_frames) for n in range(n_frames)]
+        asked = []
+
+        def run(cmd, **kw):
+            if "-read_intervals" not in cmd:
+                asked.append(None)
+                sel = packets
+            else:
+                lo, hi = cmd[cmd.index("-read_intervals") + 1].split("%")
+                asked.append((lo, hi))
+                first = 0
+                if lo:
+                    first = max(i for i, p in enumerate(packets) if p[2] and p[1] <= float(lo))
+                sel = [p for p in packets[first:] if not hi or p[1] <= float(hi)]
+            text = "\n".join(f"{p:.6f},{d:.6f},{'K_' if k else '__'}" for p, d, k in sel)
+            return subprocess.CompletedProcess(cmd, 0, text, "")
+        return run, asked
+
+    def test_packets_are_read_in_windows_widened_until_the_plan_has_its_gops(self):
+        """Keyframes every 30 s: around 100-102 the first window (+-10 s) holds the keyframe at
+        90 but not the one after the end (120); x4 still not the GOP after it (150); x16 does.
+        Nothing before the first window's start is read, and the result is cached."""
+        run, asked = self.fake_ffprobe([k * 30.0 for k in range(20)])
+        with mock.patch.object(cut, "run", run), mock.patch.object(cut, "file_origin", lambda src: 0.0), \
+                mock.patch.dict(cut._PACKETS, clear=True):
+            packets = cut.video_packets("long.mp4", [(100.0, 102.0)], 0.5, 600.0)
+            self.assertEqual(asked, [("90.000000", "112.000000"), ("60.000000", "142.000000"),
+                                     ("", "262.000000")])
+            plan = cut.plan_part(packets, 100.0, 102.0, -1, 600.0, 30)
+            self.assertEqual((plan["start_pts"], plan["end_pts"]), (90.0, 120.0))
+            self.assertFalse(cut.gop_is_open(packets, plan["end_index"]))
+            cut.video_packets("long.mp4", [(100.0, 102.0)], 0.5, 600.0)
+            self.assertEqual(len(asked), 3, "cached on (source, windows)")
+
+    def test_a_gop_longer_than_every_window_reads_the_whole_file(self):
+        """Keyframes at 0 and 1000 s only: no widened window holds the GOP after the end keyframe,
+        so the fourth widening is followed by one read of the whole file."""
+        run, asked = self.fake_ffprobe([0.0, 1000.0], length=1200.0)
+        with mock.patch.object(cut, "run", run), mock.patch.object(cut, "file_origin", lambda src: 0.0), \
+                mock.patch.dict(cut._PACKETS, clear=True):
+            packets = cut.video_packets("long.mp4", [(500.0, 502.0)], 0.5, 1200.0)
+        self.assertEqual(len(asked), 5)
+        self.assertIsNone(asked[-1], "no -read_intervals: the whole file")
+        self.assertEqual(asked[0], ("490.000000", "512.000000"))
+        self.assertEqual(len(packets), 1200 * 30)
+
+    def test_the_first_window_never_seeks_and_windows_merge(self):
+        self.assertEqual(cut.packet_windows([(3.0, 5.0), (20.0, 22.0), (50.0, 51.0)], 10.0, 120.0),
+                         ((None, 32.0), (40.0, 61.0)))
+        self.assertEqual(cut.packet_windows([(3.0, 5.0)], 10.0, 12.0), ((None, None),), "the whole file")
+        self.assertEqual(cut.packet_windows([(100.0, 110.0)], 10.0, 115.0), ((90.0, None),), "to the end")
+
+    def test_a_gop_cut_off_by_a_read_window_is_not_judged_closed(self):
+        """A window that ends inside a GOP has not shown whether a leading picture follows: the
+        next packet in the list is a later window's keyframe, not the end of this GOP."""
+        packets = cut._Packets(gop_packets()[:70] + gop_packets()[180:250])
+        packets.breaks = frozenset({69})
+        self.assertTrue(cut.gop_is_open(packets, 60))
+        self.assertFalse(cut.gop_is_open(packets, 70), "a GOP read whole is still judged")
+
     def test_the_expected_packets_are_the_sources_in_each_range(self):
         packets = gop_packets()
         self.assertEqual(cut.expected_packets(packets, [(0.0, 2.0), (4.0, 6.0), (10.0, None)]), 60 + 60 + 60)
 
     def test_an_exact_join_passes_the_check(self):
         pts = [n / 30 for n in range(180)]
-        check = cut.check_join(pts, 180, 30, 1024 / 48000, True)
+        check = cut.check_join(pts, [60, 60, 60], 30, True, [1 / 30, 1 / 30])
         self.assertTrue(check["ok"])
         self.assertAlmostEqual(check["max_step_seconds"], 1 / 30, places=6)
 
@@ -1215,29 +1503,51 @@ class CopyJoinPlanTests(unittest.TestCase):
         # I P B B, as decoded: every P before the two B-frames it references
         pts = [n / 30 for i in range(0, 180, 3) for n in (i + 2, i, i + 1)]
         self.assertNotEqual(pts, sorted(pts))
-        self.assertTrue(cut.check_join(pts, 180, 30, 0.0, True)["ok"])
+        self.assertTrue(cut.check_join(pts, [180], 30, True)["ok"])
 
     def test_one_extra_packet_fails_the_check(self):
         pts = [n / 30 for n in range(180)] + [2.0]
-        check = cut.check_join(pts, 180, 30, 0.0, True)
+        check = cut.check_join(pts, [60, 60, 60], 30, True, [1 / 30, 1 / 30])
         self.assertFalse(check["ok"])
         self.assertEqual((check["packets"], check["expected_packets"]), (181, 180))
 
     def test_one_missing_frame_fails_the_check(self):
         pts = [n / 30 for n in range(180) if n != 90]
-        self.assertFalse(cut.check_join(pts, 180, 30, 0.0, True)["ok"])
+        self.assertFalse(cut.check_join(pts, [60, 60, 60], 30, True, [1 / 30, 1 / 30])["ok"])
 
-    def test_a_hole_up_to_one_audio_frame_passes_and_more_fails(self):
-        """With no B-frames a part's sound runs up to one AAC frame past its picture, and the next
-        part is placed after it: the frames are all there, one of them shown longer."""
-        audio = 1024 / 48000
-        within = [n / 30 + (0.02 if n >= 60 else 0) for n in range(120)]
-        self.assertTrue(cut.check_join(within, 120, 30, audio, True)["ok"])
-        beyond = [n / 30 + (0.03 if n >= 60 else 0) for n in range(120)]
-        check = cut.check_join(beyond, 120, 30, audio, True)
-        self.assertFalse(check["ok"])
-        self.assertAlmostEqual(check["max_step_seconds"], 1 / 30 + 0.03, places=6)
-        self.assertFalse(cut.check_join(within, 120, 30, 0.0, True)["ok"], "no audio: half a frame is the bound")
+    def test_each_join_step_is_held_to_the_step_its_parts_predict(self):
+        """The step at a join is what the parts predict (their container ends and picture starts),
+        within a millisecond: 56.7 ms at 30 fps for an exact no-B-frame join passes, and a hole of
+        one audio packet more fails, however long the audio packets are (#306 allowed a frame plus
+        one audio frame, so a large PCM packet let a hole through). Steps inside a part are a
+        frame."""
+        join = 1 / 30 + 0.0133 + 0.0100
+        exact = [n / 30 for n in range(54)] + [53 / 30 + join + n / 30 for n in range(60)]
+        check = cut.check_join(exact, [54, 60], 30, True, [join])
+        self.assertTrue(check["ok"])
+        self.assertAlmostEqual(check["max_step_seconds"], join, places=6)
+        hole = [n / 30 for n in range(54)] + [53 / 30 + join + 0.0213 + n / 30 for n in range(60)]
+        self.assertFalse(cut.check_join(hole, [54, 60], 30, True, [join])["ok"])
+        self.assertFalse(cut.check_join(exact, [54, 60], 30, True, [join + 0.0015])["ok"], "1 ms is the slack")
+        self.assertTrue(cut.check_join(exact, [54, 60], 30, True, [join + 0.0009])["ok"])
+        self.assertFalse(cut.check_join(exact, [54, 60], 30, True)["ok"], "unpredicted, a join step is held to 1.5 frames")
+        inside = [n / 30 for n in range(54)] + [53 / 30 + 0.06 + n / 30 for n in range(60)]
+        self.assertTrue(cut.check_join(inside, [54, 60], 30, True, [0.06])["ok"], "the premise: predicted at the join")
+        self.assertFalse(cut.check_join(inside, [50, 64], 30, True, [1 / 30])["ok"], "a long step inside a part fails")
+
+    def test_a_join_step_is_predicted_from_the_parts_containers_and_pictures(self):
+        """(this part's container end - its last picture) + (the next part's first picture - its
+        container start), read from each part's format and video packets."""
+        docs = {"a": {"streams": [], "format": {"start_time": "0.000000", "duration": "1.813333"}},
+                "b": {"streams": [], "format": {"start_time": "0.000000", "duration": "2.000000"}}}
+        pts = {"a": [n / 30 for n in range(54)], "b": [0.01 + n / 30 for n in range(60)]}
+        with mock.patch.object(cut, "_part_probe", docs.get), \
+                mock.patch.object(cut, "stream_packet_times", lambda path, st, entry, limit=None: pts[path]):
+            (step,) = cut.predicted_join_steps(["a", "b"])
+        self.assertAlmostEqual(step, (1.813333 - 53 / 30) + 0.01, places=6)
+        with mock.patch.object(cut, "_part_probe", lambda path: None), \
+                mock.patch.object(cut, "stream_packet_times", lambda *a, **k: []):
+            self.assertEqual(cut.predicted_join_steps(["a", "b", "c"]), [None, None])
 
     def test_a_checked_join_is_placed_under_the_outputs_lock(self):
         """The checked join is written beside the parts and placed afterwards; placing it must
@@ -1251,14 +1561,60 @@ class CopyJoinPlanTests(unittest.TestCase):
                 cut.place_output(src, dst)
             self.assertEqual(Path(dst).read_bytes(), b"theirs")
 
-    def test_the_audio_frame_is_the_most_common_packet_not_the_longest(self):
-        """One long packet (a codec with variable frames) must not widen every join's bound."""
-        self.assertAlmostEqual(cut.typical_duration([0.021333] * 10 + [0.5, 0.005333]), 0.021333, places=6)
-        self.assertEqual(cut.typical_duration([None, 0.0]), 0.0)
+    def audio_join(self, drift, silent=False):
+        """check_join_audio on a synthetic two-part join: part 1 is source 0-2 s, part 2 source 4-6 s
+        placed at 2 s, its sound `drift` seconds late against its picture."""
+        src_a = [(i * 0.02, "z" if silent else f"h{i}") for i in range(-50, 600)]
+        out_a = ([(p, h) for p, h in src_a if 0 <= p < 2 - 1e-9]
+                 + [(p - 2.0 + drift, h) for p, h in src_a if 4 - 1e-9 <= p < 6 - 1e-9])
+        vpts = [n / 30 for n in range(120)]
+
+        def hashes(path, lo=None, hi=None):
+            if path == "out.mp4":
+                return out_a
+            return [(p, h) for p, h in src_a if (lo is None or p >= lo) and (hi is None or p <= hi)]
+        with mock.patch.object(cut, "audio_packet_hashes", hashes), mock.patch.object(cut, "file_origin", lambda src: 0.0), \
+                mock.patch.object(cut, "stream_packet_times", lambda *a, **k: vpts):
+            return cut.check_join_audio("src.mp4", "out.mp4", [0.0, 4.0], [60, 60])
+
+    def test_the_audio_check_measures_each_parts_sound_against_its_picture(self):
+        check = self.audio_join(0.016)
+        self.assertEqual(check["audio_offset_ms"], [0.0, 16.0])
+        self.assertEqual(check["audio_parts_checked"], 2)
+        self.assertFalse(check["audio_ok"])
+        self.assertTrue(self.audio_join(0.004)["audio_ok"], "within 5 ms")
+        self.assertFalse(self.audio_join(-0.006)["audio_ok"], "early sound fails too")
+
+    def test_a_part_whose_packets_repeat_is_unmeasured_not_failed(self):
+        check = self.audio_join(0.05, silent=True)
+        self.assertEqual(check["audio_offset_ms"], [None, None])
+        self.assertEqual((check["audio_parts_checked"], check["audio_ok"]), (0, True))
+
+    def test_a_checked_join_is_renamed_into_place_under_the_outputs_lock(self):
+        """place_output(move=True) renames the hidden sibling the join was written to (no copy of
+        the whole file) and still refuses while another run holds the output's lock."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = os.path.join(tmp, "out.mp4")
+            src = cut.sibling_temp(dst, "join")
+            self.assertEqual(os.path.dirname(src), tmp)
+            self.assertTrue(os.path.basename(src).startswith(".out.ffskill-join-") and src.endswith(".mp4"))
+            Path(src).write_bytes(b"new")
+            Path(dst).write_bytes(b"theirs")
+            lock = Path(tmp, ".out.mp4.ffskill-lock")
+            lock.write_text(str(os.getpid()))
+            with mock.patch.object(cut.STATE, "overwrite", True), self.assertRaises(SystemExit):
+                cut.place_output(src, dst, move=True)
+            self.assertEqual(Path(dst).read_bytes(), b"theirs")
+            lock.unlink()
+            with mock.patch.object(cut.STATE, "overwrite", True), \
+                    mock.patch("shutil.copyfile", side_effect=AssertionError("copied")):
+                cut.place_output(src, dst, move=True)
+            self.assertEqual(Path(dst).read_bytes(), b"new")
+            self.assertFalse(os.path.exists(src))
 
     def test_without_constant_timing_only_the_count_is_checked(self):
         pts = [n / 30 + (0.5 if n >= 60 else 0) for n in range(120)]
-        check = cut.check_join(pts, 120, 30, 0.0, False)
+        check = cut.check_join(pts, [60, 60], 30, False, [1 / 30])
         self.assertTrue(check["ok"])
         self.assertIsNone(check["max_step_seconds"])
 
