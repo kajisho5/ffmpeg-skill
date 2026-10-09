@@ -194,9 +194,9 @@ class CutJoinTests(unittest.TestCase):
     # ------------------------------------------------------------------ single-segment copies
     def test_an_mp4_copy_starts_its_picture_at_the_requested_time(self):
         """Core Media HEVC once gave 3.7 s of sound with no picture: make_zero showed the keyframe's
-        pre-roll. The copy now keeps its edit list, which hides it."""
+        pre-roll. With --edit-list the copy keeps its edit list, which hides it."""
         out = DIR / "copy_4.3.mp4"
-        data = cut_json(self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "-1", "-o", out)
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "-1", "--edit-list", "-o", out)
         self.assertEqual(data["mode"], "copy")
         self.assertEqual(data["reencode_reason"], [])
         self.assertTrue(data["edit_list"])
@@ -217,15 +217,35 @@ class CutJoinTests(unittest.TestCase):
         self.assertFrameExact(frames[-1], 129 + round(last_pts * FPS), "last frame, at its own presented time")
 
     def test_a_dry_run_mp4_copy_reports_the_edit_list_it_plans(self):
-        data = cut_json(self.hevc, "--start", "4.3", "--duration", "2", "--dry-run", "-o", DIR / "never.mp4")
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "2", "--dry-run", "--edit-list", "-o", DIR / "never.mp4")
         self.assertTrue(data["edit_list"])
+        self.assertIsNone(data["start_snapped"], "a planned copy has not landed anywhere yet")
         self.assertEqual(data["commands"][0].count("-avoid_negative_ts"), 0)
+
+    def test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for(self):
+        """The default is every 2.x release's: -avoid_negative_ts make_zero, no edit list, so the
+        picture starts at the keyframe and the report says the start moved. The A/V start skew
+        this can leave is reported, not repaired, and the note names both remedies."""
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "2", "--dry-run", "-o", DIR / "never.mp4")
+        self.assertIn("-avoid_negative_ts make_zero", data["commands"][0])
+        self.assertFalse(data["edit_list"])
+        self.assertIsNone(data["stored_preroll_seconds"])
+        out = DIR / "copy_4.3_default.mp4"
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "-1", "-o", out)
+        self.assertEqual((data["mode"], data["edit_list"], data["stored_preroll_seconds"]), ("copy", False, None))
+        self.assertTrue(data["start_snapped"], "the picture starts at the keyframe at 4.0, 0.3 s early")
+        self.assertFalse(any("pre-roll is stored" in n for n in data["notes"]), data["notes"])
+        self.assertFrameExact(gray_frames(out)[0], 120, "make_zero shows the keyframe's pre-roll")
+        skew = data["av_start_skew_seconds"]
+        self.assertIsNotNone(skew)
+        if abs(skew) > 0.1:
+            self.assertTrue(any("--edit-list" in n and "--accurate" in n for n in data["notes"]), data["notes"])
 
     def test_an_edit_listed_copy_past_tolerance_blames_the_end_not_the_start(self):
         """The start is exact, so offering another --start as the lossless alternative would be
         wrong: only the end overshoots (+4 to +5 frames on this fixture)."""
         out = DIR / "copy_tight.mp4"
-        proc = script("cut.py", self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "0.05", "-o", out, "--json")
+        proc = script("cut.py", self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "0.05", "--edit-list", "-o", out, "--json")
         data = json.loads(proc.stdout)
         self.assertEqual(data["reencode_reason"], ["tolerance"])
         self.assertIsNone(data["lossless_alternative"])
@@ -234,14 +254,15 @@ class CutJoinTests(unittest.TestCase):
 
     def test_an_off_grid_start_presents_the_next_source_frame(self):
         out = DIR / "copy_4.31.mp4"
-        cut_json(self.hevc, "--start", "4.31", "--duration", "2", "--tolerance", "-1", "-o", out)
+        data = cut_json(self.hevc, "--start", "4.31", "--duration", "2", "--tolerance", "-1", "--edit-list", "-o", out)
+        self.assertFalse(data["start_snapped"])
         self.assertFrameExact(gray_frames(out)[0], 130, "the first frame at or after 4.31 s is 4.333 s")
 
     def test_a_start_just_before_a_keyframe_is_reported_as_snapped(self):
         """The demuxer seeks by decode time: the keyframe at 10.0 (dts 9.833) is taken for 9.9, so
         the copy's picture starts three frames late. That is a snap, and it says so."""
         out = DIR / "copy_9.9.mp4"
-        data = cut_json(self.hevc, "--start", "9.9", "--duration", "1", "--tolerance", "-1", "-o", out)
+        data = cut_json(self.hevc, "--start", "9.9", "--duration", "1", "--tolerance", "-1", "--edit-list", "-o", out)
         self.assertEqual(data["mode"], "copy")
         self.assertTrue(data["start_snapped"])
         self.assertIsNone(data["stored_preroll_seconds"])
@@ -249,7 +270,7 @@ class CutJoinTests(unittest.TestCase):
 
     def test_a_source_that_starts_at_ten_seconds_cuts_the_same_frame(self):
         out = DIR / "copy_offset.mp4"
-        data = cut_json(self.offset, "--start", "4.3", "--duration", "2", "--tolerance", "-1", "-o", out)
+        data = cut_json(self.offset, "--start", "4.3", "--duration", "2", "--tolerance", "-1", "--edit-list", "-o", out)
         self.assertTrue(data["edit_list"])
         # --start is relative to the file's start and packet times are absolute: the report must
         # still find the keyframe at 4.0 (14.0 in the file)
@@ -263,17 +284,18 @@ class CutJoinTests(unittest.TestCase):
 
     def test_an_edit_listed_source_cut_again_starts_where_asked(self):
         first = DIR / "copy_again_1.mp4"
-        cut_json(self.hevc, "--start", "4.3", "--duration", "4", "--tolerance", "-1", "-o", first)
+        cut_json(self.hevc, "--start", "4.3", "--duration", "4", "--tolerance", "-1", "--edit-list", "-o", first)
         out = DIR / "copy_again_2.mp4"
-        data = cut_json(first, "--start", "1", "--duration", "2", "--tolerance", "-1", "-o", out)
+        data = cut_json(first, "--start", "1", "--duration", "2", "--tolerance", "-1", "--edit-list", "-o", out)
         # the VFR sampler reads the stored pre-roll too (a seek to 0 skipped its keyframe and found
         # too few frames to judge, forcing a re-encode)
         self.assertEqual((data["vfr_check"]["measured"], data["mode"]), ("sampled_cfr", "copy"))
+        self.assertFalse(data["start_snapped"])
         self.assertFrameExact(gray_frames(out)[0], 159, "1 s into a cut that starts at 4.3 s")
 
     def test_the_copy_keeps_audio_in_step_with_the_picture(self):
         out = DIR / "copy_noise.mp4"
-        cut_json(self.noise, "--start", "4.3", "--duration", "2", "--tolerance", "-1", "-o", out)
+        cut_json(self.noise, "--start", "4.3", "--duration", "2", "--tolerance", "-1", "--edit-list", "-o", out)
         rate = 8000
 
         def pcm(path, *pre):
@@ -299,14 +321,57 @@ class CutJoinTests(unittest.TestCase):
                          {"start_snapped": False, "stored_preroll_seconds": 0.3})
 
     def test_judging_a_copy_by_its_video_is_noted_even_when_it_then_reencodes(self):
-        """The late-audio source's container outlasts its video by 0.379 s, so the copy is judged
-        by the video; that explanation survives the tolerance re-encode that follows (--tolerance 0
-        re-encodes every copy, since abs(delta) >= 0)."""
+        """The late-audio source's container outlasts its video by 0.379 s, so an edit-listed copy
+        is judged by the video; that explanation survives the tolerance re-encode that follows
+        (--tolerance 0 re-encodes every copy, since abs(delta) >= 0). Without --edit-list the copy
+        is judged by the container, as in every 2.x release."""
         # to the end of the file, where the late audio runs 0.379 s past the video
-        data = cut_json(self.late, "--start", "0.5", "--tolerance", "0",
+        data = cut_json(self.late, "--start", "0.5", "--tolerance", "0", "--edit-list",
                         "-o", DIR / "late_judged.mp4")
         self.assertIn("tolerance", data["reencode_reason"])
         self.assertTrue(any("judged by the video" in n for n in data["notes"]), data["notes"])
+        data = cut_json(self.late, "--start", "0.5", "--tolerance", "0", "-o", DIR / "late_judged_default.mp4")
+        self.assertIn("tolerance", data["reencode_reason"])
+        self.assertFalse(any("judged by the video" in n for n in data["notes"]), data["notes"])
+
+    def test_a_millisecond_off_keyframe_start_is_seeked_to_the_microsecond(self):
+        """A keyframe at 61/30 = 2.0333 s: --start 00:00:02:01@30 is that frame, but -ss rounded
+        to the millisecond (2.033) fell before it, so the copy snapped back to the keyframe at 0
+        and re-encoded. -ss and -t now carry six decimals, and the copy starts on the keyframe."""
+        src = DIR / "g61.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=8",
+               "-f", "lavfi", "-i", "sine=f=440:d=8:sample_rate=48000", "-c:v", "libx264", "-g", "61", "-bf", "0",
+               "-x264-params", "scenecut=0", "-c:a", "aac", "-shortest", src)
+        dry = cut_json(src, "--start", "00:00:02:01@30", "--end", "4", "--dry-run", "-o", DIR / "never_g61.mkv")
+        self.assertIn("-ss 2.033333", dry["commands"][0])
+        out = DIR / "copy_g61.mkv"
+        data = cut_json(src, "--start", "00:00:02:01@30", "--end", "4", "-o", out)
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
+        self.assertFalse(data["start_snapped"], "the start is the keyframe at 2.0333 s")
+        self.assertEqual(md5_frames(out)[0], md5_frames(src)[61])
+
+    def test_av_skew_names_the_edit_list_only_where_it_would_help(self):
+        meta = {"video": {"start_time": 0.0, "fps": 30.0}, "audio": {"start_time": -0.122}}
+        self.assertNotIn("--edit-list", cut.av_skew(meta)[1])
+        self.assertIn("--edit-list", cut.av_skew(meta, True)[1])
+        self.assertEqual(cut.av_skew(meta, True)[0], -0.122)
+
+    def test_a_source_whose_audio_starts_late_is_not_reported_as_a_skewed_cut(self):
+        """The late-audio source's sound starts 0.355 s after its picture by design: a cut from 0
+        keeps that, and is not a stream copy that began on packets the streams do not share. The
+        skew is still reported; the warning compares it with the source's own at the start."""
+        for extra in ((), ("--accurate",)):
+            data = cut_json(self.late, "--start", "0", "--end", "2", "--tolerance", "-1", *extra,
+                            "-o", DIR / f"late_skew{len(extra)}.mp4")
+            self.assertGreater(data["av_start_skew_seconds"], 0.3, extra)
+            self.assertFalse(any("do not share" in n for n in data["notes"]), (extra, data["notes"]))
+        self.assertAlmostEqual(cut.source_skew(str(self.late), probe(str(self.late)), 0.0), 0.355, delta=0.03)
+        self.assertEqual(cut.source_skew(str(self.late), probe(str(self.late)), 4.3), 0.0)
+        skew, note = cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0}, "audio": {"start_time": 0.5}}, expected=0.5)
+        self.assertEqual((skew, note), (0.5, None))
+        self.assertIn("in the source there", cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0},
+                                                          "audio": {"start_time": 0.0}}, expected=0.5)[1])
 
     def test_av_skew_is_measured_and_named_past_the_threshold(self):
         skew, note = cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0}, "audio": {"start_time": 0.5}})

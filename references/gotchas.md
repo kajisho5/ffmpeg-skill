@@ -36,14 +36,15 @@ S-Log, V-Log and C-Log look grey and low-contrast but are tagged SDR. Run
 ## Cutting
 
 ### Keyframe cuts
-A single-segment `.mp4`/`.mov` copy keeps the MP4 edit list: the pre-roll back
-to the keyframe is stored but hidden, so the picture starts at the requested
-time (`edit_list`, `stored_preroll_seconds`). A player or tool that ignores
-edit lists shows that pre-roll. The **end** still lands on a packet boundary, a
-few frames long, and those extra frames can skip. `.mkv` output has no edit
-list, and a `--segments` join shows each part from its keyframe: they may start
-up to one GOP (often 1–10 s) earlier than requested, and the script re-encodes
-automatically when the deviation exceeds 0.5 s. An `.mp4`/`.mov` `--segments`
+A lossless `cut.py` result may start up to one GOP (often 1–10 s) earlier than
+requested (`start_snapped: true`); the script re-encodes automatically when the
+deviation exceeds 0.5 s. With `--edit-list`, a single-segment `.mp4`/`.mov` copy
+keeps the MP4 edit list instead: the pre-roll back to the keyframe is stored but
+hidden, so the picture starts at the requested time (`edit_list`,
+`stored_preroll_seconds`). A player or tool that ignores edit lists shows that
+pre-roll. The **end** still lands on a packet boundary, a few frames long, and
+those extra frames can skip. `.mkv` output has no edit list, and a `--segments`
+join shows each part from its keyframe. An `.mp4`/`.mov` `--segments`
 part's end moves to the nearest keyframe within the same tolerance
 (`segment_end_snap_seconds`); `.mkv`/`.ts` parts are not snapped, and their join
 is checked and re-cut when wrong. Open-GOP HEVC (iPhone "High Efficiency")
@@ -52,8 +53,8 @@ always re-encodes a `--segments` join, even with `--tolerance -1`. If the user i
 The MP4 demuxer seeks by *decode* time, so a start a few frames before a
 keyframe begins at that keyframe (`start_snapped: true`).
 `av_start_skew_seconds` warns when a copy's sound and picture start apart
-(Core Media HEVC once gave 3.7 s of sound with no picture); `--accurate` is the
-fix. A `-c copy` cut on VFR or a
+(Core Media HEVC once gave 3.7 s of sound with no picture); it is reported, not
+repaired: `--accurate` is the fix, or `--edit-list` for a lossless `.mp4`/`.mov`. A `-c copy` cut on VFR or a
 non-keyframe boundary produces a file that "works" but starts on a frozen or
 wrong frame — respect the automatic re-encode rather than forcing the copy.
 

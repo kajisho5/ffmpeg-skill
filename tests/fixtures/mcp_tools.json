@@ -316,6 +316,7 @@
    "codec",
    "dry_run",
    "duration",
+   "edit_list",
    "end",
    "fast",
    "hw",

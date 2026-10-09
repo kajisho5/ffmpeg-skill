@@ -63,7 +63,7 @@ JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation
 
 ### cut.py — cut / join segments
 ```
-cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,...] [--accurate] [-o OUT]
+cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,...] [--accurate] [--edit-list] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
@@ -76,11 +76,17 @@ Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
-A single `.mp4`/`.mov` stream copy keeps its MP4 edit list, so the picture
-starts at `--start`. `edit_list` and `stored_preroll_seconds` say so, and
-`notes` warns that a player which ignores edit lists shows the pre-roll.
-`av_start_skew_seconds` is audio start minus video start, with a note past
-max(2 frames, 0.1 s). `keyframe_snapped` is true for every stream copy (`precision`
+A single `.mp4`/`.mov` stream copy shifts its timestamps to zero
+(`-avoid_negative_ts make_zero`), so the picture starts at the keyframe.
+`--edit-list` keeps its MP4 edit list instead, so the picture starts at
+`--start`: `edit_list` and `stored_preroll_seconds` say so, `notes` warns that a
+player which ignores edit lists shows the pre-roll, and the copy's length is
+judged by its video (a copy that starts where asked but ends past `--tolerance`
+re-encodes without offering another `--start`). `av_start_skew_seconds` is
+audio start minus video start, with a note past max(2 frames, 0.1 s); it is
+reported, not repaired. `-ss`/`-t` are passed to the microsecond; `--accurate`
+seeks a second early and trims on the output side, so frames just before a
+keyframe are kept. `keyframe_snapped` is true for every stream copy (`precision`
 `packet`); `start_snapped` is measured: true only when a copied picture starts more
 than a frame from `--start` (`null` under `--dry-run`).
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,

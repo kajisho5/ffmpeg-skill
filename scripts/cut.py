@@ -19,6 +19,10 @@ re-encoded because the keyframe snap exceeded --tolerance), `keyframe_snapped`
 `requested_duration`, `output_duration` and `duration_delta_seconds` -- so a
 caller never has to trust "it probably cut where I asked" on faith.
 
+A single-segment .mp4/.mov copy shifts its timestamps to zero (-avoid_negative_ts
+make_zero), so the picture starts at the keyframe; --edit-list keeps the MP4 edit
+list instead, which hides the keyframe's pre-roll so the picture starts at --start.
+
 Examples:
   python3 cut.py input.mp4 --start 00:00:10 --end 00:00:25
   python3 cut.py input.mp4 --segments 0:05-0:12,1:00-1:20 -o highlights.mp4
@@ -184,6 +188,16 @@ def file_origin(src: str) -> float:
     return _ORIGINS[src]
 
 
+def source_skew(src: str, meta: dict, t: float) -> float:
+    """How far the source's audio starts after its video at `t` on the cut's clock: a cut from
+    `t` that keeps both streams where they were starts them this far apart (0 once both run)."""
+    v, a = meta.get("video") or {}, meta.get("audio") or {}
+    if v.get("start_time") is None or a.get("start_time") is None:
+        return 0.0
+    origin = file_origin(src)
+    return max(a["start_time"] - origin, t) - max(v["start_time"] - origin, t)
+
+
 def video_end(src: str, meta: dict):
     """Where the video stream ends on the cut's clock (seconds from the file's start), or None when
     the stream's length is unknown."""
@@ -203,10 +217,13 @@ def seek_keyframe(src: str, t: float):
     ffprobe = require_tool("ffprobe")
     origin = file_origin(src)
     for back in (10.0, 120.0):
-        # -read_intervals takes absolute timestamps, like the packets it returns
+        # -read_intervals takes absolute timestamps, like the packets it returns. A window that
+        # reaches the file's start does not seek: a seek to it skips an edit-listed MP4's
+        # negative-pts keyframe (a copy cut with --edit-list, cut again), and the start was then
+        # reported as snapped although the copy began on that keyframe
+        lo = "" if t - back <= 0 else f"{origin + t - back:.6f}"
         proc = run([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,dts_time,flags",
-                    "-of", "json", "-read_intervals",
-                    f"{origin + max(0.0, t - back):.6f}%{origin + t + 1.0:.6f}", src], quiet=True, check=False)
+                    "-of", "json", "-read_intervals", f"{lo}%{origin + t + 1.0:.6f}", src], quiet=True, check=False)
         try:
             packets = json.loads(proc.stdout or "")["packets"] if proc.returncode == 0 else []
         except (ValueError, KeyError, TypeError):
@@ -250,22 +267,29 @@ def copy_presentation(t: float, key, edit_list: bool, fps) -> dict:
     return {"start_snapped": abs(k_pts - t) > frame + 1e-6, "stored_preroll_seconds": None}
 
 
-def av_skew(out_meta: dict):
+def av_skew(out_meta: dict, edit_list_remedy: bool = False, expected: float = 0.0):
     """(seconds audio starts after video, warning note or None); None when either is missing.
     A lossless cut can start its streams apart -- Core Media HEVC once gave 3.7 s of sound with no
-    picture from a run that exited 0 -- so a skew past max(2 frames, 0.1 s) is named."""
+    picture from a run that exited 0 -- so a skew more than max(2 frames, 0.1 s) away from
+    `expected` (the source's own skew at the cut's start: a track that starts late there, by
+    design, is not a defect of the cut) is named. It is reported, not repaired:
+    `edit_list_remedy` (a single MP4/MOV copy whose start snapped, cut without --edit-list)
+    names --edit-list as the lossless way to start both streams at --start."""
     v, a = out_meta.get("video") or {}, out_meta.get("audio") or {}
     if v.get("start_time") is None or a.get("start_time") is None:
         return None, None
     skew = round(a["start_time"] - v["start_time"], 6)
     fps = v.get("fps") or 0
     limit = max(2.0 / fps if fps else 0.0, 0.1)
-    if abs(skew) <= limit:
+    if abs(skew - expected) <= limit:
         return skew, None
     first = "audio" if skew > 0 else "video"
-    return skew, (f"the {'video' if first == 'audio' else 'audio'} starts {abs(skew):.3f}s before the {first}: "
-                  "a stream copy began on packets the two streams do not share; re-run with --accurate "
-                  "for a cut whose picture and sound start together")
+    return skew, (f"the {'video' if first == 'audio' else 'audio'} starts {abs(skew):.3f}s before the {first}"
+                  + (f" ({abs(expected):.3f}s in the source there)" if abs(expected) > 1e-3 else "")
+                  + ": a stream copy began on packets the two streams do not share; re-run with --accurate "
+                  "for a cut whose picture and sound start together"
+                  + (", or with --edit-list to keep the lossless copy and hide the keyframe's pre-roll"
+                     if edit_list_remedy else ""))
 
 
 _PACKETS: dict = {}
@@ -432,10 +456,13 @@ def check_join(out_pts, expected: int, fps, audio_frame: float, cfr: bool) -> di
 
 
 def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: int, preset: str, tolerance: float = 0.5, meta: dict = None,
-            _reasons: List[str] = None, edit_list_ok: bool = True, copy_t: float = None) -> dict:
+            _reasons: List[str] = None, edit_list_ok: bool = False, copy_t: float = None) -> dict:
     """Cut one segment. Returns its outcome: {reencoded, reasons, precision, start_snapped, ...}, where
     `reasons` lists why THIS segment re-encoded on its own (pcm_container / copy_failed / tolerance);
     the caller adds the reasons that forced every segment (requested, codec, vfr).
+
+    `edit_list_ok` (--edit-list) keeps the edit list a single MP4/MOV copy writes instead of
+    -avoid_negative_ts make_zero; off, the copy is cut and judged as in every 2.x release.
 
     `copy_t` is a --segments part planned by plan_part: copied for -t copy_t (to its end
     keyframe's dts), keeping the edit list an MP4/MOV copy writes, and not judged by its length
@@ -476,10 +503,11 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         # FLAC/MP3 on a coarse index; reading from the start and dropping packets is exact to the packet
         cmd = ffmpeg_base() + ["-i", src, "-ss", f"{start:.6f}", "-t", f"{dur:.6f}"] + copy_args(meta, dst) + ["-avoid_negative_ts", "make_zero", dst]
     else:
-        # A single MP4/MOV output keeps the edit list the plain copy writes: the keyframe's pre-roll
-        # is stored but hidden, so the picture and the sound start at `start`. make_zero shifts the
-        # timestamps instead and shows the pre-roll -- on Core Media HEVC, 3.7 s of sound with no
-        # picture from a run that exited 0. A planned concat part keeps it too: the concat
+        # With --edit-list a single MP4/MOV output keeps the edit list the plain copy writes: the
+        # keyframe's pre-roll is stored but hidden, so the picture and the sound start at `start`.
+        # make_zero (the default, as in every 2.x release) shifts the timestamps instead and shows
+        # the pre-roll -- on Core Media HEVC, 3.7 s of sound with no picture from a run that exited
+        # 0, which av_start_skew_seconds and a note report. A planned concat part keeps it: the concat
         # demuxer ignores where the edit list starts (it shows the pre-roll) but places the next
         # part by its length, which make_zero parts got wrong by the B-frame reorder delay.
         # Other concat parts (Matroska, MPEG-TS) keep make_zero.
@@ -496,8 +524,9 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         out_meta = probe(dst)
         got = out_meta.get("duration") or 0.0
         vdur, fps = (out_meta.get("video") or {}).get("duration"), (meta.get("video") or {}).get("fps")
-        if not audio_only and vdur and fps and abs(got - vdur) > 1.0 / fps:
-            # the container's length counts the longer track; the tolerance is about the picture
+        if edit_list and not audio_only and vdur and fps and abs(got - vdur) > 1.0 / fps:
+            # the container's length counts the longer track; the tolerance is about the picture.
+            # Only under --edit-list: the default judges the container, as every 2.x release did
             msg = f"the container is {got:.3f}s but its video {vdur:.3f}s; the cut was judged by the video"
             info(msg)
             notes.append(msg)
@@ -829,6 +858,7 @@ def main() -> int:
     g.add_argument("--duration", help="duration instead of --end")
     ap.add_argument("--segments", help="comma separated START-END list, e.g. '0:05-0:12,1:00-1:20' (joined in order)")
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
+    ap.add_argument("--edit-list", action="store_true", help="a single-segment .mp4/.mov stream copy keeps the MP4 edit list that hides the keyframe's pre-roll, so the picture starts at --start (default: -avoid_negative_ts make_zero, the picture starts at the keyframe); a player that ignores edit lists shows the pre-roll")
     ap.add_argument("--vfr-copy", action="store_true", help="keep the lossless copy even when the sampled frame timing is variable or cannot be measured (default: re-encode, as --accurate)")
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
     snap = ap.add_argument_group("beat snapping")
@@ -960,7 +990,8 @@ def main() -> int:
     join_reencoded = False
     join_check = None
     if len(segments) == 1:
-        outcomes.append(cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta))
+        outcomes.append(cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta,
+                                edit_list_ok=args.edit_list))
     elif hold_needed or args.accurate:
         # Straight to one encode through the concat filter. A held frame needs the re-cut (no part
         # can carry it into a copy join); and when every part re-encodes anyway, encoding each on
@@ -1095,7 +1126,11 @@ def main() -> int:
     if join_check and join_check["ok"] and not join_reencoded:
         end_snaps = [None if o["reencoded"] or p["end_pts"] is None else round(p["end_pts"] - e, 3) + 0.0
                      for o, p, (_, e) in zip(outcomes, plans, segments)]
-    skew, skew_note = av_skew(result) if not STATE.dry_run else (None, None)
+    # a single MP4/MOV copy without --edit-list shows the pre-roll the edit list would hide
+    remedy = (len(outcomes) == 1 and not reencoded and not single.get("edit_list") and single.get("start_snapped")
+              and ext.lower() in EDIT_LIST_EXTS and not is_audio_output(output))
+    skew, skew_note = ((None, None) if STATE.dry_run
+                       else av_skew(result, bool(remedy), source_skew(args.input, meta, segments[0][0])))
     if skew_note:
         info(skew_note)
         notes.append(skew_note)

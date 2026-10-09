@@ -1032,15 +1032,54 @@ not a new file format this tool would have to maintain.
   is its own input (a file handle, demuxer and decoder), and macOS shells default to 256 open
   files. MP4/AAC chunks copy-joined put the video 23 ms behind the audio (encoder priming per
   chunk); PCM chunks carry none, and the audio is encoded once for the final file.
-- **A single MP4/MOV copy keeps its edit list; its report comes from the source's packets.**
-  `make_zero` showed the keyframe's pre-roll. The plain copy writes an edit list that hides it, and
-  its first presented frame was bit-identical to the source frame at or after `--start`. What it
-  stored is read from the source, not the output: the demuxer takes the keyframe with the largest
-  *decode* time at or before the start, so `stored_preroll_seconds` is start minus that keyframe's
-  presentation time, and a keyframe presented *after* the start (dts 9.833 for a 10.0 keyframe,
-  asked for 9.9) is a snap. Comparing the output's durations with and without the edit list was
-  tried and does not work: a B-frame composition offset makes them differ even on a keyframe
-  start. Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests: `tests/test_cut_copy.py`.
+- **A single MP4/MOV copy keeps its edit list only with `--edit-list`; its report comes from the
+  source's packets.** `make_zero` shows the keyframe's pre-roll. The plain copy writes an edit
+  list that hides it, and its first presented frame was bit-identical to the source frame at or
+  after `--start`. #306 made that the default. It is opt-in in 2.x because the default decides
+  what a caller gets, measured against main: `nob.mp4 --start 1.13 --end 5.71 --tolerance 2`
+  copied 172 frames (+1.153 s) and now 138 with the pre-roll hidden; `hevc_sdr --start 1.1 --end 4
+  --tolerance 0.3` re-encoded (`hybrid`) and now copies; a 25-minute source `--start 601 --end 661`
+  wrote 74.7 s and now 1.95 s. A player or tool that ignores edit lists also shows the stored
+  pre-roll, so an edit-listed copy is not what every 2.x caller expects. So the default stays
+  `-avoid_negative_ts make_zero` and is judged by the container's length, as in every 2.x
+  release; `edit_list` is `false` and `stored_preroll_seconds` `null`. Two rules apply only under
+  `--edit-list`: the copy is judged by its video (the container also counts a longer track), and
+  a copy that starts where asked but ends past `--tolerance` re-encodes without offering another
+  `--start`. What a copy stored is read from the source, not the output: the demuxer takes the
+  keyframe with the largest *decode* time at or before the start, so `stored_preroll_seconds` is
+  start minus that keyframe's presentation time, and a keyframe presented *after* the start (dts
+  9.833 for a 10.0 keyframe, asked for 9.9) is a snap. Comparing the output's durations with and
+  without the edit list was tried and does not work: a B-frame composition offset makes them
+  differ even on a keyframe start. The keyframe read does not seek when its window reaches the
+  file's start: a seek there skips an edit-listed file's negative-pts keyframe, and an
+  `--edit-list` copy cut again was reported as snapped although its picture started where asked.
+  Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests:
+  `test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for` (the default),
+  `test_an_mp4_copy_starts_its_picture_at_the_requested_time`,
+  `test_an_edit_listed_source_cut_again_starts_where_asked`,
+  `test_judging_a_copy_by_its_video_is_noted_even_when_it_then_reencodes`; main's
+  `test_cut_json_reports_requested_vs_actual_and_mode` and `test_eval6_followups`, verbatim.
+- **Microsecond `-ss`/`-t` and the `--accurate` seek margin are defect fixes, on by default.**
+  Both change what the default writes, and both only make it what was asked. `-ss` rounded to the
+  millisecond missed a keyframe at 61/30 = 2.0333 s: `--start 00:00:02:01@30` seeked to 2.033,
+  snapped back to the keyframe at 0 and re-encoded; it now copies from that keyframe. A video
+  `--accurate` cut seeks a second early and drops the margin on the output side, because a seek
+  straight to a start a few frames before a keyframe landed, by decode time, on that keyframe and
+  lost those frames. Tests: `test_a_millisecond_off_keyframe_start_is_seeked_to_the_microsecond`,
+  `test_accurate_keeps_the_frames_before_a_keyframe`.
+- **An A/V start skew on the default path is reported, not repaired.** Without `--edit-list` a
+  copy keeps main's `make_zero` behaviour, including the Core Media HEVC case (3.7 s of sound
+  with no picture) and the B-frame reorder delay (0.12 s on the HEVC fixture). Re-copying with
+  the edit list when the skew is large was considered and rejected for 2.x: it would change the
+  default output's timestamps, the thing `--edit-list` is opt-in to avoid. `av_start_skew_seconds`
+  is always reported. A `notes` line names `--accurate` (and `--edit-list` for an `.mp4`/`.mov`
+  copy whose start snapped) when the skew is more than max(2 frames, 0.1 s) away from the
+  source's own skew at the start: a track that starts late by design (the 0.355 s late-audio
+  fixture cut from 0) is what was asked for, not a copy that began on packets the streams do not
+  share. Code: `cut.av_skew`, `cut.source_skew`. Tests:
+  `test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for`,
+  `test_a_source_whose_audio_starts_late_is_not_reported_as_a_skewed_cut`,
+  `test_av_skew_names_the_edit_list_only_where_it_would_help`.
 - **A re-encoded cut keeps an HEVC source HEVC.** A cut is a trim, so a re-encoded segment should
   come out in the codec of the source and of any copied segment beside it; x264 for every SDR
   source turned an iPhone clip into H.264. `source_codec_video_args` sends an HEVC source through
@@ -1068,3 +1107,8 @@ not a new file format this tool would have to maintain.
   on the cut's clock: stream start + duration − the file's start_time. Tests:
   `test_a_segment_past_the_video_end_holds_its_last_frame_in_a_copy_join` and siblings,
   `test_an_accurate_join_has_no_hole_at_its_joins`.
+- **Decided for 3.0: the defaults #306 measured better, and the meanings it wanted.** 2.x keeps
+  every key's meaning and every default's behaviour, so these wait for the next major, where
+  each is a documented breaking change: `--edit-list` becomes the default for a single
+  `.mp4`/`.mov` copy; `keyframe_snapped` takes `start_snapped`'s meaning (the presented start
+  moved) and `precision` takes `least_exact_precision`'s (the least exact segment).
