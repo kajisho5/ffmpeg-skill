@@ -9,6 +9,7 @@ cases never depend on what the host has installed.
 """
 import json
 import os
+import platform
 import shutil
 import stat
 import subprocess
@@ -319,6 +320,8 @@ class InstallHintTests(unittest.TestCase):
             self.assertIn(words, section)
 
 
+@unittest.skipIf(platform.system() == "Windows", "the fake engines are #! scripts on a POSIX PATH shim; the routing "
+                 "they drive is covered on every OS by the in-process tests above")
 class ParakeetEngineTests(MediaFixtures):
     """caption.py / silence.py drive fake Parakeet binaries on a PATH that holds only them and ffmpeg."""
 

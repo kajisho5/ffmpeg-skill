@@ -3601,6 +3601,7 @@ class AsrNoSpeechTests(unittest.TestCase):
         self.assertNotIn("no local speech-to-text engine", call[0])
 
 
+@unittest.skipIf(platform.system() == "Windows", "the fake whisper-cli is a #!/bin/sh script on a POSIX PATH shim")
 class WhisperDefaultModelTests(unittest.TestCase):
     """A whisper.cpp install made the way the refusal hint says (brew + ggml-base.bin) must be the
     model caption.py --transcribe runs by default: the default became large-v3-turbo with the
