@@ -1175,6 +1175,10 @@ class CutJoinTests(unittest.TestCase):
             sh("ffmpeg", "-y", "-v", "error", "-itsoffset", "0.5", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=5.5",
                "-f", "lavfi", "-i", "sine=f=440:d=6", "-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-t", "6.5", src)
+        if subprocess.run(["ffprobe", "-v", "error", "-show_format", str(src)], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE).returncode != 0:
+            # the johnvansickle static ffprobe builds (5.1.1, 7.0.2) segfault on any MPEG-TS file
+            self.skipTest("this ffprobe cannot read MPEG-TS")
         meta = probe(str(src))
         v = meta["video"]
         end = cut.video_end(str(src), meta)
