@@ -1002,4 +1002,7 @@ not a new file format this tool would have to maintain.
   is a library the skill runs in its own process, so its first-run fetch is made from that process
   (`HF_HUB_OFFLINE=1` keeps it on the cached copy afterwards). Loading it with `local_files_only`
   by default would break the first run 2.5.1 users rely on. The install hint, docs/contract.md and
-  references/scripts.md say so. Test: `InstallHintTests`.
+  references/scripts.md say so, and the contract's `execution.model_downloads` names
+  each engine's source and process, so `network: false` cannot be read as "a first
+  `--transcribe` is network-free". Tests: `InstallHintTests`,
+  `test_the_network_claim_matches_where_each_engine_runs`.

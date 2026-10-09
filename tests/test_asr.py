@@ -646,9 +646,18 @@ class InstallHintTests(unittest.TestCase):
             self.assertNotIn("doctor's fix line", text)
             self.assertNotIn("`doctor`'s fix line", text)
         # the engines it runs are listed where the contract says what it runs
-        ran = _contract.build(detect=False)["execution"]["subprocess"]
+        execution = _contract.build(detect=False)["execution"]
+        ran = execution["subprocess"]
         for exe in ("whisper-cli", "whisper-cpp", "parakeet-mlx", "parakeet-cli", "whisper"):
             self.assertIn(exe, ran)
+        # ...and the machine-readable contract says which engine downloads, from which process: a
+        # caller that read only `network: false` took a first faster-whisper run for network-free
+        # (CodeRabbit on #312)
+        downloads = execution["model_downloads"]
+        self.assertEqual(set(downloads["in_process"]), {"faster-whisper"})
+        self.assertEqual(set(downloads["child_process"]), {"parakeet-mlx", "openai-whisper"})
+        self.assertEqual(set(downloads["none"]), {"whisper.cpp", "parakeet.cpp"})
+        self.assertIn("model_downloads", contract_md)
 
     def test_the_reference_page_no_longer_says_nothing_is_downloaded(self):
         root = Path(__file__).resolve().parent.parent

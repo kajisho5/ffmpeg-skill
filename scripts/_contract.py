@@ -1416,6 +1416,17 @@ def build(detect: bool = True) -> Dict[str, Any]:
                           "with --transcribe, a local speech engine's CLI (whisper.cpp's whisper-cli / whisper-cpp / main, "
                           "openai-whisper's whisper, parakeet-mlx, parakeet-cli) resolved from PATH",
             "network": False,
+            # `network` is about the skill's own code. A speech engine may fetch its model weights the
+            # first time it runs; faster-whisper is a library, so its fetch is made from the skill's own
+            # process. A caller that sandboxes the network must know that before a first --transcribe.
+            "model_downloads": {
+                "when": "first use of a speech engine (--transcribe) whose model is not cached yet; media is never uploaded",
+                "in_process": {"faster-whisper": "Hugging Face (Systran/faster-whisper-<model>)"},
+                "child_process": {"parakeet-mlx": "Hugging Face (mlx-community/parakeet-*)",
+                                  "openai-whisper": "OpenAI (its model checkpoint)"},
+                "none": ["whisper.cpp", "parakeet.cpp"],
+                "offline": "HF_HUB_OFFLINE=1 keeps faster-whisper and parakeet-mlx on the cached copy",
+            },
             "input_mutation": False,
         },
         "invocation": {

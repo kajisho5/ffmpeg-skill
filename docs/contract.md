@@ -123,7 +123,11 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0"},
-  "execution": {"shell": false, "arbitrary_executables": false, "network": false, "input_mutation": false}
+  "execution": {"shell": false, "arbitrary_executables": false, "network": false,
+                "model_downloads": {"when": "...", "in_process": {"faster-whisper": "..."},
+                                    "child_process": {"parakeet-mlx": "...", "openai-whisper": "..."},
+                                    "none": ["whisper.cpp", "parakeet.cpp"], "offline": "..."},
+                "input_mutation": false}
 }
 ```
 
@@ -380,7 +384,9 @@ fetch its model weights on first use: parakeet-mlx downloads its default
 each in its own child process. faster-whisper is a Python library the skill runs inside its own
 process, so its first-run download from Hugging Face is made by the skill's process;
 `HF_HUB_OFFLINE=1` keeps it (and parakeet-mlx) on the cached copy after that. parakeet.cpp and
-whisper.cpp read a model file the user downloaded.
+whisper.cpp read a model file the user downloaded. `execution.model_downloads` says the same in the
+contract, engine by engine, so a caller that sandboxes the network can tell before a first
+`--transcribe` that faster-whisper's fetch comes from the skill's own process.
 
 `doctor` has three states per capability. `available` and `missing` come from a listing
 that was read; `unknown` means the listing that would prove the capability could not be
