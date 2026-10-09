@@ -63,7 +63,7 @@ JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation
 
 ### cut.py — cut / join segments
 ```
-cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,...] [--accurate] [--edit-list] [--keep-hevc] [-o OUT]
+cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,...] [--accurate] [--edit-list] [--keep-hevc] [--vfr-guard average|sampled|off] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
@@ -97,13 +97,15 @@ A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
 `max_step_seconds`, `ok`: the written file measured against the source) and
 `segment_end_snap_seconds` (where each part's end moved to its keyframe).
 
-**VFR guard.** Before a copy, `cut.py` samples the video's packet timestamps (up
-to five 6 s windows; no decoding) and reports `vfr_check` (`measured`:
-`sampled_cfr`, `vfr` or `inconclusive`). Only `sampled_cfr` keeps the copy; the
-other two re-encode as `--accurate` (reasons `vfr` / `vfr_inconclusive`) unless
-`--vfr-copy` keeps it with a note. A phone clip whose average rate is 29.98 against
-a nominal 30 is no longer taken for VFR. Irregular timing between the windows is
-not seen; `--accurate` is always available.
+**VFR guard (`--vfr-guard`).** `average` (default): a source whose nominal and
+average frame rates differ (`variable_frame_rate_suspected`) re-encodes as
+`--accurate` (reason `vfr`), and `cut.py` then samples its packet timestamps (up
+to five 6 s windows; no decoding) into `vfr_check` (`measured`: `sampled_cfr`,
+`vfr` or `inconclusive`, plus `guard`); a `sampled_cfr` there adds a note naming
+`--vfr-guard sampled`. `sampled` samples before every copy and re-encodes only on
+`vfr` / `inconclusive` (reasons `vfr` / `vfr_inconclusive`), so a phone clip at
+29.98 against a nominal 30 copies; `off` samples and keeps the copy with a note.
+Irregular timing between the windows is not seen; `--accurate` is always available.
 
 A copied `.mp4`/`.mov` part runs from the keyframe at (or before) its start to
 the keyframe nearest its end, each end within `--tolerance`, so the join is the

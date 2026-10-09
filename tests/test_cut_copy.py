@@ -279,14 +279,16 @@ class CutJoinTests(unittest.TestCase):
         self.assertFrameExact(gray_frames(out)[0], 129)
         # cutting that result again: the VFR sampler must read its stored pre-roll, or a seek to its
         # start skips the keyframe (negative pts) and finds too few frames to judge
-        again = cut_json(out, "--start", "0.5", "--duration", "1", "--dry-run", "-o", DIR / "never_again.mp4")
+        again = cut_json(out, "--start", "0.5", "--duration", "1", "--vfr-guard", "sampled", "--dry-run",
+                         "-o", DIR / "never_again.mp4")
         self.assertEqual(again["vfr_check"]["measured"], "sampled_cfr")
 
     def test_an_edit_listed_source_cut_again_starts_where_asked(self):
         first = DIR / "copy_again_1.mp4"
         cut_json(self.hevc, "--start", "4.3", "--duration", "4", "--tolerance", "-1", "--edit-list", "-o", first)
         out = DIR / "copy_again_2.mp4"
-        data = cut_json(first, "--start", "1", "--duration", "2", "--tolerance", "-1", "--edit-list", "-o", out)
+        data = cut_json(first, "--start", "1", "--duration", "2", "--tolerance", "-1", "--edit-list",
+                        "--vfr-guard", "sampled", "-o", out)
         # the VFR sampler reads the stored pre-roll too (a seek to 0 skipped its keyframe and found
         # too few frames to judge, forcing a re-encode)
         self.assertEqual((data["vfr_check"]["measured"], data["mode"]), ("sampled_cfr", "copy"))
@@ -496,7 +498,7 @@ class CutJoinTests(unittest.TestCase):
         0.355 s hole in the video, and reported mode copy. A copy cannot add a frame, so the join
         is re-cut from the source with the last frame held for the sound."""
         out = DIR / "held_copy.mp4"
-        data = cut_json(self.long, "--segments", "4-6.3,0-2", "-o", out)
+        data = cut_json(self.long, "--segments", "4-6.3,0-2", "--vfr-guard", "sampled", "-o", out)
         self.assertEqual(data["mode"], "hybrid")
         self.assertTrue(any("past the end of the video" in n for n in data["notes"]), data["notes"])
         self.assertNotIn("vfr_check", data, "a held join cannot copy, so the frame timing is not sampled")
@@ -1262,7 +1264,8 @@ class CopyJoinPlanTests(unittest.TestCase):
 
 
 class VfrGuardTests(unittest.TestCase):
-    """cut.py's VFR guard on real files: measured timing, the reasons, and --vfr-copy."""
+    """cut.py's VFR guard on real files: the default average check, the measured timing under
+    --vfr-guard sampled, the reasons, and --vfr-guard off."""
 
     @classmethod
     def setUpClass(cls):
@@ -1297,12 +1300,12 @@ class VfrGuardTests(unittest.TestCase):
 
     def test_an_average_rate_below_nominal_is_not_vfr(self):
         self.assertTrue(probe(str(self.fp))["video"]["variable_frame_rate_suspected"], "the premise: the old check trips")
-        data = cut_json(self.fp, "--start", "0", "--duration", "2", "-o", DIR / "vfr_fp_cut.mp4")
-        self.assertEqual(data["vfr_check"]["measured"], "sampled_cfr")
+        data = cut_json(self.fp, "--start", "0", "--duration", "2", "--vfr-guard", "sampled", "-o", DIR / "vfr_fp_cut.mp4")
+        self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"]), ("sampled_cfr", "sampled"))
         self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
 
     def test_dropped_frames_force_a_reencode(self):
-        data = cut_json(self.drop, "--start", "0", "--duration", "2", "-o", DIR / "vfr_drop_cut.mp4")
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--vfr-guard", "sampled", "-o", DIR / "vfr_drop_cut.mp4")
         self.assertEqual(data["vfr_check"]["measured"], "vfr")
         self.assertEqual(data["reencode_reason"], ["vfr"])
         self.assertTrue(data["reencoded"])
@@ -1310,21 +1313,22 @@ class VfrGuardTests(unittest.TestCase):
 
     def test_dropped_frames_late_in_a_long_gop_are_seen(self):
         """Each window reads from its own start, not from the keyframe the read seeks back to."""
-        data = cut_json(self.late_drops, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "never_late.mp4")
+        data = cut_json(self.late_drops, "--start", "0", "--duration", "2", "--vfr-guard", "sampled", "--dry-run",
+                        "-o", DIR / "never_late.mp4")
         self.assertEqual(data["vfr_check"]["windows"], 3)
         self.assertEqual(data["vfr_check"]["measured"], "vfr")
 
-    def test_vfr_copy_keeps_the_copy_and_says_so(self):
-        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--vfr-copy", "--tolerance", "-1",
+    def test_vfr_guard_off_keeps_the_copy_and_says_so(self):
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--vfr-guard", "off", "--tolerance", "-1",
                         "-o", DIR / "vfr_drop_copy.mp4")
-        self.assertEqual(data["vfr_check"]["measured"], "vfr")
+        self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"]), ("vfr", "off"))
         self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
-        self.assertTrue(any("--vfr-copy" in n for n in data["notes"]), data["notes"])
+        self.assertTrue(any("--vfr-guard off" in n for n in data["notes"]), data["notes"])
 
-    def test_a_vfr_copy_join_is_checked_by_its_packet_count_only(self):
-        """Variable timing has no step to hold a join to, so --vfr-copy keeps the copy and the
+    def test_a_vfr_guard_off_join_is_checked_by_its_packet_count_only(self):
+        """Variable timing has no step to hold a join to, so --vfr-guard off keeps the copy and the
         join check counts packets only."""
-        data = cut_json(self.drop, "--segments", "0-2,4-6", "--vfr-copy", "--tolerance", "-1",
+        data = cut_json(self.drop, "--segments", "0-2,4-6", "--vfr-guard", "off", "--tolerance", "-1",
                         "-o", DIR / "vfr_drop_join.mp4")
         self.assertEqual((data["mode"], data["reencode_reason"]), ("copy", []))
         self.assertIsNone(data["join_check"]["max_step_seconds"])
@@ -1332,23 +1336,60 @@ class VfrGuardTests(unittest.TestCase):
         self.assertEqual(data["join_check"]["packets"], data["join_check"]["expected_packets"])
 
     def test_too_few_frames_to_measure_reencodes(self):
-        data = cut_json(self.short, "--start", "0", "--duration", "0.3", "-o", DIR / "vfr_short_cut.mp4")
+        data = cut_json(self.short, "--start", "0", "--duration", "0.3", "--vfr-guard", "sampled",
+                        "-o", DIR / "vfr_short_cut.mp4")
         self.assertEqual(data["vfr_check"]["measured"], "inconclusive")
         self.assertEqual(data["reencode_reason"], ["vfr_inconclusive"])
         self.assertEqual(data["precision"], "frame")
 
     def test_a_dry_run_measures_and_reports(self):
-        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "never_vfr.mp4")
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--vfr-guard", "sampled", "--dry-run",
+                        "-o", DIR / "never_vfr.mp4")
         self.assertEqual(data["vfr_check"]["measured"], "vfr")
         self.assertEqual(data["reencode_reason"], ["vfr"])
 
     def test_nothing_is_measured_when_nothing_would_copy(self):
         audio = cut_json(self.tone, "--start", "1", "--duration", "1", "-o", DIR / "vfr_tone_cut.wav")
         self.assertNotIn("vfr_check", audio)
-        accurate = cut_json(self.drop, "--start", "0", "--duration", "1", "--accurate", "-o", DIR / "vfr_drop_acc.mp4")
+        audio = cut_json(self.tone, "--start", "1", "--duration", "1", "--vfr-guard", "sampled", "-o", DIR / "vfr_tone_cut2.wav")
+        self.assertNotIn("vfr_check", audio)
+        accurate = cut_json(self.drop, "--start", "0", "--duration", "1", "--accurate", "--vfr-guard", "sampled",
+                            "-o", DIR / "vfr_drop_acc.mp4")
         self.assertNotIn("vfr_check", accurate)
         self.assertEqual(accurate["reencode_reason"], ["requested"])
 
+
+    # ---- the default, --vfr-guard average: 2.5.1's guard, with the sample reported
+
+    def test_a_short_constant_clip_copies_by_default(self):
+        """2.5.1 copied it; the sampled guard re-encodes it (11 intervals, 20 needed to judge)."""
+        self.assertFalse(probe(str(self.short))["video"]["variable_frame_rate_suspected"])
+        data = cut_json(self.short, "--start", "0", "--duration", "0.3", "-o", DIR / "vfr_short_default.mp4")
+        self.assertEqual((data["mode"], data["reencode_reason"], data["precision"]), ("copy", [], "packet"))
+        self.assertNotIn("vfr_check", data, "the average check passed it, so nothing is sampled")
+
+    def test_a_suspected_but_constant_source_reencodes_by_default_and_says_sampled_would_copy(self):
+        """2.5.1 re-encoded it, and still does; the sample shows the timing is constant, and the
+        note names the guard that would have copied it."""
+        out = DIR / "vfr_fp_default.mp4"
+        proc = script("cut.py", self.fp, "--start", "0", "--duration", "2", "-o", out, "--json")
+        self.assertIn("variable-frame-rate", proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertEqual((data["mode"], data["reencode_reason"], data["precision"]), ("accurate", ["vfr"], "frame"))
+        self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"]), ("sampled_cfr", "average"))
+        self.assertTrue(any("--vfr-guard sampled" in n for n in data["notes"]), data["notes"])
+
+    def test_a_dropped_frame_source_reencodes_by_default_without_the_note(self):
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "never_vfr_default.mp4")
+        self.assertEqual(data["reencode_reason"], ["vfr"])
+        self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"]), ("vfr", "average"))
+        self.assertFalse(any("--vfr-guard" in n for n in data["notes"]), data["notes"])
+
+    def test_the_vfr_copy_flag_is_gone(self):
+        """--vfr-copy never shipped: --vfr-guard off replaced it."""
+        proc = script("cut.py", self.drop, "--vfr-copy", "--dry-run", "-o", DIR / "never_vfr_copy.mp4", expect_fail=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--vfr-copy", proc.stderr)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

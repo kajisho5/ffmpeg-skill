@@ -1102,18 +1102,32 @@ not a new file format this tool would have to maintain.
   codec arguments and the final copy into `.mp4`/`.mov`/`.m4v` repeats their `-tag:v`. Tests:
   `test_a_chunked_hdr_join_keeps_the_hvc1_tag_by_default` (HLG, no flag),
   `test_more_segments_than_one_call_takes_are_joined_in_chunks` (`--keep-hevc`).
-- **VFR is measured, not inferred from an average.** `r_frame_rate` against `avg_frame_rate` is a
-  whole-file average: a phone clip at 29.98 against a nominal 30 tripped it, and one long last
-  frame does too. `measure_frame_timing` reads packet timestamps (no decoding) in up to five 6 s
-  windows and requires every interval within a tick (1 ms at least, half a frame at most) of its
-  window's median. The half-frame cap is there because a 1/fps time base makes one tick a whole
-  frame. VFR confined to the unsampled stretches is missed; that was accepted because the check it
-  replaces was coarser, a copy is lossless, and `--accurate` is always available. The reads are
-  shaped by how `-read_intervals` behaves: it resolves a seek, and a relative end, against the
-  keyframe it lands on, so windows name an absolute end and keep only frames from their own
-  start, and the first window does not seek (a seek to 0 on an edit-listed MP4 skipped its
-  negative-pts keyframe). Code: `_common/probe.py` `classify_frame_timing`,
-  `measure_frame_timing`. Tests: `FrameTimingTests`, `VfrGuardTests`.
+- **The VFR guard stays the average check by default; the sampled measurement is `--vfr-guard
+  sampled`.** `r_frame_rate` against `avg_frame_rate` is a whole-file average: a phone clip at
+  29.98 against a nominal 30 trips it, and one long last frame does too. #306 replaced it with
+  `measure_frame_timing`, which reads packet timestamps (no decoding) in up to five 6 s windows
+  and requires every interval within a tick (1 ms at least, half a frame at most) of its window's
+  median; the half-frame cap is there because a 1/fps time base makes one tick a whole frame.
+  As the default that changed what existing calls write in both directions: a 0.5 s
+  constant-rate clip that 2.5.1 copied re-encoded (`vfr_inconclusive`, 11 intervals where 20 are
+  needed), and the suspected-but-constant `vfr_false_positive.mp4` that 2.5.1 re-encoded copied.
+  So within 2.x the guard is a choice. `average` (default) is 2.5.1's guard: the suspected source
+  re-encodes as `--accurate`, reason `vfr`, and stderr still says "variable-frame-rate"; only
+  then is the timing sampled, and reported in `vfr_check` with `guard`, plus a `notes` line naming
+  `--vfr-guard sampled` when the sample is constant. A source the average check passes is not
+  sampled, so the default costs what it did, and a copy join of it checks its steps as constant
+  timing. `sampled` is #306's guard (re-encode on `vfr` or `inconclusive`), and `off` is #306's
+  unreleased `--vfr-copy`, which never shipped and is gone. VFR confined to the unsampled
+  stretches is missed by `sampled`; that was accepted because a copy is lossless and `--accurate`
+  is always available. The reads are shaped by how `-read_intervals` behaves: it resolves a
+  seek, and a relative end, against the keyframe it lands on, so windows name an absolute end and
+  keep only frames from their own start, and the first window does not seek (a seek to 0 on an
+  edit-listed MP4 skipped its negative-pts keyframe). Code: `cut.main()` (the guard),
+  `_common/probe.py` `classify_frame_timing`, `measure_frame_timing`. Tests:
+  `test_vfr_is_conformed_to_cfr_on_cut_and_fit` (2.5.1's, verbatim),
+  `test_a_short_constant_clip_copies_by_default`,
+  `test_a_suspected_but_constant_source_reencodes_by_default_and_says_sampled_would_copy`,
+  `FrameTimingTests`, `VfrGuardTests` (`--vfr-guard sampled` / `off`).
 - **A segment past the video's end is held or trimmed, like a join.py clip; `--accurate` joins in one
   encode.** Both concat routes start the next segment after the longer stream of this one, so a
   segment whose sound outruns its picture opened a hole (0.355 s; and one AAC frame at every
@@ -1127,5 +1141,7 @@ not a new file format this tool would have to maintain.
   every key's meaning and every default's behaviour, so these wait for the next major, where
   each is a documented breaking change: `--edit-list` becomes the default for a single
   `.mp4`/`.mov` copy; `--keep-hevc` becomes the default, so a re-encoded cut of an SDR HEVC
-  source stays HEVC; `keyframe_snapped` takes `start_snapped`'s meaning (the presented start
-  moved) and `precision` takes `least_exact_precision`'s (the least exact segment).
+  source stays HEVC; `--vfr-guard sampled` becomes the default, so a stream copy is refused on
+  measured frame timing rather than on the whole-file average; `keyframe_snapped` takes
+  `start_snapped`'s meaning (the presented start moved) and `precision` takes
+  `least_exact_precision`'s (the least exact segment).

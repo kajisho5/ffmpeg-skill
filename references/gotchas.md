@@ -63,9 +63,10 @@ wrong frame — respect the automatic re-encode rather than forcing the copy.
 `avg_frame_rate` disagree (phone and screen recordings). Every re-encoding
 script then adds `-fps_mode cfr` at the source's average rate. That flag is a
 whole-file average, and a phone clip at 29.98 against a nominal 30 trips it, so
-`cut.py` measures before a stream copy instead: packet timestamps in up to five
-sampled windows (`vfr_check`). It switches to `--accurate` only when they are
-irregular or too few to judge; `--vfr-copy` keeps the copy anyway. Pick the rate
+`cut.py` re-encodes on it by default and reports packet timestamps sampled in up
+to five windows (`vfr_check`), with a note when they are constant;
+`--vfr-guard sampled` switches to `--accurate` only when they are irregular or too
+few to judge, and `--vfr-guard off` keeps the copy anyway. Pick the rate
 explicitly with `fit.py --fps 30|60` when the average is odd (e.g. 23.4 fps from
 dropped frames).
 

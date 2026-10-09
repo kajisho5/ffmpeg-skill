@@ -922,8 +922,8 @@ class EditingTests(MediaFixtures):
 
     def test_vfr_is_conformed_to_cfr_on_cut_and_fit(self):
         out = OUT / "vfr_cut.mp4"
-        data = json.loads(script("cut.py", self.vfr, "--start", "2", "--end", "6", "-o", out, "--json").stdout)
-        self.assertEqual(data["reencode_reason"], ["vfr"])
+        proc = script("cut.py", self.vfr, "--start", "2", "--end", "6", "-o", out)
+        self.assertIn("variable-frame-rate", proc.stderr)
         m = probe(str(out))
         self.assertFalse(m["video"]["variable_frame_rate_suspected"])
         self.assertClose(m["duration"], 4.0, 0.2)

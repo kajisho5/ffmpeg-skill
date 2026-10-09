@@ -337,7 +337,7 @@
    "start",
    "timeout",
    "tolerance",
-   "vfr_copy"
+   "vfr_guard"
   ],
   "required": []
  },

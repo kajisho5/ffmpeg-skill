@@ -207,7 +207,7 @@ One line each; open the linked `references/gotchas.md` section when the job is i
 - HDR (iPhone, HDR10) re-encoded through an SDR path goes flat; the scripts keep HDR; `hdr: true` is a real PQ/HLG/DV signal, `bt2020_or_hdr: true` also BT.2020 SDR. -> [#hdr-and-colour](references/gotchas.md#hdr-and-colour)
 - Log footage (S-Log/V-Log/C-Log) is tagged SDR and looks grey: `probe.py --analyze`, then `color.py --lut` first. -> [#log-footage](references/gotchas.md#log-footage)
 - A `-c copy` cut can start on a wrong/frozen frame; `cut.py` re-encodes past a 0.5 s snap, respect it; `--edit-list` hides an .mp4's pre-roll. -> [#keyframe-cuts](references/gotchas.md#keyframe-cuts)
-- VFR phone/screen recordings: re-encodes conform to CFR, `cut.py` switches to `--accurate`; pick the rate with `fit.py --fps` when odd. -> [#variable-frame-rate](references/gotchas.md#variable-frame-rate)
+- VFR phone/screen clips: re-encodes go CFR; `cut.py` re-encodes (`--vfr-guard sampled`: only measured VFR); odd rate: `fit.py --fps`. -> [#variable-frame-rate](references/gotchas.md#variable-frame-rate)
 - Sync/multicam `confidence` under 0.3 (or a huge offset) is suspect — check every camera; these align audio, never lip sync. -> [#sync-multicam-and-drift](references/gotchas.md#sync-multicam-and-drift)
 - "Normalised" audio can still clip (check true peak); ambience at -40 LUFS or below must never be raised to a speech target. -> [#loudness-and-ambience](references/gotchas.md#loudness-and-ambience)
 - Captions burned before a crop/resize land off-frame; burned small then upscaled by `export.py` come out soft. -> [#captions-fonts-and-text-order](references/gotchas.md#captions-fonts-and-text-order)
