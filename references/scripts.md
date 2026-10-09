@@ -92,8 +92,9 @@ max(2 frames, 0.1 s) away from the source's own offset where the picture starts
 reported, not repaired. `-ss`/`-t` are passed to the microsecond; `--accurate`
 seeks a second early and trims on the output side, so frames just before a
 keyframe are kept. `keyframe_snapped` is true for every stream copy (`precision`
-`packet`); `start_snapped` is measured: true only when a copied picture starts more
-than a frame from `--start` (`null` under `--dry-run`).
+`packet`); `start_snapped` is measured: true when a copied picture starts more
+than a frame from `--start`, or when its start could not be measured (an unknown start is
+never claimed exact); `null` under `--dry-run`.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
 `vfr_inconclusive`, `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`);
 `--segments` adds `segment_precision`, and `least_exact_precision` is the least exact one.

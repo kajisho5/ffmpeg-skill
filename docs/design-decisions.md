@@ -1015,7 +1015,10 @@ not a new file format this tool would have to maintain.
   `demos/build.py`'s `demo_cut_accurate` and `docs/demos.md` read it that way. What #306 measured
   goes beside them. `start_snapped` is true when a copied picture starts more than a frame from
   its requested start (the keyframe the copy's seek lands on, measured: see the entry on where a
-  copy begins), and `null` under
+  copy begins) or when that start could not be measured (no packet at or after it in the probed
+  window): an unknown start is never claimed exact, and the copy is not re-encoded for it, because
+  2.x copied without measuring at all. Test: `test_an_unmeasured_start_is_never_reported_as_exact`.
+  It is `null` under
   `--dry-run`, because a planned copy has not landed anywhere yet. `least_exact_precision` is the
   least exact segment's precision, and `segment_precision` lists them all. The two precisions
   differ only for an audio-only join of copied and re-encoded parts, because a video join re-cuts
@@ -1061,7 +1064,7 @@ not a new file format this tool would have to maintain.
   demuxing.** Measured on lavfi fixtures, frame by frame with `framemd5`, then on real iPhone
   footage. An input `-t` stops in decode order, so a part ended at a keyframe's pts carried that
   keyframe and the P-frame after it; `make_zero` parts started at the reorder delay. Of five
-  designs only one was exact: `.mp4`/`.mov` parts that keep their edit list (the concat demuxer
+  designs only one was exact: `.mp4`/`.m4v`/`.mov` parts that keep their edit list (the concat demuxer
   ignores where it starts, so the pre-roll is shown, but places the next part by its length) and
   end at the end keyframe's **dts**. Each end is judged against `--tolerance` on its own. **Open
   GOPs** cannot be cut this way: the frames just before a keyframe decode after it, so they are

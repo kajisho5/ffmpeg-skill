@@ -340,6 +340,24 @@ class CutJoinTests(unittest.TestCase):
         lag = max(range(700, 901), key=corr)
         self.assertLessEqual(abs(lag - 800), 8, f"audio is {lag - 800} samples off the picture (±1 ms allowed)")
 
+    def test_an_m4v_copy_keeps_its_edit_list_like_mp4_and_mov(self):
+        """CodeRabbit on #313 read .m4v as outside the edit-list contract. It is the same MP4 family
+        as .mp4/.mov everywhere else in the repo, and its copy keeps the edit list too (H.264;
+        the ipod muxer behind .m4v takes no HEVC)."""
+        src = DIR / "h264_bf_for_m4v.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=8",
+               "-f", "lavfi", "-i", "sine=f=440:d=8", "-c:v", "libx264", "-bf", "3", "-g", "60", "-c:a", "aac",
+               "-shortest", src)
+        seen = {}
+        for ext in ("mp4", "m4v", "mov"):
+            data = cut_json(src, "--start", "3.3", "--end", "5.3", "--edit-list", "-o", DIR / f"el_family.{ext}")
+            seen[ext] = (data["mode"], data["edit_list"], data["stored_preroll_seconds"], data["start_snapped"])
+        self.assertEqual(seen["mp4"][:2], ("copy", True), seen)
+        self.assertEqual(seen["m4v"], seen["mp4"], seen)
+        self.assertEqual(seen["mov"], seen["mp4"], seen)
+        self.assertGreater(seen["m4v"][2], 0.5, "the keyframe's pre-roll is stored behind the edit list")
+
     def test_an_unmeasured_start_is_never_reported_as_exact(self):
         """No packet at or after the start in the probed window: the start is unknown, so it is
         not claimed exact and no pre-roll is reported."""

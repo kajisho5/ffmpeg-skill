@@ -38,7 +38,7 @@ S-Log, V-Log and C-Log look grey and low-contrast but are tagged SDR. Run
 ### Keyframe cuts
 A lossless `cut.py` result may start up to one GOP (often 1–10 s) earlier than
 requested (`start_snapped: true`); the script re-encodes automatically when the
-deviation exceeds 0.5 s. With `--edit-list`, a single-segment `.mp4`/`.mov` copy
+deviation exceeds 0.5 s. With `--edit-list`, a single-segment `.mp4`/`.m4v`/`.mov` copy
 keeps the MP4 edit list instead: the pre-roll back to the keyframe is stored but
 hidden, so the picture starts at the requested time (`edit_list`,
 `stored_preroll_seconds`). A player or tool that ignores edit lists shows that
@@ -57,7 +57,7 @@ a start a few frames before a keyframe can begin at that keyframe or one GOP
 earlier (`start_snapped: true` either way).
 `av_start_skew_seconds` warns when a copy's sound and picture start apart
 (Core Media HEVC once gave 3.7 s of sound with no picture); it is reported, not
-repaired: `--accurate` is the fix, or `--edit-list` for a lossless `.mp4`/`.mov`. A `-c copy` cut on VFR or a
+repaired: `--accurate` is the fix, or `--edit-list` for a lossless `.mp4`/`.m4v`/`.mov`. A `-c copy` cut on VFR or a
 non-keyframe boundary produces a file that "works" but starts on a frozen or
 wrong frame — respect the automatic re-encode rather than forcing the copy.
 
