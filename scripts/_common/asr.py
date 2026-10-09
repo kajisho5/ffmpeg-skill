@@ -1030,8 +1030,9 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             done = parakeet(list(route.last), {"routing": ROUTING_LAST_RESORT})
             if done:
                 return done
-        if failed:
-            # it ran: the caller refuses naming it ("no word-level timings"), not "no engine"
+        if failed and not route.last:
+            # it ran: the caller refuses naming it ("no word-level timings"), not "no engine".
+            # After a last-resort Parakeet run, the refusal below names every engine tried.
             return Transcription(engine=failed, facts=facts)
         if wanted != "auto":
             die_engine_failed(wanted, video, tried, False)

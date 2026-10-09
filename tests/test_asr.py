@@ -353,6 +353,15 @@ class WhisperFailureTests(_BridgeHarness, unittest.TestCase):
         run = self._with([], lambda: asr.transcribe_words_result("talk.mp4"), faster_whisper=_crashing_faster_whisper())
         self.assertEqual((run.engine, run.words), ("faster-whisper", []))
 
+    def test_a_word_run_whose_last_resort_parakeet_also_fails_names_every_engine(self):
+        """Parakeet was tried after the Whisper engine failed: the refusal must name both, not
+        hand back the Whisper failure as if Parakeet had never run (CodeRabbit on #312)."""
+        msg, kind, extra = self._refusal(["parakeet-mlx"], lambda: asr.transcribe_words_result("talk.mp4"),
+                                         faster_whisper=_crashing_faster_whisper(), fail=("parakeet-mlx",))
+        self.assertEqual((kind, extra.get("reason")), ("input", asr.ENGINE_FAILED_REASON))
+        self.assertEqual([e["engine"] for e in extra["engines"]], ["faster-whisper", "parakeet-mlx"])
+        self.assertIn("--filler --transcribe", msg)
+
 
 class TranscriptionStateTests(_BridgeHarness, unittest.TestCase):
     """Review of #305: the engine, routing and Parakeet word timings were handed back through
