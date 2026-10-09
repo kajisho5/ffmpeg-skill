@@ -1,9 +1,11 @@
 """The optional local speech-to-text bridge, and the SRT the rest of the skill reads and writes.
 
-Whisper is never required. Nothing here runs unless a caller asked for a transcript:
+No speech engine is ever required. Nothing here runs unless a caller asked for a transcript:
 `caption.py --transcribe` and `silence.py --filler --transcribe` share this one engine probe, so
 the "no engine found" message, its install lines and its exit code are stated once rather than
-copied per tool. This module is neither ffprobe nor a decision, which is why it is its own file.
+copied per tool. What a call used (engine, model, routing, words, notes) comes back in its
+Transcription, never in module state. This module is neither ffprobe nor a decision, which is
+why it is its own file.
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from _common.decision import fmt_srt_time, parse_time
 from _common.emit import die, info
@@ -36,12 +38,37 @@ ASR_INSTALL_HINT = (
     "  faster-whisper: pip install faster-whisper\n"
     "  openai-whisper: pip install openai-whisper")
 
-# What the last transcribe() / transcribe_words() call actually used, for the caller's result
-# document: {"engine", "model", "language", "routing"}. A caller reads it right after the call.
-LAST_RUN: Dict[str, Any] = {}
-# The word timings the last Parakeet run measured ({word, start, end}), for --karaoke; whisper
-# engines leave it empty (their word timings are read from a JSON next to the SRT instead).
-LAST_WORDS: "List[Dict[str, Any]]" = []
+
+class Transcription:
+    """What one transcription produced, and what produced it.
+
+    transcribe_result() and transcribe_words_result() return one instead of leaving it in module
+    state, so two transcriptions in one process (mcp/server.py, batch.py, a test) can never read
+    each other's engine, words or routing.
+
+      cues    [(start, end, text)]: what transcribe_result() wrote to the SRT (a Parakeet word
+              run fills them too; a whisper word run leaves them [])
+      words   [{word, start, end}]: transcribe_words_result()'s word timings; from
+              transcribe_result(), a Parakeet engine's word timings for --karaoke ([] for a
+              whisper engine, whose word timings are read from a JSON next to the SRT instead)
+      engine  the engine that produced them, or None
+      facts   the result document's `transcription` block, in its key order:
+              {routing, detected_language?, engine, model, language}
+      notes   sentences for the result document's top-level `notes`
+    """
+
+    def __init__(self, cues: Optional[List[Tuple[float, float, str]]] = None,
+                 words: "Optional[List[Dict[str, Any]]]" = None, engine: Optional[str] = None,
+                 facts: Optional[Dict[str, Any]] = None, notes: Optional[List[str]] = None) -> None:
+        self.cues: List[Tuple[float, float, str]] = list(cues or [])
+        self.words: "List[Dict[str, Any]]" = [dict(w) for w in (words or [])]
+        self.engine = engine
+        self.facts: Dict[str, Any] = dict(facts or {})
+        self.notes: List[str] = list(notes or [])
+
+    def __repr__(self) -> str:
+        return (f"Transcription(engine={self.engine!r}, cues={len(self.cues)}, words={len(self.words)}, "
+                f"facts={self.facts!r}, notes={self.notes!r})")
 
 
 def parse_srt(path: str) -> List[Tuple[float, float, str]]:
@@ -102,25 +129,31 @@ def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
             fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
 
 
-def transcribe(video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int = 0,
-               engine: Optional[str] = None) -> List[Tuple[float, float, str]]:
-    """Optional local ASR bridge. `engine` (else $FFMPEG_SKILL_ASR_ENGINE, else auto) picks the
-    engine; auto tries Parakeet (parakeet-mlx, parakeet.cpp) for English speech, then whisper-cli /
-    main (whisper.cpp), faster-whisper (python), whisper (openai-whisper CLI). What ran is left in
-    LAST_RUN. No engine installed -> clear error with install hints; the skill never depends on one."""
+def transcribe_result(video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int = 0,
+                      engine: Optional[str] = None) -> Transcription:
+    """Optional local ASR bridge: the SRT written to `out_srt`, and a Transcription saying what
+    produced it. `engine` (else $FFMPEG_SKILL_ASR_ENGINE, else auto) picks the engine; auto tries
+    Parakeet (parakeet-mlx, parakeet.cpp) for English speech, then whisper-cli / main
+    (whisper.cpp), faster-whisper (python), whisper (openai-whisper CLI). No engine installed ->
+    clear error with install hints; the skill never depends on one."""
     import shutil
     import subprocess
     import tempfile
-    from _common import require_tool, run_analysis, STATE
+    from _common import require_tool
     ffmpeg = require_tool("ffmpeg")
     wanted = requested_engine(engine)
-    LAST_RUN.clear()
-    LAST_WORDS.clear()
     tmpdir = tempfile.mkdtemp(prefix="ffskill_asr_")
     try:
         return _transcribe_in(tmpdir, video, out_srt, language, model, audio_stream, ffmpeg, shutil, subprocess, wanted)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def transcribe(video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int = 0,
+               engine: Optional[str] = None) -> List[Tuple[float, float, str]]:
+    """transcribe_result()'s cues alone: the call shape caption.transcribe has always had. A caller
+    that reports which engine ran (caption.py does) calls transcribe_result() instead."""
+    return transcribe_result(video, out_srt, language, model, audio_stream, engine).cues
 
 
 def _asr_run(cmd: List[str], subprocess, name: str) -> "subprocess.CompletedProcess":
@@ -135,8 +168,47 @@ def _asr_run(cmd: List[str], subprocess, name: str) -> "subprocess.CompletedProc
     return None  # unreachable
 
 
+def assumed_english_note(language_flag: str = "--language", whisper_failed: bool = False) -> str:
+    """The top-level `notes` line for a transcript the English-only Parakeet model made from speech
+    whose language nobody named and nothing here could detect."""
+    fix = ("or fix the Whisper engine that failed (the log names it)" if whisper_failed else
+           "or install a Whisper engine, which --engine auto then uses for speech it cannot identify")
+    return (f"English was assumed: no {language_flag} was given and the spoken language could not be "
+            "detected here (that needs whisper.cpp with a multilingual ggml model), so the English-only "
+            "Parakeet model made this transcript. If the speech is not English the transcript is wrong: "
+            f"name the language with {language_flag}, " + fix)
+
+
+def _parakeet_attempt(engines: "List[str]", facts: Dict[str, Any], wanted: str, language: Optional[str],
+                      wav: str, tmpdir: str, model: Optional[str], shutil, subprocess, video: str,
+                      language_flag: str, need_words: bool = False) -> Optional[Tuple[Transcription, str]]:
+    """(Transcription, the model's file name) from the first of `engines` that transcribes, or None.
+
+    Under --engine auto with no language named or detected, the English-only model ran on an
+    assumption: the Transcription then carries assumed_english_note(), and a warning is logged.
+    `need_words`: an engine whose cues read but whose word times do not is passed over (silence.py
+    --filler can cut nothing on cues), unless it was asked for by name."""
+    for eng in engines:
+        got = run_parakeet(eng, wav, tmpdir, model, language, shutil, subprocess, video)
+        if got and need_words and not got[1] and wanted not in PARAKEET_ENGINES:
+            # cues read but no word times (a caption could use them; this caller cannot); a
+            # named engine keeps its own "no word-level timings" refusal instead
+            info(f"{eng} gave cues but no readable word timings; trying the next engine")
+            got = None
+        if not got:
+            continue
+        cues, words, chosen = got
+        run = Transcription(cues=cues, words=words, engine=eng,
+                            facts=dict(facts, engine=eng, model=chosen, language=language or facts.get("detected_language")))
+        if wanted == "auto" and not language and not facts.get("detected_language"):
+            run.notes.append(assumed_english_note(language_flag, whisper_failed=facts.get("routing") == ROUTING_LAST_RESORT))
+            info("warning: " + run.notes[-1])
+        return run, os.path.basename(chosen)
+    return None
+
+
 def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int,
-                   ffmpeg: str, shutil, subprocess, wanted: str = "auto") -> List[Tuple[float, float, str]]:
+                   ffmpeg: str, shutil, subprocess, wanted: str = "auto") -> Transcription:
     from _common import run_analysis, STATE, die
     wav = os.path.join(tmpdir, "audio.wav")
     # A wav in our own temp dir: a measurement input for the engine, not a deliverable, so it
@@ -144,21 +216,25 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
     # reports an unreadable input as kind ffmpeg instead of a CalledProcessError traceback.
     run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
                   "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
+
+    def parakeet(engines: "List[str]", facts: Dict[str, Any]) -> Optional[Transcription]:
+        done = _parakeet_attempt(engines, facts, wanted, language, wav, tmpdir, model, shutil, subprocess, video, "--language")
+        if not done:
+            return None
+        run, model_name = done
+        info(f"transcribed with {run.engine} (model {model_name})")
+        write_srt(run.cues, out_srt)
+        return run
+
     # 0. Parakeet (English), when auto-routing picks it or it was asked for by name
-    first, route = parakeet_route(wanted, language, wav, shutil, subprocess, model)
-    LAST_RUN.update(route)
-    for eng in first:
-        got = run_parakeet(eng, wav, tmpdir, model, language, shutil, subprocess, video)
-        if got:
-            cues, words, chosen = got
-            LAST_WORDS.extend(words)
-            info(f"transcribed with {eng} (model {os.path.basename(chosen)})")
-            LAST_RUN.update(engine=eng, model=chosen, language=language or route.get("detected_language"))
-            write_srt(cues, out_srt)
-            return cues
+    route = parakeet_route(wanted, language, wav, shutil, subprocess, model)
+    done = parakeet(route.first, route.facts)
+    if done:
+        return done
     if wanted in PARAKEET_ENGINES:
         die(f"--engine {wanted} could not transcribe {video} (see the line above)", kind="missing_tool",
             hint="install it (see --help), or use --engine auto to fall back to Whisper")
+    facts = route.facts
     # 1. whisper.cpp
     cli = _whisper_cpp_cli(shutil) if wanted in ("auto", "whisper.cpp") else None
     if cli:
@@ -170,10 +246,10 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         proc = _asr_run(cmd, subprocess, "whisper.cpp")
         if proc.returncode == 0 and os.path.exists(base + ".srt"):
             info(f"transcribed with whisper.cpp ({os.path.basename(cli)}, model {os.path.basename(model_path)})")
-            LAST_RUN.update(engine="whisper.cpp", model=model_path, language=language)
             cues = _engine_cues(base + ".srt", "whisper.cpp", video)
             write_srt(cues, out_srt)
-            return cues
+            return Transcription(cues=cues, engine="whisper.cpp",
+                                 facts=dict(facts, engine="whisper.cpp", model=model_path, language=language))
         info("whisper.cpp found but failed: " + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
     # 2. faster-whisper (python package)
     try:
@@ -198,9 +274,9 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         if not cues:
             die_no_speech("faster-whisper", video)
         info("transcribed with faster-whisper")
-        LAST_RUN.update(engine="faster-whisper", model=model, language=language)
         write_srt(cues, out_srt)
-        return cues
+        return Transcription(cues=cues, engine="faster-whisper",
+                             facts=dict(facts, engine="faster-whisper", model=model, language=language))
     except ImportError:
         pass
     # 3. openai-whisper CLI
@@ -212,15 +288,21 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         srt = os.path.join(tmpdir, "audio.srt")
         if proc.returncode == 0 and os.path.exists(srt):
             info("transcribed with openai-whisper")
-            LAST_RUN.update(engine="openai-whisper", model=model, language=language)
             cues = _engine_cues(srt, "openai-whisper", video)
             write_srt(cues, out_srt)
-            return cues
+            return Transcription(cues=cues, engine="openai-whisper",
+                                 facts=dict(facts, engine="openai-whisper", model=model, language=language))
+    # 4. Parakeet after all, when the language was never known and every Whisper engine failed
+    if route.last:
+        info("no Whisper engine transcribed it; trying Parakeet with English assumed")
+        done = parakeet(list(route.last), {"routing": ROUTING_LAST_RESORT})
+        if done:
+            return done
     if wanted != "auto":
         die(f"--engine {wanted} is not installed or could not transcribe {video}", kind="missing_tool",
             hint="install it (see --help), or use --engine auto to use whichever engine is installed")
     die_no_engine("Or write the cues by hand with --text cues.txt (see format above).")
-    return []
+    return Transcription()
 
 
 def die_no_engine(alternative: str, flag: str = "--transcribe") -> None:
@@ -484,31 +566,71 @@ def detect_language(wav: str, shutil, subprocess) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def parakeet_route(engine: str, language: Optional[str], wav: str, shutil, subprocess,
-                   model: Optional[str] = None) -> Tuple[List[str], Dict[str, Any]]:
-    """(the Parakeet engines to try first, routing facts for the result document).
+ROUTING_ASSUMED_ENGLISH = "auto: language not detectable here and no Whisper engine, assumed English"
+ROUTING_UNDETECTED_WHISPER = "auto: language not detectable here, Whisper first (Parakeet is English-only)"
+ROUTING_LAST_RESORT = "auto: language not detectable here and no Whisper engine transcribed it, assumed English"
 
-    `auto` tries Parakeet only for English: an explicit --language, else whisper.cpp's detector,
-    else (no detector installed) English is assumed and the result says so. A named Parakeet
-    engine always runs; with a non-English --language it needs a multilingual (v3) model, which
-    _parakeet_model_for() checks.
+
+class Route(NamedTuple):
+    """parakeet_route()'s answer: which Parakeet engines run, and when."""
+    first: List[str]  # Parakeet engines to try before any Whisper engine
+    facts: Dict[str, Any]  # the routing facts for the result document's `transcription`
+    last: Tuple[str, ...] = ()  # Parakeet engines to try once every Whisper engine has failed
+
+
+def parakeet_route(engine: str, language: Optional[str], wav: str, shutil, subprocess,
+                   model: Optional[str] = None, whisper_model: Optional[str] = None) -> Route:
+    """Route(the Parakeet engines to try first, routing facts for the result document, the ones to
+    try last).
+
+    `auto` tries Parakeet only for English: an explicit --language, else whisper.cpp's detector.
+    When neither can say, the English-only model is not trusted with it: a Whisper engine that
+    can run (`whisper_model`, default `model`) goes first and Parakeet only after every Whisper
+    engine failed; with no Whisper engine, Parakeet runs on English assumed and the caller's
+    result carries assumed_english_note(). A named Parakeet engine always runs; with a non-English
+    --language it needs a multilingual (v3) model, which _parakeet_model_for() checks.
     """
     if engine in PARAKEET_ENGINES:
-        return [engine], {"routing": "requested"}
+        return Route([engine], {"routing": "requested"})
     if engine != "auto":
-        return [], {"routing": "requested"}
+        return Route([], {"routing": "requested"})
     if not any(_parakeet_available(e, shutil, model) for e in PARAKEET_ENGINES):
-        return [], {"routing": "auto: no Parakeet engine installed"}
+        return Route([], {"routing": "auto: no Parakeet engine installed"})
     if language:
         if _is_english(language):
-            return list(PARAKEET_ENGINES), {"routing": "auto: --language is English"}
-        return [], {"routing": f"auto: --language {language} is not English"}
+            return Route(list(PARAKEET_ENGINES), {"routing": "auto: --language is English"})
+        return Route([], {"routing": f"auto: --language {language} is not English"})
     detected = detect_language(wav, shutil, subprocess)
     if detected is None:
-        return list(PARAKEET_ENGINES), {"routing": "auto: language not detectable here, assumed English"}
+        if _whisper_ready(shutil, whisper_model if whisper_model is not None else model):
+            info("the spoken language could not be detected here; a Whisper engine takes it (Parakeet's model is English-only)")
+            return Route([], {"routing": ROUTING_UNDETECTED_WHISPER}, PARAKEET_ENGINES)
+        return Route(list(PARAKEET_ENGINES), {"routing": ROUTING_ASSUMED_ENGLISH})
     if _is_english(detected):
-        return list(PARAKEET_ENGINES), {"routing": "auto: detected English", "detected_language": detected}
-    return [], {"routing": f"auto: detected {detected}, not English", "detected_language": detected}
+        return Route(list(PARAKEET_ENGINES), {"routing": "auto: detected English", "detected_language": detected})
+    return Route([], {"routing": f"auto: detected {detected}, not English", "detected_language": detected})
+
+
+def _module_importable(name: str) -> bool:
+    """`import name` would find something, without importing it (faster-whisper pulls in ctranslate2)."""
+    import importlib.util
+    import sys
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):  # a module already in sys.modules with no __spec__ (a stub)
+        return sys.modules.get(name) is not None
+
+
+def _whisper_ready(shutil, model: Optional[str]) -> bool:
+    """A Whisper engine that --engine auto would run with `model`: whisper.cpp with that model on
+    disk, faster-whisper importable, or the openai-whisper CLI. A Parakeet model name is no
+    Whisper model, so it answers False."""
+    name = (model or "base")
+    if "parakeet" in name.lower() or name.lower().endswith(".gguf"):
+        return False
+    if _whisper_cpp_cli(shutil) and os.path.exists(_whisper_cpp_model(name)):
+        return True
+    return _module_importable("faster_whisper") or bool(shutil.which("whisper"))
 
 
 def _parakeet_available(engine: str, shutil, model: Optional[str] = None) -> bool:
@@ -607,16 +729,27 @@ def _heard_nothing(text: str, key: str) -> bool:
 
 def transcribe_words(video: str, language: "Optional[str]" = None, model: str = "base",
                      audio_stream: int = 0, engine: "Optional[str]" = None) -> "Tuple[List[Dict[str, Any]], Optional[str]]":
-    """([{word, start, end}, ...], the engine that produced them) from a local speech engine.
+    """transcribe_words_result()'s (words, engine) alone: the call shape this function has had
+    since 1.17. A caller that reports which engine ran (silence.py does) calls
+    transcribe_words_result() instead."""
+    run = transcribe_words_result(video, language, model, audio_stream, engine)
+    return run.words, run.engine
+
+
+def transcribe_words_result(video: str, language: "Optional[str]" = None, model: str = "base",
+                            audio_stream: int = 0, engine: "Optional[str]" = None,
+                            language_flag: str = "--filler-lang") -> Transcription:
+    """[{word, start, end}, ...] from a local speech engine, as a Transcription naming the engine.
 
     `engine` (else $FFMPEG_SKILL_ASR_ENGINE, else auto) picks it; auto tries Parakeet for English
     speech first (parakeet-mlx sub-word tokens merged into words, parakeet.cpp `--json` words),
     then drives whichever whisper is installed with ITS word-timestamp option -- whisper.cpp
     `--output-json-full`, faster-whisper `word_timestamps=True`, openai-whisper
-    `--word_timestamps True` -- and returns the words it measured. ([], engine) when the engine
-    ran but its build produced no word-level timings, so the caller can refuse naming that engine
-    instead of pretending the audio had no words in it. No engine at all raises through
-    die_no_engine(), the same refusal caption.py gives. What ran is left in LAST_RUN.
+    `--word_timestamps True` -- and returns the words it measured. Words [] with the engine set
+    when the engine ran but its build produced no word-level timings, so the caller can refuse
+    naming that engine instead of pretending the audio had no words in it. No engine at all
+    raises through die_no_engine(), the same refusal caption.py gives. `language_flag` is the
+    caller's flag for the language, named in assumed_english_note().
     """
     import shutil as _shutil
     import subprocess as _subprocess
@@ -624,7 +757,7 @@ def transcribe_words(video: str, language: "Optional[str]" = None, model: str = 
     from _common import require_tool, run_analysis, STATE
     ffmpeg = require_tool("ffmpeg")
     wanted = requested_engine(engine)
-    LAST_RUN.clear()
+    parakeet_model = None if model == "base" else model
     tmpdir = _tempfile.mkdtemp(prefix="ffskill_asrw_")
     try:
         wav = os.path.join(tmpdir, "audio.wav")
@@ -632,24 +765,25 @@ def transcribe_words(video: str, language: "Optional[str]" = None, model: str = 
                       "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000",
                       "-c:a", "pcm_s16le", wav])
 
+        def parakeet(engines: "List[str]", facts: Dict[str, Any]) -> Optional[Transcription]:
+            done = _parakeet_attempt(engines, facts, wanted, language, wav, tmpdir, parakeet_model,
+                                     _shutil, _subprocess, video, language_flag, need_words=True)
+            if not done:
+                return None
+            run, model_name = done
+            info(f"word timings from {run.engine} ({len(run.words)} words, model {model_name})")
+            return run
+
         # 0. Parakeet (English), when auto-routing picks it or it was asked for by name
-        first, route = parakeet_route(wanted, language, wav, _shutil, _subprocess, None if model == "base" else model)
-        LAST_RUN.update(route)
-        for eng in first:
-            got = run_parakeet(eng, wav, tmpdir, None if model == "base" else model, language, _shutil, _subprocess, video)
-            if got and not got[1] and wanted not in PARAKEET_ENGINES:
-                # cues read but no word times (a caption could use them; this caller cannot); a
-                # named engine keeps its own "no word-level timings" refusal instead
-                info(f"{eng} gave cues but no readable word timings; trying the next engine")
-                got = None
-            if got:
-                _cues, words, chosen = got
-                info(f"word timings from {eng} ({len(words)} words, model {os.path.basename(chosen)})")
-                LAST_RUN.update(engine=eng, model=chosen, language=language or route.get("detected_language"))
-                return words, eng
+        route = parakeet_route(wanted, language, wav, _shutil, _subprocess, parakeet_model, whisper_model=model)
+        done = parakeet(route.first, route.facts)
+        if done:
+            return done
         if wanted in PARAKEET_ENGINES:
             die(f"--engine {wanted} could not transcribe {video} (see the line above)", kind="missing_tool",
                 hint="install it, or use --engine auto to fall back to Whisper")
+        facts = route.facts
+        failed: Optional[str] = None  # the Whisper engine that ran and wrote no word-timing JSON
 
         # 1. whisper.cpp
         cli = _whisper_cpp_cli(_shutil) if wanted in ("auto", "whisper.cpp") else None
@@ -663,15 +797,15 @@ def transcribe_words(video: str, language: "Optional[str]" = None, model: str = 
             if proc.returncode == 0 and os.path.exists(base + ".json"):
                 words = _words_from_whisper_cpp_json(base + ".json")
                 info(f"word timings from whisper.cpp ({len(words)} words)")
-                LAST_RUN.update(engine="whisper.cpp", model=model_path, language=language)
-                return words, "whisper.cpp"
+                return Transcription(words=words, engine="whisper.cpp",
+                                     facts=dict(facts, engine="whisper.cpp", model=model_path, language=language))
             info("whisper.cpp found but produced no word-timing JSON: "
                  + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
-            return [], "whisper.cpp"
+            failed = "whisper.cpp"
 
         # 2. faster-whisper
         try:
-            if wanted not in ("auto", "faster-whisper"):
+            if failed or wanted not in ("auto", "faster-whisper"):
                 raise ImportError
             from faster_whisper import WhisperModel  # type: ignore
             import threading
@@ -692,13 +826,13 @@ def transcribe_words(video: str, language: "Optional[str]" = None, model: str = 
                 die(f"faster-whisper exceeded the {STATE.timeout:.0f} s time limit; raise "
                     "--timeout for a long recording", code=124, kind="timeout")
             info(f"word timings from faster-whisper ({len(collected)} words)")
-            LAST_RUN.update(engine="faster-whisper", model=model, language=language)
-            return [w for w in collected if w["word"]], "faster-whisper"
+            return Transcription(words=[w for w in collected if w["word"]], engine="faster-whisper",
+                                 facts=dict(facts, engine="faster-whisper", model=model, language=language))
         except ImportError:
             pass
 
         # 3. openai-whisper CLI
-        if wanted in ("auto", "openai-whisper") and _shutil.which("whisper"):
+        if not failed and wanted in ("auto", "openai-whisper") and _shutil.which("whisper"):
             cmd = ["whisper", wav, "--model", model, "--word_timestamps", "True",
                    "--output_format", "json", "--output_dir", tmpdir]
             if language:
@@ -708,17 +842,26 @@ def transcribe_words(video: str, language: "Optional[str]" = None, model: str = 
             if proc.returncode == 0 and os.path.exists(doc):
                 words = _words_from_openai_whisper_json(doc)
                 info(f"word timings from openai-whisper ({len(words)} words)")
-                LAST_RUN.update(engine="openai-whisper", model=model, language=language)
-                return words, "openai-whisper"
+                return Transcription(words=words, engine="openai-whisper",
+                                     facts=dict(facts, engine="openai-whisper", model=model, language=language))
             info("openai-whisper found but produced no word-timing JSON: "
                  + (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
-            return [], "openai-whisper"
+            failed = "openai-whisper"
 
+        # 4. Parakeet after all, when the language was never known and no Whisper engine gave words
+        if route.last:
+            info("no Whisper engine produced word timings; trying Parakeet with English assumed")
+            done = parakeet(list(route.last), {"routing": ROUTING_LAST_RESORT})
+            if done:
+                return done
+        if failed:
+            # it ran: the caller refuses naming it ("no word-level timings"), not "no engine"
+            return Transcription(engine=failed, facts=facts)
         if wanted != "auto":
             die(f"--engine {wanted} is not installed", kind="missing_tool",
                 hint="install it, or use --engine auto to use whichever engine is installed")
         die_no_engine("or pass --words with a transcript you already have.",
                       flag="--filler --transcribe")
-        return [], None
+        return Transcription()
     finally:
         _shutil.rmtree(tmpdir, ignore_errors=True)

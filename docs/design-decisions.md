@@ -831,6 +831,17 @@ not a new file format this tool would have to maintain.
 - **`auto` picks Parakeet only for English.** The default Parakeet model (tdt-0.6b-v2) is
   English-only and transcribes other speech as English-shaped nonsense. A named `--language`
   decides; without one whisper.cpp's detector (the smallest multilingual ggml model, a second
-  or less) decides; with no detector the input is assumed English and `transcription.routing`
-  says so. Measured on 8 min of LibriSpeech: parakeet-mlx v2 2.8% WER at ~120× real time,
-  whisper large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`.
+  or less) decides. When neither can name the language, a Whisper engine that can run goes first
+  (Parakeet only if every Whisper engine fails): a fast English transcript is not worth a
+  confidently wrong one. Only with no Whisper engine at all does Parakeet run on English
+  assumed, and then the result's top-level `notes` says the transcript is wrong if the speech is
+  not English -- `transcription.routing` alone was too quiet for a caller that reads `verified`.
+  A named `--engine parakeet-*` runs as asked, with no note. Measured on 8 min of LibriSpeech
+  (contributor's figures, Apple Silicon): parakeet-mlx v2 2.8% WER at ~120× real time, whisper
+  large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`,
+  `UndetectedLanguageTests`.
+- **The transcribe call returns what it used; nothing is left in module state.**
+  `transcribe_result()` / `transcribe_words_result()` return a `Transcription` (cues, words,
+  engine, the `transcription` facts, notes), so two transcriptions in one process never read each
+  other's engine or words. `transcribe()` and `transcribe_words()` keep their old return shapes
+  for existing callers. Test: `TranscriptionStateTests`.

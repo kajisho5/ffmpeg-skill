@@ -24,6 +24,11 @@ from _fixtures import MediaFixtures, OUT, script  # noqa: E402
 from _common import asr  # noqa: E402
 
 
+def _assumed(doc):
+    """The result document's top-level notes that say English was assumed."""
+    return [n for n in doc.get("notes") or [] if n.startswith("English was assumed")]
+
+
 class ParakeetCppModelTests(unittest.TestCase):
     """parakeet.cpp runs only with a .gguf it can find: an explicit --model is enough, for a
     forced engine and for --engine auto alike."""
@@ -107,10 +112,12 @@ class ParakeetRoutingTests(unittest.TestCase):
         self.assertEqual(asr.parakeet_route("parakeet.cpp", "de", "a.wav", sh_, subprocess)[0], ["parakeet.cpp"])
         with mock.patch.object(asr, "detect_language", return_value="ja"):
             self.assertEqual(asr.parakeet_route("auto", None, "a.wav", sh_, subprocess)[0], [])
-        with mock.patch.object(asr, "detect_language", return_value=None):
-            eng, route = asr.parakeet_route("auto", None, "a.wav", sh_, subprocess)
-            self.assertEqual(eng, ["parakeet-mlx", "parakeet.cpp"])
-            self.assertIn("assumed English", route["routing"])
+        with mock.patch.object(asr, "detect_language", return_value=None), \
+                mock.patch.object(asr, "_whisper_ready", return_value=False):
+            route = asr.parakeet_route("auto", None, "a.wav", sh_, subprocess)
+            self.assertEqual(route.first, ["parakeet-mlx", "parakeet.cpp"])
+            self.assertEqual(route.last, ())
+            self.assertIn("assumed English", route.facts["routing"])
 
     def test_english_only_model_refuses_another_language(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -132,6 +139,154 @@ class ParakeetRoutingTests(unittest.TestCase):
             os.environ[asr.ASR_ENGINE_ENV] = "parakeet.cpp"
             self.assertEqual(asr.requested_engine(None), "parakeet.cpp")
             self.assertEqual(asr.requested_engine("whisper.cpp"), "whisper.cpp")
+
+
+class UndetectedLanguageTests(unittest.TestCase):
+    """Review of #305: with no --language and nothing to detect one, auto handed the speech to the
+    English-only Parakeet model and the only trace was `transcription.routing`. A Whisper engine
+    that can run now goes first; only with none does Parakeet run on English assumed, and then
+    the caller gets a top-level `notes` line saying the transcript may be wrong."""
+
+    def setUp(self):
+        self.mlx_only = mock.Mock(which=lambda n: "/x/parakeet-mlx" if n == "parakeet-mlx" else None)
+
+    def test_a_runnable_whisper_goes_first_and_parakeet_waits(self):
+        with mock.patch.object(asr, "detect_language", return_value=None), \
+                mock.patch.object(asr, "_whisper_ready", return_value=True):
+            route = asr.parakeet_route("auto", None, "a.wav", self.mlx_only, subprocess)
+        self.assertEqual(route.first, [])
+        self.assertEqual(route.last, asr.PARAKEET_ENGINES)
+        self.assertEqual(route.facts, {"routing": asr.ROUTING_UNDETECTED_WHISPER})
+
+    def test_only_parakeet_runs_on_english_assumed(self):
+        with mock.patch.object(asr, "detect_language", return_value=None), \
+                mock.patch.object(asr, "_whisper_ready", return_value=False):
+            route = asr.parakeet_route("auto", None, "a.wav", self.mlx_only, subprocess)
+        self.assertEqual(route.first, list(asr.PARAKEET_ENGINES))
+        self.assertEqual(route.facts, {"routing": asr.ROUTING_ASSUMED_ENGLISH})
+
+    def test_a_named_language_or_a_detected_one_never_asks_for_whisper(self):
+        with mock.patch.object(asr, "_whisper_ready", side_effect=AssertionError("not consulted")):
+            self.assertEqual(asr.parakeet_route("auto", "en", "a.wav", self.mlx_only, subprocess).first,
+                             list(asr.PARAKEET_ENGINES))
+            with mock.patch.object(asr, "detect_language", return_value="en"):
+                self.assertEqual(asr.parakeet_route("auto", None, "a.wav", self.mlx_only, subprocess).last, ())
+            # a named engine runs as asked
+            self.assertEqual(asr.parakeet_route("parakeet-mlx", None, "a.wav", self.mlx_only, subprocess),
+                             asr.Route(["parakeet-mlx"], {"routing": "requested"}))
+
+    def test_whisper_ready_means_an_engine_auto_would_run(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(sys.modules, {"faster_whisper": None}):
+            model = Path(d) / "ggml-base.bin"
+            cli_only = mock.Mock(which=lambda n: "/x/whisper-cli" if n == "whisper-cli" else None)
+            self.assertFalse(asr._whisper_ready(cli_only, str(Path(d) / "missing.bin")), "whisper-cli with no model")
+            model.write_bytes(b"")
+            self.assertTrue(asr._whisper_ready(cli_only, str(model)))
+            self.assertFalse(asr._whisper_ready(cli_only, "mlx-community/parakeet-tdt-0.6b-v3"), "a Parakeet model")
+            self.assertFalse(asr._whisper_ready(cli_only, str(Path(d) / "tdt-0.6b-v2-f16.gguf")))
+            self.assertTrue(asr._whisper_ready(mock.Mock(which=lambda n: "/x/whisper" if n == "whisper" else None), "base"))
+            self.assertFalse(asr._whisper_ready(self.mlx_only, "base"))
+        stub = type(sys)("faster_whisper")  # a module with no __spec__, as a test stub is
+        with mock.patch.dict(sys.modules, {"faster_whisper": stub}):
+            self.assertTrue(asr._whisper_ready(self.mlx_only, "base"))
+
+    def test_the_note_names_the_callers_flag(self):
+        self.assertIn("--filler-lang", asr.assumed_english_note("--filler-lang"))
+        self.assertIn("install a Whisper engine", asr.assumed_english_note())
+        self.assertIn("fix the Whisper engine", asr.assumed_english_note(whisper_failed=True))
+
+
+class _FakeEngines:
+    """shutil / subprocess stand-ins for the bridge: `which` answers only for `names`, and `run`
+    writes what the named engine would have written where its arguments say."""
+
+    def __init__(self, names):
+        self.names = set(names)
+
+    def which(self, name):
+        return f"/x/{name}" if name in self.names or name in ("ffmpeg", "ffprobe") else None
+
+    def run(self, cmd, **kw):
+        exe = os.path.basename(cmd[0])
+        if exe == "parakeet-mlx":
+            out = cmd[cmd.index("--output-dir") + 1]
+            os.makedirs(out, exist_ok=True)
+            Path(out, "audio.json").write_text(json.dumps(MLX_DOC), encoding="utf-8")
+        elif exe == "whisper-cli" and "-osrt" in cmd:
+            Path(cmd[cmd.index("-of") + 1] + ".srt").write_text(
+                "1\n00:00:00,000 --> 00:00:01,500\nBonjour tout le monde\n", encoding="utf-8")
+        elif exe == "whisper-cli" and "--output-json-full" in cmd:
+            Path(cmd[cmd.index("-of") + 1] + ".json").write_text(json.dumps({"transcription": [{"tokens": [
+                {"text": " Bonjour", "offsets": {"from": 0, "to": 600}},
+                {"text": " euh", "offsets": {"from": 700, "to": 900}}]}]}), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+class TranscriptionStateTests(unittest.TestCase):
+    """Review of #305: the engine, routing and Parakeet word timings were handed back through
+    module-level LAST_RUN / LAST_WORDS, which every call in one process shared (mcp/server.py,
+    batch.py, a test). The calls now return them; nothing is kept in the module."""
+
+    def _patched(self, engines):
+        import _common
+        fake = _FakeEngines(engines)
+        stack = [mock.patch.object(_common, "run_analysis", lambda *a, **k: None),
+                 mock.patch.object(shutil, "which", fake.which),
+                 mock.patch.object(subprocess, "run", fake.run),
+                 mock.patch.dict(sys.modules, {"faster_whisper": None}),
+                 # a host ggml model in ~/.cache/whisper.cpp must not change the model named below
+                 mock.patch.object(asr, "_whisper_cpp_model", lambda m: m),
+                 mock.patch.dict(os.environ, {"PARAKEET_MODEL": "", "PARAKEET_CPP_MODEL": "", asr.ASR_ENGINE_ENV: ""})]
+        return stack
+
+    def _with(self, engines, call):
+        stack = self._patched(engines)
+        for p in stack:
+            p.start()
+        try:
+            return call()
+        finally:
+            for p in reversed(stack):
+                p.stop()
+
+    def test_two_transcriptions_in_one_process_do_not_share_state(self):
+        self.assertFalse(hasattr(asr, "LAST_RUN") or hasattr(asr, "LAST_WORDS"),
+                         "module-level hand-off state is back")
+        with tempfile.TemporaryDirectory() as d:
+            srt = os.path.join(d, "a.srt")
+            first = self._with(["parakeet-mlx"], lambda: asr.transcribe_result("talk.mp4", srt, "en", "base"))
+            snapshot = (first.engine, [dict(w) for w in first.words], dict(first.facts), list(first.cues))
+            self.assertEqual(first.engine, "parakeet-mlx")
+            self.assertEqual([w["word"] for w in first.words], ["So", "um", "we", "start.", "Here."])
+            self.assertEqual(first.facts, {"routing": "auto: --language is English", "engine": "parakeet-mlx",
+                                           "model": asr.PARAKEET_MLX_DEFAULT_MODEL, "language": "en"})
+
+            # a whisper caption run after it: no Parakeet words, model or routing carried over
+            second = self._with(["whisper-cli"], lambda: asr.transcribe_result("talk.mp4", srt, None, "base",
+                                                                                engine="whisper.cpp"))
+            self.assertEqual(second.engine, "whisper.cpp")
+            self.assertEqual(second.words, [])
+            self.assertEqual(second.cues, [(0.0, 1.5, "Bonjour tout le monde")])
+            self.assertEqual(second.facts, {"routing": "requested", "engine": "whisper.cpp", "model": "base", "language": None})
+            self.assertEqual(second.notes, [])
+
+            # a word run in between and after: its own words, engine and facts only
+            third = self._with(["whisper-cli", "parakeet-mlx"],
+                               lambda: asr.transcribe_words_result("talk.mp4", "fr", engine="whisper.cpp"))
+            self.assertEqual([w["word"] for w in third.words], ["Bonjour", "euh"])
+            self.assertEqual(third.facts["language"], "fr")
+
+            # and the earlier results are still exactly what their own calls returned
+            self.assertEqual((first.engine, first.words, first.facts, first.cues), snapshot)
+            self.assertEqual(second.words, [])
+
+    def test_the_old_call_shapes_still_answer(self):
+        """transcribe() -> cues and transcribe_words() -> (words, engine): what callers had."""
+        with tempfile.TemporaryDirectory() as d:
+            cues = self._with(["parakeet-mlx"], lambda: asr.transcribe("talk.mp4", os.path.join(d, "a.srt"), "en", "base"))
+            self.assertEqual(cues, [(0.2, 1.6, "So um we start."), (2.0, 2.4, "Here.")])
+            words, engine = self._with(["parakeet-mlx"], lambda: asr.transcribe_words("talk.mp4", "en"))
+            self.assertEqual((len(words), engine), (5, "parakeet-mlx"))
 
 
 class ParakeetEngineTests(MediaFixtures):
@@ -177,6 +332,7 @@ class ParakeetEngineTests(MediaFixtures):
         self.assertEqual(doc["transcription"]["engine"], "parakeet-mlx")
         self.assertEqual(doc["transcription"]["model"], asr.PARAKEET_MLX_DEFAULT_MODEL)
         self.assertIn("So um we start.", (OUT / "pk_auto.srt").read_text())
+        self.assertFalse(_assumed(doc), "English was named, not assumed")
 
     def test_caption_engine_flag_picks_parakeet_cpp(self):
         """One end-to-end parakeet.cpp run; flag-over-env precedence is a unit test above."""
@@ -184,6 +340,9 @@ class ParakeetEngineTests(MediaFixtures):
                                 "-o", OUT / "pk_cpp.mp4", env=self.env()).stdout)
         self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
         self.assertIn("So um we start.", (OUT / "pk_cpp.srt").read_text())
+        # a named engine runs as asked, with no language: no routing decision, so no warning
+        self.assertEqual(doc["transcription"]["routing"], "requested")
+        self.assertFalse(_assumed(doc))
 
     def test_caption_mux_reports_the_transcription_too(self):
         """--mode mux wrote a soft subtitle track from the transcript but left `transcription` out of
@@ -269,6 +428,102 @@ class ParakeetEngineTests(MediaFixtures):
         self.assertTrue(mlx_ran, "the crashing parakeet-mlx was never run, so nothing fell through")
         self.assertEqual(doc["filler"]["source"], "parakeet:parakeet.cpp")
         self.assertEqual([r["word"] for r in doc["filler"]["removed"]], ["um"])
+
+    def _no_host_whisper(self):
+        if asr._module_importable("faster_whisper"):
+            self.skipTest("faster-whisper is importable here, so a Whisper engine is always available")
+
+    def _with_whisper_cli(self, fail):
+        """A PATH holding the fake Parakeet engines, ffmpeg and a fake whisper-cli whose language
+        detector names nothing; it transcribes ("Bonjour tout le monde") unless `fail`. HOME
+        holds the ggml-base.bin it is run with. Returns (PATH dir, HOME dir); the caller removes both."""
+        d = Path(tempfile.mkdtemp(prefix="ffskill_whisperasr_"))
+        home = Path(tempfile.mkdtemp(prefix="ffskill_whisperhome_"))
+        for name in os.listdir(self.bin):
+            os.symlink(self.bin / name, d / name)
+        (home / ".cache" / "whisper.cpp").mkdir(parents=True)
+        (home / ".cache" / "whisper.cpp" / "ggml-base.bin").write_bytes(b"")
+        cli = d / "whisper-cli"
+        cli.write_text(f"#!{sys.executable}\nFAIL = {fail!r}\n" + textwrap.dedent("""
+            import json, sys
+            a = sys.argv[1:]
+            if "-dl" in a:
+                print("whisper_full_with_state: no language line in this build", file=sys.stderr)
+                sys.exit(0)
+            if FAIL:
+                print("whisper_init_from_file_with_params: failed to load model", file=sys.stderr)
+                sys.exit(1)
+            of = a[a.index("-of") + 1]
+            if "-osrt" in a:
+                open(of + ".srt", "w").write("1\\n00:00:00,000 --> 00:00:01,500\\nBonjour tout le monde\\n")
+            if "--output-json-full" in a:
+                json.dump({"transcription": [{"tokens": [{"text": " Bonjour", "offsets": {"from": 0, "to": 600}},
+                                                         {"text": " euh", "offsets": {"from": 700, "to": 900}}]}]},
+                          open(of + ".json", "w"))
+            """))
+        cli.chmod(0o755)
+        return d, home
+
+    def test_no_language_and_only_parakeet_says_english_was_assumed(self):
+        """Review of #305: a Mac with parakeet-mlx and no Whisper captioning speech nobody named.
+        Parakeet still runs, but the result says, at the top level, that English was assumed."""
+        self._no_host_whisper()
+        doc = json.loads(script("caption.py", self.src, "--transcribe", "--fast", "--json",
+                                "-o", OUT / "pk_assumed.mp4", env=self.env(PATH=str(self.bin))).stdout)
+        self.assertEqual(doc["transcription"]["engine"], "parakeet-mlx")
+        self.assertEqual(doc["transcription"]["routing"], asr.ROUTING_ASSUMED_ENGLISH)
+        self.assertEqual(len(_assumed(doc)), 1, doc.get("notes"))
+        self.assertIn("--language", _assumed(doc)[0])
+        self.assertTrue(doc["verified"], "the render itself is still verified; the note carries the doubt")
+        fil = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--json",
+                                env=self.env(PATH=str(self.bin))).stdout)
+        self.assertEqual(fil["filler"]["source"], "parakeet:parakeet-mlx")
+        self.assertEqual(len(_assumed(fil)), 1, fil.get("notes"))
+        self.assertIn("--filler-lang", _assumed(fil)[0])
+
+    def test_no_language_goes_to_whisper_before_parakeet(self):
+        """The same machine with whisper.cpp installed but no language it can detect: Whisper,
+        which handles any language, takes the speech; the English-only model is not trusted with it."""
+        d, home = self._with_whisper_cli(fail=False)
+        try:
+            env = self.env(PATH=str(d), HOME=str(home))
+            doc = json.loads(script("caption.py", self.src, "--transcribe", "--mode", "mux", "--json",
+                                    "-o", OUT / "pk_whisperfirst.mp4", env=env).stdout)
+            fil = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--json",
+                                    env=env).stdout)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+            shutil.rmtree(home, ignore_errors=True)
+        self.assertEqual(doc["transcription"], {"routing": asr.ROUTING_UNDETECTED_WHISPER, "engine": "whisper.cpp",
+                                                "model": str(home / ".cache" / "whisper.cpp" / "ggml-base.bin"),
+                                                "language": None})
+        self.assertIn("Bonjour tout le monde", (OUT / "pk_whisperfirst.srt").read_text())
+        self.assertFalse(_assumed(doc))
+        self.assertEqual(fil["filler"]["source"], "whisper:whisper.cpp")
+        self.assertEqual(fil["filler"]["transcription"]["routing"], asr.ROUTING_UNDETECTED_WHISPER)
+        self.assertNotIn("notes", fil)
+
+    def test_parakeet_runs_last_when_every_whisper_engine_fails(self):
+        """Whisper went first and failed: Parakeet is still better than refusing, on English
+        assumed, and the note says which fix applies."""
+        self._no_host_whisper()
+        d, home = self._with_whisper_cli(fail=True)
+        try:
+            env = self.env(PATH=str(d), HOME=str(home))
+            doc = json.loads(script("caption.py", self.src, "--transcribe", "--mode", "mux", "--json",
+                                    "-o", OUT / "pk_lastresort.mp4", env=env).stdout)
+            fil = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--json",
+                                    env=env).stdout)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+            shutil.rmtree(home, ignore_errors=True)
+        self.assertEqual(doc["transcription"]["engine"], "parakeet-mlx")
+        self.assertEqual(doc["transcription"]["routing"], asr.ROUTING_LAST_RESORT)
+        self.assertEqual(len(_assumed(doc)), 1, doc.get("notes"))
+        self.assertIn("fix the Whisper engine", _assumed(doc)[0])
+        self.assertEqual(fil["filler"]["source"], "parakeet:parakeet-mlx")
+        self.assertEqual(fil["filler"]["transcription"]["routing"], asr.ROUTING_LAST_RESORT)
+        self.assertEqual(len(_assumed(fil)), 1, fil.get("notes"))
 
     def test_caption_another_language_skips_parakeet(self):
         proc = script("caption.py", self.src, "--transcribe", "--language", "fr", "--fast", "--json",

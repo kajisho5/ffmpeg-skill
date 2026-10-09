@@ -20,7 +20,7 @@ from typing import List, Tuple
 # `detect` moved into _common/probe.py in 1.16.0 so metadata.py --auto-chapters can measure the
 # same silences without importing this tool; the body is unchanged and the name still lives here.
 from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS,
-                     FILLER_PAD, transcribe_words, read_text_or_die)
+                     FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
@@ -100,7 +100,7 @@ def resolve_filler(args, meta):
         die("--filler needs word timings: pass --words transcript.json (a whisper JSON with word "
             "timestamps) or --transcribe. There is no way to find a filler word without them -- "
             "cutting the short quiet blips instead would remove real speech.", kind="input")
-    source, engine, raw = None, None, None
+    source, engine, raw, transcription = None, None, None, {}
     if args.words:
         try:
             raw = json.loads(read_text_or_die(args.words, "--words"))
@@ -119,15 +119,18 @@ def resolve_filler(args, meta):
                 '{"words": [{"word": ..., "start": ..., "end": ...}]} (or the same inside '
                 '"segments").', kind="input")
     else:
-        # No pre-check for an installed engine here: transcribe_words() probes for one and
+        # No pre-check for an installed engine here: transcribe_words_result() probes for one and
         # raises the same die_no_engine() refusal when there is none. Two places deciding "is
         # whisper here" is two places to disagree.
         # The engine is driven with ITS word-timestamp option (whisper.cpp --output-json-full,
         # faster-whisper word_timestamps=True, openai-whisper --word_timestamps True). An SRT
         # cannot answer this question: a cue has a start and an end, a word does not.
-        # engine= only when asked for: the older call shape (no engine=) stays valid for anything wrapping it
-        words, engine = transcribe_words(args.input, args.filler_lang if args.filler_lang != "auto" else None,
-                                         **({"engine": args.engine} if args.engine else {}))
+        # The call's own result, not module state: engine, routing and notes belong to this run.
+        asr_run = _asr.transcribe_words_result(args.input, args.filler_lang if args.filler_lang != "auto" else None,
+                                               engine=args.engine)
+        words, engine = asr_run.words, asr_run.engine
+        transcription = dict(asr_run.facts)
+        args._asr_notes = list(asr_run.notes)
         family = "parakeet" if engine in _asr.PARAKEET_ENGINES else "whisper"
         source = f"{family}:{engine}" if engine else "whisper"
         if not words:
@@ -172,7 +175,7 @@ def resolve_filler(args, meta):
                             "disfluency -- this will cut real sentences.")
     block = {
         "lang": lang, "source": source, "engine": engine,
-        **({"transcription": dict(_asr.LAST_RUN)} if engine and _asr.LAST_RUN else {}),
+        **({"transcription": transcription} if engine and transcription else {}),
         "words": sorted(wordlist), "removed": [dict(s) for s in spans],
         "removed_count": len(spans),
         "removed_seconds": round(sum(s["end"] - s["start"] for s in spans), 3),
@@ -319,6 +322,10 @@ def main() -> int:
              f"({filler_info['lang']}, list {filler_info['list']})")
         for warning in filler_info.get("warnings") or []:
             info("warning: " + warning)
+    if getattr(args, "_asr_notes", None):
+        # an English-only transcript made on an assumption (asr.assumed_english_note): the
+        # bridge already logged the warning; the result document carries it at the top level
+        summary["notes"] = list(args._asr_notes)
     if len(keeps) > args.max_cuts:
         die(f"{len(keeps)} keep ranges is above --max-cuts {args.max_cuts}: the filter graph grows "
             "with every range and a graph this size is slow and fragile. Raise --max-cuts if you "

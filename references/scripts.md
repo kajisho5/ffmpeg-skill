@@ -933,7 +933,11 @@ If `parakeet-mlx`, `parakeet-cli` (parakeet.cpp, with a `.gguf`), `whisper-cli` 
 `caption.py input.mp4 --transcribe [--language ja] [--model base] [--engine auto]` writes the
 SRT from the audio and burns it (combine with `--animate pop --karaoke`). `--engine auto` (default,
 or `FFMPEG_SKILL_ASR_ENGINE`) runs Parakeet for English speech -- an English `--language`, else
-whisper.cpp's language detector, else assumed English -- and Whisper for any other language;
+English from whisper.cpp's language detector -- and Whisper for any other language. When neither
+can name the language, a Whisper engine that can run goes first (Parakeet only if every Whisper
+engine fails); with no Whisper engine at all Parakeet runs on English *assumed*, and the result's
+top-level `notes` says so: that transcript is wrong for non-English speech, so pass `--language`
+(`--filler-lang` for `silence.py`) when the speech may not be English.
 `--engine parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper` forces one (a
 missing one is `kind: missing_tool`). `--model` is the whisper model; a Parakeet engine takes it
 only when it names a Parakeet model (`mlx-community/parakeet-*` or a `.gguf`), else

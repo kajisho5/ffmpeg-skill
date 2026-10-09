@@ -1248,10 +1248,13 @@ def main() -> int:
             cues = []
             info(f"[dry-run] would transcribe {args.input} and write {srt_path}")
         else:
-            cues = transcribe(args.input, srt_path, args.language, args.model, args.audio_stream,
-                              **({"engine": args.engine} if args.engine else {}))
-            args._asr = dict(_asr.LAST_RUN)
-            args._word_timings = whisper_word_timings(srt_path) or sorted((w["start"], w["end"], w["word"]) for w in _asr.LAST_WORDS)
+            # the call's own result, not module state: engine, routing and words belong to this run
+            asr_run = _asr.transcribe_result(args.input, srt_path, args.language, args.model, args.audio_stream,
+                                             engine=args.engine)
+            cues = asr_run.cues
+            args._asr = dict(asr_run.facts)
+            args._asr_notes = list(asr_run.notes)
+            args._word_timings = whisper_word_timings(srt_path) or sorted((w["start"], w["end"], w["word"]) for w in asr_run.words)
             cues, changed = lay_out(cues)
             if changed:
                 write_srt(cues, srt_path)
@@ -1288,7 +1291,8 @@ def main() -> int:
     # WRITING waits for a real run (the rule every side file in this tool follows), which is why
     # the cues are kept in hand below for the font sample and the ASS generator.
     planned_cues: Optional[List[Tuple[float, float, str]]] = None
-    side_notes: List[str] = []
+    # an English-only transcript made on an assumption says so first (asr.assumed_english_note)
+    side_notes: List[str] = list(getattr(args, "_asr_notes", None) or [])
     ass_sample_path = args.ass
     if args.srt and not (args.text or args.transcribe) and os.path.exists(srt_path or ""):
         adjusted, changed = lay_out(parse_srt(srt_path))

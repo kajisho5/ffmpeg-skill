@@ -349,8 +349,10 @@ engine present. Whisper is never a dependency of this skill.
 `external:parakeet` is the same kind of optional capability for the same two flags:
 parakeet-mlx, or parakeet-cli with a `.gguf` model it can find. Either engine family
 satisfies `--transcribe`; `--engine auto` (the default, or `FFMPEG_SKILL_ASR_ENGINE`) runs
-Parakeet for English speech and Whisper for every other language (with no language
-detector installed and no `--language`, English is assumed and the result says so), and the result's
+Parakeet for English speech and Whisper for every other language. When no `--language` is given
+and no detector can name it, a Whisper engine that can run takes it (Parakeet only if every
+Whisper engine fails); with only Parakeet installed, English is assumed and the result's
+top-level `notes` says the transcript is wrong if the speech is not English. The result's
 `transcription` says which engine, model and routing decision produced the cues (in every
 `--mode`, `mux` included).
 
@@ -500,7 +502,6 @@ Per-tool keys added in 1.17, all additive:
 | `filler`, `removed_seconds_total` | `silence.py --filler` | `{lang, source, engine, words, removed, removed_count, removed_seconds, removed_words, word_timings, list, warnings}`. The existing `removed_seconds` is unchanged in name and meaning — the seconds of *silence* removed, which is what it has always held — and `removed_seconds_total` is the additive sibling covering silence plus filler |
 | `jobs`, `jobs_requested`, `wall_seconds`, `item_seconds_total`, `timed_out` | `batch.py` | the parallelism actually applied and the number asked for, the batch's wall clock, the sum of the per-item times (so the speed-up can be quoted), and whether the shared timeout budget ran out. A timed-out item carries `"skipped": "timeout"` in its result row |
 | `timeline` | `render.py --export-timeline FILE` | `{format, rate, duration, frames, clips, transition, transition_frames, music, markers, notes, not_exported}`: the written timeline's own numbers (`rate` is exact, `"30000/1001"` for 29.97) and what the project asked for that an editor timeline cannot carry. Nothing is encoded (`commands: []`); `verified` means the file was written and reads back as its format (`verification` step `parse`) -- not that an editor opened it |
-| `transcription` | `caption.py --transcribe`; inside `filler` for `silence.py --filler --transcribe` | `{engine, model, language, routing, detected_language?}` |
 | `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …), the GPU setting (`FFMPEG_SKILL_HW` and whether `--hw`/`--no-hw` made it explicit) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
 
 Per-tool keys added in 1.17.1, all additive:
@@ -532,6 +533,8 @@ Per-tool keys added after 2.2.2, all additive:
 | `silent` | `join.py` (every run) | `[{index, path, peak_db, at, end}]`: inputs whose whole-file audio peak (volumedetect) is at or below `--silence-threshold` (default -50 dBFS) and that `--on-silent warn` (default) joined anyway, with a `notes` line; `at`/`end` are where the input sits in the output, in seconds (a transition overlaps its neighbours). An input named by `--allow-silent N[,N]` (1-based) is a planned pause: always joined, listed with `intended: true`, no warning or note, whatever `--on-silent` says. `[]` otherwise. `--on-silent fail` names them in the `kind: input` refusal's `problems` (reason `silent (peak -91.0 dBFS)`), `skip` lists them under `skipped`. An input with no audio stream is never silent; `verified` is unaffected |
 | `short_segments`, `duplicates` | `join.py` (every run) | warnings, never refusals, and the join command is unchanged: `short_segments: [{index, path, duration}]` names each measured input shorter than 2 frames at the join's fps (an audio-only join: shorter than 0.05 s); `duplicates: [{path, indices}]` names a path (compared resolved) listed more than once — repeating a clip can be intended. `[]` when none; each non-empty one adds a `notes` line |
 | `silent` | `waveform.py` (every run) | `true` when the input audio's whole-file peak is at or below `--silence-threshold` (default -50 dBFS), which draws a flat line; `--on-silent warn` (default) renders it anyway with a `notes` line, `fail` refuses (`kind: input`) before ffmpeg runs. `false` when audible, `null` under `--dry-run` (nothing measured). `verified` is unaffected |
+| `transcription` | `caption.py --transcribe` (every `--mode`); inside `filler` for `silence.py --filler --transcribe` | `{routing, detected_language?, engine, model, language}`: the engine and model that made the transcript; `language` is the one named (`--language`, `--filler-lang`) or, for a Parakeet run, the detected one, `null` otherwise; `detected_language` is present when auto's whisper.cpp detector named one; `routing` says why `--engine auto` chose the engine (`"requested"` for a named engine) |
+| `notes` | `silence.py --filler --transcribe` (new for `silence.py`; `caption.py` already had it) | present when `--engine auto` ran the English-only Parakeet model on English *assumed* (no language given, none detectable, no Whisper engine): the transcript is wrong if the speech is not English. `caption.py --transcribe` puts the same line in its `notes` |
 
 `caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
 and produced no cue, the refusal is `"<engine> found no speech in <input>"` with `kind: input`,
