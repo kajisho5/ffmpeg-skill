@@ -126,8 +126,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                      required=FF, optional=[{"capability": "filter:silencedetect", "when": "--auto-chapters"},
                                             {"capability": "filter:scdet", "when": "--auto-chapters --from scenes|both"}],
                      video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="bit_exact", deterministic=True),
-    "loop": dict(role="execution", inputs=["video asset"], outputs=["video artifact repeated to the requested count or duration"],
-                 required=FF + [X264, AAC], optional=[],
+    "loop": dict(role="execution", inputs=["video asset"], outputs=["video artifact repeated to the requested count or duration (--boomerang: played forward then backward, silent)"],
+                 required=FF + [X264, AAC], optional=[{"capability": "filter:reverse", "when": "--boomerang"}, {"capability": "filter:loop", "when": "--boomerang"}],
                  video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "insert": dict(role="execution", inputs=["still image"], outputs=["silent video artifact of the requested duration / frame size / fps"],
                    required=FF + [X264], optional=[{"capability": "filter:zoompan", "when": "--zoom / --pan"}],
@@ -267,7 +267,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "speedramp": dict(video="always", audio="always", note="setpts/atempo per segment always forces a re-encode of both streams"),
     "broll":    dict(video="always", audio="conditional", note="the overlay graph always re-encodes the video stream; A's audio is stream-copied under --audio a and re-encoded to AAC under --audio b/mix"),
     "metadata": dict(video="never", audio="never", note="-c copy on every stream; only the container's chapters and tags change -- --auto-chapters decodes to measure, but still writes with -c copy"),
-    "loop":     dict(video="always", audio="always", note="-stream_loop always re-encodes both streams; the audio codec is always AAC when present"),
+    "loop":     dict(video="always", audio="conditional", note="-stream_loop always re-encodes both streams; the audio codec is always AAC when present. --boomerang re-encodes the video through reverse/loop filters and drops the audio"),
     "insert":    dict(video="always", audio="never", note="always encodes a fresh silent clip from the still image; there is no audio stream to touch"),
     "background": dict(video="always", audio="never", note="always encodes a fresh generated clip; there is no input to copy from"),
     "reverse":   dict(video="always", audio="conditional", note="video always re-encodes (reverse buffers and re-emits every frame); audio re-encodes to AAC when present and not dropped by --no-audio"),
@@ -453,6 +453,9 @@ def output_schema(name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
                  "sdr_path": {"enum": ["tonemap", "gamut"], "description": "--to-sdr only: tonemap for PQ / HLG / Dolby Vision (and --force on an untagged file); gamut for BT.2020 primaries on an SDR transfer, converted to BT.709 without a tone map"},
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "--to-sdr only: which path was taken and why"},
                  "measurements": {"type": "object", "description": "--correct only: signalstats levels of input and output"}}
+    elif name == "loop":
+        extra = {"boomerang": {"type": "boolean", "description": "--boomerang: frames 0..N-1 then N-2..1, repeated, so neither turnaround frame is shown twice"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--boomerang on a source with audio: the audio was dropped"}}
     elif name == "cut":
         extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},

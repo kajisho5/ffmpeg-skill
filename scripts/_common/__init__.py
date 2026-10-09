@@ -94,7 +94,7 @@ from _common.color import (
     bt709_tag_args, color_hex, _COLOR_TOKEN_RE, _sdr_bt709, validate_color
 )
 from _common.text import (
-    ADVANCE_EM, BIDI_SCRIPTS, _char_em, char_script, default_font_file, detect_script, drawtext_boxborderw,
+    ADVANCE_EM, BIDI_SCRIPTS, _char_em, char_script, default_font_file, detect_script, drawtext_boxborderw, drawtext_center_align,
     drawtext_shaping, drawtext_text_opts, emoji_asset_for, EMOJI_ASSET_HINT, emoji_clusters, emoji_codepoint_name,
     _EMOJI_COLOR_FAMILIES, _emoji_color_font, emoji_filter_chain, _emoji_name_candidates, EMOJI_RANGES,
     _EMOJI_REGIONAL, emoji_support, _EMOJI_SUPPORT_CACHE, _EMOJI_TAIL, escape_drawtext, _family_rank, FC_LANG,
@@ -188,7 +188,7 @@ __all__ = [
     "BEAT_REFRACTORY_S", "BEAT_WINDOW_S", "BEAT_SUPPORT_DIVISOR", "BEAT_ALIGN_DIVISOR",
     "BEAT_Z_FLOOR", "BEAT_Z_SPAN",
     "_onset_strength", "_pick_onsets", "_autocorrelation_peak", "_grid_score",
-    "default_font_file", "default_output", "DEFAULT_TIMEOUT", "detect_script", "die", "drawtext_boxborderw",
+    "default_font_file", "default_output", "DEFAULT_TIMEOUT", "detect_script", "die", "drawtext_boxborderw", "drawtext_center_align",
     "_DRAWTEXT_PENDING", "drawtext_shaping", "drawtext_text_opts", "_DRAWTEXT_TMPDIR", "_drawtext_tmpdir",
     "dry_run_input_pending", "emit", "emoji_asset_for", "EMOJI_ASSET_HINT", "emoji_clusters",
     "emoji_codepoint_name", "_EMOJI_COLOR_FAMILIES", "_emoji_color_font", "emoji_filter_chain",

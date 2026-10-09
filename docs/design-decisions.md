@@ -815,6 +815,17 @@ not a new file format this tool would have to maintain.
   as `kind: input`, `reason: "no_speech"`, naming the engine and the caller's input rather than
   the engine's deleted temporary SRT. Tests: `AsrNoSpeechTests`.
 
+## 2.4.1 — a plain join keeps its picture
+
+- **A plain `join.py` cut gives each clip one length, as a crossfade does.** The concat filter
+  starts the next clip after the *longer* stream of this one, so the picture of a clip whose sound
+  runs past it -- a music bed padded to the container, or only an AAC tail -- got a hole (measured:
+  0.3 s, and one frame from a 20 ms tail). `clip_length` decides the length for both paths: the
+  sound's when it runs more than a frame past the picture (the last frame is held; narration is never
+  cut), the picture's otherwise (the tail is trimmed). Tests:
+  `test_join_none_holds_a_picture_shorter_than_its_sound`,
+  `test_join_none_trims_a_sound_tail_under_a_frame`.
+
 ## Unreleased — the GPU
 
 - **`--hw` is opt-in, and a delivery preset needs it explicitly.** Measured first on an M4 Max

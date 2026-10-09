@@ -7,6 +7,7 @@
 import os
 import platform
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -542,6 +543,96 @@ class EditingTests(MediaFixtures):
     def test_loop_duration_shorter_than_source_refused(self):
         script("loop.py", self.src, "--duration", "3", expect_fail=True)
 
+    def _ramp(self, name, frames, audio=False):
+        """A lossless 10 fps clip whose every frame is a different flat grey, so each output frame
+        can be named by its source index; --quality 0 keeps a re-encode bit-exact."""
+        path = OUT / name
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=black:s=64x64:r=10:d={frames / 10},format=gray,geq=lum='20+30*N',format=yuv420p"]
+        if audio:
+            cmd += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-shortest", "-c:a", "aac"]
+        sh(*cmd, "-c:v", "libx264", "-qp", "0", path)
+        return path
+
+    @staticmethod
+    def _frame_md5s(path):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-fps_mode", "passthrough",
+                              "-f", "framemd5", "-"], stdout=subprocess.PIPE, text=True, check=True).stdout
+        return [line.split(",")[-1].strip() for line in raw.splitlines() if line and not line.startswith("#")]
+
+    def _source_indices(self, src, out):
+        """The output's frames as source frame indices (framemd5); fails on a frame that is no source frame."""
+        index = {md5: i for i, md5 in enumerate(self._frame_md5s(src))}
+        got = self._frame_md5s(out)
+        self.assertTrue(all(md5 in index for md5 in got), "every boomerang frame must be a source frame")
+        return [index[md5] for md5 in got]
+
+    def test_loop_boomerang_times_plays_forward_then_back_without_repeating_turnarounds(self):
+        src = self._ramp("ramp6.mp4", 6)
+        self.assertEqual(len(set(self._frame_md5s(src))), 6, "the ramp's frames must be distinct")
+        out = OUT / "loop_boom_times.mp4"
+        script("loop.py", src, "--boomerang", "--times", "2", "--quality", "0", "-o", out)
+        # 0..N-1 then N-2..1: neither frame 5 nor frame 0 is shown twice in a row, even across a cycle
+        self.assertEqual(self._source_indices(src, out), [0, 1, 2, 3, 4, 5, 4, 3, 2, 1] * 2)
+        self.assertClose(probe(str(out))["duration"], 2.0, 0.05)
+
+    def test_loop_boomerang_times_one_is_a_single_round_trip(self):
+        src = self._ramp("ramp6.mp4", 6)
+        out = OUT / "loop_boom_once.mp4"
+        script("loop.py", src, "--boomerang", "--times", "1", "--quality", "0", "-o", out)
+        self.assertEqual(self._source_indices(src, out), [0, 1, 2, 3, 4, 5, 4, 3, 2, 1])
+
+    def test_loop_boomerang_duration_hits_target(self):
+        src = self._ramp("ramp6.mp4", 6)
+        out = OUT / "loop_boom_dur.mp4"
+        script("loop.py", src, "--boomerang", "--duration", "1.7", "--quality", "0", "-o", out)
+        self.assertEqual(self._source_indices(src, out), ([0, 1, 2, 3, 4, 5, 4, 3, 2, 1] * 2)[:17])
+        self.assertClose(probe(str(out))["duration"], 1.7, 0.05)
+
+    def test_loop_boomerang_drops_audio_and_says_so(self):
+        src = self._ramp("ramp6_audio.mp4", 6, audio=True)
+        self.assertIsNotNone(probe(str(src))["audio"])
+        out = OUT / "loop_boom_audio.mp4"
+        data = json.loads(script("loop.py", src, "--boomerang", "--times", "2", "-o", out, "--json").stdout)
+        self.assertIsNone(probe(str(out))["audio"], "reversed audio sounds wrong; a boomerang is silent")
+        self.assertTrue(any("audio" in n for n in data["notes"]), data)
+
+    def test_loop_boomerang_vfr_source_shows_each_frame_once(self):
+        """A VFR source (phone footage) must not go through -fps_mode cfr after the graph: the CFR
+        conform duplicates frames against the reversed timestamps, doubling a turnaround."""
+        ramp = self._ramp("ramp6.mp4", 6)
+        src = OUT / "ramp6_vfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ramp,
+           "-vf", "setpts='(N*0.1+gte(N,3)*0.05)/TB'", "-fps_mode", "passthrough", "-use_editlist", "0", "-c:v", "libx264", "-qp", "0", src)
+        # -use_editlist 0: FFmpeg 7's mp4 muxer otherwise writes an edit list that hides the last
+        # frame (setpts leaves it no duration), so the fixture itself would read as 5 frames
+        self.assertTrue(probe(str(src))["video"]["variable_frame_rate_suspected"], "the fixture must read as VFR")
+        out = OUT / "loop_boom_vfr.mp4"
+        script("loop.py", src, "--boomerang", "--times", "2", "--quality", "0", "-o", out)
+        self.assertEqual(self._source_indices(src, out), [0, 1, 2, 3, 4, 5, 4, 3, 2, 1] * 2)
+        # and constant-rate: every frame lasts as long (the encoder's time base follows the graph's
+        # rate, not the source's r_frame_rate, which is 10/1 here against an average of 60/7)
+        durations = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=duration",
+                                    "-of", "csv=p=0", str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout.split()
+        self.assertEqual(len(set(durations)), 1, durations)
+        v = probe(str(out))["video"]
+        self.assertEqual(v["r_frame_rate"], v["avg_frame_rate"])
+
+    def test_loop_boomerang_rate_is_the_nominal_fraction_and_never_a_timebase(self):
+        import loop  # scripts/ is on sys.path via _fixtures
+        rate = lambda **v: loop._nominal_rate(v)
+        self.assertEqual(rate(r_frame_rate="60/1", avg_frame_rate="72000/1201"), "60/1")  # iPhone 1/600
+        self.assertEqual(rate(r_frame_rate="50/1", avg_frame_rate="75/8"), "75/8")  # VFR: the average
+        self.assertEqual(rate(r_frame_rate="1000/1", avg_frame_rate="30/1"), "30/1")
+        # no usable average: a time-base r_frame_rate would squeeze the clip to milliseconds
+        self.assertEqual(rate(r_frame_rate="90000/1", avg_frame_rate="0/0", nb_frames=250, duration=10.0), "25")
+        self.assertEqual(rate(r_frame_rate="90000/1", avg_frame_rate="0/0"), "30")
+        self.assertEqual(rate(r_frame_rate="24000/1001", avg_frame_rate="0/0"), "24000/1001")
+
+    def test_loop_boomerang_too_few_frames_refused(self):
+        src = self._ramp("ramp2.mp4", 2)
+        script("loop.py", src, "--boomerang", "--times", "2", "-o", OUT / "loop_boom_short.mp4", expect_fail=True)
+
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
         out = OUT / "insert1.mp4"
@@ -861,6 +952,74 @@ class EditingTests(MediaFixtures):
         self.assertClose(probe(str(out))["video"]["duration"], 4.5, 0.05)
         self.assertClose(self._tone_onset(out, 1900), 2.5, 0.1)
 
+    def _moving_clip(self, out, picture, tone, freq, fps=30):
+        """Like _av_clip, but every pixel changes on every frame (a luma ramp stepped by the frame
+        number), so a held frame is told apart from the next one by its content, not assumed.
+        testsrc2 is not enough at this size: its moving parts are a few pixels, and two adjacent
+        frames measured 65 dB apart."""
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           f"nullsrc=s=64x48:r={fps}:d={picture},geq=lum='mod(N*23+X*2,256)':cb=128:cr=128",
+           "-f", "lavfi", "-i", f"sine=f={freq}:d={tone}", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", out)
+        return out
+
+    @staticmethod
+    def _gray_frames(path):
+        """Every frame of `path`, decoded to 64x48 luma bytes."""
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-fps_mode", "passthrough", "-vf",
+                              "scale=64:48,format=gray", "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
+        return [raw[i:i + 64 * 48] for i in range(0, len(raw), 64 * 48)]
+
+    @staticmethod
+    def _frame_psnr(a, b):
+        """PSNR of two decoded luma frames (bytes), 99 when identical. MediaFixtures._psnr compares files."""
+        mse = sum((x - y) ** 2 for x, y in zip(a, b)) / len(a)
+        return 99.0 if mse == 0 else 10 * math.log10(255 * 255 / mse)
+
+    @staticmethod
+    def _pts_steps(path):
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                              "-of", "csv=p=0", str(path)], stdout=subprocess.PIPE, text=True, check=True).stdout
+        pts = [float(x.strip(",")) for x in out.split()]
+        return {round(b - a, 4) for a, b in zip(pts, pts[1:])}
+
+    def test_join_none_holds_a_picture_shorter_than_its_sound(self):
+        """A plain cut (--transition none) of a clip whose sound runs 0.3 s past its
+        picture. The concat filter starts the next clip after the longer stream, so the video had
+        a 0.3 s hole (an odd average rate downstream) and the run still succeeded. Each clip now
+        lasts as long as its sound, its last frame held, as the crossfade path already does."""
+        d = OUT / "join_none_hold"
+        d.mkdir(exist_ok=True)
+        a = self._moving_clip(d / "a.mp4", 3, 3.3, 700)
+        b = self._moving_clip(d / "b.mp4", 3, 3.3, 1900)
+        out = d / "held.mp4"
+        doc = json.loads(script("join.py", a, b, "--transition", "none", "--preset", "ultrafast", "--json",
+                                "-o", out).stdout)
+        self.assertEqual(doc["expected_duration"], 6.6, "two clips of 3.3 s: each lasts as long as its sound")
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(self._pts_steps(out), {0.0333}, "no hole in the video timeline")
+        frames = self._gray_frames(out)
+        self.assertEqual(len(frames), 2 * 99, "3.3 s per clip at 30 fps")
+        for i in range(90, 99):
+            self.assertGreaterEqual(self._frame_psnr(frames[i], frames[89]), 45.0, f"frame {i} holds clip a's last frame")
+        self.assertLess(self._frame_psnr(frames[89], frames[88]), 35.0, "the premise: the picture moves every frame")
+        self.assertLess(self._frame_psnr(frames[99], frames[89]), 35.0, "clip b starts with its own picture")
+        self.assertClose(self._tone_onset(out, 1900), 3.3, 0.1)
+
+    def test_join_none_trims_a_sound_tail_under_a_frame(self):
+        """The other side of the hold rule: an AAC tail of 20 ms is not held for -- each clip keeps its
+        90 frames and nothing is inserted between them."""
+        d = OUT / "join_none_tail"
+        d.mkdir(exist_ok=True)
+        a = self._moving_clip(d / "a.mp4", 3, 3.02, 700)
+        b = self._moving_clip(d / "b.mp4", 3, 3.02, 1900)
+        out = d / "tail.mp4"
+        doc = json.loads(script("join.py", a, b, "--transition", "none", "--preset", "ultrafast", "--json",
+                                "-o", out).stdout)
+        self.assertEqual(doc["expected_duration"], 6.0, "the 20 ms tails are trimmed, not counted")
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(self._pts_steps(out), {0.0333})
+        self.assertEqual(len(self._gray_frames(out)), 2 * 90)
+
     def test_join_dissolve_of_short_parts_keeps_the_frame_count(self):
         """Two 1 s parts at 30 fps whose AAC sound runs 20 ms past the picture (a cut part) dissolved
         over 0.3 s: 30 + 30 - 9 = 51 frames. Offsetting by the container length added frames and
@@ -1164,6 +1323,20 @@ class EditingTests(MediaFixtures):
         doc = json.loads(script("join.py", d / "mute1.mp4", d / "mute2.mp4", "--transition", "none", "--on-silent", "fail",
                                 "--json", "-o", d / "mute.mp4").stdout)
         self.assertEqual((doc["status"], doc["silent"]), ("completed", []))
+
+    def test_join_plain_cut_dry_run_names_a_pending_clips_trim_as_a_placeholder(self):
+        """2.4.1 trims/holds every plain-cut clip to clip_length, so a pending clip's planned
+        `trim=duration=0.000` is the unmeasured stub's 0 s, not the cut. The plan says so (#77),
+        as the crossfade path already does for its offsets."""
+        d = OUT / "join_pending_video"
+        d.mkdir(exist_ok=True)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
+           "-f", "lavfi", "-i", "sine=frequency=440", "-t", "1", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           d / "a.mp4")
+        doc = json.loads(script("join.py", d / "a.mp4", d / "later.mp4", "--transition", "none", "--dry-run", "--json",
+                                "-o", d / "plan.mp4").stdout)
+        self.assertTrue(any("planned trim lengths count each pending input as 0 s" in n for n in doc["notes"]), doc["notes"])
+        self.assertFalse((d / "plan.mp4").exists())
 
     def test_join_dry_run_plans_on_pending_segments(self):
         """Under --dry-run a segment that does not exist yet is an earlier step's output. Its
