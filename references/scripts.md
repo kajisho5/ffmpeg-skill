@@ -948,10 +948,11 @@ Nothing is required: without an engine it prints install hints and the user can 
 cues instead. The skill downloads nothing, and every engine transcribes on this machine -- the
 audio is never uploaded. An engine may fetch its *model weights* the first time it runs:
 parakeet-mlx downloads `mlx-community/parakeet-tdt-0.6b-v2` (or the `--model` /
-`PARAKEET_MODEL` repo) from Hugging Face into its cache, and faster-whisper and openai-whisper
-fetch theirs the same way; `HF_HUB_OFFLINE=1` keeps the Hugging Face ones on the cached copy
-afterwards. parakeet.cpp and whisper.cpp only read a model file you downloaded. Always tell the
-user which engine was used, and treat the transcript as a draft to review.
+`PARAKEET_MODEL` repo) from Hugging Face into its cache; faster-whisper (also from Hugging Face)
+and openai-whisper (from OpenAI) fetch theirs on first use too. `HF_HUB_OFFLINE=1` keeps the
+Hugging Face ones on the cached copy afterwards. parakeet.cpp and whisper.cpp only read a model
+file you downloaded. Always tell the user which engine was used, and treat the transcript as a
+draft to review.
 
 ### MCP server — the toolkit for any MCP client
 `python3 mcp/server.py` speaks MCP over stdio; each script is a tool taking
