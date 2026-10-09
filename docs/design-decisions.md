@@ -949,3 +949,89 @@ not a new file format this tool would have to maintain.
   re-encoded on the CPU by the fallback above, with ffmpeg's line in the note. Code:
   `_common.runner.apple_silicon`; `doctor`'s `hw.platform_ok` uses the same check. Test:
   `test_hw_runs_on_apple_silicon_hardware_under_a_rosetta_python`.
+## Unreleased — cuts that say what they did
+
+- **A `--segments` join copies only identical parts, and otherwise re-cuts from the source.**
+  The concat demuxer takes the first part's parameters for every part, so a copied HEVC segment
+  next to a re-encoded H.264 one decoded with errors from a run that exited 0. The copy join now
+  needs matching per-stream signatures (codec parameters, rotation, colour tags, extradata hash;
+  a hash missing on both sides only counts for PCM/MP3/MP2 or an MPEG-TS output). No sum of the
+  parts' durations predicts the join (each carries its own start offset, which the concat
+  demuxer drops: it missed by 0.03–1.3 s across five ordinary sources), so the result is
+  measured instead (next entry). The fallback does not join the parts at all: a copied part carries keyframe
+  pre-roll and an audio tail, and the concat filter starts each segment where its longest stream
+  ended, which left a 0.1 s hole even after a `PTS-STARTPTS` rebase. Re-cutting every segment
+  from the source (per-segment input seek, `trim`/`atrim`, concat filter) measured 120/120
+  frames with no gap. Code: `cut.signatures_match`, `cut.join_from_source`. Tests:
+  `tests/test_cut_copy.py`.
+- **A copy join snaps both ends of every part to keyframes, and verifies by demuxing.** Measured
+  on lavfi fixtures, frame by frame with `framemd5`, then on
+  real iPhone footage. An input `-t` stops in decode order, so a part ended at a
+  keyframe's pts carried that keyframe and the P-frame after it; `make_zero` parts started at
+  the reorder delay. Of five designs only one was exact: `.mp4`/`.mov` parts that keep their
+  edit list (the concat demuxer ignores where it starts, so the pre-roll is shown, but places the
+  next part by its length) and end at the end keyframe's **dts**. The end keyframe is the one
+  nearest the requested end among those decoded after the copy's start, so `-t` is positive;
+  each end is judged against `--tolerance` on its own. **Open GOPs** cannot be cut this way: the
+  frames just before a keyframe decode after it, so they are lost (144/150 in every design). An
+  open end keyframe, or an open start keyframe after the first part, re-cuts the join. iPhone
+  "High Efficiency" HEVC is open at every keyframe, so its joins re-encode; "Most Compatible"
+  H.264 has no B-frames and stays a copy. Smart rendering (copy the interior, re-encode the
+  joins) was deferred. The join is then **measured, not predicted** (`cut.check_join`): its video
+  packet count against the source packets its parts hold, and, for constant frame timing, every
+  presentation step. A step may exceed a frame by half a frame **or by one audio frame**: with no
+  B-frames a part's AAC ends up to one codec frame after its picture and the demuxer places the
+  next part after it (32.7 ms steps at 60 fps against a 25 ms half-frame bound, frames exact, A/V
+  in sync), and a stricter bound would re-encode footage that copies exactly. The check is the
+  backstop for what the design does not model: Matroska parts (still the old cut), unusual GOP
+  shapes. Only copied parts are copy-joined; parts encoded one by one leave an AAC frame's hole
+  at every join. Code: `cut.plan_part`, `cut.gop_is_open`, `cut.check_join`. Tests:
+  `CopyJoinPlanTests`, `CutJoinTests` in `tests/test_cut_copy.py`.
+- **Both streams of a segment shift by one constant.** A per-stream `PTS-STARTPTS` moved an
+  audio track that starts 0.379 s after its video 0.379 s early. The re-cut shifts video and
+  audio by the same seek margin and pads the audio to the segment origin
+  (`aresample=async=1:first_pts=0`). Test: `test_a_delayed_audio_track_keeps_its_offset_through_the_fallback`.
+- **The re-cut seeks a second early.** The MP4 demuxer seeks by decode time, so on a keyint-60
+  HEVC file with 4 B-frames `-ss 9.9` began at the keyframe at 10.0 and lost three frames; an
+  input `-t` likewise stops reading before late-stored B-frames. Test:
+  `test_more_segments_than_one_call_takes_are_joined_in_chunks` (it crosses that boundary).
+- **At most 32 segments per ffmpeg call, chunked through Matroska with PCM audio.** Each segment
+  is its own input (a file handle, demuxer and decoder), and macOS shells default to 256 open
+  files. MP4/AAC chunks copy-joined put the video 23 ms behind the audio (encoder priming per
+  chunk); PCM chunks carry none, and the audio is encoded once for the final file.
+- **A single MP4/MOV copy keeps its edit list; its report comes from the source's packets.**
+  `make_zero` showed the keyframe's pre-roll. The plain copy writes an edit list that hides it, and
+  its first presented frame was bit-identical to the source frame at or after `--start`. What it
+  stored is read from the source, not the output: the demuxer takes the keyframe with the largest
+  *decode* time at or before the start, so `stored_preroll_seconds` is start minus that keyframe's
+  presentation time, and a keyframe presented *after* the start (dts 9.833 for a 10.0 keyframe,
+  asked for 9.9) is a snap. Comparing the output's durations with and without the edit list was
+  tried and does not work: a B-frame composition offset makes them differ even on a keyframe
+  start. Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests: `tests/test_cut_copy.py`.
+- **A re-encoded cut keeps an HEVC source HEVC.** A cut is a trim, so a re-encoded segment should
+  come out in the codec of the source and of any copied segment beside it; x264 for every SDR
+  source turned an iPhone clip into H.264. `source_codec_video_args` sends an HEVC source through
+  `encoder_args("hevc")` (8-bit BT.709 for SDR, the same Main10 line as before for HDR, VideoToolbox
+  under `--hw`); other sources keep `video_args`. The chunked join re-states the chunks' `hvc1`
+  tag, because a copy out of Matroska into MP4 writes `hev1`, which Apple players refuse.
+- **VFR is measured, not inferred from an average.** `r_frame_rate` against `avg_frame_rate` is a
+  whole-file average: a phone clip at 29.98 against a nominal 30 tripped it, and one long last
+  frame does too. `measure_frame_timing` reads packet timestamps (no decoding) in up to five 6 s
+  windows and requires every interval within a tick (1 ms at least, half a frame at most) of its
+  window's median. The half-frame cap is there because a 1/fps time base makes one tick a whole
+  frame. VFR confined to the unsampled stretches is missed; that was accepted because the check it
+  replaces was coarser, a copy is lossless, and `--accurate` is always available. The reads are
+  shaped by how `-read_intervals` behaves: it resolves a seek, and a relative end, against the
+  keyframe it lands on, so windows name an absolute end and keep only frames from their own
+  start, and the first window does not seek (a seek to 0 on an edit-listed MP4 skipped its
+  negative-pts keyframe). Code: `_common/probe.py` `classify_frame_timing`,
+  `measure_frame_timing`. Tests: `FrameTimingTests`, `VfrGuardTests`.
+- **A segment past the video's end is held or trimmed, like a join.py clip; `--accurate` joins in one
+  encode.** Both concat routes start the next segment after the longer stream of this one, so a
+  segment whose sound outruns its picture opened a hole (0.355 s; and one AAC frame at every
+  `--accurate` join, because each part was encoded on its own). `clip_length`'s rule decides: under a
+  frame past the video's end, the segment ends with the video; more, its last frame is held for the
+  sound, which only the re-cut can do. The last segment keeps the source's tail. The video's end is
+  on the cut's clock: stream start + duration − the file's start_time. Tests:
+  `test_a_segment_past_the_video_end_holds_its_last_frame_in_a_copy_join` and siblings,
+  `test_an_accurate_join_has_no_hole_at_its_joins`.
