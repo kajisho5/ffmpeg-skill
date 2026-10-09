@@ -100,8 +100,9 @@ def hw_report(ctx: "Context", enc: Optional[str]) -> Dict[str, Any]:
         source = "env"
     used = None if enc is None else enc.endswith("_videotoolbox")
     notes = list(ctx.hw_notes)
-    if used and source == "env":
+    if used and source == "env" and not any(n.endswith(ENV_HW_NOTE) for n in notes):
         # the machine default, not this call, chose the GPU: say what it costs and how to opt out
+        # (once: a stage that ran on it already said so)
         notes.append(ENV_HW_NOTE)
     if ctx.hw_env_ignored and enc not in (None, "copy"):
         notes.append(ENV_NOT_FOR_DELIVERY_NOTE)
@@ -163,6 +164,26 @@ def absorb_stage_hw(stage: str, doc: Any, ctx: "Optional[Context]" = None) -> No
     quality = hw_quality_note(enc, line) if hw.get("used") else None
     ctx.hw_stages.append({"stage": stage, "requested": bool(hw.get("requested")), "source": hw.get("source"),
                           "used": hw.get("used"), "fallback": bool(hw.get("fallback")), "quality_note": quality})
+
+
+def steps_encoder_report(steps: Sequence["Tuple[str, Any]"]) -> Dict[str, Any]:
+    """batch.py's per-item `encoder`, `hw` and `notes`, from the --json documents of the steps
+    (child processes) that made the item: the last encoder a step ran (a later stream copy keeps
+    the encode before it), and their GPU facts as render.py's result carries its stages'."""
+    ctx = Context()
+    enc: Optional[str] = None
+    for name, doc in steps:
+        step_enc = doc.get("encoder") if isinstance(doc, dict) else None
+        if step_enc and (step_enc != "copy" or enc is None):
+            enc = step_enc
+        absorb_stage_hw(name, doc, ctx)
+    out: Dict[str, Any] = {"encoder": enc} if enc else {}
+    if ctx.hw_stages:
+        out["hw"] = hw_report(ctx, enc)
+        quality = [st["quality_note"] for st in ctx.hw_stages if st.get("quality_note")]
+        if quality:
+            out["notes"] = list(dict.fromkeys(quality))
+    return out
 
 
 def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:

@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, read_text_or_die, MEDIA_EXT as _MEDIA_EXT
 from _common.runner import add_hw_orchestrator_args
+from _common.emit import steps_encoder_report
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -158,6 +159,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         pj = work / f"{src.stem}_project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
         ok, _doc = run_step(["render.py", str(pj)], budget())
+        step_docs = [("render", _doc)]
         cut_reencoded: List[bool] = []
     else:
         steps = recipe.get("steps") or []
@@ -166,11 +168,13 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         cur = str(src)
         ok = True
         cut_reencoded = []
+        step_docs = []
         for i, step in enumerate(steps):
             last = i == len(steps) - 1
             out = str(final) if last else str(work / f"{src.stem}_step{i}.{'mp4' if src.suffix.lower() not in ('.wav', '.mp3', '.m4a', '.flac') else src.suffix.lstrip('.')}")
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
             step_ok, doc = run_step(argv, budget())
+            step_docs.append((Path(str(argv[0])).stem if argv else "step", doc))
             # only cut.py's own doc carries `reencoded` -- true if ANY range this call cut needed
             # the tolerance-triggered hybrid re-encode fallback (cut.py ORs its per-segment results
             # into one top-level field; it doesn't report which range, so this is per cut.py call,
@@ -184,6 +188,9 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
     result: Dict[str, Any] = {"file": str(src), "output": str(final), "ok": ok, "seconds": round(time.time() - t0, 1)}
     if cut_reencoded:
         result["cut_reencoded"] = cut_reencoded
+    # the encoder each item really ran and its GPU facts (--hw / FFMPEG_SKILL_HW: on VideoToolbox,
+    # fell back and why): this process encodes nothing itself, so its top-level hw.used is null
+    result.update(steps_encoder_report(step_docs))
     return result
 
 

@@ -551,6 +551,22 @@ class HwEverywhereTests(unittest.TestCase):
         self.assertEqual(doc["encoder"], "libx264", "never automatic: no flag, no variable, no GPU")
         self.assertNotIn("hw", doc)
 
+    def test_a_batch_row_names_the_encoder_its_steps_ran(self):
+        """batch.py encodes nothing itself (its top-level hw.used is null); each item's row carries
+        the encoder its steps ran, and `hw` only when VideoToolbox was asked for."""
+        folder = self.work / "batch"
+        folder.mkdir()
+        (folder / "a.mp4").write_bytes(self.src.read_bytes())
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_b",
+                                      "steps": [["fit.py", "{in}", "--height", "120", "-o", "{out}"]]}), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "batch.py"), str(folder), "--recipe", str(recipe), "--fast", "--json"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        row = json.loads(proc.stdout)["results"][0]
+        self.assertEqual(row["encoder"], "libx264")
+        self.assertNotIn("hw", row)
+
     def _run_encode(self, fake):
         """What a re-encoding tool does: the encoder line from video_args() (VideoToolbox under
         --hw, the swap recorded), one ffmpeg command, run(), emit()."""
@@ -666,6 +682,18 @@ class HwResultTests(unittest.TestCase):
             self.assertTrue(doc["verified"])
             self.assertEqual(doc["verification"], [{"step": "probe", "ok": True}])
         self.assertEqual(docs[0]["probe"], docs[1]["probe"])
+
+    def test_a_batch_item_s_steps_report_their_gpu_facts_once(self):
+        fit = {"encoder": "h264_videotoolbox", "commands": ["ffmpeg -i a -c:v h264_videotoolbox -q:v 75 b.mp4"],
+               "hw": {"requested": True, "source": "env", "used": True, "fallback": False, "notes": [emit_module.ENV_HW_NOTE]}}
+        loud = {"encoder": "copy", "commands": ["ffmpeg -i b.mp4 -c:v copy -af loudnorm c.mp4"]}
+        rep = emit_module.steps_encoder_report([("fit", fit), ("loudness", loud)])
+        self.assertEqual(rep["encoder"], "h264_videotoolbox", "a later stream copy keeps the encode before it")
+        self.assertEqual({k: rep["hw"][k] for k in ("requested", "source", "used", "fallback")},
+                         {"requested": True, "source": "env", "used": True, "fallback": False})
+        self.assertEqual(sum(n.endswith(emit_module.ENV_HW_NOTE) for n in rep["hw"]["notes"]), 1, rep["hw"]["notes"])
+        self.assertTrue(any("not CRF-equivalent" in n for n in rep["notes"]))
+        self.assertEqual(emit_module.steps_encoder_report([("fit", {"encoder": "libx264"})]), {"encoder": "libx264"})
 
     def test_render_carries_a_stage_s_fallback_and_gpu_quality_note(self):
         """render.py runs each stage as a child process and keeps only its command lines; the
