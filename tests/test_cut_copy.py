@@ -393,10 +393,11 @@ class CutJoinTests(unittest.TestCase):
 
     # ------------------------------------------------------------------ the source codec
     def test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc(self):
-        """A re-encode went through x264 whatever the source, so trimming an iPhone HEVC
-        clip with --accurate handed back H.264. It now keeps HEVC, 8-bit and tagged BT.709."""
+        """A re-encode goes through x264 whatever the SDR source, so trimming an iPhone HEVC
+        clip with --accurate hands back H.264. With --keep-hevc it keeps HEVC, 8-bit and tagged BT.709."""
         out = DIR / "accurate_hevc.mp4"
-        data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--preset", "ultrafast", "-o", out)
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--keep-hevc", "--preset", "ultrafast",
+                        "-o", out)
         self.assertTrue(data["reencoded"])
         v = probe(str(out))["video"]
         self.assertEqual(v["codec"], "hevc")
@@ -406,9 +407,25 @@ class CutJoinTests(unittest.TestCase):
 
     def test_codec_h264_still_overrides_the_source_codec(self):
         out = DIR / "accurate_h264.mp4"
-        data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--codec", "h264", "--preset", "ultrafast", "-o", out)
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--codec", "h264", "--keep-hevc",
+                        "--preset", "ultrafast", "-o", out)
         self.assertIn("codec", data["reencode_reason"])
         self.assertEqual(probe(str(out))["video"]["codec"], "h264")
+
+    def test_a_reencoded_cut_of_an_sdr_hevc_source_is_h264_unless_keep_hevc_is_asked_for(self):
+        """The 2.x default, pinned: a re-encode of an SDR source is x264 whatever its codec (as on
+        main); --keep-hevc is opt-in. The dry run plans the same encoders the real runs use."""
+        out = DIR / "accurate_hevc_default.mp4"
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--preset", "ultrafast", "-o", out)
+        self.assertEqual(data["reencode_reason"], ["requested"])
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264")
+        self.assertEqual(stderr_of_decode(out), "")
+        plan = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--dry-run", "-o", DIR / "plan_hevc.mp4")
+        self.assertIn("libx264", " ".join(plan["commands"]))
+        self.assertNotIn("libx265", " ".join(plan["commands"]))
+        plan = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--keep-hevc", "--dry-run",
+                        "-o", DIR / "plan_hevc.mp4")
+        self.assertIn("libx265", " ".join(plan["commands"]))
 
     # ------------------------------------------------------------------ the join fallback
     def test_mismatched_parts_are_recut_from_the_source_with_exact_boundaries(self):
@@ -427,7 +444,7 @@ class CutJoinTests(unittest.TestCase):
         self.assertFalse(data["keyframe_snapped"])
         self.assertFalse(data["start_snapped"], "every segment was re-cut, so every start is where asked")
         self.assertEqual(stderr_of_decode(out), "")
-        self.assertEqual(probe(str(out))["video"]["codec"], "hevc", "the re-cut join keeps the source codec")
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "the re-cut join is x264 unless --keep-hevc asks")
         pts = frame_pts(out)
         self.assertEqual(len(pts), 60 + 57)
         deltas = [round(b - a, 4) for a, b in zip(pts, pts[1:])]
@@ -571,7 +588,7 @@ class CutJoinTests(unittest.TestCase):
         out = DIR / "many.mp4"
         # 40 segments of 0.2 s; those not on a keyframe re-encode, so the parts are mixed
         segs = ",".join(f"{i * 0.3:.1f}-{i * 0.3 + 0.2:.1f}" for i in range(40))
-        data = cut_json(self.hevc, "--segments", segs, "--tolerance", "0.1", "--preset", "ultrafast", "-o", out)
+        data = cut_json(self.hevc, "--segments", segs, "--tolerance", "0.1", "--keep-hevc", "--preset", "ultrafast", "-o", out)
         self.assertIn("concat_fallback", data["reencode_reason"])
         self.assertEqual(sum("concat=n=32:" in c for c in data["commands"]), 1)
         self.assertEqual(sum("concat=n=8:" in c for c in data["commands"]), 1)
@@ -584,6 +601,22 @@ class CutJoinTests(unittest.TestCase):
         tag = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_tag_string",
                               "-of", "csv=p=0", str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
         self.assertEqual(tag, "hvc1", "the Matroska chunks' HEVC keeps the tag Apple players need")
+
+    def test_a_chunked_hdr_join_keeps_the_hvc1_tag_by_default(self):
+        """A defect fix on by default: an HDR source re-cuts as HEVC Main10 with no flag, and a join
+        of more than 32 segments copied its Matroska chunks into the MP4 as hev1, which Apple
+        players refuse. The final copy restates the chunks' hvc1."""
+        out = DIR / "many_hlg.mp4"
+        segs = ",".join(f"{i * 0.15:.2f}-{i * 0.15 + 0.1:.2f}" for i in range(36))
+        data = cut_json(self.hlg, "--segments", segs, "--preset", "ultrafast", "-o", out)
+        self.assertIn("concat_fallback", data["reencode_reason"])
+        self.assertEqual(sum("concat=n=32:" in c for c in data["commands"]), 1, "the join was chunked")
+        self.assertEqual(stderr_of_decode(out), "")
+        stream = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                            "stream=codec_name,codec_tag_string,pix_fmt,color_transfer", "-of", "json",
+                                            str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout)["streams"][0]
+        self.assertEqual((stream["codec_name"], stream["codec_tag_string"], stream["pix_fmt"], stream["color_transfer"]),
+                         ("hevc", "hvc1", "yuv420p10le", "arib-std-b67"))
 
     # ------------------------------------------------------------------ an exact stream-copy join
     def test_keyframe_aligned_bframe_segments_join_frame_exact(self):
@@ -897,8 +930,11 @@ class SourceCodecArgsTests(unittest.TestCase):
     HDR_HEVC = {"video": {"codec": "hevc", "bt2020_or_hdr": True, "color_space": "bt2020nc",
                           "color_primaries": "bt2020", "color_transfer": "smpte2084"}}
     SDR_H264 = {"video": {"codec": "h264", "bt2020_or_hdr": False}}
+    # BT.2020 primaries on an SDR curve: routed through the HDR (Main10, tags kept) path
+    BT2020_SDR_HEVC = {"video": {"codec": "hevc", "bt2020_or_hdr": True, "color_space": "bt2020nc",
+                                 "color_primaries": "bt2020", "color_transfer": "bt709"}}
 
-    def encoder(self, meta, codec=None, hw=False, swaps=None):
+    def encoder(self, meta, codec=None, hw=False, swaps=None, keep_hevc=True):
         """The encoder line, run through the real VideoToolbox routing with this machine's platform
         and encoder list mocked, so the test means the same on any host."""
         with mock.patch.object(decision.STATE, "codec", codec), mock.patch.object(decision.STATE, "hw", hw), \
@@ -906,8 +942,43 @@ class SourceCodecArgsTests(unittest.TestCase):
                 mock.patch.object(decision.STATE, "hw_notes", []), \
                 mock.patch.object(decision, "hw_platform_reason", lambda: None), \
                 mock.patch.object(decision, "ffmpeg_encoders", lambda: {"libx264", "libx265", "hevc_videotoolbox", "h264_videotoolbox"}):
-            args = decision.source_codec_video_args(meta, 18, "ultrafast")
+            args = decision.source_codec_video_args(meta, 18, "ultrafast", keep_hevc=keep_hevc)
         return args[args.index("-c:v") + 1], args
+
+    def test_sdr_hevc_is_encoded_as_h264_without_keep_hevc(self):
+        """The 2.x default: video_args()'s x264 line, on the CPU and on VideoToolbox."""
+        enc, args = self.encoder(self.SDR_HEVC, keep_hevc=False)
+        self.assertEqual(enc, "libx264")
+        self.assertNotIn("-tag:v", args)
+        enc, _ = self.encoder(self.SDR_HEVC, hw=True, keep_hevc=False)
+        self.assertEqual(enc, "h264_videotoolbox")
+
+    def test_an_hdr_or_bt2020_source_gets_video_args_line_with_or_without_keep_hevc(self):
+        for meta in (self.HDR_HEVC, self.BT2020_SDR_HEVC):
+            for hw in (False, True):
+                with mock.patch.object(decision.STATE, "codec", None), mock.patch.object(decision.STATE, "hw", hw), \
+                        mock.patch.object(decision.STATE, "hw_swaps", []), mock.patch.object(decision.STATE, "hw_notes", []), \
+                        mock.patch.object(decision, "hw_platform_reason", lambda: None), \
+                        mock.patch.object(decision, "ffmpeg_encoders", lambda: {"libx264", "libx265", "hevc_videotoolbox", "h264_videotoolbox"}):
+                    plain = decision.video_args(meta, 18, "ultrafast")
+                self.assertEqual(self.encoder(meta, hw=hw, keep_hevc=True)[1], plain, (meta, hw))
+                self.assertEqual(self.encoder(meta, hw=hw, keep_hevc=False)[1], plain, (meta, hw))
+
+    def test_cut_passes_keep_hevc_to_the_encoder_and_composes_with_hw(self):
+        """cut.py's own re-encode line: --keep-hevc with --hw gives VideoToolbox HEVC with its CPU
+        fallback recorded; without the flag, --hw gives VideoToolbox H.264."""
+        for keep, expected in ((True, "hevc_videotoolbox"), (False, "h264_videotoolbox")):
+            swaps = []
+            with mock.patch.object(cut, "KEEP_HEVC", keep), mock.patch.object(decision.STATE, "codec", None), \
+                    mock.patch.object(decision.STATE, "hw", True), mock.patch.object(decision.STATE, "hw_swaps", swaps), \
+                    mock.patch.object(decision.STATE, "hw_notes", []), \
+                    mock.patch.object(decision, "hw_platform_reason", lambda: None), \
+                    mock.patch.object(decision, "ffmpeg_encoders", lambda: {"libx264", "libx265", "hevc_videotoolbox", "h264_videotoolbox"}):
+                args = cut.video_encode_args({"video": dict(self.SDR_HEVC["video"], fps=30.0)}, 18, "ultrafast")
+            self.assertEqual(args[args.index("-c:v") + 1], expected)
+            self.assertEqual(len(swaps), 1, "run() can put the CPU line back if the GPU refuses")
+            cpu = swaps[0][1]
+            self.assertEqual(cpu[cpu.index("-c:v") + 1], "libx265" if keep else "libx264")
 
     def test_sdr_hevc_is_encoded_as_hevc_8bit_bt709(self):
         enc, args = self.encoder(self.SDR_HEVC)

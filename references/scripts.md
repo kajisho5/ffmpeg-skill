@@ -63,14 +63,15 @@ JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation
 
 ### cut.py — cut / join segments
 ```
-cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,...] [--accurate] [--edit-list] [-o OUT]
+cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,...] [--accurate] [--edit-list] [--keep-hevc] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
 `--tolerance` (0.5 s) from the request, that segment is re-encoded automatically
-(CRF 18: x265 Main10 with the source's own tags for an HDR or BT.2020 source; x265 8-bit
-BT.709 for any other HEVC source; x264 for the rest; `--codec` overrides all three). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
+(CRF 18: x264, or x265 Main10 with the source's own tags for an HDR or BT.2020 source;
+`--keep-hevc` re-encodes an SDR HEVC source as x265 8-bit BT.709, on VideoToolbox under `--hw`;
+`--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, or one that fails its check, still re-cuts).
 Multiple segments are concatenated in the order given. stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a

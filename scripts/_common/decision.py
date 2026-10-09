@@ -478,14 +478,15 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     return _maybe_hw("hevc", crf, meta, True, _x265_hdr_default(v, crf, preset))
 
 
-def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium") -> List[str]:
-    """video_args(), except that an SDR HEVC source re-encodes to HEVC (8-bit, BT.709-tagged, on
-    VideoToolbox when --hw asks) instead of H.264. cut.py uses it: a cut is a trim, so a re-encoded
-    segment should come out in the codec the source (and any copied segment beside it) is in. An
-    HDR HEVC source gets the same Main10 line video_args() would give it: encoder_args("hevc")
-    builds that line for HDR."""
+def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium",
+                            keep_hevc: bool = False) -> List[str]:
+    """video_args(), except that with `keep_hevc` (cut.py --keep-hevc) an SDR HEVC source re-encodes
+    to HEVC (8-bit, BT.709-tagged, on VideoToolbox when --hw asks) instead of H.264: a cut is a trim,
+    so a re-encoded segment can come out in the codec the source (and any copied segment beside it)
+    is in. Opt-in within 2.x, where an SDR re-encode stays x264 unless asked. An HDR or BT.2020
+    source always takes video_args()'s Main10 line, and --codec always wins."""
     v = (meta or {}).get("video") or {}
-    if not STATE.codec and v.get("codec") == "hevc":
+    if keep_hevc and not STATE.codec and v.get("codec") == "hevc" and not v.get("bt2020_or_hdr"):
         return encoder_args("hevc", crf, preset, meta)
     return video_args(meta, crf, preset)
 

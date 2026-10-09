@@ -23,6 +23,10 @@ A single-segment .mp4/.mov copy shifts its timestamps to zero (-avoid_negative_t
 make_zero), so the picture starts at the keyframe; --edit-list keeps the MP4 edit
 list instead, which hides the keyframe's pre-roll so the picture starts at --start.
 
+A re-encode uses x264 for an SDR source and x265 Main10 for an HDR or BT.2020 one, as every
+editing tool does; --keep-hevc re-encodes an SDR HEVC source as HEVC (x265 8-bit BT.709, or
+VideoToolbox under --hw), so a trimmed phone clip keeps its codec. --codec overrides both.
+
 Examples:
   python3 cut.py input.mp4 --start 00:00:10 --end 00:00:25
   python3 cut.py input.mp4 --segments 0:05-0:12,1:00-1:20 -o highlights.mp4
@@ -46,6 +50,8 @@ DROPPED_STREAMS: List[str] = []
 # keyframe timestamps found next to a requested cut that the tolerance turned into a re-encode
 # (reported so the caller can choose a lossless cut at one of them next time)
 NEAREST_KEYFRAMES: list = []
+# --keep-hevc: an SDR HEVC source re-encodes as HEVC instead of H.264 (set by main())
+KEEP_HEVC = False
 
 
 def _t(value: str, fps, flag: str = "--segments") -> float:
@@ -82,7 +88,7 @@ def encode_args(meta: dict, dst: str, crf: int, preset: str) -> List[str]:
 
 
 def video_encode_args(meta: dict, crf: int, preset: str) -> List[str]:
-    return source_codec_video_args(meta, crf, preset) + cfr_args(meta)
+    return source_codec_video_args(meta, crf, preset, keep_hevc=KEEP_HEVC) + cfr_args(meta)
 
 
 def copy_args(meta: dict, dst: str) -> List[str]:
@@ -859,6 +865,7 @@ def main() -> int:
     ap.add_argument("--segments", help="comma separated START-END list, e.g. '0:05-0:12,1:00-1:20' (joined in order)")
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
     ap.add_argument("--edit-list", action="store_true", help="a single-segment .mp4/.mov stream copy keeps the MP4 edit list that hides the keyframe's pre-roll, so the picture starts at --start (default: -avoid_negative_ts make_zero, the picture starts at the keyframe); a player that ignores edit lists shows the pre-roll")
+    ap.add_argument("--keep-hevc", action="store_true", help="a re-encode of an SDR HEVC source stays HEVC (x265 8-bit BT.709; VideoToolbox under --hw) instead of x264 (default: x264 for SDR, x265 Main10 for HDR); --codec overrides it")
     ap.add_argument("--vfr-copy", action="store_true", help="keep the lossless copy even when the sampled frame timing is variable or cannot be measured (default: re-encode, as --accurate)")
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never)")
     snap = ap.add_argument_group("beat snapping")
@@ -877,6 +884,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    global KEEP_HEVC
+    KEEP_HEVC = args.keep_hevc
 
     meta = probe(args.input)
     total = meta.get("duration") or 0.0

@@ -322,6 +322,7 @@
    "hw",
    "input",
    "json_brief",
+   "keep_hevc",
    "min_confidence",
    "no_hw",
    "output",

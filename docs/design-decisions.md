@@ -1080,12 +1080,28 @@ not a new file format this tool would have to maintain.
   `test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for`,
   `test_a_source_whose_audio_starts_late_is_not_reported_as_a_skewed_cut`,
   `test_av_skew_names_the_edit_list_only_where_it_would_help`.
-- **A re-encoded cut keeps an HEVC source HEVC.** A cut is a trim, so a re-encoded segment should
-  come out in the codec of the source and of any copied segment beside it; x264 for every SDR
-  source turned an iPhone clip into H.264. `source_codec_video_args` sends an HEVC source through
-  `encoder_args("hevc")` (8-bit BT.709 for SDR, the same Main10 line as before for HDR, VideoToolbox
-  under `--hw`); other sources keep `video_args`. The chunked join re-states the chunks' `hvc1`
-  tag, because a copy out of Matroska into MP4 writes `hev1`, which Apple players refuse.
+- **A re-encoded cut keeps an SDR HEVC source HEVC only with `--keep-hevc`.** A cut is a trim, so
+  a re-encoded segment could come out in the codec of the source and of any copied segment beside
+  it; x264 for every SDR source turns an iPhone clip into H.264. #306 made HEVC the default, which
+  changed what an existing call writes (`hevc_sdr --start 2 --end 4 --accurate` gave h264 on 2.5.1
+  and hevc with #306), so within 2.x it is opt-in: `source_codec_video_args(..., keep_hevc)` calls
+  `encoder_args("hevc")` (x265 8-bit BT.709, VideoToolbox under `--hw` with the CPU line recorded
+  for the fallback) only when the flag is set, the source is HEVC and not `bt2020_or_hdr`;
+  everything else takes `video_args`, the line every editing tool uses. An HDR, HLG or BT.2020-SDR
+  source gets the same Main10 line either way, and `--codec` always wins. The contract's `cut`
+  capabilities keep 2.5.1's x264 and HDR x265 entries, the x265 one extended by "with
+  `--keep-hevc` on an HEVC source". Tests:
+  `test_a_reencoded_cut_of_an_sdr_hevc_source_is_h264_unless_keep_hevc_is_asked_for` (the default
+  pin), `test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc`,
+  `test_codec_h264_still_overrides_the_source_codec`, `SourceCodecArgsTests` (including
+  `test_cut_passes_keep_hevc_to_the_encoder_and_composes_with_hw`).
+- **A chunked join restates `hvc1`, by default.** A `--segments` re-cut of more than 32 segments
+  encodes Matroska chunks and copies them into the output; out of Matroska into MP4 that copy
+  writes `hev1`, which Apple players refuse. That is a defect on 2.5.1 for every HDR source (its
+  re-encode is HEVC Main10 with no flag), so the fix is on by default: `_join_chunk` returns its
+  codec arguments and the final copy into `.mp4`/`.mov`/`.m4v` repeats their `-tag:v`. Tests:
+  `test_a_chunked_hdr_join_keeps_the_hvc1_tag_by_default` (HLG, no flag),
+  `test_more_segments_than_one_call_takes_are_joined_in_chunks` (`--keep-hevc`).
 - **VFR is measured, not inferred from an average.** `r_frame_rate` against `avg_frame_rate` is a
   whole-file average: a phone clip at 29.98 against a nominal 30 tripped it, and one long last
   frame does too. `measure_frame_timing` reads packet timestamps (no decoding) in up to five 6 s
@@ -1110,5 +1126,6 @@ not a new file format this tool would have to maintain.
 - **Decided for 3.0: the defaults #306 measured better, and the meanings it wanted.** 2.x keeps
   every key's meaning and every default's behaviour, so these wait for the next major, where
   each is a documented breaking change: `--edit-list` becomes the default for a single
-  `.mp4`/`.mov` copy; `keyframe_snapped` takes `start_snapped`'s meaning (the presented start
+  `.mp4`/`.mov` copy; `--keep-hevc` becomes the default, so a re-encoded cut of an SDR HEVC
+  source stays HEVC; `keyframe_snapped` takes `start_snapped`'s meaning (the presented start
   moved) and `precision` takes `least_exact_precision`'s (the least exact segment).
