@@ -71,7 +71,7 @@ Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
 `--tolerance` (0.5 s) from the request, that segment is re-encoded automatically
 (CRF 18: x264, or x265 Main10 with the source's own tags for an HDR or BT.2020 source;
-`--keep-hevc` re-encodes an SDR HEVC source as x265 8-bit BT.709, on VideoToolbox under `--hw`;
+`--keep-hevc` re-encodes an SDR HEVC source (not BT.2020: that keeps its Main10 line and colour tags) as x265 8-bit BT.709, on VideoToolbox under `--hw`;
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
 between keyframes, or one that fails its check, still re-cuts).

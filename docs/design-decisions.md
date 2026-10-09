@@ -1325,7 +1325,8 @@ not a new file format this tool would have to maintain.
   `--vfr-guard sampled` when the sample is constant. A source the average check passes is not
   sampled, so the default costs what it did, and a copy join of it checks its steps as constant
   timing. `sampled` is #306's guard (re-encode on `vfr` or `inconclusive`), and `off` is #306's
-  unreleased `--vfr-copy`, which never shipped and is gone. VFR confined to the unsampled
+  unreleased `--vfr-copy` (which never shipped and is gone): for an eligible copy cut it samples the
+  timing but keeps the stream copy. VFR confined to the unsampled
   stretches is missed by `sampled`; that was accepted because a copy is lossless and `--accurate`
   is always available. The reads are shaped by how `-read_intervals` behaves: it resolves a
   seek, and a relative end, against the keyframe it lands on, so windows name an absolute end and
