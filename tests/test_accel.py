@@ -8,6 +8,9 @@ The pure-logic cases run everywhere. The real VideoToolbox encodes run only on A
 an ffmpeg that lists the encoders.
 """
 import argparse
+import contextlib
+import importlib
+import io
 import json
 import os
 import platform
@@ -22,7 +25,10 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, script, sh  # noqa: E402
 from _common import STATE, add_common, apply_common, ffmpeg_encoders  # noqa: E402
+import _common  # noqa: E402
 from _common import decision, runner  # noqa: E402
+
+emit_module = importlib.import_module("_common.emit")  # the module; `_common.emit` is the function
 
 
 def _vt_here() -> bool:
@@ -42,6 +48,114 @@ def _parse(argv, codec=True, orchestrator=False):
     args = ap.parse_args(argv)
     apply_common(args)
     return args
+
+
+def require_ffmpeg_or_skip(*binaries):
+    """As test_contract.py's: locally a skip, in CI (CI=true) a broken install step."""
+    missing = [b for b in binaries if not shutil.which(b)]
+    if not missing:
+        return
+    msg = f"{'/'.join(missing)} not on PATH"
+    if os.environ.get("CI"):
+        raise AssertionError(f"{msg} -- in CI this is a broken install step, not a reason to skip")
+    raise unittest.SkipTest(msg)
+
+
+# What FFmpeg really prints when a VideoToolbox encoder cannot open, one shape per wording
+# (fftools/ffmpeg*.c and libavcodec/videotoolboxenc.c of each version; pointers shortened).
+VT_OPEN_FAILED = {
+    "5.1": "[h264_videotoolbox @ 0x7f9e1c004a00] Error: cannot create compression session: -12902\n"
+           "[h264_videotoolbox @ 0x7f9e1c004a00] Try -allow_sw 1. The hardware encoder may be busy, or not supported.\n"
+           "Error initializing output stream 0:0 -- Error while opening encoder for output stream #0:0 - maybe "
+           "incorrect parameters such as bit_rate, rate, width or height\n",
+    "6.0": "[h264_videotoolbox @ 0x14f6063b0] Error: cannot create compression session: -12908\n"
+           "[vost#0:0/h264_videotoolbox @ 0x14f605f40] Error initializing output stream: Error while opening encoder "
+           "for output stream #0:0 - maybe incorrect parameters such as bit_rate, rate, width or height\n",
+    "6.1": "[h264_videotoolbox @ 0x600002d0c000] Error: cannot create compression session: -12902\n"
+           "[h264_videotoolbox @ 0x600002d0c000] Try -allow_sw 1. The hardware encoder may be busy, or not supported.\n"
+           "[vost#0:0/h264_videotoolbox @ 0x600002d0c1e0] Error while opening encoder - maybe incorrect parameters "
+           "such as bit_rate, rate, width or height.\n",
+    "7.1": "[hevc_videotoolbox @ 0x13a604a40] Error: -q:v qscale not available for encoder. Use -b:v bitrate instead.\n"
+           "[vost#0:0/hevc_videotoolbox @ 0x13a6046a0] Error while opening encoder - maybe incorrect parameters such "
+           "as bit_rate, rate, width or height.\n"
+           "[vf#0:0 @ 0x13a604e30] Error sending frames to consumers: Generic error in an external library\n",
+    "8.0": "[vost#0:0/h264_videotoolbox @ 0x600003a1c0f0] [enc:h264_videotoolbox @ 0x600003a1c1e0] Error while opening "
+           "encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n"
+           "[vf#0:0 @ 0x600003a1c3c0] Error sending frames to consumers: Generic error in an external library\n",
+    "master": "[prores_videotoolbox @ 0x12e604a40] Cannot create compression session: -12903\n"
+              "[vost#0:0/prores_videotoolbox @ 0x12e6046a0] [enc:prores_videotoolbox @ 0x12e604960] Error while opening "
+              "encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n",
+    "mid-stream": "[h264_videotoolbox @ 0x7fa1] Error encoding frame: -12911\n"
+                  "[vost#0:0/h264_videotoolbox @ 0x7fa2] Error submitting video frame to the encoder\n",
+}
+# Failures of a VideoToolbox job that are not VideoToolbox's: retrying them on the CPU would run
+# the job twice and blame the GPU.
+NOT_VT = {
+    "missing font (7.x: the encoder never opened)":
+        "[Parsed_drawtext_0 @ 0x6000] Cannot find a valid font for the family Sans\n"
+        "[AVFilterGraph @ 0x6001] Error initializing filters\n"
+        "[vost#0:0/h264_videotoolbox @ 0x6002] Could not open encoder before EOF\n"
+        "[vost#0:0/h264_videotoolbox @ 0x6002] Task finished with error code: -22 (Invalid argument)\n",
+    "bad filter graph (6.1)":
+        "[AVFilterGraph @ 0x7000] No such filter: 'scalee'\n"
+        "Error reinitializing filters!\nFailed to inject frame into filter network: Invalid argument\n",
+    "full disk after a non-fatal encoder error line":
+        "[h264_videotoolbox @ 0x8000] Error setting profile/level property: -12900. Output will be encoded using a "
+        "supported profile/level combination.\n"
+        "[vost#0:0/h264_videotoolbox @ 0x8001] Error submitting a packet to the muxer: No space left on device\n"
+        "[out#0/mp4 @ 0x8002] Error writing trailer: No space left on device\n",
+    "the audio encoder failed to open (6.1+)":
+        "[h264_videotoolbox @ 0x9000] Error setting entropy property: -12900\n"
+        "[aost#0:1/aac @ 0x9001] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, "
+        "width or height.\n",
+    "a missing input": "a.mp4: No such file or directory\n",
+}
+
+
+class FakeFfmpeg:
+    """A stand-in ffmpeg for run(): an `ffmpeg` (POSIX sh) or `ffmpeg.cmd` (Windows) wrapper that
+    runs a Python script with this interpreter, so the same fake works on every CI runner. Each
+    call is logged; a command naming a *_videotoolbox encoder gets the `vt` behaviour, any other
+    the `cpu` one: {"rc", "stderr"}, or {"real": "<ffmpeg path>"} to hand the command to a real
+    ffmpeg (the CPU encode then writes a real, probe-able file)."""
+
+    def __init__(self, directory: Path, behaviour):
+        self.dir = Path(directory)
+        self.log = self.dir / "calls.jsonl"
+        conf = self.dir / "fake_ffmpeg.json"
+        conf.write_text(json.dumps(behaviour), encoding="utf-8")
+        body = self.dir / "fake_ffmpeg.py"
+        body.write_text(
+            "import json, subprocess, sys\n"
+            f"conf = json.load(open({str(conf)!r}, encoding='utf-8'))\n"
+            "args = sys.argv[1:]\n"
+            f"with open({str(self.log)!r}, 'a', encoding='utf-8') as fh:\n"
+            "    fh.write(json.dumps(args) + '\\n')\n"
+            "do = conf['vt' if any(a.endswith('_videotoolbox') for a in args) else 'cpu']\n"
+            "if 'real' in do:\n"
+            "    sys.exit(subprocess.run([do['real']] + args).returncode)\n"
+            "sys.stderr.write(do.get('stderr', ''))\n"
+            "sys.exit(do.get('rc', 0))\n", encoding="utf-8")
+        if os.name == "nt":
+            self.path = self.dir / "ffmpeg.cmd"
+            self.path.write_text(f'@"{sys.executable}" "{body}" %*\r\n@exit /b %ERRORLEVEL%\r\n', encoding="utf-8")
+        else:
+            self.path = self.dir / "ffmpeg"
+            self.path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{body}" "$@"\n', encoding="utf-8")
+            self.path.chmod(0o755)
+
+    def calls(self):
+        if not self.log.exists():
+            return []
+        return [json.loads(ln) for ln in self.log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def _vt_available():
+    """VideoToolbox as an Apple Silicon build would report it, on any runner: the platform check
+    passes and the encoder list has the VideoToolbox (and CPU) encoders."""
+    return (mock.patch.object(decision, "hw_platform_reason", return_value=None),
+            mock.patch.object(decision, "ffmpeg_encoders", return_value={
+                "h264_videotoolbox", "hevc_videotoolbox", "prores_videotoolbox", "libx264", "libx265", "prores_ks"}))
 
 
 class HwResolutionTests(unittest.TestCase):
@@ -231,7 +345,7 @@ class HwReviewRegressionTests(unittest.TestCase):
         emit = importlib.import_module("_common.emit")
         STATE.hw, STATE.hw_source = True, "flag"
         STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
-        refused = subprocess.CompletedProcess([], 1, "", "[vt] Error: cannot encode 8192x4608\n")
+        refused = subprocess.CompletedProcess([], 1, "", VT_OPEN_FAILED["6.1"])
         ok = subprocess.CompletedProcess([], 0, "", "")
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(runner, "_execute", side_effect=[refused, ok]) as execute:
@@ -243,10 +357,12 @@ class HwReviewRegressionTests(unittest.TestCase):
         self.assertIn("libx264", retried)
         self.assertNotIn("h264_videotoolbox", retried)
         self.assertIn("libx264", STATE.commands[-1])
-        self.assertTrue(any("VideoToolbox refused" in n and "8192x4608" in n for n in STATE.hw_notes), STATE.hw_notes)
+        self.assertTrue(any("VideoToolbox refused" in n and "cannot create compression session" in n for n in STATE.hw_notes),
+                        STATE.hw_notes)
         rep = emit._encoder_report(STATE)
         self.assertEqual(rep["encoder"], "libx264")
         self.assertFalse(rep["hw"]["used"])
+        self.assertTrue(rep["hw"]["fallback"])
 
     def test_the_cpu_fallback_keeps_the_even_dimension_scale_of_a_retry(self):
         """An odd-sized source under --hw: the encode is retried with an even scale, and when
@@ -255,7 +371,7 @@ class HwReviewRegressionTests(unittest.TestCase):
         STATE.hw, STATE.hw_source = True, "flag"
         STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
         odd = subprocess.CompletedProcess([], 1, "", "width not divisible by 2 (641x359)\n")
-        refused = subprocess.CompletedProcess([], 1, "", "[vt] Error: session refused\n")
+        refused = subprocess.CompletedProcess([], 1, "", VT_OPEN_FAILED["8.0"])
         ok = subprocess.CompletedProcess([], 0, "", "")
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(runner, "_execute", side_effect=[odd, refused, ok]) as execute:
@@ -299,21 +415,35 @@ class HwReviewRegressionTests(unittest.TestCase):
                 self.assertEqual(STATE.hw_notes, [], "the report adds the note; the run's own list is untouched")
 
     def test_hw_dry_run_runs_no_ffmpeg(self):
-        """The dry-run promise: --hw's encoder check reads the build through ffprobe, never ffmpeg."""
+        """The dry-run promise: --hw's encoder check reads the build through ffprobe, never ffmpeg.
+        (On a machine without VideoToolbox the check is never reached; EncoderListTests pins the
+        ffprobe-only-in-a-dry-run rule itself on every runner.)"""
+        require_ffmpeg_or_skip("ffprobe")
         with tempfile.TemporaryDirectory() as d:
-            log = Path(d) / "calls.log"
-            fake = Path(d) / "ffmpeg"
-            fake.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\nexit 1\n")
-            fake.chmod(0o755)
-            for tool in ("ffprobe",):
-                os.symlink(shutil.which(tool), Path(d) / tool)
-            env = dict(os.environ, PATH=f"{d}{os.pathsep}/usr/bin{os.pathsep}/bin")
-            runner._ENCODERS = None
-            proc = subprocess.run([sys.executable, str(SCRIPTS / "fit.py"), str(OUT / "source.mp4"), "--height", "360", "--hw",
+            fake = FakeFfmpeg(Path(d), {"vt": {"rc": 1, "stderr": "called\n"}, "cpu": {"rc": 1, "stderr": "called\n"}})
+            env = dict(os.environ, PATH=f"{d}{os.pathsep}{os.environ.get('PATH', '')}")
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "fit.py"), str(Path(d) / "pending.mp4"), "--height", "360", "--hw",
                                    "--dry-run", "--json", "-o", str(Path(d) / "o.mp4")], env=env, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, text=True)
+                                  stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertFalse(log.exists(), log.read_text() if log.exists() else "")
+            self.assertEqual(fake.calls(), [])
+
+
+class VideoToolboxFailureTests(unittest.TestCase):
+    """Which ffmpeg failures run() retries on the CPU: only VideoToolbox's own (review of #304)."""
+
+    def test_every_ffmpeg_version_s_videotoolbox_open_failure_is_recognised(self):
+        for version, stderr in VT_OPEN_FAILED.items():
+            with self.subTest(version=version):
+                line = runner.videotoolbox_failure(stderr)
+                self.assertIsNotNone(line, stderr)
+                self.assertIn("videotoolbox", line)
+                self.assertNotIn("0x", line, "log-context pointers are dropped from the note")
+
+    def test_a_failure_that_is_not_videotoolbox_s_is_not(self):
+        for case, stderr in NOT_VT.items():
+            with self.subTest(case=case):
+                self.assertIsNone(runner.videotoolbox_failure(stderr))
 
 
 class EncoderListTests(unittest.TestCase):
@@ -345,6 +475,223 @@ class EncoderListTests(unittest.TestCase):
     def test_only_a_dry_run_reads_ffprobe_s(self):
         tool, _names = self._read(dry_run=True)
         self.assertEqual(tool, "ffprobe")
+
+
+class HwEverywhereTests(unittest.TestCase):
+    """The --hw decisions on every CI runner, VideoToolbox or not: the platform check and the
+    encoder list are stood in for (_vt_available), the encodes are a fake ffmpeg that fails the
+    VideoToolbox command the way FFmpeg does and hands the CPU one to the real ffmpeg."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls.real_ffmpeg = shutil.which("ffmpeg")
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.src = Path(cls.tmp.name) / "src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+           "-t", "1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", cls.src)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        STATE.reset()
+        self._env = mock.patch.dict(os.environ, {}, clear=False)
+        self._env.start()
+        for k in (runner.HW_ENV, runner.HW_FORCED_ENV):
+            os.environ.pop(k, None)
+        self.work = Path(tempfile.mkdtemp(dir=self.tmp.name))
+
+    def tearDown(self):
+        self._env.stop()
+        STATE.reset()
+
+    def _tool(self, module_name, *argv, env=None):
+        """Run a tool's main() in this process (so _vt_available() applies) and parse its --json."""
+        import importlib
+        module = importlib.import_module(module_name)
+        out, err = io.StringIO(), io.StringIO()
+        a, b = _vt_available()
+        with a, b, mock.patch.dict(os.environ, env or {}), \
+                mock.patch.object(sys, "argv", [module_name + ".py"] + [str(x) for x in argv] + ["--json"]), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            STATE.reset()
+            try:
+                module.main()
+            except SystemExit as e:
+                self.assertEqual(e.code, 0, err.getvalue())
+        return json.loads(out.getvalue())
+
+    def test_export_preset_needs_an_explicit_hw(self):
+        """docs/design-decisions.md: FFMPEG_SKILL_HW=1 leaves export.py's delivery presets on x264 (a
+        dry run: the encoder choice), says so, and --hw -- or render.py --hw's explicit marker --
+        puts the same preset on VideoToolbox, so the platform stand-in is not what kept it off."""
+        out = self.work / "x.mp4"
+        doc = self._tool("export", self.src, "--preset", "x", "--dry-run", "-o", out, env={runner.HW_ENV: "1"})
+        self.assertEqual(doc["encoder"], "libx264")
+        self.assertNotIn("videotoolbox", " ".join(doc["commands"]))
+        self.assertEqual({k: doc["hw"][k] for k in ("requested", "source", "used", "fallback")},
+                         {"requested": False, "source": "env", "used": False, "fallback": False})
+        self.assertTrue(any("--hw" in n and "FFMPEG_SKILL_HW=1" in n for n in doc["hw"]["notes"]), doc["hw"])
+        self.assertFalse(any("CRF-equivalent" in n for n in doc.get("notes") or []))
+        for argv, env in ((["--hw"], {}), ([], {runner.HW_ENV: "1", runner.HW_FORCED_ENV: "1"})):
+            with self.subTest(argv=argv, env=env):
+                doc = self._tool("export", self.src, "--preset", "x", "--dry-run", "-o", out, *argv, env=env)
+                self.assertEqual(doc["encoder"], "h264_videotoolbox")
+                self.assertTrue(doc["hw"]["used"])
+                self.assertTrue(any("not CRF-equivalent" in n for n in doc["notes"]), doc.get("notes"))
+
+    def test_the_env_default_reaches_the_other_re_encoding_tools(self):
+        doc = self._tool("fit", self.src, "--height", "120", "--dry-run", "-o", self.work / "f.mp4", env={runner.HW_ENV: "1"})
+        self.assertEqual(doc["encoder"], "h264_videotoolbox")
+        self.assertEqual((doc["hw"]["requested"], doc["hw"]["source"], doc["hw"]["used"]), (True, "env", True))
+        self.assertTrue(any("--no-hw" in n for n in doc["hw"]["notes"]))
+        doc = self._tool("fit", self.src, "--height", "120", "--dry-run", "-o", self.work / "f.mp4")
+        self.assertEqual(doc["encoder"], "libx264", "never automatic: no flag, no variable, no GPU")
+        self.assertNotIn("hw", doc)
+
+    def _run_encode(self, fake):
+        """What a re-encoding tool does: the encoder line from video_args() (VideoToolbox under
+        --hw, the swap recorded), one ffmpeg command, run(), emit()."""
+        STATE.hw, STATE.hw_source, STATE.json = True, "flag", True
+        a, b = _vt_available()
+        with a, b:
+            video = decision.video_args(_common.probe(str(self.src)), 23, "ultrafast")
+        self.assertEqual(video[video.index("-c:v") + 1], "h264_videotoolbox")
+        out = self.work / "o.mp4"
+        cmd = [str(fake.path), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(self.src), "-t", "0.5"] + video + ["-an", str(out)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                runner.run(cmd)
+                emit_module.emit(str(out))
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, json.loads(stdout.getvalue()), stderr.getvalue()
+
+    def test_a_videotoolbox_open_failure_is_re_encoded_on_the_cpu_and_reported(self):
+        fake = FakeFfmpeg(self.work, {"vt": {"rc": 187, "stderr": VT_OPEN_FAILED["6.1"]}, "cpu": {"real": self.real_ffmpeg}})
+        code, doc, _err = self._run_encode(fake)
+        self.assertEqual(code, 0, doc)
+        calls = fake.calls()
+        self.assertEqual(len(calls), 2, calls)
+        self.assertIn("h264_videotoolbox", calls[0])
+        self.assertIn("libx264", calls[1])
+        self.assertNotIn("h264_videotoolbox", calls[1])
+        self.assertTrue(doc["verified"], "verified is the probe of what the CPU wrote")
+        self.assertEqual(doc["probe"]["video"]["codec"], "h264")
+        self.assertEqual(doc["encoder"], "libx264")
+        self.assertIn("libx264", doc["commands"][-1])
+        self.assertEqual((doc["hw"]["used"], doc["hw"]["fallback"]), (False, True))
+        self.assertTrue(any("VideoToolbox refused" in n and "cannot create compression session" in n
+                            for n in doc["hw"]["notes"]), doc["hw"])
+        self.assertFalse(any("CRF-equivalent" in n for n in doc.get("notes") or []), "the file is the CPU encode")
+
+    def test_a_failure_that_is_not_videotoolbox_s_is_not_retried_and_names_the_command_that_ran(self):
+        fake = FakeFfmpeg(self.work, {"vt": {"rc": 234, "stderr": NOT_VT["missing font (7.x: the encoder never opened)"]},
+                                      "cpu": {"real": self.real_ffmpeg}})
+        code, doc, _err = self._run_encode(fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(fake.calls()), 1, "a missing font is not the GPU's: one run, no CPU retry")
+        self.assertEqual(doc["error"]["kind"], "ffmpeg")
+        self.assertIn("h264_videotoolbox", doc["error"]["message"])
+        self.assertIn("not retried on the CPU", doc["error"]["message"])
+        self.assertIn("Cannot find a valid font", doc["error"]["message"])
+        self.assertIn("h264_videotoolbox", doc["commands"][-1])
+        self.assertEqual(doc["encoder"], "h264_videotoolbox")
+        self.assertEqual((doc["hw"]["used"], doc["hw"]["fallback"]), (True, False))
+        self.assertFalse(any("VideoToolbox refused" in n for n in doc["hw"]["notes"]), doc["hw"])
+
+    def test_when_the_cpu_retry_fails_too_the_error_is_the_cpu_command_s(self):
+        fake = FakeFfmpeg(self.work, {"vt": {"rc": 187, "stderr": VT_OPEN_FAILED["5.1"]},
+                                      "cpu": {"rc": 1, "stderr": "[libx264 @ 0x55d] broken CPU encode\n"}})
+        code, doc, _err = self._run_encode(fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(fake.calls()), 2)
+        message = doc["error"]["message"]
+        self.assertIn("libx264, the CPU retry after VideoToolbox refused the job", message)
+        self.assertIn("broken CPU encode", message)
+        self.assertNotIn("compression session", message, "the stderr is the command's that ran last")
+        self.assertIn("libx264", doc["commands"][-1])
+        self.assertEqual((doc["encoder"], doc["hw"]["used"], doc["hw"]["fallback"]), ("libx264", False, True))
+
+
+class HwResultTests(unittest.TestCase):
+    """What a result says about a GPU encode (review of #304: two encoders, one quality scale)."""
+
+    def tearDown(self):
+        STATE.reset()
+
+    def _doc(self, commands, hw=True):
+        STATE.reset()
+        STATE.hw, STATE.hw_source, STATE.json, STATE.dry_run = hw, ("flag" if hw else None), True, True
+        STATE.commands = list(commands)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            emit_module.emit("planned.mp4")
+        return json.loads(out.getvalue())
+
+    def test_a_gpu_encode_notes_that_its_quality_is_not_crf_equivalent(self):
+        doc = self._doc(["ffmpeg -i a.mp4 -c:v h264_videotoolbox -q:v 64 -pix_fmt yuv420p out.mp4"])
+        notes = [n for n in doc["notes"] if "not CRF-equivalent" in n]
+        self.assertEqual(len(notes), 1, doc["notes"])
+        self.assertIn("h264_videotoolbox -q:v 64", notes[0])
+        self.assertIn("--no-hw", notes[0])
+        doc = self._doc(["ffmpeg -i a.mov -c:v prores_videotoolbox -profile:v hq out.mov"])
+        self.assertTrue(any(n.startswith("prores_videotoolbox is not prores_ks") for n in doc["notes"]), doc["notes"])
+        for commands, hw in ((["ffmpeg -i a.mp4 -c:v libx264 -crf 23 out.mp4"], True),
+                             (["ffmpeg -i a.mp4 -c:v libx264 -crf 23 out.mp4"], False)):
+            self.assertNotIn("notes", self._doc(commands, hw))
+
+    def test_verified_is_the_measured_output_whatever_the_encoder(self):
+        """`verified` is the probe (and the tool's own measured steps), never a property of the
+        encoder line: the same file verifies the same under a VideoToolbox command line."""
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "o.mp4"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30",
+               "-t", "0.3", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", out)
+            docs = []
+            for enc in ("h264_videotoolbox -q:v 64", "libx264 -crf 23"):
+                STATE.reset()
+                STATE.hw, STATE.hw_source, STATE.json = True, "flag", True
+                STATE.commands = [f"ffmpeg -i a.mp4 -c:v {enc} {out}"]
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    emit_module.emit(str(out))
+                docs.append(json.loads(buf.getvalue()))
+        for doc in docs:
+            self.assertTrue(doc["verified"])
+            self.assertEqual(doc["verification"], [{"step": "probe", "ok": True}])
+        self.assertEqual(docs[0]["probe"], docs[1]["probe"])
+
+    def test_render_carries_a_stage_s_fallback_and_gpu_quality_note(self):
+        """render.py runs each stage as a child process and keeps only its command lines; the
+        stage's `hw` facts (fell back and why, ran on VideoToolbox) reach render's own result."""
+        STATE.reset()
+        STATE.json, STATE.dry_run = True, True
+        fit = {"encoder": "libx264", "commands": ["ffmpeg -i a -c:v libx264 -crf 18 b.mp4"],
+               "hw": {"requested": True, "source": "env", "used": False, "fallback": True,
+                      "notes": ["VideoToolbox refused the encode: [h264_videotoolbox] Error: cannot create compression session: -12902; re-encoded on the CPU"]}}
+        cap = {"encoder": "h264_videotoolbox", "commands": ["ffmpeg -i b.mp4 -c:v h264_videotoolbox -q:v 75 c.mp4"],
+               "hw": {"requested": True, "source": "env", "used": True, "fallback": False, "notes": [emit_module.ENV_HW_NOTE]}}
+        exp = {"encoder": "libx264", "commands": ["ffmpeg -i c.mp4 -c:v libx264 -crf 18 d.mp4"],
+               "hw": {"requested": False, "source": "env", "used": False, "fallback": False, "notes": [emit_module.ENV_NOT_FOR_DELIVERY_NOTE]}}
+        for stage, doc in (("fit", fit), ("caption", cap), ("export", exp)):
+            emit_module.absorb_stage_hw(stage, doc)
+            STATE.commands += doc["commands"]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            emit_module.emit("d.mp4")
+        doc = json.loads(out.getvalue())
+        self.assertEqual(doc["encoder"], "libx264")
+        self.assertEqual({k: doc["hw"][k] for k in ("requested", "source", "used", "fallback")},
+                         {"requested": True, "source": "env", "used": False, "fallback": True})
+        self.assertTrue(any(n.startswith("fit: VideoToolbox refused") for n in doc["hw"]["notes"]), doc["hw"])
+        self.assertTrue(any(n.startswith("caption: ") and "FFMPEG_SKILL_HW=1" in n for n in doc["hw"]["notes"]))
+        self.assertTrue(any("h264_videotoolbox -q:v 75 is not CRF-equivalent" in n for n in doc["notes"]), doc.get("notes"))
 
 
 @unittest.skipUnless(_vt_here(), "VideoToolbox encoders need Apple Silicon and an ffmpeg that lists them")
@@ -394,9 +741,10 @@ class VtEncodeTests(MediaFixtures):
         self.assertFalse(doc["hw"]["used"])
         self.assertTrue(any("VideoToolbox refused" in n for n in doc["hw"]["notes"]), doc["hw"])
 
-    def test_export_preset_needs_an_explicit_hw(self):
-        """The env default leaves a delivery preset on the CPU (a dry run: encoder choice only);
-        an explicit --hw export really runs on VideoToolbox and keeps the preset's frame rate."""
+    def test_export_with_hw_really_runs_on_videotoolbox(self):
+        """An explicit --hw export really runs on VideoToolbox and keeps the preset's frame rate
+        (the env-default half of the decision is pinned on every runner by
+        HwEverywhereTests.test_export_preset_needs_an_explicit_hw)."""
         env = dict(os.environ, FFMPEG_SKILL_HW="1")
         doc = json.loads(script("export.py", self.src, "--preset", "x", "--dry-run", "--json",
                                 "-o", OUT / "vt_x_env.mp4", env=env).stdout)

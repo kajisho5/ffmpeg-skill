@@ -66,6 +66,7 @@ from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args
+from _common.emit import absorb_stage_hw
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -355,6 +356,7 @@ def render_pack(names: List[str], args) -> int:
             if line.startswith("$ ") or line.startswith("[dry-run]"):
                 STATE.commands.append(line[2:] if line.startswith("$ ") else line)
         STATE.commands.extend(str(c) for c in (doc.get("commands") or []))
+        absorb_stage_hw(name, doc)
         out = doc.get("output") or dest_out
         chk = doc.get("check") or {}
         ok = proc.returncode == 0 and doc.get("status") == "completed"
@@ -546,6 +548,7 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, **extra_fields)
     _LAST_DOC.clear()
     _LAST_DOC.update(doc if isinstance(doc, dict) else {})
+    absorb_stage_hw(Path(script).stem, doc)  # a stage's GPU facts (ran on VideoToolbox, fell back and why) reach this result
     out_path = str(doc.get("output") or "")
     if key:
         cache_store(stage, key, out_path or (dest or ""), time.time() - started)
