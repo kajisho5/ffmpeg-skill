@@ -1353,7 +1353,10 @@ def main() -> int:
         # a video segment shorter than one frame has no picture to cut: a copy lands on a whole
         # GOP and a re-encode on one frame or none, so the result would not be what was asked
         frame = 1.0 / video["fps"]
-        vend = video.get("duration") or total
+        # where the video ends on the cut's clock (video_end), not the stream's length: video that
+        # starts after the container does (MPEG-TS) ends later than its length says. A pending
+        # --dry-run input has nothing to probe, so it falls back to the media duration.
+        vend = (None if dry_run_input_pending(args.input) else video_end(args.input, meta)) or total
         for s, e in segments:
             if (min(e, vend) if vend else e) - s < frame - 1e-6:
                 die(f"segment {s:.3f}-{e:.3f}s is shorter than one frame ({frame:.4f}s at {video['fps']:g} fps)"

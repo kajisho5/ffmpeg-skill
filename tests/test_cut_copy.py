@@ -1148,6 +1148,30 @@ class CutJoinTests(unittest.TestCase):
         self.assertIn("shorter than one frame", proc.stderr)
         self.assertFalse(out.exists())
 
+    def test_the_one_frame_refusal_measures_the_video_end_on_the_cut_clock(self):
+        """CodeRabbit on #313: the check took the video stream's length as its end. A source whose video
+        starts after the container does (MPEG-TS, here 0.54 s) ends later than that length says, so
+        a real last 0.2 s was refused as "shorter than one frame inside the video stream"."""
+        src = DIR / "video_starts_late.ts"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-itsoffset", "0.5", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=5.5",
+               "-f", "lavfi", "-i", "sine=f=440:d=6", "-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", "-t", "6.5", src)
+        meta = probe(str(src))
+        v = meta["video"]
+        end = cut.video_end(str(src), meta)
+        # the premise: the stream's own length falls short of where the video ends on the cut clock
+        self.assertGreater(end - v["duration"], 0.3, (end, v["duration"]))
+        last = (meta["duration"] - 0.2, meta["duration"] - 0.01)
+        out = DIR / "video_starts_late_tail.ts"
+        proc = script("cut.py", src, "--start", f"{last[0]:.3f}", "--end", f"{last[1]:.3f}", "--dry-run", "--json", "-o", out)
+        self.assertNotIn("shorter than one frame", proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["status"], "completed")
+        # less than a frame of picture left before the video's end is still refused
+        short = script("cut.py", src, "--start", f"{end - 0.02:.3f}", "--end", f"{end:.3f}", "--dry-run", "--json", "-o", out,
+                       expect_fail=True)
+        self.assertIn("shorter than one frame", short.stderr)
+
     def test_a_single_cut_shorter_than_a_frame_is_refused_but_not_to_audio(self):
         """2.5.1 wrote one whole frame for --start 1 --end 1.01 and reported success. The refusal
         is a kind: input before ffmpeg runs; sound has no frame, so an audio output still cuts."""
