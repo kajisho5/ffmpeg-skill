@@ -138,7 +138,9 @@ class FakeFfmpeg:
             "sys.exit(do.get('rc', 0))\n", encoding="utf-8")
         if os.name == "nt":
             self.path = self.dir / "ffmpeg.cmd"
-            self.path.write_text(f'@"{sys.executable}" "{body}" %*\r\n@exit /b %ERRORLEVEL%\r\n', encoding="utf-8")
+            # text mode writes the CRLF line ends cmd.exe expects; run() starts a .cmd directly
+            # (CreateProcess runs it through cmd.exe), and the arguments here have no cmd metacharacters
+            self.path.write_text(f'@"{sys.executable}" "{body}" %*\n@exit /b %ERRORLEVEL%\n', encoding="utf-8")
         else:
             self.path = self.dir / "ffmpeg"
             self.path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{body}" "$@"\n', encoding="utf-8")
