@@ -301,6 +301,7 @@ def _skipped_parakeet(route: "Route", language: Optional[str], language_flag: st
 def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str], model: str, audio_stream: int,
                    ffmpeg: str, shutil, subprocess, wanted: str = "auto") -> Transcription:
     from _common import run_analysis, STATE
+    language = engine_language(language)
     wav = os.path.join(tmpdir, "audio.wav")
     # A wav in our own temp dir: a measurement input for the engine, not a deliverable, so it
     # is not a run() call (no --dry-run gate, not recorded), but it keeps the time limit and
@@ -360,12 +361,14 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
         import threading
         result: list = []
         crashed: list = []
+        heard: list = []  # the language faster-whisper decoded, when it names one
 
         def work() -> None:
             try:
                 m = WhisperModel(model, device="cpu", compute_type="int8")
-                segments, _ = m.transcribe(wav, language=lang, word_timestamps=False)
+                segments, decoded = m.transcribe(wav, language=lang, word_timestamps=False)
                 result.extend((seg.start, seg.end, seg.text.strip()) for seg in segments if seg.text.strip())
+                heard.append(getattr(decoded, "language", None))
             except Exception as exc:  # noqa: BLE001 -- a model that would not load or run: a failed engine
                 crashed.append(exc)
 
@@ -388,7 +391,8 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
             info("transcribed with faster-whisper")
             write_srt(cues, out_srt)
             return Transcription(cues=cues, engine="faster-whisper",
-                                 facts=dict(facts, engine="faster-whisper", model=model, language=lang))
+                                 facts=dict(facts, engine="faster-whisper", model=model,
+                                            language=lang or _heard_language(heard)))
     except ImportError:
         pass
     # 3. openai-whisper CLI
@@ -506,6 +510,23 @@ def _words_from_whisper_cpp_json(path: str) -> "List[Dict[str, Any]]":
             else:
                 out.append({"word": text.strip(), "start": start, "end": end})
     return [w for w in out if w["word"].strip()]
+
+
+def _whisper_json_language(path: str) -> Optional[str]:
+    """The language a Whisper engine's JSON says it decoded: whisper.cpp's `result.language`, or
+    openai-whisper's top-level `language`. None when the file has neither."""
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8")) or {}
+        lang = str(((doc.get("result") or {}).get("language")) or doc.get("language") or "").strip().lower()
+    except (OSError, ValueError, AttributeError):
+        return None
+    return lang or None
+
+
+def _heard_language(heard: list) -> Optional[str]:
+    """The language an in-process engine decoded (faster-whisper's info.language), lower-cased, or None."""
+    lang = next((str(h).strip().lower() for h in heard if h), "")
+    return lang or None
 
 
 def _words_from_openai_whisper_json(path: str) -> "List[Dict[str, Any]]":
@@ -644,6 +665,22 @@ def _is_english(language: Optional[str]) -> bool:
     return (language or "").lower().split("-")[0].split("_")[0] in ("en", "eng", "english")
 
 
+def engine_language(language: Optional[str]) -> Optional[str]:
+    """`--language` as the engines take it. "auto" (caption.py's documented default, spelled out)
+    is no language: None, the undetected route. Every spelling of English (en-US, eng, English)
+    is "en", which Parakeet accepts as English and Whisper accepts as a language code; any other
+    value is its two-letter primary language (ja-JP -> ja)."""
+    named = (language or "").strip()
+    if not named or named.lower() == "auto":
+        return None
+    if _is_english(named):
+        return "en"
+    # Whisper takes the two-letter code: a regional or script subtag (ja-JP, pt-BR, zh-Hant) names the
+    # same language to it, and an ISO 639-2 code (jpn) is passed as given
+    primary = named.replace("_", "-").split("-")[0].lower()
+    return primary if len(primary) == 2 else named
+
+
 def _whisper_cpp_cli(shutil) -> Optional[str]:
     cli = shutil.which("whisper-cli") or shutil.which("whisper-cpp")
     if not cli:
@@ -675,7 +712,7 @@ def detect_language(wav: str, shutil, subprocess) -> Optional[str]:
     if not cli:
         return None
     model = next((p for p in (_whisper_cpp_model(m) for m in ("tiny", "base", "small", "tiny.en"))
-                  if os.path.exists(p) and not p.endswith(".en.bin")), None)
+                  if os.path.exists(p) and not _english_only_whisper_model(p)), None)
     if not model:
         return None
     proc = _asr_run([cli, "-m", model, "-f", wav, "-dl", "-l", "auto"], subprocess, "whisper.cpp language detection")
@@ -756,9 +793,10 @@ def _names_parakeet_model(name: str) -> bool:
 
 
 def _english_only_whisper_model(name: str) -> bool:
-    """An English-only Whisper model: tiny.en, base.en, ... or a ggml-*.en.bin file."""
+    """An English-only Whisper model: tiny.en, base.en, ... or a ggml-*.en.bin file, in any
+    quantisation (ggml-base.en-q5_1.bin, tiny.en-q8_0) or variant (ggml-small.en-tdrz.bin)."""
     base = os.path.basename(name).lower()
-    return (base[:-4] if base.endswith(".bin") else base).endswith(".en")
+    return re.search(r"\.en(-[a-z0-9_]+)*$", base[:-4] if base.endswith(".bin") else base) is not None
 
 
 def _whisper_ready(shutil, model: Optional[str]) -> bool:
@@ -913,6 +951,7 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
     from _common import require_tool, run_analysis, STATE
     ffmpeg = require_tool("ffmpeg")
     wanted = requested_engine(engine)
+    language = engine_language(language)
     parakeet_model = None if model == "base" else model
     tmpdir = _tempfile.mkdtemp(prefix="ffskill_asrw_")
     try:
@@ -962,7 +1001,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
                 words = _words_from_whisper_cpp_json(base + ".json")
                 info(f"word timings from whisper.cpp ({len(words)} words)")
                 return Transcription(words=words, engine="whisper.cpp",
-                                     facts=dict(facts, engine="whisper.cpp", model=model_path, language=lang))
+                                     facts=dict(facts, engine="whisper.cpp", model=model_path,
+                                                language=lang or _whisper_json_language(base + ".json")))
             line = _failure_line(proc)
             info("whisper.cpp found but produced no word-timing JSON: " + line)
             tried.append(_failed("whisper.cpp", "found but produced no word-timing JSON: " + line))
@@ -976,11 +1016,13 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             import threading
             collected: list = []
             crashed: list = []
+            heard: list = []
 
             def work() -> None:
                 try:
                     m = WhisperModel(model, device="cpu", compute_type="int8")
-                    segments, _ = m.transcribe(wav, language=lang, word_timestamps=True)
+                    segments, decoded = m.transcribe(wav, language=lang, word_timestamps=True)
+                    heard.append(getattr(decoded, "language", None))
                     for seg in segments:
                         for w in (getattr(seg, "words", None) or []):
                             collected.append({"word": str(w.word).strip(),
@@ -1002,7 +1044,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             else:
                 info(f"word timings from faster-whisper ({len(collected)} words)")
                 return Transcription(words=[w for w in collected if w["word"]], engine="faster-whisper",
-                                     facts=dict(facts, engine="faster-whisper", model=model, language=lang))
+                                     facts=dict(facts, engine="faster-whisper", model=model,
+                                                language=lang or _heard_language(heard)))
         except ImportError:
             pass
 
@@ -1018,7 +1061,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
                 words = _words_from_openai_whisper_json(doc)
                 info(f"word timings from openai-whisper ({len(words)} words)")
                 return Transcription(words=words, engine="openai-whisper",
-                                     facts=dict(facts, engine="openai-whisper", model=model, language=lang))
+                                     facts=dict(facts, engine="openai-whisper", model=model,
+                                                language=lang or _whisper_json_language(doc)))
             line = _failure_line(proc)
             info("openai-whisper found but produced no word-timing JSON: " + line)
             tried.append(_failed("openai-whisper", "found but produced no word-timing JSON: " + line))

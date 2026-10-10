@@ -235,7 +235,7 @@ DRY_RUN_ANALYSIS = {
     "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written",
     "report": "probe, loudness and contact-sheet measurements run; the HTML is not written",
     "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
-    "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written",
+    "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written. --filler --transcribe also runs the speech engine (its word timings are what the filler spans are planned on), which may download a model on first use",
     "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
     "check": "read-only tool; the loudness measurement (or, when it is skipped, the audio row's volumedetect) and the --content decode run under --dry-run too, so every row is present",
     "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
@@ -518,10 +518,15 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     props = dict(base)
     props.update(extra)
     notes = props.get("notes")
-    if hw and isinstance(notes, dict) and notes.get("description"):
-        # a tool-specific condition is not the only one: emit() adds the GPU line to any tool
-        props["notes"] = dict(notes, description=notes["description"] + "; also, on a VideoToolbox encode (--hw / "
-                              "$FFMPEG_SKILL_HW), a line that its quality is not CRF-equivalent (see hw)")
+    if hw:
+        # emit() adds the VideoToolbox quality line to `notes` on every tool that takes --hw, so every
+        # such tool publishes `notes`, and a tool-specific condition (loop's "--boomerang ... the audio
+        # was dropped", export's own lines) is not the only one it can carry
+        gpu = "a line that its quality is not CRF-equivalent (on a VideoToolbox encode: --hw / $FFMPEG_SKILL_HW; see hw)"
+        if isinstance(notes, dict) and notes.get("description"):
+            props["notes"] = dict(notes, description=notes["description"] + "; also " + gpu)
+        else:
+            props["notes"] = dict(notes or {"type": "array", "items": {"type": "string"}}, description=gpu[0].upper() + gpu[1:])
     required = ["status", "output", "dry_run", "commands"]
     return {"type": "object", "properties": props, "required": required, "additionalProperties": True}
 
@@ -840,8 +845,9 @@ def doctor() -> Dict[str, Any]:
 
     `gpu_encoders` is a separate, honest answer to a question none of the required/optional
     capabilities above ask: which GPU-backed encoders (nvenc, videotoolbox, qsv, vaapi, amf) this
-    ffmpeg BUILD carries, from `-encoders` alone. No tool here requires or uses one -- every tool
-    still assumes CPU x264/x265 -- so `gpu_encoders` never affects `ok` or any tool's `usable`. It
+    ffmpeg BUILD carries, from `-encoders` alone. No tool requires one -- every tool runs on CPU
+    x264/x265 unless `--hw` / FFMPEG_SKILL_HW=1 puts it on VideoToolbox (Apple Silicon only) -- so
+    `gpu_encoders` never affects `ok` or any tool's `usable`. It
     only proves the build shipped the capability, never that the GPU/driver on this machine will
     actually accept a job (that needs a real encode, which this introspection never runs).
 
@@ -1439,7 +1445,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
             # first time it runs; faster-whisper is a library, so its fetch is made from the skill's own
             # process. A caller that sandboxes the network must know that before a first --transcribe.
             "model_downloads": {
-                "when": "first use of a speech engine (--transcribe) whose model is not cached yet; media is never uploaded",
+                "when": "first use of a speech engine (--transcribe; silence.py --filler --transcribe runs it under --dry-run too, caption.py --transcribe does not) whose model is not cached yet; media is never uploaded",
                 "in_process": {"faster-whisper": "Hugging Face (Systran/faster-whisper-<model>)"},
                 "child_process": {"parakeet-mlx": "Hugging Face (mlx-community/parakeet-*)",
                                   "openai-whisper": "OpenAI (its model checkpoint)"},
@@ -1513,7 +1519,7 @@ def main() -> int:
                 print(f"note: overall 'ok' means nothing REQUIRED BY EVERY TOOL is missing -- {len(not_usable)} tool(s) still can't run today: {', '.join(not_usable)} (see doctor --json .tools for why)")
             gpu = d["gpu_encoders"]
             if gpu["status"] == "parsed":
-                print(f"GPU-backed encoders in this build: {len(gpu['present'])} (no tool here uses one; names in doctor --json)")
+                print(f"GPU-backed encoders in this build: {len(gpu['present'])} (only --hw / FFMPEG_SKILL_HW=1 use one, VideoToolbox on Apple Silicon; names in doctor --json)")
             print(_fonts_summary_line(d["fonts"]))
             print("full detail: doctor --json (capability lists, per-tool `usable`, fix hints)")
             for err in d["errors"]:

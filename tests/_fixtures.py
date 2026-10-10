@@ -206,7 +206,7 @@ def _families_for(script):
         return []
     proc = subprocess.run(["fc-list", f":lang={FC_LANG[script]}", "family"], stdout=subprocess.PIPE, text=True)
     return [f for line in proc.stdout.splitlines() for f in line.split(",")]
-# One build per process, not one per group: setUpClass runs for each of the six group classes and
+# One build per process, not one per group: setUpClass runs for each of the nine group classes and
 # the footage below takes the best part of a minute to encode. The first class through builds it
 # and records every attribute it set; the rest are handed the same paths.
 _BUILT = {}

@@ -501,10 +501,12 @@ class ContractTests(unittest.TestCase):
         tool whose `notes` description names its own condition (loop: "--boomerang ... the audio
         was dropped") must not read as if that were the only one."""
         for name, spec in self.tools.items():
-            notes = spec["output_schema"]["properties"].get("notes") or {}
-            if "hw" in spec["input_schema"]["properties"] and notes.get("description"):
-                with self.subTest(tool=name):
-                    self.assertIn("VideoToolbox", notes["description"])
+            if "hw" not in spec["input_schema"]["properties"]:
+                continue
+            notes = spec["output_schema"]["properties"].get("notes")
+            with self.subTest(tool=name):
+                self.assertIsNotNone(notes, "a --hw tool publishes notes: emit() adds the GPU line to it")
+                self.assertIn("VideoToolbox", notes.get("description", ""))
         self.assertIn("VideoToolbox", self.tools["loop"]["output_schema"]["properties"]["notes"]["description"])
         self.assertIn("VideoToolbox", self.contract["idempotency_hints"]["bit_exact"])
 

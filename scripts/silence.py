@@ -142,8 +142,18 @@ def resolve_filler(args, meta):
 
     lang = args.filler_lang
     if lang == "auto":
-        lang = str((raw or {}).get("language") or "").lower()[:2] if isinstance(raw, dict) else ""
-        lang = lang if lang in FILLER_WORDS else "en"
+        # the language the transcript says it is in: a --words document's own field, else what the
+        # engine was told or detected for this run (`--transcribe`). A language that is known and has
+        # no built-in list is refused, as --filler-lang names it: the English list would cut real
+        # words of that language (Norwegian "er" is "is"), and a transcript with no language at all
+        # keeps the English list it always had
+        spoken = str((raw or {}).get("language") or "").lower()[:2] if isinstance(raw, dict) else ""
+        spoken = spoken or str(transcription.get("language") or transcription.get("detected_language") or "").lower()[:2]
+        if spoken and spoken not in FILLER_WORDS and not args.filler_words:
+            die(f"the transcript is in {spoken}, which has no built-in filler list. The languages with one are "
+                f"{', '.join(sorted(FILLER_WORDS))}; pass --filler-words FILE with your own list for {spoken}, or "
+                "--filler-lang for a language that has one.", kind="input")
+        lang = spoken if spoken in FILLER_WORDS else "en"
     listname = "builtin"
     if args.filler_words:
         wordlist = set(_word_list(read_text_or_die(args.filler_words, "--filler-words")))

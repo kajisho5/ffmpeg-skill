@@ -617,7 +617,7 @@ Three refusals, all `kind: input`, all before any encode:
 
 Results: `filler.removed_count`, `filler.removed_seconds`, `filler.removed`
 (one entry per span), `filler.lang`, `filler.list`, `filler.word_timings` and
-`filler.warnings`. With `--transcribe`, `filler.source` is `whisper:ENGINE` or
+`filler.warnings`; `--filler-lang auto` refuses (`kind: input`) a transcript in a language with no built-in list, so pass `--filler-words FILE` for it. With `--transcribe`, `filler.source` is `whisper:ENGINE` or
 `parakeet:ENGINE` and `filler.transcription` says which engine, model, language
 and routing made the words; a top-level `notes` line says when `--engine auto`
 ran the English-only Parakeet model on English assumed (no `--filler-lang`, and

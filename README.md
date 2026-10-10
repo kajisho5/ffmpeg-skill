@@ -401,7 +401,7 @@ FFmpeg 8 shortened the flag column of `ffmpeg -filters`. A parser anchored on th
 **What is tested where.** The contract and the test suite (`tests/test_contract.py`,
 `tests/test_all.py`, which aggregates one module per tool group — `test_analysis.py`,
 `test_editing.py`, `test_audio.py`, `test_picture.py`, `test_delivery.py`,
-`test_orchestration.py` — over the shared footage in `tests/_fixtures.py`) run on Linux, macOS
+`test_orchestration.py`, `test_accel.py`, `test_asr.py`, `test_cut_copy.py` — over the shared footage in `tests/_fixtures.py`) run on Linux, macOS
 and Windows on every pull request, minus the handful of POSIX-shim tests listed under
 [Development](#development). The real-device media corpus
 (`tests/corpus.py`) has been run on Linux and macOS; the full corpus has **not** been run on

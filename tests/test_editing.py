@@ -2017,6 +2017,37 @@ class EditingTests(MediaFixtures):
         for span in fil["removed"]:
             self.assertLess(span["start"], span["end"])
 
+    def test_filler_lang_auto_follows_the_language_the_engine_transcribed(self):
+        """--transcribe with the default --filler-lang auto took the English list whatever the
+        engine heard: French speech was transcribed right and its "euh" stayed in the cut. The
+        language the engine reports picks the list; one with no built-in list says so."""
+        words = ("[{'word': 'Bonjour', 'start': 0.2, 'end': 0.5}, {'word': 'euh', 'start': 0.6, 'end': 0.8},"
+                 " {'word': 'tout', 'start': 1.0, 'end': 1.3}]")
+
+        def run(spoken, expect_fail=False):
+            shim = OUT / f"asr_shim_{spoken}"
+            shim.mkdir(exist_ok=True)
+            (shim / "sitecustomize.py").write_text(
+                "import sys, os\n"
+                "sys.path.insert(0, os.environ['FFSKILL_SCRIPTS'])\n"
+                "import _common.asr as asr\n"
+                "def fake(video, language=None, model='base', audio_stream=0, engine=None, **kw):\n"
+                f"    return asr.Transcription(words={words}, engine='whisper.cpp', facts={{'language': {spoken!r}}})\n"
+                "asr.transcribe_words_result = fake\n", encoding="utf-8")
+            env = dict(os.environ, PYTHONPATH=str(shim), FFSKILL_SCRIPTS=str(SCRIPTS))
+            r = sh(sys.executable, SCRIPTS / "silence.py", self._gappy(), "--filler",
+                   "--transcribe", "--filler-list", "--json", env=env, expect_fail=expect_fail)
+            return json.loads(r.stdout)
+        fr = run("fr")["filler"]
+        self.assertEqual((fr["lang"], fr["removed_words"], fr["warnings"]), ("fr", ["euh"], []))
+        en = run("en")["filler"]
+        self.assertEqual((en["lang"], en["removed_words"]), ("en", []))
+        # a language with no built-in list is refused, not cut with the English list ("er" is "is" in Norwegian)
+        no = run("no", expect_fail=True)
+        self.assertEqual(no["error"]["kind"], "input")
+        self.assertIn("no built-in filler list", no["error"]["message"])
+        self.assertIn("--filler-words", no["error"]["message"])
+
     def test_filler_transcribe_refuses_when_the_engine_gives_no_word_timings(self):
         """An engine that runs but whose build has no word timestamps must say exactly that and
         name --words -- not report an empty removal as a success."""

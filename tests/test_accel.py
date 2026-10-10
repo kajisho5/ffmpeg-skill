@@ -370,6 +370,63 @@ class HwReviewRegressionTests(unittest.TestCase):
         self.assertFalse(rep["hw"]["used"])
         self.assertTrue(rep["hw"]["fallback"])
 
+    def test_a_failed_cpu_retry_does_not_claim_a_re_encode_and_a_repeat_refusal_is_noted_once(self):
+        """The note is written from the retry's outcome: a document for a job whose CPU retry also
+        failed must not say it was re-encoded, and a job of many encodes names the refusal once."""
+        STATE.hw, STATE.hw_source = True, "flag"
+        STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
+        refused = subprocess.CompletedProcess([], 1, "", VT_OPEN_FAILED["6.1"])
+        broken = subprocess.CompletedProcess([], 1, "", "broken")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as d:
+            out = str(Path(d) / "o.mp4")
+            cmd = ["ffmpeg", "-i", "a.mp4", "-c:v", "h264_videotoolbox", "-q:v", "75", out]
+            with mock.patch.object(runner, "_execute", side_effect=[refused, broken]):
+                proc = runner.run(cmd, quiet=True, check=False)
+            self.assertEqual(proc.returncode, 1)
+            self.assertFalse(STATE.hw_fallback, "fallback means a job was re-encoded on the CPU; this one was not")
+            self.assertEqual(len(STATE.hw_notes), 1)
+            self.assertIn("the CPU retry failed too", STATE.hw_notes[0])
+            self.assertNotIn("re-encoded on the CPU", STATE.hw_notes[0])
+            STATE.hw_notes, STATE.hw_fallback = [], False
+            with mock.patch.object(runner, "_execute", side_effect=[refused, ok, refused, ok]):
+                runner.run(cmd, quiet=True)
+                runner.run(cmd, quiet=True)
+            self.assertTrue(STATE.hw_fallback)
+            self.assertEqual(len(STATE.hw_notes), 1, STATE.hw_notes)
+            self.assertTrue(STATE.hw_notes[0].endswith("re-encoded on the CPU"))
+
+    def test_a_cpu_retry_that_times_out_leaves_no_claim_that_it_re_encoded(self):
+        """A timeout exits from inside the retry, before any outcome exists: the note stays the
+        neutral "retrying" line and fallback stays false."""
+        STATE.hw, STATE.hw_source = True, "flag"
+        STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
+        refused = subprocess.CompletedProcess([], 1, "", VT_OPEN_FAILED["6.1"])
+        with tempfile.TemporaryDirectory() as d:
+            cmd = ["ffmpeg", "-i", "a.mp4", "-c:v", "h264_videotoolbox", "-q:v", "75", str(Path(d) / "o.mp4")]
+            with mock.patch.object(runner, "_execute", side_effect=[refused, SystemExit(124)]), \
+                    self.assertRaises(SystemExit):
+                runner.run(cmd, quiet=True)
+        self.assertFalse(STATE.hw_fallback)
+        self.assertEqual(len(STATE.hw_notes), 1, STATE.hw_notes)
+        self.assertTrue(STATE.hw_notes[0].endswith("; retrying on the CPU encoder"), STATE.hw_notes)
+
+    def test_a_later_success_replaces_an_earlier_failed_retry_for_the_same_refusal(self):
+        STATE.hw, STATE.hw_source = True, "flag"
+        STATE.hw_swaps = [(["-c:v", "h264_videotoolbox", "-q:v", "75"], ["-c:v", "libx264", "-crf", "18"])]
+        refused = subprocess.CompletedProcess([], 1, "", VT_OPEN_FAILED["6.1"])
+        broken = subprocess.CompletedProcess([], 1, "", "broken")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as d:
+            cmd = ["ffmpeg", "-i", "a.mp4", "-c:v", "h264_videotoolbox", "-q:v", "75", str(Path(d) / "o.mp4")]
+            with mock.patch.object(runner, "_execute", side_effect=[refused, broken]):
+                runner.run(cmd, quiet=True, check=False)
+            with mock.patch.object(runner, "_execute", side_effect=[refused, ok]):
+                runner.run(cmd, quiet=True)
+        self.assertTrue(STATE.hw_fallback)
+        self.assertEqual(len(STATE.hw_notes), 1, STATE.hw_notes)
+        self.assertTrue(STATE.hw_notes[0].endswith("re-encoded on the CPU"), STATE.hw_notes)
+
     def test_the_cpu_fallback_keeps_the_even_dimension_scale_of_a_retry(self):
         """An odd-sized source under --hw: the encode is retried with an even scale, and when
         VideoToolbox refuses that retry the CPU line is swapped into the retry, not into the
@@ -641,7 +698,8 @@ class HwEverywhereTests(_RealFfmpegCase):
         self.assertIn("broken CPU encode", message)
         self.assertNotIn("compression session", message, "the stderr is the command's that ran last")
         self.assertIn("libx264", doc["commands"][-1])
-        self.assertEqual((doc["encoder"], doc["hw"]["used"], doc["hw"]["fallback"]), ("libx264", False, True))
+        self.assertEqual((doc["encoder"], doc["hw"]["used"], doc["hw"]["fallback"]), ("libx264", False, False))
+        self.assertTrue(any(n.endswith("the CPU retry failed too") for n in doc["hw"]["notes"]), doc["hw"])
 
 
 class HwResultTests(unittest.TestCase):
@@ -704,6 +762,20 @@ class HwResultTests(unittest.TestCase):
         self.assertEqual(sum(n.endswith(emit_module.ENV_HW_NOTE) for n in rep["hw"]["notes"]), 1, rep["hw"]["notes"])
         self.assertTrue(any("not CRF-equivalent" in n for n in rep["notes"]))
         self.assertEqual(emit_module.steps_encoder_report([("fit", {"encoder": "libx264"})]), {"encoder": "libx264"})
+
+    def test_the_export_note_advises_hw_only_where_hw_can_run(self):
+        """export.py under FFMPEG_SKILL_HW=1 stays on the CPU and says so; "pass --hw" is advice for
+        a machine that can take the GPU, not for a Linux box that would report the CPU encode."""
+        STATE.reset()
+        STATE.hw_env_ignored = True
+        with mock.patch.object(decision, "hw_platform_reason", return_value=None):
+            notes = emit_module.hw_report(STATE, "libx264")["notes"]
+        self.assertEqual(notes, [emit_module.ENV_NOT_FOR_DELIVERY_NOTE])
+        self.assertIn("pass --hw", notes[0])
+        with mock.patch.object(decision, "hw_platform_reason", return_value="VideoToolbox is macOS-only"):
+            notes = emit_module.hw_report(STATE, "libx264")["notes"]
+        self.assertEqual(notes, [emit_module.ENV_NOT_FOR_DELIVERY_BASE])
+        self.assertNotIn("--hw", notes[0])
 
     def test_render_carries_a_stage_s_fallback_and_gpu_quality_note(self):
         """render.py runs each stage as a child process and keeps only its command lines; the

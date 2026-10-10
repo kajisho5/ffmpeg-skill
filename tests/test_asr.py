@@ -283,8 +283,9 @@ class _BridgeHarness:
         return calls[0]
 
 
-def _faster_whisper_with_words():
-    """A faster_whisper that loads and returns one segment with word timings."""
+def _faster_whisper_with_words(detected=None):
+    """A faster_whisper that loads and returns one segment with word timings; `detected` is the
+    language its transcribe() info reports (faster-whisper's info.language)."""
     mod = type(sys)("faster_whisper")
 
     class Word:
@@ -301,7 +302,7 @@ def _faster_whisper_with_words():
 
         def transcribe(self, wav, language=None, word_timestamps=False):
             mod.languages.append(language)
-            return iter([Segment()]), None
+            return iter([Segment()]), type("Info", (), {"language": detected})()
     mod.WhisperModel = WhisperModel
     mod.languages = []
     return mod
@@ -532,6 +533,60 @@ class WhisperLanguageTests(_SrtDir, _BridgeHarness, unittest.TestCase):
         fake = _FakeEngines(["whisper-cli"])
         run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, "fr", "base"), fake=fake)
         self.assertEqual((self._l(fake), run.facts["language"]), ("fr", "fr"))
+
+    def test_auto_and_every_spelling_of_english_reach_the_engines_as_the_engines_take_them(self):
+        """`--language auto` is the documented default spelled out, not a language; en-US, eng and
+        English are English, and Whisper takes "en" where it would reject the others."""
+        for given, passed in (("auto", None), ("AUTO", None), ("", None), ("en-US", "en"), ("eng", "en"),
+                              ("English", "en"), ("EN", "en"), ("fr", "fr"), ("FR", "fr"),
+                              ("ja-JP", "ja"), ("pt_BR", "pt"), ("zh-Hant", "zh"), ("jpn", "jpn")):
+            self.assertEqual(asr.engine_language(given), passed, given)
+        fake = _FakeEngines(["whisper-cli"])
+        run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, "eng", "base"), fake=fake)
+        self.assertEqual((self._l(fake), run.facts["language"]), ("en", "en"))
+        fake = _FakeEngines(["whisper-cli"])
+        run = self._with([], lambda: asr.transcribe_words_result("talk.mp4", "auto"), fake=fake)
+        self.assertEqual((self._l(fake), run.facts["language"]), ("auto", None))
+        # an installed Parakeet takes --language auto as the undetected route, not as "not English"
+        fake = _FakeEngines(["parakeet-mlx"])
+        with mock.patch.object(asr, "detect_language", return_value=None):
+            run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, "auto", "base"), fake=fake)
+        self.assertEqual((run.engine, run.facts["routing"]), ("parakeet-mlx", asr.ROUTING_ASSUMED_ENGLISH))
+
+    def test_the_language_an_engine_decoded_is_reported_when_nothing_was_named(self):
+        """faster-whisper's detected language and openai-whisper's JSON `language` are read back the way
+        whisper.cpp's are: silence.py --filler picks its word list from it."""
+        fw = _faster_whisper_with_words(detected="JA")
+        run = self._with([], lambda: asr.transcribe_words_result("talk.mp4"), faster_whisper=fw)
+        self.assertEqual((run.engine, run.facts["language"]), ("faster-whisper", "ja"))
+        run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, None, "base"),
+                         faster_whisper=_faster_whisper_with_words(detected="fr"))
+        self.assertEqual((run.engine, run.facts["language"]), ("faster-whisper", "fr"))
+        run = self._with([], lambda: asr.transcribe_words_result("talk.mp4", "de"),
+                         faster_whisper=_faster_whisper_with_words(detected="ja"))
+        self.assertEqual(run.facts["language"], "de", "a language that was named is the one reported")
+        with tempfile.TemporaryDirectory() as d:
+            doc = Path(d) / "audio.json"
+            doc.write_text(json.dumps({"language": "no", "segments": []}), encoding="utf-8")
+            self.assertEqual(asr._whisper_json_language(str(doc)), "no")
+
+    def test_the_language_whisper_cpp_decoded_is_read_back_from_its_json(self):
+        """With -l auto nobody named the language and the detector may be absent: whisper.cpp's own
+        `result.language` is what lets a caller (silence.py --filler) pick the right word list."""
+        with tempfile.TemporaryDirectory() as d:
+            doc = Path(d) / "out.json"
+            doc.write_text(json.dumps({"result": {"language": "FR"}, "transcription": []}), encoding="utf-8")
+            self.assertEqual(asr._whisper_json_language(str(doc)), "fr")
+            doc.write_text(json.dumps({"transcription": []}), encoding="utf-8")
+            self.assertIsNone(asr._whisper_json_language(str(doc)))
+            self.assertIsNone(asr._whisper_json_language(str(Path(d) / "missing.json")))
+
+    def test_a_quantised_english_only_model_is_still_english_only(self):
+        for name in ("ggml-base.en.bin", "base.en", "ggml-base.en-q5_1.bin", "tiny.en-q8_0", "/m/ggml-small.en-q5_1.bin",
+                     "ggml-small.en-tdrz.bin"):
+            self.assertTrue(asr._english_only_whisper_model(name), name)
+        for name in ("ggml-base.bin", "base", "ggml-large-v3-q5_0.bin", "ggml-medium-q8_0.bin", "/models.en/ggml-base.bin"):
+            self.assertFalse(asr._english_only_whisper_model(name), name)
 
     def test_an_english_only_whisper_model_is_no_engine_for_any_language(self):
         cli = mock.Mock(which=lambda n: "/x/whisper-cli" if n == "whisper-cli" else None)
