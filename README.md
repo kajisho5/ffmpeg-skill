@@ -480,9 +480,14 @@ FFmpeg itself:
 
 | OS | Command |
 |----|---------|
-| macOS | `brew install ffmpeg-full` (the plain `ffmpeg` formula lacks the subtitles, drawtext and zscale filters) |
+| macOS | `brew install ffmpeg-full`, then put it on `PATH` (below). The plain `ffmpeg` formula lacks the subtitles, drawtext and zscale filters |
 | Ubuntu / Debian | `sudo apt install ffmpeg` |
 | Windows | `winget install Gyan.FFmpeg` |
+
+**On macOS, `ffmpeg-full` is keg-only:** Homebrew installs it without linking it, so after `brew install ffmpeg-full` the `ffmpeg` on `PATH` is still the lean `ffmpeg` formula (often present as a dependency of another formula), or no `ffmpeg` at all, so `doctor` keeps reporting `ffmpeg`, or the `subtitles` and `drawtext` filters, as missing. Make it the one the tools find, in one of two ways:
+
+- **Put it first on `PATH`.** Add `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"` to your shell profile. `brew --prefix ffmpeg-full` is the stable `opt/` path, so this survives upgrades, but it only reaches processes started from a shell that read the profile.
+- **Link it over the lean formula:** `brew unlink ffmpeg 2>/dev/null; brew link --overwrite --force ffmpeg-full`. Every process finds this one, but `brew doctor` warns about a linked keg-only formula, and an upgrade of the lean `ffmpeg` has been seen to link the lean build back on top without a message. After upgrading, check that `command -v ffmpeg` still resolves into `ffmpeg-full`, and re-run the link if it doesn't.
 
 ## Requirements
 
