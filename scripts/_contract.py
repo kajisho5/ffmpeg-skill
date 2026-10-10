@@ -1005,10 +1005,15 @@ def _capability_fix_hint(cap: str) -> str:
     if cap in ("ffmpeg", "ffprobe"):
         from _common import INSTALL_HINTS
         hint = INSTALL_HINTS.get(platform.system(), "see https://ffmpeg.org/download.html").strip().splitlines()[0].strip()
-        return f"install ffmpeg: {hint}"
+        # a hint's "# why" is a shell comment so the printed line pastes; joined into a fix string
+        # with "; " it would swallow what follows, so show it in parentheses here instead
+        cmd, _, why = hint.partition("#")
+        return f"install ffmpeg: {cmd.strip()} ({why.strip()})" if why else f"install ffmpeg: {hint}"
     system = platform.system()
     if system == "Darwin":
-        full_hint = "on macOS, brew install ffmpeg-full (the plain formula lacks subtitles/drawtext/zscale)"
+        full_hint = ("on macOS, brew install ffmpeg-full; export PATH=\"$(brew --prefix ffmpeg-full)/bin:$PATH\" "
+                     "(ffmpeg-full is keg-only, so installing it does not replace the ffmpeg already found: keep the "
+                     "export in your shell profile; the plain formula lacks subtitles/drawtext/zscale)")
     elif system == "Windows":
         full_hint = "on Windows, winget install Gyan.FFmpeg (the gyan.dev full build carries subtitles/drawtext/zscale; a plain choco ffmpeg package can lack them)"
     else:

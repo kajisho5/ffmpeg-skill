@@ -794,6 +794,24 @@ class ContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("Gyan.FFmpeg", readme)
 
+    def test_macos_fix_hint_says_ffmpeg_full_is_keg_only(self):
+        """Homebrew's ffmpeg-full is keg-only: `brew install ffmpeg-full` alone leaves the lean
+        formula (or no ffmpeg) on PATH, so a hint that only says to install it sends the user
+        round in a loop. Both the missing-filter and the missing-ffmpeg hints must name the PATH
+        step, and README must document the same command."""
+        from unittest import mock
+        path_step = 'export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
+        with mock.patch("platform.system", return_value="Darwin"):
+            for cap in ("filter:subtitles", "ffmpeg"):
+                hint = _contract._capability_fix_hint(cap)
+                self.assertIn(path_step, hint, cap)
+                self.assertIn("keg-only", hint, cap)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(path_step, readme)
+        self.assertIn("keg-only", readme)
+        installer = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
+        self.assertIn(path_step, installer, "the npm installer's missing-ffmpeg warning gives the same command")
+
     def test_original_preservation_and_roles(self):
         for t in self.contract["tools"]:
             self.assertFalse(t["mutates_input"], t["name"])
