@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **macOS install: put ffmpeg-full on PATH.** `brew install ffmpeg-full` is keg-only, so the README, `doctor` and the installer told a Mac user to install it and stopped there, with `ffmpeg` still not on PATH. Every macOS hint and the README table now name the `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"` step that CI already runs.
 
 ## 2.8.0
 

@@ -794,6 +794,20 @@ class ContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("Gyan.FFmpeg", readme)
 
+    def test_macos_install_hints_put_ffmpeg_full_on_path(self):
+        """ffmpeg-full is keg-only: `brew install` does not put it on PATH, so every macOS install hint
+        names the export that does. The hints and the README table say the same thing (CI does it too)."""
+        from unittest import mock
+        export = 'export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
+        with mock.patch("platform.system", return_value="Darwin"):
+            fix = _contract._capability_fix_hint("filter:subtitles")
+        self.assertIn(export, fix)
+        from _common import INSTALL_HINTS
+        self.assertIn(export, INSTALL_HINTS["Darwin"])
+        self.assertIn(export, (ROOT / "README.md").read_text(encoding="utf-8"))
+        install_js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
+        self.assertIn(export, install_js)
+
     def test_original_preservation_and_roles(self):
         for t in self.contract["tools"]:
             self.assertFalse(t["mutates_input"], t["name"])
