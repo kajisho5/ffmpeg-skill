@@ -480,7 +480,7 @@ FFmpeg itself:
 
 | OS | Command |
 |----|---------|
-| macOS | `brew install ffmpeg-full` (the plain `ffmpeg` formula lacks the subtitles, drawtext and zscale filters) |
+| macOS | `brew install ffmpeg-full`, then `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"` (ffmpeg-full is keg-only: Homebrew does not put it on PATH; the plain `ffmpeg` formula lacks the subtitles, drawtext and zscale filters) |
 | Ubuntu / Debian | `sudo apt install ffmpeg` |
 | Windows | `winget install Gyan.FFmpeg` |
 

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 INSTALL_HINTS = {
-    "Darwin": "  brew install ffmpeg-full   (the plain ffmpeg formula lacks subtitles/drawtext/zscale)",
+    "Darwin": "  brew install ffmpeg-full, then export PATH=\"$(brew --prefix ffmpeg-full)/bin:$PATH\"   (keg-only; the plain ffmpeg formula lacks subtitles/drawtext/zscale)",
     "Linux": (
         "  Debian/Ubuntu: sudo apt install ffmpeg\n"
         "  Fedora:        sudo dnf install ffmpeg\n"

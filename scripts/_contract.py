@@ -1008,7 +1008,7 @@ def _capability_fix_hint(cap: str) -> str:
         return f"install ffmpeg: {hint}"
     system = platform.system()
     if system == "Darwin":
-        full_hint = "on macOS, brew install ffmpeg-full (the plain formula lacks subtitles/drawtext/zscale)"
+        full_hint = "on macOS, brew install ffmpeg-full, then export PATH=\"$(brew --prefix ffmpeg-full)/bin:$PATH\" (keg-only; the plain formula lacks subtitles/drawtext/zscale)"
     elif system == "Windows":
         full_hint = "on Windows, winget install Gyan.FFmpeg (the gyan.dev full build carries subtitles/drawtext/zscale; a plain choco ffmpeg package can lack them)"
     else:
