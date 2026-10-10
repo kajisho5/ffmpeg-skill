@@ -125,6 +125,10 @@ def main() -> int:
     for _attr in ("name", "title", "subtitle", "text", "top", "bottom"):
         _v = getattr(args, _attr, None)
         if isinstance(_v, str):
+            # one line-break form for every route: libass draws a bare CR as nothing, drawtext
+            # ignores one trailing newline, and lines_of() counts the rest -- so the layout and the
+            # drawn lines agree only if the text is normalised here, once
+            _v = _v.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
             setattr(args, _attr, _v if _v.strip() else None)
 
     args.platform = resolve_platform(args.platform)
@@ -295,6 +299,15 @@ def main() -> int:
                                   slice_overlong=True, sliced=sliced_atoms) if para.strip() else [para])
         return "\n".join(out)
 
+    def lines_of(text):
+        """How many lines drawtext and libass draw for `text` (a trailing newline is not one)."""
+        return max(1, len(str(text or "").replace("\r\n", "\n").replace("\r", "\n").rstrip("\n").split("\n")))
+
+    def block_h(text, size_px):
+        """The height the layouts below give a label: `size_px` for the first line, as they always
+        have, and a line pitch of 1.2 x the size for each further one."""
+        return size_px + (lines_of(text) - 1) * int(size_px * 1.2)
+
     def add_text(text, drawtext, *, target=None, **el):
         """One line of template text: a drawtext filter on the old route, an ASS element on the
         new one. The geometry is computed identically either way."""
@@ -314,7 +327,8 @@ def main() -> int:
         h1 = int(base * 0.055)
         h2 = int(base * 0.038)
         pad = int(base * 0.02)
-        bar_h = h1 + (h2 + pad if args.title else 0) + pad * 2
+        name_h = block_h(args.name, h1)
+        bar_h = name_h + (block_h(args.title, h2) + pad if args.title else 0) + pad * 2
         bar_w = int(base * 0.62)
         y0 = H - m_bottom - bar_h
         # slide in from the left over 0.4 s, slide out over 0.3 s (overlay evaluates x per frame)
@@ -328,7 +342,7 @@ def main() -> int:
         x_rest, x_off = m_left + tx_pad, -bar_w + tx_pad
         draws = []
         for text, fs, colour, ty in ((args.name, h1, text_c, y0 + pad),
-                                     (args.title, h2, primary, y0 + pad + h1 + pad // 2)):
+                                     (args.title, h2, primary, y0 + pad + name_h + pad // 2)):
             if not text:
                 continue
             draws.append(f"drawtext={drawtext_text_opts(text)}:{fo}:fontsize={fs}:"
@@ -355,17 +369,23 @@ def main() -> int:
         h1 = int(base * 0.11)
         h2 = int(base * 0.045)
         filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:color={ff_color(bg, 0.55)}:t=fill:{en}")
+        # the title is centred as a block, so the bar and the subtitle sit below its last line:
+        # `title_h` is the block's height, as the one-line layout has always taken h1; a further
+        # subtitle line hangs below the first, whose position the one-line layout fixes
+        title_h = block_h(args.title, h1)
+        sub_y = title_h // 2 + int(base * 0.03)
+        sub_extra = block_h(args.subtitle, h2) - h2 if args.subtitle else 0
         add_text(args.title,
                  f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if args.subtitle else 0}:alpha='{fade_a}':{en}",
                  size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2,
                  y=H / 2 - (h2 if args.subtitle else 0), outline=max(1.0, h1 / 20.0),
                  outline_color="000000", start=s, end=e, fade=(300, 300))
-        filters.append(f"drawbox=x=(iw-{int(base * 0.12)})/2:y=(ih)/2+{h1 // 2 + (0 if args.subtitle else 0)}:w={int(base * 0.12)}:h={max(2, int(base * 0.006))}:color={ff_color(primary)}:t=fill:{en}")
+        filters.append(f"drawbox=x=(iw-{int(base * 0.12)})/2:y=(ih)/2+{title_h // 2}:w={int(base * 0.12)}:h={max(2, int(base * 0.006))}:color={ff_color(primary)}:t=fill:{en}")
         if args.subtitle:
             add_text(args.subtitle,
-                     f"drawtext={drawtext_text_opts(args.subtitle)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2+{h1 // 2 + int(base * 0.03)}:alpha='{fade_a}':{en}",
+                     f"drawtext={drawtext_text_opts(args.subtitle)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2+{sub_y + sub_extra // 2}:alpha='{fade_a}':{en}",
                      size=h2, color=primary, font=ass_font_family(), align=5, x=W / 2,
-                     y=H / 2 + h1 // 2 + int(base * 0.03), outline=max(1.0, h2 / 20.0),
+                     y=H / 2 + sub_y + sub_extra // 2, outline=max(1.0, h2 / 20.0),
                      outline_color="000000", start=s, end=e, fade=(300, 300))
 
     elif args.template in ("chapter", "bug"):
@@ -439,10 +459,13 @@ def main() -> int:
         hen = f"enable='between(t,{s:.3f},{he:.3f})'"
         h1 = int(base * 0.085)
         bar_h = max(3, int(base * 0.01))
-        band_h = int(base * 0.30)
+        hook_title = wrapped(args.title, h1)
+        # the base band (30% of the short side) holds two lines; a longer wrapped title (a 9:16
+        # hook is four or five) grows the band to the text plus 0.7 of a line of margin, instead of
+        # drawing white text on the bare video. The band is clipped at the frame edges.
+        band_h = min(H, max(int(base * 0.30), block_h(hook_title, h1) + int(h1 * 0.7)))
         y0 = (H - band_h) // 2
         filters.append(f"drawbox=x=0:y={y0}:w=iw:h={band_h}:color={ff_color(bg, 0.78)}:t=fill:{hen}")
-        hook_title = wrapped(args.title, h1)
         add_text(hook_title,
                  f"drawtext={drawtext_text_opts(hook_title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}"
                  f"{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2:{hen}",

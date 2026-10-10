@@ -893,12 +893,19 @@ not a new file format this tool would have to maintain.
   encoder but means it never got a frame) or a full disk is the same failure on the CPU: retrying
   ran the job twice and reported the GPU as its cause. Those fail once, and the failure document
   names the encoder of the command that ran, says it was not retried, and carries `encoder`/`hw`;
-  when the CPU retry fails too, the message and stderr are the CPU command's. Code:
+  when the CPU retry fails too, the message and stderr are the CPU command's, and the note says
+  the retry failed too instead of claiming a re-encode. `hw.fallback` is true only when the CPU
+  retry succeeded (it means "re-encoded on the CPU"); a retry that times out keeps the neutral
+  "retrying on the CPU encoder" line. The note is one line per refusal, the latest outcome
+  (`_set_refusal_note`), so a job of many encodes names it once. Code:
   `_common.runner.videotoolbox_failure`, `run`, `_fail`. Tests: `VideoToolboxFailureTests`,
   `test_a_videotoolbox_open_failure_is_re_encoded_on_the_cpu_and_reported`,
   `test_a_failure_that_is_not_videotoolbox_s_is_not_retried_and_names_the_command_that_ran`,
-  `test_when_the_cpu_retry_fails_too_the_error_is_the_cpu_command_s` (a fake ffmpeg, every CI
-  runner); `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so` (real hardware).
+  `test_when_the_cpu_retry_fails_too_the_error_is_the_cpu_command_s`,
+  `test_a_failed_cpu_retry_does_not_claim_a_re_encode_and_a_repeat_refusal_is_noted_once`,
+  `test_a_cpu_retry_that_times_out_leaves_no_claim_that_it_re_encoded` (fake ffmpeg, every CI runner);
+  `test_a_job_videotoolbox_refuses_falls_back_to_the_cpu_and_says_so` (real hardware, confirmed on an
+  Apple M3 with FFmpeg 9.0.2: 54 tests OK, 0 skipped).
   The CPU retry gets the odd-dimension retry a CPU-only run gets
   (`test_an_odd_sized_job_videotoolbox_refused_gets_the_even_scale_on_the_cpu`), and on 5.1 the
   encoder's non-fatal property lines do not count as its refusal beside another stream's open
@@ -963,7 +970,9 @@ not a new file format this tool would have to maintain.
   that reads `verified`. "Goes first" means a Whisper engine that detects the language: whisper.cpp
   is passed `-l auto` when nothing named the language (its own default is `-l en`, which decoded
   every unnamed language as English, in 2.5.1 too), else the named or detected one, and an
-  English-only Whisper model (`base.en`, `ggml-*.en.bin`) does not count as one.
+  English-only Whisper model (`base.en`, `ggml-*.en.bin`, quantised too: `ggml-base.en-q5_1.bin`) does
+  not count as one for routing. Known gap: with whisper.cpp as the only engine and such a model, undetected
+  speech is decoded as English and the run adds no note.
   A named `--engine parakeet-*` runs as asked, with no note, and so does a Parakeet model named
   with `--model` or `PARAKEET_MODEL`: a multilingual (v3) one assumes nothing and gets no note; an
   English-only one named with `--model` gets the note, pointing at a v3 model rather than at a

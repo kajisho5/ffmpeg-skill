@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -1716,7 +1717,7 @@ class PictureTests(MediaFixtures):
 
     def test_transcribe_without_engine_explains(self):
         import shutil
-        if shutil.which("whisper-cli") or shutil.which("whisper"):
+        if any(shutil.which(e) for e in ("whisper-cli", "whisper-cpp", "whisper", "parakeet-mlx", "parakeet-cli")):
             self.skipTest("a local ASR engine is installed")
         try:
             import faster_whisper  # noqa: F401
@@ -2972,11 +2973,29 @@ class MultiLineDrawtextTests(unittest.TestCase):
     def test_the_drawn_text_keeps_its_line_breaks_and_loses_other_control_characters(self):
         import _common
         for text, drawn in (("A\nB", "A\nB"), ("A\r\nB", "A\nB"), ("A\rB", "A\nB"), ("A\x07B\x00", "AB"),
-                            ("tab\there\x0cnow", "tab here now")):
+                            ("tab\there\x0cnow", "tab here now"),
+                            # drawtext ignores one trailing newline and draws a second as a blank line
+                            ("A\nB\n", "A\nB"), ("A\nB\n\n", "A\nB"), ("\n", "\n")):
             opts = _common.drawtext_text_opts(text, tmpdir=str(OUT))
             path = re.search(r"textfile=(.+?\.txt)", opts.replace("\\", "")).group(1)
             pending = {os.path.normpath(k): v for k, v in _common._DRAWTEXT_PENDING.items()}
             self.assertEqual(pending[os.path.normpath(path)], drawn, repr(text))
+
+    def test_the_text_file_is_written_with_bare_line_feeds_on_every_platform(self):
+        """Text mode writes each line break as CRLF on Windows, and drawtext from FFmpeg 6.1 draws
+        that as a blank line plus a line break (a wrapped title came out at twice its height)."""
+        import _common
+        tmp = tempfile.mkdtemp(dir=str(OUT))
+        opts = _common.drawtext_text_opts("one\ntwo\nthree", tmpdir=tmp)
+        path = os.path.join(tmp, re.search(r"(t_[0-9a-f]+\.txt)", opts).group(1))
+        # text mode would write os.linesep, which is CRLF on Windows and invisible on this runner, so
+        # the file is opened with newline="\n" and that argument is what this checks
+        with unittest.mock.patch("os.fdopen", wraps=os.fdopen) as fdopen:
+            written = _common.flush_drawtext_textfiles(["ffmpeg", "-vf", f"drawtext={opts}", "out.mp4"])
+        self.assertEqual(fdopen.call_args.kwargs.get("newline"), "\n", fdopen.call_args)
+        self.assertEqual([os.path.normpath(w) for w in written], [os.path.normpath(path)])
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), b"one\ntwo\nthree")
 
     def test_centred_lines_are_aligned_where_ffmpeg_can(self):
         """drawtext's text_align arrived in FFmpeg 6.1; 5.x and 6.0 would reject it, and centre
@@ -3036,6 +3055,137 @@ class MultiLineDrawtextTests(unittest.TestCase):
             if _common.ffmpeg_version() >= (6, 1):
                 self.assertAlmostEqual((band[2] + band[3]) / 2, self.W / 2, delta=6, msg=f"line {band} is centred")
         self.assertEqual(self._bands(self._gray(out, 3.0), top), [], "no text after the card's --duration")
+
+
+class LineAwareLayoutTests(unittest.TestCase):
+    """2.5.1 kept a newline in a title, but the title, lower-third and hook layouts were sized for
+    one line of text: a two-line title was struck through by its own accent bar and covered by its
+    subtitle, a two-line name was printed over its title, and a long 9:16 hook ran out of its band
+    onto the bare video. The layouts now follow the line count; one line is laid out as before."""
+
+    def _need_font(self):
+        if not default_font_file("DejaVu Sans") and not default_font_file(""):
+            self.skipTest("no concrete font file on this machine for drawtext")
+
+    def _background(self, name, size, colour):
+        OUT.mkdir(parents=True, exist_ok=True)
+        bg = OUT / f"{name}.mp4"
+        if not bg.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c={colour}:s={size}:r=30:d=3",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", str(bg))
+        return bg
+
+    def _rgb(self, path, w, h, at=1.5):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(at), "-i", str(path), "-frames:v", "1",
+                              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, check=True).stdout
+        self.assertEqual(len(raw), w * h * 3)
+        return raw
+
+    @staticmethod
+    def _runs(raw, w, h, pred, x0=0, x1=None, gap=4):
+        """(first row, last row) of each run of rows holding a pixel of columns x0..x1 that satisfies pred."""
+        x1 = w if x1 is None else x1
+        rows = [y for y in range(h) if any(pred(*raw[(y * w + x) * 3:(y * w + x) * 3 + 3]) for x in range(x0, x1))]
+        out = []
+        for y in rows:
+            if out and y - out[-1][1] <= gap:
+                out[-1][1] = y
+            else:
+                out.append([y, y])
+        return out
+
+    def test_a_two_line_title_with_a_two_line_subtitle_does_not_overlap_its_accent_bar(self):
+        self._need_font()
+        W, H = 1280, 720
+        bg = self._background("t2_bg_blue", f"{W}x{H}", "0x305070")
+        out = OUT / "t2_title.mp4"
+        script("graphics.py", bg, "--template", "title", "--title", "Hello\nWorld", "--subtitle", "sub one\nsub two",
+               "-o", out)
+        raw = self._rgb(out, W, H)
+        white = self._runs(raw, W, H, lambda r, g, b: r > 235 and g > 235 and b > 235)
+        yellow = self._runs(raw, W, H, lambda r, g, b: r > 230 and 170 < g < 235 and b < 90, gap=2)
+        self.assertEqual(len(white), 2, f"two title lines, got {white}")
+        self.assertEqual(len(yellow), 3, f"the accent bar, then two subtitle lines, got {yellow}")
+        bar, sub1, sub2 = yellow
+        self.assertLessEqual(bar[1] - bar[0], 6, f"the bar is a thin rule, got {bar}")
+        self.assertLess(white[1][1], bar[0], "the title ends above the bar")
+        self.assertLess(bar[1], sub1[0], "the first subtitle line starts below the bar")
+        self.assertLess(sub1[1], sub2[0], "the subtitle lines do not overlap")
+
+    def test_a_one_line_title_is_laid_out_as_it_always_was(self):
+        """The bar and subtitle of a one-line title sit where 2.5.0 put them (1280x720: bar at y=399)."""
+        self._need_font()
+        W, H = 1280, 720
+        bg = self._background("t2_bg_blue", f"{W}x{H}", "0x305070")
+        proc = script("graphics.py", bg, "--template", "title", "--title", "One line", "--subtitle", "plain sub",
+                      "-o", OUT / "t2_title1.mp4", "--dry-run", "--json")
+        cmd = " ".join(json.loads(proc.stdout)["commands"])
+        self.assertIn("drawbox=x=(iw-86)/2:y=(ih)/2+39:", cmd)
+        self.assertIn("y=(h-text_h)/2+60:", cmd)
+
+    def test_a_two_line_name_and_title_fit_in_the_lower_third_bar(self):
+        self._need_font()
+        W, H = 1280, 720
+        bg = self._background("t2_bg_blue", f"{W}x{H}", "0x305070")
+        out = OUT / "t2_lower.mp4"
+        script("graphics.py", bg, "--template", "lower-third", "--name", "Jane\nDoe", "--title", "CEO\nand founder",
+               "-o", out)
+        raw = self._rgb(out, W, H)
+        # the bar is the dark plate right of the accent stripe; the text lies inside it
+        plate = self._runs(raw, W, H, lambda r, g, b: r < 40 and g < 45 and b < 50, x0=60, x1=62, gap=2)
+        self.assertEqual(len(plate), 1, plate)
+        white = self._runs(raw, W, H, lambda r, g, b: r > 235 and g > 235 and b > 235)
+        yellow = self._runs(raw, W, H, lambda r, g, b: r > 230 and 170 < g < 235 and b < 90, x0=60, gap=2)
+        self.assertEqual((len(white), len(yellow)), (2, 2), (white, yellow))
+        self.assertLess(white[1][1], yellow[0][0], "the name ends above the title")
+        self.assertGreaterEqual(white[0][0], plate[0][0])
+        self.assertLessEqual(yellow[1][1], plate[0][1])
+
+    def test_a_trailing_newline_is_not_a_second_line(self):
+        """'One line\\n' is one line: the frame drawn for it is the frame drawn for 'One line'. Before the
+        normalisation the block was counted as two lines and the bar was placed for the second."""
+        self._need_font()
+        W, H = 1280, 720
+        bg = self._background("t2_bg_blue", f"{W}x{H}", "0x305070")
+        frames = []
+        for i, title in enumerate(("One line", "One line\n")):
+            out = OUT / f"t2_trailing_{i}.mp4"
+            script("graphics.py", bg, "--template", "title", "--title", title, "--subtitle", "sub",
+                   "-o", out)
+            frames.append(self._rgb(out, W, H))
+        self.assertEqual(frames[0], frames[1], "a trailing newline changed the layout")
+
+    def test_a_crlf_title_on_the_libass_route_draws_both_lines_above_the_bar(self):
+        """libass drops a bare CR's line, so a CRLF title drew one line while the bar was placed for
+        two: the line breaks are normalised once for every route, and both lines are drawn."""
+        self._need_font()
+        W, H = 1280, 720
+        bg = self._background("t2_bg_blue", f"{W}x{H}", "0x305070")
+        out = OUT / "t2_title_crlf_ass.mp4"
+        script("graphics.py", bg, "--template", "title", "--title", "Hello\r\nWorld", "--subtitle", "sub",
+               "--text-render", "ass", "-o", out)
+        raw = self._rgb(out, W, H)
+        white = self._runs(raw, W, H, lambda r, g, b: r > 235 and g > 235 and b > 235)
+        yellow = self._runs(raw, W, H, lambda r, g, b: r > 230 and 170 < g < 235 and b < 90, gap=2)
+        self.assertEqual(len(white), 2, f"both title lines are drawn, got {white}")
+        self.assertLess(white[1][1], yellow[0][0], "the title ends above the accent bar")
+
+    def test_a_long_hook_title_stays_inside_its_band(self):
+        self._need_font()
+        W, H = 1080, 1920
+        bg = self._background("t2_bg_grey_portrait", f"{W}x{H}", "0x909090")
+        out = OUT / "t2_hook.mp4"
+        script("graphics.py", bg, "--template", "hook", "--title",
+               "How I went from zero to a million followers in just ninety days with no budget", "-o", out)
+        raw = self._rgb(out, W, H)
+        band = self._runs(raw, W, H, lambda r, g, b: r < 100, x0=2, x1=4, gap=2)
+        band = [r for r in band if r[0] > 40]  # not the progress bar along the top edge
+        self.assertEqual(len(band), 1, band)
+        text = self._runs(raw, W, H, lambda r, g, b: r > 235 and g > 235 and b > 235, x0=0, x1=W)
+        text = [r for r in text if r[0] > 40]
+        self.assertGreaterEqual(len(text), 4, f"a wrapped title of four or more lines, got {text}")
+        self.assertGreater(text[0][0], band[0][0], "the first line starts inside the band")
+        self.assertLess(text[-1][1], band[0][1], "the last line ends inside the band")
 
 
 class WrapReadabilityTests(unittest.TestCase):

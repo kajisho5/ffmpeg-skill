@@ -115,7 +115,7 @@ def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
     `]`, `;` and `\` all reach the picture verbatim -- 1.15 fixes `overlay.py --text "it's 100%
     done"` losing both characters. A newline is kept (`\r\n` and `\r` become `\n`): drawtext
     draws it as a line break, and graphics.py's wrap puts them there on purpose (stripping them
-    ran a wrapped title off both edges of the frame). A tab, vertical tab or form
+    ran a wrapped title off both edges of the frame); trailing newlines are dropped. A tab, vertical tab or form
     feed becomes a space, as the wrap measures it; other control characters are stripped (that
     dates from the inline-escape route, where they broke the graph parser).
 
@@ -127,6 +127,9 @@ def drawtext_text_opts(text: str, tmpdir: "Optional[str]" = None) -> str:
     """
     cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     cleaned = re.sub(r"[\x00-\x08\x0e-\x1f\x7f]", "", re.sub(r"[\t\x0b\x0c]", " ", cleaned))
+    # drawtext ignores one trailing newline and draws a second as a blank line, which would
+    # centre the block half a line too high; a label that is only newlines stays as it is
+    cleaned = cleaned.rstrip("\n") or cleaned
     import hashlib
     name = "t_" + hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16] + ".txt"
     if tmpdir is None:

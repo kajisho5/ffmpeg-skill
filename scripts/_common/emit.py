@@ -73,8 +73,17 @@ def _set_current_ctx(ctx: "Context") -> None:
 
 ENV_HW_NOTE = ("VideoToolbox chosen by FFMPEG_SKILL_HW=1 (machine default; ~1.1-3.5x the bytes of x264/x265 "
                "at matched quality); rerun with --no-hw for a final deliverable")
-ENV_NOT_FOR_DELIVERY_NOTE = ("FFMPEG_SKILL_HW=1 is not applied to export.py's delivery presets (a delivered file is where "
-                             "VideoToolbox's larger files cost most); pass --hw to put this export on the GPU")
+ENV_NOT_FOR_DELIVERY_BASE = ("FFMPEG_SKILL_HW=1 is not applied to export.py's delivery presets (a delivered file is where "
+                             "VideoToolbox's larger files cost most)")
+ENV_NOT_FOR_DELIVERY_NOTE = ENV_NOT_FOR_DELIVERY_BASE + "; pass --hw to put this export on the GPU"
+
+
+def env_not_for_delivery_note() -> str:
+    """The note for an export the variable left on the CPU: the advice to pass --hw only on a
+    machine that can take it (the same advice on a Linux box would send the caller to a flag that
+    then reports the CPU encode)."""
+    from _common import decision  # the same name the --hw decisions (and their tests) stand the platform in on
+    return ENV_NOT_FOR_DELIVERY_NOTE if decision.hw_platform_reason() is None else ENV_NOT_FOR_DELIVERY_BASE
 
 
 def _video_encoders(commands: Sequence[str]) -> "Tuple[Optional[str], Optional[str]]":
@@ -120,7 +129,7 @@ def hw_report(ctx: "Context", enc: Optional[str]) -> Dict[str, Any]:
         # (once: a stage that ran on it already said so)
         notes.append(ENV_HW_NOTE)
     if ctx.hw_env_ignored and enc not in (None, "copy"):
-        notes.append(ENV_NOT_FOR_DELIVERY_NOTE)
+        notes.append(env_not_for_delivery_note())
     return {"requested": requested, "source": source, "used": used,
             "fallback": bool(ctx.hw_fallback) or any(st.get("fallback") for st in stages), "notes": notes}
 

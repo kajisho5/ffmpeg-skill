@@ -885,9 +885,10 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                 why = videotoolbox_failure(proc.stderr or "")
                 if why is not None:
                     reason = f"VideoToolbox refused the encode: {why}"
+                    # said before the retry, without a claim about its outcome: a retry that never
+                    # returns (a timeout exits from inside _execute) leaves this line, which is true
+                    _set_refusal_note(ctx, reason, "; retrying on the CPU encoder")
                     info(reason + "; retrying on the CPU encoder")
-                    ctx.hw_notes.append(reason + "; re-encoded on the CPU")
-                    ctx.hw_fallback = True
                     ctx.commands[-1] = _cmdline(cpu_cmd[:-1] + [cmd[-1]])
                     if not quiet:
                         # echoed like the first attempt, so a caller that reads the "$ " lines
@@ -895,6 +896,11 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                         info("$ " + ctx.commands[-1], ctx=ctx)
                     proc, tried = even_retry(_execute(cpu_cmd), cpu_cmd)
                     retried = True
+                    # the outcome replaces the line above: a failure document must not claim a
+                    # re-encode that did not happen, and hw.fallback is the same claim as a flag
+                    ok = proc.returncode == 0
+                    _set_refusal_note(ctx, reason, "; re-encoded on the CPU" if ok else "; the CPU retry failed too")
+                    ctx.hw_fallback = ctx.hw_fallback or ok
         if proc.returncode != 0 and check:
             _fail(tried, proc.returncode, proc.stderr or "", ctx=ctx, retried=retried)
         if final and tmp:
@@ -908,6 +914,14 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
             else:
                 _cleanup_partial_output(exec_cmd)
     return proc
+
+
+def _set_refusal_note(ctx: "Context", reason: str, outcome: str) -> None:
+    """One note per refusal: the latest outcome for `reason` replaces any earlier line for it, so a
+    job of many encodes names it once, and a process that ran an earlier job with the same refusal
+    does not keep that job's outcome beside this one."""
+    ctx.hw_notes[:] = [n for n in ctx.hw_notes if not n.startswith(reason)]
+    ctx.hw_notes.append(reason + outcome)
 
 
 def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
@@ -1257,7 +1271,9 @@ def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
         # symlink guard is belt and braces there and unavailable on Windows
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(path, flags, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # newline="\n": text mode would write each kept line break as CRLF on Windows, and
+        # drawtext from FFmpeg 6.1 draws that as a blank line plus a line break
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(body)
         written.append(path)
     return written
