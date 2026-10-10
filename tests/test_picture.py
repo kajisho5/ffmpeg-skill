@@ -3134,12 +3134,16 @@ class LineAwareLayoutTests(unittest.TestCase):
         # the bar is the dark plate right of the accent stripe; the text lies inside it
         plate = self._runs(raw, W, H, lambda r, g, b: r < 40 and g < 45 and b < 50, x0=60, x1=62, gap=2)
         self.assertEqual(len(plate), 1, plate)
-        white = self._runs(raw, W, H, lambda r, g, b: r > 235 and g > 235 and b > 235)
+        # the two name lines can merge into one run on FFmpeg 5.1 (their rows are close): the name is
+        # checked as a block, the title as its two lines
+        white = self._runs(raw, W, H, lambda r, g, b: r > 235 and g > 235 and b > 235, x0=60)
         yellow = self._runs(raw, W, H, lambda r, g, b: r > 230 and 170 < g < 235 and b < 90, x0=60, gap=2)
-        self.assertEqual((len(white), len(yellow)), (2, 2), (white, yellow))
-        self.assertLess(white[1][1], yellow[0][0], "the name ends above the title")
+        self.assertEqual(len(yellow), 2, yellow)
+        self.assertTrue(white, "the name is drawn")
+        self.assertGreater(white[-1][1] - white[0][0], 39, f"a two-line name is taller than one line, got {white}")
+        self.assertLess(white[-1][1], yellow[0][0], "the name ends above the title")
         self.assertGreaterEqual(white[0][0], plate[0][0])
-        self.assertLessEqual(yellow[1][1], plate[0][1])
+        self.assertLessEqual(yellow[-1][1], plate[0][1])
 
     def test_a_trailing_newline_is_not_a_second_line(self):
         """'One line\\n' is one line: the frame drawn for it is the frame drawn for 'One line'. Before the
@@ -3181,9 +3185,12 @@ class LineAwareLayoutTests(unittest.TestCase):
         band = self._runs(raw, W, H, lambda r, g, b: r < 100, x0=2, x1=4, gap=2)
         band = [r for r in band if r[0] > 40]  # not the progress bar along the top edge
         self.assertEqual(len(band), 1, band)
+        # rows separated by less than the run gap merge (a descender touching the next line's ascender
+        # does so on FFmpeg 5.1), so this checks where the block starts and ends, not how many runs
         text = self._runs(raw, W, H, lambda r, g, b: r > 235 and g > 235 and b > 235, x0=0, x1=W)
         text = [r for r in text if r[0] > 40]
-        self.assertGreaterEqual(len(text), 4, f"a wrapped title of four or more lines, got {text}")
+        self.assertTrue(text, "the title is drawn")
+        self.assertGreater(text[-1][1] - text[0][0], 3 * 91, f"a multi-line title, got {text}")
         self.assertGreater(text[0][0], band[0][0], "the first line starts inside the band")
         self.assertLess(text[-1][1], band[0][1], "the last line ends inside the band")
 
