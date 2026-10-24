@@ -420,7 +420,7 @@ The encode path a tool will actually take is Apple VideoToolbox, for h264, hevc 
 
 ## FFmpeg compatibility
 
-The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only); Python 3.10+ is recommended: 3.9 still works but is deprecated since 2.10.9 (CPython 3.9 is end of life), `doctor` and the `npx` installer warn on it, and 3.0 drops it. What CI actually exercises on every pull request is FFmpeg 5.1.1 (static build), 6.1 (Ubuntu apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew) and 9.x (Windows gyan.dev), on Python 3.9 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
+The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). FFmpeg 6.1+ is recommended: FFmpeg 5.x still works but is deprecated since 2.14.0, `doctor` and the `npx` installer warn on it, and 3.0 requires 6.1. Python 3.10+ is recommended too; Python 3.10+ is recommended: 3.9 still works but is deprecated since 2.10.9 (CPython 3.9 is end of life), `doctor` and the `npx` installer warn on it, and 3.0 drops it. What CI actually exercises on every pull request is FFmpeg 5.1.1 (static build), 6.1 (Ubuntu apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew) and 9.x (Windows gyan.dev), on Python 3.9 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
 
 | FFmpeg | `-filters` row layout | Source |
 |---|---|---|
@@ -527,7 +527,7 @@ FFmpeg itself:
 
 ## Requirements
 
-- FFmpeg 5.0+. Always required: `libx264`, `aac`, and the `drawtext`, `subtitles` (libass), `loudnorm`, `xfade`, `acrossfade`, `scdet`, `silencedetect` and `tile` filters. Needed only by the flags that use them: `libx265`, `prores_ks`, `libzimg` / `zscale`, `libmp3lame`, `libopus`, `libvorbis`, the `ass` filter. `doctor` tells you which are present. The apt and gyan.dev builds carry all of them; some Homebrew bottles lack `libass` / `libfreetype` / `libzimg`, which `doctor` reports as missing.
+- FFmpeg 5.0+ (FFmpeg 5.x is deprecated since 2.14.0 and 3.0 requires 6.1; 6.1+ recommended). Always required: `libx264`, `aac`, and the `drawtext`, `subtitles` (libass), `loudnorm`, `xfade`, `acrossfade`, `scdet`, `silencedetect` and `tile` filters. Needed only by the flags that use them: `libx265`, `prores_ks`, `libzimg` / `zscale`, `libmp3lame`, `libopus`, `libvorbis`, the `ass` filter. `doctor` tells you which are present. The apt and gyan.dev builds carry all of them; some Homebrew bottles lack `libass` / `libfreetype` / `libzimg`, which `doctor` reports as missing.
 - Python 3.10+ recommended, standard library only. 3.9 still works but is deprecated (end of life upstream; support ends in 3.0)
 - Node 16+ only for the `npx` installer
 

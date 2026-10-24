@@ -55,6 +55,16 @@ function pythonDeprecation(version) {
   return version === '3.9' ? PY39_DEPRECATION : null;
 }
 
+// 2.14.0 deprecates FFmpeg 5.x the same way. The same line as scripts/_contract.py's
+// FFMPEG5_DEPRECATION (a test keeps them equal).
+const FFMPEG5_DEPRECATION = 'warning: FFmpeg 5.x is deprecated since ffmpeg-skill 2.14.0 (the 5.x branches date from 2022; Ubuntu 24.04 ships 6.1); it still works in 2.x and support ends in 3.0.0: use FFmpeg 6.1+.';
+
+// The line for `ffmpeg -version`'s first line, or null (not 5.x, or not a release number).
+function ffmpegDeprecation(versionLine) {
+  const m = /^ffmpeg version n?(\d+)\.\d+/.exec(versionLine || '');
+  return m && m[1] === '5' ? FFMPEG5_DEPRECATION : null;
+}
+
 function pythonCandidates(platform) {
   return platform === 'win32' ? ['python3', 'python', 'py'] : ['python3'];
 }
@@ -146,7 +156,10 @@ function checkFfmpeg() {
     console.warn('    Windows: winget install Gyan.FFmpeg\n');
     return false;
   }
-  console.log(`  found ${r.stdout.split('\n')[0]}`);
+  const first = r.stdout.split('\n')[0];
+  console.log(`  found ${first}`);
+  const line = ffmpegDeprecation(first);
+  if (line) console.warn(`\n  ${line}`);
   return true;
 }
 
@@ -211,4 +224,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { pythonCandidates, runWithPython, findPython, pythonDeprecation, warnDeprecatedPython, PY39_DEPRECATION };
+module.exports = { pythonCandidates, runWithPython, findPython, pythonDeprecation, warnDeprecatedPython, PY39_DEPRECATION, ffmpegDeprecation, FFMPEG5_DEPRECATION };

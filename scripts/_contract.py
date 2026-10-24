@@ -987,6 +987,20 @@ def python_deprecation(version_info: Optional[tuple] = None) -> Optional[str]:
     return PY39_DEPRECATION if vi == (3, 9) else None
 
 
+# 2.14.0 deprecates FFmpeg 5.x the same way (DEPRECATED below): 2.x keeps running on it and CI keeps
+# its 5.1.1 job, and the line names 3.0.0 as the release that raises the floor to 6.1. bin/install.js
+# prints it too (FFMPEG5_DEPRECATION there; a test keeps the two equal).
+FFMPEG5_DEPRECATION = ("warning: FFmpeg 5.x is deprecated since ffmpeg-skill 2.14.0 (the 5.x branches date from 2022; "
+                       "Ubuntu 24.04 ships 6.1); it still works in 2.x and support ends in 3.0.0: use FFmpeg 6.1+.")
+
+
+def ffmpeg_deprecation(version: Optional[str]) -> Optional[str]:
+    """The deprecation line for this ffmpeg's version token, or None (not 5.x, or not a release
+    number: a git snapshot gets no line, as with the security advisory)."""
+    v = _parse_ffmpeg_version(version)
+    return FFMPEG5_DEPRECATION if v and v[0] == 5 else None
+
+
 def _exe_report() -> Dict[str, Any]:
     """`ffmpeg_path` / `ffmpeg_source` / `ffprobe_path` / `ffprobe_source`: which binary the tools run
     and why ("path": what PATH resolves; "homebrew-ffmpeg-full": macOS, a lean Homebrew ffmpeg on
@@ -1549,6 +1563,12 @@ DEPRECATED: List[Dict[str, str]] = [
     {"what": "running on Python 3.9 (the requirements.python floor)",
      "since": "2.10.9", "removed_in": "3.0.0", "where": "behaviour",
      "replacement": "Python 3.10 or later; on 3.9, doctor and the npx installer print a one-line warning"},
+    # FFmpeg 5.x: the 5.x branches date from 2022 and keep version-specific workarounds alive.
+    # 2.x keeps running on 5.0+ (CI still tests 5.1.1) and doctor / bin/install.js print
+    # FFMPEG5_DEPRECATION; 3.0.0 raises requirements.ffmpeg to 6.1.
+    {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)",
+     "since": "2.14.0", "removed_in": "3.0.0", "where": "behaviour",
+     "replacement": "FFmpeg 6.1 or later; on 5.x, doctor and the npx installer print a one-line warning"},
 ]
 
 # What 2.0.0 removed or changed, with the version that deprecated each: the "Removed" half of the
@@ -1787,7 +1807,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
             },
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"],
         },
-        "requirements": {"python": ">=3.9 (standard library only; 3.9 deprecated since 2.10.9, removed in 3.0.0; 3.10+ recommended)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0", "node": ">=16 (npx installer only)"},
+        "requirements": {"python": ">=3.9 (standard library only; 3.9 deprecated since 2.10.9, removed in 3.0.0; 3.10+ recommended)", "ffmpeg": ">=5.0 (5.x deprecated since 2.14.0, removed in 3.0.0; 6.1+ recommended)", "ffprobe": ">=5.0", "node": ">=16 (npx installer only)"},
         "execution": {
             "shell": False,
             "arbitrary_executables": False,
@@ -1872,8 +1892,9 @@ def main() -> int:
         # Advisories, never failures: on stderr in both modes, so `doctor --json`'s stdout stays one
         # JSON document. The FFmpeg ones are also in the document (`ffmpeg_security.warnings`); the
         # Python 3.9 deprecation is stderr-only, as every deprecation warning is (docs/contract.md
-        # "Deprecation policy" step 1), and machine-readable in `contract --json`'s `deprecated`.
-        for line in [python_deprecation()] + d["ffmpeg_security"]["warnings"]:
+        # "Deprecation policy" step 1), and machine-readable in `contract --json`'s `deprecated`;
+        # so is the FFmpeg 5.x one.
+        for line in [python_deprecation(), ffmpeg_deprecation(d.get("ffmpeg"))] + d["ffmpeg_security"]["warnings"]:
             if line:
                 print(line, file=sys.stderr)
         if args.json:

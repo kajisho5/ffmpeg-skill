@@ -88,6 +88,11 @@ in October 2025 and gets no security fixes, but raising the floor is a break, so
 recommended: on 3.9, `doctor` and the `npx` installer print one stderr line,
 `warning: Python 3.9 is deprecated since ffmpeg-skill 2.10.9 (...); it still works in 2.x and support ends in 3.0.0: use Python 3.10+.`
 Like every deprecation warning it is stderr only: `doctor --json`'s document has no key for it.
+Since 2.14.0 there is a second entry, **running on FFmpeg 5.x** (`where: behaviour`, `removed_in: 3.0.0`),
+handled the same way: `requirements.ffmpeg` stays `>=5.0` and CI keeps its 5.1.1 job until 3.0, which
+requires 6.1. When `ffmpeg -version` reads 5.x, `doctor` and the `npx` installer print one stderr line,
+`warning: FFmpeg 5.x is deprecated since ffmpeg-skill 2.14.0 (...); it still works in 2.x and support ends in 3.0.0: use FFmpeg 6.1+.`
+A version that is not a release number (a git snapshot) gets no line.
 `tests/test_contract.py` refuses a package.json major bump that still lists an entry that major should remove, or that
 comes before step 2's window has passed -- unless the waiver is written here, as 2.0.0's is.
 
@@ -123,12 +128,13 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
 ```json
 {
   "contract_version": "1.0",
-  "deprecated": [{"what": "running on Python 3.9 (the requirements.python floor)", "since": "2.10.9", "replacement": "Python 3.10 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
+  "deprecated": [{"what": "running on Python 3.9 (the requirements.python floor)", "since": "2.10.9", "replacement": "Python 3.10 or later; ...", "removed_in": "3.0.0", "where": "behaviour"},
+                 {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
   "skill": {"id": "ffmpeg-skill", "version": "2.12.1", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
-  "requirements": {"python": ">=3.9 (standard library only; 3.9 deprecated since 2.10.9, removed in 3.0.0; 3.10+ recommended)", "ffmpeg": ">=5.0", "ffprobe": ">=5.0"},
+  "requirements": {"python": ">=3.9 (standard library only; 3.9 deprecated since 2.10.9, removed in 3.0.0; 3.10+ recommended)", "ffmpeg": ">=5.0 (5.x deprecated since 2.14.0, removed in 3.0.0; 6.1+ recommended)", "ffprobe": ">=5.0"},
   "execution": {"shell": false, "arbitrary_executables": false, "network": false,
                 "model_downloads": {"when": "...", "in_process": {"faster-whisper": "..."},
                                     "child_process": {"parakeet-mlx": "...", "openai-whisper": "..."},

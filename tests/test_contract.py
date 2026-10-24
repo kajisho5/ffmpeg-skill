@@ -1350,7 +1350,7 @@ class ContractTests(unittest.TestCase):
     # are what that major's own PR is checked against.
     # None: not released yet. Set it to the tag date when that version ships; a major bump fails
     # while it is None, because the 90-day window cannot be counted from an unknown date.
-    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22"}
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": None}
     # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
     # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
     WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**"}
@@ -1751,6 +1751,58 @@ class ContractTests(unittest.TestCase):
         for doc in ("README.md", "docs/contract.md", "CONTRIBUTING.md", "SKILL.md"):
             text = (ROOT / doc).read_text(encoding="utf-8")
             self.assertRegex(text, r"3\.9[^\n]*deprecated|deprecated[^\n]*3\.9", doc)
+
+    def test_ffmpeg_5_is_deprecated_on_every_surface(self):
+        """2.14.0 deprecates FFmpeg 5.x like Python 3.9: an entry in `deprecated` (removed in
+        3.0.0), the floor unchanged (5.0 still runs, CI keeps its 5.1.1 job), and one identical
+        warning line from doctor (Python) and the npx installer (Node), only for a 5.x release."""
+        entry = [e for e in self.contract["deprecated"] if "FFmpeg 5.x" in e["what"]]
+        self.assertEqual(len(entry), 1)
+        self.assertEqual((entry[0]["since"], entry[0]["removed_in"], entry[0]["where"]), ("2.14.0", "3.0.0", "behaviour"))
+        self.assertIn("6.1", entry[0]["replacement"])
+        self.assertTrue(self.contract["requirements"]["ffmpeg"].startswith(">=5.0 "), "the hard floor stays 5.0 until 3.0")
+        self.assertIn("deprecated", self.contract["requirements"]["ffmpeg"])
+        line = _contract.FFMPEG5_DEPRECATION
+        self.assertTrue(line.startswith("warning: ") and "\n" not in line)
+        for needle in ("2.14.0", "3.0.0", "6.1+"):
+            self.assertIn(needle, line)
+        for version in ("5.1.1-static", "5.0", "n5.1.6", "5.1.6-0+deb12u1"):
+            self.assertEqual(_contract.ffmpeg_deprecation(version), line, version)
+        for version in ("6.1.1-3ubuntu5", "8.0.1", "4.4.2", "N-12345-gabcdef", "unknown", None):
+            self.assertIsNone(_contract.ffmpeg_deprecation(version), version)
+        js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
+        self.assertIn(f"const FFMPEG5_DEPRECATION = '{line}';", js, "install.js must print the same line as doctor")
+        probe = self.out("ffmpeg_dep_probe.js")
+        probe.write_text(
+            "const inst = require(process.argv[2]);\n"
+            "const cases = [['ffmpeg version 5.1.1-static https://johnvansickle.com/ffmpeg/  Copyright', true],\n"
+            "  ['ffmpeg version n5.0 Copyright (c) 2000-2022', true], ['ffmpeg version 6.1.1-3ubuntu5 Copyright', false],\n"
+            "  ['ffmpeg version N-12345-gabcdef Copyright', false], ['', false], [undefined, false]];\n"
+            "for (const [l, want] of cases) if ((inst.ffmpegDeprecation(l) === inst.FFMPEG5_DEPRECATION) !== want) process.exit(2);\n",
+            encoding="utf-8")
+        proc = subprocess.run(["node", str(probe), str(ROOT / "bin" / "install.js")],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("ffmpeg-5.1.1", ci, "deprecating 5.x does not drop its CI job before 3.0")
+        for doc in ("README.md", "docs/contract.md"):
+            text = (ROOT / doc).read_text(encoding="utf-8")
+            self.assertRegex(text, r"FFmpeg 5\.x[^\n]*deprecated", doc)
+
+    def test_doctor_prints_the_ffmpeg_5_warning_on_stderr_only(self):
+        import contextlib
+        import io
+        from unittest import mock
+        for version, expect in (("5.1.1-static", True), ("6.1.1-3ubuntu5", False), (None, False)):
+            fake = {"ffmpeg_security": {"warnings": []}, "ok": True, "missing": [], "ffmpeg": version}
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(_contract, "doctor", return_value=fake), \
+                    mock.patch.object(sys, "argv", ["_contract.py", "doctor", "--json"]), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = _contract.main()
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out.getvalue()), fake)
+            self.assertEqual(_contract.FFMPEG5_DEPRECATION in err.getvalue(), expect, version)
 
     def test_doctor_prints_the_python_3_9_warning_on_stderr_only(self):
         """Deprecation warnings go to stderr (policy step 1), never into stdout: `doctor --json`

@@ -43,6 +43,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.10.9 — FFmpeg 8.0.1 (Ubuntu 26.04)](#2109--ffmpeg-801-ubuntu-2604)
 - [2.10.9 — doctor's FFmpeg advisory and the Python 3.9 deprecation](#2109--doctors-ffmpeg-advisory-and-the-python-39-deprecation)
 - [2.11.0–2.12.0 — nothing happens silently](#21102120--nothing-happens-silently)
+- [2.14.0 — the FFmpeg 5.x deprecation](#2140--the-ffmpeg-5x-deprecation)
 <!-- contents:end -->
 
 ## Time limits
@@ -2055,3 +2056,14 @@ What was decided there:
   pins that): JSON-RPC answers an invalid request with `-32600`, but a scalar on stdin is no request
   this server can name, and replying to one was not asked for. Code: `mcp/server.py` `main()`. Test:
   `test_mcp_server_error_paths_raw_argv_and_call_helper`.
+
+## 2.14.0 — the FFmpeg 5.x deprecation
+
+- **FFmpeg 5.x is deprecated, not dropped.** The 5.x branches date from 2022. Debian 12 still
+  ships 5.1, so raising `requirements.ffmpeg` is a break and waits for 3.0, which requires 6.1
+  (Ubuntu 24.04's). Until then 5.0 keeps working, CI keeps its 5.1.1 job, and the version-specific
+  workarounds stay. It follows the Python 3.9 route above: an entry in `contract --json`'s
+  `deprecated`, and one stderr line from `doctor` and the `npx` installer when `ffmpeg -version`
+  reads 5.x, never a key in `doctor --json` and never a failure. A git snapshot's version is not a
+  release number and gets no line, the same rule as the security advisory. Tests:
+  `test_ffmpeg_5_is_deprecated_on_every_surface`, `test_doctor_prints_the_ffmpeg_5_warning_on_stderr_only`.
