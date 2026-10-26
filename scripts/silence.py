@@ -152,7 +152,10 @@ def resolve_filler(args, meta):
         # (or one that says "auto", which is no language either) keeps the English list it always had
         # the ISO 639-2 spellings of the languages that have a built-in list (the mux tag uses them)
         iso3 = {"eng": "en", "spa": "es", "deu": "de", "ger": "de", "fra": "fr", "fre": "fr",
-                "ita": "it", "jpn": "ja", "por": "pt"}
+                "ita": "it", "jpn": "ja", "por": "pt", "kor": "ko", "zho": "zh", "chi": "zh",
+                "rus": "ru", "nld": "nl", "dut": "nl", "pol": "pl", "tur": "tr"}
+        names = {"spanish": "es", "german": "de", "portuguese": "pt", "chinese": "zh", "mandarin": "zh",
+                 "dutch": "nl", "polish": "pl", "turkish": "tr"}
 
         def _code(value) -> str:
             value = str(value or "").strip().lower().replace("_", "-")
@@ -160,10 +163,13 @@ def resolve_filler(args, meta):
                 return ""
             # a regional tag names its primary language (ja-JP is ja); a three-letter code that is not
             # in the table stays as it is (est is Estonian, not the Spanish "es"); a word such as
-            # "english" is cut to its two-letter code
+            # "english" is cut to its two-letter code; a name whose first two letters are not its
+            # code ("spanish" is es, "chinese" zh) is looked up, as whisper's own language table spells it
             primary = value.split("-")[0]
             if primary in iso3:
                 return iso3[primary]
+            if primary in names:
+                return names[primary]
             return primary[:2] if len(primary) > 3 else primary
         spoken = _code((raw or {}).get("language")) if isinstance(raw, dict) else ""
         spoken = spoken or _code(transcription.get("language") or transcription.get("detected_language"))

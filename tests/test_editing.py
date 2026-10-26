@@ -2265,6 +2265,21 @@ class EditingTests(MediaFixtures):
                                 "--json").stdout)["filler"]
         self.assertEqual((fil["lang"], fil["removed_words"]), ("ja", ["えー"]))
 
+    def test_filler_takes_a_korean_or_chinese_transcript_by_code_or_name(self):
+        """2.18: ko and zh have built-in lists, so "kor", "zh-CN" and "chinese" are no longer
+        refused; "chinese" used to be cut to the two letters "ch"."""
+        for lang, word, expected in (("kor", "음", "ko"), ("ko-KR", "어", "ko"), ("zh-CN", "嗯，", "zh"),
+                                     ("chinese", "呃", "zh"), ("spanish", "eh", "es")):
+            with self.subTest(lang=lang):
+                doc = OUT / "words_lang_more.json"
+                doc.write_text(json.dumps({"language": lang, "words": [
+                    {"word": word, "start": 0.2, "end": 0.5}, {"word": "x", "start": 0.7, "end": 0.9}]}),
+                    encoding="utf-8")
+                fil = json.loads(script("silence.py", self._gappy(), "--filler", "--words", doc, "--filler-list",
+                                        "--json").stdout)["filler"]
+                self.assertEqual(fil["lang"], expected)
+                self.assertEqual(fil["removed_count"], 1)
+
     def test_an_unlisted_three_letter_code_is_refused_not_read_as_its_two_letter_prefix(self):
         """est is Estonian: it has no built-in list, so it is refused. Cutting it to "es" would run the
         Spanish list on Estonian speech."""
@@ -2387,6 +2402,53 @@ class FillerSpansTests(unittest.TestCase):
             self._w(("\u3048\u30fc\u3068", 1.0, 1.3), ("\u3042\u306e", 2.0, 2.2), ("\u3042\u306e\u3072\u3068", 3.0, 3.4)), ja)
         self.assertEqual([s["word"] for s in spans], ["\u3048\u30fc\u3068", "\u3042\u306e"])
 
+    def test_a_filler_split_across_whisper_tokens_is_one_word(self):
+        """2.18: whisper splits Japanese and Chinese into tokens, not words -- its own vocabulary
+        turns えーと into えー + と and えっと into え + っと, so the list's えーと/えっと never
+        matched one token. A run of tokens that joins to a listed word is that word; the longest
+        run wins, so えーと is cut whole rather than えー with と left behind."""
+        ja = self.D.FILLER_WORDS["ja"]
+        spans = self.D.filler_spans(self._w(("えー", 1.0, 1.2), ("と", 1.2, 1.3), ("、", 1.3, 1.3),
+                                            ("今日", 1.6, 1.8), ("え", 2.5, 2.6), ("っと", 2.6, 2.8)), ja, pad=0.0)
+        self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans],
+                         [("えーと", 1.0, 1.3), ("えっと", 2.5, 2.8)])
+
+    def test_an_unspaced_filler_needs_a_word_boundary_on_each_side(self):
+        """The same token split means a listed character can be part of a longer word: あの + 人
+        is "that person", 我 + 嗯 + 是 runs straight through. A run in an unspaced script is cut
+        only with a boundary on both sides: punctuation, a pause of FILLER_BOUNDARY_GAP, the
+        transcript's edge or a spaced-script neighbour."""
+        ja, zh = self.D.FILLER_WORDS["ja"], self.D.FILLER_WORDS["zh"]
+        self.assertEqual(self.D.filler_spans(self._w(("あの", 1.0, 1.2), ("人", 1.2, 1.4)), ja), [])
+        self.assertEqual(self.D.filler_spans(self._w(("我", 1.0, 1.1), ("嗯", 1.1, 1.2), ("是", 1.2, 1.3)), zh), [])
+        cut = self.D.filler_spans(self._w(("我", 1.0, 1.1), ("嗯，", 1.3, 1.5), ("是", 1.5, 1.6)), zh, pad=0.0)
+        self.assertEqual([s["word"] for s in cut], ["嗯"])
+        # faster-whisper attaches the comma to the word before it; that is a boundary too
+        cut = self.D.filler_spans(self._w(("呃", 0.0, 0.2), ("那个", 0.2, 0.5)), zh | {"那个"}, pad=0.0)
+        self.assertEqual([s["word"] for s in cut], [], "two listed words with no boundary between them stay")
+
+    def test_korean_is_spaced_and_matches_whole_words(self):
+        ko = self.D.FILLER_WORDS["ko"]
+        spans = self.D.filler_spans(self._w(("음,", 0.5, 0.8), ("음악은", 1.0, 1.5), ("어", 2.0, 2.2), ("좋아요", 2.2, 2.6)), ko)
+        self.assertEqual([s["word"] for s in spans], ["음", "어"])
+        self.assertNotIn("저", ko, "저 is also 'I': a discourse marker, not a default")
+        self.assertIn("저", self.D.FILLER_DISCOURSE_MARKERS["ko"])
+
+    def test_a_two_word_discourse_marker_added_with_filler_extra_matches(self):
+        """--help offers 'you know' for --filler-extra, but one engine word is one word, so the
+        two-word phrase could never match before 2.18."""
+        spans = self.D.filler_spans(self._w(("So", 0.0, 0.3), ("you", 0.5, 0.7), ("know", 0.7, 0.9), ("it", 1.0, 1.2)),
+                                    {"you know"}, pad=0.0)
+        self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("you know", 0.5, 0.9)])
+
+    def test_every_new_language_list_holds_disfluencies_only(self):
+        """2.18 adds ko, zh, ru, nl, pl and tr. No list carries a word its own language uses as
+        content; those are discourse markers, reachable with --filler-extra."""
+        for lang in ("ko", "zh", "ru", "nl", "pl", "tr"):
+            self.assertTrue(self.D.FILLER_WORDS[lang], lang)
+            self.assertFalse(self.D.FILLER_WORDS[lang] & set(self.D.FILLER_DISCOURSE_MARKERS[lang]), lang)
+        self.assertNotIn("额", self.D.FILLER_WORDS["zh"], "额 is a common character in its own right")
+
     def test_like_is_not_a_default_filler_word(self):
         """A discourse marker is a content word: cutting it cuts meaning, which is a judgement
         this skill does not make. It is reachable with --filler-extra and documented."""
@@ -2413,6 +2475,16 @@ class FillerSpansTests(unittest.TestCase):
         self.assertAlmostEqual(words[0]["start"], 0.2, places=6)
         self.assertAlmostEqual(words[1]["end"], 1.1, places=6)      # glued span ends at the tail
         self.assertEqual(asr._words_from_whisper_cpp_json(str(OUT / "nope.json")), [])
+        # Japanese and Chinese have no spaces, so every token "continues" the one before: between
+        # two whole characters the tokens stay apart, a partial character (U+FFFD) is still glued
+        doc.write_text(json.dumps({"transcription": [{"tokens": [
+            {"text": "えー", "offsets": {"from": 0, "to": 200}},
+            {"text": "と", "offsets": {"from": 200, "to": 300}},
+            {"text": "\ufffd", "offsets": {"from": 300, "to": 350}},
+            {"text": "\ufffd今日", "offsets": {"from": 350, "to": 600}},
+        ]}]}), encoding="utf-8")
+        self.assertEqual([w["word"] for w in asr._words_from_whisper_cpp_json(str(doc))],
+                         ["えー", "と\ufffd\ufffd今日"])
 
     def test_openai_whisper_json_becomes_word_timings(self):
         import importlib

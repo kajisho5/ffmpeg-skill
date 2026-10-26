@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-from _common.decision import fmt_srt_time, parse_time
+from _common.decision import _unspaced_script, fmt_srt_time, parse_time
 from _common.emit import die, info, warn
 from _common.runner import read_text_or_die
 
@@ -502,7 +502,11 @@ def _words_from_whisper_cpp_json(path: str) -> "List[Dict[str, Any]]":
 
     Token text carries leading spaces and the model's special tokens ([_BEG_], [_TT_123]); those
     are dropped, and a token that is a word continuation (no leading space) is glued onto the
-    previous word so "un" + "believable" is one word with one span, not two.
+    previous word so "un" + "believable" is one word with one span, not two. Chinese, Japanese
+    and Thai have no spaces, so there every token would continue the one before and a whole
+    segment became one "word": between two whole characters of such a script the tokens stay
+    apart, as openai-whisper and faster-whisper split them (filler_spans() finds the word
+    boundaries). A token that is part of a character (U+FFFD) is still glued.
     """
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -519,7 +523,10 @@ def _words_from_whisper_cpp_json(path: str) -> "List[Dict[str, Any]]":
                 start, end = float(offsets["from"]) / 1000.0, float(offsets["to"]) / 1000.0
             except (KeyError, TypeError, ValueError):
                 continue
-            if out and not text.startswith(" "):
+            prev = out[-1]["word"] if out else ""
+            unspaced = (prev and _unspaced_script(prev[-1]) and _unspaced_script(text.lstrip()[:1] or " ")
+                        and "\ufffd" not in prev[-1:] + text)
+            if out and not text.startswith(" ") and not unspaced:
                 out[-1]["word"] += text
                 out[-1]["end"] = end
             else:
