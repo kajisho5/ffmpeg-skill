@@ -49,6 +49,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.17.0 — check.py --content's dropouts row](#2170--checkpy---contents-dropouts-row)
 - [2.17.2 — cut.py fades the sound at every --segments join it re-encodes](#2172--cutpy-fades-the-sound-at-every---segments-join-it-re-encodes)
 - [2.17.4 — a non-ASCII font path on Windows](#2174--a-non-ascii-font-path-on-windows)
+- [2.18 — results carry the VDC paper's co-reported items](#218--results-carry-the-vdc-papers-co-reported-items)
 <!-- contents:end -->
 
 ## Time limits
@@ -2139,3 +2140,31 @@ What was decided there:
   run ends. A plan binds the user's font, not the copy. libass (`subtitles=`, `ass=`, `fontsdir=`)
   opens its files through FFmpeg and is not affected. Code: `drawtext.drawtext_fontfile()`.
   Tests: `WindowsFontPathTests`, `test_filter_paths_with_drive_colon_spaces_and_unicode`.
+## 2.18 — results carry the VDC paper's co-reported items
+
+- **A missing stream is a failed check, not a note.** The paper's seeded-defect run found that
+  `cut.py` measured duration and start skew but not the output's stream composition, so an MPEG-TS
+  cut that lost its whole video said `verified: true` (#367). The expected composition comes from
+  the input's own probe and the tool's arguments (provenance `input_premeasurement`): a stream the
+  input had and the operation was not told to drop must be there. `cut.py`, `join.py` and
+  `export.py` check it through `emit(expect_streams=...)`. A missing stream fails the step rather
+  than adding a warning, because the paper's three escapes all happened under a `verified: true`
+  that the consumer believed. Code: `emit.stream_inventory_step()`. Test:
+  `test_a_cut_that_loses_its_video_is_not_verified`, which seeds the defect and runs an unseeded
+  control.
+- **A failed step says its cause is unresolved.** A failed check asserts that one of the
+  artifact, the reference, the measuring instrument or the expected value's provenance is wrong.
+  No tool knows which yet, so every `ok: false` step carries `attribution: unresolved` unless the
+  tool sets one. Re-running on an unresolved failure can destroy the evidence, so a caller should
+  not.
+- **`unverified` is a fixed list per tool, beside `emit()`.** The properties a tool does not
+  measure are a property of the tool, not of the run, so they are a table (`UNVERIFIED`) that
+  `emit()` attaches and the contract republishes as `unverified_properties`. A table outside
+  `emit()` could drift from what the results say. The list names what a caller might assume was
+  checked (caption placement, lip sync, the look of a grade), not everything in the world.
+- **One true-peak tolerance, 0.1 dB.** The three tools used 0.1, 0.05 and 0.0 dB, so "verified"
+  meant a different scale in each, and export could fail a file check passed. 0.1 dB is
+  `loudness.py`'s existing margin: two loudnorm passes on the same encode differ by about that
+  much. A tighter rule would fail files on measurement noise and send `loudness.py` round its
+  re-encode loop for nothing. Code: `_platforms.TP_TOLERANCE_DB`. Test:
+  `test_one_true_peak_tolerance_is_applied_and_reported`.

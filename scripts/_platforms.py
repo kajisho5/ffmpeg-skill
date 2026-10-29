@@ -55,6 +55,13 @@ _NO_SAFE = {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
 _CAP_VERTICAL = {"size": 0.0833, "position": "bottom", "box": False, "outline": 2, "animate": "pop"}
 _CAP_WIDE = {"size": 0.0694, "position": "bottom", "box": False, "outline": 2, "animate": "none"}
 
+# The one true-peak tolerance every tool applies to a dBTP ceiling, reported beside the verdict.
+# Before 2.18 loudness.py allowed +0.1 dB, check.py +0.05 and export.py 0.0, so "verified" meant a
+# different scale in each tool and export could fail a file check passed (the VDC paper's
+# sensitivity run). 0.1 dB is loudness.py's margin: two loudnorm passes on the same encode differ
+# by up to that much, so a tighter rule fails a file on measurement noise.
+TP_TOLERANCE_DB = 0.1
+
 PLATFORMS: Dict[str, Dict[str, Any]] = {
     "tiktok": {
         "title": "TikTok",

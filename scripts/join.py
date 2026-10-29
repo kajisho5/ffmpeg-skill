@@ -565,11 +565,21 @@ def main() -> int:
     verification = []
     if expected is not None and measured is not None and not STATE.dry_run:
         tol = max(1.5 / fps, 0.05)
-        verification.append({"step": "duration", "ok": abs(measured - expected) <= tol,
-                             "measured": round(measured, 3), "expected": expected, "tolerance": round(tol, 3)})
+        verification.append({"step": "duration", "property": "video_duration", "ok": abs(measured - expected) <= tol,
+                             "measured": round(measured, 3), "expected": expected,
+                             "delta": round(measured - expected, 3), "tolerance": round(tol, 3),
+                             "provenance": "input_premeasurement"})
+    # a clip with no audio stream is joined over generated silence: the join is right to do that, but
+    # the report must say which clips' sound is not theirs (the paper's join finding: absence was
+    # filled and nothing in the result showed it)
+    substituted = [p for p, m in zip(args.inputs, metas) if not m.get("audio")]
+    if substituted:
+        STATE_NOTES.append(f"{len(substituted)} clip(s) had no audio stream; their span of the join is generated "
+                           "silence: " + ", ".join(os.path.basename(p) for p in substituted))
     info(f"wrote {output} ({fmt_secs(measured)}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
     emit(output, mode="video", **reported(), clips=n, transition=args.transition, expected_duration=expected,
-         verification=verification,
+         verification=verification, expect_streams={"video": True, "audio": True},
+         audio_substituted=substituted,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
     return 0
 

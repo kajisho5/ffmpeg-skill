@@ -19,6 +19,7 @@ import os
 import re
 import sys
 
+from _platforms import TP_TOLERANCE_DB
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -128,7 +129,7 @@ def main() -> int:
     # integrated loudness -- reported, never hidden.
     ceiling, rounds = args.tp, 0
     steps = [] if bitrate_pinned or ext in AUDIO_CODECS and "aac" not in AUDIO_CODECS[ext] else [b for b in ("256k", "320k") if _kbps(b) > _kbps(bitrate)]
-    while not after.get("silent") and float(after["input_tp"]) > args.tp + 0.1 and rounds < 5:
+    while not after.get("silent") and float(after["input_tp"]) > args.tp + TP_TOLERANCE_DB and rounds < 5:
         rounds += 1
         overshoot = float(after["input_tp"]) - args.tp
         if steps:
@@ -152,7 +153,7 @@ def main() -> int:
         result["note"] = (f"integrated loudness is {float(after['input_i']) - args.lufs:+.1f} LU from the target because the "
                           f"true-peak ceiling had to absorb the encoder's overshoot; a lossless delivery (wav/flac) or a pinned "
                           f"higher --audio-bitrate keeps both")
-    if not after.get("silent") and float(after["input_tp"]) > args.tp + 0.1:
+    if not after.get("silent") and float(after["input_tp"]) > args.tp + TP_TOLERANCE_DB:
         die(f"true peak is still {float(after['input_tp']):.2f} dBTP after {rounds + 1} encodes (requested <= {args.tp:g}); "
             f"the encoder overshoots more than the loudnorm ceiling can absorb at this bitrate",
             kind="verification", output=output, result=result,
@@ -161,8 +162,9 @@ def main() -> int:
          measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")},
          targets={"lufs": args.lufs, "tp": args.tp, "lra": args.lra},
          verification=[{"step": "loudness",
-                        "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + 0.1),
-                        "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp}])
+                        "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + TP_TOLERANCE_DB),
+                        "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp,
+                        "tolerance": {"lufs": 1.0, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}])
     return 0
 
 

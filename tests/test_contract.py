@@ -67,6 +67,12 @@ def ffmpeg(*args):
     return sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args)
 
 
+def has_step(steps, want):
+    """A verification step carrying every key of `want` (2.18 steps carry more keys than older
+    assertions name: property, tolerance, provenance, attribution)."""
+    return any(all(s.get(k) == v for k, v in want.items()) for s in steps)
+
+
 def tool(name, *args, **kw):
     return sh(sys.executable, SCRIPTS / f"{name}.py", *args, **kw)
 
@@ -3021,13 +3027,13 @@ class ContractTests(unittest.TestCase):
         loudness: probe + its own after-write measurement; export on a raw source: loudness step
         not ok -> verified false while status stays completed; --dry-run verified nothing."""
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_cut.mp4"), "--json").stdout)
-        self.assertEqual((doc["verified"], doc["verification"]), (True, [{"step": "probe", "ok": True}]))
+        self.assertEqual((doc["verified"], [(s["step"], s["ok"]) for s in doc["verification"]]), (True, [("probe", True), ("streams", True)]))
         doc = json.loads(tool("loudness", self.src, "-o", self.out("vf_loud.mp4"), "--json").stdout)
         self.assertTrue(doc["verified"]); self.assertEqual([s["step"] for s in doc["verification"]], ["probe", "loudness"])
         self.assertEqual(doc["verification"][1]["target_lufs"], -14)
         doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("vf_x.mp4"), "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
-        self.assertEqual([(s["step"], s["ok"]) for s in doc["verification"]], [("probe", True), ("loudness", False)])
+        self.assertEqual([(s["step"], s["ok"]) for s in doc["verification"]], [("probe", True), ("loudness", False), ("streams", True)])
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_dry.mp4"), "--dry-run", "--json").stdout)
         self.assertEqual((doc["verified"], doc["verification"]), (False, []))
         doc = json.loads(tool("report", "--after", self.src, "-o", self.out("vf_rep.html"), "--json").stdout)
@@ -3064,7 +3070,7 @@ class ContractTests(unittest.TestCase):
         tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("r6_x.mp4"), "--plan", xplan)
         doc = json.loads(tool("render", xplan, "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
-        self.assertIn({"step": "check", "ok": False, "platform": "x"}, doc["verification"])
+        self.assertTrue(has_step(doc["verification"], {"step": "check", "ok": False, "platform": "x"}))
         proj = self.out("r6_proj.json"); proj.write_text(json.dumps({"output": str(self.out("r6_r.mp4")), "clips": [{"src": str(self.src)}]}))
         proc = tool("render", proj, "--plan", self.out("r6_rplan.json"), "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
@@ -3597,6 +3603,66 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(doc["status"], "completed")
         self.assertGreater(doc["probe"]["duration"], 1.5)
 
+    def test_a_cut_that_loses_its_video_is_not_verified(self):
+        """#367, found by the VDC paper's seeded-defect sensitivity run: on some MPEG-TS sources
+        ffmpeg's input seek drops the whole video stream, and cut.py said completed, verified: true,
+        notes: [] for the audio-only MP4, because it measured duration and start skew but never the
+        output's stream composition. Seeded here by stripping the video from the output probe the
+        way that defect leaves it; a no-false-alarm control runs the same cut unseeded."""
+        out = self.out("vdc_lost_video.mp4")
+        seed = ("import sys; sys.path.insert(0, %r); sys.argv = ['cut.py', %r, '--start', '1', '--end', '3', '-o', %r, "
+                "'--overwrite', '--json']; import importlib; e = importlib.import_module('_common.emit'); real = e.verify_output; "
+                "e.verify_output = lambda path: dict(real(path), video=None); import cut; sys.exit(cut.main())"
+                % (str(SCRIPTS), str(self.src), str(out)))
+        doc = json.loads(sh(sys.executable, "-c", seed).stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertFalse(doc["verified"], "a cut whose video vanished must not say verified")
+        step = next(s for s in doc["verification"] if s["step"] == "streams")
+        self.assertEqual((step["ok"], step["missing"], step["attribution"]), (False, ["video"], "unresolved"))
+        self.assertEqual(step["expected"], {"video": True, "audio": True})
+        # control: the same cut, nothing seeded, passes the same check
+        ok = json.loads(tool("cut", self.src, "--start", "1", "--end", "3", "-o", self.out("vdc_kept_video.mp4"),
+                             "--overwrite", "--json").stdout)
+        self.assertTrue(ok["verified"])
+        self.assertTrue(next(s for s in ok["verification"] if s["step"] == "streams")["ok"])
+        self.assertEqual(ok["unverified"], ["picture_content"])
+        # an audio extension is told to drop the picture: no false alarm there either
+        audio = json.loads(tool("cut", self.src, "--start", "1", "--end", "3", "-o", self.out("vdc_audio.m4a"),
+                                "--overwrite", "--json").stdout)
+        self.assertTrue(audio["verified"], audio["verification"])
+
+    def test_join_reports_which_clips_got_generated_silence(self):
+        """The VDC paper's join finding: a clip with no audio stream is joined over anullsrc silence
+        (right), and the result said verified with no note (wrong: the sound of that span is not
+        the clip's). The substitution is now named in `audio_substituted` and `notes`."""
+        silent = self.out("vdc_noaudio.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
+               "-pix_fmt", "yuv420p", silent)
+        doc = json.loads(tool("join", self.src, silent, "-o", self.out("vdc_join.mp4"), "--overwrite", "--json").stdout)
+        self.assertEqual(doc["audio_substituted"], [str(silent)])
+        self.assertTrue(any("generated silence" in n for n in doc["notes"]), doc.get("notes"))
+        self.assertTrue(next(s for s in doc["verification"] if s["step"] == "streams")["ok"])
+
+    def test_one_true_peak_tolerance_is_applied_and_reported(self):
+        """loudness.py allowed +0.1 dB over a dBTP ceiling, check.py +0.05 and export.py 0.0, so the same
+        file could pass one tool and fail another (the VDC paper's loudness/export findings). One
+        constant now, and the loudness step reports it."""
+        import _platforms
+        for name in ("loudness", "check", "export"):
+            text = (SCRIPTS / f"{name}.py").read_text(encoding="utf-8")
+            self.assertIn("TP_TOLERANCE_DB", text, name)
+            self.assertNotRegex(text, r'tp"?\]?\)? \+ 0\.\d', f"{name}.py adds its own true-peak margin")
+        doc = json.loads(tool("loudness", self.src, "-o", self.out("vdc_loud.mp4"), "--overwrite", "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "loudness")
+        self.assertEqual(step["tolerance"]["tp"], _platforms.TP_TOLERANCE_DB)
+
+    def test_unverified_range_names_real_tools_and_reaches_the_contract(self):
+        from _common.emit import UNVERIFIED
+        self.assertLessEqual(set(UNVERIFIED), set(self.tools))
+        for name, props in UNVERIFIED.items():
+            self.assertEqual(self.tools[name]["unverified_properties"], props)
+        self.assertIn("rendered_placement", self.tools["caption"]["unverified_properties"])
+
     def test_success_requires_a_verified_output(self):
         import _common
         for name in ("cut", "audio", "loudness", "silence", "fit", "export", "caption", "overlay", "color", "join", "graphics", "multicam"):
@@ -3951,7 +4017,7 @@ class SilentResultTests(unittest.TestCase):
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
         self.assertEqual({k: doc["loudness"][k] for k in ("lufs", "ok", "measured", "reason")},
                          {"lufs": None, "ok": None, "measured": False, "reason": "not_measured"})
-        self.assertIn({"step": "loudness", "ok": False, "platform": "x", "reason": "not_measured"}, doc["verification"])
+        self.assertTrue(has_step(doc["verification"], {"step": "loudness", "ok": False, "platform": "x", "reason": "not_measured"}))
         self.assertEqual(doc["diagnostics"]["warnings"][0]["code"], "loudness_not_measured")
 
     # ---------------------------------------------------------------- report
@@ -3986,7 +4052,7 @@ class SilentResultTests(unittest.TestCase):
         proj = self.project("rv", export={"preset": "x", "normalize": False})
         doc = json.loads(tool("render", proj, "--fast", "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
-        self.assertIn({"step": "loudness", "ok": False, "platform": "x", "stage": "export"}, doc["verification"])
+        self.assertTrue(has_step(doc["verification"], {"step": "loudness", "ok": False, "platform": "x", "stage": "export"}))
         self.assertTrue(any(n.startswith("export: loudness ") for n in doc["notes"]), doc.get("notes"))
 
     def test_render_runs_a_content_only_check_and_records_a_dry_run_skip(self):
@@ -4034,7 +4100,7 @@ class SilentResultTests(unittest.TestCase):
         again = render()
         self.assertEqual(again["cache"]["hits"], ["clips", "export"])
         self.assertFalse(again["verified"], "a cached export that missed its loudness is still unverified")
-        self.assertIn({"step": "loudness", "ok": False, "platform": "x", "stage": "export"}, again["verification"])
+        self.assertTrue(has_step(again["verification"], {"step": "loudness", "ok": False, "platform": "x", "stage": "export"}))
         entry("export").write_text("{not json", encoding="utf-8")
         doc = render()
         self.assertEqual([(m["stage"], m["reason"]) for m in doc["cache"]["miss_reasons"]], [("export", "sidecar_corrupt")])
@@ -4096,7 +4162,7 @@ class SilentResultTests(unittest.TestCase):
         self.assertEqual((row["ok"], row["verified"]), (True, False))
         self.assertEqual(row["unverified"], [{"step": 0, "tool": "export", "failed": ["loudness"]}])
         self.assertEqual((doc["processed"], doc["verified"]), (1, False))
-        self.assertEqual(doc["verification"], [{"step": "item", "file": row["file"], "ok": False}])
+        self.assertEqual(doc["verification"], [{"step": "item", "file": row["file"], "ok": False, "attribution": "unresolved"}])
 
     def test_batch_serves_a_cached_output_only_while_it_is_unchanged_and_records_a_reset_cache(self):
         """A cache hit checked only that the output existed, so a replaced output was served as

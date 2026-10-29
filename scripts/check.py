@@ -34,7 +34,7 @@ import sys
 from fractions import Fraction
 from typing import Any, Dict, List
 
-from _platforms import PLATFORMS, PLATFORM_CHOICES, spec_of, resolve as resolve_platform
+from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
 from _common.probe import SILENT_PEAK_DBFS, detect_content, measured_level_dbfs
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
@@ -249,7 +249,7 @@ def main() -> int:
                 diff = abs(lm["lufs"] - spec["lufs"])
                 row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g} for speech or music; leave ambience/near-silence (<= -40 LUFS) alone and say so",
                     reason="the platform will auto-normalise it to its own target anyway, which can pump or duck the mix in ways you did not choose")
-                row("true peak", "PASS" if lm["tp"] <= spec["tp"] + 0.05 else "FAIL", f"{lm['tp']:.1f} dBTP", f"<= {spec['tp']:g} dBTP", f"loudness.py --tp {spec['tp']:g}")
+                row("true peak", "PASS" if lm["tp"] <= spec["tp"] + TP_TOLERANCE_DB else "FAIL", f"{lm['tp']:.1f} dBTP", f"<= {spec['tp']:g} dBTP (+{TP_TOLERANCE_DB:g} dB tolerance)", f"loudness.py --tp {spec['tp']:g}")
             else:
                 # ffmpeg's loudnorm JSON didn't parse out of stderr (unexpected/garbled output).
                 # Dropping the loudness/true-peak rows silently here would report an overall PASS

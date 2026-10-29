@@ -1677,7 +1677,11 @@ def main() -> int:
         notes.append(skew_note)
     info(f"wrote {output} ({fmt_secs(got)}, expected ~{expected:.3f}s, "
          + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
+    # the streams the source had and this cut was not told to drop (an audio extension drops the
+    # picture): #367, a TS cut that lost its video must not say verified
+    expect_streams = {"video": bool(meta.get("video")) and not is_audio_output(output), "audio": bool(meta.get("audio"))}
     emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
+         expect_streams=expect_streams,
          dropped_non_av_streams=bool(DROPPED_STREAMS),
          requested_start=round(requested[0][0], 6) if len(requested) == 1 else None,
          requested_end=round(requested[0][1], 6) if len(requested) == 1 else None,

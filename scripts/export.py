@@ -40,7 +40,7 @@ from _common import STATE, add_common, apply_common, bt709_matrix_args, bt709_ta
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_skip, warn
 from check import SPECS as PLATFORMS, measure_loudness
-from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, resolve as resolve_platform
+from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
 # from a literal restated here: before 1.14 they were typed twice and the facebook preset had
 # already drifted (no duration cap against the table's 14400 s).
@@ -268,9 +268,10 @@ def main() -> int:
         if not m:
             _loudness_unmeasured(extra, notes, platform, spec)
         if m:
-            ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"]
+            ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"] + TP_TOLERANCE_DB
             extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok}
-            extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform}]
+            extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform,
+                                      "tolerance": {"lufs": spec["lufs_tol"], "tp": TP_TOLERANCE_DB}, "provenance": "specification"}]
             if not math.isfinite(m["lufs"]):
                 # a silent output measures -inf LUFS: no gain reaches the target, so recommending
                 # (or running, under --normalize) loudness.py only returns "nothing to normalise"
@@ -305,9 +306,10 @@ def main() -> int:
                     _loudness_unmeasured(extra, notes, platform, spec, normalized=True)
                     ok = True  # nothing more to say about a level that was not measured
                 else:
-                    ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"]
+                    ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"] + TP_TOLERANCE_DB
                     extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok, "normalized": True}
-                    extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform}]
+                    extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform,
+                                              "tolerance": {"lufs": spec["lufs_tol"], "tp": TP_TOLERANCE_DB}, "provenance": "specification"}]
                 if not ok:
                     notes.append(f"loudness is still {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP after loudness.py (target {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP): {child.get('result', {}).get('note') or 'the encoder overshoots the ceiling'}")
                     warn(notes[-1], "loudness_outside_spec", platform=platform, lufs=m["lufs"], tp=m["tp"], normalized=True)
@@ -323,6 +325,8 @@ def main() -> int:
         notes.append(f"[dry-run] --normalize: loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} would run on the written file if it misses {platform}'s spec")
     if notes:
         extra["notes"] = notes
+    # the delivery keeps the source's picture and, except as a GIF, its sound
+    extra["expect_streams"] = {"video": bool(meta.get("video")), "audio": has_audio and args.preset != "gif"}
     emit(output, **extra)
     return 0
 
