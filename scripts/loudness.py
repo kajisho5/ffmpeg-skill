@@ -100,7 +100,7 @@ def main() -> int:
     # the sound is trimmed back to the input's own length. `duration=` counts from the first sample,
     # so sound that starts late keeps its end (`end=` is a timestamp, and cut it). atrim follows
     # loudnorm directly: an aresample between them fails channel-layout negotiation on FFmpeg 5.1
-    in_audio = (meta.get("audio") or {}).get("duration") or meta.get("duration")
+    in_audio = audio_length(meta)
 
     def encode(tp: float, bitrate: str) -> None:
         nonlocal dropped_streams
@@ -176,7 +176,7 @@ def main() -> int:
                      "delta": {"lufs": round(float(after["input_i"]) - args.lufs, 2), "tp": round(float(after["input_tp"]) - args.tp, 2)},
                      "tolerance": {"lufs": 1.0, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}]
     written = probe(output, role="output")
-    out_audio = (written.get("audio") or {}).get("duration") or written.get("duration")
+    out_audio = audio_length(written)
     if in_audio and out_audio:
         # a levels pass changes no timing: the sound is as long as the input's, to one AAC frame
         tol = max(1024.0 / float(sr), AUDIO_LENGTH_TOLERANCE)
@@ -192,6 +192,14 @@ def main() -> int:
          measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")},
          targets={"lufs": args.lufs, "tp": args.tp, "lra": args.lra}, verification=verification)
     return 0
+
+
+def audio_length(meta: dict) -> "Optional[float]":
+    """The sound's own length: the stream's duration, else Matroska's DURATION tag. Never the
+    container's, which is the picture's when the picture runs longer (and would fail a correct
+    output against an expected length the sound never had)."""
+    audio = meta.get("audio") or {}
+    return audio.get("duration") or audio.get("tagged_duration")
 
 
 def _kbps(value: str) -> int:

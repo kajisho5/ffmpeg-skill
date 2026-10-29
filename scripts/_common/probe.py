@@ -300,6 +300,9 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "bitrate": _to_int(audio.get("bit_rate")),
             "duration": _to_float(audio.get("duration")),
             "start_time": _to_float(audio.get("start_time")),
+            # Matroska/WebM give no stream duration, only a DURATION tag; the container's own length
+            # is the longest stream's, which is not the sound's when the picture runs longer (2.20)
+            "tagged_duration": _tag_seconds((audio.get("tags") or {}).get("DURATION")),
         }
         # every audio stream in file order: index n here is `-map 0:a:n` (audio.py --audio-stream n)
         out["audio_streams"] = [{
@@ -495,6 +498,15 @@ def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
         "note": ("flat, low-contrast, desaturated picture tagged as SDR: probably a Log profile (S-Log/V-Log/C-Log). "
                  "Apply the camera's conversion LUT with color.py --lut" if looks_log else "contrast and saturation look like normal display-referred SDR"),
     }
+
+
+def _tag_seconds(value: Any) -> "Optional[float]":
+    """A Matroska DURATION tag ("00:00:04.008000000") in seconds, or None."""
+    try:
+        h, m, sec = str(value).split(":")
+        return int(h) * 3600 + int(m) * 60 + float(sec)
+    except (TypeError, ValueError):
+        return None
 
 
 def _to_float(v: Any) -> Optional[float]:

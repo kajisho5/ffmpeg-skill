@@ -3699,6 +3699,15 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(step["ok"], step)
         self.assertAlmostEqual(float(probe_streams(self.out("len_late_loud.mp4"))["audio"]),
                                float(probe_streams(late)["audio"]), delta=0.03)
+        # Matroska gives no stream duration: the sound's own length comes from its DURATION tag,
+        # not from the container, which is the 6 s picture's and failed a correct 4 s output
+        mkv = self.out("len_short_audio.mkv")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=6", "-f", "lavfi", "-i", "sine=440:d=4",
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "libopus", mkv)
+        doc = json.loads(tool("loudness", mkv, "-o", self.out("len_short_audio.mp4"), "--overwrite", "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "duration")
+        self.assertTrue(step["ok"], step)
+        self.assertAlmostEqual(step["expected"], 4.0, delta=0.05)
 
     def test_export_measures_the_length_its_preset_promises(self):
         """export.py trims to the platform maximum but never re-read the written length (the VDC
