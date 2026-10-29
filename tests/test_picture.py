@@ -3282,6 +3282,20 @@ class WindowsFontPathTests(unittest.TestCase):
         self.assertIn(copies[0].name, opt)
         self.assertIn(str(self.font), STATE.plan_inputs, "a plan binds the user's font, not the copy")
         self.assertIn("font_path_copied", [f.get("code") for f in STATE.fallbacks[before:]])
+        # a font replaced in place gets a new copy, not the stale one
+        self.font.write_bytes(b"other font bytes")
+        os.utime(self.font, ns=(1, 1))
+        with unittest.mock.patch.object(self.dt, "_on_windows", return_value=True), \
+                unittest.mock.patch.object(self.dt, "_windows_short_path", return_value=None), \
+                unittest.mock.patch.object(self.dt, "_drawtext_tmpdir", return_value=str(tmpdir)):
+            self.dt.drawtext_fontfile(str(self.font))
+        self.assertEqual(sorted(p.read_bytes() for p in tmpdir.iterdir()), [b"font bytes", b"other font bytes"])
+
+    def test_a_missing_font_is_left_to_ffmpeg_not_a_traceback(self):
+        missing = str(self.tmp / "フォント" / "nope.ttf")
+        with unittest.mock.patch.object(self.dt, "_on_windows", return_value=True), \
+                unittest.mock.patch.object(self.dt, "_windows_short_path", return_value=None):
+            self.assertEqual(self.dt.drawtext_fontfile(missing), "fontfile=" + self.dt.escape_filter_path(missing))
 
 
 class EmojiTests(unittest.TestCase):

@@ -162,9 +162,12 @@ def main() -> int:
     # a resolvable font file, given as fontfile=, is the only form confirmed not to crash drawtext's
     # own fontconfig resolution on some real Windows ffmpeg builds (#100); font= is the fallback when
     # nothing can be resolved, unchanged from before this existed.
-    default_font = default_font_file("DejaVu Sans")
-    font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
-    tc = "" if args.no_timecode else "," + timecode_filter(font_prefix)
+    if args.no_timecode:
+        font_prefix, tc = "", ""   # nothing is drawn, so no font is resolved or copied
+    else:
+        default_font = default_font_file("DejaVu Sans")
+        font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
+        tc = "," + timecode_filter(font_prefix)
     # --safe: the platform's occluded zones, drawn as shaded boxes in fractions of the frame so
     # the same filter is right at any scale (a tile of a contact sheet as much as a full frame).
     safe_filter = ""

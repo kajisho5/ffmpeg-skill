@@ -44,7 +44,8 @@ def drawtext_fontfile(path: str) -> str:
     binds, never the copy.
     """
     path = str(path)
-    if not _on_windows() or path.isascii():
+    if not _on_windows() or path.isascii() or not os.path.isfile(path):
+        # a missing file is left to ffmpeg's own error, as before: there is nothing to copy
         return f"fontfile={escape_filter_path(path)}"
     if os.path.isfile(path) and path not in STATE.plan_inputs:
         STATE.plan_inputs.append(path)
@@ -56,14 +57,22 @@ def drawtext_fontfile(path: str) -> str:
     tmpdir = _drawtext_tmpdir(create=not STATE.dry_run)
     if not tmpdir.isascii():
         tmpdir = _windows_short_path(tmpdir) or tmpdir
-    name = "font_" + hashlib.sha1(path.encode("utf-8")).hexdigest()[:16] + os.path.splitext(path)[1].lower()
+    st = os.stat(path)
+    # the path plus size and mtime: a font replaced in place during the run gets a new copy
+    key = f"{path}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8")
+    name = "font_" + hashlib.sha1(key).hexdigest()[:16] + os.path.splitext(path)[1].lower()
     copy = os.path.join(tmpdir, name)
     if not copy.isascii():
         warn(f"font: {path} is not an ASCII path and no ASCII copy could be placed; drawtext may "
              "not open it on Windows (move the font to a folder named in ASCII)", "font_path_not_ascii", font=path)
         return f"fontfile={escape_filter_path(path, bind=False)}"
     if not STATE.dry_run and not os.path.exists(copy):
-        shutil.copyfile(path, copy)
+        try:
+            shutil.copyfile(path, copy)
+        except OSError as e:
+            warn(f"font: could not copy {path} to an ASCII path ({e}); drawtext may not open it on "
+                 "Windows (move the font to a folder named in ASCII)", "font_path_not_ascii", font=path)
+            return f"fontfile={escape_filter_path(path, bind=False)}"
     record_fallback(f"font: {path} is not an ASCII path, which drawtext cannot open on Windows; "
                     f"drawing with a copy at {copy}", "font_path_copied", font=path, file=copy)
     return f"fontfile={escape_filter_path(copy, bind=False)}"
