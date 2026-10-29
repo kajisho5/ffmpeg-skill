@@ -403,6 +403,8 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 
 ## FAQ
 
+The same answers, plus overwrite and `-y`, filenames with spaces, vertical crops, captions, extra audio tracks and long files, are on the [FAQ page](docs/faq.md).
+
 ### Can I pass raw ffmpeg arguments, or a filter_complex?
 
 Each operation is a script whose flags are its argparse parser, and that parser is what `contract --json` and the MCP `inputSchema` are built from. CI fails the build when those drift from the scripts. A caller-supplied filter graph, `-vf` string, or other ffmpeg option is not an argument any script accepts. `doctor` reads `ffmpeg -filters` (and `-encoders`, `-bsfs`) and reports a filter a tool needs before a job runs into it. MCP does accept an `argv` array, and that array is the named script's own CLI flags, still bound to that script: the script's flags, never an ffmpeg command line and never a shell.
@@ -641,6 +643,7 @@ Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 | [CONTRIBUTING.md](CONTRIBUTING.md) | scope, dev setup, tests, PR expectations |
 | [docs/roadmap.md](docs/roadmap.md) | 1.8.0 to 1.21.0 one theme per minor, each marked shipped + evaluated, shipped with eval pending, or planned; and what 2.0.0 then removes |
 | [docs/design-decisions.md](docs/design-decisions.md) | behaviours that look like bugs but are decisions, with rationale and the pinning test; read before filing a bug |
+| [docs/faq.md](docs/faq.md) | the FAQ, including the questions people ask about overwrite, cuts, `verified`, loudness and long files |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1; reports go through the SECURITY.md channel |
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately |
 | [SKILL.md](SKILL.md) | what the agent reads: workflow, request → tool map, audio-only rules, report format, pitfalls |

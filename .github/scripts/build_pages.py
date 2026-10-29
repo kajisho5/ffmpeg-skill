@@ -30,6 +30,7 @@ PAGES = {
     "docs/demos.md": ("docs/demos.md", "Demo gallery"),
     "docs/contract.md": ("docs/contract.md", "Contract"),
     "docs/design-decisions.md": ("docs/design-decisions.md", "Design decisions"),
+    "docs/faq.md": ("docs/faq.md", "FAQ"),
     "docs/roadmap.md": ("docs/roadmap.md", "Roadmap"),
     "CHANGELOG.md": ("CHANGELOG.md", "Changelog"),
 }
