@@ -14,7 +14,7 @@
 
 <p align="center"><b>Give your coding agent a video editor.</b><br>
 Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpeg, then checks its own output.<br>
-No cloud · No API keys · Python standard library</p>
+No cloud API · No API keys · Python standard library</p>
 
 <p align="center">
   <a href="#quick-start"><b>Quick start</b></a> ·
@@ -51,7 +51,7 @@ Left half is the input, right half is what the command produced. **[All 66 befor
 
 `ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **42 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also callable as an MCP tool (`tools/list` advertises a core 12 by default to keep client context small, with `FFMPEG_SKILL_MCP_FULL=1` listing all 42; every tool is reachable by name through `tools/call` either way), and the whole set is described by a machine-readable contract.
 
-If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
+If `ffmpeg` and `python3` are on your PATH, editing runs on this machine, on footage that is not uploaded. The calls that do leave the machine are listed under [Network access](#network-access).
 
 > **SPEC** (Self-Producing Execution Contract): each tool's `input_schema` — the part of its
 > contract and MCP tool definition that has to track the CLI flag-for-flag — is never
@@ -79,7 +79,7 @@ Other repos in the ecosystem — [`media-analysis-skill`](https://github.com/kaj
 ---
 
 **Contents**
-[Standalone, and in an ecosystem](#standalone-and-in-an-ecosystem) · [Why](#why) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Design principles](#design-principles) · [Tools](#tools) · [Audio](#audio-is-a-first-class-input) · [Built for agents](#built-for-agents) · [FAQ](#faq) · [FFmpeg compatibility](#ffmpeg-compatibility) · [Tested on real footage](#tested-on-real-footage) · [Install](#install) · [Requirements](#requirements) · [Development](#development) · [Docs](#docs)
+[Standalone, and in an ecosystem](#standalone-and-in-an-ecosystem) · [Why](#why) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Design principles](#design-principles) · [Tools](#tools) · [Audio](#audio-is-a-first-class-input) · [Built for agents](#built-for-agents) · [FAQ](#faq) · [Network access](#network-access) · [FFmpeg compatibility](#ffmpeg-compatibility) · [Tested on real footage](#tested-on-real-footage) · [Install](#install) · [Requirements](#requirements) · [Development](#development) · [Docs](#docs)
 
 ---
 
@@ -91,7 +91,7 @@ An agent that "knows FFmpeg" still guesses: it assumes a frame rate, picks a cod
 - **Structured tools, not shell strings.** Each operation is a script with typed arguments. Nothing runs through a shell; no filter graph is accepted from the caller.
 - **A contract the agent can read.** `contract --json` states, for every tool, what it takes, what it writes, which FFmpeg components it needs and how the result is verified. The MCP surface is derived from it.
 - **Verification after execution.** The result is probed, checked against the destination's spec and, when the picture changed, looked at as a contact sheet.
-- **Local first.** No cloud, no API keys, no Python dependencies. Optional local transcription is used when a speech engine (Parakeet or a whisper) is installed, never required — by `caption.py --transcribe` and, since 1.17, by `silence.py --filler --transcribe`; both take a transcript you already have instead, and both refuse with the install lines rather than guessing. Both take `--engine` and `--model`; `FFMPEG_SKILL_ASR_ENGINE` and `FFMPEG_SKILL_ASR_MODEL` set this machine's defaults (e.g. `large-v3-turbo` where that whisper.cpp model is installed; without either, auto and `base`). The engine runs on your machine and the audio is never uploaded; parakeet-mlx, faster-whisper and openai-whisper download their model weights the first time they run (parakeet-mlx's default from Hugging Face).
+- **Local first.** No cloud API, no API keys, no Python dependencies. Optional local transcription is used when a speech engine (Parakeet or a whisper) is installed, never required — by `caption.py --transcribe` and, since 1.17, by `silence.py --filler --transcribe`; both take a transcript you already have instead, and both refuse with the install lines rather than guessing. Both take `--engine` and `--model`; `FFMPEG_SKILL_ASR_ENGINE` and `FFMPEG_SKILL_ASR_MODEL` set this machine's defaults (e.g. `large-v3-turbo` where that whisper.cpp model is installed; without either, auto and `base`). The engine runs on your machine and the audio is never uploaded; parakeet-mlx, faster-whisper and openai-whisper download their model weights the first time they run (parakeet-mlx's default from Hugging Face). Every outbound call is under [Network access](#network-access).
 
 ## Paper
 
@@ -403,7 +403,7 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 
 ## FAQ
 
-The same answers, plus overwrite and `-y`, filenames with spaces, vertical crops, captions, extra audio tracks and long files, are on the [FAQ page](docs/faq.md).
+The same answers, plus overwrite and `-y`, filenames with spaces, vertical crops, captions, extra audio tracks, long files and [network access](#network-access), are on the [FAQ page](docs/faq.md).
 
 ### Can I pass raw ffmpeg arguments, or a filter_complex?
 
@@ -464,6 +464,41 @@ The default limit is 1800 seconds per ffmpeg call (`DEFAULT_TIMEOUT` in `scripts
 ### Does it modify my originals, or overwrite files?
 
 No tool writes its input. Every tool's contract entry has `mutates_input: false`, and an output that resolves to the same file as an input is refused before ffmpeg (`error.reason: output_is_input`, `scripts/_common/runner.py`). That refusal ignores `--overwrite`. The default path is a new file, `<stem>_<operation>.<ext>` (`default_output` in `scripts/_common/decision.py`). A different path that already exists is refused before ffmpeg, including on a dry run (`error.reason: output_exists`, `kind: input`). `--overwrite` is the consent to replace that file. The replacement is encoded to a hidden sibling (`.{stem}.ffskill-<pid><ext>`) and moved into place only after the encode succeeds, so a failed run leaves the existing file. An output argument that starts with `-` skips the same-file check, the overwrite check, the path check, the output lock and that staging, the same way `-` and a `pipe:` output do.
+
+## Network access
+
+Editing does not call a cloud API, and it does not upload the file. `scripts/`, `mcp/server.py` and `bin/install.js` contain no `urllib`, `requests`, `http.client`, socket client, `curl` or `fetch`. The contract records that as `execution.network: false` and lists network access under `not_provided`, with `model_downloads` beside it so a first transcription is not read as network-free. The speech bridge imports `faster-whisper` and constructs `WhisperModel` in this process, so that library's first-run download is made from here. ffmpeg and ffprobe run on this machine. `waveform.py` refuses a URL passed as `--image` and does not fetch it. `https://ffmpeg.org/download.html` and `https://ffmpeg.org/security.html` are hint text and the citation for `doctor`'s CVE table, which is a local lookup.
+
+**Transcription.** Only when you pass `--transcribe` (`caption.py`, or `silence.py --filler --transcribe`). The audio stays on this machine. Three engines may download weights the first time that model is not already cached. `silence.py --filler --transcribe` runs the engine under `--dry-run` too; `caption.py --transcribe` does not. There is no separate download command: run the engine once while the network is open, or place the file yourself, then set `HF_HUB_OFFLINE=1` for the two Hugging Face engines.
+
+| Engine | Who connects | What | Staying offline |
+|---|---|---|---|
+| faster-whisper | this process (`WhisperModel`) | Hugging Face repo `Systran/faster-whisper-<model>`. Default model `base`, or `--model` / `FFMPEG_SKILL_ASR_MODEL`. This repo does not hardcode the host or the cache directory | `HF_HUB_OFFLINE=1` once the weights are cached |
+| parakeet-mlx | the `parakeet-mlx` child | Hugging Face repo `mlx-community/parakeet-tdt-0.6b-v2`, or another `mlx-community/parakeet-*` you name. Cache directory is the engine's; this repo does not name it | `HF_HUB_OFFLINE=1` |
+| openai-whisper | the `whisper` child | its checkpoint from OpenAI. No URL is hardcoded here | `HF_HUB_OFFLINE` does not cover this engine |
+| whisper.cpp | no download | `~/.cache/whisper.cpp/ggml-<model>.bin`, `models/ggml-<model>.bin`, or `/usr/local/share/whisper/ggml-<model>.bin` | place the ggml file yourself. The install hint mentions `brew install whisper-cpp` and a manual `ggml-base.bin` download; the skill runs neither |
+| parakeet.cpp | no download | a `.gguf` from `--model`, `PARAKEET_CPP_MODEL`, or `~/.cache/parakeet.cpp/` | place the file yourself. The hint names `github.com/mudler/parakeet.cpp` as where a person gets `parakeet-cli`; the skill does not fetch it |
+
+`pip`, `uv` and `brew` in those hints are text. The skill does not run them.
+
+**Install.** `npx ffmpeg-skill` downloads this package from the npm registry before `bin/install.js` runs. The script copies files and opens no connection. It does not run `npm`, `pip`, `uv` or `brew`.
+
+**Tests, benches and CI.** These are not part of using the skill. The only `urlopen` in the repository is `tests/corpus.py --fetch`, which writes `tests/corpus/` (git-ignored). `github.com` in that file is the User-Agent string `ffmpeg-skill-corpus/0.1 (+https://github.com/kajisho5/ffmpeg-skill)`, not a request target. The downloads are:
+
+- `https://archive.org/download/grizzly-bear-selfie/GX010743.MP4`
+- `https://archive.org/download/dji-0230/DJI_0038.MOV`
+- `https://archive.org/download/jupiter-canyon/IMG_3179.MOV`
+- `https://archive.org/download/screen-recording-20231223-021623/Screen_Recording_20231223_021623.mp4`
+- `https://archive.org/download/screen-recording-20260303-174357-2/Screen_Recording_20260303_174357(2).mp4`
+- `https://archive.org/download/mehanik-hdr10-test-patterns/02.%20White%20%26%20Color%20clipping/02.%20White%20240-1000nits-MaxCLL-1000-MDL-1000.mp4`
+- `https://img.photographyblog.com/reviews/apple_iphone_13_pro/sample_images/4K60p.mov`
+- `https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov`
+- `https://storage.googleapis.com/media.webmproject.org/devsite/vp9/hdr-encoding/strobe_scientist.mkv`
+- `https://www.rtings.com/images/test-materials/2015/305_24p.mp4`
+
+`tests/bench_scenes.py` and `tests/bench_sync.py` do not download. They read those corpus files and print a line telling you to run `tests/corpus.py --fetch` when one is missing. `evals/` has no HTTP client.
+
+CI (`.github/workflows/ci.yml`, `.github/workflows/release.yml`) runs on GitHub Actions: `curl` of `https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-5.1.1-amd64-static.tar.xz`; `brew install ffmpeg-full`; `choco install ffmpeg` (the workflow comment names the Chocolatey community feed, `community.chocolatey.org`); `apt-get install ffmpeg` on the Ubuntu job and the Debian trixie job; `npm publish` and `npm view` against `https://registry.npmjs.org`. Example `curl` lines under `.claude/skills/` are documentation. Nothing in the skill executes them.
 
 ## FFmpeg compatibility
 
