@@ -25,6 +25,32 @@
 
 - **`npm test` and CI run the end-to-end modules in parallel** (`tests/run_parallel.py`): the same tests as `tests/test_all.py`, with each module, and two shards of each of the four largest, in its own process and `OUT` directory. On a 4-core Linux machine all 936 tests took 21 minutes instead of 35. FFmpeg already uses several threads per encode, so more processes stop helping beyond that. `tests/test_all.py` still runs them one after another.
 
+## 2.17.4
+
+_Automated release: version and notes generated from pull requests merged since 2.17.3._
+
+### Fixed
+
+- **A font file in a folder with a non-ASCII name draws on Windows.** drawtext hands `fontfile=` to FreeType, which opens it with the ANSI `fopen` on Windows. A `--font-file` (or a brand's `font_file`) under a folder such as `フォント` or `compat dir ünïcode` failed to load, and `overlay.py`, `graphics.py` and `grid.py` died with "could not parse fontconfig pattern". Measured on the gyan.dev 9.0.2 runner: the same font under an ASCII folder loaded, spaces included. Such a path is now given in its 8.3 short form, or copied into the run's private drawtext folder under an ASCII name when the drive keeps no short names (`font_path_copied`). Found when the Windows tests first ran in parallel.
+- **`verify.py --timeout 0` no longer times out every step at once.** 0 means no limit, as it does on every other tool; `verify.py` passed it to Python as a 0-second limit. Its own per-step default (600 s) is now stated in `--help`.
+- **The contract says `render` accepts an audio-only input.** It always did (`--template podcast` and `--template audiogram` take a WAV/M4A), but `contract --json` listed it as `video_required: true, audio_only: false`.
+
+### Documentation
+
+- A read-through for statements that contradicted the code or each other:
+  - README: `join.py` always re-encodes, so it is not a stream-copy tool. The no-Node install copies the same files `npx ffmpeg-skill` does (`templates/` and `package.json` were missing, so no `--template` rendered). `doctor`'s `ok` is false when anything any tool requires is missing, with the full required list. The CI matrix now names Ubuntu 26.04's FFmpeg 8.0.1. The contract's `deprecated` list is described as it is in 2.x. The demo count is gone. The release bumps five files. All nine test groups are listed. The Quick start installs FFmpeg first and says how `--transcribe` gets a speech engine.
+  - `references/scripts.md`: `join` is not one of the tools that measure under `--dry-run`.
+  - `references/gotchas.md`: intermediates are `superfast` since 2.16.
+  - `docs/design-decisions.md`: `probe` is `none` in the contract, not `analysis_only`.
+  - `docs/roadmap.md`: 2.0.0 is shipped. The 1.19 to 1.21 themes are marked superseded.
+  - SKILL.md: `references/scripts.md` holds most flags, and `--help` lists all. The description now states the FFmpeg floor next to Python's (FFmpeg 6.1+ and Python 3.10+, with 5.x and 3.9 deprecated).
+  - SKILL.md: three rules stated twice now appear once: `--overwrite` consent lives in step 7 only, "never report success without the output probe" in step 6 only, and a stray blank line is gone. 157 bytes and one line of headroom under the 30,000-byte and 220-line budgets.
+
+### Tests
+
+- **`npm test` and CI run the end-to-end modules in parallel** (`tests/run_parallel.py`): the same tests as `tests/test_all.py`, with each module, and two shards of each of the four largest, in its own process and `OUT` directory. On a 4-core Linux machine all 936 tests took 21 minutes instead of 35. FFmpeg already uses several threads per encode, so more processes stop helping beyond that. `tests/test_all.py` still runs them one after another.
+- Fix statements that contradicted the code or each other; run the e2e tests in parallel; non-ASCII font paths on Windows (#365)
+
 ## 2.17.3
 
 _Automated release: version and notes generated from pull requests merged since 2.17.2._
