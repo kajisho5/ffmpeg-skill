@@ -2019,7 +2019,27 @@ class PictureTests(MediaFixtures):
         if font:
             ttf = d / "my font.ttf"
             shutil.copyfile(font, ttf)
-            script("overlay.py", src, "--text", "Hi", "--font-file", ttf, "--fast", "-o", d / "ov.mp4")
+            def _overlay(font_path, out, cwd=None):
+                return subprocess.run([sys.executable, str(SCRIPTS / "overlay.py"), str(src), "--text", "Hi",
+                                       "--font-file", str(font_path), "--fast", "-o", str(out), "--overwrite"],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                      errors="replace", cwd=cwd)
+            proc = _overlay(ttf, d / "ov.mp4")
+            if proc.returncode != 0:
+                # TEMPORARY (PR #365): fails only on the Windows runner under tests/run_parallel.py.
+                # Name which part of the path drawtext cannot open before deciding the fix.
+                probes = {"source font": Path(font), "ascii name, same dir": d / "myfont.ttf",
+                          "spaced name, ascii dir": Path(tempfile.mkdtemp()) / "my font.ttf",
+                          "ascii dir and name": Path(tempfile.mkdtemp()) / "myfont.ttf"}
+                lines = [f"cwd={os.getcwd()} font={font} size={ttf.stat().st_size}"]
+                for label, path in probes.items():
+                    if path != Path(font):
+                        shutil.copyfile(font, path)
+                    r = _overlay(path, d / "ov_probe.mp4")
+                    lines.append(f"{label}: exit {r.returncode}")
+                for label, cwd in (("same path, cwd=repo root", SCRIPTS.parent), ("same path, cwd=font dir", d)):
+                    lines.append(f"{label}: exit {_overlay(ttf, d / 'ov_probe.mp4', cwd=cwd).returncode}")
+                self.fail("overlay --font-file failed:\n" + "\n".join(lines) + "\n" + proc.stderr[-1500:])
 
     def test_overlay_still_is_bounded_by_the_video_length(self):
         """A looped still (-loop 1) must not make the output longer than the video (FFmpeg 7+ -shortest keeps a buffer)."""

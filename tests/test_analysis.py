@@ -575,7 +575,7 @@ class AnalysisTests(MediaFixtures):
         timed_out = [s for f in data["files"] for s in f["steps"] if s["error"].startswith("timeout after")]
         self.assertTrue(timed_out, data)
         self.assertEqual(data["failed"], len(timed_out))
-        # 0 means no limit here as on every other tool; it timed every step out at 0 s before 2.17.3
+        # 0 means no limit here as on every other tool; it timed every step out at 0 s before 2.17.4
         data = json.loads(script("verify.py", self.src, "--quick", "--timeout", "0", "--json").stdout)
         self.assertEqual((data["status"], data["failed"]), ("completed", 0), data)
 
