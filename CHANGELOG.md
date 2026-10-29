@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- **A font file in a folder with a non-ASCII name draws on Windows.** drawtext hands `fontfile=` to FreeType, which opens it with the ANSI `fopen` on Windows. A `--font-file` (or a brand's `font_file`) under a folder such as `フォント` or `compat dir ünïcode` failed to load, and `overlay.py`, `graphics.py` and `grid.py` died with "could not parse fontconfig pattern". Measured on the gyan.dev 9.0.2 runner: the same font under an ASCII folder loaded, spaces included. Such a path is now given in its 8.3 short form, or copied into the run's private drawtext folder under an ASCII name when the drive keeps no short names (`font_path_copied`). Found when the Windows tests first ran in parallel.
 - **`verify.py --timeout 0` no longer times out every step at once.** 0 means no limit, as it does on every other tool; `verify.py` passed it to Python as a 0-second limit. Its own per-step default (600 s) is now stated in `--help`.
 - **The contract says `render` accepts an audio-only input.** It always did (`--template podcast` and `--template audiogram` take a WAV/M4A), but `contract --json` listed it as `video_required: true, audio_only: false`.
 

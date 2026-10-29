@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common import STATE, require_tool, add_common, apply_common, default_font_file, die, emit, escape_drawtext, escape_filter_path, ffmpeg_base, info, parse_time, probe, run, run_analysis, time_arg
+from _common import STATE, require_tool, add_common, apply_common, default_font_file, die, emit, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_analysis, time_arg
+from _common import drawtext_fontfile  # noqa: E402
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -162,7 +163,7 @@ def main() -> int:
     # own fontconfig resolution on some real Windows ffmpeg builds (#100); font= is the fallback when
     # nothing can be resolved, unchanged from before this existed.
     default_font = default_font_file("DejaVu Sans")
-    font_prefix = f"fontfile={escape_filter_path(default_font)}:" if default_font else ""
+    font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
     tc = "" if args.no_timecode else "," + timecode_filter(font_prefix)
     # --safe: the platform's occluded zones, drawn as shaded boxes in fractions of the frame so
     # the same filter is right at any scale (a tile of a contact sheet as much as a full frame).

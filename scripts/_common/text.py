@@ -30,7 +30,7 @@ from _common.emoji import (
     emoji_support, resolve_emoji_assets, emoji_filter_chain,
 )
 from _common.drawtext import (
-    drawtext_boxborderw, SHAPING_SCRIPTS, BIDI_SCRIPTS, _SHAPING_BUILD_CACHE, drawtext_shaping, needs_shaping,
+    drawtext_boxborderw, drawtext_fontfile, SHAPING_SCRIPTS, BIDI_SCRIPTS, _SHAPING_BUILD_CACHE, drawtext_shaping, needs_shaping,
     escape_drawtext, drawtext_text_opts, drawtext_center_align, NEWLINE_GLYPH_RELEASES,
     drawtext_draws_newline_glyph, is_multiline, drawtext_clean, drawtext_line_metrics,
 )

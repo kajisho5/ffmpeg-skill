@@ -24,8 +24,9 @@ from typing import Dict, List, Optional, Tuple
 
 # `detect_scenes` moved into _common/probe.py in 1.16.0 (see silence.py); the body is unchanged.
 from _common import (detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
-                     escape_filter_path, ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
+                     ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
                      rms_envelope, BEAT_MIN_CONFIDENCE, decode_gray_frames, frame_flow, label_shot_flow)
+from _common import drawtext_fontfile  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -286,7 +287,7 @@ def main() -> int:
         stamp = ""
         if not args.no_timecode:
             default_font = default_font_file("DejaVu Sans")
-            font_prefix = f"fontfile={escape_filter_path(default_font)}:" if default_font else ""
+            font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
             stamp = f",drawtext=text='%{{pts\\:hms}}':{font_prefix}fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6"
         vf = (f"select='{expr}',scale={tile_w}:-2{stamp},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")

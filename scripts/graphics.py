@@ -43,6 +43,7 @@ from _common import (aac_args, add_common, brand_caption_style, script_font_for_
 from _common.emit import warn
 from _common.fonts import font_choice, record_font_choice
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
+from _common import drawtext_fontfile  # noqa: E402
 
 # where the template's text chain goes in a filter_complex it builds (graphics.main fills it in)
 TEXT = "@TEXT@"
@@ -62,7 +63,7 @@ def font_opts(brand: dict, font: Optional[str], font_file: Optional[str], script
     choice = font_choice(font or brand.get("font", "DejaVu Sans"), font_file=font_file or brand.get("font_file"),
                          script_file=script_file, script_family=script_family, renderer=renderer)
     if choice["file"]:
-        return f"fontfile={escape_filter_path(choice['file'])}", choice
+        return drawtext_fontfile(choice['file']), choice
     return f"font='{escape_drawtext(font or brand.get('font', 'DejaVu Sans'))}'", choice
 
 

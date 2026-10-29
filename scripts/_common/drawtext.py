@@ -13,6 +13,62 @@ from _common.decision import escape_filter_path
 from _common.runner import STATE, _DRAWTEXT_PENDING, _drawtext_tmpdir, ffmpeg_exe, ffmpeg_release, ffmpeg_version
 
 
+def _on_windows() -> bool:
+    return os.name == "nt"
+
+
+def _windows_short_path(path: str) -> "Optional[str]":
+    """The 8.3 short form of an existing Windows path, or None (not Windows, the call failed, or
+    the volume keeps no short names)."""
+    if not _on_windows():
+        return None
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(32768)
+        n = ctypes.windll.kernel32.GetShortPathNameW(str(path), buf, len(buf))
+    except (OSError, AttributeError, ValueError):
+        return None
+    return buf.value if 0 < n < len(buf) else None
+
+
+def drawtext_fontfile(path: str) -> str:
+    """`fontfile=<path>` for drawtext, with a path FreeType can open.
+
+    drawtext hands the path to FreeType, which opens it with the C runtime's ANSI fopen on
+    Windows: measured on the gyan.dev 9.0.2 build, a font under `compat dir ünïcode` fails to
+    load (drawtext falls back to fontconfig and the job dies with "could not parse fontconfig
+    pattern") while the same file under an ASCII directory loads, spaces and all. A non-ASCII
+    path on Windows is therefore given in its 8.3 short form, or, where the volume keeps no
+    short names, copied into this run's private drawtext directory under an ASCII name (recorded,
+    `font_path_copied`). Elsewhere the path is passed as it is. The original file is what a plan
+    binds, never the copy.
+    """
+    path = str(path)
+    if not _on_windows() or path.isascii():
+        return f"fontfile={escape_filter_path(path)}"
+    if os.path.isfile(path) and path not in STATE.plan_inputs:
+        STATE.plan_inputs.append(path)
+    short = _windows_short_path(path)
+    if short and short.isascii():
+        return f"fontfile={escape_filter_path(short, bind=False)}"
+    import hashlib
+    from _common.emit import record_fallback, warn
+    tmpdir = _drawtext_tmpdir(create=not STATE.dry_run)
+    if not tmpdir.isascii():
+        tmpdir = _windows_short_path(tmpdir) or tmpdir
+    name = "font_" + hashlib.sha1(path.encode("utf-8")).hexdigest()[:16] + os.path.splitext(path)[1].lower()
+    copy = os.path.join(tmpdir, name)
+    if not copy.isascii():
+        warn(f"font: {path} is not an ASCII path and no ASCII copy could be placed; drawtext may "
+             "not open it on Windows (move the font to a folder named in ASCII)", "font_path_not_ascii", font=path)
+        return f"fontfile={escape_filter_path(path, bind=False)}"
+    if not STATE.dry_run and not os.path.exists(copy):
+        shutil.copyfile(path, copy)
+    record_fallback(f"font: {path} is not an ASCII path, which drawtext cannot open on Windows; "
+                    f"drawing with a copy at {copy}", "font_path_copied", font=path, file=copy)
+    return f"fontfile={escape_filter_path(copy, bind=False)}"
+
+
 def drawtext_boxborderw(vertical: int, horizontal: int) -> str:
     """drawtext's per-side `boxborderw=top|right|bottom|left` (and the two-value `v|h` form)
     arrived in FFmpeg 6.1; 5.x and 6.0 reject the `|` with "Error setting option boxborderw"

@@ -48,6 +48,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.16.0 — intermediates at superfast, not ultrafast](#2160--intermediates-at-superfast-not-ultrafast)
 - [2.17.0 — check.py --content's dropouts row](#2170--checkpy---contents-dropouts-row)
 - [2.17.2 — cut.py fades the sound at every --segments join it re-encodes](#2172--cutpy-fades-the-sound-at-every---segments-join-it-re-encodes)
+- [2.17.4 — a non-ASCII font path on Windows](#2174--a-non-ascii-font-path-on-windows)
 <!-- contents:end -->
 
 ## Time limits
@@ -2126,3 +2127,15 @@ What was decided there:
   near zero on both sides. Code: `cut._join_chunk()`, `DECLICK_S`. Test:
   `test_cut_segments_join_is_faded_so_it_does_not_click`.
 
+## 2.17.4 — a non-ASCII font path on Windows
+
+- **drawtext gets an ASCII font path on Windows, by short name or by copy.** FreeType opens
+  `fontfile=` with the C runtime's ANSI `fopen`, so on Windows a font under a folder with a
+  non-ASCII name does not load. On PR #365's runner (gyan.dev 9.0.2) the same font failed under
+  `compat dir ünïcode` and loaded under an ASCII folder, with or without a space in the name and
+  whatever the working directory. The 8.3 short form names the same file and is used when the
+  drive keeps short names. Otherwise the font is copied into the run's private drawtext folder
+  under a hashed ASCII name, recorded as `font_path_copied`, and removed with that folder when the
+  run ends. A plan binds the user's font, not the copy. libass (`subtitles=`, `ass=`, `fontsdir=`)
+  opens its files through FFmpeg and is not affected. Code: `drawtext.drawtext_fontfile()`.
+  Tests: `WindowsFontPathTests`, `test_filter_paths_with_drive_colon_spaces_and_unicode`.

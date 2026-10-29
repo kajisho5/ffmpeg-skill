@@ -96,7 +96,7 @@ from _common.color import (
     is_neutral_color, is_rgb, NON_BT709_MATRICES, rgb_island, rgb_to_bt709_filter, _sdr_bt709, validate_color
 )
 from _common.text import (
-    ADVANCE_EM, BIDI_SCRIPTS, _char_em, char_script, default_font_file, detect_script, drawtext_boxborderw, drawtext_center_align,
+    ADVANCE_EM, BIDI_SCRIPTS, _char_em, char_script, default_font_file, detect_script, drawtext_boxborderw, drawtext_center_align, drawtext_fontfile,
     drawtext_draws_newline_glyph, is_multiline, drawtext_clean, drawtext_line_metrics, NEWLINE_GLYPH_RELEASES,
     drawtext_shaping, drawtext_text_opts, emoji_asset_for, EMOJI_ASSET_HINT, emoji_clusters, emoji_codepoint_name,
     _EMOJI_COLOR_FAMILIES, _emoji_color_font, emoji_filter_chain, _emoji_name_candidates, EMOJI_RANGES,
@@ -191,7 +191,7 @@ __all__ = [
     "BEAT_REFRACTORY_S", "BEAT_WINDOW_S", "BEAT_SUPPORT_DIVISOR", "BEAT_ALIGN_DIVISOR",
     "BEAT_Z_FLOOR", "BEAT_Z_SPAN",
     "_onset_strength", "_pick_onsets", "_autocorrelation_peak", "_grid_score",
-    "default_font_file", "default_output", "DEFAULT_TIMEOUT", "detect_script", "die", "drawtext_boxborderw", "drawtext_center_align", "drawtext_draws_newline_glyph", "is_multiline", "drawtext_clean", "drawtext_line_metrics", "NEWLINE_GLYPH_RELEASES",
+    "default_font_file", "default_output", "DEFAULT_TIMEOUT", "detect_script", "die", "drawtext_boxborderw", "drawtext_center_align", "drawtext_fontfile", "drawtext_draws_newline_glyph", "is_multiline", "drawtext_clean", "drawtext_line_metrics", "NEWLINE_GLYPH_RELEASES",
     "_DRAWTEXT_PENDING", "drawtext_shaping", "drawtext_text_opts", "_DRAWTEXT_TMPDIR", "_drawtext_tmpdir",
     "dry_run_input_pending", "emit", "emoji_asset_for", "EMOJI_ASSET_HINT", "emoji_clusters",
     "emoji_codepoint_name", "_EMOJI_COLOR_FAMILIES", "_emoji_color_font", "emoji_filter_chain",

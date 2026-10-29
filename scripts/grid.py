@@ -26,8 +26,9 @@ import os
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, X264_PRESETS, fmt_secs, \
-    draws_chroma, drawn_chain, escape_drawtext, escape_filter_path, ffmpeg_base, info, label_chain, matrix_chain, probe, run, validate_color, video_args
+    draws_chroma, drawn_chain, escape_drawtext, ffmpeg_base, info, label_chain, matrix_chain, probe, run, validate_color, video_args
 from _common.fonts import font_choice, record_font_choice
+from _common import drawtext_fontfile  # noqa: E402
 
 LABEL_MARGIN = 10
 
@@ -120,7 +121,7 @@ def main() -> int:
             drawn.append((f"trim=duration={target_duration:.3f}",) * 2)
         if args.label == "auto":
             stem = os.path.splitext(os.path.basename(p))[0]
-            font_opt = f"fontfile={escape_filter_path(font_file)}" if font_file else f"font='{escape_drawtext(args.font)}'"
+            font_opt = drawtext_fontfile(font_file) if font_file else f"font='{escape_drawtext(args.font)}'"
             drawn.append((f"drawtext=text='{escape_drawtext(stem)}':{font_opt}:fontsize={args.font_size}:"
                           f"fontcolor={args.font_color}:x=w-tw-{LABEL_MARGIN}:y=h-th-{LABEL_MARGIN}:"
                           f"box=1:boxcolor=black@0.5:boxborderw=4", "null"))
