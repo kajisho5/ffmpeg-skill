@@ -379,7 +379,11 @@ def _script_font_uncached(script: str, family_hint: "Optional[str]" = None):
         mono = 1 if "mono" in joined else 0
         # regular weights before Bold/Italic/Oblique cuts, so a default caption is not bold by accident
         styled = 1 if any(k in stem for k in ("bold", "italic", "oblique", "light", "thin", "black")) else 0
-        scored.append((last_resort, _family_rank(families, preferred), mono, styled, path, families[0]))
+        rank = _family_rank(families, preferred)
+        # a .ttc lists every face it holds (Noto CJK: JP, KR, SC, TC): name the one that ranked
+        family = next((f for f in families if rank < len(preferred) and f.lower().startswith(preferred[rank].lower())),
+                      families[0])
+        scored.append((last_resort, rank, mono, styled, path, family))
     scored.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
     best = scored[0]
     return best[4], best[5]

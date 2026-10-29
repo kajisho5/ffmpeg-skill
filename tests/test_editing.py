@@ -2449,6 +2449,19 @@ class FillerSpansTests(unittest.TestCase):
         self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("えー", 1.0, 1.2)])
         self.assertEqual(self.D.filler_spans(self._w(("you,", 0.5, 0.7), ("know", 0.7, 0.9)), {"you know"}), [])
 
+    def test_a_pause_inside_an_unspaced_run_ends_the_word(self):
+        """えー, a 0.2 s pause, then と is a filler and then a particle: the pause is a word
+        boundary, so only えー goes and the pause and と stay."""
+        ja = self.D.FILLER_WORDS["ja"]
+        spans = self.D.filler_spans(self._w(("えー", 1.0, 1.2), ("と", 1.4, 1.5)), ja, pad=0.0)
+        self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("えー", 1.0, 1.2)])
+
+    def test_han_extension_characters_are_unspaced(self):
+        """U+20000 and up (Extensions B-H) are Han too: 嗯 glued to one is part of a word."""
+        zh = self.D.FILLER_WORDS["zh"]
+        self.assertTrue(self.D._unspaced_script("\U00020000"))
+        self.assertEqual(self.D.filler_spans(self._w(("我", 0.0, 0.1), ("嗯", 0.1, 0.2), ("\U00020000", 0.2, 0.3)), zh), [])
+
     def test_a_run_listed_out_of_time_order_is_untimed(self):
         """A run whose last token ends before its first starts has no span to cut; cutting it
         would hand keep_ranges an inverted range."""
@@ -2512,6 +2525,16 @@ class FillerSpansTests(unittest.TestCase):
         ]}]}), encoding="utf-8")
         self.assertEqual([w["word"] for w in asr._words_from_whisper_cpp_json(str(doc))],
                          ["えー", "と\ufffd\ufffd今日"])
+        # a full-width comma token stays with the word before it and ends it: 嗯，+ 呃, not 嗯，呃
+        doc.write_text(json.dumps({"transcription": [{"tokens": [
+            {"text": "嗯", "offsets": {"from": 0, "to": 200}},
+            {"text": "，", "offsets": {"from": 200, "to": 200}},
+            {"text": "呃", "offsets": {"from": 400, "to": 600}},
+        ]}]}), encoding="utf-8")
+        words = asr._words_from_whisper_cpp_json(str(doc))
+        self.assertEqual([w["word"] for w in words], ["嗯，", "呃"])
+        self.assertEqual([s["word"] for s in self.D.filler_spans(words, self.D.FILLER_WORDS["zh"], pad=0.0)],
+                         ["嗯", "呃"])
 
     def test_openai_whisper_json_becomes_word_timings(self):
         import importlib

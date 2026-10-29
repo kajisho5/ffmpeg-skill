@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
@@ -524,7 +525,11 @@ def _words_from_whisper_cpp_json(path: str) -> "List[Dict[str, Any]]":
             except (KeyError, TypeError, ValueError):
                 continue
             prev = out[-1]["word"] if out else ""
-            unspaced = (prev and _unspaced_script(prev[-1]) and _unspaced_script(text.lstrip()[:1] or " ")
+            # "嗯" + "，" + "呃": the comma stays with the word before it and ends that word
+            core = prev
+            while core and unicodedata.category(core[-1]).startswith("P"):
+                core = core[:-1]
+            unspaced = (core and _unspaced_script(core[-1]) and _unspaced_script(text.lstrip()[:1] or " ")
                         and "\ufffd" not in prev[-1:] + text)
             if out and not text.startswith(" ") and not unspaced:
                 out[-1]["word"] += text

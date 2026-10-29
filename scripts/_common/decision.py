@@ -1208,6 +1208,7 @@ def _unspaced_script(text: str) -> bool:
         o = ord(ch)
         if (0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF or 0xFF66 <= o <= 0xFF9F   # kana
                 or 0x3400 <= o <= 0x4DBF or 0x4E00 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF  # Han
+                or 0x20000 <= o <= 0x323AF  # Han extensions B-H
                 or 0x0E00 <= o <= 0x0EFF or 0x1000 <= o <= 0x109F or 0x1780 <= o <= 0x17FF):  # Thai, Lao, Myanmar, Khmer
             return True
     return False
@@ -1287,6 +1288,11 @@ def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = F
                 continue
             # punctuation inside the run ("えー、" + "と") ends the word: the shorter run decides
             if any(run[m]["punct_after"] or run[m + 1]["punct_before"] for m in range(k - 1)):
+                continue
+            # so does a pause inside an unspaced run: the tokens were two words
+            if unspaced and any(run[m]["timed"] and run[m + 1]["timed"]
+                                and run[m + 1]["start"] - run[m]["end"] >= FILLER_BOUNDARY_GAP - 1e-6
+                                for m in range(k - 1)):
                 continue
             # a run listed out of time order has no span to cut on
             if not all(t["timed"] for t in run) or run[-1]["end"] <= run[0]["start"]:

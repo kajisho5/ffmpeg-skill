@@ -3360,7 +3360,8 @@ class TraditionalChineseFontTests(unittest.TestCase):
     def test_fontconfig_asks_zh_tw_and_picks_the_traditional_family(self):
         import _common.fonts as fonts
         asked, fc, plat = self._fc({
-            "zh-tw": [("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK TC"])],
+            # one .ttc lists every face it holds; the name returned is the one that ranked
+            "zh-tw": [("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans CJK TC"])],
             "zh-cn": [("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK SC"])]})
         with fc, plat:
             script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
@@ -3379,6 +3380,7 @@ class TraditionalChineseFontTests(unittest.TestCase):
         with fc, plat:
             script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
         self.assertEqual((script, family), ("zh", "Noto Sans CJK SC"))
+        self.assertEqual(path, "/f/NotoSansCJK-Regular.ttc")
         self.assertIn("font_variant_missing", [f.get("code") for f in STATE.fallbacks[before:]])
 
 
