@@ -1306,11 +1306,11 @@ def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = F
             found = k
             break
         if not found and rejected:
-            # the longest listed run that could not be cut is the one reported; a shorter listed
-            # word inside it that could be cut was tried first
+            # the longest listed run that could not be cut is the one reported. Its prefixes were
+            # tried here; moving on by one token lets a listed word later in it be tried too
             untimed += rejected[0] == "untimed"
             too_long += rejected[0] == "too_long"
-            found = rejected[1]
+            found = 1
         i += found or 1
     hits.sort(key=lambda h: (h["start"], h["end"]))
     merged: "List[Dict[str, Any]]" = []

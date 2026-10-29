@@ -2470,6 +2470,12 @@ class FillerSpansTests(unittest.TestCase):
                                     pad=0.0, stats=stats)
         self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("um", 1.0, 1.2)])
         self.assertEqual(stats["matched_too_long"], 0)
+        # and a listed word at its end: a held "uhhh" then "um" -- the phrase is too long, the um is not
+        stats = {}
+        spans = self.D.filler_spans(self._w(("uhhh", 1.0, 3.9), ("um", 3.9, 4.1)), {"um", "uhhh um"},
+                                    pad=0.0, stats=stats)
+        self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("um", 3.9, 4.1)])
+        self.assertEqual(stats["matched_too_long"], 1)
         stats = {}
         self.assertEqual(self.D.filler_spans(self._w(("uhhh", 1.0, 3.0)), {"uhhh"}, stats=stats), [])
         self.assertEqual(stats["matched_too_long"], 1)
