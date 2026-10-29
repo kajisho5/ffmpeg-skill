@@ -704,8 +704,8 @@ silence a tool reported as fine while another measurement disagreed):
 
 | key | tool | what it holds |
 |---|---|---|
-| `verification[]` step `duration` | `export.py` (a preset with a platform maximum, without `--allow-long`) | the written file's length against the maximum, measured as `check.py` measures it (the container's duration, `tolerance` 0) |
-| `verification[]` step `duration` (`property: audio_duration`) | `loudness.py` | the output's sound against the input's, to one AAC frame: a levels pass changes no timing |
+| `verification[]` step `duration` | `export.py` (a preset with a platform maximum, without `--allow-long`) | the written file's length against the maximum, measured as `check.py` measures it (the container's duration, `tolerance` 0). A length that cannot be read fails the step with `reason: not_measured` |
+| `verification[]` step `duration` (`property: audio_duration`) | `loudness.py` | the output's sound against the input's, to one AAC frame (at least 0.03 s): a levels pass changes no timing. A length that cannot be read fails the step with `reason: not_measured` |
 | `inputs_duration`, `transition_shortening`; step `duration`'s `inputs_total` | `join.py` | the clips' own total and how much the transitions took out of it. `expected_duration` is derived from the transition the join applied, so it cannot show that on its own |
 | `silence_kinds`, `silence_breakdown` | `silence.py` | per detected silence, `digital` (at or below -90 dBFS) or `below_threshold` (quiet sound under `--threshold`), and the count and seconds of each with the level that defines it |
 

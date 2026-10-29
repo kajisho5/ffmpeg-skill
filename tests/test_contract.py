@@ -3700,6 +3700,20 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(step["expected"], {"max": limit})
         self.assertEqual((step["ok"], step["tolerance"], step["provenance"]), (True, 0.0, "specification"))
         self.assertAlmostEqual(step["delta"], step["measured"] - limit, places=3)
+        # seeded: the written file measures past the limit (as the 90.10 s Reels file did), and the
+        # step and the result both say so; then a length that cannot be read at all
+        for seeded, want in (("999.0", 999.0), ("None", None)):
+            out = self.out(f"len_x_seeded_{want}.mp4")
+            seed = ("import sys; sys.path.insert(0, %r); sys.argv = ['export.py', %r, '--preset', 'x', '--fast', '-o', %r, "
+                    "'--overwrite', '--json']; import export; real = export.probe; "
+                    "export.probe = lambda path, role=None, **k: dict(real(path, role=role, **k), duration=%s) "
+                    "if role == 'output' and path == %r else real(path, role=role, **k); sys.exit(export.main())"
+                    % (str(SCRIPTS), str(self.src), str(out), seeded, str(out)))
+            doc = json.loads(sh(sys.executable, "-c", seed).stdout)
+            step = next(s for s in doc["verification"] if s["step"] == "duration")
+            self.assertFalse(step["ok"], seeded)
+            self.assertFalse(doc["verified"], seeded)
+            self.assertEqual(step.get("measured"), want)
 
     def test_join_reports_the_clips_total_next_to_the_joined_length(self):
         """join.py's expected length is derived from the transition it applied, so a check against
@@ -3727,6 +3741,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(doc["silence_kinds"], ["digital", "below_threshold"])
         self.assertEqual(doc["silence_breakdown"]["below_threshold"]["level_db"], -35)
         self.assertEqual(doc["silence_breakdown"]["digital"]["count"], 1)
+        self.assertAlmostEqual(doc["silence_breakdown"]["digital"]["seconds"], 1.0, delta=0.1)
+        self.assertAlmostEqual(doc["silence_breakdown"]["below_threshold"]["seconds"], 1.0, delta=0.1)
 
     def test_unverified_range_names_real_tools_and_reaches_the_contract(self):
         from _common.emit import UNVERIFIED

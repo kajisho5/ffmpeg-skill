@@ -339,10 +339,14 @@ def main() -> int:
         # that left the sound 0.1 s long shipped a 90.10 s Reels file as verified
         written = probe(output, role="output").get("duration")
         if written is not None:
-            extra.setdefault("verification", []).append(
-                {"step": "duration", "property": "duration", "ok": written <= p["max"],
-                 "expected": {"max": p["max"]}, "measured": round(written, 3),
-                 "delta": round(written - p["max"], 3), "tolerance": 0.0, "provenance": "specification"})
+            step = {"step": "duration", "property": "duration", "ok": written <= p["max"],
+                    "expected": {"max": p["max"]}, "measured": round(written, 3),
+                    "delta": round(written - p["max"], 3), "tolerance": 0.0, "provenance": "specification"}
+        else:
+            # the preset promised a length; one that could not be read is not one that held
+            step = {"step": "duration", "property": "duration", "ok": False, "expected": {"max": p["max"]},
+                    "reason": "not_measured: the written file reports no duration"}
+        extra.setdefault("verification", []).append(step)
     if notes:
         extra["notes"] = notes
     # the delivery keeps the source's picture and, except as a GIF, its sound

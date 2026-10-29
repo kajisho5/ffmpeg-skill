@@ -173,14 +173,19 @@ def main() -> int:
                      "measured": {"lufs": float(after["input_i"]), "tp": float(after["input_tp"])},
                      "delta": {"lufs": round(float(after["input_i"]) - args.lufs, 2), "tp": round(float(after["input_tp"]) - args.tp, 2)},
                      "tolerance": {"lufs": 1.0, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}]
-    out_audio = (probe(output, role="output").get("audio") or {}).get("duration")
+    written = probe(output, role="output")
+    out_audio = (written.get("audio") or {}).get("duration") or written.get("duration")
     if in_audio and out_audio:
         # a levels pass changes no timing: the sound is as long as the input's, to one AAC frame
-        tol = max(2048.0 / float(sr), AUDIO_LENGTH_TOLERANCE)
+        tol = max(1024.0 / float(sr), AUDIO_LENGTH_TOLERANCE)
         verification.append({"step": "duration", "property": "audio_duration", "ok": abs(out_audio - in_audio) <= tol,
                              "expected": round(float(in_audio), 3), "measured": round(float(out_audio), 3),
                              "delta": round(float(out_audio) - float(in_audio), 3), "tolerance": round(tol, 3),
                              "provenance": "input_premeasurement"})
+    else:
+        # a length that could not be read is not a length that matched
+        verification.append({"step": "duration", "property": "audio_duration", "ok": False,
+                             "reason": "not_measured: the " + ("input" if not in_audio else "output") + " reports no duration"})
     emit(output, result=result, dropped_non_av_streams=dropped_streams,
          measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")},
          targets={"lufs": args.lufs, "tp": args.tp, "lra": args.lra}, verification=verification)
