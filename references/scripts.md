@@ -38,10 +38,15 @@ Every row names the constant or flag it comes from, and a test holds the table t
 | a pause this long between two tokens of an unspaced script is a word boundary | 0.1 s | `_common.decision.FILLER_BOUNDARY_GAP` | `silence.py --filler` |
 | `--content` black: WARN above this share of the duration | 0.10 | `check.BLACK_WARN` | `check.py --content` |
 | `--content` black: FAIL at this share | 0.95 | `check.BLACK_FAIL` | `check.py --content` |
+| `--content` black: a pixel is black below this share of the luma range | 0.10 | `_common.probe.CONTENT_BLACK_PIX_TH` | `check.py --content` |
+| `--content` black: a black run shorter than this is not counted | 0.1 s | `_common.probe.CONTENT_MIN_SPAN` | `check.py --content` |
 | `--content` frozen: WARN when the longest span is above this, or above 30% | 3.0 s | `check.FROZEN_WARN_S` | `check.py --content` |
 | `--content` frozen: FAIL when one span covers this share | 0.95 | `check.FROZEN_FAIL` | `check.py --content` |
+| `--content` frozen: a picture unchanged for at least this long is frozen | 0.5 s | `_common.probe.CONTENT_FREEZE_MIN` | `check.py --content` |
+| `--content` frozen: frames this close count as unchanged (freezedetect noise) | -60 dB | `_common.probe.CONTENT_FREEZE_NOISE` | `check.py --content` |
 | `--content` silence: WARN above this share below the silent level | 0.50 | `check.SILENCE_WARN` | `check.py --content` |
 | `--content` silence: FAIL at this share | 0.95 | `check.SILENCE_FAIL` | `check.py --content` |
+| `--content` silence: a silent run shorter than this is not counted | 0.5 s | `_common.probe.CONTENT_SILENCE_MIN` | `check.py --content` |
 | `--content` dropout: a gap of sound at or below | -80 dBFS | `_common.probe.CONTENT_DROPOUT_DB` | `check.py --content` |
 | ... between (s) and 1 s long, with sound on both sides | 0.02 s | `_common.probe.CONTENT_DROPOUT_MIN` | `check.py --content` |
 | a beat grid below this confidence is not snapped to | 0.5 | `_common.decision.BEAT_MIN_CONFIDENCE` | `cut.py --snap beats`, `scenes.py --beats` |

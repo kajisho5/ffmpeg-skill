@@ -3784,7 +3784,8 @@ class ContractTests(unittest.TestCase):
         text = (ROOT / "references" / "scripts.md").read_text(encoding="utf-8")
         block = text.split("<!-- thresholds:start -->", 1)[1].split("<!-- thresholds:end -->", 1)[0]
         rows = [r for r in block.strip().splitlines()[2:] if r.startswith("|")]
-        self.assertGreaterEqual(len(rows), 15)
+        # every threshold: a row deleted (or added) must be a deliberate edit here too
+        self.assertEqual(len(rows), 26)
         for row in rows:
             what, value, source, _used = [c.strip() for c in row.strip("|").split("|")]
             number = float(re.search(r"-?\d+(?:\.\d+)?", value).group(0))
@@ -3797,7 +3798,15 @@ class ContractTests(unittest.TestCase):
             else:
                 module, _, name = src.rpartition(".")
                 actual = getattr(importlib.import_module(module), name)
+            if isinstance(actual, str):  # an ffmpeg option value such as "-60dB"
+                actual = re.search(r"-?\d+(?:\.\d+)?", actual).group(0)
             self.assertAlmostEqual(float(actual), number, places=6, msg=f"{what}: table says {value}, {src} is {actual}")
+        # the silent-track row says join, audio and waveform default to it: hold them to that
+        from _common.probe import SILENT_PEAK_DBFS
+        for name in ("join", "audio", "waveform"):
+            props = self.tools[name]["input_schema"]["properties"]
+            prop = next(p for p in props.values() if "--silence-threshold" in (p.get("cli") or []))
+            self.assertAlmostEqual(prop["default"], SILENT_PEAK_DBFS, places=6, msg=name)
         import _platforms
         block = text.split("<!-- platforms:start -->", 1)[1].split("<!-- platforms:end -->", 1)[0]
         table = [r for r in block.strip().splitlines()[2:] if r.startswith("|")]
