@@ -2173,3 +2173,11 @@ What was decided there:
   script the tokens now stay apart, as openai-whisper and faster-whisper split them. A token that
   is part of a character (U+FFFD) is still glued. Code: `_words_from_whisper_cpp_json()`. Test:
   `test_whisper_cpp_json_becomes_word_timings`.
+- **Traditional Chinese is a font choice, not a script.** Simplified and Traditional Chinese share
+  most code points but draw some differently, so the characters cannot tell them apart; only the
+  caller's `--lang` can. `zh-TW`, `zh-HK`, `zh-MO`, `zh-Hant` and `yue` look the font up under
+  `zh-hant` while the script stays `zh`, so line breaking and `doctor`'s `fonts.scripts` are
+  unchanged. A machine with no Traditional face draws with the Simplified one and records
+  `font_variant_missing` rather than refusing: the characters are there, in the other form, and a
+  caption in a slightly different glyph form is a delivery where a refusal is not. Code:
+  `fonts.font_key()`, `HANT_TAGS`. Test: `TraditionalChineseFontTests`.
