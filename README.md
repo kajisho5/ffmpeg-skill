@@ -26,6 +26,7 @@ No cloud · No API keys · Python standard library</p>
 
 <p align="center">
   <a href="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml"><img src="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/kajisho5/ffmpeg-skill"><img src="https://api.scorecard.dev/projects/github.com/kajisho5/ffmpeg-skill/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://www.npmjs.com/package/ffmpeg-skill"><img src="https://img.shields.io/npm/v/ffmpeg-skill" alt="npm"></a>
   <a href="#ffmpeg-compatibility"><img src="https://img.shields.io/badge/ffmpeg-5.1%20%7C%206.1%20%7C%207.1%20%7C%208%20%7C%209%20tested-orange" alt="FFmpeg 5.1, 6.1, 7.1, 8 and 9 tested in CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
