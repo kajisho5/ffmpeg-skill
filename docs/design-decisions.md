@@ -50,6 +50,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.17.2 — cut.py fades the sound at every --segments join it re-encodes](#2172--cutpy-fades-the-sound-at-every---segments-join-it-re-encodes)
 - [2.17.4 — a non-ASCII font path on Windows](#2174--a-non-ascii-font-path-on-windows)
 - [2.18 — results carry the VDC paper's co-reported items](#218--results-carry-the-vdc-papers-co-reported-items)
+- [2.19.0 — filler words in Korean, Chinese, Russian, Dutch, Polish and Turkish](#2190--filler-words-in-korean-chinese-russian-dutch-polish-and-turkish)
 - [2.20 — a length or a silence is checked against a yardstick the tool did not make](#220--a-length-or-a-silence-is-checked-against-a-yardstick-the-tool-did-not-make)
 <!-- contents:end -->
 
@@ -2141,6 +2142,7 @@ What was decided there:
   run ends. A plan binds the user's font, not the copy. libass (`subtitles=`, `ass=`, `fontsdir=`)
   opens its files through FFmpeg and is not affected. Code: `drawtext.drawtext_fontfile()`.
   Tests: `WindowsFontPathTests`, `test_filter_paths_with_drive_colon_spaces_and_unicode`.
+
 ## 2.18 — results carry the VDC paper's co-reported items
 
 - **A missing stream is a failed check, not a note.** The paper's seeded-defect run found that
@@ -2169,6 +2171,47 @@ What was decided there:
   much. A tighter rule would fail files on measurement noise and send `loudness.py` round its
   re-encode loop for nothing. Code: `_platforms.TP_TOLERANCE_DB`. Test:
   `test_one_true_peak_tolerance_is_applied_and_reported`.
+
+## 2.19.0 — filler words in Korean, Chinese, Russian, Dutch, Polish and Turkish
+
+- **The new lists hold disfluencies only.** `ko` is 음/어/에/흠 and their doubled forms; `zh` is
+  嗯/呃/唔 and their doubled forms; `ru`, `nl`, `pl` and `tr` are the hesitation sounds of each
+  language. Words that are fillers as often as they are content stay out of the defaults and are
+  named as discourse markers for `--filler-extra`, the same line `like` and `tipo` already sit
+  behind: 그/저/뭐/이제 (저 is also "I"), 那个/这个/就是, ну/типа, şey/yani. `额` is a common
+  filler spelling in Chinese chat, but it is also an ordinary character (金额, 额外), so it is in
+  neither list. The lists are seeds with no measured accuracy, like the 1.17 ones (P2-11). Code:
+  `FILLER_WORDS`, `FILLER_DISCOURSE_MARKERS`. Test:
+  `test_every_new_language_list_holds_disfluencies_only`.
+- **A filler may span several engine tokens, and in an unspaced script it needs a word boundary
+  on each side.** Whisper splits Chinese, Japanese and Thai into tokens, not words: its own
+  vocabulary turns えーと into えー + と and 金额 into 金 + 额. Before 2.19 only a single token
+  could match, so the `ja` list's えーと and えっと never matched and えー was cut with と left
+  behind. Now a run of up to `FILLER_MAX_TOKENS` tokens that joins to a listed word is that word,
+  and the longest run wins. Matching runs of tokens can also join the middle of a real word
+  (あの + 人 is "that person"), so in those scripts a run is cut only when punctuation, a pause of
+  `FILLER_BOUNDARY_GAP` (0.1 s), the transcript's edge or a spaced-script word sits on each side.
+  A filler spoken straight into the next word with no pause is kept: a missed "um" costs less than
+  a cut word. Spaced languages keep the old whole-word rule, and a two-word marker such as
+  `you know` now matches too; `--help` offered it, but it could never match one engine word. Code:
+  `filler_spans()`, `_unspaced_script()`. Tests:
+  `test_a_filler_split_across_whisper_tokens_is_one_word`,
+  `test_an_unspaced_filler_needs_a_word_boundary_on_each_side`,
+  `test_a_two_word_discourse_marker_added_with_filler_extra_matches`.
+- **whisper.cpp tokens in an unspaced script are not glued.** whisper.cpp marks a word start with a
+  leading space, so in Japanese or Chinese every token "continued" the one before and a whole
+  segment became one word, which no filler could match. Between two whole characters of such a
+  script the tokens now stay apart, as openai-whisper and faster-whisper split them. A token that
+  is part of a character (U+FFFD) is still glued. Code: `_words_from_whisper_cpp_json()`. Test:
+  `test_whisper_cpp_json_becomes_word_timings`.
+- **Traditional Chinese is a font choice, not a script.** Simplified and Traditional Chinese share
+  most code points but draw some differently, so the characters cannot tell them apart; only the
+  caller's `--lang` can. `zh-TW`, `zh-HK`, `zh-MO`, `zh-Hant` and `yue` look the font up under
+  `zh-hant` while the script stays `zh`, so line breaking and `doctor`'s `fonts.scripts` are
+  unchanged. A machine with no Traditional face draws with the Simplified one and records
+  `font_variant_missing` rather than refusing: the characters are there, in the other form, and a
+  caption in a slightly different glyph form is a delivery where a refusal is not. Code:
+  `fonts.font_key()`, `HANT_TAGS`. Test: `TraditionalChineseFontTests`.
 
 ## 2.20 — a length or a silence is checked against a yardstick the tool did not make
 

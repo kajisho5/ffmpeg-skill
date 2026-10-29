@@ -578,7 +578,7 @@ each shorter clip's last frame (with silence) out to the longest.
 ### silence.py — remove dead air / jump cuts
 ```
 silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.15] [--min-keep 0.2] [--list] [--edl keep.txt] [--speech-aware] [-o OUT]
-silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|es|de|fr|pt|it]
+silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|zh|es|de|fr|pt|it|nl|pl|ru|tr]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
            [--model MODEL] [--filler-list] [--max-cuts 400]
@@ -598,6 +598,11 @@ per-word `start`/`end`) or `--transcribe` (the same local engine `caption.py`
 uses, never required). There is no heuristic fallback — finding an "um" by
 looking for short quiet blips would cut real speech, so the tool refuses
 instead. `--filler-list` reports what would go and writes nothing.
+Built-in lists (2.19): en, ja, ko, zh, es, de, fr, pt, it, nl, pl, ru, tr. They hold
+hesitation sounds only; words that are as often content (`like`, 저, 那个, ну) are
+`--filler-extra` material. Chinese and Japanese are cut only where the transcript shows
+a word boundary on each side (punctuation or a 0.1 s pause), because whisper splits them
+into tokens rather than words.
 `filler.matched_untimed` counts listed words the transcript gives no usable
 timing for (not removed, and a `filler_words_untimed` warning), and
 `matched_too_long` those longer than a filler (a held vowel, kept).
@@ -608,11 +613,17 @@ Built-in lists, one per language:
 |---|---|
 | en | um, uh, erm, hmm, mm, mhm, er, ah |
 | ja | えー, えーと, えっと, あの, あのー, その, そのー, まあ, なんか |
+| ko | 어, 어어, 에, 음, 음음, 으음, 흠 |
+| zh | 呃, 呃呃, 嗯, 嗯嗯, 唔 |
 | es | eh, este, esto, mmm |
 | de | äh, ähm, hm |
 | fr | euh, hein |
 | pt | é, hum |
 | it | ehm |
+| nl | eh, ehm, uh, uhm, hm |
+| pl | yy, yyy, ee, eee, em, emm, hmm |
+| ru | э, ээ, эм, эмм, мм, хм |
+| tr | ıı, ııı, ee, eee, hmm |
 
 **Discourse markers are not disfluencies.** `like`, `tipo` and `cioè` are
 deliberately *not* in the default lists: they are grammatical words in most

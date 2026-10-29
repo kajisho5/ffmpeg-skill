@@ -456,6 +456,7 @@ DIAGNOSTIC_CODES = {
     "font_path_copied": ("fallbacks", "a --font-file under a non-ASCII path was copied to an ASCII one, because drawtext cannot open it on Windows; {font, file}"),
     "font_path_not_ascii": ("warnings", "a --font-file under a non-ASCII path could not be given an ASCII form on Windows; drawtext may not open it; {font}"),
     "fonts_dir_lacks_script": ("fallbacks", "no face in --fonts-dir covers the text's script, so one was picked by script; {fonts_dir, script}"),
+    "font_variant_missing": ("fallbacks", "--lang named Traditional Chinese but no Traditional face is installed, so a Simplified one draws it (some glyph forms differ); {lang, file}"),
     "emoji_monochrome": ("warnings", "emoji drawn by the text font (monochrome at best): no colour path here"),
     "emoji_stripped": ("warnings", "overlay.py --emoji none: emoji removed from the drawn text; {mode}"),
     "emoji_assets_missing": ("warnings", "--emoji-assets has no PNG for these clusters; the text font draws them; {missing}"),

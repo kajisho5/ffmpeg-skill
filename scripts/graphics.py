@@ -294,7 +294,7 @@ def main(force_route: Optional[str] = None) -> int:
         if explicit:
             return font_family_of_file(explicit) or args.font or brand.get("font")
         if script_file:
-            return font_family_of_file(script_file) or font_family_for_script(_script)
+            return _family or font_family_of_file(script_file) or font_family_for_script(_script)
         return args.font or brand.get("font", "DejaVu Sans")
 
     def ass_fonts_dir() -> "Optional[str]":

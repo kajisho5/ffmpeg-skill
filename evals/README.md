@@ -169,6 +169,12 @@ the synthetic video/audio those prompts need (`shots.mp4`, `speech_breaths.m4a`,
 generated fixture. It shares the same CLI shown above; `python3 evals/write_fixtures.py OUTDIR b1`
 also builds `OUTDIR/shots.mp4`.
 
+`agent_prompts_26.json` (2.19, 4 prompts, not yet run) measures the multilingual filler lists and
+the Traditional Chinese font: `fk1` (Korean: 음/어 go, 저 stays), `fz1` (Chinese: 嗯/呃 go at a
+boundary, the 额 of 金额 stays), `fj2` (Japanese: えーと and えっと arrive as two whisper tokens
+each and are cut whole) and `tw1` (a Taiwan caption must pass `--lang zh-TW`). Same field shape;
+pass the file to the CLI: `python3 evals/write_fixtures.py OUTDIR fk1 evals/agent_prompts_26.json`.
+
 ## Grading
 
     python3 evals/grade_runs_24.py ITERATION_DIR [PROMPTS_JSON]

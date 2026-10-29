@@ -14,6 +14,22 @@
 - **`loudness.py` no longer lengthens the sound.** Through the AAC encoder its output ran longer than the input: 0.015 s on a 6 s clip, 0.1 s on a 90 s one. The sound is trimmed to the input's length, and a `duration` step measures it.
 - **`export.py` measures the length its preset promises.** It trimmed to the platform maximum but never re-read what it wrote. With `--normalize`, a Reels export left at 90.10 s by the loudness pass came back `verified: true`, and `check.py` failed the same file. A `duration` step now holds the written file to the same limit `check.py` uses.
 
+## 2.19.0
+
+_Automated release: version and notes generated from pull requests merged since 2.18.0._
+
+### Added
+
+- **Traditional Chinese captions get a Traditional face.** Han-only text always resolved a Simplified Chinese font, so a Taiwanese or Hong Kong caption was drawn in the mainland glyph forms (骨, 直 and 角 differ). `--lang zh-TW`, `zh-HK`, `zh-Hant` or `yue` on `caption.py` and `graphics.py` (or a brand's `lang`) now resolves a Traditional face: Noto Sans CJK TC, or Microsoft JhengHei on Windows. A machine without one draws with the Simplified face and records `font_variant_missing`.
+- **Filler words in Korean, Chinese, Russian, Dutch, Polish and Turkish.** `silence.py --filler` has built-in lists for `ko`, `zh`, `ru`, `nl`, `pl` and `tr`, so a transcript in one of them is no longer refused. The lists hold hesitation sounds only (음/어, 嗯/呃, э/эм, ehm, yyy, ıı). Words that are as often content stay out and are named as discourse markers for `--filler-extra`: 저 is also "I", 那个 is also "that". ISO 639-2 codes (`kor`, `zho`) and language names (`chinese`, `spanish`) in a `--words` document now name the right list; `spanish` used to be cut to `sp`.
+
+### Fixed
+
+- **Japanese fillers split across whisper tokens are cut.** Whisper splits Japanese and Chinese into tokens, not words: えーと arrives as えー + と. Only a single token could match, so `--filler` never cut えーと or えっと and cut えー with と left behind. A run of up to four tokens that joins to a listed word now matches as that word. In Chinese and Japanese a match also needs punctuation or a 0.1 s pause on each side, so the あの of あの人 ("that person") is kept.
+- **`--filler-extra "you know"` matches.** A two-word marker could never match one engine word, though `--help` offered it.
+- **whisper.cpp transcripts in Japanese and Chinese have per-token timings.** whisper.cpp marks a word start with a space, so in an unspaced language a whole segment was glued into one "word" that no filler could match. Tokens between two whole characters now stay apart.
+- Filler words in Korean, Chinese, Russian, Dutch, Polish and Turkish; Japanese fillers split across whisper tokens; Traditional Chinese fonts (#371)
+
 ## 2.18.0
 
 _Automated release: version and notes generated from pull requests merged since 2.17.4._

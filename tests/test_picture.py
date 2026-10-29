@@ -3298,6 +3298,92 @@ class WindowsFontPathTests(unittest.TestCase):
             self.assertEqual(self.dt.drawtext_fontfile(missing), "fontfile=" + self.dt.escape_filter_path(missing))
 
 
+class TraditionalChineseFontTests(unittest.TestCase):
+    """2.19: Han-only text resolved a Simplified face whatever --lang said, so a zh-TW caption was
+    drawn in the Beijing glyph forms. A --lang naming Traditional Chinese now resolves a
+    Traditional face, and falls back to the Simplified one, recorded, when none is installed."""
+
+    def tearDown(self):
+        import _common.fonts as fonts
+        fonts._SCRIPT_FONT_CACHE.clear()
+
+    def test_font_key_reads_traditional_tags_only(self):
+        import _common.fonts as fonts
+        for lang in ("zh-TW", "zh_hk", "zh-Hant", "zh-Hant-TW", "yue", "zh-MO"):
+            self.assertEqual(fonts.font_key("zh", lang), "zh-hant", lang)
+        for lang in (None, "", "zh", "zh-CN", "zh-Hans", "ja", "zh-twx"):
+            self.assertEqual(fonts.font_key("zh", lang), "zh", lang)
+        self.assertEqual(fonts.font_key("ja", "zh-TW"), "ja", "kana text stays Japanese")
+
+    def test_windows_picks_jhenghei_for_traditional_and_yahei_for_simplified(self):
+        import _common.fonts as fonts
+        fonts._SCRIPT_FONT_CACHE.clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "Fonts").mkdir()
+            for name in ("msyh.ttc", "msjh.ttc"):
+                (Path(tmp) / "Fonts" / name).write_bytes(b"existence is the check")
+            with unittest.mock.patch("platform.system", return_value="Windows"), \
+                    unittest.mock.patch.dict(os.environ, {"WINDIR": tmp}):
+                script, path, family = fonts.script_font_for_text("台灣的骨頭", lang="zh-TW")
+                self.assertEqual((script, family), ("zh", "Microsoft JhengHei"))
+                self.assertTrue(path.endswith("msjh.ttc"), path)
+                script, path, family = fonts.script_font_for_text("台湾的骨头")
+                self.assertEqual((script, family), ("zh", "Microsoft YaHei"))
+
+    def test_no_traditional_face_falls_back_to_simplified_and_says_so(self):
+        import _common.fonts as fonts
+        from _common import STATE
+        fonts._SCRIPT_FONT_CACHE.clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "Fonts").mkdir()
+            (Path(tmp) / "Fonts" / "msyh.ttc").write_bytes(b"ttc")
+            before = len(STATE.fallbacks)
+            with unittest.mock.patch("platform.system", return_value="Windows"), \
+                    unittest.mock.patch.dict(os.environ, {"WINDIR": tmp}):
+                script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
+            self.assertTrue(path.endswith("msyh.ttc"), path)
+            self.assertEqual((script, family), ("zh", "Microsoft YaHei"))
+            codes = [f.get("code") for f in STATE.fallbacks[before:]]
+            self.assertIn("font_variant_missing", codes)
+
+    def _fc(self, by_lang):
+        import _common.fonts as fonts
+        fonts._SCRIPT_FONT_CACHE.clear()
+        asked = []
+
+        def fake(lang):
+            asked.append(lang)
+            return by_lang.get(lang, [])
+        return asked, unittest.mock.patch.multiple(fonts, _fc_list_fonts=fake), \
+            unittest.mock.patch("platform.system", return_value="Linux")
+
+    def test_fontconfig_asks_zh_tw_and_picks_the_traditional_family(self):
+        import _common.fonts as fonts
+        asked, fc, plat = self._fc({
+            # one .ttc lists every face it holds; the name returned is the one that ranked
+            "zh-tw": [("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans CJK TC"])],
+            "zh-cn": [("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK SC"])]})
+        with fc, plat:
+            script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
+        self.assertIn("zh-tw", asked)
+        self.assertEqual((script, family), ("zh", "Noto Sans CJK TC"))
+
+    def test_unifont_alone_for_traditional_does_not_block_the_simplified_face(self):
+        """fontconfig's Unifont "covers" zh-tw with code-point boxes; a real Simplified face
+        draws the characters, so it wins, and the swap is recorded."""
+        import _common.fonts as fonts
+        from _common import STATE
+        asked, fc, plat = self._fc({
+            "zh-tw": [("/f/unifont.otf", ["Unifont"])],
+            "zh-cn": [("/f/unifont.otf", ["Unifont"]), ("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK SC"])]})
+        before = len(STATE.fallbacks)
+        with fc, plat:
+            script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
+        self.assertEqual((script, family), ("zh", "Noto Sans CJK SC"))
+        self.assertEqual(path, "/f/NotoSansCJK-Regular.ttc")
+        self.assertIn("font_variant_missing", [f.get("code") for f in STATE.fallbacks[before:]])
+
+
 class EmojiTests(unittest.TestCase):
     """1.15: emoji are detected as clusters, measured at a full em, reserved in the ASS and
     composited as PNGs -- and every degraded path says so instead of lying."""

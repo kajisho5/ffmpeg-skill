@@ -1158,6 +1158,18 @@ FILLER_WORDS = {
     "fr": frozenset({"euh", "hein"}),
     "pt": frozenset({"é", "hum"}),
     "it": frozenset({"ehm"}),
+    # 2.19: Korean is written with spaces, so a whisper word is a word and the list works as the
+    # English one does. 그/저/뭐/이제 are fillers as often as they are "that"/"I"/"what"/"now":
+    # discourse markers below, not defaults.
+    "ko": frozenset({"음", "으음", "음음", "어", "어어", "에", "흠"}),
+    # Chinese has no spaces: these match only as a whole token with a boundary on each side
+    # (filler_spans), so the 额 of 金额 or the 呃 inside a word is never cut. 额 itself is left
+    # out: it is a common character in its own right.
+    "zh": frozenset({"嗯", "嗯嗯", "呃", "呃呃", "唔"}),
+    "ru": frozenset({"э", "ээ", "эм", "эмм", "мм", "хм"}),
+    "nl": frozenset({"eh", "ehm", "uh", "uhm", "hm"}),
+    "pl": frozenset({"yyy", "yy", "eee", "ee", "em", "emm", "hmm"}),
+    "tr": frozenset({"ıı", "ııı", "ee", "eee", "hmm"}),
 }
 
 # Words in a default list that are also ordinary vocabulary: every run that removes one says so.
@@ -1173,11 +1185,33 @@ FILLER_DISCOURSE_MARKERS = {
     "en": ("like", "you know"),
     "pt": ("tipo",),
     "it": ("cioè",),
+    "ko": ("그", "저", "뭐", "이제", "약간", "막", "그니까"),
+    "zh": ("那个", "这个", "就是", "然后"),
+    "ru": ("ну", "типа", "короче", "как бы"),
+    "nl": ("nou", "dus", "zeg maar"),
+    "pl": ("no", "jakby", "wiesz", "znaczy"),
+    "tr": ("şey", "yani", "işte"),
 }
 
 FILLER_MAX_WORD = 1.2   # a longer "uhhh" is a held vowel someone meant
 FILLER_MIN_GAP = 0.05   # spans closer than this become one span
 FILLER_PAD = 0.02       # trimmed either side of the word
+FILLER_MAX_TOKENS = 4   # a listed word may span this many engine tokens ("えー" + "と", "you" + "know")
+FILLER_BOUNDARY_GAP = 0.1  # a pause this long between two tokens is a word boundary
+
+
+def _unspaced_script(text: str) -> bool:
+    """True when `text` has a character of a script written without spaces between words (Han,
+    kana, Thai, Lao, Myanmar, Khmer). Whisper splits those languages into tokens, not words, so a
+    token boundary there says nothing about a word boundary. Hangul is spaced and not listed."""
+    for ch in text:
+        o = ord(ch)
+        if (0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF or 0xFF66 <= o <= 0xFF9F   # kana
+                or 0x3400 <= o <= 0x4DBF or 0x4E00 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF  # Han
+                or 0x20000 <= o <= 0x323AF  # Han extensions B-H
+                or 0x0E00 <= o <= 0x0EFF or 0x1000 <= o <= 0x109F or 0x1780 <= o <= 0x17FF):  # Thai, Lao, Myanmar, Khmer
+            return True
+    return False
 
 
 def normalise_filler_token(word: str) -> str:
@@ -1195,37 +1229,89 @@ def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = F
                  max_word: float = FILLER_MAX_WORD, stats: "Optional[Dict[str, int]]" = None) -> "List[Dict[str, Any]]":
     """Time spans to remove, from measured word timings. Pure: no subprocess, no I/O.
 
-    `words` is [{"word", "start", "end"}] as whisper emits. A word is removed only when its
-    normalised form is in `wordlist` AND it carries a real start < end pair AND its length is
-    <= max_word. Adjacent spans closer than min_gap merge. Returns [{"start", "end", "word"}]
-    sorted and non-overlapping.
+    `words` is [{"word", "start", "end"}] as whisper emits. A run of up to FILLER_MAX_TOKENS
+    consecutive entries is removed only when the run, joined with or without spaces and
+    normalised, is in `wordlist` AND every entry carries a real start < end pair AND the run is
+    <= max_word long. The longest run wins. Adjacent spans closer than min_gap merge. Returns
+    [{"start", "end", "word"}] sorted and non-overlapping.
+
+    Whisper splits Chinese, Japanese and Thai into tokens rather than words ("えーと" arrives as
+    "えー" + "と", "金额" as "金" + "额"), so a run in such a script also needs a word boundary on
+    each side: the start or end of the transcript, punctuation, a spaced-script neighbour, or a
+    pause of FILLER_BOUNDARY_GAP. Without one the run is part of a longer word and is kept.
 
     `stats`, when given, receives the listed words that were kept anyway, so the caller can say
     so: `matched_untimed` (no usable start < end: nothing to cut on) and `matched_too_long`
     (longer than max_word: a held vowel someone meant).
     """
+    import unicodedata as _ud
     listed = {normalise_filler_token(w) for w in (wordlist or set())}
     listed.discard("")
-    hits = []
-    untimed = too_long = 0
+    toks = []
     for entry in words or []:
         if not isinstance(entry, dict):
             continue
-        token = normalise_filler_token(entry.get("word") or entry.get("text") or "")
-        if not token or token not in listed:
-            continue
+        raw = str(entry.get("word") or entry.get("text") or "").strip()
         try:
             start, end = float(entry["start"]), float(entry["end"])
+            timed = end > start
         except (KeyError, TypeError, ValueError):
-            untimed += 1
-            continue     # no measured timing: nothing to cut
-        if not (end > start):
-            untimed += 1
-            continue
-        if (end - start) > max_word:
-            too_long += 1
-            continue
-        hits.append({"start": max(0.0, start - pad), "end": end + pad, "word": token})
+            start = end = 0.0
+            timed = False
+        toks.append({"norm": normalise_filler_token(raw), "start": start, "end": end, "timed": timed,
+                     "punct_before": bool(raw) and _ud.category(raw[0]).startswith("P"),
+                     "punct_after": bool(raw) and _ud.category(raw[-1]).startswith("P")})
+
+    def _bounded(i: int, j: int) -> bool:
+        """A word boundary before toks[i] and after toks[j - 1]."""
+        left = (i == 0 or toks[i]["punct_before"] or toks[i - 1]["punct_after"] or not toks[i - 1]["norm"]
+                or not _unspaced_script(toks[i - 1]["norm"])
+                or (toks[i - 1]["timed"] and toks[i]["start"] - toks[i - 1]["end"] >= FILLER_BOUNDARY_GAP - 1e-6))
+        right = (j == len(toks) or toks[j - 1]["punct_after"] or toks[j]["punct_before"] or not toks[j]["norm"]
+                 or not _unspaced_script(toks[j]["norm"])
+                 or (toks[j]["timed"] and toks[j]["start"] - toks[j - 1]["end"] >= FILLER_BOUNDARY_GAP - 1e-6))
+        return left and right
+
+    hits = []
+    untimed = too_long = 0
+    i = 0
+    while i < len(toks):
+        found = 0
+        rejected = None
+        for k in range(min(FILLER_MAX_TOKENS, len(toks) - i), 0, -1):
+            run = toks[i:i + k]
+            norms = [t["norm"] for t in run]
+            if not all(norms):
+                continue
+            unspaced = any(_unspaced_script(n) for n in norms)
+            joined = ("" if unspaced else " ").join(norms)
+            if joined not in listed or (unspaced and not _bounded(i, i + k)):
+                continue
+            # punctuation inside the run ("えー、" + "と") ends the word: the shorter run decides
+            if any(run[m]["punct_after"] or run[m + 1]["punct_before"] for m in range(k - 1)):
+                continue
+            # so does a pause inside an unspaced run: the tokens were two words
+            if unspaced and any(run[m]["timed"] and run[m + 1]["timed"]
+                                and run[m + 1]["start"] - run[m]["end"] >= FILLER_BOUNDARY_GAP - 1e-6
+                                for m in range(k - 1)):
+                continue
+            # a run listed out of time order has no span to cut on
+            if not all(t["timed"] for t in run) or run[-1]["end"] <= run[0]["start"]:
+                rejected = rejected or ("untimed", k)
+                continue
+            if run[-1]["end"] - run[0]["start"] > max_word:
+                rejected = rejected or ("too_long", k)
+                continue
+            hits.append({"start": max(0.0, run[0]["start"] - pad), "end": run[-1]["end"] + pad, "word": joined})
+            found = k
+            break
+        if not found and rejected:
+            # the longest listed run that could not be cut is the one reported. Its prefixes were
+            # tried here; moving on by one token lets a listed word later in it be tried too
+            untimed += rejected[0] == "untimed"
+            too_long += rejected[0] == "too_long"
+            found = 1
+        i += found or 1
     hits.sort(key=lambda h: (h["start"], h["end"]))
     merged: "List[Dict[str, Any]]" = []
     for h in hits:

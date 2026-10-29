@@ -147,13 +147,14 @@ LANGUAGE_NAMES = {
     "ja": "Japanese", "zh": "Chinese", "ko": "Korean", "ar": "Arabic", "he": "Hebrew",
     "hi": "Devanagari (Hindi/Marathi/Nepali)", "th": "Thai", "ru": "Cyrillic (Russian and others)",
     "el": "Greek", "latin": "Latin", "bn": "Bengali", "ta": "Tamil", "lo": "Lao",
+    "zh-hant": "Traditional Chinese",
 }
 
 
 # fontconfig's own :lang= codes for each script we detect (zh uses zh-cn, the Simplified subset
 # every CJK font that claims zh carries; the rest are the plain two-letter codes).
 FC_LANG = {"ja": "ja", "zh": "zh-cn", "ko": "ko", "ar": "ar", "he": "he", "hi": "hi", "th": "th", "ru": "ru", "el": "el",
-           "bn": "bn", "ta": "ta", "lo": "lo"}
+           "bn": "bn", "ta": "ta", "lo": "lo", "zh-hant": "zh-tw"}
 
 
 # Families tried in order, best first. The names are matched case-insensitively against the start
@@ -162,6 +163,8 @@ FC_LANG = {"ja": "ja", "zh": "zh-cn", "ko": "ko", "ar": "ar", "he": "he", "hi": 
 PREFERRED_FAMILIES = {
     "ja": ["Noto Sans CJK JP", "Noto Serif CJK JP", "Noto Sans JP", "Source Han Sans", "IPAPGothic", "IPAGothic", "IPA", "VL Gothic", "TakaoGothic", "WenQuanYi Zen Hei"],
     "zh": ["Noto Sans CJK SC", "Noto Serif CJK SC", "Noto Sans SC", "Source Han Sans", "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Droid Sans Fallback"],
+    "zh-hant": ["Noto Sans CJK TC", "Noto Serif CJK TC", "Noto Sans CJK HK", "Noto Sans TC", "Noto Sans HK", "Source Han Sans TW",
+                "Source Han Sans HC", "AR PL UMing TW", "AR PL UKai TW", "PingFang TC", "WenQuanYi Zen Hei", "Droid Sans Fallback"],
     "ko": ["Noto Sans CJK KR", "Noto Serif CJK KR", "Noto Sans KR", "Source Han Sans K", "NanumGothic", "Nanum Gothic", "Malgun Gothic", "WenQuanYi Zen Hei"],
     "ar": ["Noto Sans Arabic", "Noto Naskh Arabic", "Amiri", "Scheherazade", "DejaVu Sans", "FreeSans", "FreeSerif"],
     "he": ["Noto Sans Hebrew", "Noto Serif Hebrew", "DejaVu Sans", "FreeSans", "FreeSerif"],
@@ -179,6 +182,7 @@ PREFERRED_FAMILIES = {
 WINDOWS_FONTS = {
     "ko": [("malgun.ttf", "Malgun Gothic"), ("gulim.ttc", "Gulim"), ("batang.ttc", "Batang")],
     "zh": [("msyh.ttc", "Microsoft YaHei"), ("simhei.ttf", "SimHei"), ("simsun.ttc", "SimSun")],
+    "zh-hant": [("msjh.ttc", "Microsoft JhengHei"), ("mingliu.ttc", "MingLiU")],
     "ja": [("meiryo.ttc", "Meiryo"), ("YuGothM.ttc", "Yu Gothic Medium"), ("YuGothR.ttc", "Yu Gothic"), ("msgothic.ttc", "MS Gothic")],
     "ar": [("tahoma.ttf", "Tahoma"), ("arial.ttf", "Arial")],
     "he": [("tahoma.ttf", "Tahoma"), ("arial.ttf", "Arial")],
@@ -277,6 +281,22 @@ def detect_script(text: str, lang: "Optional[str]" = None) -> str:
     return best
 
 
+# 2.19: Han-only text is Chinese, and Chinese is written in two standard forms whose glyphs differ
+# (骨, 直, 角 are drawn differently in Taipei and Beijing). A Simplified face draws a Taiwanese
+# caption in the wrong form, so a --lang naming Traditional Chinese resolves a Traditional face.
+# The script stays "zh" for wrapping; only the font lookup changes.
+HANT_TAGS = ("zh-tw", "zh-hk", "zh-mo", "zh-hant", "yue")
+
+
+def font_key(script: str, lang: "Optional[str]" = None) -> str:
+    """The font-table key for `script` under the caller's `lang`: "zh-hant" for Chinese text the
+    caller says is Traditional (zh-TW, zh-HK, zh-MO, zh-Hant-*, yue), else `script` itself."""
+    tag = (lang or "").strip().lower().replace("_", "-")
+    if script == "zh" and any(tag == t or tag.startswith(t + "-") for t in HANT_TAGS):
+        return "zh-hant"
+    return script
+
+
 _SCRIPT_FONT_CACHE: "Dict[Tuple[str, Optional[str]], Optional[Tuple[str, str]]]" = {}
 
 
@@ -359,7 +379,11 @@ def _script_font_uncached(script: str, family_hint: "Optional[str]" = None):
         mono = 1 if "mono" in joined else 0
         # regular weights before Bold/Italic/Oblique cuts, so a default caption is not bold by accident
         styled = 1 if any(k in stem for k in ("bold", "italic", "oblique", "light", "thin", "black")) else 0
-        scored.append((last_resort, _family_rank(families, preferred), mono, styled, path, families[0]))
+        rank = _family_rank(families, preferred)
+        # a .ttc lists every face it holds (Noto CJK: JP, KR, SC, TC): name the one that ranked
+        family = next((f for f in families if rank < len(preferred) and f.lower().startswith(preferred[rank].lower())),
+                      families[0])
+        scored.append((last_resort, rank, mono, styled, path, family))
     scored.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
     best = scored[0]
     return best[4], best[5]
@@ -453,6 +477,11 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
     return False
 
 
+def _is_last_resort(entry: "Tuple[str, str]") -> bool:
+    """Unifont, fontconfig's code-point-box face: it covers every script and renders none."""
+    return "unifont" in " ".join(str(x) for x in entry).lower()
+
+
 def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Optional[str]" = None,
                          font_explicit: bool = False, font_file: "Optional[str]" = None,
                          fonts_dir: "Optional[str]" = None
@@ -476,30 +505,41 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
         return script, None, None
     if font_file:
         return script, None, None
+    key = font_key(script, lang)
     if font_explicit and font:
-        if not font_covers_script(font, script):
-            warn(f"font: '{font}' does not cover {LANGUAGE_NAMES[script]} text on this machine; keeping it as asked "
+        if not font_covers_script(font, key):
+            warn(f"font: '{font}' does not cover {LANGUAGE_NAMES[key]} text on this machine; keeping it as asked "
                  f"(drop --font, or {FONT_FLAG_HINT}, to pick one by script automatically)", "font_lacks_script",
                  font=font, script=script)
         return script, None, None
     if fonts_dir:
-        covered = fonts_dir_covers_script(fonts_dir, script)
+        covered = fonts_dir_covers_script(fonts_dir, key)
         if covered:
             return script, None, None
         if covered is None:
-            warn(f"font: could not verify that {fonts_dir} covers {LANGUAGE_NAMES[script]} text "
+            warn(f"font: could not verify that {fonts_dir} covers {LANGUAGE_NAMES[key]} text "
                  "(no fc-scan on this machine); using it as given", "font_coverage_unverified", fonts_dir=fonts_dir, script=script)
             return script, None, None
-        record_fallback(f"font: no face in {fonts_dir} covers {LANGUAGE_NAMES[script]} text; "
+        record_fallback(f"font: no face in {fonts_dir} covers {LANGUAGE_NAMES[key]} text; "
                         "picking one by script instead (the directory is still searched first)", "fonts_dir_lacks_script",
                         fonts_dir=fonts_dir, script=script)
-    entry = _script_font_entry(script)
+    entry = _script_font_entry(key)
+    if key != script and (not entry or (entry is not FC_UNKNOWN and _is_last_resort(entry))):
+        # no Traditional face (Unifont's code-point boxes are none): the Simplified one still
+        # has the characters, in the other form
+        simplified = _script_font_entry(script)
+        if simplified and simplified is not FC_UNKNOWN and (not entry or not _is_last_resort(simplified)):
+            entry = simplified
+            record_fallback(f"font: no {LANGUAGE_NAMES[key]} face is installed; drawing with {entry[0]}, a "
+                            "Simplified Chinese face whose glyph forms differ in places "
+                            "(install fonts-noto-cjk or a TC font)", "font_variant_missing", lang=lang, file=entry[0])
+            key = script
     if entry is FC_UNKNOWN:
-        warn(f"font: could not verify that this machine can render {LANGUAGE_NAMES[script]} text "
+        warn(f"font: could not verify that this machine can render {LANGUAGE_NAMES[key]} text "
              "(no working fontconfig); rendering with the font as given -- "
              "doctor --json .fonts.scripts reports what is known", "font_coverage_unverified", script=script)
         return script, None, None
     if not entry:
-        die(f"no installed font covers {LANGUAGE_NAMES[script]} text on this machine — {FONT_INSTALL_HINT}", kind="input")
-    info(f"font: {entry[0]} (covers {script})")
+        die(f"no installed font covers {LANGUAGE_NAMES[key]} text on this machine — {FONT_INSTALL_HINT}", kind="input")
+    info(f"font: {entry[0]} (covers {key})")
     return script, entry[0], entry[1]

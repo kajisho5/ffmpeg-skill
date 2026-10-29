@@ -1371,6 +1371,32 @@ def demo_silence_speech_aware(ctx):
     return naive, after
 
 
+def demo_filler_korean(ctx):
+    """2.19 built-in Korean list. Five timed words over a tone bed: the two 음/어 hesitations are
+    cut, 음악은 ("music"), which starts with the same syllable, is kept -- fillers match whole
+    words, never prefixes. The timings are the --words file a speech engine would write."""
+    before = ctx.path("speech.mp4")
+    words = [("오늘은", 0.3, 1.1), ("음", 1.4, 2.0), ("음악은", 2.3, 3.3), ("어", 3.6, 4.2), ("좋아요", 4.5, 5.5)]
+    filler = {"음", "어"}
+    voiced = "+".join("between(t\\,%s\\,%s)" % (a, b) for w, a, b in words if w not in filler)
+    hum = "+".join("between(t\\,%s\\,%s)" % (a, b) for w, a, b in words if w in filler)
+    expr = "(%s)*(%s)+0.35*sin(2*PI*140*t)*(%s)" % (SPEECH, voiced, hum)
+    ffmpeg("-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % expr, "-t", "6", str(before))
+    words_json = ctx.path("words.json")
+    words_json.write_text(json.dumps({"language": "ko", "segments": [
+        {"words": [{"word": w, "start": a, "end": b} for w, a, b in words]}]}, ensure_ascii=False),
+        encoding="utf-8")
+    listed = ctx.script("silence.py", before, "--filler", "--words", words_json, "--filler-list",
+                        "--json", capture=True)
+    after = ctx.path("after.mp4")
+    ctx.script("silence.py", before, "--filler", "--words", words_json, "--margin", "0",
+               "--preset", "veryfast", "-o", after)
+    removed = (json.loads(listed).get("filler", {}).get("removed_words") if listed else None) or "?"
+    ctx.note("--filler-lang auto read 'ko' from the transcript; removed %s, kept 음악은; "
+             "%.2f s in, %.2f s out" % (", ".join(removed) if removed != "?" else "?", duration(before), duration(after)))
+    return before, after
+
+
 def demo_motion_centre(ctx):
     """cropdetect.py --motion-centre reports where the motion sits per second; it never picks a
     reframe. Left is a naive centre crop, which clips the moving subject sitting off to one
@@ -1636,6 +1662,9 @@ _ROWS = [
     ("silence_speech_aware", AUDIO, "Speech-aware silence removal keeps the breaths",
      "A 0.25 s breath sits inside a sentence and a 1 s pause sits between sentences. Left uses a --min-silence low enough to catch the breath too, so plain detection cuts both; right is --speech-aware at the ordinary --min-silence -- its finer 0.12 s floor still measures the breath, but the breath is shorter than --min-silence so it is kept, and only the real sentence-boundary pause is cut.",
      demo_silence_speech_aware, "wave", None, ("--MIN-SILENCE 0.2 (cuts the breath)", "--SPEECH-AWARE (breath kept)")),
+    ("filler_korean", AUDIO, "Korean filler words cut by the built-in list",
+     "Five timed words, two of them the hesitations 음 and 어 (the low hum). Right is silence.py --filler with the transcript's language read as Korean: both hesitations are gone, and 음악은 (music), which starts with the same syllable, stays -- a filler matches a whole word, never a prefix.",
+     demo_filler_korean, "wave", None, ("BEFORE", "--FILLER (KO)")),
     ("motion_centre_crop", PICTURE, "Crop centred on the measured motion",
      "cropdetect.py --motion-centre reports where the motion sits per second; it never picks a reframe itself. Left is a naive centre crop that clips the moving subject sitting off to one side; right is crop.py aimed at the measured centroid instead.",
      demo_motion_centre, "video", None, ("CENTRE CROP", "MOTION-CENTRED CROP")),
