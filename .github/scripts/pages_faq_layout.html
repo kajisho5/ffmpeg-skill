@@ -31,14 +31,16 @@ body {
 }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
-a:focus-visible, summary:focus-visible, input:focus-visible, .skip:focus {
+a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, .skip:focus {
   outline: 2px solid var(--link); outline-offset: 2px;
 }
 .skip {
-  position: absolute; left: 12px; top: -40px; background: var(--bg); color: var(--fg);
-  padding: 8px 12px; border-radius: 6px; z-index: 4;
+  position: absolute; left: 12px; top: 8px; z-index: 4;
+  background: var(--bg); color: var(--fg);
+  padding: 8px 12px; border-radius: 6px;
+  transform: translateY(-150%);
 }
-.skip:focus { top: 8px; }
+.skip:focus { transform: none; }
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
@@ -50,12 +52,12 @@ nav .in {
 }
 .nav-links { display: contents; }
 nav .brand { font-weight: 600; color: var(--fg); margin-right: auto; }
-.search-toggle {
+.menu-toggle, .search-toggle {
   display: none; flex: 0 0 auto; width: 44px; height: 44px; padding: 0;
   border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
-  cursor: pointer;
+  cursor: pointer; align-items: center; justify-content: center;
 }
-.search-toggle svg { display: block; margin: auto; }
+.menu-toggle svg, .search-toggle svg { display: block; }
 .tools { max-width: 760px; margin: 0 auto; padding: 0 16px 12px; }
 .tools label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
 .tools input {
@@ -65,15 +67,29 @@ nav .brand { font-weight: 600; color: var(--fg); margin-right: auto; }
 }
 #faq-count { margin: 6px 0 0; color: var(--muted); font-size: .85rem; }
 @media (max-width: 720px) {
-  nav .in { flex-wrap: nowrap; gap: 8px; padding: 4px 8px 4px 12px; }
-  .nav-links {
-    display: flex; gap: 14px; overflow-x: auto; flex: 1 1 auto; min-width: 0;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  .head {
+    height: 53px; box-sizing: border-box;
+    display: flex; align-items: center;
   }
-  .nav-links::-webkit-scrollbar { display: none; }
-  .nav-links a { white-space: nowrap; flex: 0 0 auto; line-height: 44px; }
-  nav .brand, .search-toggle { flex: 0 0 auto; }
-  .search-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  nav { flex: 1 1 auto; min-width: 0; }
+  nav .in {
+    height: auto; box-sizing: border-box;
+    flex-wrap: nowrap; gap: 8px; padding: 0 8px 0 12px;
+  }
+  .menu-toggle, .search-toggle { display: inline-flex; }
+  nav .brand, .menu-toggle, .search-toggle { flex: 0 0 auto; }
+  .nav-links {
+    display: none; position: absolute; left: 0; right: 0; top: 100%;
+    flex-direction: column; gap: 0; margin: 0; padding: 6px;
+    background: var(--nav-bg); border-bottom: 1px solid var(--line);
+  }
+  .head.is-menu-open .nav-links { display: flex; }
+  .nav-links a {
+    display: flex; align-items: center; min-height: 44px;
+    padding: 8px 12px; border-radius: 8px; color: var(--fg);
+  }
+  .nav-links a:hover { background: var(--code-bg); text-decoration: none; }
+  .nav-links a[aria-current="page"] { font-weight: 600; }
   .tools {
     display: none; position: absolute; left: 0; right: 0; top: 100%;
     margin: 0; max-width: none; background: var(--nav-bg);
@@ -97,8 +113,8 @@ h1 { font-size: 2rem; line-height: 1.2; margin: 1.2rem 0 .4rem; }
   font-size: .85rem; letter-spacing: .04em; text-transform: uppercase;
   color: var(--muted); border: 0; margin: 1.6rem 0 .6rem; font-weight: 600;
 }
-.qa { position: relative; margin: 0 0 8px; scroll-margin-top: calc(var(--head-h, 56px) + 12px); }
-.topic, h1 { scroll-margin-top: calc(var(--head-h, 56px) + 12px); }
+.qa { position: relative; margin: 0 0 8px; scroll-margin-top: calc(var(--head-h, 53px) + 12px); }
+.topic, h1 { scroll-margin-top: calc(var(--head-h, 53px) + 12px); }
 .qa[hidden], .topic[hidden], #faq-empty[hidden] { display: none; }
 .perma {
   position: absolute; right: 10px; top: 10px; z-index: 1;
@@ -139,7 +155,11 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
 <div class="head">
 <nav><div class="in">
   <a class="brand" href="{{ '/' | relative_url }}">ffmpeg-skill</a>
-  <div class="nav-links">
+  <button type="button" class="menu-toggle" id="faq-menu-toggle" aria-expanded="false" aria-controls="faq-nav-panel">
+    <span class="visually-hidden">Site menu</span>
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <div class="nav-links" id="faq-nav-panel">
   <a href="{{ '/docs/demos.html' | relative_url }}">Demos</a>
   <a href="{{ '/docs/contract.html' | relative_url }}">Contract</a>
   <a href="{{ '/docs/design-decisions.html' | relative_url }}">Design decisions</a>
@@ -173,6 +193,8 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
   var count = document.getElementById("faq-count");
   var head = document.querySelector(".head");
   var toggle = document.getElementById("faq-search-toggle");
+  var menuToggle = document.getElementById("faq-menu-toggle");
+  var menuPanel = document.getElementById("faq-nav-panel");
   if (!input || !list || !head) return;
   var narrow = window.matchMedia("(max-width: 720px)");
 
@@ -182,32 +204,69 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
   setHeadHeight();
   if (window.ResizeObserver) new ResizeObserver(setHeadHeight).observe(head);
   window.addEventListener("resize", setHeadHeight);
+  if (narrow.addEventListener) {
+    narrow.addEventListener("change", function () {
+      if (narrow.matches) return;
+      head.classList.remove("is-menu-open", "is-search-open");
+      if (menuToggle) menuToggle.setAttribute("aria-expanded", "false");
+      if (toggle) toggle.setAttribute("aria-expanded", "false");
+      setHeadHeight();
+    });
+  }
 
-  function setSearchOpen(open) {
+  function setMenuOpen(open, returnFocus) {
+    if (!menuToggle || !narrow.matches) return;
+    if (open) setSearchOpen(false, false);
+    head.classList.toggle("is-menu-open", open);
+    menuToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open && menuPanel) {
+      var first = menuPanel.querySelector("a");
+      if (first) first.focus();
+    } else if (returnFocus) {
+      menuToggle.focus();
+    }
+    setHeadHeight();
+  }
+  function setSearchOpen(open, returnFocus) {
     if (!toggle || !narrow.matches) return;
+    if (open) setMenuOpen(false, false);
     head.classList.toggle("is-search-open", open);
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) input.focus();
+    else if (returnFocus) toggle.focus();
     setHeadHeight();
+  }
+  if (menuToggle) {
+    menuToggle.addEventListener("click", function () {
+      setMenuOpen(menuToggle.getAttribute("aria-expanded") !== "true", false);
+    });
+  }
+  if (menuPanel) {
+    menuPanel.addEventListener("click", function (event) {
+      if (event.target.closest && event.target.closest("a")) setMenuOpen(false, false);
+    });
   }
   if (toggle) {
     toggle.addEventListener("click", function () {
-      var open = toggle.getAttribute("aria-expanded") !== "true";
-      setSearchOpen(open);
-      if (!open) toggle.focus();
+      setSearchOpen(toggle.getAttribute("aria-expanded") !== "true", false);
     });
   }
   document.addEventListener("keydown", function (event) {
-    if (event.key !== "Escape" || !head.classList.contains("is-search-open")) return;
-    setSearchOpen(false);
-    if (toggle) toggle.focus();
+    if (event.key !== "Escape") return;
+    if (head.classList.contains("is-menu-open")) { setMenuOpen(false, true); return; }
+    if (head.classList.contains("is-search-open")) setSearchOpen(false, true);
   });
-  var lastY = 0;
-  window.addEventListener("scroll", function () {
-    var y = window.scrollY || 0;
-    if (narrow.matches && y > lastY + 8 && y > 48 && head.classList.contains("is-search-open")) setSearchOpen(false);
-    lastY = y;
-  }, { passive: true });
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (head.classList.contains("is-menu-open") && menuPanel && menuToggle &&
+        !menuPanel.contains(target) && !menuToggle.contains(target)) {
+      setMenuOpen(false, true);
+    }
+    if (head.classList.contains("is-search-open") && toggle) {
+      var panel = document.getElementById("faq-search-panel");
+      if (panel && !panel.contains(target) && !toggle.contains(target)) setSearchOpen(false, true);
+    }
+  });
   var articles = list.querySelectorAll("article.qa");
   var sections = list.querySelectorAll("section.topic");
 
@@ -249,14 +308,16 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
   input.addEventListener("input", apply);
   window.addEventListener("hashchange", function () {
     if (input.value) { input.value = ""; apply(); }
-    setSearchOpen(false);
+    setSearchOpen(false, false);
+    setMenuOpen(false, false);
     openFromHash();
   });
   document.addEventListener("click", function (event) {
     var link = event.target.closest ? event.target.closest("a[href^='#']") : null;
     if (!link) return;
     if (input.value) { input.value = ""; apply(); }
-    setSearchOpen(false);
+    setSearchOpen(false, false);
+    setMenuOpen(false, false);
   });
   apply();
   openFromHash();
