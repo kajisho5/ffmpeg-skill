@@ -2,14 +2,183 @@
 <p class="lede">What ffmpeg-skill does on this machine, from the scripts.</p>
 <nav class="toc" aria-label="Topics">
   <ul>
+    <li><a href="#start">Getting started</a></li>
+    <li><a href="#compat">Compatibility</a></li>
     <li><a href="#safety">Safety and files</a></li>
     <li><a href="#editing">Editing behaviour</a></li>
     <li><a href="#verification">Verification and failures</a></li>
     <li><a href="#audio">Audio and captions</a></li>
     <li><a href="#scale">Scale and tooling</a></li>
+    <li><a href="#compare">Comparison</a></li>
   </ul>
 </nav>
 <div id="faq-list">
+
+<section class="topic" id="start">
+<h2>Getting started</h2>
+
+<article class="qa" id="install">
+  <a class="perma" href="#install" aria-label="Link to this question">#</a>
+  <details>
+    <summary>How do I install it?</summary>
+    <div class="a">
+      <p><code>npx ffmpeg-skill</code> copies the skill for Claude Code, into <code>~/.claude/skills/ffmpeg-skill</code>. <code>--cursor</code> uses <code>~/.cursor/skills/ffmpeg-skill</code>. <code>--codex</code> uses <code>~/.agents/skills/ffmpeg-skill</code> (and uninstall also removes an older <code>~/.codex/skills</code> copy). <code>--all</code> does those three. <code>--project</code> writes <code>./.claude/skills/ffmpeg-skill</code>. <code>--dir</code> writes under a directory you name. <code>--uninstall</code> removes the selected targets. The copy is <code>SKILL.md</code>, <code>scripts</code>, <code>templates</code>, <code>references</code>, <code>docs</code>, <code>mcp</code> and <code>package.json</code>.</p>
+      <p>Claude Code can also install it as a plugin: <code>/plugin install ffmpeg-skill --marketplace kajisho5/ffmpeg-skill</code>. Older Claude Code adds the marketplace first, then <code>claude plugin install ffmpeg-skill@ffmpeg-skill</code>. The plugin name is <code>ffmpeg-skill:ffmpeg-skill</code>.</p>
+      <p><code>npx ffmpeg-skill doctor</code> and <code>npx ffmpeg-skill contract --json</code> run <code>scripts/_contract.py</code>. On Windows the installer looks for <code>python3</code>, then <code>python</code>, then <code>py</code>, and keeps the first that is Python 3.9 or newer.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/bin/install.js#L8-L19">install.js:8</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/bin/install.js#L30">install.js:30</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/bin/install.js#L116-L132">install.js:116</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L563-L583">README.md:563</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="no-node">
+  <a class="perma" href="#no-node" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Can I install it without Node?</summary>
+    <div class="a">
+      <p>Yes. The README says to clone the repository and copy <code>SKILL.md</code>, <code>scripts/</code>, <code>references/</code> and <code>mcp/</code> into the agent’s skills directory. That list is shorter than the npx payload, which also copies <code>templates/</code>, <code>docs/</code> and <code>package.json</code>. <code>render.py --template</code> reads <code>templates/&lt;name&gt;.json</code> beside the scripts, so a copy that omits <code>templates/</code> does not have the shipped templates. Node is only required for the <code>npx</code> installer (Node 16+). The tools themselves are Python.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L585">README.md:585</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L611">README.md:611</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/bin/install.js#L30">install.js:30</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/render.py#L98">render.py:98</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/render.py#L174-L182">render.py:174</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="updates">
+  <a class="perma" href="#updates" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Does an installed copy update itself?</summary>
+    <div class="a">
+      <p>No. Re-run <code>npx ffmpeg-skill</code> (or the same flags you installed with) to refresh the copy. The installer writes the new tree beside the old one and swaps it into place, so a killed upgrade leaves the previous install. A Claude Code plugin updates with <code>claude plugin update</code>.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/bin/install.js#L18-L19">install.js:18</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/bin/install.js#L180-L196">install.js:180</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L575">README.md:575</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="skill-vs-mcp">
+  <a class="perma" href="#skill-vs-mcp" aria-label="Link to this question">#</a>
+  <details>
+    <summary>What is the difference between the skill and the MCP server?</summary>
+    <div class="a">
+      <p>The skill is <code>SKILL.md</code> plus the Python scripts an agent runs. The MCP server is <code>mcp/server.py</code>, a stdio JSON-RPC transport with no tool table of its own: <code>tools/list</code> and the argument mapping come from the contract. Any client that speaks MCP over stdio can launch it. The server appends <code>--json</code> except for <code>look</code> and <code>probe</code>. On Windows, if <code>python3</code> is not on PATH, the client’s command should be <code>python</code> (or <code>py</code>).</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/mcp/server.py#L1-L10">server.py:1</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L1806-L1810">_contract.py:1806</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L351-L359">README.md:351</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="which-agents">
+  <a class="perma" href="#which-agents" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Which agents can use it?</summary>
+    <div class="a">
+      <p>The installer has targets for Claude Code, Cursor and Codex. Any agent that can read <code>SKILL.md</code> and run the scripts can use the skill without those directories. Any MCP client that can start a stdio server can use <code>mcp/server.py</code>. The published agent evaluations named in the README are a Sonnet agent with an Opus grader; that is a separate question.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/bin/install.js#L125-L131">install.js:125</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/package.json#L3">package.json:3</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/mcp/server.py#L13-L17">server.py:13</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="license">
+  <a class="perma" href="#license" aria-label="Link to this question">#</a>
+  <details>
+    <summary>What license is it under?</summary>
+    <div class="a">
+      <p>MIT. Copyright (c) 2026 kajisho5. The same license name is in <code>package.json</code>.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/LICENSE#L1-L3">LICENSE:1</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/package.json#L27">package.json:27</a>
+      </p>
+    </div>
+  </details>
+</article>
+</section>
+
+<section class="topic" id="compat">
+<h2>Compatibility</h2>
+
+<article class="qa" id="versions">
+  <a class="perma" href="#versions" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Which FFmpeg and Python versions does it need, and how does doctor check?</summary>
+    <div class="a">
+      <p>The tools need FFmpeg 5.0 or later and Python 3.9 or later, standard library only. FFmpeg 6.1+ is recommended: 5.x still works, is deprecated since 2.14.0, and 3.0 requires 6.1. Python 3.10+ is recommended: 3.9 still works, is deprecated since 2.10.9, and 3.0 drops it. <code>doctor</code> and the npx installer print that warning. Node 16+ is only for the installer.</p>
+      <p><code>doctor</code> runs <code>ffmpeg -encoders</code>, <code>-filters</code> and <code>-bsfs</code> and marks each capability the contract names <code>available</code>, <code>missing</code> or <code>unknown</code>. Exit 0 when everything required is available, 1 when something required is missing, 2 when nothing required is proven missing but a required capability is unknown. CI on every pull request runs FFmpeg 5.1.1, 6.1, 7.1, 8.x and 9.x, on Python 3.9 and 3.13.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L470">README.md:470</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L609-L611">README.md:609</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L1814">_contract.py:1814</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L984-L1002">_contract.py:984</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L1936-L1939">_contract.py:1936</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="doctor-usable">
+  <a class="perma" href="#doctor-usable" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Does <code>doctor</code> saying ok mean every tool can run?</summary>
+    <div class="a">
+      <p>No. <code>ok</code> means nothing required by every tool is missing. <code>doctor --json</code>’s <code>tools</code> field is per tool: <code>usable</code>, <code>missing</code> and <code>fix</code>. A plain Homebrew <code>ffmpeg</code> can be <code>ok</code> while <code>caption</code> is <code>usable: no</code> because <code>subtitles</code> is absent. <code>gpu_encoders</code> lists nvenc, videotoolbox, qsv, vaapi and amf when the build was compiled with them. That list is not a successful encode, and it does not change <code>ok</code>.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L117">README.md:117</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L372-L374">README.md:372</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="windows">
+  <a class="perma" href="#windows" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Does it run on Windows?</summary>
+    <div class="a">
+      <p>CI runs the tests on Windows with the 9.x gyan.dev FFmpeg build, on Python 3.9 and 3.13. The README’s install line for FFmpeg there is <code>winget install Gyan.FFmpeg</code>. A python.org install exposes <code>python</code> or <code>py</code>, not <code>python3</code>, unless Python came from the Microsoft Store; the installer and MCP docs say to use <code>python</code> in that case.</p>
+      <p>The real-device corpus has been run on Linux and macOS. The README says the full corpus has not been run on Windows, and an install by someone other than the maintainer has not been reproduced there. <a href="https://github.com/kajisho5/ffmpeg-skill/issues/143">Issue #143</a> is still open: it tracks real-hands verification of Windows, Cursor and Codex installs on machines that are not the maintainer’s, plus editor reviews.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L470">README.md:470</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L157">README.md:157</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L600">README.md:600</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L490-L492">README.md:490</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/issues/143">issue #143</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="homebrew">
+  <a class="perma" href="#homebrew" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Why does a Homebrew ffmpeg lack subtitles or drawtext?</summary>
+    <div class="a">
+      <p>The plain Homebrew <code>ffmpeg</code> formula lacks <code>subtitles</code>, <code>drawtext</code> and <code>zscale</code>. <code>ffmpeg-full</code> has them and is keg-only, so installing it does not put it on PATH. If the <code>ffmpeg</code> on PATH is that lean formula, the skill uses <code>ffmpeg-full</code> from the same Homebrew prefix (<code>opt/ffmpeg-full/bin</code>) for both <code>ffmpeg</code> and <code>ffprobe</code>. <code>doctor</code> says so. Any other <code>ffmpeg</code> on PATH is used as it is.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L598">README.md:598</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L602">README.md:602</a>
+      </p>
+    </div>
+  </details>
+</article>
+</section>
 
 <section class="topic" id="safety">
 <h2>Safety and files</h2>
@@ -47,6 +216,21 @@
         <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_common/runner.py#L1379-L1382">runner.py:1379</a>
         <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L1816-L1818">_contract.py:1816</a>
         <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/tests/test_contract.py#L3713-L3719">test_contract.py:3713</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="local">
+  <a class="perma" href="#local" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Is it local, and does it upload media?</summary>
+    <div class="a">
+      <p>The contract sets <code>execution.network</code> to false and lists network access as not provided. The scripts call ffmpeg and ffprobe on this machine. They do not upload the file.</p>
+      <p>Optional speech recognition is the exception the contract names. <code>--transcribe</code>, and <code>silence.py --filler --transcribe</code>, can start a local engine (whisper.cpp, openai-whisper, faster-whisper, parakeet). The media is not uploaded. faster-whisper, parakeet-mlx and openai-whisper may download model weights the first time they run. <code>HF_HUB_OFFLINE=1</code> keeps faster-whisper and parakeet-mlx on a copy already cached. whisper.cpp and parakeet.cpp do not download. If no engine is installed, the tool refuses and names the installs.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L1812">_contract.py:1812</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L1815-L1832">_contract.py:1815</a>
       </p>
     </div>
   </details>
@@ -126,6 +310,93 @@
       <p>The encode path a tool will actually take is Apple VideoToolbox, for h264, hevc and prores, and only on Apple Silicon. <code>--hw</code> asks for it on that call. <code>FFMPEG_SKILL_HW=1</code> makes it the default for every re-encoding tool except <code>export.py</code>’s delivery presets, which take <code>--hw</code> on their own (or <code>render.py --hw</code> for a whole project). AV1 stays on SVT-AV1. nvenc, QSV, VAAPI and AMF are reported by <code>doctor --json</code>’s <code>gpu_encoders</code> when the ffmpeg build was compiled with them, and no tool encodes with them. One build is the exception to opt-in: with no <code>libx264</code> and no <code>libx265</code>, and with <code>h264_videotoolbox</code> or <code>hevc_videotoolbox</code>, those encodes use VideoToolbox without <code>--hw</code> and the result says <code>hw.source</code> is <code>"auto"</code>. <code>--no-hw</code> still asks for the CPU encoder. A VideoToolbox job the hardware refuses is re-encoded on the CPU and the result says so (<code>hw.fallback</code>).</p>
       <p class="src"><span>Sources</span>
         <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L430">README.md:430</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="formats">
+  <a class="perma" href="#formats" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Which formats can it read and write?</summary>
+    <div class="a">
+      <p>Reading is whatever <code>ffprobe</code> and <code>ffmpeg</code> on PATH can open. The skill does not keep a separate list of input containers. For audio outputs, the extension picks the codec: <code>.wav</code> PCM, <code>.flac</code> FLAC, <code>.mp3</code> MP3, <code>.m4a</code> and <code>.aac</code> AAC, <code>.ogg</code> Vorbis, <code>.opus</code> Opus. The README names those same extensions for <code>probe</code>, <code>cut</code>, <code>join</code>, <code>silence</code>, <code>loudness</code>, <code>audio</code>, <code>sync</code> and <code>check --platform podcast</code>.</p>
+      <p><code>export.py</code> presets are <code>youtube</code>, <code>youtube4k</code>, <code>reels</code>, <code>tiktok</code>, <code>shorts</code>, <code>linkedin</code>, <code>facebook</code>, <code>x</code>, <code>youtube-hdr</code>, <code>youtube-av1</code>, <code>prores</code>, <code>h265</code>, <code>gif</code> and <code>copy</code>. <code>copy</code> stream-copies the source codecs. ProRes is written as <code>.mov</code>.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_common/decision.py#L679-L687">decision.py:679</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L284">README.md:284</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/export.py#L6-L21">export.py:6</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="times">
+  <a class="perma" href="#times" aria-label="Link to this question">#</a>
+  <details>
+    <summary>How do I write a time?</summary>
+    <div class="a">
+      <p>Timestamp flags take seconds, <code>mm:ss</code>, <code>hh:mm:ss</code> with an optional fraction, or SMPTE <code>hh:mm:ss:ff</code> with an optional <code>@fps</code>. Length flags such as <code>--min-silence</code> and <code>--fade</code> are plain seconds. One parser, <code>time_arg</code>, is what the tools call.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/SKILL.md#L61">SKILL.md:61</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L206">README.md:206</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="fast">
+  <a class="perma" href="#fast" aria-label="Link to this question">#</a>
+  <details>
+    <summary>What does <code>--fast</code> do?</summary>
+    <div class="a">
+      <p><code>--fast</code> is preview quality. When the tool’s <code>--preset</code> is an x264 preset name, it is set to <code>veryfast</code>. It does not change the timeout. On the one-hour measurement, <code>export.py --preset youtube --fast</code> on a 10-minute segment took 162 s, against 514 s without it.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_common/runner.py#L293">runner.py:293</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_common/runner.py#L348-L358">runner.py:348</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L552">README.md:552</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="silence-threshold">
+  <a class="perma" href="#silence-threshold" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Why did silence removal find nothing?</summary>
+    <div class="a">
+      <p>The default threshold is <code>-35</code> dBFS (<code>--threshold</code>). The help text says to use <code>-40</code> to <code>-45</code> for a quiet room. Raise the threshold (for example <code>--threshold -25</code>) or shorten <code>--min-silence</code> when the track is louder than the default and nothing is marked.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/silence.py#L256">silence.py:256</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L397">README.md:397</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="hdr">
+  <a class="perma" href="#hdr" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Does it flatten HDR?</summary>
+    <div class="a">
+      <p>No. When the probe reports HDR (HDR10, HLG, Dolby Vision, BT.2020), the tools keep it. Convert on purpose with <code>color.py --to-sdr</code> before an H.264 deliverable or a LUT. <code>export.py</code> platform presets are SDR and warn on HDR input. <code>youtube-hdr</code> is the preset that keeps HDR10/HLG tags and refuses an SDR source.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L384">README.md:384</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/export.py#L14">export.py:14</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="join-reencode">
+  <a class="perma" href="#join-reencode" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Does join stream-copy?</summary>
+    <div class="a">
+      <p>No. <code>join.py</code> builds one filter graph (scale, fps, format, and either <code>concat</code> or <code>xfade</code>/<code>acrossfade</code>) and encodes. The one-hour measurement notes that join always re-encodes so it can crossfade and conform. A clip with no audio stream is padded with <code>anullsrc</code>, which is the same gap described under <code>verified: true</code>.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/join.py#L513-L558">join.py:513</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L550">README.md:550</a>
       </p>
     </div>
   </details>
@@ -256,6 +527,20 @@
     </div>
   </details>
 </article>
+
+<article class="qa" id="caption-text">
+  <a class="perma" href="#caption-text" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Will it rewrite my caption text to make it fit?</summary>
+    <div class="a">
+      <p>No. <code>caption.py</code> burns the cues as given. Line breaks, timing and type size can change. <code>--fit-size</code> walks the size down until the cue fits. A split cue, a dropped cue, transcription, or <code>--emoji none</code> (which removes glyphs from the drawn text) are reported as not unchanged. The result key <code>text_unchanged</code> is true only when none of those happened.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/caption.py#L1643-L1657">caption.py:1643</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/SKILL.md#L50">SKILL.md:50</a>
+      </p>
+    </div>
+  </details>
+</article>
 </section>
 
 <section class="topic" id="scale">
@@ -295,6 +580,87 @@
   </details>
 </article>
 
+<article class="qa" id="batch">
+  <a class="perma" href="#batch" aria-label="Link to this question">#</a>
+  <details>
+    <summary>How does batch processing and its cache work?</summary>
+    <div class="a">
+      <p><code>batch.py</code> applies one recipe to each file in a folder. The cache file is <code>.ffskill_cache.json</code> in the output directory. <code>--force</code> ignores it. <code>--jobs N</code> runs N files at once, or <code>auto</code> for <code>min(cpu_count, 4)</code>, and the cap is <code>min(N, cpu_count, 8)</code>.</p>
+      <p>A file’s cache identity is a sha1 of its name, size, mtime in whole seconds, and the first and last 1 MiB (the last megabyte is read only when the file is larger than 2 MiB). The recipe is hashed too, including the text of a <code>project</code> file it names. The GPU flag is part of the key, so a <code>--hw</code> output is not served to a CPU run. A change that leaves the name, size, that mtime-second, and those two megabytes the same does not change the file key.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/batch.py#L50-L59">batch.py:50</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/batch.py#L62-L78">batch.py:62</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/batch.py#L81-L86">batch.py:81</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/batch.py#L312-L316">batch.py:312</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/batch.py#L368">batch.py:368</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="render-cache">
+  <a class="perma" href="#render-cache" aria-label="Link to this question">#</a>
+  <details>
+    <summary>How does <code>render.py --cache</code> decide a stage is the same?</summary>
+    <div class="a">
+      <p><code>--cache DIR</code> is opt-in. There is no default directory. The key is a sha1 of the stage name, tool, arguments (files that exist are replaced by the same fingerprint <code>batch.py</code> uses), input fingerprints, the forwarded child flags except <code>--dry-run</code>, codec, output extension, the hardware environment, the ffmpeg build banner, the skill version and the contract version. A different ffmpeg build or skill version does not reuse an entry. If the banner cannot be read, the key falls back to the major.minor pair and says so.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/render.py#L658-L665">render.py:658</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/render.py#L697-L726">render.py:697</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/render.py#L1057-L1060">render.py:1057</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="prompts">
+  <a class="perma" href="#prompts" aria-label="Link to this question">#</a>
+  <details>
+    <summary>What are the MCP prompts?</summary>
+    <div class="a">
+      <p>The server advertises five prompts: <code>reel</code>, <code>podcast</code>, <code>multicam</code>, <code>delivery_check</code> and <code>hdr</code>. <code>prompts/get</code> returns text that names commands the tools already run. They are not extra tools.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/scripts/_contract.py#L1626-L1628">_contract.py:1626</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L363">README.md:363</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="evals">
+  <a class="perma" href="#evals" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Which models has it been evaluated on?</summary>
+    <div class="a">
+      <p>The published agent runs in the README are a Sonnet agent. Where an independent grader is named, it is Opus, and the trigger judge is Sonnet. <code>docs/design-decisions.md</code> records that as Claude-only: a number for another vendor was not measured here. <code>evals/run.py</code> is a regex grader that another harness can run on a transcript. The README table is the record of those runs, including the ones that did not score full marks.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/docs/design-decisions.md#L532-L539">design-decisions.md:532</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L504">README.md:504</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="bugs">
+  <a class="perma" href="#bugs" aria-label="Link to this question">#</a>
+  <details>
+    <summary>How do I report a bug?</summary>
+    <div class="a">
+      <p>Read <code>docs/design-decisions.md</code> first. It lists behaviours that look like bugs and names the test that pins each one. If the report is about one of those, say which sentence no longer holds. A bug report should include the command, the actual and expected behaviour, and <code>python3 scripts/_contract.py doctor --json</code> when the failure might be a missing encoder or filter.</p>
+      <p>A security issue goes to GitHub’s private advisory flow (Security tab, Report a vulnerability), not a public issue. <code>SECURITY.md</code> asks for the file, the version, a minimal reproduction and the impact. Only the latest published version is supported.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/CONTRIBUTING.md#L102-L110">CONTRIBUTING.md:102</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/docs/design-decisions.md#L1-L7">design-decisions.md:1</a>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/SECURITY.md#L3-L22">SECURITY.md:3</a>
+      </p>
+    </div>
+  </details>
+</article>
+</section>
+
+<section class="topic" id="compare">
+<h2>Comparison</h2>
+
 <article class="qa" id="remotion">
   <a class="perma" href="#remotion" aria-label="Link to this question">#</a>
   <details>
@@ -303,6 +669,19 @@
       <p>ffmpeg-skill edits footage you already have, on this machine, with FFmpeg tools whose flags are a machine-readable contract (<code>contract --json</code>). Remotion renders a video from React components. They complement each other: this repository does not call Remotion, and a file Remotion writes is an ordinary input (<code>probe.py</code>, <code>cut.py</code>, <code>fit.py</code>, <code>export.py</code>, <code>check.py</code>). <a href="https://github.com/kajisho5/remotion-ffmpeg-skill">remotion-ffmpeg-skill</a> joins the two. It measures the footage with this repo, draws the graphics in Remotion from those measurements, and checks and delivers the result with this repo again. Install both (<code>npx ffmpeg-skill</code>, then <code>npx remotion-ffmpeg-skill</code>). As with the other skills, the dependency runs one way: it calls these tools, and nothing here calls it. HyperFrames renders a video from HTML and is the same kind of neighbour: a file it writes is an ordinary input too.</p>
       <p class="src"><span>Sources</span>
         <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L414">README.md:414</a>
+      </p>
+    </div>
+  </details>
+</article>
+
+<article class="qa" id="other-skills">
+  <a class="perma" href="#other-skills" aria-label="Link to this question">#</a>
+  <details>
+    <summary>Does this repository call the other skills?</summary>
+    <div class="a">
+      <p>No. The README’s ecosystem list (media analysis, transcription, subtitles, thumbnails, colour grading, motion graphics, QC) reads this repo’s <code>contract --json</code>, tool JSON and <code>doctor</code>. This repository does not call them. The same one-way line is what the Remotion answer says about <code>remotion-ffmpeg-skill</code>.</p>
+      <p class="src"><span>Sources</span>
+        <a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/README.md#L64-L77">README.md:64</a>
       </p>
     </div>
   </details>

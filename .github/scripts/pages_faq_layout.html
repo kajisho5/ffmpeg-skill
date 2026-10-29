@@ -39,12 +39,23 @@ a:focus-visible, summary:focus-visible, input:focus-visible, .skip:focus {
   padding: 8px 12px; border-radius: 6px; z-index: 4;
 }
 .skip:focus { top: 8px; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .head { position: sticky; top: 0; z-index: 2; background: var(--nav-bg); border-bottom: 1px solid var(--line); }
 nav .in {
   max-width: 760px; margin: 0 auto; padding: 10px 16px;
   display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
 }
+.nav-links { display: contents; }
 nav .brand { font-weight: 600; color: var(--fg); margin-right: auto; }
+.search-toggle {
+  display: none; flex: 0 0 auto; width: 44px; height: 44px; padding: 0;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+  cursor: pointer;
+}
+.search-toggle svg { display: block; margin: auto; }
 .tools { max-width: 760px; margin: 0 auto; padding: 0 16px 12px; }
 .tools label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
 .tools input {
@@ -53,6 +64,25 @@ nav .brand { font-weight: 600; color: var(--fg); margin-right: auto; }
   min-height: 44px;
 }
 #faq-count { margin: 6px 0 0; color: var(--muted); font-size: .85rem; }
+@media (max-width: 720px) {
+  nav .in { flex-wrap: nowrap; gap: 8px; padding: 4px 8px 4px 12px; }
+  .nav-links {
+    display: flex; gap: 14px; overflow-x: auto; flex: 1 1 auto; min-width: 0;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .nav-links::-webkit-scrollbar { display: none; }
+  .nav-links a { white-space: nowrap; flex: 0 0 auto; line-height: 44px; }
+  nav .brand, .search-toggle { flex: 0 0 auto; }
+  .search-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  .tools {
+    display: none; position: absolute; left: 0; right: 0; top: 100%;
+    margin: 0; max-width: none; background: var(--nav-bg);
+    border-bottom: 1px solid var(--line); padding: 8px 12px 12px;
+  }
+  .head.is-search-open .tools { display: block; }
+  .toc ul { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .toc a { white-space: nowrap; }
+}
 main { max-width: 760px; margin: 0 auto; padding: 8px 16px 64px; overflow-wrap: anywhere; }
 h1 { font-size: 2rem; line-height: 1.2; margin: 1.2rem 0 .4rem; }
 .lede { margin: 0 0 1rem; color: var(--fg); max-width: 62ch; }
@@ -67,7 +97,8 @@ h1 { font-size: 2rem; line-height: 1.2; margin: 1.2rem 0 .4rem; }
   font-size: .85rem; letter-spacing: .04em; text-transform: uppercase;
   color: var(--muted); border: 0; margin: 1.6rem 0 .6rem; font-weight: 600;
 }
-.qa { position: relative; margin: 0 0 8px; scroll-margin-top: 9rem; }
+.qa { position: relative; margin: 0 0 8px; scroll-margin-top: calc(var(--head-h, 56px) + 12px); }
+.topic, h1 { scroll-margin-top: calc(var(--head-h, 56px) + 12px); }
 .qa[hidden], .topic[hidden], #faq-empty[hidden] { display: none; }
 .perma {
   position: absolute; right: 10px; top: 10px; z-index: 1;
@@ -108,14 +139,20 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
 <div class="head">
 <nav><div class="in">
   <a class="brand" href="{{ '/' | relative_url }}">ffmpeg-skill</a>
+  <div class="nav-links">
   <a href="{{ '/docs/demos.html' | relative_url }}">Demos</a>
   <a href="{{ '/docs/contract.html' | relative_url }}">Contract</a>
   <a href="{{ '/docs/design-decisions.html' | relative_url }}">Design decisions</a>
   <a href="{{ '/docs/faq.html' | relative_url }}" aria-current="page">FAQ</a>
   <a href="{{ '/CHANGELOG.html' | relative_url }}">Changelog</a>
   <a href="https://github.com/kajisho5/ffmpeg-skill">GitHub</a>
+  </div>
+  <button type="button" class="search-toggle" id="faq-search-toggle" aria-expanded="false" aria-controls="faq-search-panel">
+    <span class="visually-hidden">Search questions</span>
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12.5 12.5 L17 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
 </div></nav>
-<div class="tools">
+<div class="tools" id="faq-search-panel">
   <form role="search" action="#faq-list">
     <label for="faq-q">Search questions</label>
     <input id="faq-q" type="search" placeholder="Filter by words in the question or answer" autocomplete="off" enterkeyhint="search">
@@ -134,7 +171,43 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
   var list = document.getElementById("faq-list");
   var empty = document.getElementById("faq-empty");
   var count = document.getElementById("faq-count");
-  if (!input || !list) return;
+  var head = document.querySelector(".head");
+  var toggle = document.getElementById("faq-search-toggle");
+  if (!input || !list || !head) return;
+  var narrow = window.matchMedia("(max-width: 720px)");
+
+  function setHeadHeight() {
+    document.documentElement.style.setProperty("--head-h", head.offsetHeight + "px");
+  }
+  setHeadHeight();
+  if (window.ResizeObserver) new ResizeObserver(setHeadHeight).observe(head);
+  window.addEventListener("resize", setHeadHeight);
+
+  function setSearchOpen(open) {
+    if (!toggle || !narrow.matches) return;
+    head.classList.toggle("is-search-open", open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) input.focus();
+    setHeadHeight();
+  }
+  if (toggle) {
+    toggle.addEventListener("click", function () {
+      var open = toggle.getAttribute("aria-expanded") !== "true";
+      setSearchOpen(open);
+      if (!open) toggle.focus();
+    });
+  }
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape" || !head.classList.contains("is-search-open")) return;
+    setSearchOpen(false);
+    if (toggle) toggle.focus();
+  });
+  var lastY = 0;
+  window.addEventListener("scroll", function () {
+    var y = window.scrollY || 0;
+    if (narrow.matches && y > lastY + 8 && y > 48 && head.classList.contains("is-search-open")) setSearchOpen(false);
+    lastY = y;
+  }, { passive: true });
   var articles = list.querySelectorAll("article.qa");
   var sections = list.querySelectorAll("section.topic");
 
@@ -176,13 +249,14 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
   input.addEventListener("input", apply);
   window.addEventListener("hashchange", function () {
     if (input.value) { input.value = ""; apply(); }
+    setSearchOpen(false);
     openFromHash();
   });
   document.addEventListener("click", function (event) {
     var link = event.target.closest ? event.target.closest("a[href^='#']") : null;
-    if (!link || !input.value) return;
-    input.value = "";
-    apply();
+    if (!link) return;
+    if (input.value) { input.value = ""; apply(); }
+    setSearchOpen(false);
   });
   apply();
   openFromHash();
