@@ -14,6 +14,7 @@ on:
       - "brand/**"
       - ".github/scripts/build_pages.py"
       - ".github/scripts/pages_layout.html"
+      - ".github/scripts/pages_faq_layout.html"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 

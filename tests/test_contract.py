@@ -252,9 +252,18 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(build_pages._rewrite_prose('[c](docs/contract.md "API") `](no.png)`', "README.md", set()),
                              '[c](docs/contract.html "API") `](no.png)`')
             self.assertTrue((out / "_layouts" / "default.html").is_file())
-            for page in out.rglob("*.md"):
+            self.assertTrue((out / "_layouts" / "faq.html").is_file())
+            faq = (out / "docs" / "faq.html").read_text(encoding="utf-8")
+            self.assertTrue(faq.startswith("---\nlayout: faq\n"), "docs/faq.html")
+            self.assertIn('"@type": "FAQPage"', faq)
+            for page in out.rglob("*"):
+                if "_layouts" in page.parts or page.suffix not in {".md", ".html"}:
+                    continue
                 text = page.read_text(encoding="utf-8")
-                self.assertTrue(text.startswith("---\nlayout: default\n"), page)
+                self.assertTrue(
+                    text.startswith("---\nlayout: default\n") or text.startswith("---\nlayout: faq\n"),
+                    page,
+                )
                 for src in re.findall(r'(?:src|srcset)="([^"]+)"|!\[[^\]]*\]\(([^)\s]+)\)', text):
                     url = (src[0] or src[1]).split()[0]
                     if not re.match(r"^[a-z]+:", url):

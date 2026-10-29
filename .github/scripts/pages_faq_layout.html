@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if page.title and page.title != site.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+<meta name="description" content="Questions about ffmpeg-skill: overwrite, cuts, verification, audio, captions, and long jobs.">
+<meta property="og:title" content="{{ page.title | default: site.title }}">
+<meta property="og:description" content="Questions about ffmpeg-skill: overwrite, cuts, verification, audio, captions, and long jobs.">
+<meta property="og:image" content="https://raw.githubusercontent.com/kajisho5/ffmpeg-skill/main/assets/social-preview.png">
+<link rel="icon" href="{{ '/brand/app-icon.png' | relative_url }}">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
+  --link: #0969da; --code-bg: #f6f8fa; --nav-bg: #f6f8fa;
+  --card: #ffffff; --chip: #f6f8fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
+    --link: #4493f8; --code-bg: #151b23; --nav-bg: #151b23;
+    --card: #0d1117; --chip: #151b23;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:focus-visible, summary:focus-visible, input:focus-visible, .skip:focus {
+  outline: 2px solid var(--link); outline-offset: 2px;
+}
+.skip {
+  position: absolute; left: 12px; top: -40px; background: var(--bg); color: var(--fg);
+  padding: 8px 12px; border-radius: 6px; z-index: 4;
+}
+.skip:focus { top: 8px; }
+.head { position: sticky; top: 0; z-index: 2; background: var(--nav-bg); border-bottom: 1px solid var(--line); }
+nav .in {
+  max-width: 760px; margin: 0 auto; padding: 10px 16px;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+}
+nav .brand { font-weight: 600; color: var(--fg); margin-right: auto; }
+.tools { max-width: 760px; margin: 0 auto; padding: 0 16px 12px; }
+.tools label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
+.tools input {
+  width: 100%; font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  min-height: 44px;
+}
+#faq-count { margin: 6px 0 0; color: var(--muted); font-size: .85rem; }
+main { max-width: 760px; margin: 0 auto; padding: 8px 16px 64px; overflow-wrap: anywhere; }
+h1 { font-size: 2rem; line-height: 1.2; margin: 1.2rem 0 .4rem; }
+.lede { margin: 0 0 1rem; color: var(--fg); max-width: 62ch; }
+.toc { margin: 0 0 1.5rem; padding: 0; }
+.toc ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.toc a {
+  display: inline-block; border: 1px solid var(--line); background: var(--chip);
+  border-radius: 999px; padding: 6px 12px; min-height: 44px; line-height: 30px;
+}
+.topic { margin: 0 0 1.5rem; }
+.topic h2 {
+  font-size: .85rem; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); border: 0; margin: 1.6rem 0 .6rem; font-weight: 600;
+}
+.qa { position: relative; margin: 0 0 8px; scroll-margin-top: 9rem; }
+.qa[hidden], .topic[hidden], #faq-empty[hidden] { display: none; }
+.perma {
+  position: absolute; right: 10px; top: 10px; z-index: 1;
+  width: 32px; height: 32px; line-height: 32px; text-align: center;
+  border-radius: 6px; color: var(--muted); font-weight: 600;
+}
+.perma:hover, .perma:focus-visible { background: var(--code-bg); color: var(--link); }
+details {
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+}
+summary {
+  cursor: pointer; list-style: none; min-height: 44px;
+  padding: 12px 44px 12px 2.4rem; font-weight: 600; line-height: 1.4;
+  position: relative;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: ""; position: absolute; left: 16px; top: 1.15rem;
+  width: .45rem; height: .45rem;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+}
+details[open] summary::before { transform: rotate(45deg); top: 1rem; }
+@media (prefers-reduced-motion: reduce) {
+  summary::before { transition: none; }
+}
+.a { padding: 0 16px 14px 2.4rem; max-width: 68ch; }
+.a p { margin: .6em 0; }
+code { font: 85%/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: .15em .35em; border-radius: 6px; }
+.src { font-size: .85rem; color: var(--muted); margin-top: 1em; }
+.src a { margin-right: .75em; }
+#faq-empty { margin: 1rem 0; }
+footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#faq-list">Skip to questions</a>
+<div class="head">
+<nav><div class="in">
+  <a class="brand" href="{{ '/' | relative_url }}">ffmpeg-skill</a>
+  <a href="{{ '/docs/demos.html' | relative_url }}">Demos</a>
+  <a href="{{ '/docs/contract.html' | relative_url }}">Contract</a>
+  <a href="{{ '/docs/design-decisions.html' | relative_url }}">Design decisions</a>
+  <a href="{{ '/docs/faq.html' | relative_url }}" aria-current="page">FAQ</a>
+  <a href="{{ '/CHANGELOG.html' | relative_url }}">Changelog</a>
+  <a href="https://github.com/kajisho5/ffmpeg-skill">GitHub</a>
+</div></nav>
+<div class="tools">
+  <form role="search" action="#faq-list">
+    <label for="faq-q">Search questions</label>
+    <input id="faq-q" type="search" placeholder="Filter by words in the question or answer" autocomplete="off" enterkeyhint="search">
+  </form>
+  <p id="faq-count" aria-live="polite"></p>
+</div>
+</div>
+<main>
+{{ content }}
+<p id="faq-empty" hidden>No questions match that search.</p>
+</main>
+<footer>Generated from the repository's own Markdown by <code>.github/scripts/build_pages.py</code>. Source: <a href="https://github.com/kajisho5/ffmpeg-skill">kajisho5/ffmpeg-skill</a> · MIT</footer>
+<script>
+(function () {
+  var input = document.getElementById("faq-q");
+  var list = document.getElementById("faq-list");
+  var empty = document.getElementById("faq-empty");
+  var count = document.getElementById("faq-count");
+  if (!input || !list) return;
+  var articles = list.querySelectorAll("article.qa");
+  var sections = list.querySelectorAll("section.topic");
+
+  function detailsOf(article) { return article.querySelector("details"); }
+
+  function openFromHash() {
+    var id = decodeURIComponent((location.hash || "").replace(/^#/, ""));
+    if (!id) return;
+    var el = document.getElementById(id);
+    if (!el) return;
+    var article = el.classList && el.classList.contains("qa") ? el : (el.closest ? el.closest("article.qa") : null);
+    var details = article ? detailsOf(article) : (el.tagName === "DETAILS" ? el : null);
+    if (details) details.open = true;
+  }
+
+  function apply() {
+    var needle = input.value.trim().toLowerCase();
+    var shown = 0;
+    for (var i = 0; i < articles.length; i++) {
+      var article = articles[i];
+      var match = !needle || article.textContent.toLowerCase().indexOf(needle) !== -1;
+      article.hidden = !match;
+      var details = detailsOf(article);
+      if (match) shown++;
+      if (needle && match && details) details.open = true;
+      if (!needle && details) details.open = location.hash === "#" + article.id;
+    }
+    for (var s = 0; s < sections.length; s++) {
+      sections[s].hidden = !sections[s].querySelector("article.qa:not([hidden])");
+    }
+    if (empty) empty.hidden = shown !== 0;
+    if (count) {
+      count.textContent = needle
+        ? (shown + (shown === 1 ? " question matches" : " questions match"))
+        : (articles.length + " questions");
+    }
+  }
+
+  input.addEventListener("input", apply);
+  window.addEventListener("hashchange", function () {
+    if (input.value) { input.value = ""; apply(); }
+    openFromHash();
+  });
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest ? event.target.closest("a[href^='#']") : null;
+    if (!link || !input.value) return;
+    input.value = "";
+    apply();
+  });
+  apply();
+  openFromHash();
+})();
+</script>
+</body>
+</html>
