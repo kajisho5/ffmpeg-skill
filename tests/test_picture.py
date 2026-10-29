@@ -3345,6 +3345,41 @@ class TraditionalChineseFontTests(unittest.TestCase):
             codes = [f.get("code") for f in STATE.fallbacks[before:]]
             self.assertIn("font_variant_missing", codes)
 
+    def _fc(self, by_lang):
+        import _common.fonts as fonts
+        fonts._SCRIPT_FONT_CACHE.clear()
+        asked = []
+
+        def fake(lang):
+            asked.append(lang)
+            return by_lang.get(lang, [])
+        return asked, unittest.mock.patch.multiple(fonts, _fc_list_fonts=fake), \
+            unittest.mock.patch("platform.system", return_value="Linux")
+
+    def test_fontconfig_asks_zh_tw_and_picks_the_traditional_family(self):
+        import _common.fonts as fonts
+        asked, fc, plat = self._fc({
+            "zh-tw": [("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK TC"])],
+            "zh-cn": [("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK SC"])]})
+        with fc, plat:
+            script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
+        self.assertIn("zh-tw", asked)
+        self.assertEqual((script, family), ("zh", "Noto Sans CJK TC"))
+
+    def test_unifont_alone_for_traditional_does_not_block_the_simplified_face(self):
+        """fontconfig's Unifont "covers" zh-tw with code-point boxes; a real Simplified face
+        draws the characters, so it wins, and the swap is recorded."""
+        import _common.fonts as fonts
+        from _common import STATE
+        asked, fc, plat = self._fc({
+            "zh-tw": [("/f/unifont.otf", ["Unifont"])],
+            "zh-cn": [("/f/unifont.otf", ["Unifont"]), ("/f/NotoSansCJK-Regular.ttc", ["Noto Sans CJK SC"])]})
+        before = len(STATE.fallbacks)
+        with fc, plat:
+            script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
+        self.assertEqual((script, family), ("zh", "Noto Sans CJK SC"))
+        self.assertIn("font_variant_missing", [f.get("code") for f in STATE.fallbacks[before:]])
+
 
 class EmojiTests(unittest.TestCase):
     """1.15: emoji are detected as clusters, measured at a full em, reserved in the ASS and

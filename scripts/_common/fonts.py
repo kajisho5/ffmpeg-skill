@@ -473,6 +473,11 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
     return False
 
 
+def _is_last_resort(entry: "Tuple[str, str]") -> bool:
+    """Unifont, fontconfig's code-point-box face: it covers every script and renders none."""
+    return "unifont" in " ".join(str(x) for x in entry).lower()
+
+
 def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Optional[str]" = None,
                          font_explicit: bool = False, font_file: "Optional[str]" = None,
                          fonts_dir: "Optional[str]" = None
@@ -515,10 +520,12 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
                         "picking one by script instead (the directory is still searched first)", "fonts_dir_lacks_script",
                         fonts_dir=fonts_dir, script=script)
     entry = _script_font_entry(key)
-    if not entry and key != script:
-        # no Traditional face: the Simplified one still has the characters, in the other form
-        entry = _script_font_entry(script)
-        if entry and entry is not FC_UNKNOWN:
+    if key != script and (not entry or (entry is not FC_UNKNOWN and _is_last_resort(entry))):
+        # no Traditional face (Unifont's code-point boxes are none): the Simplified one still
+        # has the characters, in the other form
+        simplified = _script_font_entry(script)
+        if simplified and simplified is not FC_UNKNOWN and (not entry or not _is_last_resort(simplified)):
+            entry = simplified
             record_fallback(f"font: no {LANGUAGE_NAMES[key]} face is installed; drawing with {entry[0]}, a "
                             "Simplified Chinese face whose glyph forms differ in places "
                             "(install fonts-noto-cjk or a TC font)", "font_variant_missing", lang=lang, file=entry[0])

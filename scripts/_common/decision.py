@@ -1285,7 +1285,11 @@ def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = F
             joined = ("" if unspaced else " ").join(norms)
             if joined not in listed or (unspaced and not _bounded(i, i + k)):
                 continue
-            if not all(t["timed"] for t in run):
+            # punctuation inside the run ("えー、" + "と") ends the word: the shorter run decides
+            if any(run[m]["punct_after"] or run[m + 1]["punct_before"] for m in range(k - 1)):
+                continue
+            # a run listed out of time order has no span to cut on
+            if not all(t["timed"] for t in run) or run[-1]["end"] <= run[0]["start"]:
                 untimed += 1
             elif run[-1]["end"] - run[0]["start"] > max_word:
                 too_long += 1

@@ -613,11 +613,17 @@ Built-in lists, one per language:
 |---|---|
 | en | um, uh, erm, hmm, mm, mhm, er, ah |
 | ja | えー, えーと, えっと, あの, あのー, その, そのー, まあ, なんか |
+| ko | 어, 어어, 에, 음, 음음, 으음, 흠 |
+| zh | 呃, 呃呃, 嗯, 嗯嗯, 唔 |
 | es | eh, este, esto, mmm |
 | de | äh, ähm, hm |
 | fr | euh, hein |
 | pt | é, hum |
 | it | ehm |
+| nl | eh, ehm, uh, uhm, hm |
+| pl | yy, yyy, ee, eee, em, emm, hmm |
+| ru | э, ээ, эм, эмм, мм, хм |
+| tr | ıı, ııı, ee, eee, hmm |
 
 **Discourse markers are not disfluencies.** `like`, `tipo` and `cioè` are
 deliberately *not* in the default lists: they are grammatical words in most

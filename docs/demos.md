@@ -618,6 +618,17 @@ python3 scripts/silence.py demos/out/silence_speech_aware_breathy.mp4 --threshol
 
 **Look for:** A 0.25 s breath sits inside a sentence and a 1 s pause sits between sentences. Left uses a --min-silence low enough to catch the breath too, so plain detection cuts both; right is --speech-aware at the ordinary --min-silence -- its finer 0.12 s floor still measures the breath, but the breath is shorter than --min-silence so it is kept, and only the real sentence-boundary pause is cut.
 
+### Korean filler words cut by the built-in list
+
+![Korean filler words cut by the built-in list](demos/filler_korean.gif)
+
+```bash
+python3 scripts/silence.py demos/out/filler_korean_speech.mp4 --filler --words demos/out/filler_korean_words.json --filler-list --json
+python3 scripts/silence.py demos/out/filler_korean_speech.mp4 --filler --words demos/out/filler_korean_words.json --margin 0 --preset veryfast -o demos/out/filler_korean_after.mp4
+```
+
+**Look for:** Five timed words, two of them the hesitations 음 and 어 (the low hum). Right is silence.py --filler with the transcript's language read as Korean: both hesitations are gone, and 음악은 (music), which starts with the same syllable, stays -- a filler matches a whole word, never a prefix.
+
 
 ## Delivery & checks
 

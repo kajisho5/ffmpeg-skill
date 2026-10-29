@@ -2441,6 +2441,33 @@ class FillerSpansTests(unittest.TestCase):
                                     {"you know"}, pad=0.0)
         self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("you know", 0.5, 0.9)])
 
+    def test_punctuation_inside_a_run_ends_the_word(self):
+        """えー、と is a filler and then a particle, not えーと: the comma is a word boundary, so
+        only えー goes and と is kept. The same holds for "you, know"."""
+        ja = self.D.FILLER_WORDS["ja"]
+        spans = self.D.filler_spans(self._w(("えー、", 1.0, 1.2), ("と", 1.2, 1.3)), ja, pad=0.0)
+        self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("えー", 1.0, 1.2)])
+        self.assertEqual(self.D.filler_spans(self._w(("you,", 0.5, 0.7), ("know", 0.7, 0.9)), {"you know"}), [])
+
+    def test_a_run_listed_out_of_time_order_is_untimed(self):
+        """A run whose last token ends before its first starts has no span to cut; cutting it
+        would hand keep_ranges an inverted range."""
+        stats = {}
+        spans = self.D.filler_spans(self._w(("you", 1.0, 1.2), ("know", 0.5, 0.7)), {"you know"}, stats=stats)
+        self.assertEqual(spans, [])
+        self.assertEqual(stats["matched_untimed"], 1)
+
+    def test_the_reference_table_lists_every_built_in_list_word_for_word(self):
+        """references/scripts.md restates FILLER_WORDS as a table; a language added to one and
+        not the other leaves a reader with no row to look up."""
+        text = (SCRIPTS.parent / "references" / "scripts.md").read_text(encoding="utf-8")
+        table = text.split("Built-in lists, one per language:", 1)[1].split("\n\n", 2)[1]
+        rows = {}
+        for line in table.splitlines()[2:]:
+            lang, words = [c.strip() for c in line.strip("|").split("|")]
+            rows[lang] = {w.strip() for w in words.split(",")}
+        self.assertEqual(rows, {k: set(v) for k, v in self.D.FILLER_WORDS.items()})
+
     def test_every_new_language_list_holds_disfluencies_only(self):
         """2.18 adds ko, zh, ru, nl, pl and tr. No list carries a word its own language uses as
         content; those are discourse markers, reachable with --filler-extra."""
