@@ -503,10 +503,14 @@ def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
 def _tag_seconds(value: Any) -> "Optional[float]":
     """A Matroska DURATION tag ("00:00:04.008000000") in seconds, or None."""
     try:
+        if "-" in str(value):  # "-00:00:01": int("-00") is 0, so the sign would be lost
+            return None
         h, m, sec = str(value).split(":")
-        return int(h) * 3600 + int(m) * 60 + float(sec)
+        seconds = int(h) * 3600 + int(m) * 60 + float(sec)
     except (TypeError, ValueError):
         return None
+    # float() reads "nan" and "inf": a length that is not a finite, non-negative number is none
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
 def _to_float(v: Any) -> Optional[float]:

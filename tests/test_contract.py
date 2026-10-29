@@ -75,8 +75,14 @@ def has_step(steps, want):
 
 def probe_streams(path):
     """{codec_type: stream duration in seconds} straight from ffprobe, not through the skill."""
-    out = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", path).stdout
+    out = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration,start_time", "-of", "json", path).stdout
     return {st["codec_type"]: st.get("duration") for st in json.loads(out)["streams"]}
+
+
+def probe_starts(path):
+    """{codec_type: stream start_time in seconds} straight from ffprobe."""
+    out = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "json", path).stdout
+    return {st["codec_type"]: float(st.get("start_time") or 0) for st in json.loads(out)["streams"]}
 
 
 def tool(name, *args, **kw):
@@ -3699,6 +3705,8 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(step["ok"], step)
         self.assertAlmostEqual(float(probe_streams(self.out("len_late_loud.mp4"))["audio"]),
                                float(probe_streams(late)["audio"]), delta=0.03)
+        # and it still starts where it started, beside the copied picture
+        self.assertAlmostEqual(probe_starts(self.out("len_late_loud.mp4"))["audio"], probe_starts(late)["audio"], delta=0.05)
         # Matroska gives no stream duration: the sound's own length comes from its DURATION tag,
         # not from the container, which is the 6 s picture's and failed a correct 4 s output
         mkv = self.out("len_short_audio.mkv")
@@ -3708,6 +3716,11 @@ class ContractTests(unittest.TestCase):
         step = next(s for s in doc["verification"] if s["step"] == "duration")
         self.assertTrue(step["ok"], step)
         self.assertAlmostEqual(step["expected"], 4.0, delta=0.05)
+        import importlib
+        probe_mod = importlib.import_module("_common.probe")
+        for bad in ("nan", "inf", "-00:00:01.0", "00:00:-1", "garbage", None):
+            self.assertIsNone(probe_mod._tag_seconds(bad if bad is None or ":" in bad else f"00:00:{bad}"), bad)
+        self.assertAlmostEqual(probe_mod._tag_seconds("00:00:04.008000000"), 4.008)
 
     def test_export_measures_the_length_its_preset_promises(self):
         """export.py trims to the platform maximum but never re-read the written length (the VDC
