@@ -164,6 +164,9 @@ def main() -> int:
          verification=[{"step": "loudness",
                         "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + TP_TOLERANCE_DB),
                         "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp,
+                        "property": "loudness", "expected": {"lufs": args.lufs, "tp_max": args.tp},
+                        "measured": {"lufs": float(after["input_i"]), "tp": float(after["input_tp"])},
+                        "delta": {"lufs": round(float(after["input_i"]) - args.lufs, 2), "tp": round(float(after["input_tp"]) - args.tp, 2)},
                         "tolerance": {"lufs": 1.0, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}])
     return 0
 

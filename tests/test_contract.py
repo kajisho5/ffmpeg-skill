@@ -3655,6 +3655,22 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("loudness", self.src, "-o", self.out("vdc_loud.mp4"), "--overwrite", "--json").stdout)
         step = next(s for s in doc["verification"] if s["step"] == "loudness")
         self.assertEqual(step["tolerance"]["tp"], _platforms.TP_TOLERANCE_DB)
+        self.assertEqual(set(step["expected"]), {"lufs", "tp_max"})
+        self.assertAlmostEqual(step["delta"]["tp"], step["measured"]["tp"] - step["expected"]["tp_max"], places=1)
+        # the verdict at the boundary, not only the constant: a 440 Hz sine whose true peak is
+        # 0.05 dB over a -1 dBTP ceiling passes, one 0.15 dB over fails
+        for over, status in ((0.05, "PASS"), (0.15, "FAIL")):
+            wav = self.out(f"vdc_tp_{over}.wav")
+            ffmpeg("-f", "lavfi", "-i", f"aevalsrc={10 ** ((-1 + over) / 20):.6f}*sin(2*PI*440*t):s=48000:d=5", "-c:a", "pcm_s24le", wav)
+            rows = json.loads(tool("check", wav, "--platform", "podcast", "--tp", "-1", "--json", check=False).stdout)["checks"]
+            self.assertEqual(next(r for r in rows if r["check"] == "true peak")["status"], status, f"+{over} dB")
+        # export's step carries what it measured against the platform, not only the verdict
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("vdc_x.mp4"), "--overwrite", "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "loudness")
+        self.assertEqual(step["tolerance"]["tp"], _platforms.TP_TOLERANCE_DB)
+        self.assertAlmostEqual(step["delta"]["tp"], step["measured"]["tp"] - step["expected"]["tp_max"], places=1)
+        self.assertIn("lufs", step["measured"])
+        self.assertIn("tp", step["delta"])
 
     def test_unverified_range_names_real_tools_and_reaches_the_contract(self):
         from _common.emit import UNVERIFIED

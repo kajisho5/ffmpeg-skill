@@ -44,6 +44,18 @@ from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLE
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
 # from a literal restated here: before 1.14 they were typed twice and the facebook preset had
 # already drifted (no duration cap against the table's 14400 s).
+
+def _loudness_step(ok: bool, platform: str, spec: dict, m: dict) -> dict:
+    """export's loudness verification step: the platform's targets, what was measured, the
+    difference and the tolerance each was held to (docs/contract.md, 2.18 keys)."""
+    expected = {"lufs": spec["lufs"], "tp_max": spec["tp"]}
+    measured = {"lufs": m["lufs"], "tp": m["tp"]}
+    delta = {"lufs": round(m["lufs"] - spec["lufs"], 2) if math.isfinite(m["lufs"]) else None,
+             "tp": round(m["tp"] - spec["tp"], 2) if math.isfinite(m["tp"]) else None}
+    return {"step": "loudness", "ok": ok, "platform": platform, "property": "loudness",
+            "expected": expected, "measured": measured, "delta": delta,
+            "tolerance": {"lufs": spec["lufs_tol"], "tp": TP_TOLERANCE_DB}, "provenance": "specification"}
+
 def _from_table(dest: str, **over) -> Dict:
     """A preset's w/h/max read from PLATFORMS[dest], with the encoder settings given here.
 
@@ -270,8 +282,7 @@ def main() -> int:
         if m:
             ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"] + TP_TOLERANCE_DB
             extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok}
-            extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform,
-                                      "tolerance": {"lufs": spec["lufs_tol"], "tp": TP_TOLERANCE_DB}, "provenance": "specification"}]
+            extra["verification"] = [_loudness_step(ok, platform, spec, m)]
             if not math.isfinite(m["lufs"]):
                 # a silent output measures -inf LUFS: no gain reaches the target, so recommending
                 # (or running, under --normalize) loudness.py only returns "nothing to normalise"
@@ -308,8 +319,7 @@ def main() -> int:
                 else:
                     ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"] + TP_TOLERANCE_DB
                     extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok, "normalized": True}
-                    extra["verification"] = [{"step": "loudness", "ok": ok, "platform": platform,
-                                              "tolerance": {"lufs": spec["lufs_tol"], "tp": TP_TOLERANCE_DB}, "provenance": "specification"}]
+                    extra["verification"] = [_loudness_step(ok, platform, spec, m)]
                 if not ok:
                     notes.append(f"loudness is still {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP after loudness.py (target {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP): {child.get('result', {}).get('note') or 'the encoder overshoots the ceiling'}")
                     warn(notes[-1], "loudness_outside_spec", platform=platform, lufs=m["lufs"], tp=m["tp"], normalized=True)
