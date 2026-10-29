@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if page.title and page.title != site.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+<meta name="description" content="Questions about ffmpeg-skill: overwrite, cuts, verification, audio, captions, and long jobs.">
+<meta property="og:title" content="{{ page.title | default: site.title }}">
+<meta property="og:description" content="Questions about ffmpeg-skill: overwrite, cuts, verification, audio, captions, and long jobs.">
+<meta property="og:image" content="https://raw.githubusercontent.com/kajisho5/ffmpeg-skill/main/assets/social-preview.png">
+<link rel="icon" href="{{ '/brand/app-icon.png' | relative_url }}">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
+  --link: #0969da; --code-bg: #f6f8fa; --nav-bg: #f6f8fa;
+  --card: #ffffff; --chip: #f6f8fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
+    --link: #4493f8; --code-bg: #151b23; --nav-bg: #151b23;
+    --card: #0d1117; --chip: #151b23;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, .skip:focus {
+  outline: 2px solid var(--link); outline-offset: 2px;
+}
+.skip {
+  position: absolute; left: 12px; top: 8px; z-index: 4;
+  background: var(--bg); color: var(--fg);
+  padding: 8px 12px; border-radius: 6px;
+  transform: translateY(-150%);
+}
+.skip:focus { transform: none; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.head { position: sticky; top: 0; z-index: 2; background: var(--nav-bg); border-bottom: 1px solid var(--line); }
+nav .in {
+  max-width: 760px; margin: 0 auto; padding: 10px 16px;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+}
+.nav-links { display: contents; }
+nav .brand { font-weight: 600; color: var(--fg); margin-right: auto; }
+.menu-toggle, .search-toggle {
+  display: none; flex: 0 0 auto; width: 44px; height: 44px; padding: 0;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+  cursor: pointer; align-items: center; justify-content: center;
+}
+.menu-toggle svg, .search-toggle svg { display: block; }
+.tools { max-width: 760px; margin: 0 auto; padding: 0 16px 12px; }
+.tools label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
+.tools input {
+  width: 100%; font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  min-height: 44px;
+}
+#faq-count { margin: 6px 0 0; color: var(--muted); font-size: .85rem; }
+@media (max-width: 720px) {
+  .head {
+    height: 53px; box-sizing: border-box;
+    display: flex; align-items: center;
+  }
+  nav { flex: 1 1 auto; min-width: 0; }
+  nav .in {
+    height: auto; box-sizing: border-box;
+    flex-wrap: nowrap; gap: 8px; padding: 0 8px 0 12px;
+  }
+  .menu-toggle, .search-toggle { display: inline-flex; }
+  nav .brand, .menu-toggle, .search-toggle { flex: 0 0 auto; }
+  .nav-links {
+    display: none; position: absolute; left: 0; right: 0; top: 100%;
+    flex-direction: column; gap: 0; margin: 0; padding: 6px;
+    background: var(--nav-bg); border-bottom: 1px solid var(--line);
+  }
+  .head.is-menu-open .nav-links { display: flex; }
+  .nav-links a {
+    display: flex; align-items: center; min-height: 44px;
+    padding: 8px 12px; border-radius: 8px; color: var(--fg);
+  }
+  .nav-links a:hover { background: var(--code-bg); text-decoration: none; }
+  .nav-links a[aria-current="page"] { font-weight: 600; }
+  .tools {
+    display: none; position: absolute; left: 0; right: 0; top: 100%;
+    margin: 0; max-width: none; background: var(--nav-bg);
+    border-bottom: 1px solid var(--line); padding: 8px 12px 12px;
+  }
+  .head.is-search-open .tools { display: block; }
+  .toc ul { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .toc a { white-space: nowrap; }
+}
+main { max-width: 760px; margin: 0 auto; padding: 8px 16px 64px; overflow-wrap: anywhere; }
+h1 { font-size: 2rem; line-height: 1.2; margin: 1.2rem 0 .4rem; }
+.lede { margin: 0 0 1rem; color: var(--fg); max-width: 62ch; }
+.toc { margin: 0 0 1.5rem; padding: 0; }
+.toc ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.toc a {
+  display: inline-block; border: 1px solid var(--line); background: var(--chip);
+  border-radius: 999px; padding: 6px 12px; min-height: 44px; line-height: 30px;
+}
+.topic { margin: 0 0 1.5rem; }
+.topic h2 {
+  font-size: .85rem; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); border: 0; margin: 1.6rem 0 .6rem; font-weight: 600;
+}
+.qa { position: relative; margin: 0 0 8px; scroll-margin-top: calc(var(--head-h, 53px) + 12px); }
+.topic, h1 { scroll-margin-top: calc(var(--head-h, 53px) + 12px); }
+.qa[hidden], .topic[hidden], #faq-empty[hidden] { display: none; }
+.perma {
+  position: absolute; right: 10px; top: 10px; z-index: 1;
+  width: 32px; height: 32px; line-height: 32px; text-align: center;
+  border-radius: 6px; color: var(--muted); font-weight: 600;
+}
+.perma:hover, .perma:focus-visible { background: var(--code-bg); color: var(--link); }
+details {
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+}
+summary {
+  cursor: pointer; list-style: none; min-height: 44px;
+  padding: 12px 44px 12px 2.4rem; font-weight: 600; line-height: 1.4;
+  position: relative;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: ""; position: absolute; left: 16px; top: 1.15rem;
+  width: .45rem; height: .45rem;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+}
+details[open] summary::before { transform: rotate(45deg); top: 1rem; }
+@media (prefers-reduced-motion: reduce) {
+  summary::before { transition: none; }
+}
+.a { padding: 0 16px 14px 2.4rem; max-width: 68ch; }
+.a p { margin: .6em 0; }
+code { font: 85%/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: .15em .35em; border-radius: 6px; }
+.src { font-size: .85rem; color: var(--muted); margin-top: 1em; }
+.src a { margin-right: .75em; }
+#faq-empty { margin: 1rem 0; }
+footer { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#faq-list">Skip to questions</a>
+<div class="head">
+<nav><div class="in">
+  <a class="brand" href="{{ '/' | relative_url }}">ffmpeg-skill</a>
+  <button type="button" class="menu-toggle" id="faq-menu-toggle" aria-expanded="false" aria-controls="faq-nav-panel">
+    <span class="visually-hidden">Site menu</span>
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <div class="nav-links" id="faq-nav-panel">
+  <a href="{{ '/docs/demos.html' | relative_url }}">Demos</a>
+  <a href="{{ '/docs/contract.html' | relative_url }}">Contract</a>
+  <a href="{{ '/docs/design-decisions.html' | relative_url }}">Design decisions</a>
+  <a href="{{ '/docs/faq.html' | relative_url }}" aria-current="page">FAQ</a>
+  <a href="{{ '/CHANGELOG.html' | relative_url }}">Changelog</a>
+  <a href="https://github.com/kajisho5/ffmpeg-skill">GitHub</a>
+  </div>
+  <button type="button" class="search-toggle" id="faq-search-toggle" aria-expanded="false" aria-controls="faq-search-panel">
+    <span class="visually-hidden">Search questions</span>
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12.5 12.5 L17 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+</div></nav>
+<div class="tools" id="faq-search-panel">
+  <form role="search" action="#faq-list">
+    <label for="faq-q">Search questions</label>
+    <input id="faq-q" type="search" placeholder="Filter by words in the question or answer" autocomplete="off" enterkeyhint="search">
+  </form>
+  <p id="faq-count" aria-live="polite"></p>
+</div>
+</div>
+<main>
+{{ content }}
+<p id="faq-empty" hidden>No questions match that search.</p>
+</main>
+<footer>Generated from the repository's own Markdown by <code>.github/scripts/build_pages.py</code>. Source: <a href="https://github.com/kajisho5/ffmpeg-skill">kajisho5/ffmpeg-skill</a> · MIT</footer>
+<script>
+(function () {
+  var input = document.getElementById("faq-q");
+  var list = document.getElementById("faq-list");
+  var empty = document.getElementById("faq-empty");
+  var count = document.getElementById("faq-count");
+  var head = document.querySelector(".head");
+  var toggle = document.getElementById("faq-search-toggle");
+  var menuToggle = document.getElementById("faq-menu-toggle");
+  var menuPanel = document.getElementById("faq-nav-panel");
+  if (!input || !list || !head) return;
+  var narrow = window.matchMedia("(max-width: 720px)");
+
+  function setHeadHeight() {
+    document.documentElement.style.setProperty("--head-h", head.offsetHeight + "px");
+  }
+  setHeadHeight();
+  if (window.ResizeObserver) new ResizeObserver(setHeadHeight).observe(head);
+  window.addEventListener("resize", setHeadHeight);
+  if (narrow.addEventListener) {
+    narrow.addEventListener("change", function () {
+      if (narrow.matches) return;
+      head.classList.remove("is-menu-open", "is-search-open");
+      if (menuToggle) menuToggle.setAttribute("aria-expanded", "false");
+      if (toggle) toggle.setAttribute("aria-expanded", "false");
+      setHeadHeight();
+    });
+  }
+
+  function setMenuOpen(open, returnFocus) {
+    if (!menuToggle || !narrow.matches) return;
+    if (open) setSearchOpen(false, false);
+    head.classList.toggle("is-menu-open", open);
+    menuToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open && menuPanel) {
+      var first = menuPanel.querySelector("a");
+      if (first) first.focus();
+    } else if (returnFocus) {
+      menuToggle.focus();
+    }
+    setHeadHeight();
+  }
+  function setSearchOpen(open, returnFocus) {
+    if (!toggle || !narrow.matches) return;
+    if (open) setMenuOpen(false, false);
+    head.classList.toggle("is-search-open", open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) input.focus();
+    else if (returnFocus) toggle.focus();
+    setHeadHeight();
+  }
+  if (menuToggle) {
+    menuToggle.addEventListener("click", function () {
+      setMenuOpen(menuToggle.getAttribute("aria-expanded") !== "true", false);
+    });
+  }
+  if (menuPanel) {
+    menuPanel.addEventListener("click", function (event) {
+      if (event.target.closest && event.target.closest("a")) setMenuOpen(false, false);
+    });
+  }
+  if (toggle) {
+    toggle.addEventListener("click", function () {
+      setSearchOpen(toggle.getAttribute("aria-expanded") !== "true", false);
+    });
+  }
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape") return;
+    if (head.classList.contains("is-menu-open")) { setMenuOpen(false, true); return; }
+    if (head.classList.contains("is-search-open")) setSearchOpen(false, true);
+  });
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (head.classList.contains("is-menu-open") && menuPanel && menuToggle &&
+        !menuPanel.contains(target) && !menuToggle.contains(target)) {
+      setMenuOpen(false, true);
+    }
+    if (head.classList.contains("is-search-open") && toggle) {
+      var panel = document.getElementById("faq-search-panel");
+      if (panel && !panel.contains(target) && !toggle.contains(target)) setSearchOpen(false, true);
+    }
+  });
+  var articles = list.querySelectorAll("article.qa");
+  var sections = list.querySelectorAll("section.topic");
+
+  function detailsOf(article) { return article.querySelector("details"); }
+
+  function openFromHash() {
+    var id = decodeURIComponent((location.hash || "").replace(/^#/, ""));
+    if (!id) return;
+    var el = document.getElementById(id);
+    if (!el) return;
+    var article = el.classList && el.classList.contains("qa") ? el : (el.closest ? el.closest("article.qa") : null);
+    var details = article ? detailsOf(article) : (el.tagName === "DETAILS" ? el : null);
+    if (details) details.open = true;
+  }
+
+  function apply() {
+    var needle = input.value.trim().toLowerCase();
+    var shown = 0;
+    for (var i = 0; i < articles.length; i++) {
+      var article = articles[i];
+      var match = !needle || article.textContent.toLowerCase().indexOf(needle) !== -1;
+      article.hidden = !match;
+      var details = detailsOf(article);
+      if (match) shown++;
+      if (needle && match && details) details.open = true;
+      if (!needle && details) details.open = location.hash === "#" + article.id;
+    }
+    for (var s = 0; s < sections.length; s++) {
+      sections[s].hidden = !sections[s].querySelector("article.qa:not([hidden])");
+    }
+    if (empty) empty.hidden = shown !== 0;
+    if (count) {
+      count.textContent = needle
+        ? (shown + (shown === 1 ? " question matches" : " questions match"))
+        : (articles.length + " questions");
+    }
+  }
+
+  input.addEventListener("input", apply);
+  window.addEventListener("hashchange", function () {
+    if (input.value) { input.value = ""; apply(); }
+    setSearchOpen(false, false);
+    setMenuOpen(false, false);
+    openFromHash();
+  });
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest ? event.target.closest("a[href^='#']") : null;
+    if (!link) return;
+    if (input.value) { input.value = ""; apply(); }
+    setSearchOpen(false, false);
+    setMenuOpen(false, false);
+  });
+  apply();
+  openFromHash();
+})();
+</script>
+</body>
+</html>

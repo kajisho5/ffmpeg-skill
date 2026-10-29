@@ -14,7 +14,7 @@
 
 <p align="center"><b>Give your coding agent a video editor.</b><br>
 Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpeg, then checks its own output.<br>
-No cloud · No API keys · Python standard library</p>
+No cloud API · No API keys · Python standard library</p>
 
 <p align="center">
   <a href="#quick-start"><b>Quick start</b></a> ·
@@ -51,7 +51,7 @@ Left half is the input, right half is what the command produced. **[All 66 befor
 
 `ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **42 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also callable as an MCP tool (`tools/list` advertises a core 12 by default to keep client context small, with `FFMPEG_SKILL_MCP_FULL=1` listing all 42; every tool is reachable by name through `tools/call` either way), and the whole set is described by a machine-readable contract.
 
-If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
+If `ffmpeg` and `python3` are on your PATH, editing runs on this machine, on footage that is not uploaded. The calls that do leave the machine are listed under [Network access](#network-access).
 
 > **SPEC** (Self-Producing Execution Contract): each tool's `input_schema` — the part of its
 > contract and MCP tool definition that has to track the CLI flag-for-flag — is never
@@ -79,7 +79,7 @@ Other repos in the ecosystem — [`media-analysis-skill`](https://github.com/kaj
 ---
 
 **Contents**
-[Standalone, and in an ecosystem](#standalone-and-in-an-ecosystem) · [Why](#why) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Design principles](#design-principles) · [Tools](#tools) · [Audio](#audio-is-a-first-class-input) · [Built for agents](#built-for-agents) · [FAQ](#faq) · [FFmpeg compatibility](#ffmpeg-compatibility) · [Tested on real footage](#tested-on-real-footage) · [Install](#install) · [Requirements](#requirements) · [Development](#development) · [Docs](#docs)
+[Standalone, and in an ecosystem](#standalone-and-in-an-ecosystem) · [Why](#why) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Design principles](#design-principles) · [Tools](#tools) · [Audio](#audio-is-a-first-class-input) · [Built for agents](#built-for-agents) · [FAQ](#faq) · [Network access](#network-access) · [FFmpeg compatibility](#ffmpeg-compatibility) · [Tested on real footage](#tested-on-real-footage) · [Install](#install) · [Requirements](#requirements) · [Development](#development) · [Docs](#docs)
 
 ---
 
@@ -91,7 +91,7 @@ An agent that "knows FFmpeg" still guesses: it assumes a frame rate, picks a cod
 - **Structured tools, not shell strings.** Each operation is a script with typed arguments. Nothing runs through a shell; no filter graph is accepted from the caller.
 - **A contract the agent can read.** `contract --json` states, for every tool, what it takes, what it writes, which FFmpeg components it needs and how the result is verified. The MCP surface is derived from it.
 - **Verification after execution.** The result is probed, checked against the destination's spec and, when the picture changed, looked at as a contact sheet.
-- **Local first.** No cloud, no API keys, no Python dependencies. Optional local transcription is used when a speech engine (Parakeet or a whisper) is installed, never required — by `caption.py --transcribe` and, since 1.17, by `silence.py --filler --transcribe`; both take a transcript you already have instead, and both refuse with the install lines rather than guessing. Both take `--engine` and `--model`; `FFMPEG_SKILL_ASR_ENGINE` and `FFMPEG_SKILL_ASR_MODEL` set this machine's defaults (e.g. `large-v3-turbo` where that whisper.cpp model is installed; without either, auto and `base`). The engine runs on your machine and the audio is never uploaded; parakeet-mlx, faster-whisper and openai-whisper download their model weights the first time they run (parakeet-mlx's default from Hugging Face).
+- **Local first.** No cloud API, no API keys, no Python dependencies. Optional local transcription is used when a speech engine (Parakeet or a whisper) is installed, never required — by `caption.py --transcribe` and, since 1.17, by `silence.py --filler --transcribe`; both take a transcript you already have instead, and both refuse with the install lines rather than guessing. Both take `--engine` and `--model`; `FFMPEG_SKILL_ASR_ENGINE` and `FFMPEG_SKILL_ASR_MODEL` set this machine's defaults (e.g. `large-v3-turbo` where that whisper.cpp model is installed; without either, auto and `base`). The engine runs on your machine and the audio is never uploaded; parakeet-mlx, faster-whisper and openai-whisper download their model weights the first time they run (parakeet-mlx's default from Hugging Face). Every outbound call is under [Network access](#network-access).
 
 ## Paper
 
@@ -403,6 +403,8 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 
 ## FAQ
 
+The same answers, plus overwrite and `-y`, filenames with spaces, vertical crops, captions, extra audio tracks, long files and [network access](#network-access), are on the [FAQ page](docs/faq.md).
+
 ### Can I pass raw ffmpeg arguments, or a filter_complex?
 
 Each operation is a script whose flags are its argparse parser, and that parser is what `contract --json` and the MCP `inputSchema` are built from. CI fails the build when those drift from the scripts. A caller-supplied filter graph, `-vf` string, or other ffmpeg option is not an argument any script accepts. `doctor` reads `ffmpeg -filters` (and `-encoders`, `-bsfs`) and reports a filter a tool needs before a job runs into it. MCP does accept an `argv` array, and that array is the named script's own CLI flags, still bound to that script: the script's flags, never an ffmpeg command line and never a shell.
@@ -426,6 +428,77 @@ A rectangle you already know, sitting still for the whole clip, can be filled fr
 ### Does it encode on the GPU?
 
 The encode path a tool will actually take is Apple VideoToolbox, for h264, hevc and prores, and only on Apple Silicon. `--hw` asks for it on that call. `FFMPEG_SKILL_HW=1` makes it the default for every re-encoding tool except `export.py`'s delivery presets, which take `--hw` on their own (or `render.py --hw` for a whole project). AV1 stays on SVT-AV1. nvenc, QSV, VAAPI and AMF are reported by `doctor --json`'s `gpu_encoders` when the ffmpeg build was compiled with them, and no tool encodes with them. One build is the exception to opt-in: with no `libx264` and no `libx265`, and with `h264_videotoolbox` or `hevc_videotoolbox`, those encodes use VideoToolbox without `--hw` and the result says `hw.source` is `"auto"`. `--no-hw` still asks for the CPU encoder. A VideoToolbox job the hardware refuses is re-encoded on the CPU and the result says so (`hw.fallback`).
+
+### Are 42 tools too many for an agent?
+
+`tools/list` advertises a core set of 12. The set is `MCP_CORE_TOOLS` in `scripts/_contract.py`: `render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`. `tools/list` yields the members the contract contains, in contract order, which is alphabetical: `audio`, `caption`, `check`, `cut`, `export`, `fit`, `graphics`, `look`, `loudness`, `probe`, `render`, `silence`. The comment on `MCP_CORE_TOOLS` records the selection: the tools eval iterations 17–20 named most often in the ground-truth `expect` lists, across the 118 prompts in `evals/agent_prompts*.json` (render, look, caption, export and check at least 10 hits each; fit, cut, audio, loudness, graphics, silence and probe at least 6). The other 30 stay callable by name through `tools/call` either way, and `contract --json` still describes all 42. `FFMPEG_SKILL_MCP_FULL` unset, empty, or `0` keeps the core set; any other value (the usual one is `1`) makes `tools/list` return all 42 (`mcp/server.py`, `tool_list`). Which script a request should call is the "Request → script" table in [SKILL.md](SKILL.md).
+
+### What does cut do when a trim would snap to a keyframe?
+
+`cut.py` tries a lossless stream copy first (`-c copy`). A video copy starts on a keyframe, so the picture can begin at an earlier keyframe than `--start`. `--tolerance` is how many seconds that landing may miss by before the segment is re-encoded. The default is `0.5`, and a miss of exactly `0.5` s is re-encoded: the copy is kept only when the miss is strictly under the limit. `--tolerance -1` keeps the copy for a keyframe snap. A `--segments` join can still be re-cut at that setting, for open GOPs, a later B-frame `.mp4`/`.mov` segment that starts between keyframes, or a join that fails its check. `--accurate` re-encodes from the start, frame-accurate for video and sample-accurate for audio. A source whose nominal frame rate and average frame rate differ is re-encoded too (`--vfr-guard`, default `average`).
+
+With `--json`, `mode` is `copy` when nothing re-encoded, `accurate` when `--accurate` was passed or a guard forced that path, and `hybrid` when a copy was asked for and a segment or the join re-encoded anyway. `keyframe_snapped` is true when the whole run stayed a stream copy (`precision` is `packet`). Whether a copied start actually moved is `start_snapped`. `duration_error_ms` is the probed output duration minus the requested duration, in milliseconds, and is null on `--dry-run`. `reencode_reason` lists the causes (`tolerance`, `requested`, `vfr`, `vfr_inconclusive`, `codec`, `copy_failed`, `pcm_container`, `concat_fallback`).
+
+### Does `verified: true` mean the output is good?
+
+`verified` is true when a file was written and every step in `verification` passed (`emit()` in `scripts/_common/emit.py`). For a media file the first step is `probe`: the file exists, is not empty, and ffprobe reads at least one video or audio stream (`verify_output` in `scripts/_common/probe.py`). On `--dry-run`, `verified` is false. A tool that measures more adds steps. `loudness.py` re-measures the file it wrote, `export.py` compares the platform spec, and `render.py`'s `verified` is every stage's. A miss the tool leaves in the file, such as export loudness outside the platform spec, stays `status: completed` with `verified: false`.
+
+The probe step does not compare the output's streams with the input's. [Issue #367](https://github.com/kajisho5/ffmpeg-skill/issues/367) is open. It reports that `cut.py` on some MPEG-TS inputs can drop the whole video stream and still return `status: completed` and `verified: true`, including with `--accurate`; the loss shows up as `probe.video` null. The follow-up on that issue reports the same class of miss in `join.py`: a clip with no audio stream is padded with synthesized silence and can still return `verified: true`. The code does that pad with `anullsrc` (`scripts/join.py`) and adds no note for it; the join's own `verification` step is duration. A clip that has an audio stream and is silent is a separate case: `--on-silent` defaults to `warn`, and that flag's help says a clip with no audio stream is never counted as silent.
+
+### What does the agent get back on failure, or during a long job?
+
+With `--json`, a failure is one document on stdout: `status: failed`, `exit_code`, `error.kind`, `error.message`, `error.code`, `error.retryable` (always `false`) and `commands`. The same message goes to stderr as `error: …`. When ffmpeg fails inside `run()`, `_fail()` in `scripts/_common/runner.py` sets `kind` to `ffmpeg` and `code` to `FFMPEG_EXECUTION_FAILED`, puts the last 15 stderr lines in `message`, and sets `ffmpeg_returncode` to ffmpeg's own exit code. The process still exits 1. A tool that reports the failure itself can put stderr in `message` and leave `ffmpeg_returncode` unset (`cut.py` when the re-encode fails; `loudness.py` when the measurement fails).
+
+Exit codes: `0` success, `1` failure, `124` timeout, `127` when ffmpeg or ffprobe is missing, and `128` plus the signal number when interrupted (`130` for SIGINT, `143` for SIGTERM). `doctor` returns `2` when a required capability is unknown and nothing required is proven missing.
+
+The default limit is 1800 seconds per ffmpeg call (`DEFAULT_TIMEOUT` in `scripts/_common/runner.py`). `--timeout SECONDS` or `FFMPEG_SKILL_TIMEOUT` changes it, and `0` means no limit. A non-numeric `FFMPEG_SKILL_TIMEOUT` stays at 1800 and is recorded as `timeout_env_invalid`; a negative value is read as `0`. On timeout the process is killed, the partial file is removed, and the document is `kind: timeout`, exit `124`. ffprobe and the other non-ffmpeg commands `run()` starts are capped at 120 seconds (`PROBE_TIMEOUT`) while a limit is set; `--timeout 0` removes that cap too. The JSON document is printed when the call finishes. `--progress` prints percent and ETA on that process's stderr while ffmpeg encodes. The MCP server waits for the script (`run_tool` in `scripts/_common/runner.py`): its outer ceiling is four times the per-call limit plus 60 seconds, and that ceiling is off when the per-call limit is `0`. A failed call comes back as `isError: true`, with the child's document in `structuredContent` when stdout is JSON, and the last 12 stderr lines in the text (`mcp/server.py`). Those progress lines are not sent while the call is still running.
+
+### Are results structured, or only pass or fail?
+
+`--json` prints one document, and `--json-brief` is that document trimmed. A success carries `status: completed`, `output`, `dry_run`, `commands`, `verified`, `verification` and, when a media file was written, `probe` of that file (duration, video, audio, and the rest of the probe object). Fields the tool measured sit beside those, such as `cut.py`'s `mode` and `duration_error_ms`, and `loudness.py`'s `measured`, `targets` and `result`. `diagnostics` is included when the run recorded a warning, a fallback or a skip; each entry is `{code, message, …}`. `--json-brief` keeps `verified`, replaces `probe` with `summary`, replaces `commands` with a count, and drops `verification`. `probe.py` prints its measurement as JSON without `--json`. The MCP server appends `--json` for every tool except `look` and `probe` (`MCP_JSON_EXEMPT` in `scripts/_contract.py`) and returns the document as `structuredContent`.
+
+### Can it normalise loudness?
+
+`loudness.py` is a two-pass EBU R128 `loudnorm`. Pass 1 measures integrated loudness, true peak, LRA and threshold. Pass 2 applies `loudnorm` in linear mode (`linear=true`) with those measurements. The defaults are `-14` LUFS (`-I` / `--lufs`, default `-14.0`), `-1` dBTP (`--tp`, default `-1.0`) and `11` LU (`--lra`, default `11.0`). After the file is written, the same measurement runs on the output. If the encoded true peak is more than `0.1` dB over `--tp`, it re-encodes and measures again, up to five further encodes, and the result reports `tp_ceiling_used` and `encodes`. On a video file the picture is stream-copied (`-c:v copy`) and the audio is AAC at `192k` unless `--audio-bitrate` is set; when that bitrate was not passed, the retries go to `256k`, then `320k`, then a lower loudnorm ceiling. A passed `--audio-bitrate` skips the `256k`/`320k` steps. The `verification` step `loudness` is ok when the file is silent, or when integrated loudness is within `1.0` LU of the target and true peak is at most `0.1` dB over `--tp`. More than `1.0` LU off the target keeps the file, sets that step's `ok` to false (so `verified` is false) and explains it in `result.note`. True peak still over the ceiling after those encodes fails with `kind: verification`. `--measure-only` prints the measurement and writes no file.
+
+### Does it modify my originals, or overwrite files?
+
+No tool writes its input. Every tool's contract entry has `mutates_input: false`, and an output that resolves to the same file as an input is refused before ffmpeg (`error.reason: output_is_input`, `scripts/_common/runner.py`). That refusal ignores `--overwrite`. The default path is a new file, `<stem>_<operation>.<ext>` (`default_output` in `scripts/_common/decision.py`). A different path that already exists is refused before ffmpeg, including on a dry run (`error.reason: output_exists`, `kind: input`). `--overwrite` is the consent to replace that file. The replacement is encoded to a hidden sibling (`.{stem}.ffskill-<pid><ext>`) and moved into place only after the encode succeeds, so a failed run leaves the existing file. An output argument that starts with `-` skips the same-file check, the overwrite check, the path check, the output lock and that staging, the same way `-` and a `pipe:` output do.
+
+## Network access
+
+Editing does not call a cloud API, and it does not upload the file. `scripts/`, `mcp/server.py` and `bin/install.js` contain no `urllib`, `requests`, `http.client`, socket client, `curl` or `fetch`. The contract records that as `execution.network: false` and lists network access under `not_provided`, with `model_downloads` beside it so a first transcription is not read as network-free. The speech bridge imports `faster-whisper` and constructs `WhisperModel` in this process, so that library's first-run download is made from here. ffmpeg and ffprobe run on this machine. `waveform.py` refuses a URL passed as `--image` and does not fetch it. `https://ffmpeg.org/download.html` and `https://ffmpeg.org/security.html` are hint text and the citation for `doctor`'s CVE table, which is a local lookup.
+
+**Transcription.** Only when you pass `--transcribe` (`caption.py`, or `silence.py --filler --transcribe`). The audio stays on this machine. Three engines may download weights the first time that model is not already cached. `silence.py --filler --transcribe` runs the engine under `--dry-run` too; `caption.py --transcribe` does not. There is no separate download command: run the engine once while the network is open, or place the file yourself, then set `HF_HUB_OFFLINE=1` for the two Hugging Face engines.
+
+| Engine | Who connects | What | Staying offline |
+|---|---|---|---|
+| faster-whisper | this process (`WhisperModel`) | Hugging Face repo `Systran/faster-whisper-<model>`. Default model `base`, or `--model` / `FFMPEG_SKILL_ASR_MODEL`. This repo does not hardcode the host or the cache directory | `HF_HUB_OFFLINE=1` once the weights are cached |
+| parakeet-mlx | the `parakeet-mlx` child | Hugging Face repo `mlx-community/parakeet-tdt-0.6b-v2`, or another `mlx-community/parakeet-*` you name. Cache directory is the engine's; this repo does not name it | `HF_HUB_OFFLINE=1` |
+| openai-whisper | the `whisper` child | its checkpoint from OpenAI. No URL is hardcoded here | `HF_HUB_OFFLINE` does not cover this engine |
+| whisper.cpp | no download | `~/.cache/whisper.cpp/ggml-<model>.bin`, `models/ggml-<model>.bin`, or `/usr/local/share/whisper/ggml-<model>.bin` | place the ggml file yourself. The install hint mentions `brew install whisper-cpp` and a manual `ggml-base.bin` download; the skill runs neither |
+| parakeet.cpp | no download | a `.gguf` from `--model`, `PARAKEET_CPP_MODEL`, or `~/.cache/parakeet.cpp/` | place the file yourself. The hint names `github.com/mudler/parakeet.cpp` as where a person gets `parakeet-cli`; the skill does not fetch it |
+
+`pip`, `uv` and `brew` in those hints are text. The skill does not run them.
+
+**Install.** `npx ffmpeg-skill` downloads this package from the npm registry before `bin/install.js` runs. The script copies files and opens no connection. It does not run `npm`, `pip`, `uv` or `brew`.
+
+**Tests, benches and CI.** These are not part of using the skill. The only `urlopen` in the repository is `tests/corpus.py --fetch`, which writes `tests/corpus/` (git-ignored). `github.com` in that file is the User-Agent string `ffmpeg-skill-corpus/0.1 (+https://github.com/kajisho5/ffmpeg-skill)`, not a request target. The downloads are:
+
+- `https://archive.org/download/grizzly-bear-selfie/GX010743.MP4`
+- `https://archive.org/download/dji-0230/DJI_0038.MOV`
+- `https://archive.org/download/jupiter-canyon/IMG_3179.MOV`
+- `https://archive.org/download/screen-recording-20231223-021623/Screen_Recording_20231223_021623.mp4`
+- `https://archive.org/download/screen-recording-20260303-174357-2/Screen_Recording_20260303_174357(2).mp4`
+- `https://archive.org/download/mehanik-hdr10-test-patterns/02.%20White%20%26%20Color%20clipping/02.%20White%20240-1000nits-MaxCLL-1000-MDL-1000.mp4`
+- `https://img.photographyblog.com/reviews/apple_iphone_13_pro/sample_images/4K60p.mov`
+- `https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov`
+- `https://storage.googleapis.com/media.webmproject.org/devsite/vp9/hdr-encoding/strobe_scientist.mkv`
+- `https://www.rtings.com/images/test-materials/2015/305_24p.mp4`
+
+`tests/bench_scenes.py` and `tests/bench_sync.py` do not download. They read those corpus files and print a line telling you to run `tests/corpus.py --fetch` when one is missing. `evals/` has no HTTP client.
+
+CI (`.github/workflows/ci.yml`, `.github/workflows/release.yml`) runs on GitHub Actions: `curl` of `https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-5.1.1-amd64-static.tar.xz`; `brew install ffmpeg-full`; `choco install ffmpeg` (the workflow comment names the Chocolatey community feed, `community.chocolatey.org`); `apt-get install ffmpeg` on the Ubuntu job and the Debian trixie job; `npm publish` and `npm view` against `https://registry.npmjs.org`. Example `curl` lines under `.claude/skills/` are documentation. Nothing in the skill executes them.
 
 ## FFmpeg compatibility
 
@@ -605,6 +678,7 @@ Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 | [CONTRIBUTING.md](CONTRIBUTING.md) | scope, dev setup, tests, PR expectations |
 | [docs/roadmap.md](docs/roadmap.md) | 1.8.0 to 1.21.0 one theme per minor, each marked shipped + evaluated, shipped with eval pending, or planned; and what 2.0.0 then removes |
 | [docs/design-decisions.md](docs/design-decisions.md) | behaviours that look like bugs but are decisions, with rationale and the pinning test; read before filing a bug |
+| [docs/faq.md](docs/faq.md) | the FAQ, including the questions people ask about overwrite, cuts, `verified`, loudness and long files |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1; reports go through the SECURITY.md channel |
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately |
 | [SKILL.md](SKILL.md) | what the agent reads: workflow, request → tool map, audio-only rules, report format, pitfalls |

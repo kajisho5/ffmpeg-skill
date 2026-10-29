@@ -14,6 +14,8 @@ document with Jekyll front matter added and its relative links rewritten.
 pages.yml runs this and hands OUT to actions/jekyll-build-pages; tests/test_contract.py runs
 it too, so a broken link fails CI before it reaches the site.
 """
+import html
+import json
 import re
 import shutil
 import sys
@@ -30,6 +32,9 @@ PAGES = {
     "docs/demos.md": ("docs/demos.md", "Demo gallery"),
     "docs/contract.md": ("docs/contract.md", "Contract"),
     "docs/design-decisions.md": ("docs/design-decisions.md", "Design decisions"),
+    # HTML, not Markdown: the FAQ is a <details> page. Jekyll would otherwise run it
+    # through kramdown and can split the widgets. layout: faq is the matching template.
+    "docs/faq.md": ("docs/faq.html", "FAQ"),
     "docs/roadmap.md": ("docs/roadmap.md", "Roadmap"),
     "CHANGELOG.md": ("CHANGELOG.md", "Changelog"),
 }
@@ -96,14 +101,48 @@ def _rewrite_prose(text: str, page_repo: str, assets: set) -> str:
     return "".join(c if i % 2 else HTML_ATTR.sub(attr, MD_LINK.sub(md, c)) for i, c in enumerate(chunks))
 
 
+_FAQ_ARTICLE = re.compile(
+    r'<article class="qa" id="[^"]+">.*?<summary>(?P<q>.*?)</summary>\s*<div class="a">(?P<a>.*?)</div>',
+    re.S,
+)
+
+
+def _html_text(fragment: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", fragment)
+    text = re.sub(r"\s+", " ", html.unescape(text)).strip()
+    return re.sub(r"\s+([?.!,;:])", r"\1", text)
+
+
+def _faq_jsonld(page_html: str) -> str:
+    """FAQPage schema from the visible questions, so the JSON cannot drift from the page."""
+    entities = []
+    for match in _FAQ_ARTICLE.finditer(page_html):
+        answer = re.sub(r'<p class="src">.*?</p>', " ", match.group("a"), flags=re.S)
+        entities.append({
+            "@type": "Question",
+            "name": _html_text(match.group("q")),
+            "acceptedAnswer": {"@type": "Answer", "text": _html_text(answer)},
+        })
+    if not entities:
+        raise DeadLink("docs/faq.md: no questions found to build the FAQPage schema")
+    payload = {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": entities}
+    body = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
+    return '<script type="application/ld+json">\n' + body + "\n</script>\n"
+
+
 def render(page_repo: str, assets: set) -> str:
     text = (ROOT / page_repo).read_text(encoding="utf-8")
     # fenced code blocks are shown as written: a `](x)` inside one is code, not a link
     chunks = re.split(r"(^```.*?^```[^\n]*$)", text, flags=re.M | re.S)
     text = "".join(c if i % 2 else _rewrite_prose(c, page_repo, assets) for i, c in enumerate(chunks))
+    if page_repo == "docs/faq.md":
+        text += "\n" + _faq_jsonld(text)
+        layout = "faq"
+    else:
+        layout = "default"
     title = PAGES[page_repo][1]
     # {% raw %} keeps Liquid from reading a `{{` or `{%` that a code sample may contain.
-    return f"---\nlayout: default\ntitle: {title}\n---\n{{% raw %}}\n{text}\n{{% endraw %}}\n"
+    return f"---\nlayout: {layout}\ntitle: {title}\n---\n{{% raw %}}\n{text}\n{{% endraw %}}\n"
 
 
 def build(out: Path) -> "list[str]":
@@ -124,10 +163,12 @@ def build(out: Path) -> "list[str]":
         "repository: kajisho5/ffmpeg-skill\n"
         "markdown: kramdown\n"
         "kramdown:\n  input: GFM\n  hard_wrap: false\n", encoding="utf-8")
-    # The site's own layout, not a theme: a theme pulls in GitHub-API metadata the build
-    # does not need, and this one page of HTML is the only design the site has.
+    # The site's own layouts, not a theme: a theme pulls in GitHub-API metadata the build
+    # does not need. default.html is every page but the FAQ; faq.html is that page only.
     (out / "_layouts").mkdir()
-    shutil.copy2(Path(__file__).with_name("pages_layout.html"), out / "_layouts" / "default.html")
+    here = Path(__file__).parent
+    shutil.copy2(here / "pages_layout.html", out / "_layouts" / "default.html")
+    shutil.copy2(here / "pages_faq_layout.html", out / "_layouts" / "faq.html")
     return sorted(assets)
 
 
