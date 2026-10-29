@@ -2462,6 +2462,18 @@ class FillerSpansTests(unittest.TestCase):
         self.assertTrue(self.D._unspaced_script("\U00020000"))
         self.assertEqual(self.D.filler_spans(self._w(("我", 0.0, 0.1), ("嗯", 0.1, 0.2), ("\U00020000", 0.2, 0.3)), zh), [])
 
+    def test_a_rejected_longer_phrase_does_not_hide_a_listed_word(self):
+        """--filler-extra "um huh" held for 3 s is too long to be a filler, but the "um" at its
+        start is a filler of its own: it is still cut, and nothing is counted as too long."""
+        stats = {}
+        spans = self.D.filler_spans(self._w(("um", 1.0, 1.2), ("huh", 1.2, 4.0)), {"um", "um huh"},
+                                    pad=0.0, stats=stats)
+        self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("um", 1.0, 1.2)])
+        self.assertEqual(stats["matched_too_long"], 0)
+        stats = {}
+        self.assertEqual(self.D.filler_spans(self._w(("uhhh", 1.0, 3.0)), {"uhhh"}, stats=stats), [])
+        self.assertEqual(stats["matched_too_long"], 1)
+
     def test_a_run_listed_out_of_time_order_is_untimed(self):
         """A run whose last token ends before its first starts has no span to cut; cutting it
         would hand keep_ranges an inverted range."""

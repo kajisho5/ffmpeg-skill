@@ -1277,6 +1277,7 @@ def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = F
     i = 0
     while i < len(toks):
         found = 0
+        rejected = None
         for k in range(min(FILLER_MAX_TOKENS, len(toks) - i), 0, -1):
             run = toks[i:i + k]
             norms = [t["norm"] for t in run]
@@ -1296,13 +1297,20 @@ def filler_spans(words, wordlist, *, pad: float = FILLER_PAD, min_gap: float = F
                 continue
             # a run listed out of time order has no span to cut on
             if not all(t["timed"] for t in run) or run[-1]["end"] <= run[0]["start"]:
-                untimed += 1
-            elif run[-1]["end"] - run[0]["start"] > max_word:
-                too_long += 1
-            else:
-                hits.append({"start": max(0.0, run[0]["start"] - pad), "end": run[-1]["end"] + pad, "word": joined})
+                rejected = rejected or ("untimed", k)
+                continue
+            if run[-1]["end"] - run[0]["start"] > max_word:
+                rejected = rejected or ("too_long", k)
+                continue
+            hits.append({"start": max(0.0, run[0]["start"] - pad), "end": run[-1]["end"] + pad, "word": joined})
             found = k
             break
+        if not found and rejected:
+            # the longest listed run that could not be cut is the one reported; a shorter listed
+            # word inside it that could be cut was tried first
+            untimed += rejected[0] == "untimed"
+            too_long += rejected[0] == "too_long"
+            found = rejected[1]
         i += found or 1
     hits.sort(key=lambda h: (h["start"], h["end"]))
     merged: "List[Dict[str, Any]]" = []
