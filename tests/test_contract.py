@@ -3689,6 +3689,16 @@ class ContractTests(unittest.TestCase):
         step = next(s for s in doc["verification"] if s["step"] == "duration")
         self.assertEqual((step["property"], step["provenance"], step["ok"]), ("audio_duration", "input_premeasurement", True))
         self.assertAlmostEqual(step["expected"], src_audio, places=2)
+        # sound that starts a second into the file: the trim counts from its first sample, not
+        # from the file's zero (atrim=end= cut the last second off it)
+        late = self.out("len_late.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=6", "-itsoffset", "1", "-f", "lavfi", "-i", "sine=440:d=4",
+               "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", late)
+        doc = json.loads(tool("loudness", late, "-o", self.out("len_late_loud.mp4"), "--overwrite", "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "duration")
+        self.assertTrue(step["ok"], step)
+        self.assertAlmostEqual(float(probe_streams(self.out("len_late_loud.mp4"))["audio"]),
+                               float(probe_streams(late)["audio"]), delta=0.03)
 
     def test_export_measures_the_length_its_preset_promises(self):
         """export.py trims to the platform maximum but never re-read the written length (the VDC

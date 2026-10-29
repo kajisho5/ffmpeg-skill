@@ -97,8 +97,9 @@ def main() -> int:
     dropped_streams = False
     # loudnorm emits its last block whole, and through the AAC encoder that came out as 0.1 s more
     # sound than the input had (a 90.000 s Reels export left at 90.100 s, which check.py fails):
-    # the sound is trimmed back to the input's own length. atrim follows loudnorm directly: an
-    # aresample between them fails channel-layout negotiation on FFmpeg 5.1 (-ar converts after)
+    # the sound is trimmed back to the input's own length. `duration=` counts from the first sample,
+    # so sound that starts late keeps its end (`end=` is a timestamp, and cut it). atrim follows
+    # loudnorm directly: an aresample between them fails channel-layout negotiation on FFmpeg 5.1
     in_audio = (meta.get("audio") or {}).get("duration") or meta.get("duration")
 
     def encode(tp: float, bitrate: str) -> None:
@@ -109,7 +110,7 @@ def main() -> int:
             f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true:print_format=summary"
         )
         if in_audio:
-            af += f",atrim=end={float(in_audio):.6f}"
+            af += f",atrim=duration={float(in_audio):.6f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-af", af, "-ar", str(sr)]
         if ext in AUDIO_CODECS or not meta.get("video"):
             cmd += ["-vn"] + audio_codec_for(output, bitrate)
