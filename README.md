@@ -93,6 +93,12 @@ An agent that "knows FFmpeg" still guesses: it assumes a frame rate, picks a cod
 - **Verification after execution.** The result is probed, checked against the destination's spec and, when the picture changed, looked at as a contact sheet.
 - **Local first.** No cloud, no API keys, no Python dependencies. Optional local transcription is used when a speech engine (Parakeet or a whisper) is installed, never required — by `caption.py --transcribe` and, since 1.17, by `silence.py --filler --transcribe`; both take a transcript you already have instead, and both refuse with the install lines rather than guessing. Both take `--engine` and `--model`; `FFMPEG_SKILL_ASR_ENGINE` and `FFMPEG_SKILL_ASR_MODEL` set this machine's defaults (e.g. `large-v3-turbo` where that whisper.cpp model is installed; without either, auto and `base`). The engine runs on your machine and the audio is never uploaded; parakeet-mlx, faster-whisper and openai-whisper download their model weights the first time they run (parakeet-mlx's default from Hugging Face).
 
+## Paper
+
+The design discipline behind this skill — per-operation verification for AI agents — is written up as a position paper. The paper scores ffmpeg-skill itself as only partially conformant with the discipline it defines.
+
+Kajiyama, S. (2026). *What Is Verification-Driven Coding? — A Discipline for Not Trusting Generation.* Zenodo. https://doi.org/10.5281/zenodo.23720216
+
 ## Quick start
 
 ```bash

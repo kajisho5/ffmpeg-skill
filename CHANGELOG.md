@@ -24,6 +24,12 @@
 
 - **`npm test` and CI run the end-to-end modules in parallel** (`tests/run_parallel.py`): the same tests as `tests/test_all.py`, with each module, and two shards of each of the four largest, in its own process and `OUT` directory. On a 4-core Linux machine all 936 tests took 21 minutes instead of 35. FFmpeg already uses several threads per encode, so more processes stop helping beyond that. `tests/test_all.py` still runs them one after another.
 
+## 2.17.3
+
+_Automated release: version and notes generated from pull requests merged since 2.17.2._
+
+- Add Paper section linking the Verification-Driven Coding paper (DOI: 10.5281/zenodo.23720216)
+
 ## 2.17.2
 
 _Automated release: version and notes generated from pull requests merged since 2.17.1._
