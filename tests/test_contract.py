@@ -232,6 +232,47 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(set(manifest) <= {"name", "version", "description", "author", "homepage", "repository", "license", "keywords"}, sorted(manifest))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", manifest["name"]))
 
+    def test_mcp_registry_manifest_tracks_the_package_version(self):
+        """server.json is the official MCP Registry document (schema 2025-12-11). Its two
+        version fields and package.json's mcpName have to stay on the published npm version,
+        or mcp-publisher rejects the publish. release.yml's auto-bump moves server.json."""
+        import importlib.util
+        pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        self.assertEqual(server["$schema"], "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json")
+        self.assertEqual(server["name"], "io.github.kajisho5/ffmpeg-skill")
+        self.assertEqual(pkg["mcpName"], server["name"])
+        self.assertEqual(server["version"], pkg["version"])
+        self.assertLessEqual(len(server["description"]), 100)
+        self.assertEqual(server["repository"]["source"], "github")
+        self.assertEqual(server["repository"]["url"], "https://github.com/kajisho5/ffmpeg-skill")
+        pkg_entry = server["packages"][0]
+        self.assertEqual(pkg_entry["registryType"], "npm")
+        self.assertEqual(pkg_entry["identifier"], "ffmpeg-skill")
+        self.assertEqual(pkg_entry["version"], pkg["version"])
+        self.assertEqual(pkg_entry["transport"], {"type": "stdio"})
+        self.assertEqual(pkg_entry["packageArguments"], [{"type": "positional", "value": "mcp"}])
+        glama = json.loads((ROOT / "glama.json").read_text(encoding="utf-8"))
+        self.assertEqual(glama["$schema"], "https://glama.ai/mcp/schemas/server.json")
+        self.assertEqual(glama["maintainers"], ["kajisho5"])
+        spec = importlib.util.spec_from_file_location(
+            "bump_server_json", ROOT / ".github" / "scripts" / "bump_server_json.py")
+        bump = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bump)
+        bumped = json.loads(bump.bump_server_json((ROOT / "server.json").read_text(encoding="utf-8"), pkg["version"], "9.9.9"))
+        self.assertEqual(bumped["version"], "9.9.9")
+        self.assertEqual(bumped["packages"][0]["version"], "9.9.9")
+        self.assertEqual(bumped["name"], server["name"])
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("bump_server_json", release)
+        self.assertIn("server.json", release)
+        scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
+        self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
+        self.assertIn("publish_results: true", scorecard)
+        self.assertIn("branch_protection_rule:", scorecard)
+        self.assertIn("security-events: write", scorecard)
+        self.assertIn("id-token: write", scorecard)
+
     def test_pages_site_builds_with_no_dead_links(self):
         """The GitHub Pages site (pages.yml) is assembled from the repo's own Markdown by
         .github/scripts/build_pages.py, which refuses a relative link whose target does not
@@ -1727,6 +1768,17 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(sh("node", ROOT / "bin" / "install.js", "contract", "--json", "--static").stdout)
         self.assertEqual([t["id"] for t in doc["tools"]], [t["id"] for t in self.contract["tools"]])
         self.assertEqual(sh("node", ROOT / "bin" / "install.js", "doctor", "--json").returncode, 0)
+        # `npx ffmpeg-skill mcp` is the stdio command server.json publishes. One initialize
+        # and EOF: the installer must not run, and the child must answer as the MCP server.
+        proc = subprocess.run(
+            ["node", str(ROOT / "bin" / "install.js"), "mcp"],
+            input='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n',
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertNotIn("installed", proc.stdout.lower())
+        answer = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertEqual(answer["result"]["serverInfo"]["name"], "ffmpeg-skill")
+        self.assertEqual(answer["result"]["serverInfo"]["version"], json.loads((ROOT / "package.json").read_text())["version"])
 
     def test_windows_store_python_stub_is_not_treated_as_an_interpreter(self):
         """The Microsoft Store python3 alias is a real executable: spawn succeeds (no ENOENT) and

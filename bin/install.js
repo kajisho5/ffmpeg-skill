@@ -14,6 +14,7 @@
  *   npx ffmpeg-skill --uninstall     # remove from the selected targets
  *   npx ffmpeg-skill contract --json # machine-readable execution contract (see docs/contract.md)
  *   npx ffmpeg-skill doctor [--json] # which required ffmpeg capabilities this machine has
+ *   npx ffmpeg-skill mcp              # stdio MCP server (python3 mcp/server.py); registry clients pass `mcp`
  *
  * Already installed? re-run `npx ffmpeg-skill` to refresh ~/.claude/skills/ffmpeg-skill
  * Copies are not updated automatically.
@@ -103,9 +104,18 @@ function warnDeprecatedPython(platform, spawn, warn) {
 }
 
 function main() {
-// `contract` / `doctor` are answered by scripts/_contract.py; everything else installs.
+// `contract` / `doctor` are answered by scripts/_contract.py. `mcp` is the stdio server
+// (server.json's packageArguments). Everything else installs.
 if (args[0] === 'contract' || args[0] === 'doctor') {
   const py = runWithPython([path.join(ROOT, 'scripts', '_contract.py'), ...args], process.platform, spawnSync);
+  if (py.missing) {
+    console.error(`error: could not find a Python 3.9+ interpreter (tried: ${py.candidates.join(', ')}). Install Python 3.9+ and ensure it is on PATH.`);
+    process.exit(127);
+  }
+  process.exit(py.error ? 127 : (py.status == null ? 1 : py.status));
+}
+if (args[0] === 'mcp') {
+  const py = runWithPython([path.join(ROOT, 'mcp', 'server.py'), ...args.slice(1)], process.platform, spawnSync);
   if (py.missing) {
     console.error(`error: could not find a Python 3.9+ interpreter (tried: ${py.candidates.join(', ')}). Install Python 3.9+ and ensure it is on PATH.`);
     process.exit(127);
