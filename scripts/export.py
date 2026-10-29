@@ -333,6 +333,16 @@ def main() -> int:
     elif platform and has_audio and args.normalize:
         spec = PLATFORMS[platform]
         notes.append(f"[dry-run] --normalize: loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} would run on the written file if it misses {platform}'s spec")
+    if p["max"] and not args.allow_long and not STATE.dry_run:
+        # the preset's length promise, measured the way check.py measures it (the container's
+        # duration, no tolerance): before 2.20 nothing re-read the length, and a --normalize pass
+        # that left the sound 0.1 s long shipped a 90.10 s Reels file as verified
+        written = probe(output, role="output").get("duration")
+        if written is not None:
+            extra.setdefault("verification", []).append(
+                {"step": "duration", "property": "duration", "ok": written <= p["max"],
+                 "expected": {"max": p["max"]}, "measured": round(written, 3),
+                 "delta": round(written - p["max"], 3), "tolerance": 0.0, "provenance": "specification"})
     if notes:
         extra["notes"] = notes
     # the delivery keeps the source's picture and, except as a GIF, its sound

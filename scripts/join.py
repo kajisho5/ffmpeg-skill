@@ -81,6 +81,20 @@ def unpending_length(durs: List[float], d: float) -> Optional[float]:
     return round(sum(durs) - d * (len(durs) - 1), 3)
 
 
+def overlap_report(durs: List[float], expected: Optional[float]) -> Dict[str, Any]:
+    """The clips' own total next to the joined length (2.20). The joined length is derived from
+    the transition the join itself applied, so a check against it alone cannot show that a fade
+    took time out of the material; the sum of the inputs is the yardstick the user holds."""
+    if expected is None or STATE_PENDING:
+        return {}
+    total = round(sum(durs), 3)
+    out: Dict[str, Any] = {"inputs_duration": total, "transition_shortening": round(total - expected, 3)}
+    if out["transition_shortening"] > 0.0005:
+        STATE_NOTES.append(f"the transitions overlap the clips: {fmt_secs(total)} of clips play as {fmt_secs(expected)} "
+                           f"({out['transition_shortening']:.3f} s shorter)")
+    return out
+
+
 def clip_length(meta: Dict[str, Any], fps: float) -> float:
     """The one length a clip holds in a join, for its picture and its sound alike: the
     video stream's, or the audio stream's when the sound runs more than a frame past the picture
@@ -175,7 +189,8 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
             die(f"{output} is {a.get('sample_rate')} Hz {a.get('channels')} ch, expected {rate} Hz {channels} ch")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {expected_text(expected)}, audio {a.get('codec')} {channels}ch {rate}Hz, {n} clips, "
          + ("crossfade" if d else "butt join") + ")")
-    emit(output, mode="audio", **reported(), clips=n, transition=args.transition if d else "none", expected_duration=expected,
+    overlap = overlap_report(durs, expected)
+    emit(output, mode="audio", **overlap, **reported(), clips=n, transition=args.transition if d else "none", expected_duration=expected,
          sample_rate=rate, channels=channels, video=False)
     return 0
 
@@ -568,7 +583,7 @@ def main() -> int:
         verification.append({"step": "duration", "property": "video_duration", "ok": abs(measured - expected) <= tol,
                              "measured": round(measured, 3), "expected": expected,
                              "delta": round(measured - expected, 3), "tolerance": round(tol, 3),
-                             "provenance": "input_premeasurement"})
+                             "provenance": "input_premeasurement", "inputs_total": round(sum(lens), 3)})
     # a clip with no audio stream is joined over generated silence: the join is right to do that, but
     # the report must say which clips' sound is not theirs (the paper's join finding: absence was
     # filled and nothing in the result showed it)
@@ -577,7 +592,8 @@ def main() -> int:
         STATE_NOTES.append(f"{len(substituted)} clip(s) had no audio stream; their span of the join is generated "
                            "silence: " + ", ".join(os.path.basename(p) for p in substituted))
     info(f"wrote {output} ({fmt_secs(measured)}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
-    emit(output, mode="video", **reported(), clips=n, transition=args.transition, expected_duration=expected,
+    overlap = overlap_report(lens, expected)
+    emit(output, mode="video", **overlap, **reported(), clips=n, transition=args.transition, expected_duration=expected,
          verification=verification, expect_streams={"video": True, "audio": True},
          audio_substituted=substituted,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))

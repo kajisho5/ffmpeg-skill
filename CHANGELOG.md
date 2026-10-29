@@ -6,14 +6,13 @@
 
 ### Added
 
-- **A result says what was measured, how far, and what was not.** A verification step that measures a property now carries `property`, `expected`, `measured`, `delta`, `tolerance` and the `provenance` of the expected value. A failed step carries `attribution: unresolved`. Every writing tool's result lists the output properties it did not measure as `unverified`, for example `caption`'s `rendered_placement` and `sync`'s `lip_sync`, and the contract carries the same list per tool as `unverified_properties`. These are the co-reported items of the Verification-Driven Coding paper.
-- **SKILL.md tells the agent what `verified` does not cover.** The report names in `Notes:` any `unverified` item the user would assume was checked, and a step with `attribution: unresolved` is reported, not re-run. Without that, a result that says `verified` passes on as more than it measured.
+- **`join.py` reports the clips' own total beside the joined length.** The expected length a join is checked against comes from the transition the join applied, so a fade that took time out of the material passed unseen. 15 s of clips joined with the default fade play as 14 s. `inputs_duration` and `transition_shortening` now sit next to `expected_duration`, the duration step carries `inputs_total`, and `notes` says when the transitions shortened the join.
+- **`silence.py` says which removed spans were digital silence.** Quiet sound under `--threshold` (room tone, a breath, a whisper) and digital silence were removed alike and both reported as `silences`. They still are, but `silence_kinds` labels each span `digital` or `below_threshold`, and `silence_breakdown` gives the count and seconds of each.
 
 ### Fixed
 
-- **A cut that loses its video is no longer `verified`** (#367). On some MPEG-TS sources ffmpeg's input seek drops the whole video stream, and `cut.py` returned an audio-only MP4 as `completed`, `verified: true`, with no note. It measured duration and start skew but never the output's streams. `cut.py`, `join.py` and `export.py` now add a `streams` step that compares the output's video and audio with the input's, allowing for what the operation was told to drop (an audio extension, a GIF). A missing stream fails the step and the result says `verified: false`.
-- **`join.py` says which clips got generated silence.** A clip with no audio stream is joined over `anullsrc` silence, which is right, but the result said nothing about it. `audio_substituted` and `notes` now name those clips.
-- **One true-peak tolerance.** `loudness.py` allowed +0.1 dB over a dBTP ceiling, `check.py` +0.05 dB and `export.py` none, so the same file could pass one tool and fail another. All three use `_platforms.TP_TOLERANCE_DB` (0.1 dB), the step reports it, and `check.py`'s true-peak row shows it.
+- **`loudness.py` no longer lengthens the sound.** Through the AAC encoder its output ran longer than the input: 0.015 s on a 6 s clip, 0.1 s on a 90 s one. The sound is trimmed to the input's length, and a `duration` step measures it.
+- **`export.py` measures the length its preset promises.** It trimmed to the platform maximum but never re-read what it wrote. With `--normalize`, a Reels export left at 90.10 s by the loudness pass came back `verified: true`, and `check.py` failed the same file. A `duration` step now holds the written file to the same limit `check.py` uses.
 
 ## 2.18.0
 

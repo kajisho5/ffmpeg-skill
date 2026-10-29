@@ -15,7 +15,7 @@ import argparse
 import json
 import os
 import sys
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 # `detect` moved into _common/probe.py in 1.16.0 so metadata.py --auto-chapters can measure the
 # same silences without importing this tool; the body is unchanged and the name still lives here.
@@ -44,6 +44,7 @@ def merge_spans(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     return out
 
 
+DIGITAL_SILENCE_DB = -90.0  # 2.20: at or below this a span is digital silence (16-bit dither sits near -96)
 BREATH_FLOOR = 0.12  # shortest gap silencedetect is asked for under --speech-aware
 
 
@@ -249,6 +250,33 @@ def _words_from_transcript(data):
     return out, had_segments, untimed
 
 
+def silence_kinds(path: str, silences: "List[Tuple[float, float]]", duration: float,
+                  threshold: float) -> "Dict[str, Any]":
+    """Which detected silences are digital silence and which are quiet sound under the threshold
+    (2.20). Both are removed alike, but they are not the same finding: a room tone, a breath or a
+    whisper under --threshold is sound, and a report that called all of it "silence" hid that the
+    cut took audible material. One more silencedetect pass at DIGITAL_SILENCE_DB finds the digital
+    spans; a detected silence that is at least 99% digital counts as digital."""
+    if not silences or STATE.dry_run:
+        return {}
+    digital = [(s, duration if e == float("inf") else e) for s, e in detect(path, DIGITAL_SILENCE_DB, 0.02)]
+    labels, tally = [], {"digital": [0, 0.0], "below_threshold": [0, 0.0]}
+    for s, e in silences:
+        e = duration if e == float("inf") else e
+        span = max(e - s, 1e-9)
+        covered = sum(max(0.0, min(e, de) - max(s, ds)) for ds, de in digital)
+        kind = "digital" if covered / span >= 0.99 else "below_threshold"
+        labels.append(kind)
+        tally[kind][0] += 1
+        tally[kind][1] += e - s
+    return {"silence_kinds": labels,
+            "silence_breakdown": {"digital": {"count": tally["digital"][0], "seconds": round(tally["digital"][1], 3),
+                                              "level_db": DIGITAL_SILENCE_DB},
+                                  "below_threshold": {"count": tally["below_threshold"][0],
+                                                      "seconds": round(tally["below_threshold"][1], 3),
+                                                      "level_db": threshold}}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -338,6 +366,7 @@ def main() -> int:
     if args.filler:
         silence_keeps = keep_ranges(merge_spans(list(silences)), duration, args.margin, args.min_keep)
         silence_only = max(0.0, duration - sum(e - s for s, e in silence_keeps))
+    kinds = silence_kinds(args.input, silences, duration, args.threshold)
     summary = {
         "silences": [[round(s, 3), None if e == float("inf") else round(e, 3)] for s, e in silences],
         "keep": [[round(s, 3), round(e, 3)] for s, e in keeps],
@@ -345,6 +374,8 @@ def main() -> int:
         "kept_duration": round(kept, 3),
         "removed_seconds": round(silence_only, 3),
     }
+    if kinds:
+        summary.update(kinds)
     if args.speech_aware:
         summary["speech_aware"] = {
             "min_silence": args.min_silence, "floor": min(BREATH_FLOOR, args.min_silence),

@@ -699,6 +699,16 @@ from where the expected value came, and what was not measured.
 | `audio_substituted` | `join.py` (video join) | the clips that had no audio stream, whose span of the join is generated silence; `notes` says the same |
 | loudness `tolerance.tp` | `loudness.py`, `export.py`, and `check.py`'s true-peak row | the one dBTP margin every tool applies (`_platforms.TP_TOLERANCE_DB`, 0.1 dB); before 2.18 it was 0.1, 0.05 and 0.0 in the three tools |
 
+Keys added in 2.20, all additive, from the same paper's baseline experiment (each was a length or a
+silence a tool reported as fine while another measurement disagreed):
+
+| key | tool | what it holds |
+|---|---|---|
+| `verification[]` step `duration` | `export.py` (a preset with a platform maximum, without `--allow-long`) | the written file's length against the maximum, measured as `check.py` measures it (the container's duration, `tolerance` 0) |
+| `verification[]` step `duration` (`property: audio_duration`) | `loudness.py` | the output's sound against the input's, to one AAC frame: a levels pass changes no timing |
+| `inputs_duration`, `transition_shortening`; step `duration`'s `inputs_total` | `join.py` | the clips' own total and how much the transitions took out of it. `expected_duration` is derived from the transition the join applied, so it cannot show that on its own |
+| `silence_kinds`, `silence_breakdown` | `silence.py` | per detected silence, `digital` (at or below -90 dBFS) or `below_threshold` (quiet sound under `--threshold`), and the count and seconds of each with the level that defines it |
+
 Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 
 | key | tool | what it holds |

@@ -73,6 +73,12 @@ def has_step(steps, want):
     return any(all(s.get(k) == v for k, v in want.items()) for s in steps)
 
 
+def probe_streams(path):
+    """{codec_type: stream duration in seconds} straight from ffprobe, not through the skill."""
+    out = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", path).stdout
+    return {st["codec_type"]: st.get("duration") for st in json.loads(out)["streams"]}
+
+
 def tool(name, *args, **kw):
     return sh(sys.executable, SCRIPTS / f"{name}.py", *args, **kw)
 
@@ -3671,6 +3677,55 @@ class ContractTests(unittest.TestCase):
         self.assertAlmostEqual(step["delta"]["tp"], step["measured"]["tp"] - step["expected"]["tp_max"], places=1)
         self.assertIn("lufs", step["measured"])
         self.assertIn("tp", step["delta"])
+
+    def test_a_levels_pass_keeps_the_input_length_and_says_so(self):
+        """loudness.py's AAC output came back longer than its input (0.015 s on 6 s, 0.1 s on a 90 s
+        Reels export, which check.py then failed while export.py said verified). The sound is
+        trimmed to the input's length, and a duration step measures it (2.20)."""
+        src_audio = float(probe_streams(self.src)["audio"])
+        doc = json.loads(tool("loudness", self.src, "-o", self.out("len_loud.mp4"), "--overwrite", "--json").stdout)
+        self.assertAlmostEqual(float(probe_streams(self.out("len_loud.mp4"))["audio"]), src_audio, delta=0.005)
+        step = next(s for s in doc["verification"] if s["step"] == "duration")
+        self.assertEqual((step["property"], step["provenance"], step["ok"]), ("audio_duration", "input_premeasurement", True))
+        self.assertAlmostEqual(step["expected"], src_audio, places=2)
+
+    def test_export_measures_the_length_its_preset_promises(self):
+        """export.py trims to the platform maximum but never re-read the written length (the VDC
+        paper's 90.10 s Reels file). The step holds the length to the same limit check.py does."""
+        import _platforms
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("len_x.mp4"), "--overwrite", "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "duration")
+        limit = float(_platforms.PLATFORMS["x"]["spec"]["max_duration"])
+        self.assertEqual(step["expected"], {"max": limit})
+        self.assertEqual((step["ok"], step["tolerance"], step["provenance"]), (True, 0.0, "specification"))
+        self.assertAlmostEqual(step["delta"], step["measured"] - limit, places=3)
+
+    def test_join_reports_the_clips_total_next_to_the_joined_length(self):
+        """join.py's expected length is derived from the transition it applied, so a check against
+        it alone hid that a fade took time out of the material (15 s of clips as 14 s). The clips'
+        own total is reported beside it, with a note when the transitions shortened the join."""
+        doc = json.loads(tool("join", self.src, self.src, "-o", self.out("len_join.mp4"), "--overwrite", "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "duration")
+        self.assertAlmostEqual(doc["inputs_duration"], step["inputs_total"], places=2)
+        self.assertAlmostEqual(doc["transition_shortening"], doc["inputs_duration"] - doc["expected_duration"], places=3)
+        self.assertGreater(doc["transition_shortening"], 0)
+        self.assertTrue(any("transitions overlap the clips" in n for n in doc.get("notes") or []))
+        cut = json.loads(tool("join", self.src, self.src, "--transition", "none", "-o", self.out("len_join_cut.mp4"),
+                              "--overwrite", "--json").stdout)
+        self.assertEqual(cut["transition_shortening"], 0.0)
+        self.assertFalse(any("transitions overlap" in n for n in cut.get("notes") or []))
+
+    def test_silence_says_which_removed_spans_were_digital_silence(self):
+        """silence.py removed quiet sound under --threshold and digital silence alike and reported
+        both as "silences". It still removes both, and now says which is which (2.20)."""
+        wav = self.out("kinds.wav")
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+between(t\\,3\\,5)+gt(t\\,6))"
+               "+0.003*sin(2*PI*300*t)*between(t\\,5\\,6)':s=48000:d=8", wav)
+        doc = json.loads(tool("silence", wav, "--threshold", "-35", "--min-silence", "0.4", "--list", "--json").stdout)
+        self.assertEqual(len(doc["silences"]), 2)
+        self.assertEqual(doc["silence_kinds"], ["digital", "below_threshold"])
+        self.assertEqual(doc["silence_breakdown"]["below_threshold"]["level_db"], -35)
+        self.assertEqual(doc["silence_breakdown"]["digital"]["count"], 1)
 
     def test_unverified_range_names_real_tools_and_reaches_the_contract(self):
         from _common.emit import UNVERIFIED

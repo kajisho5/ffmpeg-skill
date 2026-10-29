@@ -20,6 +20,8 @@ import re
 import sys
 
 from _platforms import TP_TOLERANCE_DB
+
+AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -93,6 +95,10 @@ def main() -> int:
     bitrate = args.audio_bitrate or "192k"
 
     dropped_streams = False
+    # loudnorm emits its last block whole, and through the AAC encoder that came out as 0.1 s more
+    # sound than the input had (a 90.000 s Reels export left at 90.100 s, which check.py fails):
+    # the sound is trimmed back to the input's own length after the rate conversion
+    in_audio = (meta.get("audio") or {}).get("duration") or meta.get("duration")
 
     def encode(tp: float, bitrate: str) -> None:
         nonlocal dropped_streams
@@ -101,6 +107,8 @@ def main() -> int:
             f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
             f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true:print_format=summary"
         )
+        if in_audio:
+            af += f",aresample={sr},atrim=end={float(in_audio):.6f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-af", af, "-ar", str(sr)]
         if ext in AUDIO_CODECS or not meta.get("video"):
             cmd += ["-vn"] + audio_codec_for(output, bitrate)
@@ -158,16 +166,24 @@ def main() -> int:
             f"the encoder overshoots more than the loudnorm ceiling can absorb at this bitrate",
             kind="verification", output=output, result=result,
             hint="raise --audio-bitrate (e.g. 256k) or deliver a lossless format (wav/flac) and let the platform encode")
+    verification = [{"step": "loudness",
+                     "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + TP_TOLERANCE_DB),
+                     "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp,
+                     "property": "loudness", "expected": {"lufs": args.lufs, "tp_max": args.tp},
+                     "measured": {"lufs": float(after["input_i"]), "tp": float(after["input_tp"])},
+                     "delta": {"lufs": round(float(after["input_i"]) - args.lufs, 2), "tp": round(float(after["input_tp"]) - args.tp, 2)},
+                     "tolerance": {"lufs": 1.0, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}]
+    out_audio = (probe(output, role="output").get("audio") or {}).get("duration")
+    if in_audio and out_audio:
+        # a levels pass changes no timing: the sound is as long as the input's, to one AAC frame
+        tol = max(2048.0 / float(sr), AUDIO_LENGTH_TOLERANCE)
+        verification.append({"step": "duration", "property": "audio_duration", "ok": abs(out_audio - in_audio) <= tol,
+                             "expected": round(float(in_audio), 3), "measured": round(float(out_audio), 3),
+                             "delta": round(float(out_audio) - float(in_audio), 3), "tolerance": round(tol, 3),
+                             "provenance": "input_premeasurement"})
     emit(output, result=result, dropped_non_av_streams=dropped_streams,
          measured={k: stats[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")},
-         targets={"lufs": args.lufs, "tp": args.tp, "lra": args.lra},
-         verification=[{"step": "loudness",
-                        "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + TP_TOLERANCE_DB),
-                        "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp,
-                        "property": "loudness", "expected": {"lufs": args.lufs, "tp_max": args.tp},
-                        "measured": {"lufs": float(after["input_i"]), "tp": float(after["input_tp"])},
-                        "delta": {"lufs": round(float(after["input_i"]) - args.lufs, 2), "tp": round(float(after["input_tp"]) - args.tp, 2)},
-                        "tolerance": {"lufs": 1.0, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}])
+         targets={"lufs": args.lufs, "tp": args.tp, "lra": args.lra}, verification=verification)
     return 0
 
 

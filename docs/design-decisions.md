@@ -50,6 +50,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.17.2 — cut.py fades the sound at every --segments join it re-encodes](#2172--cutpy-fades-the-sound-at-every---segments-join-it-re-encodes)
 - [2.17.4 — a non-ASCII font path on Windows](#2174--a-non-ascii-font-path-on-windows)
 - [2.18 — results carry the VDC paper's co-reported items](#218--results-carry-the-vdc-papers-co-reported-items)
+- [2.20 — a length or a silence is checked against a yardstick the tool did not make](#220--a-length-or-a-silence-is-checked-against-a-yardstick-the-tool-did-not-make)
 <!-- contents:end -->
 
 ## Time limits
@@ -2168,3 +2169,28 @@ What was decided there:
   much. A tighter rule would fail files on measurement noise and send `loudness.py` round its
   re-encode loop for nothing. Code: `_platforms.TP_TOLERANCE_DB`. Test:
   `test_one_true_peak_tolerance_is_applied_and_reported`.
+
+## 2.20 — a length or a silence is checked against a yardstick the tool did not make
+
+- **export.py holds the written length to the preset's maximum, as check.py does.** The paper's
+  baseline experiment shipped a 90.10 s Reels file under `verified: true` while `check.py` failed it.
+  The step measures the container's duration with no tolerance, because that is the number and the
+  rule `check.py` applies. Any other margin would bring back two verdicts on one file. The source of
+  the extra 0.1 s, `loudness.py` lengthening the sound, is fixed too, but the step does not depend on
+  that fix. Code: `export.py`. Test: `test_export_measures_the_length_its_preset_promises`.
+- **loudness.py trims the sound to the input's length.** loudnorm's last block and the AAC encoder
+  made the output run 0.015 s long on 6 s and 0.1 s on 90 s. A levels pass should change no timing,
+  so `atrim` cuts at the input's audio duration after the rate conversion. A `duration` step allows
+  one AAC frame of difference. Test: `test_a_levels_pass_keeps_the_input_length_and_says_so`.
+- **join.py reports the clips' total beside the joined length, and does not fail on the
+  difference.** The expected length comes from the transition the join applied (provenance
+  `input_premeasurement`), so on its own it cannot show that a fade took time out of the material:
+  15 s of clips played as 14 s. The shortening is what a fade does, so it is not a failure. It is
+  reported (`inputs_duration`, `transition_shortening`, a note) so the caller can hold it against
+  the user's own expectation. Test: `test_join_reports_the_clips_total_next_to_the_joined_length`.
+- **silence.py labels each removed span `digital` or `below_threshold`, and removes both as
+  before.** Quiet sound under `--threshold` is what the user asked to remove, so the cut is
+  unchanged. Reporting room tone and digital silence as the same "silence" hid that the cut took
+  audible material, so each span is labelled. A span is digital when at least 99% of it sits at or
+  below -90 dBFS, measured by one more silencedetect pass. That is near the 16-bit dither floor and
+  far below any speech. Test: `test_silence_says_which_removed_spans_were_digital_silence`.
