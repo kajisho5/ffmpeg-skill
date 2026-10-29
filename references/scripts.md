@@ -14,7 +14,62 @@ yourself, which is the only way for a tool with no input file (`caption.py
 anywhere is `kind: input` naming the flag. Nothing else about times differs
 between tools.
 
+## Verdict thresholds (what passes, 2.21)
+
+The numbers behind `verified`, `check.py`'s PASS/WARN/FAIL rows and the cuts the tools make. A
+result also carries the tolerance it used in each `verification[]` step (`tolerance`, since 2.18).
+Every row names the constant or flag it comes from, and a test holds the table to it
+(`test_the_thresholds_table_matches_the_code`).
+
+<!-- thresholds:start -->
+| what | value | source | used by |
+|---|---|---|---|
+| true peak may exceed the dBTP ceiling by | 0.1 dB | `_platforms.TP_TOLERANCE_DB` | `loudness.py`, `check.py`, `export.py` |
+| a normalised file is on its `-I` target within | 1.0 LU | `loudness.LUFS_TOLERANCE` | `loudness.py` |
+| a levels pass keeps the sound's length to (or one AAC frame, 1024 samples, if longer) | 0.03 s | `loudness.AUDIO_LENGTH_TOLERANCE` | `loudness.py` |
+| a joined picture is as long as the clips less the transitions, to (frames) | 1.5 | `join.DURATION_TOLERANCE_FRAMES` | `join.py` |
+| ... and at least | 0.05 s | `join.DURATION_TOLERANCE_MIN` | `join.py` |
+| a lossless cut may land this far from the asked time before it re-encodes | 0.5 s | `cut.py --tolerance` | `cut.py` |
+| silence is sound at or below | -35 dBFS | `silence.py --threshold` | `silence.py` |
+| ... lasting at least | 0.6 s | `silence.py --min-silence` | `silence.py` |
+| a removed silence is digital silence when 99% of it sits at or below | -90 dBFS | `silence.DIGITAL_SILENCE_DB` | `silence.py` (`silence_kinds`) |
+| a track is silent when its peak is at or below | -50 dBFS | `_common.probe.SILENT_PEAK_DBFS` | `check.py`; the `--silence-threshold` default of `join.py`, `audio.py`, `waveform.py` |
+| a filler word longer than this is a held vowel, kept | 1.2 s | `_common.decision.FILLER_MAX_WORD` | `silence.py --filler` |
+| a pause this long between two tokens of an unspaced script is a word boundary | 0.1 s | `_common.decision.FILLER_BOUNDARY_GAP` | `silence.py --filler` |
+| `--content` black: WARN above this share of the duration | 0.10 | `check.BLACK_WARN` | `check.py --content` |
+| `--content` black: FAIL at this share | 0.95 | `check.BLACK_FAIL` | `check.py --content` |
+| `--content` frozen: WARN when the longest span is above this, or above 30% | 3.0 s | `check.FROZEN_WARN_S` | `check.py --content` |
+| `--content` frozen: FAIL when one span covers this share | 0.95 | `check.FROZEN_FAIL` | `check.py --content` |
+| `--content` silence: WARN above this share below the silent level | 0.50 | `check.SILENCE_WARN` | `check.py --content` |
+| `--content` silence: FAIL at this share | 0.95 | `check.SILENCE_FAIL` | `check.py --content` |
+| `--content` dropout: a gap of sound at or below | -80 dBFS | `_common.probe.CONTENT_DROPOUT_DB` | `check.py --content` |
+| ... between (s) and 1 s long, with sound on both sides | 0.02 s | `_common.probe.CONTENT_DROPOUT_MIN` | `check.py --content` |
+| a beat grid below this confidence is not snapped to | 0.5 | `_common.decision.BEAT_MIN_CONFIDENCE` | `cut.py --snap beats`, `scenes.py --beats` |
+<!-- thresholds:end -->
+
+Delivery targets per platform (`scripts/_platforms.py`). A file passes loudness within the
+platform's tolerance of its target, and true peak at or below its ceiling plus 0.1 dB. `export.py`
+holds the written length to the maximum with no tolerance, as `check.py` does.
+
+<!-- platforms:start -->
+| platform | loudness | tolerance | true peak | max duration |
+|---|---|---|---|---|
+| `tiktok` | -14 LUFS | ±2 LU | -1 dBTP | 600 s |
+| `reels` | -14 LUFS | ±2 LU | -1 dBTP | 90 s |
+| `shorts` | -14 LUFS | ±2 LU | -1 dBTP | 180 s |
+| `youtube` | -14 LUFS | ±2 LU | -1 dBTP | 43200 s |
+| `youtube-hdr` | -14 LUFS | ±2 LU | -1 dBTP | 43200 s |
+| `youtube-av1` | -14 LUFS | ±2 LU | -1 dBTP | 43200 s |
+| `x` | -14 LUFS | ±3 LU | -1 dBTP | 140 s |
+| `linkedin` | -14 LUFS | ±3 LU | -1 dBTP | 600 s |
+| `facebook` | -14 LUFS | ±3 LU | -1 dBTP | 14400 s |
+| `podcast` | -16 LUFS | ±1 LU | -1 dBTP | — |
+| `broadcast` | -23 LUFS | ±1 LU | -1 dBTP | — |
+| `custom` | — | ±2 LU | -1 dBTP | — |
+<!-- platforms:end -->
+
 ## Contents
+- verdict thresholds — what passes, and where each number lives
 - probe.py — inspect
 - cut.py — cut / join segments
 - fit.py — target duration and/or aspect, rotate/flip

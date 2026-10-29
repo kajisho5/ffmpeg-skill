@@ -35,6 +35,7 @@ import os
 import sys
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
+from _common.probe import SILENT_PEAK_DBFS
 from _common import (add_common, apply_common, aac_args, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs)
@@ -60,7 +61,7 @@ def main() -> int:
     ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
                     help="input audio whose peak is at or below --silence-threshold (the render would be a flat "
                          "line): warn (default: render it, report `silent: true`) or fail (refuse before ffmpeg runs)")
-    ap.add_argument("--silence-threshold", type=float, default=-50.0, metavar="DBFS",
+    ap.add_argument("--silence-threshold", type=float, default=SILENT_PEAK_DBFS, metavar="DBFS",
                     help="peak level in dBFS at or below which the input counts as silent (default -50)")
     ag = ap.add_argument_group("audiogram (1.16)",
                                "The visualisation over a picture, for an episode that has no video. The image is a "

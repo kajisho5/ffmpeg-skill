@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import warn
 
@@ -216,7 +217,7 @@ def main() -> int:
     ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
                     help="a --music/--replace/--effects file (or, under --duck, the voice) whose peak is at or below "
                          "--silence-threshold: warn (default: mix it, report it under `silent`) or fail (refuse before ffmpeg runs)")
-    ap.add_argument("--silence-threshold", type=float, default=-50.0, metavar="DBFS",
+    ap.add_argument("--silence-threshold", type=float, default=SILENT_PEAK_DBFS, metavar="DBFS",
                     help="peak level in dBFS at or below which a track counts as silent (default -50)")
     add_common(ap)
     args = ap.parse_args()

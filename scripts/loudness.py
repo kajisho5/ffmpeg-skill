@@ -22,6 +22,7 @@ import sys
 from _platforms import TP_TOLERANCE_DB
 
 AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
+LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is on target
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -159,7 +160,7 @@ def main() -> int:
     if ext not in AUDIO_CODECS or "aac" in AUDIO_CODECS[ext]:
         result["audio_bitrate_used"] = bitrate
     result["encodes"] = rounds + 1
-    if not after.get("silent") and abs(float(after["input_i"]) - args.lufs) > 1.0:
+    if not after.get("silent") and abs(float(after["input_i"]) - args.lufs) > LUFS_TOLERANCE:
         result["note"] = (f"integrated loudness is {float(after['input_i']) - args.lufs:+.1f} LU from the target because the "
                           f"true-peak ceiling had to absorb the encoder's overshoot; a lossless delivery (wav/flac) or a pinned "
                           f"higher --audio-bitrate keeps both")
@@ -169,12 +170,12 @@ def main() -> int:
             kind="verification", output=output, result=result,
             hint="raise --audio-bitrate (e.g. 256k) or deliver a lossless format (wav/flac) and let the platform encode")
     verification = [{"step": "loudness",
-                     "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= 1.0 and float(after["input_tp"]) <= args.tp + TP_TOLERANCE_DB),
+                     "ok": bool(after.get("silent")) or (abs(float(after["input_i"]) - args.lufs) <= LUFS_TOLERANCE and float(after["input_tp"]) <= args.tp + TP_TOLERANCE_DB),
                      "lufs": float(after["input_i"]), "tp": float(after["input_tp"]), "target_lufs": args.lufs, "target_tp": args.tp,
                      "property": "loudness", "expected": {"lufs": args.lufs, "tp_max": args.tp},
                      "measured": {"lufs": float(after["input_i"]), "tp": float(after["input_tp"])},
                      "delta": {"lufs": round(float(after["input_i"]) - args.lufs, 2), "tp": round(float(after["input_tp"]) - args.tp, 2)},
-                     "tolerance": {"lufs": 1.0, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}]
+                     "tolerance": {"lufs": LUFS_TOLERANCE, "tp": TP_TOLERANCE_DB}, "provenance": "user_specified"}]
     written = probe(output, role="output")
     out_audio = audio_length(written)
     if in_audio and out_audio:

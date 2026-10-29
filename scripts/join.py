@@ -39,6 +39,7 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, AUDIO_MEDIA_EXT, draws_chroma, drawn_chain, label_chain, matrix_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import warn
 
@@ -50,6 +51,9 @@ STATE_SKIPPED: List[Dict[str, Any]] = []
 # --dry-run: inputs that do not exist yet, planned on as an earlier step's output
 STATE_PENDING: List[Dict[str, Any]] = []
 STATE_NOTES: List[str] = []
+# the joined picture's length against the clips' sum less the transitions: 1.5 frames, at least 0.05 s
+DURATION_TOLERANCE_FRAMES = 1.5
+DURATION_TOLERANCE_MIN = 0.05
 # --on-silent warn: inputs whose audio peak is at or below --silence-threshold, joined anyway
 STATE_SILENT: List[Dict[str, Any]] = []
 # warnings, never refusals: a clip shorter than MIN_SEGMENT_FRAMES frames (audio-only: shorter than
@@ -316,7 +320,7 @@ def main() -> int:
     ap.add_argument("--allow-silent", metavar="N[,N...]",
                     help="input numbers (1-based) whose silence is intended, e.g. a planned pause: always joined, "
                          "listed under `silent` with intended: true, no warning, whatever --on-silent says")
-    ap.add_argument("--silence-threshold", type=float, default=-50.0, metavar="DB",
+    ap.add_argument("--silence-threshold", type=float, default=SILENT_PEAK_DBFS, metavar="DB",
                     help="peak level in dBFS at or below which an input counts as silent (default -50)")
     ap.add_argument("-o", "--output", help="output file (default: <first>_joined.mp4)")
     ap.add_argument("--transition", choices=TRANSITIONS, default="fade", help="transition between clips (default fade)")
@@ -579,7 +583,7 @@ def main() -> int:
     measured = (r.get("video") or {}).get("duration") or r.get("duration")
     verification = []
     if expected is not None and measured is not None and not STATE.dry_run:
-        tol = max(1.5 / fps, 0.05)
+        tol = max(DURATION_TOLERANCE_FRAMES / fps, DURATION_TOLERANCE_MIN)
         verification.append({"step": "duration", "property": "video_duration", "ok": abs(measured - expected) <= tol,
                              "measured": round(measured, 3), "expected": expected,
                              "delta": round(measured - expected, 3), "tolerance": round(tol, 3),

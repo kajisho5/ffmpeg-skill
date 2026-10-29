@@ -6,13 +6,11 @@
 
 ### Added
 
-- **`join.py` reports the clips' own total beside the joined length.** The expected length a join is checked against comes from the transition the join applied, so a fade that took time out of the material passed unseen. 15 s of clips joined with the default fade play as 14 s. `inputs_duration` and `transition_shortening` now sit next to `expected_duration`, the duration step carries `inputs_total`, and `notes` says when the transitions shortened the join.
-- **`silence.py` says which removed spans were digital silence.** Quiet sound under `--threshold` (room tone, a breath, a whisper) and digital silence were removed alike and both reported as `silences`. They still are, but `silence_kinds` labels each span `digital` or `below_threshold`, and `silence_breakdown` gives the count and seconds of each.
+- **One table of verdict thresholds.** `references/scripts.md` § "Verdict thresholds" lists the numbers behind `verified` and `check.py`'s rows: true-peak and loudness tolerances, the length tolerances of `loudness.py` and `join.py`, `cut.py`'s keyframe tolerance, the silence, digital-silence and dropout levels, `--content`'s shares and filler timings. It also gives each platform's loudness target, tolerance, true-peak ceiling and maximum length. Before, these numbers were split across the code, docs/contract.md and docs/design-decisions.md, and some were in no doc at all. Each row names the constant or flag it comes from, and a test holds the table to the code.
 
-### Fixed
+### Changed
 
-- **`loudness.py` no longer lengthens the sound.** Through the AAC encoder its output ran longer than the input: 0.015 s on a 6 s clip, 0.1 s on a 90 s one. The sound is trimmed to the input's length, and a `duration` step measures it.
-- **`export.py` measures the length its preset promises.** It trimmed to the platform maximum but never re-read what it wrote. With `--normalize`, a Reels export left at 90.10 s by the loudness pass came back `verified: true`, and `check.py` failed the same file. A `duration` step now holds the written file to the same limit `check.py` uses.
+- **The -50 dBFS silent-track level is one constant.** `join.py`, `audio.py` and `waveform.py` took their `--silence-threshold` default from a literal; it is now `_common.probe.SILENT_PEAK_DBFS`, the level `check.py` already used. `loudness.py`'s ±1.0 LU and `join.py`'s duration tolerance are named constants too. No value changed.
 
 ## 2.20.0
 
