@@ -2223,8 +2223,9 @@ What was decided there:
   that fix. Code: `export.py`. Test: `test_export_measures_the_length_its_preset_promises`.
 - **loudness.py trims the sound to the input's length.** loudnorm's last block and the AAC encoder
   made the output run 0.015 s long on 6 s and 0.1 s on 90 s. A levels pass should change no timing,
-  so `atrim` cuts at the input's audio duration after the rate conversion. A `duration` step allows
-  one AAC frame of difference. Test: `test_a_levels_pass_keeps_the_input_length_and_says_so`.
+  so `atrim` cuts at the input's audio duration, right after loudnorm: an `aresample` between the
+  two fails channel-layout negotiation on FFmpeg 5.1. A `duration` step allows one AAC frame of
+  difference, at least 0.03 s. Test: `test_a_levels_pass_keeps_the_input_length_and_says_so`.
 - **join.py reports the clips' total beside the joined length, and does not fail on the
   difference.** The expected length comes from the transition the join applied (provenance
   `input_premeasurement`), so on its own it cannot show that a fade took time out of the material:
