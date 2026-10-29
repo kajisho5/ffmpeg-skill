@@ -3712,16 +3712,20 @@ class EmojiTests(unittest.TestCase):
         import glob
         import tempfile as _tf
         out = OUT / "textfile_life.mp4"
-        doc = json.loads(script("overlay.py", self.src, "--text", "Label", "-o", out,
-                                "--json", "--dry-run").stdout)
-        m = re.search(r"textfile=(\S+?\.txt)", " ".join(doc["commands"]).replace("\\", ""))
-        self.assertTrue(m, "the plan must still name the path it would use")
-        self.assertFalse(os.path.exists(m.group(1)), "a dry run wrote a file")
-        self.assertFalse(os.path.isdir(os.path.dirname(m.group(1))), "a dry run created a directory")
-        self.assertEqual(glob.glob(os.path.join(_tf.gettempdir(), "ffmpeg-skill-text-*")), [],
-                         "a drawn-text directory was left behind")
-        self.assertFalse(os.path.exists(os.path.join(_tf.gettempdir(), "ffmpeg-skill-text")),
-                         "the shared world-writable directory must not be created at all")
+        # A temp dir of its own: run_parallel shards this module, and a real drawtext run in the
+        # other shard holds an ffmpeg-skill-text-* directory in the shared one while it works.
+        with _tf.TemporaryDirectory() as tmp:
+            env = dict(os.environ, TMPDIR=tmp, TEMP=tmp, TMP=tmp)
+            doc = json.loads(script("overlay.py", self.src, "--text", "Label", "-o", out,
+                                    "--json", "--dry-run", env=env).stdout)
+            m = re.search(r"textfile=(\S+?\.txt)", " ".join(doc["commands"]).replace("\\", ""))
+            self.assertTrue(m, "the plan must still name the path it would use")
+            self.assertFalse(os.path.exists(m.group(1)), "a dry run wrote a file")
+            self.assertFalse(os.path.isdir(os.path.dirname(m.group(1))), "a dry run created a directory")
+            self.assertEqual(glob.glob(os.path.join(tmp, "ffmpeg-skill-text-*")), [],
+                             "a drawn-text directory was left behind")
+            self.assertFalse(os.path.exists(os.path.join(tmp, "ffmpeg-skill-text")),
+                             "the shared world-writable directory must not be created at all")
 
     def test_the_ass_route_writes_no_drawtext_textfile(self):
         from _common import script_font_status
@@ -3730,10 +3734,12 @@ class EmojiTests(unittest.TestCase):
         import glob
         import tempfile as _tf
         out = OUT / "textfile_ass_route.mp4"
-        script("graphics.py", self.src, "--template", "title", "--title", "\u0915\u093f\u0924\u093e\u092c",
-               "--start", "0", "--end", "2", "-o", out)
-        self.assertEqual(glob.glob(os.path.join(_tf.gettempdir(), "ffmpeg-skill-text-*")), [],
-                         "the ASS route wrote (and kept) a drawtext textfile it never reads")
+        with _tf.TemporaryDirectory() as tmp:  # private, as above: the module runs sharded
+            env = dict(os.environ, TMPDIR=tmp, TEMP=tmp, TMP=tmp)
+            script("graphics.py", self.src, "--template", "title", "--title", "\u0915\u093f\u0924\u093e\u092c",
+                   "--start", "0", "--end", "2", "-o", out, env=env)
+            self.assertEqual(glob.glob(os.path.join(tmp, "ffmpeg-skill-text-*")), [],
+                             "the ASS route wrote (and kept) a drawtext textfile it never reads")
 
     def test_the_ass_route_keeps_braces_and_backslashes(self):
         """The same title through drawtext and through libass must produce the same characters:
