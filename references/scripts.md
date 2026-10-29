@@ -598,7 +598,7 @@ per-word `start`/`end`) or `--transcribe` (the same local engine `caption.py`
 uses, never required). There is no heuristic fallback — finding an "um" by
 looking for short quiet blips would cut real speech, so the tool refuses
 instead. `--filler-list` reports what would go and writes nothing.
-Built-in lists (2.18): en, ja, ko, zh, es, de, fr, pt, it, nl, pl, ru, tr. They hold
+Built-in lists (2.19): en, ja, ko, zh, es, de, fr, pt, it, nl, pl, ru, tr. They hold
 hesitation sounds only; words that are as often content (`like`, 저, 那个, ну) are
 `--filler-extra` material. Chinese and Japanese are cut only where the transcript shows
 a word boundary on each side (punctuation or a 0.1 s pause), because whisper splits them

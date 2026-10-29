@@ -3299,7 +3299,7 @@ class WindowsFontPathTests(unittest.TestCase):
 
 
 class TraditionalChineseFontTests(unittest.TestCase):
-    """2.18: Han-only text resolved a Simplified face whatever --lang said, so a zh-TW caption was
+    """2.19: Han-only text resolved a Simplified face whatever --lang said, so a zh-TW caption was
     drawn in the Beijing glyph forms. A --lang naming Traditional Chinese now resolves a
     Traditional face, and falls back to the Simplified one, recorded, when none is installed."""
 
@@ -3341,6 +3341,7 @@ class TraditionalChineseFontTests(unittest.TestCase):
             with unittest.mock.patch("platform.system", return_value="Windows"), \
                     unittest.mock.patch.dict(os.environ, {"WINDIR": tmp}):
                 script, path, family = fonts.script_font_for_text("台灣", lang="zh-TW")
+            self.assertTrue(path.endswith("msyh.ttc"), path)
             self.assertEqual((script, family), ("zh", "Microsoft YaHei"))
             codes = [f.get("code") for f in STATE.fallbacks[before:]]
             self.assertIn("font_variant_missing", codes)

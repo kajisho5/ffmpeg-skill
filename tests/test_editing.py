@@ -2266,7 +2266,7 @@ class EditingTests(MediaFixtures):
         self.assertEqual((fil["lang"], fil["removed_words"]), ("ja", ["えー"]))
 
     def test_filler_takes_a_korean_or_chinese_transcript_by_code_or_name(self):
-        """2.18: ko and zh have built-in lists, so "kor", "zh-CN" and "chinese" are no longer
+        """2.19: ko and zh have built-in lists, so "kor", "zh-CN" and "chinese" are no longer
         refused; "chinese" used to be cut to the two letters "ch"."""
         for lang, word, expected in (("kor", "음", "ko"), ("ko-KR", "어", "ko"), ("zh-CN", "嗯，", "zh"),
                                      ("chinese", "呃", "zh"), ("spanish", "eh", "es")):
@@ -2403,7 +2403,7 @@ class FillerSpansTests(unittest.TestCase):
         self.assertEqual([s["word"] for s in spans], ["\u3048\u30fc\u3068", "\u3042\u306e"])
 
     def test_a_filler_split_across_whisper_tokens_is_one_word(self):
-        """2.18: whisper splits Japanese and Chinese into tokens, not words -- its own vocabulary
+        """2.19: whisper splits Japanese and Chinese into tokens, not words -- its own vocabulary
         turns えーと into えー + と and えっと into え + っと, so the list's えーと/えっと never
         matched one token. A run of tokens that joins to a listed word is that word; the longest
         run wins, so えーと is cut whole rather than えー with と left behind."""
@@ -2436,7 +2436,7 @@ class FillerSpansTests(unittest.TestCase):
 
     def test_a_two_word_discourse_marker_added_with_filler_extra_matches(self):
         """--help offers 'you know' for --filler-extra, but one engine word is one word, so the
-        two-word phrase could never match before 2.18."""
+        two-word phrase could never match before 2.19."""
         spans = self.D.filler_spans(self._w(("So", 0.0, 0.3), ("you", 0.5, 0.7), ("know", 0.7, 0.9), ("it", 1.0, 1.2)),
                                     {"you know"}, pad=0.0)
         self.assertEqual([(s["word"], s["start"], s["end"]) for s in spans], [("you know", 0.5, 0.9)])
@@ -2469,7 +2469,7 @@ class FillerSpansTests(unittest.TestCase):
         self.assertEqual(rows, {k: set(v) for k, v in self.D.FILLER_WORDS.items()})
 
     def test_every_new_language_list_holds_disfluencies_only(self):
-        """2.18 adds ko, zh, ru, nl, pl and tr. No list carries a word its own language uses as
+        """2.19 adds ko, zh, ru, nl, pl and tr. No list carries a word its own language uses as
         content; those are discourse markers, reachable with --filler-extra."""
         for lang in ("ko", "zh", "ru", "nl", "pl", "tr"):
             self.assertTrue(self.D.FILLER_WORDS[lang], lang)

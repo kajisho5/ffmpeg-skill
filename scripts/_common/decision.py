@@ -1158,7 +1158,7 @@ FILLER_WORDS = {
     "fr": frozenset({"euh", "hein"}),
     "pt": frozenset({"é", "hum"}),
     "it": frozenset({"ehm"}),
-    # 2.18: Korean is written with spaces, so a whisper word is a word and the list works as the
+    # 2.19: Korean is written with spaces, so a whisper word is a word and the list works as the
     # English one does. 그/저/뭐/이제 are fillers as often as they are "that"/"I"/"what"/"now":
     # discourse markers below, not defaults.
     "ko": frozenset({"음", "으음", "음음", "어", "어어", "에", "흠"}),

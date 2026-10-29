@@ -15,6 +15,22 @@
 - **`--filler-extra "you know"` matches.** A two-word marker could never match one engine word, though `--help` offered it.
 - **whisper.cpp transcripts in Japanese and Chinese have per-token timings.** whisper.cpp marks a word start with a space, so in an unspaced language a whole segment was glued into one "word" that no filler could match. Tokens between two whole characters now stay apart.
 
+## 2.18.0
+
+_Automated release: version and notes generated from pull requests merged since 2.17.4._
+
+### Added
+
+- **A result says what was measured, how far, and what was not.** A verification step that measures a property now carries `property`, `expected`, `measured`, `delta`, `tolerance` and the `provenance` of the expected value. A failed step carries `attribution: unresolved`. Every writing tool's result lists the output properties it did not measure as `unverified`, for example `caption`'s `rendered_placement` and `sync`'s `lip_sync`, and the contract carries the same list per tool as `unverified_properties`. These are the co-reported items of the Verification-Driven Coding paper.
+- **SKILL.md tells the agent what `verified` does not cover.** The report names in `Notes:` any `unverified` item the user would assume was checked, and a step with `attribution: unresolved` is reported, not re-run. Without that, a result that says `verified` passes on as more than it measured.
+
+### Fixed
+
+- **A cut that loses its video is no longer `verified`** (#367). On some MPEG-TS sources ffmpeg's input seek drops the whole video stream, and `cut.py` returned an audio-only MP4 as `completed`, `verified: true`, with no note. It measured duration and start skew but never the output's streams. `cut.py`, `join.py` and `export.py` now add a `streams` step that compares the output's video and audio with the input's, allowing for what the operation was told to drop (an audio extension, a GIF). A missing stream fails the step and the result says `verified: false`.
+- **`join.py` says which clips got generated silence.** A clip with no audio stream is joined over `anullsrc` silence, which is right, but the result said nothing about it. `audio_substituted` and `notes` now name those clips.
+- **One true-peak tolerance.** `loudness.py` allowed +0.1 dB over a dBTP ceiling, `check.py` +0.05 dB and `export.py` none, so the same file could pass one tool and fail another. All three use `_platforms.TP_TOLERANCE_DB` (0.1 dB), the step reports it, and `check.py`'s true-peak row shows it.
+- Results carry what was measured, how far, and what was not; a cut that loses its video is not verified (#370)
+
 ## 2.17.4
 
 _Automated release: version and notes generated from pull requests merged since 2.17.3._

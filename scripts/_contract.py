@@ -537,7 +537,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
             "hw": {"type": "object", "description": "present when VideoToolbox was asked for (--hw, $FFMPEG_SKILL_HW, a render.py stage, a batch.py item), on export.py when $FFMPEG_SKILL_HW=1 is set but its delivery preset does not take it, and when this ffmpeg build has no libx264/libx265 and an encode ran on VideoToolbox instead: {requested: whether this run's encodes were asked onto VideoToolbox (false for that export, and for the build without libx264/libx265), source: flag|env|auto (auto: nobody asked, the build has no libx264/libx265 and this Apple Silicon machine ran VideoToolbox in its place), used: true|false whether the encoder that ran last is VideoToolbox, null under --dry-run (nothing ran) and when this process ran no encode itself (batch.py: its stages are child processes; its top-level hw gathers the items' requested/source/fallback/notes and each results row carries its item's encoder and hw), fallback: a job VideoToolbox refused (encoder open or compression session failure; nothing else is retried) was re-encoded on the CPU, notes: why an encode stayed on or fell back to the CPU, and, when $FFMPEG_SKILL_HW chose the GPU and it ran, what that costs and that --no-hw opts out}. A VideoToolbox encode also adds a top-level notes line: its quality is not CRF-equivalent. A kind: ffmpeg failure under --hw / $FFMPEG_SKILL_HW carries encoder and hw too"},
             "plan": {"type": "string", "description": "with --plan FILE: the plan document written (the run itself is a dry run)"},
             "verified": {"type": "boolean", "description": "true only when the artifact was written, probed, and every self-check the tool ran (verification) met its target; false under --dry-run"},
-            "verification": {"type": "array", "items": {"type": "object", "properties": {"step": {"type": "string"}, "ok": {"type": "boolean"}, "stage": {"type": "string"}}}, "description": "what the tool itself verified: probe, plus loudness (loudness.py, export platform presets; ok false with reason not_measured when it could not be read), check (render), report.py's sections (loudness, compliance, contact_sheet) and batch.py's items (item). render.py also lists every stage's own steps beyond its artifact probe, tagged with `stage` (a cached stage's as recorded), so its `verified` is the conjunction of every stage's"},
+            "verification": {"type": "array", "items": {"type": "object", "properties": {"step": {"type": "string"}, "ok": {"type": "boolean"}, "stage": {"type": "string"}, "property": {"type": "string"}, "expected": {}, "measured": {}, "delta": {}, "tolerance": {}, "provenance": {"enum": ["specification", "user_specified", "independent_measurement", "input_premeasurement"]}, "attribution": {"enum": ["artifact", "reference", "instrument", "provenance", "unresolved"]}}}, "description": "what the tool itself verified: probe, plus loudness (loudness.py, export platform presets; ok false with reason not_measured when it could not be read), check (render), report.py's sections (loudness, compliance, contact_sheet) and batch.py's items (item). render.py also lists every stage's own steps beyond its artifact probe, tagged with `stage` (a cached stage's as recorded), so its `verified` is the conjunction of every stage's. Since 2.18 a step may carry the property it measured with expected, measured, delta, tolerance and the provenance of the expected value; cut, join and export add a `streams` step comparing the output's video/audio streams with the input's; a step with ok false carries `attribution` (unresolved until a tool knows the cause)"},
+            "unverified": {"type": "array", "items": {"type": "string"}, "description": "2.18: the properties of the output this tool did not measure (the unverified range), e.g. caption's rendered_placement; `verified` covers the measured properties only"},
             "diagnostics": DIAGNOSTICS_SCHEMA}
     extra: Dict[str, Any] = {}
     if name == "check":
@@ -684,6 +685,13 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     return {"type": "object", "properties": props, "required": required, "additionalProperties": True}
 
 @functools.lru_cache(maxsize=1)
+def _unverified_table() -> Dict[str, List[str]]:
+    """emit()'s per-tool unverified range, read where the results are made so the two cannot differ."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from _common.emit import UNVERIFIED
+    return UNVERIFIED
+
+
 def skill_examples() -> Dict[str, List[Dict[str, Any]]]:
     """1.20.0: per-tool `examples`, parsed from SKILL.md's "User says" / "Do" table -- the
     same facts that table already states, machine-readable instead of prose-only. A row
@@ -1548,6 +1556,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "reencodes_audio": REENCODE_META.get(name, {}).get("audio", "conditional"),
         **({"reencode_note": REENCODE_META[name]["note"]} if REENCODE_META.get(name, {}).get("note") else {}),
         "requires_visual_verification": meta["visual"],
+        # 2.18: what `verified` does not cover for this tool (the result's `unverified`)
+        "unverified_properties": list(_unverified_table().get(name, [])),
         "audio_only": meta["audio_only"],
         "video_required": meta["video_required"],
         "deterministic_inputs": meta["deterministic"],

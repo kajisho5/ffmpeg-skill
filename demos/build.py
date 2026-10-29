@@ -1372,7 +1372,7 @@ def demo_silence_speech_aware(ctx):
 
 
 def demo_filler_korean(ctx):
-    """2.18 built-in Korean list. Five timed words over a tone bed: the two 음/어 hesitations are
+    """2.19 built-in Korean list. Five timed words over a tone bed: the two 음/어 hesitations are
     cut, 음악은 ("music"), which starts with the same syllable, is kept -- fillers match whole
     words, never prefixes. The timings are the --words file a speech engine would write."""
     before = ctx.path("speech.mp4")

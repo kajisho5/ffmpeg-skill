@@ -372,6 +372,45 @@ def steps_encoder_report(steps: Sequence["Tuple[str, Any]"]) -> Dict[str, Any]:
     return out
 
 
+# The properties each writing tool does NOT measure about its output, by tool name: the unverified
+# range U that every --json result reports (docs/contract.md "unverified"). A property listed here
+# is one a caller might assume was checked; naming it is the difference between "verified" meaning
+# "the listed properties were measured" and "everything is fine". Kept beside emit() so a tool
+# cannot report verified without this list travelling with it.
+UNVERIFIED: Dict[str, List[str]] = {
+    "cut": ["picture_content"],
+    "join": ["picture_content", "transition_look"],
+    "fit": ["subject_framing"],
+    "crop": ["subject_framing"],
+    "caption": ["rendered_placement", "legibility"],
+    "overlay": ["rendered_placement"],
+    "graphics": ["rendered_placement"],
+    "color": ["grade_look"],
+    "export": ["picture_content"],
+    "render": ["picture_content", "rendered_placement"],
+    "silence": ["removed_span_content"],
+    "audio": ["mix_balance"],
+    "loudness": ["perceived_loudness"],
+    "sync": ["lip_sync"],
+    "multicam": ["lip_sync", "shot_choice"],
+}
+
+
+def stream_inventory_step(meta: Dict[str, Any], expect: Dict[str, bool]) -> Dict[str, Any]:
+    """The output's stream composition checked against what the operation should have produced
+    (#367: a cut of an MPEG-TS source lost its whole video stream and still said verified: true,
+    because the only properties measured were duration and start skew). `expect` comes from the
+    input's own probe and the tool's arguments (provenance "input_premeasurement"): a stream the
+    input had and the operation was not told to drop must still be there."""
+    measured = {kind: bool(meta.get(kind)) for kind in expect}
+    missing = [k for k, want in expect.items() if want and not measured[k]]
+    step: Dict[str, Any] = {"step": "streams", "property": "stream_inventory", "expected": dict(expect),
+                            "measured": measured, "provenance": "input_premeasurement", "ok": not missing}
+    if missing:
+        step["missing"] = missing
+    return step
+
+
 def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json.
 
@@ -392,13 +431,22 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         # only when the file was written, probed, and every self-check met its target; a dry run
         # verified nothing. Spec failures the tool cannot fix on its own (export's loudness gap)
         # keep status completed and say verified: false, so a caller keys on one field.
+        expect_streams = extra.pop("expect_streams", None)
         steps: List[Dict[str, Any]] = ([{"step": "probe", "ok": True}] if meta else []) + list(extra.pop("verification", None) or [])
+        if meta and expect_streams:
+            steps.append(stream_inventory_step(meta, expect_streams))
         # a tool that ran others (render.py) verified what its stages verified too (absorb_stage())
         steps += [s for s in ctx.stage_verification if s not in steps]
         if output and not ctx.dry_run and os.path.splitext(output)[1].lower() not in MEDIA_EXT:
             steps.insert(0, {"step": "exists", "ok": True})
         doc["verified"] = not ctx.dry_run and bool(steps) and all(s.get("ok") for s in steps)
+        # a failed check asserts that something in artifact, reference, instrument or the expected
+        # value's provenance is wrong; until a tool knows which, it says it does not know
+        steps = [dict(s, attribution=s.get("attribution") or "unresolved") if s.get("ok") is False else s for s in steps]
         doc["verification"] = steps
+        tool = os.path.splitext(os.path.basename(sys.argv[0] or ""))[0]
+        if output and not ctx.dry_run and tool in UNVERIFIED and "unverified" not in extra:
+            doc["unverified"] = list(UNVERIFIED[tool])
         doc.update(_encoder_report(ctx))
         doc.update(extra)
         hw_notes = [n for n in _hw_notes_for(ctx) if n not in (doc.get("notes") or [])]

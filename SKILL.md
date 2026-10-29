@@ -150,7 +150,6 @@ Timestamp flags (`--start`, `--end`, `--at`, `--from`, `--duration`, `--offset`,
 | "where does the subject move, so I can crop it myself" | `cropdetect.py input.mp4 --motion-centre` — motion centroid per second, report-only; the calling agent picks the crop |
 | "does it look like Log / S-Log?" | `probe.py clip.mp4 --analyze` (`looks_like_log`) then `color.py --lut` |
 | "test the tool on my real files" | `verify.py ~/Footage --report verify.md` |
-| "show me progress", "quick preview first" | any encoding script with `--progress` and/or `--fast` |
 | "it's a phone video with variable frame rate" | nothing extra: re-encodes conform VFR to constant fps; `fit.py --fps 30` picks the rate |
 
 ## Audio-only files
@@ -181,7 +180,7 @@ Look: final_sheet.png（字幕はセーフエリア内、ロゴは右上）
 Notes: 元は VFR だったので 30 fps に揃えた。音声はモノラルだったのでステレオにした
 ```
 
-Keep it to those five lines plus anything the user must decide. Never describe a fix you did not run.
+Keep it to those five lines plus anything the user must decide. Never describe a fix you did not run. `verified` covers only what was measured: in `Notes:` name any `unverified` item the user would assume checked. Report a step with `attribution: unresolved`; do not re-run it.
 
 When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
 
@@ -196,9 +195,7 @@ Notes: send a valid .cube, or say if you want the clip left as is
 Those filler lines are sentences, not labels: the same report for a Japanese request ends
 `Check: 検証するものなし` / `Look: 不要`.
 
-A refusal uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run, `Look: not needed`. A partial result is `Done:` with the shortfall in `Notes:`; a refusal that still delivers something is `Failed:` — never a third label like `Done (partially):`. Quote a failure's `error.hint` in `Notes:`.
-
-A failure's `--json` is `status: failed` plus `error.kind` and `error.message`; quote the message, never paraphrase it.
+A refusal uses the same shape: `Failed:` names what was refused and why, `Steps:` lists what did run, `Look: not needed`. A partial result is `Done:` with the shortfall in `Notes:`; a refusal that still delivers something is `Failed:` — never a third label like `Done (partially):`. A failure's `--json` is `status: failed` plus `error.kind`, `error.message` and `error.hint`: quote the message in `Failed:`, never paraphrase it, and the hint in `Notes:`.
 
 ## Things that look right but are wrong
 

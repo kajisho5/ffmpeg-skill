@@ -281,7 +281,7 @@ def detect_script(text: str, lang: "Optional[str]" = None) -> str:
     return best
 
 
-# 2.18: Han-only text is Chinese, and Chinese is written in two standard forms whose glyphs differ
+# 2.19: Han-only text is Chinese, and Chinese is written in two standard forms whose glyphs differ
 # (骨, 直, 角 are drawn differently in Taipei and Beijing). A Simplified face draws a Taiwanese
 # caption in the wrong form, so a --lang naming Traditional Chinese resolves a Traditional face.
 # The script stays "zh" for wrapping; only the font lookup changes.
