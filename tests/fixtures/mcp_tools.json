@@ -1069,6 +1069,7 @@
    "quality",
    "speech_aware",
    "threshold",
+   "timemap",
    "timeout",
    "transcribe",
    "words"

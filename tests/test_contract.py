@@ -4001,6 +4001,58 @@ def garbage_payload(p):
         self.assertAlmostEqual(doc["silence_breakdown"]["digital"]["seconds"], 1.0, delta=0.1)
         self.assertAlmostEqual(doc["silence_breakdown"]["below_threshold"]["seconds"], 1.0, delta=0.1)
 
+    def test_silence_writes_a_map_from_source_to_output_times(self):
+        """X request (2026-10-30): after a silence cut, find a sentence again and re-time subtitles.
+        --timemap writes, as JSON or CSV by extension, each kept range with its time in the source
+        and in the output, and each removed range; under --dry-run nothing is written."""
+        wav = self.out("tm.wav")
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+between(t\\,3\\,5)+gt(t\\,6))':s=48000:d=8", wav)
+        jmap, cmap = self.out("tm.json"), self.out("tm.csv")
+        doc = json.loads(tool("silence", wav, "-o", self.out("tm_out.wav"), "--timemap", jmap, "--overwrite", "--json").stdout)
+        tm = json.loads(jmap.read_text(encoding="utf-8"))
+        self.assertEqual(doc["timemap"], str(jmap))
+        kept, removed = tm["kept"], tm["removed"]
+        self.assertEqual(len(kept), len(doc["keep"]))
+        out_t = 0.0
+        for seg, (s, e) in zip(kept, doc["keep"]):
+            self.assertEqual((seg["source_start"], seg["source_end"]), (s, e))
+            self.assertAlmostEqual(seg["output_start"], out_t, places=3)
+            out_t += e - s
+            self.assertAlmostEqual(seg["output_end"], out_t, places=3)
+        self.assertAlmostEqual(out_t, doc["kept_duration"], places=2)
+        # removed ranges are exactly the gaps between kept ones, each placed at its output cut point
+        for prev, nxt, gap in zip(kept, kept[1:], removed):
+            self.assertEqual((gap["source_start"], gap["source_end"]), (prev["source_end"], nxt["source_start"]))
+            self.assertAlmostEqual(gap["output_time"], prev["output_end"], places=3)
+        tool("silence", wav, "-o", self.out("tm_out2.wav"), "--timemap", cmap, "--overwrite")
+        rows = cmap.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(rows[0], "type,source_start,source_end,output_start,output_end")
+        self.assertEqual(sum(1 for r in rows if r.startswith("kept,")), len(kept))
+        self.assertEqual(sum(1 for r in rows if r.startswith("removed,")), len(removed))
+        dry = self.out("tm_dry.json")
+        tool("silence", wav, "-o", self.out("tm_dry.wav"), "--timemap", dry, "--dry-run")
+        self.assertFalse(dry.exists(), "a dry run wrote the time map")
+
+    def test_silence_reports_the_level_at_every_cut_and_warns_near_speech(self):
+        """X request (2026-10-30): probe checks parameters, not whether a cut landed on a breath or
+        a word's tail. The result now carries the RMS just around each cut, and warns where it is
+        within CUT_SOUND_MARGIN_DB of --threshold: room tone sits far below, a weak tail does not."""
+        wav = self.out("tail.wav")
+        # loud speech stand-in, a weak tail (about -29 dBFS RMS), then digital silence, then speech
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+gt(t\\,4))"
+               "+0.05*sin(2*PI*300*t)*between(t\\,2\\,2.8)':s=48000:d=6", wav)
+        safe = json.loads(tool("silence", wav, "--list", "--json").stdout)
+        self.assertTrue(safe["cut_points"], safe)
+        for c in safe["cut_points"]:
+            self.assertEqual(set(c), {"source_time", "output_time", "edge", "rms_dbfs"})
+        self.assertEqual(safe["cut_warnings"], [])  # the default -35 dB cut is inside digital silence
+        hard = json.loads(tool("silence", wav, "--threshold", "-25", "--list", "--json").stdout)
+        self.assertTrue(hard["cut_warnings"], hard["cut_points"])  # -25 dB cuts into the weak tail
+        w = hard["cut_warnings"][0]
+        import importlib
+        self.assertGreater(w["rms_dbfs"], -25 - importlib.import_module("silence").CUT_SOUND_MARGIN_DB)
+        self.assertTrue(any(d["code"] == "cut_near_sound" for d in hard["diagnostics"]["warnings"]))
+
     def test_the_thresholds_table_matches_the_code(self):
         """references/scripts.md restates every verdict threshold (2.21). Each row names the constant
         or flag it comes from, and its value must be that constant's or that flag's default; the
@@ -4010,7 +4062,7 @@ def garbage_payload(p):
         block = text.split("<!-- thresholds:start -->", 1)[1].split("<!-- thresholds:end -->", 1)[0]
         rows = [r for r in block.strip().splitlines()[2:] if r.startswith("|")]
         # every threshold: a row deleted (or added) must be a deliberate edit here too
-        self.assertEqual(len(rows), 28)
+        self.assertEqual(len(rows), 29)
         for row in rows:
             what, value, source, _used = [c.strip() for c in row.strip("|").split("|")]
             number = float(re.search(r"-?\d+(?:\.\d+)?", value).group(0))

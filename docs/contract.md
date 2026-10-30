@@ -721,6 +721,15 @@ lost 40 s of sound with no error):
 | `probe.stream_counts` | `probe.py` and every output probe | `{video, audio}`: how many picture streams (a cover picture is not one) and sound streams the file carries |
 | `probe.video.tagged_duration` | `probe.py` and every output probe | the video stream's DURATION tag in seconds (Matroska/WebM give no stream duration), as `audio.tagged_duration` since 2.20 |
 
+Keys added after 2.21.1, all additive (requests on X: a map of what a silence cut removed, and a
+pointer to cuts that may sit in a breath):
+
+| key | tool | what it holds |
+|---|---|---|
+| `timemap` | `silence.py --timemap FILE` | the path the time map was written to (`.json`: `{kept: [{source_start, source_end, output_start, output_end}], removed: [{source_start, source_end, output_time}]}`; `.csv`: `type,source_start,source_end,output_start,output_end` rows, a removed row's output columns both its cut point). Nothing is written under `--dry-run` |
+| `cut_points` | `silence.py` (every run that cuts) | per cut, `{source_time, output_time, edge, rms_dbfs}`: the RMS level 50 ms either side of the cut on the source (`null` for digital silence), `edge` `out` where the source is left and `in` where it is picked up; `filler: true` on a filler-word cut |
+| `cut_warnings` | `silence.py` | the `cut_points` (not filler cuts) whose level is within `silence.CUT_SOUND_MARGIN_DB` (10 dB) of `--threshold`: a breath or a word's weak tail may be cut there. A `cut_near_sound` warning names them. `verified` is unchanged: this is where to listen, not a measured failure |
+
 Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 
 | key | tool | what it holds |

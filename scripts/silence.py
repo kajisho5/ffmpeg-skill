@@ -44,6 +44,12 @@ def merge_spans(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     return out
 
 
+# around each cut, how many seconds on either side the level is measured over, and how close to
+# --threshold (in dB) that level may come before the cut is flagged: room tone sits far below the
+# threshold, a breath or a word's weak tail just under it
+CUT_LEVEL_WINDOW = 0.05
+CUT_SOUND_MARGIN_DB = 10.0
+CUT_LEVEL_RATE = 8000
 DIGITAL_SILENCE_DB = -90.0  # 2.20: at or below this a span is digital silence (16-bit dither sits near -96)
 BREATH_FLOOR = 0.12  # shortest gap silencedetect is asked for under --speech-aware
 
@@ -86,6 +92,79 @@ def keep_ranges(silences: List[Tuple[float, float]], duration: float, margin: fl
     if duration - cursor >= min_keep:
         keeps.append((cursor, duration))
     return keeps
+
+
+def time_map(keeps: List[Tuple[float, float]], duration: float) -> Dict[str, Any]:
+    """Each kept range with its time in the source and in the output, and each removed range with
+    the output time it was cut at: re-timing subtitles, or finding a removed sentence again."""
+    kept: List[Dict[str, float]] = []
+    removed: List[Dict[str, float]] = []
+    out, prev = 0.0, 0.0
+    for s, e in keeps:
+        if s - prev > 0.0005:
+            removed.append({"source_start": round(prev, 3), "source_end": round(s, 3), "output_time": round(out, 3)})
+        kept.append({"source_start": round(s, 3), "source_end": round(e, 3),
+                     "output_start": round(out, 3), "output_end": round(out + (e - s), 3)})
+        out += e - s
+        prev = e
+    if duration - prev > 0.0005:
+        removed.append({"source_start": round(prev, 3), "source_end": round(duration, 3), "output_time": round(out, 3)})
+    return {"kept": kept, "removed": removed}
+
+
+def write_time_map(path: str, tm: Dict[str, Any]) -> None:
+    """--timemap: JSON, or CSV for a .csv path (one row per kept and removed range)."""
+    if os.path.splitext(path)[1].lower() == ".csv":
+        rows = ["type,source_start,source_end,output_start,output_end"]
+        rows += [f"kept,{k['source_start']:.3f},{k['source_end']:.3f},{k['output_start']:.3f},{k['output_end']:.3f}" for k in tm["kept"]]
+        rows += [f"removed,{r['source_start']:.3f},{r['source_end']:.3f},{r['output_time']:.3f},{r['output_time']:.3f}" for r in tm["removed"]]
+        text = "\n".join(rows) + "\n"
+    else:
+        text = json.dumps(tm, indent=2) + "\n"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def cut_levels(path: str, tm: Dict[str, Any], duration: float, filler_spans_: List[Tuple[float, float]]) -> List[Dict[str, Any]]:
+    """The RMS level just around every cut, in dBFS (None for digital silence), measured on the
+    source: one decode at CUT_LEVEL_RATE, CUT_LEVEL_WINDOW on each side of the cut point. A probe
+    of the output can say its length and streams are right, not whether a cut landed in a breath
+    or a word's weak tail; the level there is the measurable part of that question. `edge` is
+    `out` where the source is left, `in` where it is picked up again; `filler` marks a cut that
+    removed a word (it is meant to sit in sound)."""
+    import array
+    import math
+    from _common import require_tool, run_analysis
+    points = []
+    for r in tm["removed"]:
+        is_filler = any(fs < r["source_end"] and fe > r["source_start"] for fs, fe in filler_spans_)
+        if r["source_start"] > 0.0005:
+            points.append((r["source_start"], r["output_time"], "out", is_filler))
+        if r["source_end"] < duration - 0.0005:
+            points.append((r["source_end"], r["output_time"], "in", is_filler))
+    if not points:
+        return []
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vn",
+                         "-ac", "1", "-ar", str(CUT_LEVEL_RATE), "-f", "s16le", "-"], check=False, text=False)
+    pcm = array.array("h")
+    if proc.returncode == 0 and proc.stdout:
+        pcm.frombytes(proc.stdout[: len(proc.stdout) // 2 * 2])
+        if sys.byteorder == "big":
+            pcm.byteswap()
+    out = []
+    half = int(CUT_LEVEL_WINDOW * CUT_LEVEL_RATE)
+    for t, ot, edge, is_filler in points:
+        i = int(round(t * CUT_LEVEL_RATE))
+        block = pcm[max(0, i - half): i + half]
+        level = None
+        if block:
+            rms = math.sqrt(sum(x * x for x in block) / len(block)) / 32768.0
+            level = round(20 * math.log10(rms), 1) if rms > 0 else None
+        entry = {"source_time": round(t, 3), "output_time": round(ot, 3), "edge": edge, "rms_dbfs": level}
+        if is_filler:
+            entry["filler"] = True
+        out.append(entry)
+    return out
 
 
 def _word_list(text: "str") -> "list":
@@ -298,6 +377,10 @@ def main() -> int:
                          "with --filler through the same keep_ranges() removal list.")
     ap.add_argument("--list", action="store_true", help="only print silences and the kept ranges")
     ap.add_argument("--edl", help="write the kept ranges to this file, one START-END per line")
+    ap.add_argument("--timemap", metavar="FILE",
+                    help="write the source-to-output time map: every kept range with its source and output "
+                         "times and every removed range with the output time it was cut at; .csv for CSV, "
+                         "otherwise JSON (re-time subtitles, find a removed sentence again)")
     fil = ap.add_argument_group("filler words (1.17)")
     fil.add_argument("--filler", action="store_true",
                      help="also remove filler words. Needs measured word timings: pass --words or "
@@ -430,6 +513,26 @@ def main() -> int:
         else:
             summary["hint"] = f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; try a higher --threshold (e.g. -25) or a shorter --min-silence"
         info("hint: " + summary["hint"])
+
+    tm = time_map(keeps, duration)
+    if not (STATE.dry_run and not os.path.exists(args.input)):
+        points = cut_levels(args.input, tm, duration, list(filler_ranges))
+        near = [{k: v for k, v in c.items() if k != "filler"} for c in points
+                if not c.get("filler") and c["rms_dbfs"] is not None and c["rms_dbfs"] > args.threshold - CUT_SOUND_MARGIN_DB]
+        summary["cut_points"] = points
+        summary["cut_warnings"] = near
+        if near:
+            where = ", ".join("%.2fs" % c["source_time"] for c in near[:5]) + (", ..." if len(near) > 5 else "")
+            warn(f"{len(near)} cut point(s) sit within {CUT_SOUND_MARGIN_DB:g} dB of --threshold ({where}): "
+                 "a breath or a word's weak tail may be cut; listen there, or lower --threshold / raise --margin",
+                 "cut_near_sound", cuts=len(near))
+    if args.timemap:
+        if os.path.splitext(args.timemap)[1].lower() not in (".json", ".csv"):
+            die(f"--timemap must end in .json or .csv: {args.timemap}", kind="input")
+        if not STATE.dry_run:  # an artifact like the EDL: a plan writes nothing
+            write_time_map(args.timemap, tm)
+        summary["timemap"] = args.timemap
+        info(f"wrote {args.timemap}")
 
     if args.edl:
         if not STATE.dry_run:  # the EDL is an artifact like the cut itself: a plan writes nothing

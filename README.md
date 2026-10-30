@@ -224,7 +224,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio, `--keep-hevc` to re-encode an HEVC source as HEVC, `--edit-list` to keep an `.mp4` copy's start exact, `--vfr-guard` to choose the VFR check; reports `precision`; `--snap beats` moves the in/out points onto a measured beat, or refuses when there is no measurable pulse |
 | `join.py` | Concatenate clips with xfade transitions, normalising size, fps, sample rate and channel layout (the widest clip's, or `--channels`); audio-only inputs are joined as audio; `--list parts.txt` reads generated segments (TTS lines) and checks every one first — missing, empty or unreadable parts are all named in one refusal, or skipped and reported with `--on-missing skip` |
-| `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech; list or export the cut list; `--filler` also removes filler words, but only where a speech engine timed them; `--speech-aware` keeps a breath inside a sentence and cuts only at sentence-boundary pauses, composing with `--filler` through the same `keep_ranges()` |
+| `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech (`--margin`, 0.15 s each side); list or export the cut list, or a source-to-output time map (`--timemap`, JSON or CSV); reports the level at every cut and warns where one may land in a breath or a word's tail; `--filler` also removes filler words, but only where a speech engine timed them; `--speech-aware` keeps a breath inside a sentence and cuts only at sentence-boundary pauses, composing with `--filler` through the same `keep_ranges()` |
 | `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo) and/or aspect ratio (pad, crop or `--fit blur`'s blurred, darkened fill, with `--crop-x`/`--crop-y` to keep an off-centre subject) and/or exact `--width`/`--height`; rotate 90/180/270, flip h/v; force constant fps |
 | `crop.py` | Crop to an exact pixel rectangle (`--x --y --width --height`) — distinct from `fit.py --fit crop`, which crops to an aspect ratio it computes itself |
 | `cropdetect.py` | Measure existing black letterbox/pillarbox bars and report the `crop.py`-ready rectangle that removes them — analysis only, writes no file; `--motion-centre` reports the per-second motion centroid instead, for a 9:16 reframe — report only, the calling agent picks the crop, no auto-reframing |
@@ -438,6 +438,27 @@ Without the other 30, an agent writes raw ffmpeg for those jobs, and a mistake t
 - `sync.py` and `multicam.py` find the offset between two recordings by audio cross-correlation. No ffmpeg filter measures it.
 
 Every command a tool ran is in its `--json` `commands`, shell-quoted so it can be pasted and run again, and `--dry-run` prints the commands without running anything. In the 100-prompt agent eval (1.17.0, [Tested on real footage](#tested-on-real-footage)) the agent made no raw ffmpeg calls and reported no false successes.
+
+### What does `verified` check, and what can it not tell me?
+
+`verified` covers what can be measured from the file. Each tool measures its output again: the probe (the file opens, its duration, codecs, size and frame rate) and the tool's own promise. For example, loudness and true peak after `loudness.py` or `export.py`, the length against the asked one, and for `cut.py`, `join.py` and `export.py` the stream count, where picture and sound end, and whether both ends of every stream decode. `check.py` grades a file against a platform's limits. A value that cannot be read fails its step as `not_measured`; it does not pass.
+
+It cannot tell you whether the result looks or sounds right, and the result says so: every writing tool lists the properties it did not measure in `unverified`. Examples are `picture_content` (what is in the frame), `subject_framing` after a reframe, `rendered_placement` and `legibility` of captions and titles, `grade_look` after a colour conversion, `removed_span_content` after a silence cut (whether a removed span held speech), `mix_balance` and `lip_sync`. For those, look at frames with `look.py` (a contact sheet, or `--safe` for a platform's UI zones) and listen where the result points you. `silence.py` lists the level at every cut, and `cut_warnings` names the cuts that may have landed in a breath or a word's tail.
+
+### Are silence removal and captions stable?
+
+They are the most used tools here, and they are tested on every push on Linux, macOS and Windows, with FFmpeg 5.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.15 s by default; raise it to 0.2-0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.
+
+`caption.py` burns SRT/ASS or muxes them as soft tracks, fits the size to the platform's safe area, and picks a font that covers the script (Japanese, Chinese, Korean, Arabic, Thai, Hindi and others). It needs FFmpeg's `subtitles` filter (libass); `doctor` reports whether this build has it. Placement and legibility are listed as `unverified`, so look at a contact sheet before delivering. Speech-to-text runs on a local engine you install; its first run may download a model.
+
+### How well does HDR to SDR work, and what should I watch for?
+
+`color.py --to-sdr` converts PQ (HDR10), HLG and iPhone Dolby Vision 8.4 to SDR BT.709 with real tone mapping (`zscale` and `tonemap`, `hable` by default; `mobius`, `reinhard`, `bt2390` and others with `--tonemap`). BT.2020 footage on an SDR transfer gets a gamut conversion only. Watch for four things:
+
+- It needs `zscale` (libzimg). The plain Homebrew `ffmpeg` lacks it, so use `ffmpeg-full`; `doctor` reports whether it is there.
+- `--peak` (default 1000 nits) should match how bright the source was mastered. A wrong value makes highlights dull or clipped.
+- Tone mapping is a judgement, and the result says so (`grade_look` in `unverified`). Compare frames with `look.py`, and try another `--tonemap` if skin or skies look off.
+- An HDR source that only needs to play everywhere may not need converting at all. `--strip-dovi` removes the Dolby Vision layer from an iPhone clip, keeping its HLG picture, with a stream copy.
 
 ### How does ffmpeg-skill compare with Remotion?
 
