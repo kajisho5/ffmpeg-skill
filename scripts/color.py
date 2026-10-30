@@ -23,7 +23,7 @@ import os
 import sys
 from typing import List, Optional
 
-from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, ffmpeg_exe, info, probe, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
 
 TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
@@ -256,7 +256,7 @@ def retag_mismatch(output: str, want: tuple) -> "Optional[str]":
     got = probe(output, role="output")["video"]
     stream = (got.get("color_space"), got.get("color_primaries"), got.get("color_transfer"))
     keys = ("color_space", "color_primaries", "color_transfer")
-    proc = run_analysis([ffmpeg_exe("ffprobe")[0] or "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames",
+    proc = run_analysis([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_frames",
                          "-read_intervals", "%+#1", "-show_entries", "frame=" + ",".join(keys), "-of", "json", output],
                         check=False)
     try:

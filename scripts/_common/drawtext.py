@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from typing import Dict, List, Optional
 from _common.decision import escape_filter_path
-from _common.runner import STATE, _DRAWTEXT_PENDING, _drawtext_tmpdir, ffmpeg_exe, ffmpeg_release, ffmpeg_version
+from _common.runner import STATE, _DRAWTEXT_PENDING, _drawtext_tmpdir, ffmpeg_exe, ffmpeg_release, ffmpeg_version, require_tool
 
 
 def _on_windows() -> bool:
@@ -254,7 +254,7 @@ def drawtext_line_metrics(lines: "List[str]", font_opt: str, fontsize: int) -> "
                              f"y='print({-(1000 + i)},16)+print(text_w,16)+print(top_a,16)+print(bottom_d,16)+print(lh,16)'")
         if not chain:
             return out
-        cmd = [ffmpeg_exe("ffmpeg")[0] or "ffmpeg", "-hide_banner", "-nostdin", "-v", "error", "-f", "lavfi",
+        cmd = [require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-v", "error", "-f", "lavfi",
                "-i", "color=c=black:s=16x16:r=1", "-frames:v", "1", "-vf", ",".join(chain), "-f", "null", "-"]
         try:
             flush_drawtext_textfiles(cmd)
