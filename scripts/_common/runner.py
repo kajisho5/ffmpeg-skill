@@ -553,6 +553,46 @@ def video_encoder_of(cmd: Sequence[str]) -> Optional[str]:
     return enc
 
 
+# A protocol prefix (`tcp:`, `http://`, `file:`, `concat:`, ...): ffmpeg opens such a value as a URL,
+# while every guard here reads it as a path. Two or more letters, so a Windows
+# drive letter (`C:\x.mp4`) is a path; `pipe:` is the skill's own stdout/stdin and stays allowed.
+_URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
+
+
+def looks_like_url(value: str) -> bool:
+    """True for a value ffmpeg would open through a protocol rather than as a local file."""
+    return bool(_URL_SCHEME.match(value)) and not value.startswith("pipe:")
+
+
+def _refuse_url_media(cmd: Sequence[str]) -> None:
+    """Refuse an ffmpeg/ffprobe command that names a URL as an input or as its output, before it
+    runs or is recorded. This skill reads and writes local files only, and the path guards below
+    (output-is-input, existing output, output directory) only mean something for a local path. A
+    `-f lavfi` input is a filtergraph, not a location, and is left alone; a local name that
+    contains a colon still works written as `./name`."""
+    base = os.path.basename(cmd[0])
+    if not (base.startswith("ffmpeg") or base.startswith("ffprobe")):
+        return
+    fmt = None
+    values = []
+    for i, a in enumerate(cmd[1:-1], start=1):
+        if a == "-f":
+            fmt = cmd[i + 1]
+        elif a == "-i":
+            if fmt != "lavfi":
+                values.append(cmd[i + 1])
+            fmt = None
+    last = cmd[-1]
+    if not last.startswith("-"):
+        values.append(last)
+    for value in values:
+        if looks_like_url(value):
+            refuse("input", "media_path_is_url",
+                   f"{value!r} would be opened by ffmpeg as a URL ({value.split(':', 1)[0]}:), not as a local file; "
+                   "this skill reads and writes local files only. Pass a plain path (a local name containing "
+                   "a colon works as ./name)", path=value, scheme=value.split(":", 1)[0].lower())
+
+
 def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
     """Refuse an ffmpeg command whose output path resolves to the same file as one of its
     inputs. ffmpeg's own "Output same as Input" guard only catches byte-identical path
@@ -615,6 +655,10 @@ def _check_output_path(cmd: Sequence[str]) -> None:
     output = cmd[-1]
     if output == "-" or output.startswith("pipe:") or output.startswith("-"):
         return
+    if looks_like_url(output):
+        refuse("input", "media_path_is_url",
+               f"output {output!r} would be opened by ffmpeg as a URL, not as a local file; pass a plain path "
+               "(a local name containing a colon works as ./name)", path=output, scheme=output.split(":", 1)[0].lower())
     if os.path.isdir(output):
         refuse("input", "output_is_directory",
                f"output {output!r} is a directory; pass a file path (e.g. {os.path.join(output, 'result.mp4')!r})", output=output)
@@ -1042,6 +1086,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         # or runs the command (color.py imports this module, hence the late import)
         from _common.color import fold_bt709_matrix
         cmd = fold_bt709_matrix(cmd)
+        _refuse_url_media(cmd)
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
         _check_existing_output(cmd)
@@ -1144,6 +1189,7 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
     wall-clock limit as any other ffmpeg invocation and, with check=True, the same `kind: ffmpeg`
     failure instead of an exit-0 "0 scenes found" over a file ffmpeg could not read. record=True
     lists the command in the --json `commands` like run() does."""
+    _refuse_url_media(cmd)
     if record:
         STATE.commands.append(_cmdline(cmd))
     limit = _limit_for(cmd)

@@ -3247,6 +3247,52 @@ class ContractTests(unittest.TestCase):
         warning = doc["diagnostics"]["warnings"][0]
         self.assertEqual((warning["code"], warning["paths"]), ("plan_unbound_inputs", [str(pending)]))
 
+    def test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output(self):
+        """The path guards read -o as a path, ffmpeg reads a value with a protocol prefix as a URL.
+        The skill reads and writes local files only, so such an input or output is refused as
+        kind: input before ffmpeg starts, and nothing reaches a listener or an existing file; a
+        drive letter, `./clip:1.mp4` and `pipe:` still pass."""
+        import importlib, socket
+        runner = importlib.import_module("_common.runner")
+        for url in ("tcp:127.0.0.1:9?x=.mkv", "http://127.0.0.1:9/../../x.mkv", "file:other.mp4", "FILE:x.mp4",
+                    "rtmp://h/live", "concat:a.ts|b.ts", "data:video/mp4;base64,AA=="):
+            self.assertTrue(runner.looks_like_url(url), url)
+        for path in ("C:\\clips\\a.mp4", "C:/clips/a.mp4", "./clip:1.mp4", "clips/a:b.mp4", "pipe:1", "-", "a.mp4",
+                     "/abs/a.mp4", "sine=frequency=440:sample_rate=48000"):
+            self.assertFalse(runner.looks_like_url(path), path)
+        # a listener that must never hear from ffmpeg
+        srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1); srv.settimeout(0.5)
+        port = srv.getsockname()[1]
+        other = self.out("ghsa_other.mp4"); other.write_bytes(b"x" * 5000)
+        victim = self.out("ghsa_victim.mp4"); shutil.copy(self.src, victim); before = victim.read_bytes()
+        cases = [
+            ("fit", [self.src, "--aspect", "9:16", "-o", f"tcp:127.0.0.1:{port}?x=.mkv"]),
+            ("fit", [self.src, "--aspect", "9:16", "-o", f"http://127.0.0.1:{port}/../../x.mkv"]),
+            ("fit", [self.src, "--aspect", "9:16", "-o", "file:" + str(other)]),
+            ("fit", [victim, "--aspect", "9:16", "-o", "file:" + str(victim)]),
+            ("cut", [self.src, "--start", "0.2", "--end", "0.8", "--snap", "beats",
+                     "--snap-source", f"http://127.0.0.1:{port}/beacon.wav", "-o", self.out("ghsa_cut.mp4")]),
+        ]
+        try:
+            for name, args in cases:
+                for extra in ([], ["--dry-run"]):
+                    proc = tool(name, *args, "--json", *extra, check=False)
+                    err = json.loads(proc.stdout)["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_is_url"), (name, args, extra, proc.stderr))
+                    self.assertEqual(json.loads(proc.stdout).get("commands", []), [], "refused after ffmpeg ran")
+            with self.assertRaises(socket.timeout):
+                srv.accept()  # nothing connected
+        finally:
+            srv.close()
+        self.assertEqual(other.read_bytes(), b"x" * 5000)
+        self.assertEqual(victim.read_bytes(), before)
+        if os.name == "nt":
+            return  # Windows forbids ':' in a file name, so there is no such local file to keep working
+        # an ordinary local name with a colon still works when written as a relative path
+        colon = self.work / "clip:1.mp4"
+        tool("cut", self.src, "--start", "0", "--end", "0.5", "-o", "./clip:1.mp4", cwd=self.work)
+        self.assertTrue(colon.exists())
+
     def test_refusals_at_the_runner_choke_points_carry_a_reason_and_details(self):
         """The runner's guards refused in prose only. Each now names error.reason and the facts in
         error.details; render.py executing a plan forwards its tool's reason and details."""

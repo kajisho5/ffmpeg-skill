@@ -415,6 +415,7 @@ ERROR_REASONS = {
     "output_exists": "an output already exists and --overwrite was not given; details.outputs: [{path, resolved, size, mtime_ns}]",
     "output_is_input": "the output resolves to the same file as an input; details: {output, input, resolved}",
     "output_is_directory": "the output path is a directory; details: {output}",
+    "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
     "timemap_path_taken": "silence.py --timemap names the same file as -o, --edl or --plan; details: {timemap, flag, path}",
