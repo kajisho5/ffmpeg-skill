@@ -212,6 +212,12 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         "audio": None,
         "subtitle_streams": len(subs),
         "data_streams": data_stream_count,
+        # how many picture and sound streams the file carries (a cover picture is not a video
+        # stream); the streams check compares them with what the operation should have written
+        "stream_counts": {
+            "video": sum(1 for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0) == 0),
+            "audio": sum(1 for s in streams if s.get("codec_type") == "audio"),
+        },
         # container-level chapter markers and the common tags, so metadata.py's result is
         # verifiable the same way every other tool's is (additive keys, 1.x-safe)
         "chapters": [{
@@ -286,6 +292,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "nb_frames": _to_int(video.get("nb_frames")),
             # the stream's own length (a container's also counts audio priming and a longer track)
             "duration": _to_float(video.get("duration")),
+            # Matroska/WebM keep the stream's length in a DURATION tag only, as for audio below
+            "tagged_duration": _tag_seconds((video.get("tags") or {}).get("DURATION")),
             # where the stream starts; a video stream that starts after its audio (or the reverse)
             # is how a lossless cut's A/V skew shows up
             "start_time": _to_float(video.get("start_time")),

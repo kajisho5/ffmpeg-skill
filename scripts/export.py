@@ -350,7 +350,8 @@ def main() -> int:
     if notes:
         extra["notes"] = notes
     # the delivery keeps the source's picture and, except as a GIF, its sound
-    extra["expect_streams"] = {"video": bool(meta.get("video")), "audio": has_audio and args.preset != "gif"}
+    extra["expect_streams"] = {"video": int(bool(meta.get("video"))), "audio": int(bool(has_audio and args.preset != "gif"))}
+    extra["stream_reference"] = [meta]
     emit(output, **extra)
     return 0
 

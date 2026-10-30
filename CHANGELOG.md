@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A cut, join or export that loses part of a stream is no longer `verified`** (#367 follow-up). The `streams` step (2.18) checked that a video and an audio stream were there; it now also counts them, and two steps join it. `stream_lengths` compares where the picture and the sound end, allowing the gap the inputs already had plus 0.25 s, so sound that stops early fails the check even when the container's length looks right. A report on X described a filename with a space that lost 40 s of sound with no error. `decode` decodes the first and last second of every kept stream and fails one that yields no frame. Damaged files written over a real cut's output (video removed, sound cut to 0.8 s, payload zeroed) each fail the check that names the damage.
+- **`cut.py` re-encodes an MPEG-TS cut whose stream copy wrote no video.** The TS demuxer does not seek back to a keyframe as the MP4 one does, so a copy whose window held no video keyframe wrote an audio-only file and exited 0 (the defect behind #367). The cut is redone by re-encoding, and `reencode_reason` says `stream_lost`.
+- **Printed commands run as printed in a POSIX shell.** `commands` quoted only a deny-list of characters, so a name with a backtick, a leading `#` or `~`, or `!` was printed bare: pasted into a shell, the backtick ran as a command and `#tag.mp4` turned the rest of the line into a comment. Any argument outside a known-safe set is quoted now. ffmpeg itself always received an argv list, never a shell line.
 
 ## 2.21.0
 

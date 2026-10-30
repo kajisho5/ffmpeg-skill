@@ -598,7 +598,7 @@ def main() -> int:
     info(f"wrote {output} ({fmt_secs(measured)}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
     overlap = overlap_report(lens, expected)
     emit(output, mode="video", **overlap, **reported(), clips=n, transition=args.transition, expected_duration=expected,
-         verification=verification, expect_streams={"video": True, "audio": True},
+         verification=verification, expect_streams={"video": 1, "audio": 1}, stream_reference=metas,
          audio_substituted=substituted,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
     return 0

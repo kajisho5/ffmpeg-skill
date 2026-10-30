@@ -865,8 +865,17 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             info("stream copy failed, falling back to re-encode")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["copy_failed"], edit_list_ok)
         die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
-    if not reencode and tolerance >= 0 and not STATE.dry_run and copy_t is None:
-        out_meta = probe(dst)
+    out_meta = probe(dst) if not reencode and not STATE.dry_run and copy_t is None else None
+    if out_meta is not None:
+        # #367: a copy from MPEG-TS whose window holds no video keyframe writes no video at all
+        # (the TS demuxer does not seek back to one, as the MP4 demuxer does), and ffmpeg exits 0
+        lost = [k for k in ("video", "audio") if meta.get(k) and not out_meta.get(k) and not (k == "video" and audio_only)]
+        if lost:
+            info(f"the stream copy wrote no {' or '.join(lost)} stream (no keyframe to start it from); "
+                 "re-encoding this segment")
+            return _with_notes(cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["stream_lost"],
+                                       edit_list_ok), notes)
+    if out_meta is not None and tolerance >= 0:
         got = out_meta.get("duration") or 0.0
         vdur, fps = (out_meta.get("video") or {}).get("duration"), (meta.get("video") or {}).get("fps")
         if edit_list and not audio_only and vdur and fps and abs(got - vdur) > 1.0 / fps:
@@ -1678,10 +1687,12 @@ def main() -> int:
     info(f"wrote {output} ({fmt_secs(got)}, expected ~{expected:.3f}s, "
          + ("re-encoded" if reencoded else "lossless stream copy") + f", {precision} precision)")
     # the streams the source had and this cut was not told to drop (an audio extension drops the
-    # picture): #367, a TS cut that lost its video must not say verified
-    expect_streams = {"video": bool(meta.get("video")) and not is_audio_output(output), "audio": bool(meta.get("audio"))}
+    # picture): #367, a TS cut that lost its video must not say verified. ffmpeg's default stream
+    # selection writes one of each, so that is the count; the source's own picture/sound gap is
+    # the reference for the lengths check
+    expect_streams = {"video": int(bool(meta.get("video")) and not is_audio_output(output)), "audio": int(bool(meta.get("audio")))}
     emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
-         expect_streams=expect_streams,
+         expect_streams=expect_streams, stream_reference=[meta],
          dropped_non_av_streams=bool(DROPPED_STREAMS),
          requested_start=round(requested[0][0], 6) if len(requested) == 1 else None,
          requested_end=round(requested[0][1], 6) if len(requested) == 1 else None,

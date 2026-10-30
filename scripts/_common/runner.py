@@ -1377,9 +1377,16 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
 
 
 def shell_quote(s: str) -> str:
-    if not s or any(ch in s for ch in " \t\n\r\\\"';|&<>()[]{}$*?"):
-        return "'" + s.replace("'", "'\\''") + "'"
-    return s
+    """One argument as a POSIX shell word, so a printed command can be pasted and run again.
+    Anything outside a known-safe set is single-quoted: the old deny-list left a backtick, `!`, a
+    leading `#` or `~` and non-ASCII bare, and a shell ran `x`id`.mp4`'s backtick as a command
+    and dropped `#tag.mp4` (and everything after it) as a comment."""
+    if s and _SHELL_SAFE.fullmatch(s):
+        return s
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+_SHELL_SAFE = re.compile(r"[A-Za-z0-9_@%+=:,./-]+")
 
 
 def ffmpeg_base(overwrite: bool = True) -> List[str]:

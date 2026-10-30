@@ -29,6 +29,8 @@ Every row names the constant or flag it comes from, and a test holds the table t
 | a levels pass keeps the sound's length to (or one AAC frame, 1024 samples, if longer) | 0.03 s | `loudness.AUDIO_LENGTH_TOLERANCE` | `loudness.py` |
 | a joined picture is as long as the clips less the transitions, to (frames) | 1.5 | `join.DURATION_TOLERANCE_FRAMES` | `join.py` |
 | ... and at least | 0.05 s | `join.DURATION_TOLERANCE_MIN` | `join.py` |
+| the picture and the sound end together, beyond the gap the inputs had, to | 0.25 s | `_common.emit.STREAM_LENGTH_TOLERANCE` | `cut.py`, `join.py`, `export.py` (`stream_lengths`) |
+| every kept stream decodes at least one frame in its first and its last | 1.0 s | `_common.emit.DECODE_WINDOW_SECONDS` | `cut.py`, `join.py`, `export.py` (`decode`) |
 | a lossless cut may land this far from the asked time before it re-encodes | 0.5 s | `cut.py --tolerance` | `cut.py` |
 | silence is sound at or below | -35 dBFS | `silence.py --threshold` | `silence.py` |
 | ... lasting at least | 0.6 s | `silence.py --min-silence` | `silence.py` |
@@ -165,7 +167,7 @@ in the length. `keyframe_snapped` is true for every stream copy (`precision`
 than a frame from `--start`, or when its start could not be measured (an unknown start is
 never claimed exact); `null` under `--dry-run`.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
-`vfr_inconclusive`, `pcm_container`, `copy_failed`, `tolerance`, `concat_fallback`);
+`vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost`, `tolerance`, `concat_fallback`);
 `--segments` adds `segment_precision`, and `least_exact_precision` is the least exact one.
 A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
 `max_step_seconds`, `audio_offset_ms` per part, `audio_parts_checked`, `ok`: the

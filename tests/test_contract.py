@@ -11,6 +11,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -3073,18 +3074,19 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(doc["edit_list"])
 
     def test_verified_reports_what_the_tool_measured(self):
-        """#189 C: every success document carries `verified` and `verification`. cut: probe only;
+        """#189 C: every success document carries `verified` and `verification`. cut: probe and its streams;
         loudness: probe + its own after-write measurements (level, and since 2.20 length); export on a raw source: loudness step
         not ok -> verified false while status stays completed; --dry-run verified nothing."""
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_cut.mp4"), "--json").stdout)
-        self.assertEqual((doc["verified"], [(s["step"], s["ok"]) for s in doc["verification"]]), (True, [("probe", True), ("streams", True)]))
+        self.assertEqual((doc["verified"], [(s["step"], s["ok"]) for s in doc["verification"]]), (True, [("probe", True), ("streams", True), ("stream_lengths", True), ("decode", True)]))
         doc = json.loads(tool("loudness", self.src, "-o", self.out("vf_loud.mp4"), "--json").stdout)
         self.assertTrue(doc["verified"]); self.assertEqual([s["step"] for s in doc["verification"]], ["probe", "loudness", "duration"])
         self.assertEqual(doc["verification"][1]["target_lufs"], -14)
         doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("vf_x.mp4"), "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
         self.assertEqual([(s["step"], s["ok"]) for s in doc["verification"]],
-                         [("probe", True), ("loudness", False), ("duration", True), ("streams", True)])
+                         [("probe", True), ("loudness", False), ("duration", True), ("streams", True),
+                          ("stream_lengths", True), ("decode", True)])
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_dry.mp4"), "--dry-run", "--json").stdout)
         self.assertEqual((doc["verified"], doc["verification"]), (False, []))
         doc = json.loads(tool("report", "--after", self.src, "-o", self.out("vf_rep.html"), "--json").stdout)
@@ -3682,6 +3684,125 @@ class ContractTests(unittest.TestCase):
                                 "--overwrite", "--json").stdout)
         self.assertTrue(audio["verified"], audio["verification"])
 
+    # The #367 follow-up and the "space in a filename dropped 40 s of audio" report (X,
+    # 2026-10-29): a stream's presence was checked, but not its count, its length against the
+    # other stream, or whether it decodes. Seeded with real damaged files written over the
+    # tool's own output just before it is measured.
+    SEED = r"""
+import os, shutil, subprocess
+
+def _ff(*a):
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *a], check=True)
+
+def drop_video(p):
+    tmp = p + ".seed.mp4"; _ff("-i", p, "-map", "0:a", "-c", "copy", tmp); os.replace(tmp, p)
+
+def short_audio(p):
+    tmp = p + ".seed.mp4"
+    _ff("-i", p, "-t", "0.8", "-i", p, "-map", "0:v", "-map", "1:a", "-c", "copy", tmp); os.replace(tmp, p)
+
+def garbage_payload(p):
+    data = bytearray(open(p, "rb").read()); i = 0
+    while i + 8 <= len(data):
+        size = int.from_bytes(data[i:i + 4], "big"); kind = bytes(data[i + 4:i + 8])
+        if kind == b"mdat":
+            for j in range(i + 8, min(len(data), i + size)):
+                data[j] = 0
+            break
+        i += size if size >= 8 else len(data)
+    open(p, "wb").write(bytes(data))
+"""
+
+    def seeded(self, mode, name, *args):
+        """Run cut.py with its output damaged by `mode` right before the tool measures it."""
+        mod = self.work / "seed_mod.py"
+        mod.write_text(self.SEED, encoding="utf-8")
+        out = self.out(name)
+        code = ("import sys; sys.path.insert(0, %r); sys.path.insert(0, %r); import seed_mod; "
+                "sys.argv = ['cut.py'] + %r + ['-o', %r, '--overwrite', '--json']; import importlib; "
+                "e = importlib.import_module('_common.emit'); real = e.verify_output; "
+                "e.verify_output = lambda path: (seed_mod.%s(path), real(path))[1]; import cut; sys.exit(cut.main())"
+                % (str(SCRIPTS), str(self.work), [str(a) for a in args], str(out), mode))
+        return json.loads(sh(sys.executable, "-c", code).stdout)
+
+    def test_a_damaged_ts_cut_names_the_stream_that_broke(self):
+        ts = self.out("ts_source.ts")
+        ffmpeg("-i", self.src, "-c", "copy", "-f", "mpegts", ts)
+        ok = json.loads(tool("cut", ts, "--start", "1", "--end", "4", "-o", self.out("ts_ok.mp4"),
+                             "--overwrite", "--json").stdout)
+        self.assertTrue(ok["verified"], ok["verification"])
+        steps = {s["step"]: s for s in ok["verification"]}
+        for name in ("streams", "stream_lengths", "decode"):
+            self.assertTrue(steps[name]["ok"], steps.get(name))
+        self.assertEqual(steps["streams"]["measured_count"], {"video": 1, "audio": 1})
+        self.assertEqual(set(steps["decode"]["frames"]), {"video", "audio"})
+        for mode, failing in (("drop_video", "streams"), ("short_audio", "stream_lengths"),
+                              ("garbage_payload", "decode")):
+            with self.subTest(mode=mode):
+                doc = self.seeded(mode, f"ts_{mode}.mp4", ts, "--start", "1", "--end", "4")
+                self.assertEqual(doc["status"], "completed")
+                self.assertFalse(doc["verified"], f"{mode}: a damaged cut said verified")
+                bad = [s["step"] for s in doc["verification"] if s.get("ok") is False]
+                self.assertIn(failing, bad, doc["verification"])
+        short = next(s for s in self.seeded("short_audio", "ts_short2.mp4", ts, "--start", "1", "--end", "4")["verification"]
+                     if s["step"] == "stream_lengths")
+        self.assertEqual(short["short"], ["audio"])
+        self.assertGreater(short["measured"]["video"] - short["measured"]["audio"], 1.5)
+
+    def test_paths_with_spaces_quotes_and_japanese_keep_every_second_of_audio(self):
+        """The report: a filename with a space "was shell-escaped" and 40 s of audio went missing
+        with no error. Every tool passes ffmpeg an argv list (no shell; pinned by
+        test_every_tool_help_and_no_shell_paths), so the path reaches ffmpeg as one argument. This
+        runs the tools that carry sound on such paths and requires the sound to keep its length,
+        measured by ffprobe here and by the tool's own stream_lengths step."""
+        odd = "a b's & 日本語 [1];x" + ("" if os.name == "nt" else ' "q"')
+        d = self.work / odd
+        d.mkdir(exist_ok=True)
+        a, b = d / f"clip {odd}.mp4", d / f"two {odd}.mp4"
+        shutil.copy(self.src, a)
+        shutil.copy(self.camb, b)
+        lst = d / f"list {odd}.txt"
+        lst.write_text(f"{a}\n{b}\n", encoding="utf-8")
+        a_len = float(probe_streams(a)["audio"])
+        b_len = float(probe_streams(b)["audio"])
+        runs = [("cut", (a, "--start", "1", "--end", "4"), 3.0),
+                ("cut", (a, "--segments", "0.5-2,3-5.5"), 4.0),
+                ("join", (a, b), a_len + b_len),
+                ("join", ("--list", lst), a_len + b_len),
+                ("loudness", (a, "-I", "-16"), a_len),
+                ("audio", (a, "--denoise"), a_len),
+                ("export", (a, "--preset", "youtube"), a_len)]
+        for n, (name, args, want) in enumerate(runs):
+            with self.subTest(tool=name, args=args[1:]):
+                out = d / f"out {n} {odd}.mp4"
+                doc = json.loads(tool(name, *args, "-o", out, "--overwrite", "--json").stdout)
+                self.assertEqual(doc["status"], "completed", doc)
+                lens = {k: float(v) for k, v in probe_streams(out).items()}
+                if name == "join":  # the default crossfade overlaps the clips by its own length
+                    want -= doc["transition_shortening"]
+                self.assertAlmostEqual(lens["audio"], want, delta=0.25, msg=f"{name}: audio is {lens['audio']}s, wanted {want}s")
+                self.assertAlmostEqual(lens["audio"], lens["video"], delta=0.25)
+                if name in ("cut", "join", "export"):
+                    step = next(s for s in doc["verification"] if s["step"] == "stream_lengths")
+                    self.assertTrue(step["ok"], step)
+
+    def test_printed_commands_run_unchanged_in_a_posix_shell(self):
+        """`commands` are shell-quoted so they can be pasted and run again. A name with a backtick,
+        a leading `#` or `~`, or `!` was printed bare: a shell ran the backtick as a command,
+        dropped a `#name` as a comment and expanded `~`."""
+        from _common.runner import shell_quote
+        names = ["clip a.mp4", "it's.mp4", 'say "hi".mp4', "a&b.mp4", "日本語 の 動画.mp4", "x`id`.mp4",
+                 "$(echo hi).mp4", "#tag.mp4", "~/clip.mp4", "wow!.mp4", "tab\there.mp4", "-dash.mp4", "50%.mp4",
+                 "a=b.mp4", "plain.mp4", ""]
+        for n in names:
+            self.assertEqual(shlex.split(shell_quote(n)), [n], n)
+        if os.name == "nt" or not shutil.which("sh"):
+            self.skipTest("no POSIX shell here")
+        line = " ".join(shell_quote(n) for n in names)
+        got = subprocess.run(["sh", "-c", "set -- " + line + '; for a in "$@"; do printf "%s\\0" "$a"; done'],
+                             stdout=subprocess.PIPE, check=True).stdout.decode("utf-8")
+        self.assertEqual(got.split("\0")[:-1], names)
+
     def test_join_reports_which_clips_got_generated_silence(self):
         """The VDC paper's join finding: a clip with no audio stream is joined over anullsrc silence
         (right), and the result said verified with no note (wrong: the sound of that span is not
@@ -3823,7 +3944,7 @@ class ContractTests(unittest.TestCase):
         block = text.split("<!-- thresholds:start -->", 1)[1].split("<!-- thresholds:end -->", 1)[0]
         rows = [r for r in block.strip().splitlines()[2:] if r.startswith("|")]
         # every threshold: a row deleted (or added) must be a deliberate edit here too
-        self.assertEqual(len(rows), 26)
+        self.assertEqual(len(rows), 28)
         for row in rows:
             what, value, source, _used = [c.strip() for c in row.strip("|").split("|")]
             number = float(re.search(r"-?\d+(?:\.\d+)?", value).group(0))

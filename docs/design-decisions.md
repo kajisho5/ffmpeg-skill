@@ -52,6 +52,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.18 — results carry the VDC paper's co-reported items](#218--results-carry-the-vdc-papers-co-reported-items)
 - [2.19.0 — filler words in Korean, Chinese, Russian, Dutch, Polish and Turkish](#2190--filler-words-in-korean-chinese-russian-dutch-polish-and-turkish)
 - [2.20 — a length or a silence is checked against a yardstick the tool did not make](#220--a-length-or-a-silence-is-checked-against-a-yardstick-the-tool-did-not-make)
+- [2.21.1 — a stream that ends early or decodes nothing fails the check](#2211--a-stream-that-ends-early-or-decodes-nothing-fails-the-check)
 <!-- contents:end -->
 
 ## Time limits
@@ -2240,3 +2241,32 @@ What was decided there:
   audible material, so each span is labelled. A span is digital when at least 99% of it sits at or
   below -90 dBFS, measured by one more silencedetect pass. That is near the 16-bit dither floor and
   far below any speech. Test: `test_silence_says_which_removed_spans_were_digital_silence`.
+
+## 2.21.1 — a stream that ends early or decodes nothing fails the check
+
+- **The streams check counts streams, compares where they end, and decodes both ends.** 2.18's
+  `streams` step only asked whether a video and an audio stream were there. A report on X described
+  a filename with a space that lost 40 s of sound with no error, and the container's length could
+  not show that, because it is the longest stream's. `stream_lengths` compares where the picture and
+  the sound end. It allows the gap the inputs already had (summed over join's clips) plus 0.25 s, so
+  a source whose sound is shorter by design is not a failure. It compares ends, not lengths: a
+  stream that only starts late is the start skew that cut.py reports in a note and does not fail
+  (2.8.0, above). `decode` decodes the first and last second of every kept stream. A header can list a
+  stream whose payload no decoder accepts, and only reading the payload shows that. The tail read
+  starts 10 s earlier, because an MPEG-TS seek can land past the last keyframe. A length that cannot
+  be read fails the step, as in 2.20. Code: `emit.stream_lengths_step()`, `emit.decode_step()`.
+  Test: `test_a_damaged_ts_cut_names_the_stream_that_broke`, which writes three damaged files over
+  a real cut's output (video removed, sound cut to 0.8 s, payload zeroed) and runs an undamaged
+  control.
+- **A TS stream copy that wrote no video is redone as a re-encode, not only reported.** The
+  defect behind #367 is not random: the TS demuxer does not seek back to a keyframe as the MP4 one
+  does, so a copy whose window holds no video keyframe writes no video packets, and ffmpeg exits
+  0. The tool can tell which streams are missing and has a correct route, so it re-encodes that
+  segment (`reencode_reason: stream_lost`), as it already does when a copy fails or lands past
+  `--tolerance`. Test: the control in `test_a_damaged_ts_cut_names_the_stream_that_broke`, whose
+  TS source has one keyframe at 0.
+- **A printed command is quoted for a shell by an allow-list.** ffmpeg always receives an argv
+  list (no shell, pinned by `test_every_tool_help_and_no_shell_paths`). The printed `commands`,
+  though, are meant to be pasted and run again, and a deny-list of characters missed the backtick,
+  a leading `#` and `~`, and `!`. Any argument outside `[A-Za-z0-9_@%+=:,./-]` is single-quoted now.
+  Test: `test_printed_commands_run_unchanged_in_a_posix_shell`, which runs the quoted line in `sh`.
