@@ -127,11 +127,17 @@ def write_time_map(path: str, tm: Dict[str, Any]) -> None:
         text = "\n".join(rows) + "\n"
     else:
         text = json.dumps(tm, indent=2) + "\n"
-    # staged and swapped in, so a full disk or an interrupted write leaves the previous map whole
-    tmp = f"{path}.tmp{os.getpid()}"
+    # staged and swapped in, so a full disk or an interrupted write leaves the previous map whole;
+    # the staging name is short and unique, so it neither outgrows the name limit nor truncates a
+    # sibling that happens to exist
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=".tm", suffix=".tmp", dir=os.path.dirname(os.path.abspath(path)))
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+        mask = os.umask(0)  # mkstemp makes the file 0600; give the map the mode open() would have
+        os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -459,7 +465,7 @@ def main() -> int:
         _check_output_path([args.timemap])
         # --overwrite allows replacing an old map, never the source, the cut or the EDL
         refuse_output_is_input(args.timemap, *[p for p in (args.input, args.words) if p])
-        for flag, other in (("-o", args.output), ("--edl", args.edl)):
+        for flag, other in (("-o", args.output), ("--edl", args.edl), ("--plan", getattr(args, "plan", None))):
             if other and os.path.realpath(other) == os.path.realpath(args.timemap):
                 refuse("input", "timemap_path_taken",
                        f"--timemap {args.timemap} is the same file as {flag}; give the map its own path",

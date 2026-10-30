@@ -4137,9 +4137,16 @@ def garbage_payload(p):
             with self.assertRaises(OSError):
                 silence.write_time_map(str(old), {"kept": [], "removed": []})
         self.assertEqual(old.read_text(encoding="utf-8"), "previous map")
-        self.assertEqual([p.name for p in old.parent.glob("tm_old.json.tmp*")], [], "a staging file was left behind")
+        self.assertEqual(sorted(p.name for p in old.parent.iterdir() if p.name.endswith(".tmp")), [],
+                         "a staging file was left behind")
+        # the staging file is a fresh unique name: a sibling that happens to exist is never truncated
+        bystander = self.out("tm_old.json.tmp%d" % os.getpid()); bystander.write_text("not ours", encoding="utf-8")
+        silence.write_time_map(str(old), {"kept": [], "removed": []})
+        self.assertEqual(bystander.read_text(encoding="utf-8"), "not ours")
+        self.assertEqual(json.loads(old.read_text(encoding="utf-8")), {"kept": [], "removed": []})
+        bystander.unlink()
         same = self.out("tm_same.csv")
-        for extra in (["-o", same], ["--edl", same, "--list"]):
+        for extra in (["-o", same], ["--edl", same, "--list"], ["--plan", same, "--dry-run", "-o", self.out("tm_plan.wav")]):
             proc = tool("silence", src, "--timemap", same, "--overwrite", "--json", *extra, check=False)
             self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "timemap_path_taken", (extra, proc.stderr))
 
