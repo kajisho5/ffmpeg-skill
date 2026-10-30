@@ -1790,6 +1790,11 @@ audio.py INPUT [--voice [light|medium|strong] | --denoise [--denoise-strength 25
          [--effects FILE [--effects-volume -14]] [--stereo-widen 0..1]
          [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE] [-o OUT]
 ```
+`--denoise` is `afftdn=nf=-N:tn=1`, where N is `--denoise-strength`, the noise
+floor in dB below full scale (20..60, default 25). It is the starting floor that
+`tn=1` then tracks, not an amount removed; ffmpeg's `nf` accepts -80..-20 only, so
+values under 20 are refused before ffmpeg runs.
+
 `--voice` takes a strength; a bare `--voice` is `medium`, the chain it has always
 produced. The exact filter chains:
 

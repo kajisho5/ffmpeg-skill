@@ -161,7 +161,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output file (default: <name>_audio.<ext>)")
     clean = ap.add_argument_group("clean-up")
     clean.add_argument("--denoise", action="store_true", help="FFT noise reduction (afftdn, adaptive)")
-    clean.add_argument("--denoise-strength", type=float, default=25.0, help="noise floor in dB to remove, 10..60 (default 25)")
+    clean.add_argument("--denoise-strength", type=float, default=25.0, help="afftdn noise floor in dB below full scale, 20..60 (default 25; ffmpeg accepts nf -80..-20, and tn=1 then tracks the floor from this starting point)")
     clean.add_argument("--voice", nargs="?", const="medium", choices=["light", "medium", "strong"], default=None,
                        help="speech preset (default medium when the flag is given bare): light = highpass 80 Hz + gentle compression; "
                             "medium = highpass, de-esser, denoise, gentle compression; strong = medium plus a harder de-esser, a second "
@@ -305,8 +305,9 @@ def main() -> int:
     if args.voice:
         fx.append(VOICE_LEVELS[args.voice])
     elif args.denoise:
-        if not 10 <= args.denoise_strength <= 60:
-            die(f"--denoise-strength must be 10..60 (dB of noise floor to remove), got {args.denoise_strength:g}")
+        # afftdn's nf accepts -80..-20 only; 10..19.99 used to pass here and then fail inside ffmpeg.
+        if not 20 <= args.denoise_strength <= 60:
+            die(f"--denoise-strength must be 20..60 (afftdn noise floor in dB below full scale), got {args.denoise_strength:g}")
         fx.append(f"afftdn=nf=-{args.denoise_strength:g}:tn=1")
     if args.gain:
         fx.append(f"volume={args.gain:g}dB")
