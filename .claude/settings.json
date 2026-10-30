@@ -1,0 +1,15 @@
+{
+  "extraKnownMarketplaces": {
+    "trailofbits": {
+      "source": { "source": "github", "repo": "trailofbits/skills" }
+    }
+  },
+  "enabledPlugins": {
+    "variant-analysis@trailofbits": true,
+    "sharp-edges@trailofbits": true,
+    "insecure-defaults@trailofbits": true,
+    "differential-review@trailofbits": true,
+    "vulnerability-triage-brocards@trailofbits": true,
+    "post-patch-validation@trailofbits": true
+  }
+}
