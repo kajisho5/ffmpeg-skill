@@ -3281,7 +3281,9 @@ class ContractTests(unittest.TestCase):
                 runner._FFMPEG_VERSION, runner._FFMPEG_RELEASE, runner._FFMPEG_RELEASE_READ = saved
             self.assertFalse(marker.exists(), "a version read ran the ffprobe in the working directory")
             os.environ["PATH"] = os.pathsep.join([str(trap), real])  # on PATH as an absolute entry: a choice
-            self.assertEqual(os.path.dirname(runner.safe_which("ffmpeg")), str(trap))
+            hit = runner.safe_which("ffmpeg")
+            self.assertTrue(os.path.isabs(hit), hit)
+            self.assertEqual(os.path.normcase(os.path.realpath(os.path.dirname(hit))), os.path.normcase(os.path.realpath(trap)))
             if os.name != "nt":  # a relative entry that links back to the working directory is still it
                 if not os.path.lexists("alias"):
                     os.symlink(".", "alias")

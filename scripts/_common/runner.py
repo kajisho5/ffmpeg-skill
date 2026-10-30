@@ -226,8 +226,10 @@ def safe_which(name: str, which: Optional[Any] = None) -> Optional[str]:
     if not found:
         return found
     entries = os.environ.get("PATH", "").split(os.pathsep)
-    if _real_dir(os.path.dirname(os.path.abspath(found))) != _real_dir(os.getcwd()) or _cwd_on_path(entries):
+    if _real_dir(os.path.dirname(os.path.abspath(found))) != _real_dir(os.getcwd()):
         return found
+    if _cwd_on_path(entries):
+        return os.path.abspath(found)  # Windows answers `.\ffmpeg.EXE`; a later chdir must not change what runs
     return _which_on_path(name, entries)
 
 
