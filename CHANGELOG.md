@@ -7,6 +7,7 @@
 ### Added
 
 - **One table of verdict thresholds.** `references/scripts.md` § "Verdict thresholds" lists the numbers behind `verified` and `check.py`'s rows: true-peak and loudness tolerances, the length tolerances of `loudness.py` and `join.py`, `cut.py`'s keyframe tolerance, the silence, digital-silence and dropout levels, `--content`'s shares and filler timings. It also gives each platform's loudness target, tolerance, true-peak ceiling and maximum length. Before, these numbers were split across the code, docs/contract.md and docs/design-decisions.md, and some were in no doc at all. Each row names the constant or flag it comes from, and a test holds the table to the code.
+- **README FAQ: "Why 42 tools?"** It explains why there is one tool per job, and that over MCP an agent sees the core 12 by default and calls the other 30 by name. A table splits the 42 by the Tools section's groups and marks the 12, and a test holds it to that section and to `MCP_CORE_TOOLS`.
 
 ### Changed
 

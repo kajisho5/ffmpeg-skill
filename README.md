@@ -412,6 +412,33 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 
 Each operation is a script whose flags are its argparse parser, and that parser is what `contract --json` and the MCP `inputSchema` are built from. CI fails the build when those drift from the scripts. A caller-supplied filter graph, `-vf` string, or other ffmpeg option is not an argument any script accepts. `doctor` reads `ffmpeg -filters` (and `-encoders`, `-bsfs`) and reports a filter a tool needs before a job runs into it. MCP does accept an `argv` array, and that array is the named script's own CLI flags, still bound to that script: the script's flags, never an ffmpeg command line and never a shell.
 
+### Why 42 tools? Isn't that overkill?
+
+One tool per job, because each job promises something different, and the tool measures that promise after the run. `loudness.py` re-measures integrated loudness and true peak. `cut.py` reports how far a cut snapped to a keyframe. `silence.py` returns the ranges it kept. `export.py` checks the preset's maximum length. A value a tool cannot read fails that step as `not_measured`; it does not pass. One tool with a mode flag would need as large a schema, and its checks would be vaguer.
+
+An agent does not read 42 schemas. Over MCP, `tools/list` advertises the core 12 (bold below). The other 30 are called by name through `tools/call` when a job needs one, and `FFMPEG_SKILL_MCP_FULL=1` lists all 42. The groups are the ones in [Tools](#tools).
+
+<!-- why42:start -->
+| Group | MCP default / all | Tools |
+|---|---|---|
+| Analysis and inspection | 2 / 3 | **probe**, **look**, scenes |
+| Editing | 3 / 24 | **cut**, **fit**, **silence**, join, crop, cropdetect, deinterlace, denoise, redact, sphere, straighten, insert, background, reverse, stabilize, sequence, waveform, freeze, pad, speedramp, loop, broll, metadata, grid |
+| Audio | 2 / 3 | **audio**, **loudness**, sync |
+| Picture | 2 / 4 | **caption**, **graphics**, overlay, color |
+| Delivery | 2 / 4 | **export**, **check**, proxy, report |
+| Orchestration | 1 / 4 | **render**, batch, multicam, verify |
+| **Total** | **12 / 42** | |
+<!-- why42:end -->
+
+Without the other 30, an agent writes raw ffmpeg for those jobs, and a mistake there often still exits 0:
+
+- `stabilize.py` runs vidstab in two passes, and the second pass needs the first pass's transforms file.
+- `color.py` builds the HDR-to-SDR chain. With a wrong colour tag the run still finishes, and the picture comes out washed out.
+- `join.py` puts transitions between clips that differ in size, frame rate or audio layout. Done by hand, those clips have to be normalised first or xfade fails.
+- `sync.py` and `multicam.py` find the offset between two recordings by audio cross-correlation. No ffmpeg filter measures it.
+
+Every command a tool ran is in its `--json` `commands`, shell-quoted so it can be pasted and run again, and `--dry-run` prints the commands without running anything. In the 100-prompt agent eval (1.17.0, [Tested on real footage](#tested-on-real-footage)) the agent made no raw ffmpeg calls and reported no false successes.
+
 ### How does ffmpeg-skill compare with Remotion?
 
 ffmpeg-skill edits footage you already have, on this machine, with FFmpeg tools whose flags are a machine-readable contract (`contract --json`). Remotion renders a video from React components. They complement each other: this repository does not call Remotion, and a file Remotion writes is an ordinary input (`probe.py`, `cut.py`, `fit.py`, `export.py`, `check.py`). [`remotion-ffmpeg-skill`](https://github.com/kajisho5/remotion-ffmpeg-skill) joins the two. It measures the footage with this repo, draws the graphics in Remotion from those measurements, and checks and delivers the result with this repo again. Install both (`npx ffmpeg-skill`, then `npx remotion-ffmpeg-skill`). As with the other skills, the dependency runs one way: it calls these tools, and nothing here calls it. HyperFrames renders a video from HTML and is the same kind of neighbour: a file it writes is an ordinary input too.

@@ -225,6 +225,40 @@ class ContractTests(unittest.TestCase):
                               f"{path.relative_to(ROOT)}: states tool count(s) {sorted(counts)}, "
                               f"but scripts/ actually has {real_count} public tools -- update the stale wording")
 
+    def test_the_why_42_faq_table_matches_the_tools_section_and_the_mcp_core(self):
+        """README's "Why 42 tools?" answer restates two facts held elsewhere: which group each
+        tool sits in (the Tools section) and which 12 tools/list shows by default
+        (_contract.MCP_CORE_TOOLS). Both are pinned here, row by row, with the counts."""
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        tools_md = readme.split("\n## Tools\n", 1)[1].split("\n## ", 1)[0]
+        groups, current = {}, None
+        for line in tools_md.splitlines():
+            head = re.fullmatch(r"\*\*(.+)\*\*", line.strip())
+            if head:
+                current = head.group(1)
+                groups[current] = []
+            row = re.match(r"\| `(\w+)\.py` \|", line)
+            if row and current:
+                groups[current].append(row.group(1))
+        m = re.search(r"<!-- why42:start -->\n(.*?)<!-- why42:end -->", readme, re.S)
+        self.assertTrue(m, "README.md: the why42 table markers are missing")
+        rows = [r for r in m.group(1).splitlines() if r.startswith("| ") and not r.startswith("| Group")]
+        seen_core, seen_all = set(), []
+        for r in rows[:-1]:
+            name, counts, cells = [c.strip() for c in r.strip("|").split("|")]
+            listed = [c.strip() for c in cells.split(",")]
+            core = {c.strip("*") for c in listed if c.startswith("**")}
+            names = [c.strip("*") for c in listed]
+            self.assertIn(name, groups, f"why42 row {name!r} is not a group in README's Tools section")
+            self.assertEqual(sorted(names), sorted(groups[name]), f"why42 row {name!r}")
+            self.assertEqual(counts, f"{len(core)} / {len(names)}", f"why42 row {name!r} counts")
+            seen_core |= core
+            seen_all += names
+        self.assertEqual(seen_core, set(_contract.MCP_CORE_TOOLS))
+        self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"]))
+        self.assertEqual(set(groups), {r.strip("|").split("|")[0].strip() for r in rows[:-1]})
+        self.assertIn(f"**{len(seen_core)} / {len(seen_all)}**", rows[-1])
+
     def test_skill_metadata_and_version_separation(self):
         pkg = json.loads((ROOT / "package.json").read_text())
         self.assertEqual(self.contract["skill"]["version"], pkg["version"])
