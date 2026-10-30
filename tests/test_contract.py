@@ -4006,9 +4006,12 @@ def garbage_payload(p):
         --timemap writes, as JSON or CSV by extension, each kept range with its time in the source
         and in the output, and each removed range; under --dry-run nothing is written."""
         wav = self.out("tm.wav")
-        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+between(t\\,3\\,5)+gt(t\\,6))':s=48000:d=8", wav)
+        # silence at both ends too, so the leading and trailing removed ranges are exercised
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(between(t\\,1\\,2)+between(t\\,3\\,5)+between(t\\,6\\,7))':s=48000:d=8", wav)
         jmap, cmap = self.out("tm.json"), self.out("tm.csv")
-        doc = json.loads(tool("silence", wav, "-o", self.out("tm_out.wav"), "--timemap", jmap, "--overwrite", "--json").stdout)
+        # --margin 0: the margin is kept at the file's ends too, which would hide the edge ranges
+        doc = json.loads(tool("silence", wav, "-o", self.out("tm_out.wav"), "--timemap", jmap, "--margin", "0",
+                              "--overwrite", "--json").stdout)
         tm = json.loads(jmap.read_text(encoding="utf-8"))
         self.assertEqual(doc["timemap"], str(jmap))
         kept, removed = tm["kept"], tm["removed"]
@@ -4020,15 +4023,26 @@ def garbage_payload(p):
             out_t += e - s
             self.assertAlmostEqual(seg["output_end"], out_t, places=3)
         self.assertAlmostEqual(out_t, doc["kept_duration"], places=2)
-        # removed ranges are exactly the gaps between kept ones, each placed at its output cut point
-        for prev, nxt, gap in zip(kept, kept[1:], removed):
-            self.assertEqual((gap["source_start"], gap["source_end"]), (prev["source_end"], nxt["source_start"]))
-            self.assertAlmostEqual(gap["output_time"], prev["output_end"], places=3)
-        tool("silence", wav, "-o", self.out("tm_out2.wav"), "--timemap", cmap, "--overwrite")
+        # removed ranges are exactly the lead-in, the gaps between kept ones and the tail, each
+        # placed at its output cut point
+        bounds = [0.0] + [b for k in kept for b in (k["source_start"], k["source_end"])] + [doc["input_duration"]]
+        expect = [{"source_start": a, "source_end": b, "output_time": t}
+                  for (a, b), t in zip(zip(bounds[::2], bounds[1::2]), [0.0] + [k["output_end"] for k in kept])]
+        self.assertEqual(len(removed), len(kept) + 1)
+        for got, want in zip(removed, expect):
+            for key in want:
+                self.assertAlmostEqual(got[key], want[key], places=3, msg=(got, want))
+        tool("silence", wav, "-o", self.out("tm_out2.wav"), "--timemap", cmap, "--margin", "0", "--overwrite")
         rows = cmap.read_text(encoding="utf-8").splitlines()
         self.assertEqual(rows[0], "type,source_start,source_end,output_start,output_end")
         self.assertEqual(sum(1 for r in rows if r.startswith("kept,")), len(kept))
         self.assertEqual(sum(1 for r in rows if r.startswith("removed,")), len(removed))
+        cells = [r.split(",") for r in rows[1:]]
+        self.assertEqual([r[1:] for r in cells if r[0] == "kept"],
+                         [["%.3f" % k[c] for c in ("source_start", "source_end", "output_start", "output_end")] for k in kept])
+        self.assertEqual([r[1:] for r in cells if r[0] == "removed"],
+                         [["%.3f" % g["source_start"], "%.3f" % g["source_end"], "%.3f" % g["output_time"], "%.3f" % g["output_time"]]
+                          for g in removed])
         dry = self.out("tm_dry.json")
         tool("silence", wav, "-o", self.out("tm_dry.wav"), "--timemap", dry, "--dry-run")
         self.assertFalse(dry.exists(), "a dry run wrote the time map")
