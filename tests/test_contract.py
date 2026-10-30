@@ -4125,6 +4125,19 @@ def garbage_payload(p):
                               check=False).stdout)["error"]
         self.assertEqual(err["reason"], "output_is_input")
         self.assertEqual(src_copy.read_bytes(), before, "the map replaced the source")
+        words = self.out("tm_words.json"); words.write_text('{"segments": []}', encoding="utf-8")
+        err = json.loads(tool("silence", src, "--filler", "--words", words, "--list", "--timemap", words, "--overwrite",
+                              "--json", check=False).stdout)["error"]
+        self.assertEqual(err["reason"], "output_is_input")
+        self.assertEqual(words.read_text(encoding="utf-8"), '{"segments": []}', "the map replaced the transcript")
+        # the map is staged and swapped in: a write that fails leaves the previous map whole
+        from unittest import mock
+        old = self.out("tm_old.json"); old.write_text("previous map", encoding="utf-8")
+        with mock.patch.object(silence.os, "replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                silence.write_time_map(str(old), {"kept": [], "removed": []})
+        self.assertEqual(old.read_text(encoding="utf-8"), "previous map")
+        self.assertEqual([p.name for p in old.parent.glob("tm_old.json.tmp*")], [], "a staging file was left behind")
         same = self.out("tm_same.csv")
         for extra in (["-o", same], ["--edl", same, "--list"]):
             proc = tool("silence", src, "--timemap", same, "--overwrite", "--json", *extra, check=False)

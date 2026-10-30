@@ -127,8 +127,18 @@ def write_time_map(path: str, tm: Dict[str, Any]) -> None:
         text = "\n".join(rows) + "\n"
     else:
         text = json.dumps(tm, indent=2) + "\n"
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(text)
+    # staged and swapped in, so a full disk or an interrupted write leaves the previous map whole
+    tmp = f"{path}.tmp{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def cut_levels(path: str, tm: Dict[str, Any], duration: float,
@@ -448,7 +458,7 @@ def main() -> int:
         # directory at the path is a `kind: input` refusal, not a traceback from open()
         _check_output_path([args.timemap])
         # --overwrite allows replacing an old map, never the source, the cut or the EDL
-        refuse_output_is_input(args.timemap, args.input)
+        refuse_output_is_input(args.timemap, *[p for p in (args.input, args.words) if p])
         for flag, other in (("-o", args.output), ("--edl", args.edl)):
             if other and os.path.realpath(other) == os.path.realpath(args.timemap):
                 refuse("input", "timemap_path_taken",
