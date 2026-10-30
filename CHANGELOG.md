@@ -8,6 +8,15 @@
 
 - **An input or output with a protocol prefix is refused.** ffmpeg opens a value such as `tcp:...`, `http://...` or `file:...` as a URL, while the path guards (output-is-input, existing output, output directory) read it as a path. Every tool now refuses such a value as `kind: input` (`error.reason: media_path_is_url`) before ffmpeg starts, so the skill reads and writes local files only, as documented. A Windows drive letter, `pipe:` and a local name with a colon written as `./name` still work.
 
+## 2.22.1
+
+_Automated release: version and notes generated from pull requests merged since 2.22.0._
+
+### Fixed
+
+- **An input or output with a protocol prefix is refused.** ffmpeg opens a value such as `tcp:...`, `http://...` or `file:...` as a URL, while the path guards (output-is-input, existing output, output directory) read it as a path. Every tool now refuses such a value as `kind: input` (`error.reason: media_path_is_url`) before ffmpeg starts, so the skill reads and writes local files only, as documented. A Windows drive letter, `pipe:` and a local name with a colon written as `./name` still work.
+- Fix: refuse an input or output with a protocol prefix (#377)
+
 ## 2.22.0
 
 _Automated release: version and notes generated from pull requests merged since 2.21.1._
