@@ -3729,6 +3729,9 @@ def garbage_payload(p):
     def test_a_damaged_ts_cut_names_the_stream_that_broke(self):
         ts = self.out("ts_source.ts")
         ffmpeg("-i", self.src, "-c", "copy", "-f", "mpegts", ts)
+        if sh("ffprobe", "-v", "error", "-show_format", ts, check=False).returncode != 0:
+            # the johnvansickle static ffprobe builds (5.1.1, 7.0.2) segfault on any MPEG-TS file
+            self.skipTest("this ffprobe cannot read MPEG-TS")
         ok = json.loads(tool("cut", ts, "--start", "1", "--end", "4", "-o", self.out("ts_ok.mp4"),
                              "--overwrite", "--json").stdout)
         self.assertTrue(ok["verified"], ok["verification"])
@@ -3772,6 +3775,12 @@ def garbage_payload(p):
         self.assertTrue(E.stream_lengths_step(out, [ref])["ok"])  # the input was 0.6 s short already
         edge = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": 4.0 - 0.2504, "start_time": 0.0}}
         self.assertEqual(E.stream_lengths_step(edge, [])["short"], ["audio"])
+        nan = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": float("nan"), "start_time": 0.0}}
+        self.assertEqual(E.stream_lengths_step(nan, [])["ok"], False)  # NaN is no length, not a pass
+        # a count, not presence: two sound streams expected and one written is `missing`
+        two = {"video": {"codec": "h264"}, "audio": {"codec": "aac"}, "stream_counts": {"video": 1, "audio": 1}}
+        inv = E.stream_inventory_step(two, {"video": 1, "audio": 2})
+        self.assertEqual((inv["ok"], inv["missing"], inv["measured_count"]), (False, ["audio"], {"video": 1, "audio": 1}))
 
     def test_paths_with_spaces_quotes_and_japanese_keep_every_second_of_audio(self):
         """The report: a filename with a space "was shell-escaped" and 40 s of audio went missing

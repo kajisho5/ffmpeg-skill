@@ -431,9 +431,13 @@ def stream_inventory_step(meta: Dict[str, Any], expect: Dict[str, Any]) -> Dict[
 
 
 def stream_length(meta: Dict[str, Any], kind: str) -> Optional[float]:
-    """One stream's own length: its duration, else the DURATION tag Matroska/WebM keep."""
+    """One stream's own length: its duration, else the DURATION tag Matroska/WebM keep. A value
+    that is not a finite number is no length (a NaN compares false and would pass every check)."""
     s = meta.get(kind) or {}
-    return s.get("duration") or s.get("tagged_duration")
+    for v in (s.get("duration"), s.get("tagged_duration")):
+        if isinstance(v, (int, float)) and math.isfinite(v) and v > 0:
+            return float(v)
+    return None
 
 
 def stream_end(meta: Dict[str, Any], kind: str) -> Optional[float]:
