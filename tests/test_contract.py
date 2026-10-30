@@ -3767,6 +3767,13 @@ def garbage_payload(p):
         self.assertEqual(E._framecrc_frames(crc, since=9.5), 0)
         held = types.SimpleNamespace(stdout="#tb 0: 1/1000\n0, 7000, 7000, 3000, 4, 0x1\n")  # 7-10 s on screen
         self.assertEqual(E._framecrc_frames(held, since=9.0), 1)
+        self.assertEqual(E._framecrc_frames(held, since=10.0), 0)  # gone by the window's start
+        # a GOP longer than the 10 s margin: the first tail read finds no keyframe, the retry does
+        gop = self.out("dec_long_gop.ts")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25", "-t", "14", "-c:v", "libx264", "-g", "400", "-f", "mpegts", gop)
+        if sh("ffprobe", "-v", "error", "-show_format", gop, check=False).returncode == 0:  # static 5.1.1 ffprobe: no TS
+            d = E.decode_step(str(gop), importlib.import_module("_common.probe").probe(str(gop)), ["video"])
+            self.assertTrue(d["ok"] and d["frames"]["video"]["tail"] > 0, d)
         ref = {"duration": 10.0, "video": {"duration": 10.0, "start_time": 0.0}, "audio": {"duration": None, "start_time": 0.0}}
         out = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": 3.5, "start_time": 0.0}}
         step = E.stream_lengths_step(out, [ref])  # the input's own gap is unknown: not a pass, not "short"
