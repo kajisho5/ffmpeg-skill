@@ -36,9 +36,9 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, add_common, apply_common, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
+from _common import STATE, add_common, apply_common, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
-from _common.emit import note, record_skip, warn
+from _common.emit import note, record_fallback, record_skip, warn
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
@@ -137,6 +137,92 @@ def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: s
     warn(msg, "loudness_not_measured", platform=platform, normalized=normalized)
 
 
+# Text subtitle codecs ffmpeg can convert to the container's own text track: mov_text is the one
+# text track MP4/MOV hold, Matroska holds SubRip/ASS/WebVTT as they are but not mov_text.
+_TEXT_SUBTITLES = frozenset({"mov_text", "subrip", "srt", "ass", "ssa", "webvtt", "text"})
+_MP4_FAMILY = frozenset({"mp4", "m4v", "mov"})
+
+
+def _subtitle_codec(codec: str, out_ext: str) -> str:
+    """The -c:s for one source subtitle stream: copy when the output container holds it as it is,
+    else the container's own text format (a bitmap track is tried as a copy; a container that
+    refuses it is the fallback below)."""
+    if out_ext in _MP4_FAMILY and codec in _TEXT_SUBTITLES and codec != "mov_text":
+        return "mov_text"
+    if out_ext == "mkv" and codec == "mov_text":
+        return "srt"
+    return "copy"
+
+
+def _data_streams(path: str) -> List[Dict[str, object]]:
+    """The data streams of a file ({index, codec}), without its attachments (probe()'s
+    data_streams counts both, and -map 0:d maps only the data streams)."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "d", "-show_entries",
+                "stream=codec_name,codec_tag_string", "-of", "json", path], quiet=True, check=False)
+    try:
+        streams = json.loads(proc.stdout or "{}").get("streams") or []
+    except ValueError:
+        streams = []
+    return [{"index": n, "codec": s.get("codec_name") or s.get("codec_tag_string")} for n, s in enumerate(streams)]
+
+
+def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data: int) -> List[str]:
+    """run_keeping_subtitles() for export: the subtitle streams go in the codec the container takes
+    (_subtitle_codec), and a refused data stream does not cost the subtitles. The rungs are
+    subtitles + data, subtitles alone, neither; each retry is a `non_av_streams_dropped` fallback
+    with the attempt's error. `cmd` already maps the picture and the sound and has no output.
+    Returns the stream types dropped ([] when everything mapped was written)."""
+    sub_args: List[str] = ["-map", "0:s"] if sub_codecs else []
+    for n, codec in enumerate(sub_codecs):
+        sub_args += [f"-c:s:{n}", codec]
+    data_args = ["-map", "0:d", "-c:d", "copy"] if data else []
+    rungs = [(sub_args + data_args, [])]
+    if sub_codecs and data:
+        rungs.append((sub_args, ["data"]))
+    rungs.append(([], (["subtitle"] if sub_codecs else []) + (["data"] if data else [])))
+    for n, (extra, dropped) in enumerate(rungs):
+        if n == len(rungs) - 1:
+            run(cmd + extra + [output])
+            return dropped
+        attempt = run(cmd + extra + [output], check=False)
+        if attempt.returncode == 0:
+            return dropped
+        error = " | ".join([ln.strip() for ln in (attempt.stderr or "").splitlines() if ln.strip()][-3:])[-500:]
+        going = rungs[n + 1][1]
+        record_fallback(f"{os.path.basename(output)} could not hold the source's {' and '.join(t for t in ('subtitle', 'data') if t in going)} "
+                        f"stream(s) ({error or 'ffmpeg exit ' + str(attempt.returncode)}); encoding again without them",
+                        "non_av_streams_dropped", output=output, returncode=attempt.returncode, error=error, dropped=going)
+    return []  # not reached: the last rung either returns or exits
+
+
+def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dropped: List[str],
+                   output: str, reason: str) -> Dict[str, List[Dict]]:
+    """`non_av_streams`: each source subtitle/data stream as kept (with the codec it was written in)
+    or dropped (with why), read back from the written file; under --dry-run, as planned."""
+    kept: List[Dict] = []
+    gone: List[Dict] = []
+    written_subs: List[Dict] = []
+    written_data: List[Dict] = []
+    if not STATE.dry_run and (subs or data):
+        written_subs = probe(output, role="output").get("subtitle_stream_details") or []
+        written_data = _data_streams(output)
+    for kind, streams, written in (("subtitle", subs, written_subs), ("data", data, written_data)):
+        for n, s in enumerate(streams):
+            row = {"type": kind, "index": n, "codec": s.get("codec")}
+            if kind == "subtitle":
+                row["language"] = s.get("language")
+            if STATE.dry_run and kind not in dropped:
+                planned = sub_codecs[n] if kind == "subtitle" else "copy"
+                kept.append(dict(row, output_codec=s.get("codec") if planned == "copy" else planned))
+            elif n < len(written):
+                # read back, not assumed: an MP4/MOV muxer writes a timecode (tmcd) track of its
+                # own from the source's timecode tag even when the copied one was refused
+                kept.append(dict(row, output_codec=written[n].get("codec")))
+            else:
+                gone.append(dict(row, reason=reason if kind in dropped else "not_in_output"))
+    return {"kept": kept, "dropped": gone}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", nargs="?")
@@ -202,6 +288,15 @@ def main() -> int:
         else:
             vf.append(f"scale={p['w']}:-2")
     cmd = ffmpeg_base() + ["-i", args.input]
+    # Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are
+    # kept where the container can hold them: ffmpeg's default stream selection takes one video
+    # and one audio stream only, and through 2.22.1 every preset dropped the rest without a word.
+    # Mapping them means mapping the picture and the sound too, the same streams probe() describes.
+    subs = meta.get("subtitle_stream_details") or []
+    data = _data_streams(args.input) if meta.get("data_streams") else []
+    sub_codecs = [_subtitle_codec(s.get("codec") or "", out_ext) for s in subs]
+    if args.preset != "gif" and (subs or data):
+        cmd += ["-map", "0:V:0"] + (["-map", "0:a:0"] if has_audio else [])
 
     if args.preset == "gif":
         chain = ",".join(["fps=12"] + vf) if vf else "fps=12"
@@ -209,7 +304,10 @@ def main() -> int:
         cmd += ["-filter_complex", fc, "-loop", "0", output]
         run(cmd)
         info(f"wrote {output}")
-        emit(output, **({"notes": notes} if notes else {}))
+        non_av = _non_av_report(subs, [], data, ["subtitle", "data"], output, "gif")
+        if non_av["dropped"]:
+            notes.append(f"a GIF holds no subtitle or data stream: the source's {len(non_av['dropped'])} were not written")
+        emit(output, non_av_streams=non_av, dropped_non_av_streams=bool(non_av["dropped"]), **({"notes": notes} if notes else {}))
         return 0
 
     if vf:
@@ -259,13 +357,15 @@ def main() -> int:
     trimmed = None
     if p["max"] and not args.allow_long and (meta.get("duration") or 0) > p["max"]:
         # the preset's promise (the platform's maximum), but the caller loses the tail: say how much
-        # in the document (`trimmed`, `notes`), not only on stderr
+        # in the document (`trimmed`, `notes`), not only on stderr. -t is an output option, so a
+        # kept subtitle track is cut at the same point (a cue after it is not written)
         trimmed = {"from": round(float(meta["duration"]), 3), "to": round(float(p["max"]), 3)}
         note(f"trimmed from {trimmed['from']:.3f}s to the {args.preset} maximum of {p['max']:.0f}s "
              "(use --allow-long to keep full length)")
         cmd += ["-t", f"{p['max']:.3f}"]
-    cmd.append(output)
-    run(cmd)
+    dropped = _run_keeping_non_av(cmd, output, sub_codecs, len(data)) if (subs or data) else []
+    if not (subs or data):
+        run(cmd + [output])
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
@@ -347,6 +447,13 @@ def main() -> int:
             step = {"step": "duration", "property": "duration", "ok": False, "expected": {"max": p["max"]},
                     "reason": "not_measured: the written file reports no duration"}
         extra.setdefault("verification", []).append(step)
+    # read back after --normalize, which rewrote the file
+    non_av = _non_av_report(subs, sub_codecs, data, dropped, output, "container_refused")
+    if non_av["dropped"]:
+        notes.append(f"{len(non_av['dropped'])} subtitle/data stream(s) of the source are not in {os.path.basename(output)} "
+                     f"({', '.join(sorted({d['type'] + ': ' + d['reason'] for d in non_av['dropped']}))}); non_av_streams lists them")
+    extra["non_av_streams"] = non_av
+    extra["dropped_non_av_streams"] = bool(non_av["dropped"])
     if notes:
         extra["notes"] = notes
     # the delivery keeps the source's picture and, except as a GIF, its sound

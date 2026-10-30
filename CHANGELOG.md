@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`export.py` keeps subtitle and data streams.** It mapped nothing, so ffmpeg's default selection wrote one video and one audio stream: on 2.22.1, an .mp4 with a `mov_text` track exported with `--preset youtube` or `--preset copy` came out `h264` + `aac`, and the result said nothing. Found by an agent that muxes soft subtitles before a platform export and had to refuse the pair. Every preset but `gif` now keeps the track: copied when the container holds it, or converted to the container's text track (`mov_text` in .mp4/.mov, SubRip in .mkv). A platform trim (`-t`) cuts it with the picture. A data stream the container refuses (a camera's timecode in .mp4) is retried away on its own, so it does not take the subtitles with it, and the retry is a `non_av_streams_dropped` fallback naming what it `dropped`. The result gains `non_av_streams: {kept, dropped}` (each source stream, its `output_codec` or the `reason` it is missing, read back from the written file) and `dropped_non_av_streams`, with a `notes` line when something was dropped. When the source has such a stream, the picture and the sound are mapped as the first non-cover video and the first audio stream (what `probe` describes); a source without one gets the same command as before.
 
 ## 2.22.1
 

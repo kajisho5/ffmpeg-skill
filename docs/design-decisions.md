@@ -344,7 +344,12 @@ exists. When a decision changes, edit the entry in the same PR.
   it is retimed; both cases report `dropped_non_av_streams`.** Tools that re-encode the picture
   or audio in place (`fit`, `color`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
   `deinterlace`, `denoise`, `freeze --mode extend`) try `run_keeping_subtitles()` first and
-  report `false` unless the container refused the track. Tools that move the timeline
+  report `false` unless the container refused the track. `export` does the same with its own
+  ladder (`_run_keeping_non_av()`): a text track is converted to the container's own (mov_text in
+  .mp4/.mov, SubRip in .mkv) rather than refused, a data stream the container refuses (a camera's
+  timecode in .mp4) is retried away alone so the subtitles survive it, a platform trim cuts the
+  track with the picture, and `non_av_streams` lists every stream kept or dropped. Test:
+  `test_export_keeps_the_subtitle_track_for_every_preset_whose_container_holds_one`. Tools that move the timeline
   (`cut` re-encode, `pad --start`, `freeze --mode insert`, `fit --method speed`, `speedramp`,
   `broll`, `join`) do not copy a track whose cues would fire at the wrong time and report
   `true` when the source had one. Code: `_common.run_keeping_subtitles()` and each tool's `emit`.

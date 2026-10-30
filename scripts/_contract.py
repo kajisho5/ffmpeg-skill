@@ -445,7 +445,7 @@ DIAGNOSTIC_CODES = {
     # the runner
     "odd_dimensions_scaled_even": ("fallbacks", "an encode that failed on odd dimensions was run again scaled to even ones (the frame loses a row or column); {output, scale}"),
     "measurement_input_pending": ("skipped", "--dry-run: a measurement skipped because its input is an earlier stage's output that does not exist yet; {path}"),
-    "non_av_streams_dropped": ("fallbacks", "the subtitle/data streams could not be copied, so the encode ran again without them (dropped_non_av_streams: true); {output, returncode, error: the first attempt's last stderr lines}"),
+    "non_av_streams_dropped": ("fallbacks", "the subtitle/data streams could not be copied, so the encode ran again without them (dropped_non_av_streams: true); {output, returncode, error: the first attempt's last stderr lines}; export.py adds dropped: the stream types this retry leaves out (data alone first, then subtitle too)"),
     "ffmpeg_list_unreadable": ("warnings", "`ffmpeg -encoders` / `-bsfs` could not be read; what needs the list says so instead of 'the build lacks it'; {list, tool, error}"),
     "timeout_env_invalid": ("warnings", "FFMPEG_SKILL_TIMEOUT was not a number (the default was used) or was negative (read as 0, no limit); {value, timeout}"),
     # encoder decisions
@@ -610,6 +610,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "export":
         extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file; silent true (lufs \"-inf\", ok false, no normalize) when the written audio is silent; measured false (lufs, tp and ok null, reason not_measured) when the measurement could not be read"},
                  "trimmed": {"type": "object", "description": "present when the source was longer than the preset's platform maximum and the export was cut to it (no --allow-long): {from, to} in seconds; notes says so too"},
+                 "non_av_streams": {"type": "object", "description": "the source's subtitle and data streams: {kept: [{type: subtitle|data, index (n-th of its type), codec, language (subtitle), output_codec}], dropped: [{type, index, codec, language, reason: container_refused|gif|not_in_output}]}, read back from the written file (under --dry-run, as planned). A subtitle track is copied when the container holds it as it is, else converted to the container's text track (mov_text in .mp4/.mov, SubRip in .mkv); a trimmed export cuts it at the same point. Both lists are empty for a source with neither"},
+                 "dropped_non_av_streams": {"type": "boolean", "description": "true when non_av_streams.dropped is not empty; a notes line says so too"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "loudness":
         extra = {"measured": {"type": "object", "description": "the loudnorm measurement of the input (input_i, input_tp, input_lra, input_thresh, target_offset); with --measure-only it is the whole result"},
