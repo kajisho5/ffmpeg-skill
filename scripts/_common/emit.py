@@ -524,9 +524,15 @@ def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: f
             continue
         tail_from = max(0.0, end - window - DECODE_SEEK_MARGIN_SECONDS)
         # -copyts keeps the file's own timestamps, the timeline `end` is measured on
-        tail = run_analysis(base + ["-copyts", "-ss", "%.3f" % tail_from,
-                                    "-t", "%g" % (end - tail_from + 1.0), "-i", path] + sel, check=False)
-        frames[kind]["tail"] = _framecrc_frames(tail, since=end - window) if tail.returncode == 0 else 0
+        def tail_frames(start: float) -> int:
+            proc = run_analysis(base + ["-copyts", "-ss", "%.3f" % start, "-t", "%g" % (end - start + 1.0), "-i", path]
+                                + sel, check=False)
+            return _framecrc_frames(proc, since=end - window) if proc.returncode == 0 else 0
+        frames[kind]["tail"] = tail_frames(tail_from)
+        if not frames[kind]["tail"] and tail_from > 0:
+            # a GOP longer than the margin (long-GOP MPEG-TS) has no keyframe after tail_from: read
+            # from the start before calling it undecodable (only a failing stream pays for this)
+            frames[kind]["tail"] = tail_frames(0.0)
     bad = [k for k in kinds if not all(frames[k].values())]
     step: Dict[str, Any] = {"step": "decode", "property": "decodable", "frames": frames, "window": window,
                             "provenance": "measurement", "ok": not bad}
@@ -538,7 +544,8 @@ def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: f
 
 
 def _framecrc_frames(proc: Any, since: Optional[float] = None) -> int:
-    """Frames in ffmpeg's framecrc output; with `since`, only those at or after that time. Rows
+    """Frames in ffmpeg's framecrc output; with `since`, only those still on screen at that time
+    (pts plus duration: a last frame held for 2 s starts before the window and still counts). Rows
     are `stream, dts, pts, duration, size, crc`, timestamps in the `#tb N: num/den` time base."""
     tb: Dict[str, float] = {}
     n = 0
@@ -551,7 +558,7 @@ def _framecrc_frames(proc: Any, since: Optional[float] = None) -> int:
             cols = [c.strip() for c in line.split(",")]
             if since is None:
                 n += 1
-            elif len(cols) > 2 and cols[0] in tb and float(cols[2]) * tb[cols[0]] >= since - 1e-3:
+            elif len(cols) > 3 and cols[0] in tb and (float(cols[2]) + float(cols[3])) * tb[cols[0]] >= since - 1e-3:
                 n += 1
     return n
 

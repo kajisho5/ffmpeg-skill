@@ -3765,6 +3765,8 @@ def garbage_payload(p):
         self.assertEqual(E._framecrc_frames(crc), 3)
         self.assertEqual(E._framecrc_frames(crc, since=9.0), 1)
         self.assertEqual(E._framecrc_frames(crc, since=9.5), 0)
+        held = types.SimpleNamespace(stdout="#tb 0: 1/1000\n0, 7000, 7000, 3000, 4, 0x1\n")  # 7-10 s on screen
+        self.assertEqual(E._framecrc_frames(held, since=9.0), 1)
         ref = {"duration": 10.0, "video": {"duration": 10.0, "start_time": 0.0}, "audio": {"duration": None, "start_time": 0.0}}
         out = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": 3.5, "start_time": 0.0}}
         step = E.stream_lengths_step(out, [ref])  # the input's own gap is unknown: not a pass, not "short"
