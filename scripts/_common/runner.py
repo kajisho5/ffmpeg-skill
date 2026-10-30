@@ -187,19 +187,25 @@ def _homebrew_full_build(path: str, name: str) -> str:
     return full if os.path.isfile(full) and os.access(full, os.X_OK) else ""
 
 
+def _real_dir(path: str) -> str:
+    """`path` with symlinks resolved, so a PATH entry that links to the working directory is
+    recognised as the working directory."""
+    return os.path.normcase(os.path.realpath(path))
+
+
 def _cwd_on_path(entries: List[str]) -> bool:
-    cwd = os.path.normcase(os.path.abspath(os.getcwd()))
-    return any(e and os.path.isabs(e) and os.path.normcase(os.path.abspath(e)) == cwd for e in entries)
+    cwd = _real_dir(os.getcwd())
+    return any(e and os.path.isabs(e) and _real_dir(e) == cwd for e in entries)
 
 
 def _which_on_path(name: str, entries: List[str]) -> Optional[str]:
     """The first `name` in an absolute PATH entry that is not the working directory."""
-    cwd = os.path.normcase(os.path.abspath(os.getcwd()))
+    cwd = _real_dir(os.getcwd())
     exts = [""]
     if os.name == "nt" and not os.path.splitext(name)[1]:
         exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if e] + [""]
     for entry in entries:
-        if not entry or not os.path.isabs(entry) or os.path.normcase(os.path.abspath(entry)) == cwd:
+        if not entry or not os.path.isabs(entry) or _real_dir(entry) == cwd:
             continue
         for ext in exts:
             candidate = os.path.join(entry, name + ext)
@@ -212,15 +218,15 @@ def safe_which(name: str, which: Optional[Any] = None) -> Optional[str]:
     """shutil.which() without the working directory. On Windows it looks in the current directory
     before PATH (and so does a bare name handed to subprocess), and a `.` or relative PATH entry
     does the same elsewhere: an `ffmpeg.exe` in a folder the skill is run from would run instead
-    of the real one. A hit there is dropped and PATH searched again, unless the working directory
-    is on PATH as an absolute entry, which is the caller's own choice. `which` lets a test pass
+    of the real one. A hit there (or in a directory that links to it) is dropped and PATH searched
+    again, unless the working directory is on PATH as an absolute entry, which is the caller's own
+    choice. `which` lets a test pass
     its own lookup."""
     found = (which or shutil.which)(name)
     if not found:
         return found
     entries = os.environ.get("PATH", "").split(os.pathsep)
-    here = os.path.normcase(os.path.abspath(os.getcwd()))
-    if os.path.normcase(os.path.dirname(os.path.abspath(found))) != here or _cwd_on_path(entries):
+    if _real_dir(os.path.dirname(os.path.abspath(found))) != _real_dir(os.getcwd()) or _cwd_on_path(entries):
         return found
     return _which_on_path(name, entries)
 

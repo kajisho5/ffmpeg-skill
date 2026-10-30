@@ -3258,7 +3258,8 @@ class ContractTests(unittest.TestCase):
         real = os.path.dirname(shutil.which("ffmpeg"))
         trap = self.work / "trap"; trap.mkdir(exist_ok=True)
         marker = trap / "PWNED"
-        for name in ("ffmpeg", "ffprobe", "fc-match", "fc-list", "whisper"):
+        for name in ("ffmpeg", "ffprobe", "fc-match", "fc-list", "whisper", "whisper-cli", "whisper-cpp", "main",
+                     "parakeet-mlx", "parakeet-cli"):
             p = trap / (name + (".bat" if os.name == "nt" else ""))
             p.write_text(("@echo off\r\necho x> PWNED\r\n" if os.name == "nt" else f"#!/bin/sh\ntouch '{marker}'\nexit 1\n"),
                          encoding="utf-8")
@@ -3272,6 +3273,11 @@ class ContractTests(unittest.TestCase):
             self.assertIsNone(runner.safe_which("ffmpeg"))
             os.environ["PATH"] = os.pathsep.join([str(trap), real])  # on PATH as an absolute entry: a choice
             self.assertEqual(os.path.dirname(runner.safe_which("ffmpeg")), str(trap))
+            if os.name != "nt":  # a relative entry that links back to the working directory is still it
+                if not os.path.lexists("alias"):
+                    os.symlink(".", "alias")
+                os.environ["PATH"] = os.pathsep.join(["alias", real])
+                self.assertEqual(os.path.dirname(runner.safe_which("ffmpeg")), real)
         finally:
             os.chdir(old_cwd); os.environ["PATH"] = old_path
         env = dict(os.environ, PATH=os.pathsep.join([".", real]))
@@ -3279,6 +3285,10 @@ class ContractTests(unittest.TestCase):
         for args in (["probe", "in.mp4", "--json"], ["fit", "in.mp4", "--aspect", "9:16", "-o", "out.mp4"],
                      ["overlay", "in.mp4", "--text", "hi", "-o", "out2.mp4"]):
             tool(*args, env=env, cwd=trap)
+        # both transcription entry points look every engine up (and launch it) by full path
+        for args in (["caption", "in.mp4", "--transcribe", "-o", "out3.mp4"],
+                     ["silence", "in.mp4", "--filler", "--transcribe", "-o", "out4.mp4"]):
+            tool(*args, env=env, cwd=trap, check=False)
         self.assertFalse(marker.exists(), "a program in the working directory ran in place of the real tool")
 
     def test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output(self):
