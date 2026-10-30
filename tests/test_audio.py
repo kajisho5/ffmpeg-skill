@@ -417,6 +417,23 @@ class AudioTests(MediaFixtures):
         self.assertLessEqual(self._peak_rms(mp4)[0], -1.0 + 0.3)
 
 
+    def test_audio_denoise_strength_range_matches_what_afftdn_accepts(self):
+        """--denoise-strength is afftdn's nf, which ffmpeg accepts only in -80..-20: both ends of the
+        accepted 20..60 produce a file, and 12 (once accepted, then exit 222 inside ffmpeg) is refused first."""
+        for strength in ("20", "60"):
+            out = OUT / f"denoise_{strength}.wav"
+            data = json.loads(script("audio.py", self.mic, "--denoise", "--denoise-strength", strength, "-o", out, "--json").stdout)
+            self.assertIn(f"afftdn=nf=-{strength}:tn=1", data["commands"][0])
+            self.assertTrue(out.exists() and out.stat().st_size > 0, strength)
+        for strength in ("12", "19.99", "61"):
+            proc = script("audio.py", self.mic, "--denoise", "--denoise-strength", strength, "-o", OUT / "denoise_bad.wav",
+                          "--json", expect_fail=True)
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["error"]["kind"], "input", strength)
+            self.assertIn("20..60", doc["error"]["message"])
+            self.assertNotIn("$ ", proc.stderr, "refused before ffmpeg ran")
+
+
 class AudiogramTests(MediaFixtures):
     """1.16: waveform.py over a still plate. The command line without any of the new flags must
     stay byte-identical to 1.15, which is the whole reason this is not a new tool."""

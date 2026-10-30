@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`audio.py --denoise-strength` accepts 20..60, down from 10..60.** The value becomes afftdn's noise floor `nf=-N`, which ffmpeg accepts only in -80..-20, so 10..19.99 passed the check and then failed inside ffmpeg (exit 222). Those values are now refused as `kind: input` before ffmpeg runs; the help text says the value is a starting noise floor that `tn=1` tracks, not an amount removed. The default 25 and every value from 20 to 60 produce the same filter as before.
 
 ## 2.22.1
 
