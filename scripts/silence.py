@@ -23,7 +23,7 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
                      FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common.emit import warn
-from _common import refuse_existing_outputs
+from _common import refuse_existing_outputs, _check_output_path
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
 
@@ -443,7 +443,10 @@ def main() -> int:
     if args.timemap:
         if os.path.splitext(args.timemap)[1].lower() not in (".json", ".csv"):
             die(f"--timemap must end in .json or .csv: {args.timemap}", kind="input")
-        refuse_existing_outputs([args.timemap])  # before any decode or write; a dry run predicts it too
+        # before any decode or write, so a dry run predicts it too: a missing directory or a
+        # directory at the path is a `kind: input` refusal, not a traceback from open()
+        _check_output_path([args.timemap])
+        refuse_existing_outputs([args.timemap])
 
     if args.filler_pad < 0:
         die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "
@@ -557,11 +560,16 @@ def main() -> int:
             warn(f"{len(near)} cut point(s) sit within {CUT_SOUND_MARGIN_DB:g} dB of --threshold ({where}): "
                  "a breath or a word's weak tail may be cut; listen there, or lower --threshold / raise --margin",
                  "cut_near_sound", cuts=len(near))
-    if args.timemap:
+
+    def finish_time_map() -> None:
+        """Written last, once the cut it describes exists (or under --list, where the map is the
+        result): a map left beside a failed or refused encode would describe media never made."""
+        if not args.timemap:
+            return
         if not STATE.dry_run:  # an artifact like the EDL: a plan writes nothing
             write_time_map(args.timemap, tm)
+            info(f"wrote {args.timemap}")
         summary["timemap"] = args.timemap
-        info(f"wrote {args.timemap}")
 
     if args.edl:
         if not STATE.dry_run:  # the EDL is an artifact like the cut itself: a plan writes nothing
@@ -571,6 +579,7 @@ def main() -> int:
         info(f"wrote {args.edl}")
 
     if args.list or args.filler_list:
+        finish_time_map()
         if args.json:
             emit(None, **summary)
         else:
@@ -601,6 +610,7 @@ def main() -> int:
     run(cmd)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{kept:.3f}s)")
+    finish_time_map()
     emit(output, **summary)
     return 0
 

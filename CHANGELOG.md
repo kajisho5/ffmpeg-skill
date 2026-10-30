@@ -10,7 +10,7 @@
 
 ### Added
 
-- **`silence.py --timemap FILE`** writes the source-to-output time map of a silence cut: every kept range with its source and output times, and every removed range with the output time it was cut at. It is JSON, or CSV for a `.csv` path, and an existing map is refused without `--overwrite`. It was requested on X for re-timing subtitles and finding a removed sentence again.
+- **`silence.py --timemap FILE`** writes the source-to-output time map of a silence cut: every kept range with its source and output times, and every removed range with the output time it was cut at. It is JSON, or CSV for a `.csv` path, and an existing map is refused without `--overwrite`. The map is written only after the cut it describes. It was requested on X for re-timing subtitles and finding a removed sentence again.
 - **`silence.py` reports the level at every cut.** `cut_points` gives the RMS 50 ms either side of each cut on the source, on the loudest channel (`null`, with a `cut_levels_unmeasured` warning, when the source cannot be decoded for it). `cut_warnings` and a `cut_near_sound` warning name the cuts whose level is within 10 dB of `--threshold`, where a breath or a word's weak tail may have been cut. A probe can say the output's parameters are right, not where a cut landed; this points to where to listen. `verified` is unchanged.
 - **README: what `verified` can and cannot tell you**, and FAQ answers on how stable silence removal and captions are and on HDR-to-SDR conversion. The padding asked for around cuts already exists as `--margin` (now 0.2 s each side), and `--speech-aware` keeps breaths inside a sentence; the FAQ and the scripts reference now say so.
 

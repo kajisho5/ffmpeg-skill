@@ -4103,6 +4103,17 @@ def garbage_payload(p):
             self.assertEqual(err["reason"], "output_exists")
             self.assertEqual(existing.read_text(encoding="utf-8"), "theirs")
             self.assertFalse(self.out("tm_ow_out.wav").exists(), "refused after the cut was written")
+        # a bad map path is a structured refusal, not a traceback from open()
+        dir_named_json = self.work / "tm_dir.json"; dir_named_json.mkdir(exist_ok=True)
+        for bad, reason in ((self.work / "no_such_dir" / "m.json", "output_dir_missing"), (dir_named_json, "output_is_directory")):
+            proc = tool("silence", src, "-o", self.out("tm_bad.wav"), "--timemap", bad, "--json", check=False)
+            self.assertEqual(json.loads(proc.stdout)["error"]["reason"], reason, proc.stderr)
+        # the map is written only once the cut it describes exists: a refused encode leaves none
+        taken = self.out("tm_taken.wav"); taken.write_bytes(b"theirs")
+        fresh = self.out("tm_fresh.json")
+        err = json.loads(tool("silence", src, "-o", taken, "--timemap", fresh, "--json", check=False).stdout)["error"]
+        self.assertEqual(err["reason"], "output_exists")
+        self.assertFalse(fresh.exists(), "a map was left beside a cut that was never written")
 
     def test_the_thresholds_table_matches_the_code(self):
         """references/scripts.md restates every verdict threshold (2.21). Each row names the constant

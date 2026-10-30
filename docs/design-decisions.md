@@ -2287,7 +2287,9 @@ What was decided there:
   The level is the loudest channel, not a mono mix (antiphase stereo would read as silence);
   `filler` is set per edge, so a filler merged into a silence leaves the silence's other edge
   checked; a decode that fails gives `cut_points: null` and `cut_levels_unmeasured`, never a
-  silent reading. Test: `test_silence_time_map_and_cut_levels_hold_at_the_edges`.
+  silent reading. The `--timemap` file is checked up front (path, existing file) and written
+  only after the cut: a map beside a refused or failed encode would describe media never made.
+  Test: `test_silence_time_map_and_cut_levels_hold_at_the_edges`.
 - **No second padding flag; `--margin` goes from 0.15 s to 0.2 s.** A request asked for
   100-300 ms of padding around cuts, with a safe default. `--margin` is that setting already, and
   `--speech-aware` keeps breaths inside a sentence. A `--padding` alias would be a second name for
