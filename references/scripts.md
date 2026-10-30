@@ -672,7 +672,8 @@ source and output times, and every removed range with the output time it was cut
 gives `type,source_start,source_end,output_start,output_end` rows (a removed row's two output
 columns are its cut point); any other path must end in `.json`. Use it to re-time subtitles
 made on the source, or to find a removed sentence again. Its times advance by the
-millisecond-rounded ranges the render cuts on. An existing map is refused without `--overwrite`,
+millisecond-rounded ranges the render cuts on; they are computed, not measured on the written
+file, so each kept range can be off by up to one video frame or audio block. An existing map is refused without `--overwrite`,
 and a missing directory or a directory at the path as `kind: input`, before anything runs (a dry
 run predicts both); the map is written only after the cut is, so a failed or refused encode
 leaves none. A dry run writes nothing.

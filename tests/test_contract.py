@@ -4023,6 +4023,10 @@ def garbage_payload(p):
             out_t += e - s
             self.assertAlmostEqual(seg["output_end"], out_t, places=3)
         self.assertAlmostEqual(out_t, doc["kept_duration"], places=2)
+        # the map is computed, not measured: the written audio must still agree with it to within
+        # about one audio block per kept range (whole blocks are kept at each cut)
+        written = float(probe_streams(self.out("tm_out.wav"))["audio"])
+        self.assertLess(abs(written - kept[-1]["output_end"]), 0.03 * len(kept), (written, kept[-1]))
         # removed ranges are exactly the lead-in, the gaps between kept ones and the tail, each
         # placed at its output cut point
         bounds = [0.0] + [b for k in kept for b in (k["source_start"], k["source_end"])] + [doc["input_duration"]]
