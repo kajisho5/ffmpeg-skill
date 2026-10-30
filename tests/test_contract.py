@@ -4118,6 +4118,17 @@ def garbage_payload(p):
         err = json.loads(tool("silence", src, "-o", taken, "--timemap", fresh, "--json", check=False).stdout)["error"]
         self.assertEqual(err["reason"], "output_exists")
         self.assertFalse(fresh.exists(), "a map was left beside a cut that was never written")
+        # the map never lands on the input, the cut or the EDL, even with --overwrite
+        src_copy = self.out("tm_src.json"); shutil.copy(src, src_copy)
+        before = src_copy.read_bytes()
+        err = json.loads(tool("silence", src_copy, "--list", "--timemap", src_copy, "--overwrite", "--json",
+                              check=False).stdout)["error"]
+        self.assertEqual(err["reason"], "output_is_input")
+        self.assertEqual(src_copy.read_bytes(), before, "the map replaced the source")
+        same = self.out("tm_same.csv")
+        for extra in (["-o", same], ["--edl", same, "--list"]):
+            proc = tool("silence", src, "--timemap", same, "--overwrite", "--json", *extra, check=False)
+            self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "timemap_path_taken", (extra, proc.stderr))
 
     def test_the_thresholds_table_matches_the_code(self):
         """references/scripts.md restates every verdict threshold (2.21). Each row names the constant

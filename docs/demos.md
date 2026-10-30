@@ -539,10 +539,10 @@ python3 scripts/multicam.py demos/out/fixtures/motion.mp4 demos/out/fixtures/cam
 ![Silence removal](demos/silence_removal.gif)
 
 ```bash
-python3 scripts/silence.py demos/out/fixtures/motion.mp4 --threshold -35 --min-silence 0.4 --margin 0.1 --preset veryfast -o demos/out/silence_removal_after.mp4
+python3 scripts/silence.py demos/out/fixtures/motion.mp4 --threshold -35 --min-silence 0.4 --margin 0.1 --timemap demos/out/silence_removal_timemap.csv --preset veryfast -o demos/out/silence_removal_after.mp4
 ```
 
-**Look for:** The 'after' side runs out of material and freezes: that held frame is the part of the timeline that was cut.
+**Look for:** The 'after' side runs out of material and freezes: that held frame is the part of the timeline that was cut. The --timemap CSV beside it says where each kept range sits in the source and in the cut, to re-time subtitles.
 
 ### Loudness normalisation to -14 LUFS
 

@@ -417,6 +417,7 @@ ERROR_REASONS = {
     "output_is_directory": "the output path is a directory; details: {output}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
+    "timemap_path_taken": "silence.py --timemap names the same file as -o or --edl; details: {timemap, flag, path}",
     "output_locked": "another run holds the output's lock; details: {lock, output, pid, pid_alive, deadline, why}",
     "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed; details: {plan, plan_sha256, checked_at, "
                            "inputs: [{path, status: unchanged|changed|missing, expected: {size, sha256_head_tail}, actual: {size, "

@@ -705,9 +705,13 @@ def demo_join_fadeblack(ctx):
 def demo_silence_removal(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
+    timemap = ctx.path("timemap.csv")
     ctx.script("silence.py", before, "--threshold", "-35", "--min-silence", "0.4",
-               "--margin", "0.1", "--preset", "veryfast", "-o", after)
-    ctx.note("%.2f s in, %.2f s out" % (duration(before), duration(after)))
+               "--margin", "0.1", "--timemap", timemap, "--preset", "veryfast", "-o", after)
+    rows = timemap.read_text(encoding="utf-8").splitlines()[1:] if timemap.exists() else []
+    ctx.note("%.2f s in, %.2f s out; the time map lists %d kept and %d removed range(s)"
+             % (duration(before), duration(after), sum(r.startswith("kept,") for r in rows),
+                sum(r.startswith("removed,") for r in rows)))
     return before, after
 
 
@@ -1522,7 +1526,8 @@ _ROWS = [
      demo_join_fadeblack, "video", None),
 
     ("silence_removal", AUDIO, "Silence removal",
-     "The 'after' side runs out of material and freezes: that held frame is the part of the timeline that was cut.",
+     "The 'after' side runs out of material and freezes: that held frame is the part of the timeline that was cut. "
+     "The --timemap CSV beside it says where each kept range sits in the source and in the cut, to re-time subtitles.",
      demo_silence_removal, "video", None),
     ("loudness", AUDIO, "Loudness normalisation to -14 LUFS",
      "Two showwavespic plots: the quiet input on the left, the same programme brought up to broadcast level on the right without clipping.",

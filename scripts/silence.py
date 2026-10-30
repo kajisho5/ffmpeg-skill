@@ -23,7 +23,8 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
                      FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common.emit import warn
-from _common import refuse_existing_outputs, _check_output_path
+from _common import refuse_existing_outputs, refuse_output_is_input, _check_output_path
+from _common.emit import refuse
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
 
@@ -446,6 +447,13 @@ def main() -> int:
         # before any decode or write, so a dry run predicts it too: a missing directory or a
         # directory at the path is a `kind: input` refusal, not a traceback from open()
         _check_output_path([args.timemap])
+        # --overwrite allows replacing an old map, never the source, the cut or the EDL
+        refuse_output_is_input(args.timemap, args.input)
+        for flag, other in (("-o", args.output), ("--edl", args.edl)):
+            if other and os.path.realpath(other) == os.path.realpath(args.timemap):
+                refuse("input", "timemap_path_taken",
+                       f"--timemap {args.timemap} is the same file as {flag}; give the map its own path",
+                       timemap=args.timemap, flag=flag, path=other)
         refuse_existing_outputs([args.timemap])
 
     if args.filler_pad < 0:
