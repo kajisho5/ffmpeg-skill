@@ -247,6 +247,8 @@ class ContractTests(unittest.TestCase):
         for r in rows[:-1]:
             name, counts, cells = [c.strip() for c in r.strip("|").split("|")]
             listed = [c.strip() for c in cells.split(",")]
+            for c in listed:
+                self.assertRegex(c, r"^(\*\*\w+\*\*|\w+)$", f"why42 row {name!r}: cell {c!r} is not a name or **name**")
             core = {c.strip("*") for c in listed if c.startswith("**")}
             names = [c.strip("*") for c in listed]
             self.assertIn(name, groups, f"why42 row {name!r} is not a group in README's Tools section")
@@ -257,7 +259,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(seen_core, set(_contract.MCP_CORE_TOOLS))
         self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"]))
         self.assertEqual(set(groups), {r.strip("|").split("|")[0].strip() for r in rows[:-1]})
-        self.assertIn(f"**{len(seen_core)} / {len(seen_all)}**", rows[-1])
+        total_name, total_counts, _ = [c.strip() for c in rows[-1].strip("|").split("|")]
+        self.assertEqual(total_name, "**Total**")
+        self.assertEqual(total_counts, f"**{len(seen_core)} / {len(seen_all)}**")
 
     def test_skill_metadata_and_version_separation(self):
         pkg = json.loads((ROOT / "package.json").read_text())
