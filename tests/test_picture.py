@@ -2232,7 +2232,7 @@ class PictureTests(MediaFixtures):
         def fake_run(cmd, **kw):
             return subprocess.CompletedProcess(cmd, 0, line, "")
 
-        with unittest.mock.patch("shutil.which", return_value="fc-list"), \
+        with unittest.mock.patch("shutil.which", return_value="/usr/bin/fc-list"), \
                 unittest.mock.patch("subprocess.run", side_effect=fake_run):
             family, path, answered = emoji_mod._emoji_color_font()
         self.assertEqual((family, path, answered), ("Noto Color Emoji", str(real), True))

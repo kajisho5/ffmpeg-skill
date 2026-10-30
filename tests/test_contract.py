@@ -5165,7 +5165,7 @@ class SilentFallbackTests(unittest.TestCase):
         face.write_bytes(b"\0")
         answer = subprocess.CompletedProcess([], 0, f"{face}\nOther Sans,Other Sans Book\n", "")
         with mock.patch.object(fonts.platform, "system", return_value="Linux"), \
-                mock.patch.object(fonts.shutil, "which", return_value="/usr/bin/fc-match"), \
+                mock.patch.object(fonts, "_safe_which", return_value="/usr/bin/fc-match"), \
                 mock.patch.object(fonts.subprocess, "run", return_value=answer):
             got = fonts.resolve_font("Wanted Serif")
             same = fonts.resolve_font("Other Sans")
