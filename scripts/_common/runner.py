@@ -118,7 +118,7 @@ def ffmpeg_version() -> "Tuple[int, int]":
     if _FFMPEG_VERSION is None:
         _FFMPEG_VERSION = (0, 0)
         try:
-            out = subprocess.run([ffmpeg_exe("ffprobe")[0] or "ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+            out = subprocess.run([found_exe("ffprobe"), "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                                  timeout=PROBE_TIMEOUT).stdout
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
             if m:
@@ -155,7 +155,7 @@ def ffmpeg_release() -> "Optional[Tuple[int, int, int]]":
     if not _FFMPEG_RELEASE_READ:
         _FFMPEG_RELEASE_READ = True
         try:
-            out = subprocess.run([ffmpeg_exe("ffprobe")[0] or "ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+            out = subprocess.run([found_exe("ffprobe"), "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                                  timeout=PROBE_TIMEOUT).stdout
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)(?:\.(\d+))?", out)
             if m:
@@ -255,6 +255,15 @@ def ffmpeg_exe(name: str) -> Tuple[str, str]:
         return "", ""
     full = _homebrew_full_build(found, name)
     return (full, "homebrew-ffmpeg-full") if full else (found, "path")
+
+
+def found_exe(name: str) -> str:
+    """ffmpeg_exe()'s path, or FileNotFoundError when there is none: never the bare name, which
+    the OS would look up in the working directory (Windows) or through a relative PATH entry."""
+    path = ffmpeg_exe(name)[0]
+    if not path:
+        raise FileNotFoundError(f"{name} not on PATH")
+    return path
 
 
 def require_tool(name: str) -> str:
@@ -1661,7 +1670,7 @@ def _read_ff_list(flag: str, pattern: str) -> set:
     names: set = set()
     why = None
     try:
-        proc = subprocess.run([ffmpeg_exe(tool)[0] or tool, "-hide_banner", flag], stdout=subprocess.PIPE,
+        proc = subprocess.run([found_exe(tool), "-hide_banner", flag], stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=limit)
         names = set(re.findall(pattern, proc.stdout or "", re.M))
         if not names:

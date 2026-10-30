@@ -927,7 +927,11 @@ def run_parakeet(engine: str, wav: str, tmpdir: str, model: Optional[str], langu
 
     if engine == "parakeet-mlx":
         outdir = os.path.join(tmpdir, "pmlx")
-        cmd = [shutil.which("parakeet-mlx") or "parakeet-mlx", wav, "--model", chosen, "--output-format", "json", "--output-dir", outdir,
+        exe = shutil.which("parakeet-mlx")
+        if not exe:  # never the bare name: the OS would look for it in the working directory
+            failed("not on PATH")
+            return None
+        cmd = [exe, wav, "--model", chosen, "--output-format", "json", "--output-dir", outdir,
                "--max-duration", f"{CUE_MAX_SECONDS:g}", "--silence-gap", f"{CUE_GAP_SECONDS:g}"]
         # the JSON is looked for as <outdir>/audio.json: a host PARAKEET_OUTPUT_TEMPLATE would name it otherwise
         env = {k: v for k, v in os.environ.items() if k != "PARAKEET_OUTPUT_TEMPLATE"}
@@ -942,7 +946,11 @@ def run_parakeet(engine: str, wav: str, tmpdir: str, model: Optional[str], langu
         except OSError:
             raw, key = "", "sentences"
     else:
-        cmd = [shutil.which("parakeet-cli") or "parakeet-cli", "transcribe", "--model", chosen, "--input", wav, "--json"]
+        exe = shutil.which("parakeet-cli")
+        if not exe:
+            failed("not on PATH")
+            return None
+        cmd = [exe, "transcribe", "--model", chosen, "--input", wav, "--json"]
         proc = _asr_run(cmd, subprocess, "parakeet.cpp")
         if proc.returncode != 0:
             failed("found but failed: " + _failure_line(proc))

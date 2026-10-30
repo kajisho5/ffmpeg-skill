@@ -3261,7 +3261,7 @@ class ContractTests(unittest.TestCase):
         for name in ("ffmpeg", "ffprobe", "fc-match", "fc-list", "whisper", "whisper-cli", "whisper-cpp", "main",
                      "parakeet-mlx", "parakeet-cli"):
             p = trap / (name + (".bat" if os.name == "nt" else ""))
-            p.write_text(("@echo off\r\necho x> PWNED\r\n" if os.name == "nt" else f"#!/bin/sh\ntouch '{marker}'\nexit 1\n"),
+            p.write_text(("@echo off\r\necho x> PWNED\r\n" if os.name == "nt" else f"#!/bin/sh\n: > '{marker}'\nexit 1\n"),
                          encoding="utf-8")
             p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         old_cwd, old_path = os.getcwd(), os.environ.get("PATH", "")
@@ -3271,6 +3271,15 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(os.path.dirname(runner.safe_which("ffmpeg")), real)
             os.environ["PATH"] = "."
             self.assertIsNone(runner.safe_which("ffmpeg"))
+            # with nothing found the version reads run nothing, not the bare name (which the OS
+            # would look up in the working directory)
+            saved = (runner._FFMPEG_VERSION, runner._FFMPEG_RELEASE, runner._FFMPEG_RELEASE_READ)
+            runner._FFMPEG_VERSION, runner._FFMPEG_RELEASE_READ = None, False
+            try:
+                runner.ffmpeg_version(); runner.ffmpeg_release()
+            finally:
+                runner._FFMPEG_VERSION, runner._FFMPEG_RELEASE, runner._FFMPEG_RELEASE_READ = saved
+            self.assertFalse(marker.exists(), "a version read ran the ffprobe in the working directory")
             os.environ["PATH"] = os.pathsep.join([str(trap), real])  # on PATH as an absolute entry: a choice
             self.assertEqual(os.path.dirname(runner.safe_which("ffmpeg")), str(trap))
             if os.name != "nt":  # a relative entry that links back to the working directory is still it

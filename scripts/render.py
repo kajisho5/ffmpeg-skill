@@ -74,8 +74,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, ffmpeg_exe, X264_PRESETS
-from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args
+from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, found_exe
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
 import subprocess
 from _contract import CONTRACT_VERSION
@@ -679,7 +679,7 @@ def ffmpeg_banner() -> str:
     key. Unreadable falls back to the parsed pair, which still separates the major releases.
     """
     try:
-        out = subprocess.run([ffmpeg_exe("ffprobe")[0] or "ffprobe", "-version"], stdout=subprocess.PIPE,
+        out = subprocess.run([found_exe("ffprobe"), "-version"], stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=20).stdout
         first = (out or "").strip().splitlines()
         if first:
