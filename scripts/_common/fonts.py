@@ -7,12 +7,12 @@ from __future__ import annotations
 import os
 import platform
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, info, record_fallback, warn
 from _common.emoji import _is_emoji_char
+from _common.runner import safe_which as _safe_which
 
 
 def default_font_file(font_name: str) -> Optional[str]:
@@ -79,7 +79,7 @@ def resolve_font(font_name: str) -> "Dict[str, object]":
             return {"file": str(candidate), "family": "Arial",
                     "substituted": bool(wanted) and wanted != "arial" and wanted not in _GENERIC_FAMILIES, "via": "windows_fonts"}
         return none
-    exe = shutil.which("fc-match")
+    exe = _safe_which("fc-match")
     if not exe:
         return none
     try:
@@ -220,7 +220,7 @@ def font_family_of_file(path: str) -> "Optional[str]":
     the file directly; without fontconfig the file stem is the honest best guess."""
     if not path or not os.path.isfile(path):
         return None
-    exe = shutil.which("fc-scan")
+    exe = _safe_which("fc-scan")
     if exe:
         try:
             proc = subprocess.run([exe, "--format", "%{family[0]}", path], stdout=subprocess.PIPE,
@@ -307,7 +307,7 @@ def _fc_list_fonts(fc_lang: str) -> "Optional[List[Tuple[str, List[str]]]]":
     asked at all (no `fc-list` on PATH, or it failed/timed out) -- the difference between
     "missing" and "unknown", which the caller must not collapse: unknown is not a refusal.
     """
-    exe = shutil.which("fc-list")
+    exe = _safe_which("fc-list")
     if not exe:
         return None
     try:
@@ -426,7 +426,7 @@ def font_covers_script(font_name: str, script: str) -> bool:
     """
     if script not in FC_LANG or not font_name:
         return True
-    exe = shutil.which("fc-list")
+    exe = _safe_which("fc-list")
     if not exe:
         return True
     try:
@@ -460,7 +460,7 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
     """
     if script not in FC_LANG or not fonts_dir or not os.path.isdir(fonts_dir):
         return None
-    exe = shutil.which("fc-scan")
+    exe = _safe_which("fc-scan")
     if not exe:
         return None
     try:

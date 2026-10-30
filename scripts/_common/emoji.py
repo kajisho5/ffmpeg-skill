@@ -5,12 +5,12 @@ Split out of _common.text in the refactor after 1.17.3; every body is byte-ident
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 from typing import Any, Dict, List, Tuple, Optional
 from _common.decision import escape_filter_path
 from _common.emit import die
 from _common.runner import ffmpeg_exe
+from _common.runner import safe_which as _safe_which
 
 
 # --------------------------------------------------------------------------- emoji (1.15)
@@ -183,7 +183,7 @@ _EMOJI_SUPPORT_CACHE: "Dict[Tuple[Optional[str], bool], Dict[str, Any]]" = {}
 
 def _emoji_color_font() -> "Tuple[Optional[str], Optional[str], bool]":
     """(family, file, fontconfig_answered) for the first installed colour emoji family."""
-    exe = shutil.which("fc-list")
+    exe = _safe_which("fc-list")
     if not exe:
         return None, None, False
     for family in _EMOJI_COLOR_FAMILIES:

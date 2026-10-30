@@ -3247,6 +3247,40 @@ class ContractTests(unittest.TestCase):
         warning = doc["diagnostics"]["warnings"][0]
         self.assertEqual((warning["code"], warning["paths"]), ("plan_unbound_inputs", [str(pending)]))
 
+    def test_a_program_in_the_working_directory_is_never_run_in_place_of_ffmpeg(self):
+        """On Windows, shutil.which() and a bare name given to subprocess look in the current
+        directory before PATH, so an ffmpeg.exe sitting in a folder the skill is run from would
+        run instead of the real one. A `.` (or relative) PATH entry does the same elsewhere, which
+        is how this is reproduced here. Every lookup skips the working directory unless it is on
+        PATH as an absolute entry."""
+        import importlib, stat
+        runner = importlib.import_module("_common.runner")
+        real = os.path.dirname(shutil.which("ffmpeg"))
+        trap = self.work / "trap"; trap.mkdir(exist_ok=True)
+        marker = trap / "PWNED"
+        for name in ("ffmpeg", "ffprobe", "fc-match", "fc-list", "whisper"):
+            p = trap / (name + (".bat" if os.name == "nt" else ""))
+            p.write_text(("@echo off\r\necho x> PWNED\r\n" if os.name == "nt" else f"#!/bin/sh\ntouch '{marker}'\nexit 1\n"),
+                         encoding="utf-8")
+            p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        old_cwd, old_path = os.getcwd(), os.environ.get("PATH", "")
+        try:
+            os.chdir(trap)
+            os.environ["PATH"] = os.pathsep.join([".", real])
+            self.assertEqual(os.path.dirname(runner.safe_which("ffmpeg")), real)
+            os.environ["PATH"] = "."
+            self.assertIsNone(runner.safe_which("ffmpeg"))
+            os.environ["PATH"] = os.pathsep.join([str(trap), real])  # on PATH as an absolute entry: a choice
+            self.assertEqual(os.path.dirname(runner.safe_which("ffmpeg")), str(trap))
+        finally:
+            os.chdir(old_cwd); os.environ["PATH"] = old_path
+        env = dict(os.environ, PATH=os.pathsep.join([".", real]))
+        src = shutil.copy(self.src, trap / "in.mp4")
+        for args in (["probe", "in.mp4", "--json"], ["fit", "in.mp4", "--aspect", "9:16", "-o", "out.mp4"],
+                     ["overlay", "in.mp4", "--text", "hi", "-o", "out2.mp4"]):
+            tool(*args, env=env, cwd=trap)
+        self.assertFalse(marker.exists(), "a program in the working directory ran in place of the real tool")
+
     def test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output(self):
         """The path guards read -o as a path, ffmpeg reads a value with a protocol prefix as a URL.
         The skill reads and writes local files only, so such an input or output is refused as

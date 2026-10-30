@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **ffmpeg, ffprobe and the helper programs (fc-match, the speech engines) are found on PATH only.** On Windows a program lookup also tries the current directory first, and so does a command started by a bare name; a `.` or relative PATH entry does the same elsewhere. A program of that name in the folder the skill is run from is now never used in place of the real one, unless that folder is on PATH as an absolute entry, and the speech engines are started by their full path.
 
 ## 2.22.1
 

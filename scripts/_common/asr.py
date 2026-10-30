@@ -221,7 +221,9 @@ def transcribe_result(video: str, out_srt: str, language: Optional[str], model: 
     model, parakeet_model = requested_model(model)
     tmpdir = tempfile.mkdtemp(prefix="ffskill_asr_")
     try:
-        return _transcribe_in(tmpdir, video, out_srt, language, model, audio_stream, ffmpeg, shutil, subprocess, wanted,
+        # the engines' own CLIs are looked up and launched by full path, never from the working directory
+        from _common.runner import SafeShutil
+        return _transcribe_in(tmpdir, video, out_srt, language, model, audio_stream, ffmpeg, SafeShutil(shutil), subprocess, wanted,
                               parakeet_model=parakeet_model)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -412,8 +414,9 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
     except ImportError:
         pass
     # 3. openai-whisper CLI
-    if wanted in ("auto", "openai-whisper") and shutil.which("whisper"):
-        cmd = ["whisper", wav, "--model", model, "--output_format", "srt", "--output_dir", tmpdir]
+    whisper_exe = shutil.which("whisper") if wanted in ("auto", "openai-whisper") else None
+    if whisper_exe:
+        cmd = [whisper_exe, wav, "--model", model, "--output_format", "srt", "--output_dir", tmpdir]
         if lang:
             cmd += ["--language", lang]
         proc = _asr_run(cmd, subprocess, "openai-whisper")
@@ -924,7 +927,7 @@ def run_parakeet(engine: str, wav: str, tmpdir: str, model: Optional[str], langu
 
     if engine == "parakeet-mlx":
         outdir = os.path.join(tmpdir, "pmlx")
-        cmd = ["parakeet-mlx", wav, "--model", chosen, "--output-format", "json", "--output-dir", outdir,
+        cmd = [shutil.which("parakeet-mlx") or "parakeet-mlx", wav, "--model", chosen, "--output-format", "json", "--output-dir", outdir,
                "--max-duration", f"{CUE_MAX_SECONDS:g}", "--silence-gap", f"{CUE_GAP_SECONDS:g}"]
         # the JSON is looked for as <outdir>/audio.json: a host PARAKEET_OUTPUT_TEMPLATE would name it otherwise
         env = {k: v for k, v in os.environ.items() if k != "PARAKEET_OUTPUT_TEMPLATE"}
@@ -939,7 +942,7 @@ def run_parakeet(engine: str, wav: str, tmpdir: str, model: Optional[str], langu
         except OSError:
             raw, key = "", "sentences"
     else:
-        cmd = ["parakeet-cli", "transcribe", "--model", chosen, "--input", wav, "--json"]
+        cmd = [shutil.which("parakeet-cli") or "parakeet-cli", "transcribe", "--model", chosen, "--input", wav, "--json"]
         proc = _asr_run(cmd, subprocess, "parakeet.cpp")
         if proc.returncode != 0:
             failed("found but failed: " + _failure_line(proc))
@@ -993,6 +996,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
     caller's flag for the language, named in assumed_english_note().
     """
     import shutil as _shutil
+    from _common.runner import SafeShutil
+    _shutil = SafeShutil(_shutil)  # look engines up and launch them by full path, never from the working directory
     import subprocess as _subprocess
     import tempfile as _tempfile
     from _common import require_tool, run_analysis, STATE
@@ -1098,8 +1103,9 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             pass
 
         # 3. openai-whisper CLI
-        if (not failed or every_whisper) and wanted in ("auto", "openai-whisper") and _shutil.which("whisper"):
-            cmd = ["whisper", wav, "--model", model, "--word_timestamps", "True",
+        whisper_exe = _shutil.which("whisper") if (not failed or every_whisper) and wanted in ("auto", "openai-whisper") else None
+        if whisper_exe:
+            cmd = [whisper_exe, wav, "--model", model, "--word_timestamps", "True",
                    "--output_format", "json", "--output_dir", tmpdir]
             if lang:
                 cmd += ["--language", lang]

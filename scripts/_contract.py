@@ -1034,7 +1034,8 @@ def _exe_report() -> Dict[str, Any]:
 
 
 def _whisper_available() -> bool:
-    if shutil.which("whisper-cli") or shutil.which("whisper-cpp") or shutil.which("whisper"):
+    from _common.runner import safe_which
+    if safe_which("whisper-cli") or safe_which("whisper-cpp") or safe_which("whisper"):
         return True
     return importlib.util.find_spec("faster_whisper") is not None or importlib.util.find_spec("whisper") is not None
 
@@ -1043,7 +1044,8 @@ def _parakeet_available() -> bool:
     """parakeet-mlx on PATH, or parakeet-cli with a model it can find (PARAKEET_CPP_MODEL or a
     .gguf in ~/.cache/parakeet.cpp) -- the same test the speech bridge applies before running it."""
     from _common.asr import _parakeet_available as runtime_check  # the bridge's own test, not a copy of it
-    return any(runtime_check(e, shutil) for e in ("parakeet-mlx", "parakeet.cpp"))
+    from _common.runner import SafeShutil
+    return any(runtime_check(e, SafeShutil(shutil)) for e in ("parakeet-mlx", "parakeet.cpp"))
 
 
 def _hw_default() -> Dict[str, Any]:
@@ -1134,7 +1136,8 @@ def _font_available(font_name: str) -> Dict[str, Any]:
     silently renders with a different typeface. `fc-match` is queried instead, since it reports the
     family fontconfig actually resolved to; that only equals the request when the font is installed.
     """
-    exe = shutil.which("fc-match")
+    from _common.runner import safe_which
+    exe = safe_which("fc-match")
     if not exe:
         return {"status": "unknown", "detail": "fc-match not on PATH; drawtext succeeding proves nothing (fontconfig substitutes silently), so availability cannot be verified"}
     try:
