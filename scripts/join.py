@@ -195,7 +195,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
          + ("crossfade" if d else "butt join") + ")")
     overlap = overlap_report(durs, expected)
     emit(output, mode="audio", **overlap, **reported(), clips=n, transition=args.transition if d else "none", expected_duration=expected,
-         sample_rate=rate, channels=channels, video=False)
+         sample_rate=rate, channels=channels, video=False, expect_streams={"audio": 1})
     return 0
 
 

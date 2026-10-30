@@ -459,49 +459,88 @@ def stream_lengths_step(meta: Dict[str, Any], references: Sequence[Dict[str, Any
     if unknown:
         return dict(step, ok=False, reason="not_measured: no length for the %s stream" % " and ".join(unknown))
     allowed: Dict[str, float] = {k: 0.0 for k in kinds}
+    unread_input = False
     for ref in references:
-        ends = {k: stream_end(ref, k) for k in kinds}
-        if None in ends.values():
+        if not all(ref.get(k) for k in kinds):
             continue  # an input with one stream (join's silent clip) brings no gap of its own
-        last = max(ends.values())
+        ref_ends = {k: stream_end(ref, k) for k in kinds}
+        if None in ref_ends.values():
+            unread_input = True  # its gap is unknown, not zero
+            continue
+        last = max(ref_ends.values())
         for k in kinds:
-            allowed[k] += last - ends[k]
+            allowed[k] += last - ref_ends[k]
     ends = {k: stream_end(meta, k) for k in kinds}
     last = max(ends.values())
-    shortfall = {k: round(last - ends[k], 3) for k in kinds}
-    short = [k for k in kinds if shortfall[k] > allowed[k] + tolerance]
-    step.update(ends={k: round(v, 3) for k, v in ends.items()}, shortfall=shortfall,
+    raw = {k: last - ends[k] for k in kinds}
+    short = [k for k in kinds if raw[k] > allowed[k] + tolerance]
+    step.update(ends={k: round(v, 3) for k, v in ends.items()}, shortfall={k: round(v, 3) for k, v in raw.items()},
                 input_shortfall={k: round(v, 3) for k, v in allowed.items()}, ok=not short)
-    if short:
+    if short and unread_input:
+        # a gap the output has may be one an input already had: neither a pass nor a "short"
+        step["input_shortfall"] = None
+        step["reason"] = ("not_measured: an input's stream length cannot be read, so whether the %s gap "
+                          "was already in the input is unknown" % " and ".join(short))
+    elif short:
         step["short"] = short
     return step
 
 
 def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: float = DECODE_WINDOW_SECONDS) -> Dict[str, Any]:
-    """Decode the first `window` seconds of every kept stream and the last ones before that
+    """Decode the first `window` seconds of every kept stream and the last `window` before that
     stream's own end, and count the frames. A stream ffprobe lists from the container header can
     still hold nothing a decoder accepts; the inventory and length checks read the header, this
     one reads the payload. The tail read starts DECODE_SEEK_MARGIN_SECONDS earlier, so a seek that
-    lands past the last keyframe (MPEG-TS seeks by timestamp, not to a keyframe) still decodes."""
+    lands past the last keyframe (MPEG-TS seeks by timestamp, not to a keyframe) still decodes,
+    but only frames in the last `window` count. A stream whose end cannot be read (no stream
+    length, no container duration) is not decoded to the end: its tail is `not_measured`."""
     from _common.runner import require_tool, run_analysis
     ffmpeg = require_tool("ffmpeg")
     frames: Dict[str, Dict[str, int]] = {}
+    unmeasured: List[str] = []
     for kind in kinds:
+        sel = ["-map", "0:%s:0" % kind[0], "-f", "framecrc", "-"]
+        base = [ffmpeg, "-hide_banner", "-nostdin", "-v", "error"]
+        head = run_analysis(base + ["-i", path, "-t", "%g" % window] + sel, check=False)
+        frames[kind] = {"head": _framecrc_frames(head) if head.returncode == 0 else 0}
         end = stream_end(meta, kind)
-        tail_from = max(0.0, (end or 0.0) - window - DECODE_SEEK_MARGIN_SECONDS)
-        frames[kind] = {}
-        for part, pre, post in (("head", [], ["-t", "%g" % window]), ("tail", ["-ss", "%.3f" % tail_from], [])):
-            cmd = ([ffmpeg, "-hide_banner", "-nostdin", "-v", "error"] + pre + ["-i", path] + post
-                   + ["-map", "0:%s:0" % kind[0], "-f", "framecrc", "-"])
-            proc = run_analysis(cmd, check=False)
-            frames[kind][part] = (sum(1 for line in (proc.stdout or "").splitlines() if line and not line.startswith("#"))
-                                  if proc.returncode == 0 else 0)
+        if end is None:
+            end = meta.get("duration")
+        if end is None:
+            frames[kind]["tail"] = 0
+            unmeasured.append(kind)
+            continue
+        tail_from = max(0.0, end - window - DECODE_SEEK_MARGIN_SECONDS)
+        # -copyts keeps the file's own timestamps, the timeline `end` is measured on
+        tail = run_analysis(base + ["-copyts", "-ss", "%.3f" % tail_from, "-i", path] + sel, check=False)
+        frames[kind]["tail"] = _framecrc_frames(tail, since=end - window) if tail.returncode == 0 else 0
     bad = [k for k in kinds if not all(frames[k].values())]
     step: Dict[str, Any] = {"step": "decode", "property": "decodable", "frames": frames, "window": window,
                             "provenance": "measurement", "ok": not bad}
     if bad:
-        step["undecodable"] = bad
+        step["undecodable"] = [k for k in bad if k not in unmeasured]
+    if unmeasured:
+        step["reason"] = "not_measured: no end time for the %s stream" % " and ".join(unmeasured)
     return step
+
+
+def _framecrc_frames(proc: Any, since: Optional[float] = None) -> int:
+    """Frames in ffmpeg's framecrc output; with `since`, only those at or after that time. Rows
+    are `stream, dts, pts, duration, size, crc`, timestamps in the `#tb N: num/den` time base."""
+    tb: Dict[str, float] = {}
+    n = 0
+    for line in (proc.stdout or "").splitlines():
+        if line.startswith("#tb "):
+            idx, frac = line[4:].split(":", 1)
+            num, den = frac.strip().split("/")
+            tb[idx.strip()] = float(num) / float(den)
+        elif line and not line.startswith("#"):
+            cols = [c.strip() for c in line.split(",")]
+            if since is None:
+                n += 1
+            elif len(cols) > 2 and cols[0] in tb and float(cols[2]) * tb[cols[0]] >= since - 1e-3:
+                n += 1
+    return n
 
 
 def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:

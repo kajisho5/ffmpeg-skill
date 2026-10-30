@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import types
 import sys
 import tempfile
 import time
@@ -3748,6 +3749,29 @@ def garbage_payload(p):
                      if s["step"] == "stream_lengths")
         self.assertEqual(short["short"], ["audio"])
         self.assertGreater(short["measured"]["video"] - short["measured"]["audio"], 1.5)
+
+    def test_stream_checks_count_the_tail_window_and_allow_an_unread_input_gap(self):
+        """Review of the checks above: the tail decode reads from 10 s early, so only frames in the
+        last window may count; an input whose sound length cannot be read has an unknown gap, not
+        a zero one, so a gap in the output is not_measured rather than short; a shortfall is
+        compared before rounding."""
+        import importlib
+        E = importlib.import_module("_common.emit")
+        crc = types.SimpleNamespace(stdout="#tb 0: 1/1000\n#media_type 0: audio\n0, 1000, 1000, 21, 4, 0x1\n"
+                                           "0, 8500, 8500, 21, 4, 0x2\n0, 9200, 9200, 21, 4, 0x3\n")
+        self.assertEqual(E._framecrc_frames(crc), 3)
+        self.assertEqual(E._framecrc_frames(crc, since=9.0), 1)
+        self.assertEqual(E._framecrc_frames(crc, since=9.5), 0)
+        ref = {"duration": 10.0, "video": {"duration": 10.0, "start_time": 0.0}, "audio": {"duration": None, "start_time": 0.0}}
+        out = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": 3.5, "start_time": 0.0}}
+        step = E.stream_lengths_step(out, [ref])  # the input's own gap is unknown: not a pass, not "short"
+        self.assertEqual((step["ok"], "short" in step, step["reason"][:13]), (False, False, "not_measured:"))
+        even = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": 4.0, "start_time": 0.0}}
+        self.assertTrue(E.stream_lengths_step(even, [ref])["ok"])  # no gap to explain
+        ref["audio"]["duration"] = 9.4
+        self.assertTrue(E.stream_lengths_step(out, [ref])["ok"])  # the input was 0.6 s short already
+        edge = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": 4.0 - 0.2504, "start_time": 0.0}}
+        self.assertEqual(E.stream_lengths_step(edge, [])["short"], ["audio"])
 
     def test_paths_with_spaces_quotes_and_japanese_keep_every_second_of_audio(self):
         """The report: a filename with a space "was shell-escaped" and 40 s of audio went missing
