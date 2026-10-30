@@ -3777,6 +3777,14 @@ def garbage_payload(p):
         self.assertEqual(E.stream_lengths_step(edge, [])["short"], ["audio"])
         nan = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": float("nan"), "start_time": 0.0}}
         self.assertEqual(E.stream_lengths_step(nan, [])["ok"], False)  # NaN is no length, not a pass
+        # a cut window counts only the input's gap inside it (CodeRabbit on #375): video 10 s,
+        # sound 5 s; a 2-4 s cut has no gap to inherit, a 4-8 s cut inherits 3 s
+        src = {"video": {"duration": 10.0, "start_time": 0.0}, "audio": {"duration": 5.0, "start_time": 0.0}}
+        lost = {"video": {"duration": 2.0, "start_time": 0.0}, "audio": {"duration": 1.0, "start_time": 0.0}}
+        self.assertEqual(E.stream_lengths_step(lost, [src], windows=[(2.0, 4.0)])["short"], ["audio"])
+        self.assertTrue(E.stream_lengths_step(lost, [src])["ok"])  # the whole source's 5 s would hide it
+        tail = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": 1.0, "start_time": 0.0}}
+        self.assertTrue(E.stream_lengths_step(tail, [src], windows=[(4.0, 8.0)])["ok"])
         # a stream with no end of its own is unmeasured at its tail, never "undecodable"
         dec = E.decode_step(str(self.src), {"duration": 6.0, "video": {"duration": 6.0, "start_time": 0.0},
                                             "audio": {"duration": None, "start_time": 0.0}}, ["video", "audio"])

@@ -447,14 +447,17 @@ def stream_end(meta: Dict[str, Any], kind: str) -> Optional[float]:
 
 
 def stream_lengths_step(meta: Dict[str, Any], references: Sequence[Dict[str, Any]],
-                        tolerance: float = STREAM_LENGTH_TOLERANCE) -> Dict[str, Any]:
+                        tolerance: float = STREAM_LENGTH_TOLERANCE,
+                        windows: Optional[Sequence[Tuple[float, float]]] = None) -> Dict[str, Any]:
     """Where the picture and the sound of the output end, against each other, allowing the gap
     the inputs already had. A filename with a space was reported to have lost 40 s of sound with
     no error: the container's length is the longest stream's, so a duration check passes while
     one stream stops early. `short` names a stream that ends more than `tolerance` (plus the
     inputs' own shortfall, summed over the inputs) before the other one. Ends, not lengths: a
     stream that only starts late is the start-skew check's (cut.py reports it in a note). A length
-    that cannot be read is not a pass (`not_measured`)."""
+    that cannot be read is not a pass (`not_measured`). `windows` (cut.py's requested ranges, on
+    the input's own timeline) count only the gap the input has inside them: a source whose video
+    runs 5 s past its sound allows nothing to a cut from its middle."""
     kinds = ("video", "audio")
     lengths = {k: stream_length(meta, k) for k in kinds}
     step: Dict[str, Any] = {"step": "stream_lengths", "property": "stream_end", "measured": lengths,
@@ -471,9 +474,13 @@ def stream_lengths_step(meta: Dict[str, Any], references: Sequence[Dict[str, Any
         if None in ref_ends.values():
             unread_input = True  # its gap is unknown, not zero
             continue
-        last = max(ref_ends.values())
-        for k in kinds:
-            allowed[k] += last - ref_ends[k]
+        origin = min(((ref.get(k) or {}).get("start_time") or 0.0) for k in kinds)
+        rel = {k: ref_ends[k] - origin for k in kinds}
+        for s, e in (windows or [(0.0, max(rel.values()))]):
+            inside = {k: max(s, min(e, rel[k])) for k in kinds}
+            top = max(inside.values())
+            for k in kinds:
+                allowed[k] += top - inside[k]
     ends = {k: stream_end(meta, k) for k in kinds}
     last = max(ends.values())
     raw = {k: last - ends[k] for k in kinds}
@@ -571,12 +578,13 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         # keep status completed and say verified: false, so a caller keys on one field.
         expect_streams = extra.pop("expect_streams", None)
         stream_reference = extra.pop("stream_reference", None)
+        stream_windows = extra.pop("stream_windows", None)
         steps: List[Dict[str, Any]] = ([{"step": "probe", "ok": True}] if meta else []) + list(extra.pop("verification", None) or [])
         if meta and expect_streams:
             steps.append(stream_inventory_step(meta, expect_streams))
             kept = [k for k in ("video", "audio") if _expected_count(expect_streams.get(k, 0))]
             if stream_reference is not None and len(kept) == 2:
-                steps.append(stream_lengths_step(meta, stream_reference))
+                steps.append(stream_lengths_step(meta, stream_reference, windows=stream_windows))
             present = [k for k in kept if meta.get(k)]
             if present:
                 steps.append(decode_step(output, meta, present))
