@@ -306,8 +306,9 @@ class AudioTests(MediaFixtures):
         # silence removal on an m4a
         tight = OUT / "gappy_tight.m4a"
         data = json.loads(script("silence.py", m4a, "-o", tight, "--json").stdout)
-        self.assertClose(data["removed_seconds"], 5.25, 0.3)
-        self.assertClose(probe(str(tight))["duration"], 6.75, 0.3)
+        # at the 2.22 default --margin 0.2 (5.25 s removed, 6.75 s kept at 0.15)
+        self.assertClose(data["removed_seconds"], 4.9, 0.3)
+        self.assertClose(probe(str(tight))["duration"], 7.1, 0.3)
         # voice clean-up keeps the container, plain -o converts
         clean = OUT / "gappy_clean.m4a"
         script("audio.py", m4a, "--voice", "-o", clean)

@@ -1070,17 +1070,19 @@ class EditingTests(MediaFixtures):
         self.assertEqual(none["silences"], [])
         self.assertIn("--threshold", none["hint"])
         self.assertIn("mean level", none["hint"])
-        self.assertClose(data["removed_seconds"], 5.25, 0.3)
+        # three 2 s gaps; --margin keeps 0.2 s of each on both sides (0.15 s before 2.22, when this
+        # was 5.25 s removed and 6.75 s kept)
+        self.assertClose(data["removed_seconds"], 4.9, 0.3)
         out = OUT / "tight.mp4"
         edl = OUT / "keep.txt"
         script("silence.py", gappy, "--preset", "veryfast", "--edl", edl, "-o", out)
-        self.assertClose(probe(str(out))["duration"], 6.75, 0.3)
+        self.assertClose(probe(str(out))["duration"], 7.1, 0.3)
         self.assertEqual(len(edl.read_text().strip().splitlines()), 3)
         # the EDL feeds cut.py --segments directly
         segs = ",".join(edl.read_text().split())
         out2 = OUT / "tight_via_cut.mp4"
         script("cut.py", gappy, "--segments", segs, "--accurate", "--preset", "veryfast", "-o", out2)
-        self.assertClose(probe(str(out2))["duration"], 6.75, 0.4)
+        self.assertClose(probe(str(out2))["duration"], 7.1, 0.4)
 
     def test_silence_removal_cuts_the_sound_with_the_picture(self):
         """FFmpeg 8.0 and 8.0.1 (Ubuntu 26.04) ship an `aselect` that passes every frame through (its
@@ -1102,7 +1104,8 @@ class EditingTests(MediaFixtures):
             streams = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration",
                                     "-of", "json", out).stdout)["streams"]
             for s in streams:
-                self.assertClose(float(s["duration"]), 6.75, 0.1, f"{name} {s['codec_type']}")
+                # 7.1 s at the 2.22 default --margin 0.2 (6.75 s at 0.15)
+                self.assertClose(float(s["duration"]), 7.1, 0.1, f"{name} {s['codec_type']}")
 
     def test_silence_on_wav_input_keeps_pcm_not_forced_aac(self):
         """silence.py's final ffmpeg command used to unconditionally append aac_args() (-c:a aac)
