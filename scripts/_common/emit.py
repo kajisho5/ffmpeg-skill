@@ -496,8 +496,9 @@ def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: f
     still hold nothing a decoder accepts; the inventory and length checks read the header, this
     one reads the payload. The tail read starts DECODE_SEEK_MARGIN_SECONDS earlier, so a seek that
     lands past the last keyframe (MPEG-TS seeks by timestamp, not to a keyframe) still decodes,
-    but only frames in the last `window` count. A stream whose end cannot be read (no stream
-    length, no container duration) is not decoded to the end: its tail is `not_measured`."""
+    but only frames in the last `window` count, and the read stops a second past the end. A
+    stream whose own end cannot be read is not decoded at its end: its tail is `not_measured`,
+    not undecodable (the container's end is the longest stream's, not this one's)."""
     from _common.runner import require_tool, run_analysis
     ffmpeg = require_tool("ffmpeg")
     frames: Dict[str, Dict[str, int]] = {}
@@ -507,16 +508,17 @@ def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: f
         base = [ffmpeg, "-hide_banner", "-nostdin", "-v", "error"]
         head = run_analysis(base + ["-i", path, "-t", "%g" % window] + sel, check=False)
         frames[kind] = {"head": _framecrc_frames(head) if head.returncode == 0 else 0}
+        # the stream's own end only: the container's is the longest stream's, and a shorter stream
+        # read there would decode nothing and be called undecodable when it is only unmeasured
         end = stream_end(meta, kind)
-        if end is None:
-            end = meta.get("duration")
         if end is None:
             frames[kind]["tail"] = 0
             unmeasured.append(kind)
             continue
         tail_from = max(0.0, end - window - DECODE_SEEK_MARGIN_SECONDS)
         # -copyts keeps the file's own timestamps, the timeline `end` is measured on
-        tail = run_analysis(base + ["-copyts", "-ss", "%.3f" % tail_from, "-i", path] + sel, check=False)
+        tail = run_analysis(base + ["-copyts", "-ss", "%.3f" % tail_from,
+                                    "-t", "%g" % (end - tail_from + 1.0), "-i", path] + sel, check=False)
         frames[kind]["tail"] = _framecrc_frames(tail, since=end - window) if tail.returncode == 0 else 0
     bad = [k for k in kinds if not all(frames[k].values())]
     step: Dict[str, Any] = {"step": "decode", "property": "decodable", "frames": frames, "window": window,

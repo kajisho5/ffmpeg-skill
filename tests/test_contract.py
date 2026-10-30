@@ -3777,6 +3777,11 @@ def garbage_payload(p):
         self.assertEqual(E.stream_lengths_step(edge, [])["short"], ["audio"])
         nan = {"video": {"duration": 4.0, "start_time": 0.0}, "audio": {"duration": float("nan"), "start_time": 0.0}}
         self.assertEqual(E.stream_lengths_step(nan, [])["ok"], False)  # NaN is no length, not a pass
+        # a stream with no end of its own is unmeasured at its tail, never "undecodable"
+        dec = E.decode_step(str(self.src), {"duration": 6.0, "video": {"duration": 6.0, "start_time": 0.0},
+                                            "audio": {"duration": None, "start_time": 0.0}}, ["video", "audio"])
+        self.assertEqual((dec["ok"], dec["undecodable"], dec["frames"]["audio"]["tail"]), (False, [], 0))
+        self.assertTrue(dec["reason"].startswith("not_measured:") and dec["frames"]["video"]["tail"] > 0, dec)
         # a count, not presence: two sound streams expected and one written is `missing`
         two = {"video": {"codec": "h264"}, "audio": {"codec": "aac"}, "stream_counts": {"video": 1, "audio": 1}}
         inv = E.stream_inventory_step(two, {"video": 1, "audio": 2})
