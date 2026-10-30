@@ -3792,6 +3792,17 @@ def garbage_payload(p):
                                             "audio": {"duration": None, "start_time": 0.0}}, ["video", "audio"])
         self.assertEqual((dec["ok"], dec["undecodable"], dec["frames"]["audio"]["tail"]), (False, [], 0))
         self.assertTrue(dec["reason"].startswith("not_measured:") and dec["frames"]["video"]["tail"] > 0, dec)
+        # a cover picture stored before the motion video is not what is decoded (0:V, not 0:v), and
+        # sound that starts 2 s in is decoded from its own start, not the file's first second
+        covered = self.out("dec_cover.mp4")
+        ffmpeg("-i", self.logo, "-i", self.src, "-map", "0", "-map", "1", "-c:v:0", "png", "-c:v:1", "copy", "-c:a", "copy",
+               "-disposition:v:0", "attached_pic", covered)
+        late = self.out("dec_late_audio.mp4")
+        ffmpeg("-i", self.src, "-itsoffset", "2", "-i", self.src, "-map", "0:v", "-map", "1:a", "-c", "copy", late)
+        Pm = importlib.import_module("_common.probe")
+        for path in (covered, late):
+            d = E.decode_step(str(path), Pm.probe(str(path)), ["video", "audio"])
+            self.assertTrue(d["ok"], (path.name, d))
         # a count, not presence: two sound streams expected and one written is `missing`
         two = {"video": {"codec": "h264"}, "audio": {"codec": "aac"}, "stream_counts": {"video": 1, "audio": 1}}
         inv = E.stream_inventory_step(two, {"video": 1, "audio": 2})

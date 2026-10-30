@@ -446,6 +446,16 @@ def stream_end(meta: Dict[str, Any], kind: str) -> Optional[float]:
     return None if length is None else ((meta.get(kind) or {}).get("start_time") or 0.0) + length
 
 
+def file_origin(meta: Dict[str, Any]) -> float:
+    """Where the file's timeline starts: the container's start time, else its earliest stream's.
+    A -ss, a cut's --start and a window are counted from here, while stream starts and ends are
+    on the file's own timestamps."""
+    if isinstance(meta.get("start_time"), (int, float)):
+        return float(meta["start_time"])
+    starts = [(meta.get(k) or {}).get("start_time") for k in ("video", "audio")]
+    return min([s for s in starts if isinstance(s, (int, float))] or [0.0])
+
+
 def stream_lengths_step(meta: Dict[str, Any], references: Sequence[Dict[str, Any]],
                         tolerance: float = STREAM_LENGTH_TOLERANCE,
                         windows: Optional[Sequence[Tuple[float, float]]] = None) -> Dict[str, Any]:
@@ -474,8 +484,7 @@ def stream_lengths_step(meta: Dict[str, Any], references: Sequence[Dict[str, Any
         if None in ref_ends.values():
             unread_input = True  # its gap is unknown, not zero
             continue
-        origin = min(((ref.get(k) or {}).get("start_time") or 0.0) for k in kinds)
-        rel = {k: ref_ends[k] - origin for k in kinds}
+        rel = {k: ref_ends[k] - file_origin(ref) for k in kinds}  # the clock cut's ranges are on
         for s, e in (windows or [(0.0, max(rel.values()))]):
             inside = {k: max(s, min(e, rel[k])) for k in kinds}
             top = max(inside.values())
@@ -511,9 +520,13 @@ def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: f
     frames: Dict[str, Dict[str, int]] = {}
     unmeasured: List[str] = []
     for kind in kinds:
-        sel = ["-map", "0:%s:0" % kind[0], "-f", "framecrc", "-"]
+        # 0:V is the motion picture only: an attached cover picture would be 0:v:0
+        sel = ["-map", "0:%s:0" % ("V" if kind == "video" else "a"), "-f", "framecrc", "-"]
         base = [ffmpeg, "-hide_banner", "-nostdin", "-v", "error"]
-        head = run_analysis(base + ["-i", path, "-t", "%g" % window] + sel, check=False)
+        origin = file_origin(meta)
+        # the head is the stream's own first window: sound that starts 2 s in has none in the file's
+        head_from = max(0.0, ((meta.get(kind) or {}).get("start_time") or origin) - origin)
+        head = run_analysis(base + ["-ss", "%.3f" % head_from, "-i", path, "-t", "%g" % window] + sel, check=False)
         frames[kind] = {"head": _framecrc_frames(head) if head.returncode == 0 else 0}
         # the stream's own end only: the container's is the longest stream's, and a shorter stream
         # read there would decode nothing and be called undecodable when it is only unmeasured
@@ -522,10 +535,10 @@ def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: f
             frames[kind]["tail"] = 0
             unmeasured.append(kind)
             continue
-        tail_from = max(0.0, end - window - DECODE_SEEK_MARGIN_SECONDS)
+        tail_from = max(0.0, end - origin - window - DECODE_SEEK_MARGIN_SECONDS)  # -ss counts from the origin
         # -copyts keeps the file's own timestamps, the timeline `end` is measured on
         def tail_frames(start: float) -> int:
-            proc = run_analysis(base + ["-copyts", "-ss", "%.3f" % start, "-t", "%g" % (end - start + 1.0), "-i", path]
+            proc = run_analysis(base + ["-copyts", "-ss", "%.3f" % start, "-t", "%g" % (end - origin - start + 1.0), "-i", path]
                                 + sel, check=False)
             return _framecrc_frames(proc, since=end - window) if proc.returncode == 0 else 0
         frames[kind]["tail"] = tail_frames(tail_from)

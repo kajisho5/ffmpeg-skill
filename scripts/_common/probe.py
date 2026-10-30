@@ -206,6 +206,9 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         "file": path,
         "format": fmt.get("format_name"),
         "duration": duration,
+        # where the file's timeline starts (MPEG-TS starts at 1.4 s, not 0): a -ss and a cut's
+        # --start count from here
+        "start_time": _to_float(fmt.get("start_time")),
         "size_bytes": _to_int(fmt.get("size")),
         "bitrate": _to_int(fmt.get("bit_rate")),
         "video": None,

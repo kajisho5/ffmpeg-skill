@@ -352,6 +352,8 @@ def main() -> int:
     # the delivery keeps the source's picture and, except as a GIF, its sound
     extra["expect_streams"] = {"video": int(bool(meta.get("video"))), "audio": int(bool(has_audio and args.preset != "gif"))}
     extra["stream_reference"] = [meta]
+    if trimmed:  # only the kept 0..max of the source can have handed its gap to the output
+        extra["stream_windows"] = [(0.0, float(p["max"]))]
     emit(output, **extra)
     return 0
 
