@@ -473,6 +473,7 @@ DIAGNOSTIC_CODES = {
     "cropdetect_windows_failed": ("warnings", "cropdetect.py: sampled windows ffmpeg could not decode (windows_failed); {failed, windows, starts}"),
     "filler_words_untimed": ("warnings", "silence.py --filler: listed words in the transcript with no usable timing were not removed (filler.matched_untimed); {count}"),
     "cut_near_sound": ("warnings", "silence.py: a cut point's level is within CUT_SOUND_MARGIN_DB of --threshold, so it may land in a breath or a word's weak tail (cut_warnings lists them)"),
+    "cut_levels_unmeasured": ("warnings", "silence.py: the source could not be decoded to measure the level at each cut; cut_points and cut_warnings are null (unmeasured, not silent)"),
     "filler_removal_caution": ("warnings", "silence.py --filler: a removed word that is often an ordinary word, or a discourse marker added with --filler-extra (also in filler.warnings)"),
     # media and defaults
     "silent_track_mixed": ("warnings", "audio.py --on-silent warn: a silent track was mixed anyway; {tracks}"),

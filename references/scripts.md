@@ -640,7 +640,7 @@ each shorter clip's last frame (with silence) out to the longest.
 
 ### silence.py — remove dead air / jump cuts
 ```
-silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.15] [--min-keep 0.2] [--list] [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
+silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--min-keep 0.2] [--list] [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
 silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|zh|es|de|fr|pt|it|nl|pl|ru|tr]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
@@ -655,13 +655,14 @@ so the user can edit the list by hand. Quiet rooms need `--threshold -40`
 to `-45`; noisy ones `-30`. Always tell the user how many seconds were removed.
 
 **Breaths and weak word endings.** `--margin` is the padding kept on each side of every cut
-(default 0.15 s; 0.2-0.3 s for a speaker who trails off). `--speech-aware` keeps the short
+(default 0.2 s since 2.22, 0.15 s before; 0.3 s for a speaker who trails off). `--speech-aware` keeps the short
 breaths inside a sentence and cuts only at sentence-boundary pauses. A `--threshold` set too high
 (-25, say) counts a weak word ending as silence: the result then warns.
 
 **Cut levels (2.22).** Every run measures the RMS level 50 ms either side of each cut on the
-source (`cut_points`: `source_time`, `output_time`, `edge` out/in, `rms_dbfs`, `null` for digital
-silence) and lists in `cut_warnings` the cuts whose level is within 10 dB of `--threshold`,
+source (`cut_points`: `source_time`, `output_time`, `edge` out/in, `rms_dbfs` of the loudest
+channel, `null` for digital silence; the whole key is `null`, with a `cut_levels_unmeasured`
+warning, when the source could not be decoded for it) and lists in `cut_warnings` the cuts whose level is within 10 dB of `--threshold`,
 with a `cut_near_sound` warning. Room tone sits well below the threshold; a breath or a word's
 weak tail sits just under it. This is a pointer for listening, not a verdict: `verified` is
 unchanged, and filler-word cuts (which sit in sound by design) are measured but not flagged.
@@ -670,7 +671,9 @@ unchanged, and filler-word cuts (which sit in sound by design) are measured but 
 source and output times, and every removed range with the output time it was cut at. `.csv`
 gives `type,source_start,source_end,output_start,output_end` rows (a removed row's two output
 columns are its cut point); any other path must end in `.json`. Use it to re-time subtitles
-made on the source, or to find a removed sentence again. A dry run writes nothing.
+made on the source, or to find a removed sentence again. Its times advance by the
+millisecond-rounded ranges the render cuts on. An existing map is refused without `--overwrite`,
+before anything runs (a dry run predicts the refusal); a dry run writes nothing.
 
 **`--filler` (1.17)** removes filler words as well, through the same
 `keep_ranges()` graph with more, shorter ranges. It is **never**

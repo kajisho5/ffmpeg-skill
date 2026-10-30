@@ -4043,6 +4043,11 @@ def garbage_payload(p):
                "+0.05*sin(2*PI*300*t)*between(t\\,2\\,2.8)':s=48000:d=6", wav)
         safe = json.loads(tool("silence", wav, "--list", "--json").stdout)
         self.assertTrue(safe["cut_points"], safe)
+        # the padding left on each side of a cut is 0.2 s by default (0.15 before 2.22: weak word
+        # endings were the complaint), so the first cut sits 0.2 s into the silence at 2.8 s
+        props = self.tools["silence"]["input_schema"]["properties"]
+        self.assertEqual(next(p for p in props.values() if "--margin" in (p.get("cli") or []))["default"], 0.2)
+        self.assertAlmostEqual(safe["keep"][0][1], safe["silences"][0][0] + 0.2, places=2)
         for c in safe["cut_points"]:
             self.assertEqual(set(c), {"source_time", "output_time", "edge", "rms_dbfs"})
         self.assertEqual(safe["cut_warnings"], [])  # the default -35 dB cut is inside digital silence
@@ -4052,6 +4057,38 @@ def garbage_payload(p):
         import importlib
         self.assertGreater(w["rms_dbfs"], -25 - importlib.import_module("silence").CUT_SOUND_MARGIN_DB)
         self.assertTrue(any(d["code"] == "cut_near_sound" for d in hard["diagnostics"]["warnings"]))
+
+    def test_silence_time_map_and_cut_levels_hold_at_the_edges(self):
+        """Review of the 2.22 change: the map advanced by unrounded lengths while the render cuts on
+        millisecond-rounded bounds; a filler merged into a silence exempted the silence's own edge
+        from the warning; a mono downmix read an antiphase stereo cut as silence; a failed decode
+        read as digital silence; --timemap replaced an existing file without --overwrite."""
+        import importlib
+        silence = importlib.import_module("silence")
+        tm = silence.time_map([(0.0, 1.0004), (2.0006, 3.0)], 3.0)
+        a, b = tm["kept"]
+        self.assertEqual((a["output_end"], b["output_start"]), (1.0, 1.0))
+        self.assertEqual(round(b["output_end"] - b["output_start"], 3), round(b["source_end"] - b["source_start"], 3))
+        # left and right in antiphase: a mono mix is digital silence, either channel is not
+        wav = self.out("anti.wav")
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.3*sin(2*PI*440*t)|-0.3*sin(2*PI*440*t)':s=48000:d=3", wav)
+        tm = {"kept": [], "removed": [{"source_start": 1.0, "source_end": 2.0, "output_time": 1.0}]}
+        points = silence.cut_levels(str(wav), tm, 3.0, [(1.7, 2.0)])
+        self.assertEqual([(p["edge"], bool(p.get("filler"))) for p in points], [("out", False), ("in", True)])
+        self.assertIsNotNone(points[0]["rms_dbfs"])
+        self.assertGreater(points[0]["rms_dbfs"], -20)
+        junk = self.out("not_media.wav"); junk.write_bytes(b"not audio at all")
+        self.assertIsNone(silence.cut_levels(str(junk), tm, 3.0, []))  # unmeasured, not "silence"
+        # an existing map is refused without --overwrite, and a dry run predicts the refusal
+        src = self.out("tm_ow.wav")
+        ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+gt(t\\,3))':s=48000:d=5", src)
+        existing = self.out("tm_ow.json"); existing.write_text("theirs", encoding="utf-8")
+        for extra in ([], ["--dry-run"]):
+            err = json.loads(tool("silence", src, "-o", self.out("tm_ow_out.wav"), "--timemap", existing, "--json",
+                                  *extra, check=False).stdout)["error"]
+            self.assertEqual(err["reason"], "output_exists")
+            self.assertEqual(existing.read_text(encoding="utf-8"), "theirs")
+            self.assertFalse(self.out("tm_ow_out.wav").exists(), "refused after the cut was written")
 
     def test_the_thresholds_table_matches_the_code(self):
         """references/scripts.md restates every verdict threshold (2.21). Each row names the constant
