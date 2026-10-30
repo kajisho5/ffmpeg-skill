@@ -614,7 +614,7 @@ Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately |
 | [SKILL.md](SKILL.md) | what the agent reads: workflow, request → tool map, audio-only rules, report format, pitfalls |
 | [references/scripts.md](references/scripts.md) | per-flag reference for every tool |
-| [references/scripts.md § Verdict thresholds](references/scripts.md#verdict-thresholds-what-passes-221) | every number behind `verified` and `check.py`'s rows (tolerances, silence levels, per-platform loudness and length), each with the constant or flag it comes from |
+| [references/scripts.md § Verdict thresholds](references/scripts.md#verdict-thresholds-what-passes) | every number behind `verified` and `check.py`'s rows (tolerances, silence levels, per-platform loudness and length), each with the constant or flag it comes from |
 | [references/devices.md](references/devices.md) | real-device notes (iPhone HDR, GoPro, DJI, screen recordings) |
 | [references/ci-platform-pitfalls.md](references/ci-platform-pitfalls.md) | per-OS ffmpeg/CI behaviour differences already diagnosed once — read before re-diagnosing a Windows/macOS-only test failure |
 | [references/process-pitfalls.md](references/process-pitfalls.md) | process mistakes already made once (breaking a pinned test by narrowing a capability list, retrying a git/GitHub operation this environment can't do, re-designing a fixture instead of recognising a real platform difference) — a living record, add to it whenever one recurs |

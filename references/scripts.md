@@ -14,7 +14,7 @@ yourself, which is the only way for a tool with no input file (`caption.py
 anywhere is `kind: input` naming the flag. Nothing else about times differs
 between tools.
 
-## Verdict thresholds (what passes, 2.21)
+## Verdict thresholds (what passes)
 
 The numbers behind `verified`, `check.py`'s PASS/WARN/FAIL rows and the cuts the tools make. A
 result also carries the tolerance it used in each `verification[]` step (`tolerance`, since 2.18).
