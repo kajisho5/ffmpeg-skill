@@ -35,10 +35,10 @@ import json
 import re
 import sys
 from fractions import Fraction
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
-from _common.probe import CONTENT_FLAT_STD, SILENT_PEAK_DBFS, detect_content, detect_flashes, first_frame_stats, measured_level_dbfs
+from _common.probe import CONTENT_FLAT_STD, SILENT_PEAK_DBFS, detect_content, detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -71,15 +71,20 @@ FROZEN_FAIL = 0.95                         # a frozen span covering this share =
 SILENCE_WARN, SILENCE_FAIL = 0.50, 0.95    # share of the duration below SILENT_PEAK_DBFS
 
 
-def flash_times(flashes: List[int], v: Dict[str, Any], meta: Dict[str, Any]) -> str:
-    """The flashes row's first five times: frame index / average rate on look.py's timeline (the
-    video stream's lead over the container start added), "~" where probe suspects a variable rate,
-    and `frame N` when the stream has no frame rate at all."""
+def flash_times(flashes: List[int], v: Dict[str, Any], meta: Dict[str, Any], pts: "Optional[List[float]]" = None) -> str:
+    """The flashes row's first five times on look.py's timeline (seconds from the container
+    start). A flash frame's own presentation time when `pts` has it (presentation_times(): exact,
+    gaps in the timestamps included); otherwise index / average rate plus the video's lead over
+    the container, marked "~" (approximate), and `frame N` when there is no frame rate either."""
+    origin = float(meta.get("start_time") or 0.0)
     fps = float(v.get("fps") or 0.0)
-    lead = max(0.0, float(v.get("start_time") or 0.0) - float(meta.get("start_time") or 0.0))
-    approx = "~" if v.get("variable_frame_rate_suspected") else ""
-    return ", ".join(f"{approx}{lead + n / fps:.2f}s" if fps else f"frame {n}" for n in flashes[:5]) \
-        + (" ..." if len(flashes) > 5 else "")
+    lead = max(0.0, float(v.get("start_time") or 0.0) - origin)
+
+    def one(n: int) -> str:
+        if pts and n < len(pts):
+            return f"{max(0.0, pts[n] - origin):.2f}s"
+        return f"~{lead + n / fps:.2f}s" if fps else f"frame {n}"
+    return ", ".join(one(n) for n in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
 
 
 def _span_total(spans: Any) -> float:
@@ -313,7 +318,8 @@ def main() -> int:
                     "a picture (cut.py --start a few frames in, or move a title card to frame 0)" if flat else "",
                     reason="a feed shows the first frame before anything plays, and a flat one reads as a broken upload" if flat else "")
             flashes = detect_flashes(args.input)
-            at = flash_times(flashes or [], v, meta)
+            pts = presentation_times(args.input, float(v.get("start_time") or 0.0)) if flashes else None
+            at = flash_times(flashes or [], v, meta, pts)
             if flashes is None:
                 row("flashes", "WARN", "could not measure", "no single frame unlike both its neighbours",
                     "look.py the video: no frame decoded, so nothing was compared",

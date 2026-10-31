@@ -346,20 +346,36 @@ class AnalysisTests(MediaFixtures):
         r = self._rows(gap, "--content")
         self.assertTrue(r["flashes"]["value"].startswith("1: "), r["flashes"])
         self.assertEqual(content_probe.detect_flashes(str(gap)), [20])
+        # the gap comes before this flash: its row time is its own presentation time (4.0 s), not 30 / 10 fps
+        late = OUT / "content_flash_after_gap.mkv"
+        if not late.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               moving + ":duration=6,drawbox=t=fill:color=white:enable='eq(n,30)',setpts='if(gt(N,20),PTS+1/TB,PTS)'",
+               "-fps_mode", "passthrough", "-c:v", "libx264", "-pix_fmt", "yuv420p", late)
+        self.assertEqual(self._rows(late, "--content")["flashes"]["value"], "1: 4.00s")
         r = self._rows(lead, "--content")
         self.assertEqual(r["first frame"]["status"], "WARN", r["first frame"])
         self.assertEqual(self._rows(cut, "--content")["first frame"]["status"], "PASS")
         self.assertNotIn("flashes", self._rows(flash))  # opt-in: the default row set is unchanged
 
     def test_check_flash_times_on_the_look_timeline(self):
-        """The flashes row's times: index / rate plus the video's lead over the container, "~" on
-        suspected variable-rate video, and `frame N` when the stream has no frame rate."""
-        meta = {"start_time": 0.0}
-        self.assertEqual(check_module.flash_times([15, 45], {"fps": 30.0}, meta), "0.50s, 1.50s")
-        self.assertEqual(check_module.flash_times([15], {"fps": 30.0, "start_time": 0.2}, meta), "0.70s")
-        self.assertEqual(check_module.flash_times([15], {"fps": 30.0, "variable_frame_rate_suspected": True}, meta), "~0.50s")
+        """The flashes row's times: a flash frame's own presentation time from the container start
+        when it is known, else index / rate plus the video's lead marked "~", else `frame N`."""
+        meta = {"start_time": 0.5}
+        pts = [0.5 + i / 10 for i in range(20)] + [4.0 + i / 10 for i in range(20)]  # a 1.5 s gap after frame 19
+        self.assertEqual(check_module.flash_times([5, 25], {"fps": 10.0}, meta, pts), "0.50s, 4.00s")
+        self.assertEqual(check_module.flash_times([15], {"fps": 30.0, "start_time": 0.7}, meta), "~0.70s")
         self.assertEqual(check_module.flash_times([15, 16], {"fps": None}, meta), "frame 15, frame 16")
-        self.assertTrue(check_module.flash_times(list(range(7)), {"fps": 10.0}, meta).endswith(" ..."))
+        self.assertTrue(check_module.flash_times(list(range(7)), {"fps": 10.0}, meta, pts).endswith(" ..."))
+
+    def test_check_flash_pass_failure_is_unmeasured(self):
+        """A flash pass that fails is None (a WARN 'could not measure' row in check.py), never []
+        (which would read as PASS)."""
+        from unittest import mock
+        failed = subprocess.CompletedProcess([], 1, b"", b"Error while decoding stream")
+        clip = self._content_clip("content_normal.mp4", "testsrc2=size=160x90:rate=10", "sine=frequency=440:sample_rate=48000")
+        with mock.patch.object(content_probe, "run_analysis", lambda *a, **k: failed):
+            self.assertIsNone(content_probe.detect_flashes(str(clip)))
 
     def test_check_content_dropouts_row(self):
         """2.17: a short run of digital silence with sound on both sides (lost audio at a join) is a

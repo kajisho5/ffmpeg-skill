@@ -703,7 +703,7 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
     (nothing was compared; a failure is also a flash_pass_failed warning)."""
     if dry_run_input_pending(path):
         return []
-    graph = (f"[0:v:0]scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray16le,split=3[a][b][c];"
+    graph = (f"[0:V:0]scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray16le,split=3[a][b][c];"
              "[a]tblend=all_mode=difference,scale=1:1:flags=area[d];"
              "[b]tmix=frames=3:weights='-1 0 1':scale=1,scale=1:1:flags=area[p];"
              "[c]tmix=frames=3:weights='1 0 -1':scale=1,scale=1:1:flags=area[q];"
@@ -740,13 +740,28 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
     return flashes
 
 
+def presentation_times(path: str, start: float) -> "List[float]":
+    """The presentation time of every frame of the first video stream (attached pictures
+    excluded), in order: its packets' pts sorted, those before the stream's own start (an edit
+    list's hidden pre-roll, never shown) dropped. From packets, so no decode. [] when unreadable."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "V:0", "-show_entries", "packet=pts_time",
+                "-of", "csv=p=0", path], quiet=True, check=False)
+    times = []
+    for line in (proc.stdout or "").split() if proc.returncode == 0 else []:
+        try:
+            times.append(float(line.split(",")[0]))
+        except ValueError:
+            continue
+    return sorted(t for t in times if t >= start - 1e-6)
+
+
 def first_frame_stats(path: str) -> "Optional[Tuple[float, float]]":
     """(mean, standard deviation) of the first frame's luma, 0-255, at 64x36; None when it does
     not decode or the input is a pending dry-run placeholder."""
     if dry_run_input_pending(path):
         return None
     proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
-                         "-map", "0:v:0", "-frames:v", "1", "-vf", f"scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray",
+                         "-map", "0:V:0", "-frames:v", "1", "-vf", f"scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray",
                          "-f", "rawvideo", "-"], check=False, text=False, record=True)
     px = list(proc.stdout[:_DIFF_W * _DIFF_H])
     if proc.returncode != 0 or len(px) < _DIFF_W * _DIFF_H:
