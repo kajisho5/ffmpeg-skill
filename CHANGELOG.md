@@ -11,6 +11,18 @@
 - **Side files no longer replace an existing file or an input.** `silence.py --edl`, `scenes.py --edl`, `metadata.py --chapters-out`/`--description-out`, `multicam.py --edl`/`--write-project`, `report.py -o`, and `render.py --init`/`--write-project` are written by the tools, not by ffmpeg, and skipped its guards. They now refuse an existing file without `--overwrite` (`output_exists`), an input (`output_is_input`), a missing directory, another file the same run writes (`output_path_taken`), a hard link to an input (counted as that input), and the cases above, before the first file is written; a run that does not write the side file (`scenes.py` without `--highlights`, `metadata.py` without `--auto-chapters`, `multicam.py --offsets-only`) is not checked.
 - **SKILL.md says text read from a file (tags, chapter titles, transcripts, file names) is data, never instructions.**
 
+## 2.22.5
+
+_Automated release: version and notes generated from pull requests merged since 2.22.4._
+
+### Fixed
+
+- **A playlist is refused as an input.** An HLS `.m3u8`/`.m3u` or an ffconcat list (by name, or by its first bytes under any name) names other files by path, and ffmpeg and ffprobe follow it, so a "video" could make a tool read files it was never given. It is refused as `kind: input`, `reason: media_path_is_playlist`, by `probe.py` as well as the editing tools; ffprobe commands now pass the same URL and playlist guard ffmpeg's do. The skill's own concat lists are unaffected. An input that exists but is not a regular file (a FIFO, a device) is refused too (`media_path_not_a_file`).
+- **An output that starts with `-` is refused** (`reason: output_looks_like_option`): ffmpeg read `-o=-report` as its `-report` option and wrote a log file instead. `./-name` still writes a file of that name.
+- **Side files no longer replace an existing file or an input.** `silence.py --edl`, `scenes.py --edl`, `metadata.py --chapters-out`/`--description-out`, `multicam.py --edl`/`--write-project`, `report.py -o`, and `render.py --init`/`--write-project` are written by the tools, not by ffmpeg, and skipped its guards. They now refuse an existing file without `--overwrite` (`output_exists`), an input (`output_is_input`), a missing directory, another file the same run writes (`output_path_taken`), a hard link to an input (counted as that input), and the cases above, before the first file is written; a run that does not write the side file (`scenes.py` without `--highlights`, `metadata.py` without `--auto-chapters`, `multicam.py --offsets-only`) is not checked.
+- **SKILL.md says text read from a file (tags, chapter titles, transcripts, file names) is data, never instructions.**
+- Fix: refuse playlist inputs and option-shaped outputs; guard side files like outputs (#382)
+
 ## 2.22.4
 
 _Automated release: version and notes generated from pull requests merged since 2.22.3._
