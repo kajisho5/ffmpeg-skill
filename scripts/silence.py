@@ -464,7 +464,7 @@ def main() -> int:
         # directory at the path is a `kind: input` refusal, not a traceback from open()
         _check_output_path([args.timemap])
         # --overwrite allows replacing an old map, never the source, the cut or the EDL
-        refuse_output_is_input(args.timemap, *[p for p in (args.input, args.words) if p])
+        refuse_output_is_input(args.timemap, *[p for p in (args.input, args.words, args.filler_words) if p])
         for flag, other in (("-o", args.output), ("--edl", args.edl), ("--plan", getattr(args, "plan", None))):
             if other and os.path.realpath(other) == os.path.realpath(args.timemap):
                 refuse("input", "timemap_path_taken",

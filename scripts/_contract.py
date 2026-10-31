@@ -416,6 +416,7 @@ ERROR_REASONS = {
     "output_is_input": "the output resolves to the same file as an input; details: {output, input, resolved}",
     "output_is_directory": "the output path is a directory; details: {output}",
     "media_path_is_playlist": "an input is a playlist (HLS .m3u8/.m3u or an ffconcat list, by name or by its first bytes) that ffmpeg would follow to the files it names; the skill takes media files only; details: {path}",
+    "media_path_not_a_file": "an input exists but is not a regular file (a FIFO or a device), which ffmpeg would block on or read as a stream; details: {path}",
     "output_path_taken": "two files one run writes (a side file and the output, or two side files) resolve to the same path, so the second would replace the first; details: {output, other}",
     "output_looks_like_option": "the output starts with '-' (other than '-' for stdout), which ffmpeg would read as an option; ./name writes a file of that name; details: {output}",
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",

@@ -642,9 +642,13 @@ def _refuse_playlist(value: str) -> None:
     than as media. A playlist names other files by path, so a media file handed to the skill could
     pull in any file the user can read. The skill's own concat lists pass `-f concat` and are not
     checked here."""
+    if os.path.exists(value) and not os.path.isfile(value) and not os.path.isdir(value):
+        # a FIFO or a device: ffmpeg would block on it or read whatever it streams
+        refuse("input", "media_path_not_a_file",
+               f"{value!r} is not a regular file (a pipe or a device); this skill takes media files only", path=value)
     head = b""
     try:
-        if os.path.isfile(value):  # a FIFO or device would block the open
+        if os.path.isfile(value):
             with open(value, "rb") as fh:
                 head = fh.read(16).lstrip(b"\xef\xbb\xbf \t\r\n")
     except OSError:
@@ -737,7 +741,9 @@ def refuse_output_is_input(output: str, *inputs: str) -> None:
         return
     for inp in inputs:
         try:
-            same = os.path.realpath(inp) == out_real
+            # a hard link is another name for the same file: compare the files, not just the names
+            same = os.path.realpath(inp) == out_real or (
+                os.path.exists(output) and os.path.exists(inp) and os.path.samefile(output, inp))
         except OSError:
             continue
         if same:

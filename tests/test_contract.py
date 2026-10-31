@@ -3337,6 +3337,13 @@ class ContractTests(unittest.TestCase):
         proc = tool("metadata", self.src, "--auto-chapters", "--chapters-out", work / "same.txt",
                     "--description-out", work / "same.txt", "-o", work / "m2.mp4", "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
+        # a hard link is another name for the input: it is refused like the input itself
+        link = work / "link.mp4"
+        if not link.exists():
+            os.link(victim, link)
+        proc = tool("scenes", victim, "--highlights", "1", "--edl", link, "--overwrite", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
+        self.assertEqual(victim.read_bytes(), before)
         tool("render", "--init", old, "--overwrite")
         self.assertNotEqual(old.read_text(encoding="utf-8"), "keep me\n", "--overwrite replaces an old side file")
 
@@ -3358,6 +3365,12 @@ class ContractTests(unittest.TestCase):
                 err = json.loads(proc.stdout)["error"]
                 self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_is_playlist"), (name, path, proc.stderr))
         self.assertFalse((work / "out.mp4").exists())
+        if hasattr(os, "mkfifo"):  # a pipe is refused before anything opens it (an open would block)
+            fifo = work / "pipe.mp4"
+            if not fifo.exists():
+                os.mkfifo(fifo)
+            proc = tool("probe", fifo, "--json", check=False)
+            self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "media_path_not_a_file")
         proc = tool("fit", self.src, "--aspect", "1:1", "-o=-report", "--json", check=False, cwd=work)
         err = json.loads(proc.stdout)["error"]
         self.assertEqual((err["kind"], err["reason"]), ("input", "output_looks_like_option"))
