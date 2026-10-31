@@ -427,6 +427,21 @@ class AnalysisTests(MediaFixtures):
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual({r["check"]: r["status"] for r in doc["checks"]}["identity"], "FAIL")
         self.assertEqual(doc["input_identity"]["size"], out.stat().st_size)
+        # a file replaced while it was being measured fails, even when the second read matches
+        import contextlib, io
+        from unittest import mock
+        first = {"size": 1, "mtime_ns": 1}
+        now = {"size": out.stat().st_size, "mtime_ns": out.stat().st_mtime_ns}
+        argv = ["check.py", str(out), "--platform", "custom", "--no-loudness", "--expect-identity",
+                f"{now['size']}:{now['mtime_ns']}", "--json"]
+        buf = io.StringIO()
+        with mock.patch.object(check_module, "file_identity", side_effect=[first, now]), \
+                mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(buf), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                check_module.main()
+        row = {r["check"]: r for r in json.loads(buf.getvalue())["checks"]}["identity"]
+        self.assertEqual((row["status"], row["reason"]), ("FAIL", "the file changed while it was being checked"), row)
         # a dry run reads the file that exists, so the identity row is there under --dry-run too
         self.assertEqual(self._rows(out, "--no-loudness", "--expect-identity", expect, "--dry-run")["identity"]["status"], "FAIL")
 

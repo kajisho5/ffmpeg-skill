@@ -391,16 +391,21 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                    hint="drop --copy, or re-cut those clips with cut.py --accurate", clips=[{"path": p, "differs": {"edit_list": True}} for p in hidden])
         gaps = []
         for p, m in zip(args.inputs, metas):
-            # where each stream ends on the clip's timeline: its start plus its length
+            # each stream's start, and its end (start plus length) where the container states one;
+            # Matroska/WebM give no stream length, but the starts still have to agree
             vs, as_ = m.get("video") or {}, m.get("audio") or {}
+            if not (vs and as_):
+                continue
+            vb, ab = float(vs.get("start_time") or 0.0), float(as_.get("start_time") or 0.0)
             vd, ad = vs.get("duration"), as_.get("duration")
-            if vd and ad:
-                vb, ab = float(vs.get("start_time") or 0.0), float(as_.get("start_time") or 0.0)
-                if abs(vb - ab) > COPY_AV_GAP or abs((vb + vd) - (ab + ad)) > COPY_AV_GAP:
-                    gaps.append({"path": p, "video": [round(vb, 3), round(vb + vd, 3)], "audio": [round(ab, 3), round(ab + ad, 3)]})
+            ve, ae = (vb + vd if vd else None), (ab + ad if ad else None)
+            if abs(vb - ab) > COPY_AV_GAP or (ve is not None and ae is not None and abs(ve - ae) > COPY_AV_GAP):
+                gaps.append({"path": p, "video": [round(vb, 3), None if ve is None else round(ve, 3)],
+                             "audio": [round(ab, 3), None if ae is None else round(ae, 3)]})
         if gaps:
-            listing = "; ".join(f"{g['path']} (video {g['video'][0]:.3f}-{g['video'][1]:.3f}s, "
-                                f"audio {g['audio'][0]:.3f}-{g['audio'][1]:.3f}s)" for g in gaps)
+            def span(x):
+                return f"{x[0]:.3f}-" + ("?" if x[1] is None else f"{x[1]:.3f}") + "s"
+            listing = "; ".join(f"{g['path']} (video {span(g['video'])}, audio {span(g['audio'])})" for g in gaps)
             refuse("input", "join_copy_mismatch",
                    f"--copy: picture and sound start or end more than {COPY_AV_GAP * 1000:.0f} ms apart in {listing}; a copy join "
                    "would leave that gap at the next clip", hint="drop --copy, which trims both streams to one length",

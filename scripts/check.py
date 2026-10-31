@@ -147,6 +147,8 @@ def main() -> int:
     if args.max_mb is not None:
         spec["max_bytes"] = int(args.max_mb * 1024 * 1024)
 
+    # read before anything is measured and again after: a file replaced mid-check is not the one graded
+    identity_before = None if dry_run_input_pending(args.input) else file_identity(args.input)
     meta = probe(args.input)
     v, a = meta.get("video") or {}, meta.get("audio") or {}
     rows: List[Dict[str, Any]] = []
@@ -367,10 +369,16 @@ def main() -> int:
         except ValueError:
             die(f"--expect-identity takes SIZE:MTIME_NS from a tool's output_identity, got {args.expect_identity!r}")
         if identity is not None:
-            same = identity == {"size": size, "mtime_ns": mtime_ns}
+            changed = identity != identity_before
+            same = identity == {"size": size, "mtime_ns": mtime_ns} and not changed
             row("identity", "PASS" if same else "FAIL", f"{identity['size']}:{identity['mtime_ns']}", f"{size}:{mtime_ns}",
                 "" if same else "re-run the tool that writes this file and check what it reports, not what the path holds",
-                reason="" if same else "the file at this path is not the one the run being checked wrote")
+                reason="" if same else ("the file changed while it was being checked" if changed
+                                        else "the file at this path is not the one the run being checked wrote"))
+        elif not dry_run_input_pending(args.input):
+            row("identity", "FAIL", "no regular file at this path", f"{size}:{mtime_ns}",
+                "re-run the tool that writes this file and check what it reports, not what the path holds",
+                reason="the file at this path is not the one the run being checked wrote")
     if args.compare and not dry_run_input_pending(args.input) and not dry_run_input_pending(args.compare):
         ref = probe(args.compare)
         rv = ref.get("video") or {}

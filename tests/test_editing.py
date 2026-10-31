@@ -1182,6 +1182,12 @@ class EditingTests(MediaFixtures):
            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-fps_mode", "passthrough", offset)
         proc = script("join.py", clips[0], offset, "--copy", "--transition", "none", "-o", OUT / "copy_offset.mp4", "--json", expect_fail=True)
         self.assertIn("start or end", json.loads(proc.stdout)["error"]["message"])
+        # Matroska states no stream length, but a start gap is still caught
+        mk_ok, mk_late = OUT / "copy_ok.mkv", OUT / "copy_late_picture.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", clips[0], "-c", "copy", mk_ok)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", offset, "-c", "copy", mk_late)
+        proc = script("join.py", mk_ok, mk_late, "--copy", "--transition", "none", "-o", OUT / "copy_offset.mkv", "--json", expect_fail=True)
+        self.assertIn("start or end", json.loads(proc.stdout)["error"]["message"])
         # a cover picture between the video and the sound moves the audio to another stream index
         cover_img = OUT / "copy_cover.png"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=32x32", "-frames:v", "1", cover_img)
