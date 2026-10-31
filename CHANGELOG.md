@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.1
+
+_Automated release: version and notes generated from pull requests merged since 3.1.0._
+
 ### Changed
 
 - The GitHub Pages site opens on a landing page (`site/index.html`, one static HTML file in the
@@ -22,6 +28,8 @@
   of the language asked for (English under auto) is now passed as the initial prompt (whisper.cpp
   `--prompt`, faster-whisper `initial_prompt`, openai-whisper `--initial_prompt`). On the new demo
   clip, faster-whisper base found neither hesitation without it and both with it.
+- Prime Whisper with the filler list; two demos from AI-generated footage (#391)
+- Pages: open on a landing page instead of a copy of the README (#390)
 
 ## 3.1.0
 
