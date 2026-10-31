@@ -724,7 +724,7 @@ def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[
         "hw": [os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on"), os.environ.get(HW_FORCED_ENV) == "1"],
         "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
     }
-    return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode(), usedforsecurity=False).hexdigest()
 
 
 def _cache_miss(stage: str, reason: str, **facts: Any) -> bool:

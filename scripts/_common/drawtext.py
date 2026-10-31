@@ -60,7 +60,7 @@ def drawtext_fontfile(path: str) -> str:
     st = os.stat(path)
     # the path plus size and mtime: a font replaced in place during the run gets a new copy
     key = f"{path}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8")
-    name = "font_" + hashlib.sha1(key).hexdigest()[:16] + os.path.splitext(path)[1].lower()
+    name = "font_" + hashlib.sha1(key, usedforsecurity=False).hexdigest()[:16] + os.path.splitext(path)[1].lower()
     copy = os.path.join(tmpdir, name)
     if not copy.isascii():
         warn(f"font: {path} is not an ASCII path and no ASCII copy could be placed; drawtext may "

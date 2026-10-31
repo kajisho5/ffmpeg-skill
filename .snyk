@@ -1,0 +1,11 @@
+# Snyk (https://snyk.io) policy file
+#
+# Snyk Code skips folders that are never shipped: package.json "files" publishes bin/, scripts/,
+# templates/, mcp/ and a few docs, so tests/, evals/ and demos/ never reach a user's machine and
+# their findings (fixture paths, test-corpus downloads, the eval harness's own regexes) are noise.
+# .github/ stays scanned on purpose: its scripts run in CI with the release secrets.
+exclude:
+  code:
+    - tests/**
+    - evals/**
+    - demos/**
