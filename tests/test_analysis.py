@@ -497,7 +497,12 @@ class AnalysisTests(MediaFixtures):
         short, rgb, side, upright = (OUT / n for n in ("compare_short.mp4", "compare_rgb.mkv", "compare_side.mp4", "compare_upright.mp4"))
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ref, "-t", "1.5", "-c", "copy", short)
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ref, "-c:v", "libx264rgb", "-crf", "0", "-an", rgb)
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", ref, "-c", "copy", side)
+        # -display_rotation is FFmpeg 6.0+; 5.x writes the same display matrix from the rotate tag
+        rotated = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", str(ref),
+                                  "-c", "copy", str(side)], capture_output=True)
+        if rotated.returncode != 0:
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ref, "-c", "copy", "-metadata:s:v:0", "rotate=90", side)
+        self.assertIn(abs(int(probe(str(side))["video"].get("rotation") or 0)), (90, 270))
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", side, "-c:v", "libx264", "-crf", "0", "-an", upright)
         row = self._rows(short, "--no-loudness", "--compare", ref)["similarity"]
         self.assertEqual(row["status"], "PASS", row)

@@ -1251,7 +1251,8 @@ class EditingTests(MediaFixtures):
         sys.path.insert(0, str(SCRIPTS))
         import join as join_mod
         from unittest import mock
-        with mock.patch.object(join_mod, "run", return_value=subprocess.CompletedProcess([], 0, "0.000000,0.033\nN/A,0.033\n", "")):
+        packets = json.dumps({"packets": [{"pts_time": "0.000000", "duration_time": "0.033"}, {"duration_time": "0.033"}]})
+        with mock.patch.object(join_mod, "run", return_value=subprocess.CompletedProcess([], 0, packets, "")):
             self.assertIsNone(join_mod._stream_span("x.mkv", "V"))
         subs = []
         for src in (a, b):

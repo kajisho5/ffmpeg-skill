@@ -349,18 +349,23 @@ def _stream_span(path: str, kind: str) -> "Optional[Tuple[float, float]]":
     """First packet's time and last packet's time plus its duration for the first `kind` stream
     (V or a): measured, because Matroska/WebM state no stream length and MPEG-TS only an estimate.
     None when the packets cannot be read or one has no time: a partial span would invent a gap."""
+    # JSON, not csv: older ffprobe builds (5.1) print side-data rows between the packet rows in csv
     proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", f"{kind}:0", "-show_entries",
-                "packet=pts_time,duration_time", "-of", "csv=p=0", path], quiet=True, check=False)
+                "packet=pts_time,dts_time,duration_time", "-of", "json", path], quiet=True, check=False)
+    try:
+        packets = json.loads(proc.stdout or "{}").get("packets") or [] if proc.returncode == 0 else []
+    except ValueError:
+        return None
     times = []
-    for line in (proc.stdout or "").splitlines() if proc.returncode == 0 else []:
-        parts = line.strip().split(",")
+    for pkt in packets:
         try:
-            t = float(parts[0])
-        except (ValueError, IndexError):
+            # a packet ffprobe gives no pts (some muxers leave it on B-frames) still has its dts
+            t = float(pkt.get("pts_time", pkt.get("dts_time")))
+        except (TypeError, ValueError):
             return None
         try:
-            d = float(parts[1])
-        except (ValueError, IndexError):
+            d = float(pkt.get("duration_time") or 0.0)
+        except (TypeError, ValueError):
             d = 0.0
         times.append((t, t + d))
     if not times:
