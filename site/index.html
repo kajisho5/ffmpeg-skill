@@ -207,6 +207,11 @@ section.blk{padding:112px 0}
 
 /* Demos */
 .demos{list-style:none;display:grid;gap:32px;margin-top:48px}
+.reel{list-style:none;display:grid;gap:32px;margin-top:48px}
+@media(min-width:900px){.reel{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.reel video{display:block;width:100%;height:auto;border-radius:14px;border:1px solid var(--line);background:#000}
+.reel code{display:block;margin-top:14px;font-size:13px;line-height:20px;overflow-wrap:anywhere}
+.reel span{display:block;margin-top:4px;font-size:14px;line-height:20px;color:var(--slate)}
 @media(min-width:700px){.demos{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(min-width:1100px){.demos{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .demos a{display:block;text-decoration:none;min-width:0}
@@ -383,10 +388,14 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
   <div class="wrap">
     <p class="eyebrow" data-i="nav.demos">Demos</p>
     <h2 class="h2 dotted" id="demos-h" data-i="demos.h">Left is the input. Right is what the command produced.</h2>
-    <p class="lede"><span data-i="demos.p1">Every demo is generated from synthetic footage by </span><code>demos/build.py</code><span data-i="demos.p2">, so you can rebuild every frame yourself.</span></p>
+    <p class="lede"><span data-i="demos.p1">The two videos run the tools on AI-generated footage; the previews below are generated from synthetic footage. All of it is rebuilt by </span><code>demos/build.py</code><span data-i="demos.p2">, so you can make every frame yourself.</span></p>
+    <ul class="reel">
+      <li><video src="media/reframe_talk.mp4" poster="media/reframe_talk.jpg" width="1280" height="432" controls muted loop playsinline preload="metadata" aria-label="A talking-head clip reframed from 16:9 to 9:16 with the speaker kept in frame, side by side (AI-generated footage)"></video><code>fit.py --aspect 9:16 --fit crop --crop-x 0.27</code><span data-i="v1">Real speech, made vertical: the crop follows the speaker, not the centre. AI-generated footage.</span></li>
+      <li><video src="media/filler_en.mp4" poster="media/filler_en.jpg" width="854" height="480" controls playsinline preload="metadata" aria-label="English speech with two filler words, then the same speech with them cut (AI-generated footage)"></video><code>silence.py --filler --transcribe</code><span data-i="v2">Turn the sound on: "er" and "um" play, then they are gone. AI-generated footage.</span></li>
+    </ul>
     <ul class="demos">
       <li><a href="docs/demos.html"><img src="docs/demos/captions_pop_karaoke.gif" alt="Animated captions with a karaoke highlight, before and after" width="480" height="136" loading="lazy"><code>caption.py --animate pop --karaoke</code><span data-i="d1">Animated captions with a karaoke highlight</span></a></li>
-      <li><a href="docs/demos.html"><img src="docs/demos/reframe_talk.gif" alt="A talking-head clip reframed from 16:9 to 9:16 with the speaker kept in frame, before and after (AI-generated footage)" width="480" height="136" loading="lazy"><code>fit.py --aspect 9:16 --fit crop --crop-x 0.27</code><span data-i="d2">16:9 to 9:16, speaker kept in frame (AI-generated footage)</span></a></li>
+      <li><a href="docs/demos.html"><img src="docs/demos/reframe_crop.gif" alt="16:9 footage reframed to 9:16, before and after" width="480" height="136" loading="lazy"><code>fit.py --aspect 9:16 --fit crop</code><span data-i="d2">16:9 reframed to 9:16</span></a></li>
       <li><a href="docs/demos.html"><img src="docs/demos/silence_removal.gif" alt="Silence removed, before and after" width="480" height="136" loading="lazy"><code>silence.py --threshold -35</code><span data-i="d3">Silence removed, timeline shorter</span></a></li>
       <li><a href="docs/demos.html"><img src="docs/demos/loudness.gif" alt="Waveform before and after loudness normalisation" width="480" height="136" loading="lazy"><code>loudness.py -I -14 --tp -1</code><span data-i="d4">Waveform before and after normalisation</span></a></li>
       <li><a href="docs/demos.html"><img src="docs/demos/hdr_tonemap.gif" alt="HDR10 converted to SDR, before and after" width="480" height="136" loading="lazy"><code>color.py --to-sdr --tonemap hable</code><span data-i="d5">HDR10 to SDR</span></a></li>
@@ -552,8 +561,10 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
     "fl.h": "教えるのは、この手順", "fl.s": "どの作業も、この順番で",
     "fl.1": "測る", "fl.1s": "実際のファイルを調べる", "fl.2": "編集", "fl.2s": "できるだけ無劣化で", "fl.3": "検査", "fl.3s": "出す先の基準で", "fl.4": "確認", "fl.4s": "仕上がりを見る",
     "demos.h": "左が元の映像。右がコマンドの結果。",
-    "demos.p1": "どのデモも ", "demos.p2": " が合成した映像から作っているので、すべてのコマを自分で作り直せます。",
-    "d1": "カラオケ風に色が変わる、動く字幕", "d2": "16:9 を 9:16 に、話し手を残して切り出し（AI 生成の映像）", "d3": "無音をカットして尺が短く", "d4": "音量をそろえる前とあとの波形", "d5": "HDR10 を SDR に変換", "d6": "グリーンバックを生成した背景に合成",
+    "demos.p1": "上の 2 本の動画は AI 生成の映像に、下のプレビューは合成した映像にツールをかけたものです。どれも ", "demos.p2": " で作り直せるので、すべてのコマを自分で再現できます。",
+    "v1": "実際の話し声の映像を縦長に。切り抜きは中央ではなく話し手に合わせています。AI 生成の映像です。",
+    "v2": "音を出して聞いてください。「er」「um」が入った声のあとに、それを切った声が流れます。AI 生成の映像です。",
+    "d1": "カラオケ風に色が変わる、動く字幕", "d2": "16:9 を 9:16 に切り出し", "d3": "無音をカットして尺が短く", "d4": "音量をそろえる前とあとの波形", "d5": "HDR10 を SDR に変換", "d6": "グリーンバックを生成した背景に合成",
     "demos.more": "すべてのビフォー・アフターと、その正確なコマンド",
     "how.h": "当て推量を、やめさせる。",
     "how.p": "「FFmpeg を知っている」AI でも、実は推測しています。フレームレートを決めつけ、コンテナに入らないコーデックを選び、ストリームコピーで済むファイルを再エンコードし、結果を開かずに「できました」と報告します。",
