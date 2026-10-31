@@ -1964,7 +1964,8 @@ def main() -> int:
         if d["ok"]:
             return 0
         # 1: something required is missing; 2: nothing proven missing but a required capability is unknown
-        return 1 if d["missing"] else 2
+        # an unsupported Python/FFmpeg is a known failure, like a missing capability (not "unknown")
+        return 1 if d["missing"] or d.get("unsupported") else 2
     print(json.dumps(build(detect=not args.static), indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

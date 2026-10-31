@@ -3018,7 +3018,7 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(doc["loudness"]["ok"]); self.assertNotIn("notes", doc)
         doc = json.loads(tool("export", self.src, "--preset", "x", "--dry-run", "--json", "-o", self.out("e6_xd.mp4")).stdout)
         self.assertNotIn("loudness", doc)
-        doc = json.loads(tool("cut", self.src, "--start", "2", "--end", "4", "--fast", "--json", "-o", self.out("e6_cut.mp4")).stdout)
+        doc = json.loads(tool("cut", self.src, "--start", "2", "--end", "4", "--fast", "--no-edit-list", "--json", "-o", self.out("e6_cut.mp4")).stdout)
         self.assertEqual(doc["mode"], "hybrid")
         self.assertIn("--start 0.000", doc["lossless_alternative"])
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "2", "--json", "-o", self.out("e6_cut0.mp4")).stdout)

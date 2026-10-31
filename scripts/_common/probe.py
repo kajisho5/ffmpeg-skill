@@ -434,7 +434,7 @@ def measure_frame_timing(path: str, duration: Optional[float], start: float = 0.
     time_base = None
     for i, t in enumerate(timing_window_starts(duration or 0.0, start)):
         proc = run([ffprobe, "-v", "error", "-select_streams", "V:0", "-show_packets",
-                    "-show_entries", "packet=pts,dts:stream=time_base", "-of", "json",
+                    "-show_entries", "packet=pts,dts,flags:stream=time_base", "-of", "json",
                     "-read_intervals", f"{t if i else ''}%{t + TIMING_WINDOW_SECONDS:.3f}", path], quiet=True, check=False)
         try:
             doc = json.loads(proc.stdout) if proc.returncode == 0 else None
@@ -444,8 +444,16 @@ def measure_frame_timing(path: str, duration: Optional[float], start: float = 0.
             return {"measured": "inconclusive", "windows": len(windows), "deltas": 0}
         time_base = time_base or ((doc.get("streams") or [{}])[0] or {}).get("time_base")
         tick = float(_fraction(str(time_base)) or 0) if time_base else 0.0
-        windows.append([p for p in complete_pts(doc.get("packets") or [])
-                        if isinstance(p, int) and p * tick >= t - 1e-6])
+        packets = doc.get("packets") or []
+        floor = t - 1e-6
+        if i:
+            # a seek into MPEG-TS lands mid-GOP, not on a keyframe: a frame stored before the
+            # landing point is missing, which read as a dropped frame (a constant TS measured
+            # `vfr`). Judge a seeked window from its first keyframe's presentation on.
+            key = next((p.get("pts") for p in packets if "K" in str(p.get("flags", "")) and isinstance(p.get("pts"), int)), None)
+            if key is not None:
+                floor = max(floor, key * tick - 1e-6)
+        windows.append([p for p in complete_pts(packets) if isinstance(p, int) and p * tick >= floor])
     return classify_frame_timing(windows, time_base)
 
 

@@ -13,15 +13,16 @@ WAV), -o out.m4a writes AAC; an audio extension on a video input drops the
 picture (mp4 -> wav extraction). The result reports `precision`
 (packet / sample / codec_frame / frame) and the measured duration error, plus
 `mode` (copy / accurate / hybrid -- "hybrid" means a lossless cut silently
-re-encoded because the keyframe snap exceeded --tolerance), `keyframe_snapped`
-(a stream copy end to end), `start_snapped` (measured: a copied start moved past a frame),
+re-encoded because the keyframe snap exceeded --tolerance), `keyframe_snapped` and
+`start_snapped` (measured: a copied start moved past a frame; equal since 3.0.0),
 `reencode_reason`, `requested_start`/`requested_end` (or `requested_segments` for --segments),
 `requested_duration`, `output_duration` and `duration_delta_seconds` -- so a
 caller never has to trust "it probably cut where I asked" on faith.
 
-A single-segment .mp4/.mov copy shifts its timestamps to zero (-avoid_negative_ts
-make_zero), so the picture starts at the keyframe; --edit-list keeps the MP4 edit
-list instead, which hides the keyframe's pre-roll so the picture starts at --start.
+A single-segment .mp4/.mov copy keeps the MP4 edit list (the default since 3.0.0),
+which hides the keyframe's pre-roll so the picture starts at --start; --no-edit-list
+shifts its timestamps to zero instead (-avoid_negative_ts make_zero, every 2.x
+release's default), so the picture starts at the keyframe.
 An --accurate re-encode of a video does not: make_zero moved the picture by the
 AAC priming (about 21 ms, and further when a B-frame's decode time is negative)
 while the sound stayed at 0. A start that lands on a frame keeps that frame at 0.
@@ -29,14 +30,16 @@ A start between frames begins on the next frame and may keep up to one frame of
 timestamp. The MP4 edit list hides the encoder priming, and a source whose audio
 starts late keeps that offset.
 
-A re-encode uses x264 for an SDR source and x265 Main10 for an HDR or BT.2020 one, as every
-editing tool does; --keep-hevc re-encodes an SDR HEVC source as HEVC (x265 8-bit BT.709, or
-VideoToolbox under --hw), so a trimmed phone clip keeps its codec. --codec overrides both.
+A re-encode keeps an SDR HEVC source HEVC (x265 8-bit BT.709, or VideoToolbox under --hw;
+the default since 3.0.0), so a trimmed phone clip keeps its codec; --no-keep-hevc uses x264
+as every 2.x release did. Other SDR sources get x264 and an HDR or BT.2020 one x265 Main10,
+as every editing tool does. --codec overrides all of these.
 
-A source whose nominal and average frame rates differ is taken for variable-frame-rate and
-re-encoded, as --accurate (--vfr-guard average, the default); its sampled packet timing is
-reported in `vfr_check`. --vfr-guard sampled re-encodes only when that sampled timing is
-variable or too short to judge, and --vfr-guard off keeps the copy with a note.
+The VFR guard samples a video's packet timing (`vfr_check`) and re-encodes, as --accurate,
+only when it is variable or too short to judge (--vfr-guard sampled, the default since
+3.0.0). --vfr-guard average is every 2.x release's: a source whose nominal and average frame
+rates differ is taken for variable-frame-rate and re-encoded. --vfr-guard off keeps the copy
+with a note.
 
 Examples:
   python3 cut.py input.mp4 --start 00:00:10 --end 00:00:25

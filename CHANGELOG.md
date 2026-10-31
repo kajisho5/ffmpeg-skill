@@ -44,6 +44,12 @@ the waiver is written in `docs/contract.md`.
   join of copied and re-encoded parts. `keyframe_snapped` equals `start_snapped`: true only when a
   copied start really moved, `null` under `--dry-run` (2.x: true for every stream copy end to end).
 
+### Fixed
+
+- `cut.py --vfr-guard sampled` (now the default) measured a constant-frame-rate MPEG-TS as
+  variable and re-encoded it: a seek into TS lands mid-GOP, and the frame stored before the
+  landing point read as a dropped frame. A seeked window is judged from its first keyframe on.
+
 ## 2.24.1
 
 _Automated release: version and notes generated from pull requests merged since 2.24.0._

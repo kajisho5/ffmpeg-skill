@@ -279,10 +279,10 @@ def require_tool(name: str) -> str:
         if found != (0, 0) and found < MIN_FFMPEG:
             system = platform.system()
             hint = INSTALL_HINTS.get(system, "  See https://ffmpeg.org/download.html")
-            die(f"FFmpeg {found[0]}.{found[1]} is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
-                f"2.14.0): use FFmpeg 6.1+. Install it for {system}:\n{hint}",
-                code=127, kind="missing_tool",
-                error_extra={"reason": "ffmpeg_unsupported", "details": {"version": f"{found[0]}.{found[1]}", "required": "6.1"}})
+            refuse("missing_tool", "ffmpeg_unsupported",
+                   f"FFmpeg {found[0]}.{found[1]} is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
+                   f"2.14.0): use FFmpeg 6.1+. Install it for {system}:\n{hint}",
+                   code=127, version=f"{found[0]}.{found[1]}", required="6.1")
     if path:
         return path
     system = platform.system()

@@ -220,8 +220,8 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(data["mode"], "copy")
         self.assertEqual(data["reencode_reason"], [])
         self.assertTrue(data["edit_list"])
-        self.assertTrue(data["keyframe_snapped"], "a stream copy end to end")
         self.assertFalse(data["start_snapped"])
+        self.assertIs(data["keyframe_snapped"], data["start_snapped"], "3.0: keyframe_snapped is start_snapped")
         self.assertAlmostEqual(data["stored_preroll_seconds"], 0.3, places=3, msg="4.3 s back to the keyframe at 4.0")
         self.assertIn("edit list", " ".join(data["notes"]))
         self.assertLessEqual(abs(data["av_start_skew_seconds"]), 1 / FPS)
@@ -242,18 +242,23 @@ class CutJoinTests(unittest.TestCase):
         self.assertIsNone(data["start_snapped"], "a planned copy has not landed anywhere yet")
         self.assertEqual(data["commands"][0].count("-avoid_negative_ts"), 0)
 
-    def test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for(self):
-        """The default is every 2.x release's: -avoid_negative_ts make_zero, no edit list, so the
-        picture starts at the keyframe and the report says the start moved. The A/V start skew
-        this can leave is reported, not repaired, and the note names both remedies."""
-        data = cut_json(self.hevc, "--start", "4.3", "--duration", "2", "--dry-run", "-o", DIR / "never.mp4")
+    def test_an_mp4_copy_keeps_its_edit_list_by_default_and_shifts_to_zero_under_no_edit_list(self):
+        """3.0.0: the edit list is the default (the picture starts where asked); --no-edit-list is
+        every 2.x release's -avoid_negative_ts make_zero, so the picture starts at the keyframe and
+        the report says the start moved. The A/V start skew this can leave is reported, not
+        repaired, and the note names both remedies."""
+        default = cut_json(self.hevc, "--start", "4.3", "--duration", "2", "--dry-run", "-o", DIR / "never.mp4")
+        self.assertTrue(default["edit_list"])
+        self.assertEqual(default["commands"][0].count("-avoid_negative_ts"), 0)
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "2", "--dry-run", "--no-edit-list", "-o", DIR / "never.mp4")
         self.assertIn("-avoid_negative_ts make_zero", data["commands"][0])
         self.assertFalse(data["edit_list"])
         self.assertIsNone(data["stored_preroll_seconds"])
-        out = DIR / "copy_4.3_default.mp4"
-        data = cut_json(self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "-1", "-o", out)
+        out = DIR / "copy_4.3_make_zero.mp4"
+        data = cut_json(self.hevc, "--start", "4.3", "--duration", "3", "--tolerance", "-1", "--no-edit-list", "-o", out)
         self.assertEqual((data["mode"], data["edit_list"], data["stored_preroll_seconds"]), ("copy", False, None))
         self.assertTrue(data["start_snapped"], "the picture starts at the keyframe at 4.0, 0.3 s early")
+        self.assertTrue(data["keyframe_snapped"])
         self.assertFalse(any("pre-roll is stored" in n for n in data["notes"]), data["notes"])
         self.assertFrameExact(gray_frames(out)[0], 120, "make_zero shows the keyframe's pre-roll")
         skew = data["av_start_skew_seconds"]
@@ -363,14 +368,14 @@ class CutJoinTests(unittest.TestCase):
     def test_judging_a_copy_by_its_video_is_noted_even_when_it_then_reencodes(self):
         """The late-audio source's container outlasts its video by 0.379 s, so an edit-listed copy
         is judged by the video; that explanation survives the tolerance re-encode that follows
-        (--tolerance 0 re-encodes every copy, since abs(delta) >= 0). Without --edit-list the copy
+        (--tolerance 0 re-encodes every copy, since abs(delta) >= 0). Under --no-edit-list the copy
         is judged by the container, as in every 2.x release."""
         # to the end of the file, where the late audio runs 0.379 s past the video
         data = cut_json(self.late, "--start", "0.5", "--tolerance", "0", "--edit-list",
                         "-o", DIR / "late_judged.mp4")
         self.assertIn("tolerance", data["reencode_reason"])
         self.assertTrue(any("judged by the video" in n for n in data["notes"]), data["notes"])
-        data = cut_json(self.late, "--start", "0.5", "--tolerance", "0", "-o", DIR / "late_judged_default.mp4")
+        data = cut_json(self.late, "--start", "0.5", "--tolerance", "0", "--no-edit-list", "-o", DIR / "late_judged_default.mp4")
         self.assertIn("tolerance", data["reencode_reason"])
         self.assertFalse(any("judged by the video" in n for n in data["notes"]), data["notes"])
 
@@ -426,9 +431,10 @@ class CutJoinTests(unittest.TestCase):
     def test_a_snapped_copy_is_compared_with_the_source_where_it_landed(self):
         """--start 0.3 snaps back to the keyframe at 0 and writes the copy --start 0 writes, sound
         0.379 s after the picture as in the source there: no note. It was compared with the source
-        at 0.3 s and told it began on packets the streams do not share."""
-        a = cut_json(self.late, "--start", "0", "--end", "4", "-o", DIR / "late_from0.mp4")
-        b = cut_json(self.late, "--start", "0.3", "--end", "4", "-o", DIR / "late_from03.mp4")
+        at 0.3 s and told it began on packets the streams do not share. (--no-edit-list: with the
+        3.0 default edit list the start does not snap at all.)"""
+        a = cut_json(self.late, "--start", "0", "--end", "4", "--no-edit-list", "-o", DIR / "late_from0.mp4")
+        b = cut_json(self.late, "--start", "0.3", "--end", "4", "--no-edit-list", "-o", DIR / "late_from03.mp4")
         self.assertEqual((b["mode"], b["start_snapped"]), ("copy", True))
         self.assertAlmostEqual(a["av_start_skew_seconds"], b["av_start_skew_seconds"], delta=0.001)
         self.assertFalse(any("do not share" in n for n in a["notes"] + b["notes"]), (a["notes"], b["notes"]))
@@ -519,15 +525,19 @@ class CutJoinTests(unittest.TestCase):
         self.assertIn("codec", data["reencode_reason"])
         self.assertEqual(probe(str(out))["video"]["codec"], "h264")
 
-    def test_a_reencoded_cut_of_an_sdr_hevc_source_is_h264_unless_keep_hevc_is_asked_for(self):
-        """The 2.x default, pinned: a re-encode of an SDR source is x264 whatever its codec (as on
-        main); --keep-hevc is opt-in. The dry run plans the same encoders the real runs use."""
+    def test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc_unless_no_keep_hevc(self):
+        """3.0.0: a re-encode of an SDR HEVC source stays HEVC by default; --no-keep-hevc gives
+        every 2.x release's x264, and --keep-hevc is still accepted. The dry run plans the same
+        encoders the real runs use."""
         out = DIR / "accurate_hevc_default.mp4"
         data = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--preset", "ultrafast", "-o", out)
         self.assertEqual(data["reencode_reason"], ["requested"])
-        self.assertEqual(probe(str(out))["video"]["codec"], "h264")
+        self.assertEqual(probe(str(out))["video"]["codec"], "hevc")
         self.assertEqual(stderr_of_decode(out), "")
         plan = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--dry-run", "-o", DIR / "plan_hevc.mp4")
+        self.assertIn("libx265", " ".join(plan["commands"]))
+        plan = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--no-keep-hevc", "--dry-run",
+                        "-o", DIR / "plan_hevc.mp4")
         self.assertIn("libx264", " ".join(plan["commands"]))
         self.assertNotIn("libx265", " ".join(plan["commands"]))
         plan = cut_json(self.hevc, "--start", "4.3", "--duration", "1", "--accurate", "--keep-hevc", "--dry-run",
@@ -551,7 +561,7 @@ class CutJoinTests(unittest.TestCase):
         self.assertFalse(data["keyframe_snapped"])
         self.assertFalse(data["start_snapped"], "every segment was re-cut, so every start is where asked")
         self.assertEqual(stderr_of_decode(out), "")
-        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "the re-cut join is x264 unless --keep-hevc asks")
+        self.assertEqual(probe(str(out))["video"]["codec"], "hevc", "3.0: the re-cut join of an HEVC source stays HEVC")
         pts = frame_pts(out)
         self.assertEqual(len(pts), 60 + 57)
         deltas = [round(b - a, 4) for a, b in zip(pts, pts[1:])]
@@ -925,6 +935,9 @@ class CutJoinTests(unittest.TestCase):
             # the johnvansickle static ffprobe builds (5.1.1, 7.0.2) segfault on any MPEG-TS file
             self.skipTest("this ffprobe cannot read MPEG-TS")
         data = cut_json(ts, "--segments", "0-2,4-6,8-10", "-o", DIR / "bf_noise_ts_join.mp4")
+        # 3.0.0: the default sampled guard measures a constant TS as constant (a seek into TS lands
+        # mid-GOP; the window used to count the frame it skipped as dropped and re-encode)
+        self.assertEqual(data["vfr_check"]["measured"], "sampled_cfr", data["vfr_check"])
         check = data["join_check"]
         self.assertIsNotNone(check, data["notes"])
         self.assertEqual(check["audio_parts_checked"], 3, check)
@@ -947,7 +960,7 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(cut.seek_keyframe(str(self.h264bf), 4.0)[0], 4.0)
         src = md5_frames(self.h264bf)
         out = DIR / "bf_3.99.mp4"
-        data = cut_json(self.h264bf, "--start", "3.99", "--end", "8", "--tolerance", "3", "-o", out)
+        data = cut_json(self.h264bf, "--start", "3.99", "--end", "8", "--tolerance", "3", "--no-edit-list", "-o", out)
         self.assertEqual(data["mode"], "copy")
         self.assertEqual(md5_frames(out)[0], src[60], "the copy begins at the keyframe at 2.0")
         self.assertTrue(data["start_snapped"])
@@ -1981,28 +1994,39 @@ class VfrGuardTests(unittest.TestCase):
         self.assertEqual(accurate["reencode_reason"], ["requested"])
 
 
-    # ---- the default, --vfr-guard average: 2.5.1's guard, with the sample reported
+    # ---- --vfr-guard average: 2.5.1's guard (every 2.x release's default), with the sample reported
 
-    def test_a_short_constant_clip_copies_by_default(self):
+    def test_the_default_guard_is_sampled(self):
+        """3.0.0: --vfr-guard defaults to sampled, so the suspected-but-constant source copies and a
+        dropped-frame source re-encodes on the measured timing."""
+        data = cut_json(self.fp, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "vfr_fp_default_plan.mp4")
+        self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"]), ("sampled_cfr", "sampled"))
+        self.assertEqual(data["reencode_reason"], [])
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "never_vfr_default.mp4")
+        self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"], data["reencode_reason"]),
+                         ("vfr", "sampled", ["vfr"]))
+
+    def test_a_short_constant_clip_copies_under_average(self):
         """2.5.1 copied it; the sampled guard re-encodes it (11 intervals, 20 needed to judge)."""
         self.assertFalse(probe(str(self.short))["video"]["variable_frame_rate_suspected"])
-        data = cut_json(self.short, "--start", "0", "--duration", "0.3", "-o", DIR / "vfr_short_default.mp4")
+        data = cut_json(self.short, "--start", "0", "--duration", "0.3", "--vfr-guard", "average", "-o", DIR / "vfr_short_default.mp4")
         self.assertEqual((data["mode"], data["reencode_reason"], data["precision"]), ("copy", [], "packet"))
         self.assertNotIn("vfr_check", data, "the average check passed it, so nothing is sampled")
 
-    def test_a_suspected_but_constant_source_reencodes_by_default_and_says_sampled_would_copy(self):
-        """2.5.1 re-encoded it, and still does; the sample shows the timing is constant, and the
-        note names the guard that would have copied it."""
+    def test_a_suspected_but_constant_source_reencodes_under_average_and_says_sampled_would_copy(self):
+        """2.5.1 re-encoded it, and --vfr-guard average still does; the sample shows the timing is
+        constant, and the note names the guard that would have copied it."""
         out = DIR / "vfr_fp_default.mp4"
-        proc = script("cut.py", self.fp, "--start", "0", "--duration", "2", "-o", out, "--json")
+        proc = script("cut.py", self.fp, "--start", "0", "--duration", "2", "--vfr-guard", "average", "-o", out, "--json")
         self.assertIn("variable-frame-rate", proc.stderr)
         data = json.loads(proc.stdout)
         self.assertEqual((data["mode"], data["reencode_reason"], data["precision"]), ("accurate", ["vfr"], "frame"))
         self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"]), ("sampled_cfr", "average"))
         self.assertTrue(any("--vfr-guard sampled" in n for n in data["notes"]), data["notes"])
 
-    def test_a_dropped_frame_source_reencodes_by_default_without_the_note(self):
-        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--dry-run", "-o", DIR / "never_vfr_default.mp4")
+    def test_a_dropped_frame_source_reencodes_under_average_without_the_note(self):
+        data = cut_json(self.drop, "--start", "0", "--duration", "2", "--dry-run", "--vfr-guard", "average",
+                        "-o", DIR / "never_vfr_average.mp4")
         self.assertEqual(data["reencode_reason"], ["vfr"])
         self.assertEqual((data["vfr_check"]["measured"], data["vfr_check"]["guard"]), ("vfr", "average"))
         self.assertFalse(any("--vfr-guard" in n for n in data["notes"]), data["notes"])
