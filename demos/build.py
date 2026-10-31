@@ -1699,8 +1699,9 @@ INSPECTION = [
     ("check.py --content", "python3 scripts/check.py final.mp4 --platform youtube --content",
      "adds content rows to the platform check: black frames, frozen frames, the share of "
      "silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, "
-     "the mark of lost audio at a join). The dropouts row lists the first five gaps' times "
-     "and lengths; a row that does not pass names a fix."),
+     "the mark of lost audio at a join), single-frame flashes (one frame unlike both of its "
+     "neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the "
+     "first five times; a row that does not pass names a fix."),
     ("report.py", "python3 scripts/report.py --before raw.mov --after final.mp4 -o report.html",
      "a single self-contained HTML page: before/after contact sheets, loudness, the platform "
      "check table and the exact commands. It is a file to open, not a picture to embed here."),

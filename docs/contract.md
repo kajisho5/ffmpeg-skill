@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`2.22.5`) | any release |
+| `skill.version` | the npm / package.json version (`2.23.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -131,7 +131,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [{"what": "running on Python 3.9 (the requirements.python floor)", "since": "2.10.9", "replacement": "Python 3.10 or later; ...", "removed_in": "3.0.0", "where": "behaviour"},
                  {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "2.22.5", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "2.23.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only; 3.9 deprecated since 2.10.9, removed in 3.0.0; 3.10+ recommended)", "ffmpeg": ">=5.0 (5.x deprecated since 2.14.0, removed in 3.0.0; 6.1+ recommended)", "ffprobe": ">=5.0"},
@@ -206,7 +206,8 @@ rows carry `kind: format` (fix it) or `kind: judgement` (decide with the user).
 The `audio` row FAILs (WARN when no loudness target applies) when the track is present but silent (peak at or below -50 dBFS, from
 the loudness pass or, when loudness is skipped, one volumedetect pass). `check --content`
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
-from one decode pass, and `dropouts` (2.17) from one audio-only pass; without it the row set is unchanged.
+from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
+video-only pass and a one-frame decode; without it the row set is unchanged.
 `--compare REF` adds `similarity` (SSIM/PSNR against a reference) and `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). Thresholds:
 `docs/design-decisions.md` ("check.py --content").

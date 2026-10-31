@@ -13,6 +13,15 @@
 - **`join.py --copy --transition none` joins clips by stream copy, without re-encoding,** when they already match: the same codec, size, frame rate, pixel format, colour tags, sample rate and channels in the first video and audio stream, no edit-list pre-roll, and picture and sound ending within 50 ms in each clip. Anything else is refused before ffmpeg runs, naming each clip and what differs (`reason: join_copy_mismatch`). The join is measured before it replaces anything: its video packet count must equal the clips' total and its length their summed length.
 - **`cut.py --remove A-B,...` drops ranges and keeps the rest,** the inverse of `--segments`: overlapping ranges merge, a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused.
 
+## 2.23.0
+
+_Automated release: version and notes generated from pull requests merged since 2.22.5._
+
+### Added
+
+- **`check.py --content` reports single-frame flashes and a flat first frame.** `flashes` lists the times of frames that differ from both neighbours while the neighbours match each other (a stray frame left at a cut, a white or black frame at a join, a decode glitch); a hard cut, a cut away and back that holds two frames or more, and fast motion are not flashes. `first frame` WARNs when the first frame is one flat colour, which is what a feed's autoplay and preview show first. Both rows only WARN, because a camera flash, a strobe or a fade from black can be the edit. They cost one more video-only pass and a one-frame decode, and only with `--content`.
+- Add check.py --content rows for single-frame flashes and a flat first frame (#383)
+
 ## 2.22.5
 
 _Automated release: version and notes generated from pull requests merged since 2.22.4._

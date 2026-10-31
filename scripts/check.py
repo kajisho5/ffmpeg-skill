@@ -25,17 +25,21 @@ duration that is black: WARN > 10%, FAIL >= 95%), frozen (longest frozen span: W
 max(3 s, 30% of the duration), FAIL when the whole video is frozen) and silence (share
 below -50 dBFS: WARN > 50%, FAIL >= 95%); and, from one more audio-only pass (2.17),
 dropouts (gaps of digital silence, <= -80 dBFS for 20 ms to 1 s with sound on both sides:
-WARN when there is any). Without it the row set is unchanged.
+WARN when there is any); and, from one more video pass and a one-frame decode (2.23), flashes
+(single frames that differ from both neighbours while they match each other: WARN when there is
+any) and first frame (one flat colour, the frame a feed's autoplay shows first: WARN). Without it
+the row set is unchanged.
 """
 import argparse
 import json
 import re
 import sys
 from fractions import Fraction
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
-from _common.probe import COMPARE_SSIM_WARN, SILENT_PEAK_DBFS, compare_pictures, detect_content, measured_level_dbfs
+from _common.probe import (COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
+                           detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
 from _common.emit import file_identity
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
@@ -72,6 +76,22 @@ SILENCE_WARN, SILENCE_FAIL = 0.50, 0.95    # share of the duration below SILENT_
 STATE_NOTES: List[str] = []
 
 
+def flash_times(flashes: List[int], v: Dict[str, Any], meta: Dict[str, Any], pts: "Optional[List[float]]" = None) -> str:
+    """The flashes row's first five times on look.py's timeline (seconds from the container
+    start). A flash frame's own presentation time when `pts` has it (presentation_times(): exact,
+    gaps in the timestamps included); otherwise index / average rate plus the video's lead over
+    the container, marked "~" (approximate), and `frame N` when there is no frame rate either."""
+    origin = float(meta.get("start_time") or 0.0)
+    fps = float(v.get("fps") or 0.0)
+    lead = max(0.0, float(v.get("start_time") or 0.0) - origin)
+
+    def one(n: int) -> str:
+        if pts and n < len(pts):
+            return f"{max(0.0, pts[n] - origin):.2f}s"
+        return f"~{lead + n / fps:.2f}s" if fps else f"frame {n}"
+    return ", ".join(one(n) for n in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
+
+
 def _span_total(spans: Any) -> float:
     return sum(max(0.0, e - s) for s, e in spans)
 
@@ -95,7 +115,7 @@ def main() -> int:
     ap.add_argument("--max-mb", type=float, help="override max file size in MB")
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
-                    help="also check the content (one decode pass, plus an audio-only one): black, frozen, silence and dropouts rows")
+                    help="also check the content (one decode pass, plus an audio-only and a video-only one): black, frozen, silence, dropouts, flashes and first frame rows")
     ap.add_argument("--compare", metavar="REFERENCE",
                     help="also measure the picture against REFERENCE, frame by frame (SSIM and PSNR, one pass): a "
                          "similarity row, WARN when the mean SSIM is under 0.98, with the worst frame's time")
@@ -127,7 +147,8 @@ def main() -> int:
     v, a = meta.get("video") or {}, meta.get("audio") or {}
     rows: List[Dict[str, Any]] = []
 
-    JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution"}
+    # first frame / flashes: a fade from black or a strobe can be the edit, so neither is a mechanical fix
+    JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution", "first frame", "flashes"}
 
     def row(name: str, status: str, value: Any, expect: Any, fix: str = "", reason: str = "") -> None:
         # "format" rows are safe to fix mechanically; "judgement" rows change the content
@@ -294,6 +315,32 @@ def main() -> int:
                 f"longest {longest:.1f}s", f"<= {limit:.1f}s frozen",
                 "look.py the frozen span: a still title card is fine, a stuck decode is not",
                 reason="a picture that never changes is usually a stuck frame, not the edit")
+        if v and not dry_run_input_pending(args.input):  # a plan's not-yet-written input: no rows, as above
+            first = first_frame_stats(args.input)
+            if first is None:
+                row("first frame", "WARN", "could not measure", f"spread >= {CONTENT_FLAT_STD:g} (not one flat colour)",
+                    "look.py the first frame", reason="the first frame did not decode, so whether it is flat is unknown")
+            else:
+                mean, spread = first
+                flat = spread < CONTENT_FLAT_STD
+                row("first frame", "WARN" if flat else "PASS", f"luma {mean:.0f}, spread {spread:.1f}",
+                    f"spread >= {CONTENT_FLAT_STD:g} (not one flat colour)",
+                    "a fade from black is a choice; where autoplay or the preview shows the first frame, start on "
+                    "a picture (cut.py --start a few frames in, or move a title card to frame 0)" if flat else "",
+                    reason="a feed shows the first frame before anything plays, and a flat one reads as a broken upload" if flat else "")
+            flashes = detect_flashes(args.input)
+            pts = presentation_times(args.input, float(v.get("start_time") or 0.0)) if flashes else None
+            at = flash_times(flashes or [], v, meta, pts)
+            if flashes is None:
+                row("flashes", "WARN", "could not measure", "no single frame unlike both its neighbours",
+                    "look.py the video: no frame decoded, so nothing was compared",
+                    reason="the video did not decode, so whether it has flashes is unknown")
+            else:
+                row("flashes", "WARN" if flashes else "PASS", f"{len(flashes)}" + (f": {at}" if flashes else ""),
+                    "no single frame unlike both its neighbours",
+                    "look.py at those times: a stray frame at a cut or join is an edit error (re-cut with cut.py "
+                    "--accurate, or join.py again); a camera flash or a strobe in the footage is fine" if flashes else "",
+                    reason="one frame that matches neither neighbour is usually a frame left over at a cut, or a decode glitch" if flashes else "")
         if "silence" in cd and span:
             share = _span_total(cd["silence"]) / span
             row("silence", "FAIL" if share >= SILENCE_FAIL else ("WARN" if share > SILENCE_WARN else "PASS"),

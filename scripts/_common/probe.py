@@ -12,7 +12,7 @@ import re
 import statistics
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.emit import die
+from _common.emit import die, warn
 from _common.runner import STATE, dry_run_input_pending, require_tool, run, run_analysis
 
 
@@ -605,6 +605,15 @@ CONTENT_DROPOUT_MIN, CONTENT_DROPOUT_MAX = 0.02, 1.0   # seconds
 CONTENT_DROPOUT_EDGE = 0.05      # a gap this close to the start or end is a lead-in/out, not a dropout
 CONTENT_DROPOUT_PAD = 2.0        # zeros appended before the dropout pass; > MAX, so a tail that runs into it never counts
 
+# 2.23: a flash is one frame that differs from both of its neighbours while they match each other
+# (a stray frame from another shot, a white or black frame at a join, a decode glitch). Measured on
+# 64x36 grey frames as the mean absolute luma difference (0-255): moving footage stays at a few
+# units, a cut or a flash moves the whole frame by tens.
+CONTENT_FLASH_JUMP = 12.0        # both steps into and out of the frame are at least this
+CONTENT_FLASH_RETURN = 0.25      # ...and the frames either side differ by at most this share of the smaller step
+CONTENT_FLAT_STD = 4.0           # first frame: luma standard deviation (0-255) below this is one flat colour
+_DIFF_W, _DIFF_H = 64, 36
+
 _BLACK_RE = re.compile(r"black_start:\s*([0-9.]+)\s+black_end:\s*([0-9.]+)")
 _FREEZE_RE = re.compile(r"lavfi\.freezedetect\.freeze_(start|end):\s*([0-9.]+)")
 
@@ -619,7 +628,7 @@ def detect_content(path: str, duration: float, *, video: bool = True, audio: boo
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path]
     if video:
-        cmd += ["-map", "0:v:0", "-vf", f"blackdetect=d={CONTENT_MIN_SPAN}:pix_th={CONTENT_BLACK_PIX_TH},"
+        cmd += ["-map", "0:V:0", "-vf", f"blackdetect=d={CONTENT_MIN_SPAN}:pix_th={CONTENT_BLACK_PIX_TH},"
                 f"freezedetect=n={CONTENT_FREEZE_NOISE}:d={CONTENT_FREEZE_MIN}"]
     if audio:
         cmd += ["-map", "0:a:0", "-af", f"silencedetect=noise={SILENT_PEAK_DBFS:g}dB:d={CONTENT_SILENCE_MIN}"]
@@ -682,6 +691,83 @@ def _detect_dropouts(path: str, end: float) -> "List[Tuple[float, float]]":
             if inside and CONTENT_DROPOUT_MIN <= e - s <= CONTENT_DROPOUT_MAX:
                 gaps.append((s, e))
     return gaps  # a gap still open at the end is a tail, never a dropout
+
+
+def detect_flashes(path: str) -> "Optional[List[int]]":
+    """Frame indexes of single-frame flashes in the first video stream: frame n differs from n-1 and
+    from n+1 by at least CONTENT_FLASH_JUMP while n-1 and n+1 differ by at most
+    CONTENT_FLASH_RETURN of the smaller step. One video-only pass; ffmpeg reduces each frame to
+    three 16-bit numbers (|f[n]-f[n-1]| and the two clipped halves of f[n]-f[n-2]): 6 bytes a
+    frame in the captured output (1.3 MB for an hour at 60 fps), read in place. The caller turns an index into a time;
+    the comparison itself needs no frame rate. None when no frame decoded or the pass failed
+    (nothing was compared; a failure is also a flash_pass_failed warning)."""
+    if dry_run_input_pending(path):
+        return []
+    graph = (f"[0:V:0]scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray16le,split=3[a][b][c];"
+             "[a]tblend=all_mode=difference,scale=1:1:flags=area[d];"
+             "[b]tmix=frames=3:weights='-1 0 1':scale=1,scale=1:1:flags=area[p];"
+             "[c]tmix=frames=3:weights='1 0 -1':scale=1,scale=1:1:flags=area[q];"
+             "[d][p][q]hstack=inputs=3")
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                         "-filter_complex", graph, "-fps_mode", "passthrough", "-f", "rawvideo", "-"],
+                        check=False, text=False, record=True)
+    if proc.returncode != 0:
+        # an unmeasured row, not the end of the report: the other content rows stand
+        warn("flash detection failed: " + (proc.stderr.decode(errors="replace").strip().splitlines() or ["ffmpeg exited " + str(proc.returncode)])[-1][:300],
+             "flash_pass_failed")
+        return None
+    # tblend has no output for frame 0, so record r is frame r+1: a zero record in front puts
+    # every value at its own frame's index. passthrough keeps the rawvideo muxer from padding a
+    # constant rate, which repeated records over timestamp gaps (a repeat is a zero step, and a
+    # flash before a gap went unreported)
+    if len(proc.stdout) < 6:
+        return None
+    data = bytes(6) + proc.stdout
+    n = len(data) // 6
+
+    def record(i: int) -> "Tuple[float, float]":
+        """(|f[i] - f[i-1]|, |f[i] - f[i-2]|), 0-255; read from the buffer, never kept per frame."""
+        d, p, q = (int.from_bytes(data[i * 6 + k:i * 6 + k + 2], "little") / 256.0 for k in (0, 2, 4))
+        return d, p + q
+
+    flashes = []
+    into = record(1)[0] if n > 1 else 0.0
+    for i in range(1, n - 1):
+        out, back = record(i + 1)
+        if into >= CONTENT_FLASH_JUMP and out >= CONTENT_FLASH_JUMP and back <= CONTENT_FLASH_RETURN * min(into, out):
+            flashes.append(i)
+        into = out
+    return flashes
+
+
+def presentation_times(path: str, start: float) -> "List[float]":
+    """The presentation time of every frame of the first video stream (attached pictures
+    excluded), in order: its packets' pts sorted, those before the stream's own start (an edit
+    list's hidden pre-roll, never shown) dropped. From packets, so no decode. [] when unreadable,
+    also when one packet has no pts: skipping it would shift every later time onto the wrong frame."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "V:0", "-show_entries", "packet=pts_time",
+                "-of", "csv=p=0", path], quiet=True, check=False)
+    times = []
+    for line in (proc.stdout or "").split() if proc.returncode == 0 else []:
+        try:
+            times.append(float(line.split(",")[0]))
+        except ValueError:
+            return []
+    return sorted(t for t in times if t >= start - 1e-6)
+
+
+def first_frame_stats(path: str) -> "Optional[Tuple[float, float]]":
+    """(mean, standard deviation) of the first frame's luma, 0-255, at 64x36; None when it does
+    not decode or the input is a pending dry-run placeholder."""
+    if dry_run_input_pending(path):
+        return None
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                         "-map", "0:V:0", "-frames:v", "1", "-vf", f"scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray",
+                         "-f", "rawvideo", "-"], check=False, text=False, record=True)
+    px = list(proc.stdout[:_DIFF_W * _DIFF_H])
+    if proc.returncode != 0 or len(px) < _DIFF_W * _DIFF_H:
+        return None
+    return statistics.fmean(px), statistics.pstdev(px)
 
 
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")

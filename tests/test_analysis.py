@@ -16,6 +16,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _is_faststart, _no_fontconfig, png_size, script, sh  # noqa: E402
 from _common import default_font_file, font_for_script, probe  # noqa: E402
+import importlib  # noqa: E402
+content_probe = importlib.import_module("_common.probe")  # the module: `_common.probe` is also a function
+import check as check_module  # noqa: E402
 
 
 class AnalysisTests(MediaFixtures):
@@ -303,7 +306,8 @@ class AnalysisTests(MediaFixtures):
                "-f", "lavfi", "-i", tone + ",volume=enable='gte(t,2)':volume=0", "-t", "6",
                "-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac", mixed)
         r = self._rows(normal, "--content")
-        self.assertEqual([r[k]["status"] for k in ("black", "frozen", "silence", "dropouts")], ["PASS"] * 4, r)
+        self.assertEqual([r[k]["status"] for k in ("black", "frozen", "silence", "dropouts", "first frame", "flashes")],
+                         ["PASS"] * 6, r)
         self.assertEqual(self._rows(black, "--content")["black"]["status"], "FAIL")
         self.assertEqual(self._rows(frozen, "--content")["frozen"]["status"], "FAIL")
         self.assertEqual(self._rows(part, "--content")["frozen"]["status"], "WARN")
@@ -311,6 +315,99 @@ class AnalysisTests(MediaFixtures):
         r = self._rows(mixed, "--content")
         self.assertEqual((r["black"]["status"], r["silence"]["status"]), ("WARN", "WARN"), r)
 
+    def test_check_content_flashes_and_first_frame_rows(self):
+        """2.23: one frame unlike both neighbours (which match each other) is a flashes WARN with its
+        time; a hard cut, a cut away and back after several frames, and moving footage are not. A
+        first frame of one flat colour (a black lead-in) is a first-frame WARN. Fast motion, where every
+        frame jumps as far as a flash does, is not a flash because its frames never return. Neither row FAILs:
+        a strobe or a fade from black can be the edit."""
+        tone = "sine=frequency=440:sample_rate=48000"
+        moving = "testsrc2=size=160x90:rate=10"
+        flash = self._content_clip("content_flash.mp4", moving + ",drawbox=t=fill:color=white:enable='eq(n,15)'", tone)
+        away = self._content_clip("content_cut_away.mp4", moving + ",drawbox=t=fill:color=red:enable='between(n,15,18)'", tone)
+        cut = self._content_clip("content_hard_cut.mp4", moving + ",drawbox=t=fill:color=navy:enable='gte(n,30)'", tone)
+        lead = self._content_clip("content_black_lead.mp4", moving + ",drawbox=t=fill:color=black:enable='lt(n,3)'", tone)
+        # every frame jumps as far as a flash does, but never comes back: the neighbour rule keeps it out
+        whip = self._content_clip("content_whip.mp4", moving + ",scroll=horizontal=0.13", tone)
+        r = self._rows(flash, "--content")
+        self.assertEqual(r["flashes"]["status"], "WARN", r["flashes"])
+        self.assertTrue(r["flashes"]["value"].startswith("1: 1.50s"), r["flashes"])
+        self.assertIn("join", r["flashes"]["fix"])
+        self.assertEqual((r["flashes"]["kind"], r["first frame"]["kind"]), ("judgement", "judgement"))
+        for clip in (away, cut, lead, whip):
+            self.assertEqual(self._rows(clip, "--content")["flashes"]["status"], "PASS", clip)
+        # a timestamp gap right after the flash: the rawvideo muxer's constant-rate padding repeated
+        # records there, which hid this flash and reported two false ones 9 frames later
+        gap = OUT / "content_flash_gap.mkv"
+        if not gap.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               moving + ":duration=6,drawbox=t=fill:color=white:enable='eq(n,20)',setpts='if(gt(N,20),PTS+1/TB,PTS)'",
+               "-fps_mode", "passthrough", "-c:v", "libx264", "-pix_fmt", "yuv420p", gap)
+        r = self._rows(gap, "--content")
+        self.assertTrue(r["flashes"]["value"].startswith("1: "), r["flashes"])
+        self.assertEqual(content_probe.detect_flashes(str(gap)), [20])
+        # the gap comes before this flash: its row time is its own presentation time (4.0 s), not 30 / 10 fps
+        late = OUT / "content_flash_after_gap.mkv"
+        if not late.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               moving + ":duration=6,drawbox=t=fill:color=white:enable='eq(n,30)',setpts='if(gt(N,20),PTS+1/TB,PTS)'",
+               "-fps_mode", "passthrough", "-c:v", "libx264", "-pix_fmt", "yuv420p", late)
+        self.assertEqual(self._rows(late, "--content")["flashes"]["value"], "1: 4.00s")
+        r = self._rows(lead, "--content")
+        self.assertEqual(r["first frame"]["status"], "WARN", r["first frame"])
+        self.assertEqual(self._rows(cut, "--content")["first frame"]["status"], "PASS")
+        self.assertNotIn("flashes", self._rows(flash))  # opt-in: the default row set is unchanged
+
+    def test_check_flash_times_on_the_look_timeline(self):
+        """The flashes row's times: a flash frame's own presentation time from the container start
+        when it is known, else index / rate plus the video's lead marked "~", else `frame N`."""
+        meta = {"start_time": 0.5}
+        pts = [0.5 + i / 10 for i in range(20)] + [4.0 + i / 10 for i in range(20)]  # a 1.5 s gap after frame 19
+        self.assertEqual(check_module.flash_times([5, 25], {"fps": 10.0}, meta, pts), "0.50s, 4.00s")
+        self.assertEqual(check_module.flash_times([15], {"fps": 30.0, "start_time": 0.7}, meta), "~0.70s")
+        self.assertEqual(check_module.flash_times([15, 16], {"fps": None}, meta), "frame 15, frame 16")
+        self.assertTrue(check_module.flash_times(list(range(7)), {"fps": 10.0}, meta, pts).endswith(" ..."))
+
+    def test_check_flash_pass_failure_is_unmeasured(self):
+        """A flash pass that fails is None (a WARN 'could not measure' row in check.py), never []
+        (which would read as PASS)."""
+        from unittest import mock
+        failed = subprocess.CompletedProcess([], 1, b"", b"Error while decoding stream")
+        clip = self._content_clip("content_normal.mp4", "testsrc2=size=160x90:rate=10", "sine=frequency=440:sample_rate=48000")
+        with mock.patch.object(content_probe, "run_analysis", lambda *a, **k: failed):
+            self.assertIsNone(content_probe.detect_flashes(str(clip)))
+
+    def test_presentation_times_refuse_a_packet_without_pts(self):
+        """One unreadable pts makes the whole list [] (the flashes row falls back to its "~" time)
+        rather than skipping that packet and shifting every later time onto the wrong frame."""
+        from unittest import mock
+        def fake(stdout):
+            return lambda *a, **k: subprocess.CompletedProcess([], 0, stdout, "")
+        with mock.patch.object(content_probe, "run", fake("0.2\n0.0\n0.1\n")):
+            self.assertEqual(content_probe.presentation_times("in.mp4", 0.0), [0.0, 0.1, 0.2])
+        with mock.patch.object(content_probe, "run", fake("0.0\nN/A\n0.2\n")):
+            self.assertEqual(content_probe.presentation_times("in.mp4", 0.0), [])
+
+    def test_content_passes_skip_cover_art(self):
+        """Every --content decode selects V:0 (attached pictures excluded, as probe does), so cover
+        art ahead of the playable video is never what the black, frozen, flash or first-frame rows
+        measure."""
+        from unittest import mock
+        seen = []
+        def fake(cmd, *a, **k):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, b"", b"")
+        with mock.patch.object(content_probe, "run_analysis", fake), \
+                mock.patch.object(content_probe, "die", side_effect=RuntimeError):
+            with self.assertRaises(RuntimeError):
+                content_probe.detect_content("in.mp4", 3.0, audio=False)
+            content_probe.detect_flashes("in.mp4")
+            content_probe.first_frame_stats("in.mp4")
+        self.assertEqual(len(seen), 3, seen)
+        for cmd in seen:
+            joined = " ".join(map(str, cmd))
+            self.assertIn("0:V:0", joined, cmd)
+            self.assertNotIn("0:v:0", joined, cmd)
     def test_check_expect_identity_ties_the_check_to_one_write(self):
         """2.24: a writing tool reports output_identity; check.py --expect-identity FAILs on any other
         file at that path (here: the same path rewritten by a second run), and reports input_identity."""

@@ -496,6 +496,7 @@ DIAGNOSTIC_CODES = {
     # degraded or partial results (part 2)
     "colour_not_converted": ("warnings", "export.py: an HDR or wide-gamut source written by a preset that tags SDR BT.709 without converting it; {preset, hdr_format}"),
     "output_audio_silent": ("warnings", "export.py: the written audio is silent (-inf LUFS), so no gain meets the platform's loudness; {platform}"),
+    "flash_pass_failed": ("warnings", "check.py --content: the flash pass failed, so the flashes row is not measured (WARN, could not measure); the other rows stand"),
     "repair_incomplete": ("warnings", "export.py --repair: decode errors remain after the remux (a damaged frame needs a re-encode); {timestamp_warnings, decode_errors}"),
     "size_over_limit": ("warnings", "export.py --max-mb: the written file is over the size asked for (the encoder overshot its bitrate); {size, limit}"),
     "loudness_outside_spec": ("warnings", "export.py: the written file's loudness is outside the platform's spec (normalized: after --normalize too); {platform, lufs, tp, normalized}"),
