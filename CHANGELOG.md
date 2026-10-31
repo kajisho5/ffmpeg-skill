@@ -6,6 +6,7 @@
 
 ### Added
 
+- **`export.py --preset copy --repair` remuxes a damaged file** (a recording cut off mid-write, broken timestamps from a screen recorder): timestamps regenerated, corrupt packets dropped, negative timestamps shifted to zero, the input untouched. Decode errors and timestamp warnings are counted before and after; errors a remux cannot fix are named.
 - **`export.py --max-mb MB` fits a delivery under a size limit** (an email attachment, a chat app's upload cap): a two-pass x264 encode at the bitrate the running time leaves after the audio, with the written size measured. A size too small for a watchable picture (under 100 kb/s) is refused before anything runs.
 - **Every writing tool reports `output_identity: {size, mtime_ns}`, and `check.py --expect-identity SIZE:MTIME_NS` checks against it.** A check run after a write that failed, leaving an older file at the path, or after another run replaced it, used to grade whatever was there; with the flag an `identity` row FAILs instead. check.py reports the file it graded as `input_identity`. SKILL.md's delivery check passes it.
 - **`check.py --compare REF` measures the picture against a reference:** mean SSIM, the worst frame and its time, and mean PSNR, in one pass; WARN under a mean SSIM of 0.98. Frames of another size are not compared.

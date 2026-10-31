@@ -496,6 +496,7 @@ DIAGNOSTIC_CODES = {
     # degraded or partial results (part 2)
     "colour_not_converted": ("warnings", "export.py: an HDR or wide-gamut source written by a preset that tags SDR BT.709 without converting it; {preset, hdr_format}"),
     "output_audio_silent": ("warnings", "export.py: the written audio is silent (-inf LUFS), so no gain meets the platform's loudness; {platform}"),
+    "repair_incomplete": ("warnings", "export.py --repair: decode errors remain after the remux (a damaged frame needs a re-encode); {timestamp_warnings, decode_errors}"),
     "size_over_limit": ("warnings", "export.py --max-mb: the written file is over the size asked for (the encoder overshot its bitrate); {size, limit}"),
     "loudness_outside_spec": ("warnings", "export.py: the written file's loudness is outside the platform's spec (normalized: after --normalize too); {platform, lufs, tp, normalized}"),
     "camera_not_started": ("fallbacks", "multicam.py: a range asked for a camera that had not started; camera 0 played it ({start, end, requested_camera, camera, starts_at}); `cuts` names the camera rendered"),
@@ -616,7 +617,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "report":
         extra = {"report": {"type": "string"}, "check": {"type": ["object", "null"], "description": "check.py's document for --platform; null when it was not asked for or could not run (a failing compliance verification step then says why)"}}
     elif name == "export":
-        extra = {"loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file; silent true (lufs \"-inf\", ok false, no normalize) when the written audio is silent; measured false (lufs, tp and ok null, reason not_measured) when the measurement could not be read"},
+        extra = {"repair": {"type": "object", "description": "--repair (2.23): {before, after}, each {timestamp_warnings, decode_errors} counted over one full decode at -v warning"},
+                 "loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file; silent true (lufs \"-inf\", ok false, no normalize) when the written audio is silent; measured false (lufs, tp and ok null, reason not_measured) when the measurement could not be read"},
                  "trimmed": {"type": "object", "description": "present when the source was longer than the preset's platform maximum and the export was cut to it (no --allow-long): {from, to} in seconds; notes says so too"},
                  "non_av_streams": {"type": "object", "description": "the source's subtitle and data streams: {kept: [{type: subtitle|data, index (n-th of its type), codec, language (subtitle), output_codec}], dropped: [{type, index, codec, language, reason: write_failed|gif|not_in_output}]}, read back from the written file (under --dry-run, as planned). A subtitle track is copied when the container holds it as it is, else converted to the container's text track (mov_text in .mp4/.mov, SubRip in .mkv); a trimmed export cuts it at the same point. Both lists are empty for a source with neither"},
                  "dropped_non_av_streams": {"type": "boolean", "description": "true when non_av_streams.dropped is not empty; a notes line says so too"},

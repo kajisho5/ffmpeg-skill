@@ -57,6 +57,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.23 — join.py --copy and cut.py --remove](#223--joinpy---copy-and-cutpy---remove)
 - [2.23 — output identity and check.py --compare](#223--output-identity-and-checkpy---compare)
 - [2.23 — export.py --max-mb](#223--exportpy---max-mb)
+- [2.23 — export.py --repair](#223--exportpy---repair)
 <!-- contents:end -->
 
 ## Time limits
@@ -2369,3 +2370,17 @@ What was decided there:
   size), a source with no duration, and a budget that leaves under 100 kb/s for the picture. A
   size that small makes an unwatchable file the user did not ask for, so the refusal says the
   bitrate it would have been. Same test.
+
+## 2.23 — export.py --repair
+
+- **Repair is a flag on the copy preset, not a tool.** It is a remux with three input flags
+  (`-fflags +genpts+discardcorrupt -err_detect ignore_err`) and `-avoid_negative_ts make_zero`:
+  the copy preset with different demuxing, so a new tool would add a name without adding a job.
+  A re-encoding preset already decodes past damage, so `--repair` with one is refused as
+  meaningless. Test: `test_export_repair_counts_damage_before_and_after`.
+- **It is measured by what a decoder says, before and after.** One full decode of each file at
+  `-v warning`, lines about timestamps counted apart from the rest. The verification step fails
+  only when the output has more of either than the input: a remux that removed every timestamp
+  warning but left decode errors from damaged frames did what a remux can do, and those errors are
+  named (`repair_incomplete`) with the way out (a re-encoding preset). On a TS file with 40 bytes
+  overwritten: 3 timestamp warnings and 57 errors before, 0 and 53 after. Same test.

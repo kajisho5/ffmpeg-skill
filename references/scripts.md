@@ -1881,8 +1881,17 @@ integrated loudness ended more than 1 LU from the target because of it.
 ```
 export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|h265|gif|copy
                 [--fit pad|crop] [--no-scale] [--allow-long] [--crf N | --max-mb MB] [--normalize] [-o OUT]
+export.py INPUT --preset copy --repair [-o OUT]
 export.py --list
 ```
+`--repair` (2.23, `--preset copy` only) remuxes a damaged file: timestamps are regenerated
+(`-fflags +genpts`), packets flagged corrupt are dropped (`+discardcorrupt`), demuxing goes on past
+errors (`-err_detect ignore_err`) and negative timestamps are shifted to zero. The input is read,
+never written. Both files are decoded once at `-v warning` and the lines counted:
+`repair: {before, after}`, each `{timestamp_warnings, decode_errors}`, and a `repair` verification
+step that fails when the output has more of either than the input. A remux cannot rebuild a damaged
+frame, so decode errors that remain are a `repair_incomplete` warning and a `notes` line (a
+re-encoding preset decodes past them).
 `--max-mb MB` (2.23) fits the file under MB MiB: the preset's x264 line gets the video bitrate the
 running time leaves after the preset's audio bitrate (97% of the budget; the rest is container
 overhead) in place of its CRF, and the encode runs in two passes. The written size is measured: a

@@ -31,13 +31,14 @@ Examples:
 import argparse
 import json
 import math
+import re
 import os
 import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, add_common, apply_common, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
+from _common import STATE, run_analysis, add_common, apply_common, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from check import SPECS as PLATFORMS, measure_loudness
@@ -240,6 +241,21 @@ def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dr
     return {"kept": kept, "dropped": gone}
 
 
+# --repair (2.23): regenerate missing timestamps, drop packets flagged corrupt, keep demuxing past errors
+REPAIR_INPUT_ARGS = ["-fflags", "+genpts+discardcorrupt", "-err_detect", "ignore_err"]
+_TIMESTAMP_WARNING = re.compile(r"(?i)\b(dts|pts)\b|timestamp")
+
+
+def media_damage(path: str) -> Dict[str, int]:
+    """One full decode of `path` at -v warning: lines about timestamps (non-monotonic DTS, invalid
+    PTS) and every other error line, counted. What --repair is measured by, before and after."""
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-v", "warning", "-i", path, "-f", "null", "-"],
+                        check=False, record=True)
+    lines = [ln for ln in (proc.stderr or "").splitlines() if ln.strip()]
+    stamps = sum(1 for ln in lines if _TIMESTAMP_WARNING.search(ln))
+    return {"timestamp_warnings": stamps, "decode_errors": len(lines) - stamps}
+
+
 MIB = 1024 * 1024
 SIZE_HEADROOM = 0.97        # of the byte budget given to the streams; the rest is container overhead
 SIZE_MIN_VIDEO_KBPS = 100   # below this the picture is not worth delivering; refused instead
@@ -287,6 +303,10 @@ def main() -> int:
     ap.add_argument("--no-scale", action="store_true", help="keep source resolution even for platform presets")
     ap.add_argument("--allow-long", action="store_true", help="do not trim to the platform's max duration")
     ap.add_argument("--crf", type=int, help="override CRF")
+    ap.add_argument("--repair", action="store_true",
+                    help="--preset copy only: remux a damaged file -- timestamps regenerated, corrupt packets dropped, "
+                         "negative timestamps shifted to zero -- and count the decode errors and timestamp warnings "
+                         "before and after; the input is never touched")
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="fit the file under MB megabytes (MiB): a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
@@ -343,7 +363,9 @@ def main() -> int:
             vf.append("setsar=1")
         else:
             vf.append(f"scale={p['w']}:-2")
-    cmd = ffmpeg_base() + ["-i", args.input]
+    if args.repair and args.preset != "copy":
+        die("--repair is a remux: use it with --preset copy (a re-encoding preset already rebuilds every frame)")
+    cmd = ffmpeg_base() + (REPAIR_INPUT_ARGS if args.repair else []) + ["-i", args.input]
     # Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are
     # kept where the container can hold them: ffmpeg's default stream selection takes one video
     # and one audio stream only, and through 2.22.1 every preset dropped the rest without a word.
@@ -411,6 +433,8 @@ def main() -> int:
             cmd += bt709_matrix_args(meta)
     if out_ext == "mp4":
         cmd += ["-movflags", "+faststart"]
+    if args.repair:
+        cmd += ["-avoid_negative_ts", "make_zero"]
     cmd += (p["audio"] if has_audio else ["-an"])
     trimmed = None
     if p["max"] and not args.allow_long and (meta.get("duration") or 0) > p["max"]:
@@ -421,6 +445,7 @@ def main() -> int:
         note(f"trimmed from {trimmed['from']:.3f}s to the {args.preset} maximum of {p['max']:.0f}s "
              "(use --allow-long to keep full length)")
         cmd += ["-t", f"{p['max']:.3f}"]
+    damage_before = media_damage(args.input) if args.repair and not STATE.dry_run else None
     with tempfile.TemporaryDirectory(prefix="ffskill_2pass_") as passdir:
         if args.max_mb is not None:
             # pass 1 only writes x264's statistics; pass 2 encodes against them
@@ -511,6 +536,17 @@ def main() -> int:
             step = {"step": "duration", "property": "duration", "ok": False, "expected": {"max": p["max"]},
                     "reason": "not_measured: the written file reports no duration"}
         extra.setdefault("verification", []).append(step)
+    if damage_before is not None:
+        after = media_damage(output)
+        extra["repair"] = {"before": damage_before, "after": after}
+        worse = any(after[k] > damage_before[k] for k in after)
+        extra.setdefault("verification", []).append(
+            {"step": "repair", "property": "decode_errors", "ok": not worse, "expected": {"max": damage_before},
+             "measured": after, "provenance": "input_premeasurement"})
+        if after["decode_errors"]:
+            notes.append(f"--repair: {after['decode_errors']} decode error(s) remain: a remux drops corrupt packets and "
+                         "rewrites timestamps but cannot rebuild a damaged frame; a re-encoding preset decodes past them")
+            warn(notes[-1], "repair_incomplete", **after)
     if args.max_mb is not None and not STATE.dry_run:
         limit = int(args.max_mb * MIB)
         size = os.path.getsize(output)

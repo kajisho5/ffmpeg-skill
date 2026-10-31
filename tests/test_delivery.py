@@ -62,6 +62,28 @@ class DeliveryTests(MediaFixtures):
         proc = script("export.py", src, "--preset", "h265", "--max-mb", "1", "-o", OUT / "max_mb_bad.mp4", "--json", expect_fail=True)
         self.assertIn("x264", json.loads(proc.stdout)["error"]["message"])
 
+    def test_export_repair_counts_damage_before_and_after(self):
+        """2.23: --preset copy --repair on a TS with overwritten bytes: the input is untouched, the
+        counts are reported before and after and do not grow, remaining errors are named; --repair
+        with a re-encoding preset is refused."""
+        src = OUT / "repair_src.ts"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:d=6",
+           "-f", "lavfi", "-i", "sine=d=6", "-c:v", "libx264", "-c:a", "aac", "-f", "mpegts", src)
+        data = bytearray(src.read_bytes())
+        for k in range(40):  # deterministic damage in the middle half
+            data[len(data) // 4 + k * (len(data) // 80)] ^= 0xFF
+        src.write_bytes(bytes(data))
+        before = src.read_bytes()
+        out = OUT / "repair_out.mp4"
+        doc = json.loads(script("export.py", src, "--preset", "copy", "--repair", "-o", out, "--overwrite", "--json").stdout)
+        self.assertEqual(src.read_bytes(), before)
+        rep = doc["repair"]
+        self.assertGreater(sum(rep["before"].values()), 0, rep)
+        self.assertTrue(all(rep["after"][k] <= rep["before"][k] for k in rep["after"]), rep)
+        self.assertTrue(next(v for v in doc["verification"] if v["step"] == "repair")["ok"])
+        proc = script("export.py", src, "--preset", "youtube", "--repair", "-o", OUT / "repair_bad.mp4", "--json", expect_fail=True)
+        self.assertIn("--preset copy", json.loads(proc.stdout)["error"]["message"])
+
     def test_export_list(self):
         self.assertIn("youtube", script("export.py", "--list").stdout)
 
