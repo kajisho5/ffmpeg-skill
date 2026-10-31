@@ -20,7 +20,7 @@ The contract is derived from the code that runs, not maintained beside it:
 
 | Field | Meaning | Changes when |
 |---|---|---|
-| `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
+| `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
 | `skill.version` | the npm / package.json version (`2.24.1`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
@@ -35,12 +35,12 @@ from `scripts/` on every CI run instead — a stale count fails a test rather th
 silently. (`SKILL.md` was added to that check after its "the 28 scripts" sat stale through
 twelve tool additions while the other three files were correct.)
 
-## Stability guarantee (2.x)
+## Stability guarantee (3.x)
 
 1.0.0 was published on 2026-09-11 (by accident: see CHANGELOG.md's 1.0.0 entry; the number
 is kept rather than burned). From 1.0.3 on, the number is treated as the promise it implies;
-2.0.0 (2026-09-22) is the first deliberate break, listed under "What 2.0 changed" below.
-The same promise holds for the whole of 2.x:
+2.0.0 (2026-09-22) is the first deliberate break, listed under "What 2.0 changed" below, and
+3.0.0 is the second, listed under "What 3.0 changed". The same promise holds for the whole of 3.x:
 
 | Surface | Promise |
 |---|---|
@@ -48,7 +48,7 @@ The same promise holds for the whole of 2.x:
 | CLI arguments (`argparse` dests, flags, positionals) | never removed, renamed, or made newly required; new optional arguments may be added |
 | `--json` output keys, and the keys of `contract --json` / `doctor --json` | never removed or given a different type; new keys may be added |
 | Exit codes (0 success, 1 failure incl. ffmpeg failures, 2 unknown/undecidable in `doctor`, 124 timeout, 127 missing tool, 128+signal interrupted) | unchanged |
-| `contract_version` (`1.0`) | unchanged; a ToolSpec shape change is a major |
+| `contract_version` (`2.0`) | unchanged; a ToolSpec shape change is a major |
 | MCP `tools/list` names and `inputSchema` property names | derived from the above, so covered by the same promise |
 | Behaviour of a tool for the same input and arguments | may change only to fix a defect or to track an FFmpeg change, and every such change gets a CHANGELOG line |
 
@@ -81,20 +81,17 @@ on, the line says so.
 
 `contract --json` carries a top-level `deprecated` list, next to `contract_version`: one entry per
 thing the next major removes, `{"what", "since", "replacement", "removed_in", "where"}` with `where`
-naming the surface (`cli`, `json`, `mcp`, `behaviour`). It was empty in 2.0.0. Since 2.10.9 it lists one
-entry: **running on Python 3.9** (`where: behaviour`, `removed_in: 3.0.0`). CPython 3.9 reached end of life
-in October 2025 and gets no security fixes, but raising the floor is a break, so 2.x keeps running on 3.9
-(`requirements.python` stays `>=3.9`, and CI keeps testing it). It is deprecated, and Python 3.10+ is
-recommended: on 3.9, `doctor` and the `npx` installer print one stderr line,
-`warning: Python 3.9 is deprecated since ffmpeg-skill 2.10.9 (...); it still works in 2.x and support ends in 3.0.0: use Python 3.10+.`
-Like every deprecation warning it is stderr only: `doctor --json`'s document has no key for it.
-Since 2.14.0 there is a second entry, **running on FFmpeg 5.x** (`where: behaviour`, `removed_in: 3.0.0`),
-handled the same way: `requirements.ffmpeg` stays `>=5.0` and CI keeps its 5.1.1 job until 3.0, which
-requires 6.1. When `ffmpeg -version` reads 5.x, `doctor` and the `npx` installer print one stderr line,
-`warning: FFmpeg 5.x is deprecated since ffmpeg-skill 2.14.0 (...); it still works in 2.x and support ends in 3.0.0: use FFmpeg 6.1+.`
-A version that is not a release number (a git snapshot) gets no line.
+naming the surface (`cli`, `json`, `mcp`, `behaviour`). It was empty in 2.0.0, and it is empty again
+in 3.0.0: its two 2.x entries, **running on Python 3.9** (`since: 2.10.9`) and **running on
+FFmpeg 5.x** (`since: 2.14.0`), were settled by 3.0.0 and moved to `removed`
+(`removed_in: 3.0.0`). The 2.x warning lines are gone with them. 3.0.0 requires Python 3.10+ and
+FFmpeg 6.1+: every tool refuses an `ffmpeg`/`ffprobe` whose version it can read as older than 6.1
+(`kind: missing_tool`, `error.reason: ffmpeg_unsupported`; a git or vendor build whose version is
+unreadable is not refused), `doctor` names an unsupported Python or FFmpeg in `unsupported` and
+reports `ok: false`, and the `npx` installer skips a Python older than 3.10 and prints the same
+"not supported" line for an older FFmpeg.
 `tests/test_contract.py` refuses a package.json major bump that still lists an entry that major should remove, or that
-comes before step 2's window has passed -- unless the waiver is written here, as 2.0.0's is.
+comes before step 2's window has passed -- unless the waiver is written here, as 2.0.0's and 3.0.0's are.
 
 **2.0.0 waived the 90-day half of step 2.** Its deprecations date from 1.10.0 (2026-09-13), so
 the policy's earliest 2.0.0 was 2026-12-12; on 2026-09-22 the maintainer decided not to wait.
@@ -103,6 +100,15 @@ of them, each already had a 1.x opt-in to the 2.0 behaviour (`--quality`,
 `FFMPEG_SKILL_MCP_LEAN=1`, `hdr_signal`, `FFMPEG_SKILL_NO_OVERWRITE=1`), and the one change a
 caller could not have prepared for mechanically -- promoting `result_v2` -- was withdrawn
 rather than shipped early (below).
+
+**3.0.0 waived the 90-day half of step 2.**
+
+Its deprecations date from 2.10.9 (2026-10-22, Python 3.9) and 2.14.0 (2026-10-24, FFmpeg 5.x), so
+the policy's earliest 3.0.0 was 2027-01-22; the maintainer decided not to wait. The other half held:
+ten minor releases (2.15-2.24) carried both deprecations, and each had a way to prepare -- run
+Python 3.10+ and FFmpeg 6.1+. The `cut.py` defaults that changed in 3.0 were not deprecations but
+decisions recorded in 2.x (`docs/design-decisions.md`), and each already had an opt-in flag in 2.x
+(`--edit-list`, `--keep-hevc`, `--vfr-guard sampled`).
 
 ## What 2.0 changed
 
@@ -123,18 +129,30 @@ value (a number went to `metrics`, the same key holding `null` went to `details`
 could not know where to look without knowing the value first, and every consumer of every tool's
 JSON would have been rewritten for that. The flat keys, typed per tool in `output_schema`, stay.
 
+## What 3.0 changed
+
+`contract --json`'s `removed` list carries the two floor changes (`removed_in: 3.0.0`); the
+`cut.py` rows were decided in 2.x and recorded in `docs/design-decisions.md` ("Decided for 3.0").
+
+| What changed in 3.0.0 | Deprecated in | 3.0 behaviour | Migrating from 2.x |
+|---|---|---|---|
+| Running on FFmpeg 5.x (`requirements.ffmpeg` `>=5.0`) | 2.14.0 | `requirements.ffmpeg`/`ffprobe` are `>=6.1`. Every tool refuses an `ffmpeg`/`ffprobe` whose version it can read as older than 6.1 (`kind: missing_tool`, exit 127, `error.reason: ffmpeg_unsupported`, `details: {version, required}`); a git/vendor build whose version is unreadable is not refused. `doctor` lists it in `unsupported` with `ok: false`; the `npx` installer prints the same "not supported" line. CI dropped its 5.1.1 job | Install FFmpeg 6.1 or later (Ubuntu 24.04's apt package is 6.1) |
+| Running on Python 3.9 (`requirements.python` `>=3.9`) | 2.10.9 | `requirements.python` is `>=3.10 (standard library only)`. The `npx` installer skips an older interpreter (and warns when none is found); `doctor` lists it in `unsupported` with `ok: false`. CI's floor is 3.10 | Run the scripts with Python 3.10 or later |
+| `cut.py` defaults: `-avoid_negative_ts make_zero` on a single `.mp4`/`.mov` stream copy; x264 for an SDR HEVC source's re-encode; `--vfr-guard average` | decided in 2.x (`docs/design-decisions.md`) | the edit list is kept by default (`edit_list: true`, the picture starts at `--start`); an SDR HEVC source's re-encode stays HEVC; `--vfr-guard` defaults to `sampled`. `--edit-list` and `--keep-hevc` are still accepted | `--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore the 2.x behaviour |
+| `cut.py`'s `precision` and `keyframe_snapped` | decided in 2.x (`docs/design-decisions.md`) | `precision` is the least exact segment's, equal to `least_exact_precision` (which stays); `keyframe_snapped` equals `start_snapped`: a copied start really moved (boolean, or `null` under `--dry-run`). `contract_version` is `2.0` | Read `start_snapped`/`keyframe_snapped` for "did the start move"; a 2.x "stream copy end to end" test is `reencoded: false` |
+
 ## Skill
 
 ```json
 {
-  "contract_version": "1.0",
-  "deprecated": [{"what": "running on Python 3.9 (the requirements.python floor)", "since": "2.10.9", "replacement": "Python 3.10 or later; ...", "removed_in": "3.0.0", "where": "behaviour"},
-                 {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
+  "contract_version": "2.0",
+  "deprecated": [],
+  "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
+              {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
   "skill": {"id": "ffmpeg-skill", "version": "2.24.1", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
-  "requirements": {"python": ">=3.9 (standard library only; 3.9 deprecated since 2.10.9, removed in 3.0.0; 3.10+ recommended)", "ffmpeg": ">=5.0 (5.x deprecated since 2.14.0, removed in 3.0.0; 6.1+ recommended)", "ffprobe": ">=5.0"},
+  "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
   "execution": {"shell": false, "arbitrary_executables": false, "network": false,
                 "model_downloads": {"when": "...", "in_process": {"faster-whisper": "..."},
                                     "child_process": {"parakeet-mlx": "...", "openai-whisper": "..."},
@@ -249,8 +267,9 @@ too, beside a converted clip). A colour a tool draws from a hex or named value (
 `color`/`gradients`, `waveform.py`'s plate and waves) lands in the same BT.709: from FFmpeg 7.1
 an untagged picture is labelled for the drawing filters, before 7.1 the drawing runs on an RGB copy
 and only the pixels it touched are taken from it (`_common.drawn_chain()`); a grey changes nothing.
-`cut.py --keep-hevc` (opt-in) re-encodes an SDR HEVC source as x265 8-bit BT.709 instead of x264; an HDR or
-BT.2020 source keeps the Main10 line with its own colour tags, with or without the flag. The
+`cut.py` re-encodes an SDR HEVC source as x265 8-bit BT.709 (the default since 3.0.0, `--keep-hevc`;
+`--no-keep-hevc` uses x264 as 2.x did); an HDR or BT.2020 source keeps the Main10 line with its own
+colour tags either way. The
 encoder each value needs is listed under the tool's optional capabilities (`--codec hevc` and
 so on). `export.py` refuses `--codec`: its presets decide the codec.
 
@@ -468,6 +487,11 @@ both live in `tests/fixtures/`.
 missing, 2 when none is missing but a required one is unknown. `ok` is true only for 0. The
 keys of 0.9.0 (`available`, `missing`, `missing_optional`, `ok`) are unchanged.
 
+`doctor`'s `unsupported` (3.0.0) lists one line per requirements floor this machine is below: a
+Python older than 3.10, or an `ffmpeg` whose version reads as older than 6.1 (a git/vendor version
+that is not a release number is never listed). The lines are also printed to stderr, and a
+non-empty list makes `ok` false and the exit code non-zero; `[]` on a supported machine.
+
 One capability can be neither: `encoder:libx264` (`encoder:libx265`) absent from the build while
 `h264_videotoolbox` (`hevc_videotoolbox`) is in it, on a machine that can run VideoToolbox (the
 check `--hw` uses: macOS on Apple Silicon). The tools encode with VideoToolbox there without
@@ -585,7 +609,7 @@ it never moves `ok` or any tool's `usable`.
 (`{"mode", "count", "clusters", "assets", "missing", "overlays"}`) on `caption.py` and
 `graphics.py`, and `text_renderer` (`"ass"`|`"drawtext"`), `script` and `ass` (the generated file,
 when one was written) on `graphics.py`. `--json-brief` carries `emoji.mode` and `emoji.count` only.
-All additive: `contract_version` stays 1.0.
+All additive: `contract_version` stayed 1.0 (it became 2.0 in 3.0.0).
 
 ## Invocation
 
@@ -682,11 +706,11 @@ Per-tool keys added after 2.2.2, all additive:
 | `encoder`, `hw`, `notes` | every re-encoding tool, `export.py`, `render.py`, `batch.py` (and its rows), `waveform.py` | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback; under `--dry-run`, the planned one), `copy` for a stream copy; absent when no command encoded video. A tool that runs other tools reports its stages': `render.py` its stages and an executed plan's tool, `waveform.py` the title/caption stage that writes its file (its `commands` include that stage's). `hw` is present when VideoToolbox was asked for (`--hw`, `FFMPEG_SKILL_HW=1`, or a stage or `batch.py` item that reported it), on `export.py` when `FFMPEG_SKILL_HW=1` is set but its delivery preset does not take it, and when an encode ran on VideoToolbox because the build has no `libx264`/`libx265`: `{requested, source: flag\|env\|auto, used, fallback, notes}`. `requested` says whether this run's encodes were asked onto VideoToolbox (`false` for that export, and for `source: "auto"`, where nobody asked: `notes` names the missing CPU encoder and the one that ran, and `--no-hw` is not offered as a remedy since there is no CPU encoder to go back to; a job VideoToolbox refuses there is a plain `kind: ffmpeg` failure, not retried), `used` whether the encoder that ran last is VideoToolbox (`null` under `--dry-run`, which ran nothing, and when the tool encoded nothing itself: `batch.py`, whose top-level `hw` gathers its items' `requested`/`source`/`fallback`/`notes` while each `results` row carries the item's own `encoder`, and `hw`/`notes` when VideoToolbox was asked for), `fallback` whether a job VideoToolbox refused was re-encoded on the CPU, and `notes` why. Only a VideoToolbox failure (the encoder could not open, or its compression session failed) is retried on the CPU; any other failure is reported as it happened, once. Every VideoToolbox encode adds a top-level `notes` line: its quality is not CRF-equivalent (`--quality` / a preset's CRF maps to `-q:v` approximately), and `verified` stays what it is for every tool, the measured properties of the output. A `kind: ffmpeg` failure under `--hw` / `FFMPEG_SKILL_HW` carries `encoder` and `hw` for the command that ran last (a stage's, when `render.py`/`waveform.py` re-raise it); when the command itself failed inside the run (not a tool's own check afterwards, such as `cut.py`'s), its message also names that encoder |
 | `transcription` | `caption.py --transcribe` (every `--mode`); inside `filler` for `silence.py --filler --transcribe` | `{routing, detected_language?, engine, model, language}`: the engine and model that made the transcript; `language` is the language the engine was told -- the one named (`--language`, `--filler-lang`), else the one auto's detector named -- and, when nothing was named, the language the engine decoded where it reports one (whisper.cpp's word-timing JSON, faster-whisper, openai-whisper's word-timing JSON), else `null`; `detected_language` is present when auto's whisper.cpp detector named one; `routing` says why `--engine auto` chose the engine (`"requested"` for a named engine), ending `, no Parakeet engine transcribed it` when auto chose Parakeet and a Whisper engine made the transcript after every Parakeet engine failed |
 | `notes` | `silence.py --filler --transcribe` (new for `silence.py`; `caption.py` already had it) | present when `--engine auto` ran the English-only Parakeet model on English *assumed* (no language given or detectable, and no Whisper engine installed or none that succeeded): the transcript is wrong if the speech is not English. `caption.py --transcribe` puts the same line in its `notes` |
-| `reencode_reason`, `segment_precision`, `least_exact_precision`, `start_snapped` | `cut.py` (every run) | `reencode_reason`: why anything was re-encoded, distinct values in first-seen order, `[]` for a clean copy: `requested` (`--accurate`), `codec` (`--codec`), `vfr`, `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost` (the copy wrote no video or no audio: an MPEG-TS copy whose window holds no video keyframe, #367), `tolerance`, `concat_fallback` (a `--segments` join that could not stay a stream copy, which now also sets `reencoded: true` and `mode: hybrid`; it reported `copy` before). `segment_precision`: each `--segments` segment's precision (`null` for one segment); `least_exact_precision`: the least exact of them, on every run. `precision` and `keyframe_snapped` keep their meaning (`keyframe_snapped` is `precision == "packet"`, a stream copy end to end); `least_exact_precision` differs from `precision` only for an audio-only join of copied and re-encoded parts. `start_snapped`: measured, `true` when a copied segment's picture starts more than one frame from its requested start (or its start could not be measured: an unknown start is never claimed exact), `false` when every start is where asked or everything re-encoded, `null` under `--dry-run`. `requested_segments`/`requested_duration` keep their meaning, the request clamped to the media's duration: a segment ended with the video (less than a frame of sound trimmed) shows in `duration_delta_seconds` and a `notes` line |
-| `edit_list`, `stored_preroll_seconds`, `av_start_skew_seconds`, `notes` | `cut.py` (every run) | `edit_list`: `true` only for a single-segment `.mp4`/`.m4v`/`.mov` stream copy run with `--edit-list`, which keeps the MP4 edit list the copy writes instead of `-avoid_negative_ts make_zero` (the default, unchanged): the keyframe's pre-roll is stored but hidden, so the picture starts at `--start`. `stored_preroll_seconds`: with `edit_list`, the seconds decoded from the keyframe the copy's seek lands on (measured with the seek ffmpeg makes) up to the first presented frame; `null` otherwise. Under `--edit-list` a copy is judged by its video's length (a `notes` line says so when the container is longer), and one that starts where asked but ends past `--tolerance` re-encodes (`tolerance`) without a `lossless_alternative`. `av_start_skew_seconds`: the output's audio start minus its video start (`null` when either is missing or under `--dry-run`); on a stream copy, when it is more than max(2 frames, 0.1 s) away from the source's own audio/video offset where the copy's picture starts (the keyframe it began from; `--start` under `--edit-list`), a `notes` line names `--accurate`, and `--edit-list` for a single `.mp4`/`.mov` copy whose start snapped. A re-encode carries no such note. The skew is reported, never repaired. `notes`: what the run did that a caller should know, in plain sentences (`[]` when nothing) |
+| `reencode_reason`, `segment_precision`, `least_exact_precision`, `start_snapped` | `cut.py` (every run) | `reencode_reason`: why anything was re-encoded, distinct values in first-seen order, `[]` for a clean copy: `requested` (`--accurate`), `codec` (`--codec`), `vfr`, `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost` (the copy wrote no video or no audio: an MPEG-TS copy whose window holds no video keyframe, #367), `tolerance`, `concat_fallback` (a `--segments` join that could not stay a stream copy, which now also sets `reencoded: true` and `mode: hybrid`; it reported `copy` before). `segment_precision`: each `--segments` segment's precision (`null` for one segment); `least_exact_precision`: the least exact of them, on every run. Since 3.0.0 `precision` is the least exact segment's, equal to `least_exact_precision`, and `keyframe_snapped` equals `start_snapped` (2.x: `precision` was the whole run's, `packet` only when nothing re-encoded, and `keyframe_snapped` was `precision == "packet"`, a stream copy end to end; see "What 3.0 changed"). `start_snapped`: measured, `true` when a copied segment's picture starts more than one frame from its requested start (or its start could not be measured: an unknown start is never claimed exact), `false` when every start is where asked or everything re-encoded, `null` under `--dry-run`. `requested_segments`/`requested_duration` keep their meaning, the request clamped to the media's duration: a segment ended with the video (less than a frame of sound trimmed) shows in `duration_delta_seconds` and a `notes` line |
+| `edit_list`, `stored_preroll_seconds`, `av_start_skew_seconds`, `notes` | `cut.py` (every run) | `edit_list`: `true` only for a single-segment `.mp4`/`.m4v`/`.mov` stream copy, which by default since 3.0.0 keeps the MP4 edit list the copy writes (`--no-edit-list` restores 2.x's `-avoid_negative_ts make_zero`): the keyframe's pre-roll is stored but hidden, so the picture starts at `--start`. `stored_preroll_seconds`: with `edit_list`, the seconds decoded from the keyframe the copy's seek lands on (measured with the seek ffmpeg makes) up to the first presented frame; `null` otherwise. With an edit list a copy is judged by its video's length (a `notes` line says so when the container is longer), and one that starts where asked but ends past `--tolerance` re-encodes (`tolerance`) without a `lossless_alternative`. `av_start_skew_seconds`: the output's audio start minus its video start (`null` when either is missing or under `--dry-run`); on a stream copy, when it is more than max(2 frames, 0.1 s) away from the source's own audio/video offset where the copy's picture starts (the keyframe it began from; `--start` with an edit list), a `notes` line names `--accurate`, and the edit list for a single `.mp4`/`.mov` copy whose start snapped under `--no-edit-list`. A re-encode carries no such note. The skew is reported, never repaired. `notes`: what the run did that a caller should know, in plain sentences (`[]` when nothing) |
 | `video.start_time`, `audio.start_time` | `probe.py` (and every `probe` block a tool returns) | where each stream starts, in seconds on the file's own clock (ffprobe's stream `start_time`; `null` when unknown). A video stream that starts after its audio, or the reverse, is how a lossless cut's A/V skew shows; `cut.py` reads them for `av_start_skew_seconds` |
 | `cut_reencode_reasons` | `batch.py` (and its `results` rows) | a row whose recipe ran `cut.py` lists each `reencode_reason` its `cut.py` calls named, once per call, beside `cut_reencoded`; the top level counts them across the folder (`{}` when no call re-encoded, `null` when no `cut.py` step ran) on a completed batch, as `cut_stream_copy` does: a failure document carries `results`, whose rows hold each row's reasons; a re-encoded call in a row served from a cache an earlier 2.x batch wrote, which recorded no reasons, counts as `unknown`. `cut_stream_copy` is unchanged |
-| `vfr_check` | `cut.py` (a video input that could still stream-copy) | the sampled frame timing, `{heuristic: true, measured, method: "sampled", guard, windows, deltas}`; `measured` is `sampled_cfr`, `vfr` or `inconclusive`. `--vfr-guard average` (the default) keeps the 2.x guard: a source whose nominal and average frame rates differ (`variable_frame_rate_suspected`) re-encodes as `--accurate` (reason `vfr`, stderr says "variable-frame-rate"), and only then is the timing sampled and reported, with a `notes` line naming `--vfr-guard sampled` when it measured `sampled_cfr`; the key is absent otherwise. `--vfr-guard sampled` samples before every copy and re-encodes on `vfr` (reason `vfr`) or `inconclusive` (fewer than 20 intervals; `vfr_inconclusive`); `--vfr-guard off` samples and keeps the copy, with a `notes` line. Absent for audio-only input or output, `--accurate`, `--codec` and a pending `--dry-run` input |
+| `vfr_check` | `cut.py` (a video input that could still stream-copy) | the sampled frame timing, `{heuristic: true, measured, method: "sampled", guard, windows, deltas}`; `measured` is `sampled_cfr`, `vfr` or `inconclusive`. `--vfr-guard average` (2.x's default) keeps the 2.x guard: a source whose nominal and average frame rates differ (`variable_frame_rate_suspected`) re-encodes as `--accurate` (reason `vfr`, stderr says "variable-frame-rate"), and only then is the timing sampled and reported, with a `notes` line naming `--vfr-guard sampled` when it measured `sampled_cfr`; the key is absent otherwise. `--vfr-guard sampled` (the default since 3.0.0) samples before every copy and re-encodes on `vfr` (reason `vfr`) or `inconclusive` (fewer than 20 intervals; `vfr_inconclusive`); `--vfr-guard off` samples and keeps the copy, with a `notes` line. Absent for audio-only input or output, `--accurate`, `--codec` and a pending `--dry-run` input |
 | `join_check`, `segment_end_snap_seconds` | `cut.py --segments` | `join_check`: a video stream-copy join measured by demuxing, `{packets, expected_packets, max_step_seconds, audio_offset_ms, audio_parts_checked, ok}`. `expected_packets` counts the source's video packets from each part's start keyframe to its end (or the end of the video); `max_step_seconds` is the largest presentation step, `null` when `vfr_check` measured anything but `sampled_cfr` (a `--vfr-guard off` join of variable timing: count only), and each step at a join must be the step its parts predict within 1 ms. `audio_offset_ms`: per part, its sound's shift minus its picture's in ms (+ = sound late), from audio packets matched by CRC32 to the source stream shaped like the joined audio (FFmpeg's default selection may copy one other than `a:0`; an MPEG-TS source's AAC is hashed without its ADTS headers); `null` for a part with no unique match (digital silence, a periodic tone), and as a whole when the source has no audio or the video check failed. `audio_parts_checked` counts the measured parts. `ok` is the conjunction (count, steps, every measured part within 5 ms); `ok: false` means the join was re-cut (`concat_fallback`) and this is the failed measurement. `null` for a single segment, audio, `--dry-run`, any re-encode forced for every segment, a segment that re-encoded, or a join re-cut before a copy was tried (open GOPs, a later B-frame segment starting between keyframes, parts that differ, a concat error). `segment_end_snap_seconds`: per segment, the signed seconds its end moved to the keyframe the copied part stops at, the first at or after the requested end (`null` for a part that reaches the end of the video, a part of a source with no B-frames, cut to its requested end as in 2.5.1, or a Matroska/MPEG-TS part, which is not snapped); `null` as a whole unless the output is those copied parts |
 
 Keys added in 2.18, all additive. They make a result carry what the VDC paper
