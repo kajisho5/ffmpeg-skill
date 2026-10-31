@@ -1140,7 +1140,10 @@ def main() -> int:
     validate_project(proj, timeline=bool(args.export_timeline), stop_after=args.stop_after)
     if args.write_project:
         # Only the filled project: the point is to edit it before rendering, so nothing runs.
-        guard_sidecar(args.write_project, args.project)
+        # the project file and every clip it names are inputs the JSON must not replace
+        where = Path(args.project).resolve().parent if args.project else Path.cwd()
+        srcs = [c["src"] for c in proj.get("clips") or [] if isinstance(c, dict) and isinstance(c.get("src"), str)]
+        guard_sidecar(args.write_project, args.project, *[str(where / s) for s in srcs])
         try:
             Path(args.write_project).write_text(json.dumps(proj, indent=2) + "\n", encoding="utf-8")
         except OSError as exc:

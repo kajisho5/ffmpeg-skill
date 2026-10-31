@@ -3333,6 +3333,10 @@ class ContractTests(unittest.TestCase):
             proc = tool(name, *args, "--json", check=False)
             self.assertEqual(proc.returncode, 0, (name, proc.stdout[-400:], proc.stderr[-400:]))
             self.assertEqual(old.read_text(encoding="utf-8"), "keep me\n", name)
+        # nor a side file the media output the run writes by default (no -o)
+        clip = work / "clip.mp4"; shutil.copy(self.src, clip)
+        proc = tool("silence", clip, "--edl", work / "clip_tight.mp4", "--overwrite", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
         # two side files of one run never share a path
         proc = tool("metadata", self.src, "--auto-chapters", "--chapters-out", work / "same.txt",
                     "--description-out", work / "same.txt", "-o", work / "m2.mp4", "--json", check=False)
