@@ -158,11 +158,12 @@ def _data_streams(path: str) -> List[Dict[str, object]]:
     """The data streams of a file ({index, codec}), without its attachments (probe()'s
     data_streams counts both, and -map 0:d maps only the data streams)."""
     proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "d", "-show_entries",
-                "stream=codec_name,codec_tag_string", "-of", "json", path], quiet=True, check=False)
+                "stream=codec_name,codec_tag_string", "-of", "json", path], quiet=True)
     try:
         streams = json.loads(proc.stdout or "{}").get("streams") or []
     except ValueError:
-        streams = []
+        # an unread list would map nothing and report nothing dropped
+        die(f"ffprobe's data-stream list for {path} did not parse", kind="ffmpeg")
     return [{"index": n, "codec": s.get("codec_name") or s.get("codec_tag_string")} for n, s in enumerate(streams)]
 
 
@@ -195,6 +196,14 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
     return []  # not reached: the last rung either returns or exits
 
 
+def _written_data_codec(stream: Dict, sources: List[Dict], written: List[Dict]) -> bool:
+    """True when the written file has a data track of `stream`'s codec and no other source data
+    stream shares that codec (so the track is this stream's, not a muxer's own or a sibling's)."""
+    codec = stream.get("codec")
+    return bool(codec) and sum(1 for s in sources if s.get("codec") == codec) == 1 \
+        and any(w.get("codec") == codec for w in written)
+
+
 def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dropped: List[str],
                    output: str, reason: str) -> Dict[str, List[Dict]]:
     """`non_av_streams`: each source subtitle/data stream as kept (with the codec it was written in)
@@ -214,10 +223,14 @@ def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dr
             if STATE.dry_run and kind not in dropped:
                 planned = sub_codecs[n] if kind == "subtitle" else "copy"
                 kept.append(dict(row, output_codec=s.get("codec") if planned == "copy" else planned))
-            elif n < len(written):
-                # read back, not assumed: an MP4/MOV muxer writes a timecode (tmcd) track of its
-                # own from the source's timecode tag even when the copied one was refused
+            elif kind == "subtitle" and n < len(written):
                 kept.append(dict(row, output_codec=written[n].get("codec")))
+            elif kind == "data" and _written_data_codec(s, streams, written):
+                # read back, not assumed: an MP4/MOV muxer writes a timecode (tmcd) track of its
+                # own from the source's timecode tag even when the copied one was refused, so a
+                # data track is attributed by its codec, and only to a source stream that is the
+                # one of its codec
+                kept.append(dict(row, output_codec=s.get("codec")))
             else:
                 gone.append(dict(row, reason=reason if kind in dropped else "not_in_output"))
     return {"kept": kept, "dropped": gone}
@@ -448,7 +461,7 @@ def main() -> int:
                     "reason": "not_measured: the written file reports no duration"}
         extra.setdefault("verification", []).append(step)
     # read back after --normalize, which rewrote the file
-    non_av = _non_av_report(subs, sub_codecs, data, dropped, output, "container_refused")
+    non_av = _non_av_report(subs, sub_codecs, data, dropped, output, "write_failed")
     if non_av["dropped"]:
         notes.append(f"{len(non_av['dropped'])} subtitle/data stream(s) of the source are not in {os.path.basename(output)} "
                      f"({', '.join(sorted({d['type'] + ': ' + d['reason'] for d in non_av['dropped']}))}); non_av_streams lists them")

@@ -735,7 +735,7 @@ the track gone and nothing in the result saying so):
 
 | key | tool | what it holds |
 |---|---|---|
-| `non_av_streams` | `export.py` | the source's subtitle and data streams: `{kept: [{type, index, codec, language, output_codec}], dropped: [{type, index, codec, language, reason}]}` (`index` is the n-th stream of its type; `language` on subtitles). Read back from the written file; under `--dry-run`, as planned. A subtitle track is copied when the container holds it, else converted to the container's text track (`mov_text` in .mp4/.mov, SubRip in .mkv); a platform trim cuts it with the picture. `reason`: `container_refused` (dropped on a retry, a `non_av_streams_dropped` fallback with `dropped`: data alone first, then subtitles too), `gif`, `not_in_output` |
+| `non_av_streams` | `export.py` | the source's subtitle and data streams: `{kept: [{type, index, codec, language, output_codec}], dropped: [{type, index, codec, language, reason}]}` (`index` is the n-th stream of its type; `language` on subtitles). Read back from the written file; under `--dry-run`, as planned. A subtitle track is copied when the container holds it, else converted to the container's text track (`mov_text` in .mp4/.mov, SubRip in .mkv); a platform trim cuts it with the picture. `reason`: `write_failed` (the attempt that mapped it failed and the encode ran again without it; the error is in its `non_av_streams_dropped` fallback, whose `dropped` says data alone first, then subtitles too), `gif`, `not_in_output` |
 | `dropped_non_av_streams` | `export.py` | `true` when `non_av_streams.dropped` is not empty (a `notes` line too), as on the tools that use `run_keeping_subtitles()` |
 
 Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:

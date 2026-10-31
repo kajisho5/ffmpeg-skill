@@ -1881,7 +1881,7 @@ container's own (mov_text in .mp4/.mov, SubRip in .mkv). A platform trim cuts th
 same point as the picture. A data stream the container refuses is dropped on its own retry, so
 the subtitles are not lost with it (`non_av_streams_dropped` fallback). `non_av_streams: {kept,
 dropped}` lists each source stream with its codec, its `output_codec` or the `reason` it was
-dropped (`container_refused`, `gif`), read back from the written file; `dropped_non_av_streams`
+dropped (`write_failed`, `gif`, `not_in_output`), read back from the written file; `dropped_non_av_streams`
 is true when any was dropped, with a `notes` line. A GIF holds none. When the source has such a
 stream, the picture and the sound are mapped explicitly: the first video stream that is not a
 cover picture and the first audio stream, the ones `probe` describes.
