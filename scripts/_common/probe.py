@@ -697,8 +697,8 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
     """Frame indexes of single-frame flashes in the first video stream: frame n differs from n-1 and
     from n+1 by at least CONTENT_FLASH_JUMP while n-1 and n+1 differ by at most
     CONTENT_FLASH_RETURN of the smaller step. One video-only pass; ffmpeg reduces each frame to
-    three 16-bit numbers (|f[n]-f[n-1]| and the two clipped halves of f[n]-f[n-2]), so a
-    feature-length input costs a few MB, not its frames. The caller turns an index into a time;
+    three 16-bit numbers (|f[n]-f[n-1]| and the two clipped halves of f[n]-f[n-2]): 6 bytes a
+    frame in the captured output (1.3 MB for an hour at 60 fps), read in place. The caller turns an index into a time;
     the comparison itself needs no frame rate. None when no frame decoded (nothing was compared)."""
     if dry_run_input_pending(path):
         return []
@@ -720,17 +720,19 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
         return None
     data = bytes(6) + proc.stdout
     n = len(data) // 6
-    step = [0.0] * n   # step[i] = |f[i] - f[i-1]|, valid from i = 1
-    skip = [0.0] * n   # skip[i] = |f[i] - f[i-2]|, valid from i = 2
-    for i in range(n):
+
+    def record(i: int) -> "Tuple[float, float]":
+        """(|f[i] - f[i-1]|, |f[i] - f[i-2]|), 0-255; read from the buffer, never kept per frame."""
         d, p, q = (int.from_bytes(data[i * 6 + k:i * 6 + k + 2], "little") / 256.0 for k in (0, 2, 4))
-        step[i], skip[i] = d, p + q
+        return d, p + q
+
     flashes = []
+    into = record(1)[0] if n > 1 else 0.0
     for i in range(1, n - 1):
-        into, out = step[i], step[i + 1]
-        if into >= CONTENT_FLASH_JUMP and out >= CONTENT_FLASH_JUMP \
-                and skip[i + 1] <= CONTENT_FLASH_RETURN * min(into, out):
+        out, back = record(i + 1)
+        if into >= CONTENT_FLASH_JUMP and out >= CONTENT_FLASH_JUMP and back <= CONTENT_FLASH_RETURN * min(into, out):
             flashes.append(i)
+        into = out
     return flashes
 
 
