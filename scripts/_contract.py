@@ -1292,8 +1292,10 @@ def doctor() -> Dict[str, Any]:
     # 3.0.0: below the requirements floor is a broken install, not an advisory
     unsupported = [line for line in (python_unsupported(), ffmpeg_unsupported(versions["ffmpeg"])) if line]
     probe_line = ffmpeg_unsupported(versions["ffprobe"])
-    if probe_line and probe_line not in unsupported:
-        unsupported.append(probe_line.replace("error: FFmpeg ", "error: ffprobe ", 1))
+    if probe_line:
+        probe_line = probe_line.replace("error: FFmpeg ", "error: ffprobe ", 1)
+        if probe_line not in unsupported:
+            unsupported.append(probe_line)
     return {
         "version": skill_version(),
         "python": ".".join(str(x) for x in sys.version_info[:3]),
@@ -1311,7 +1313,7 @@ def doctor() -> Dict[str, Any]:
         **({"notes": notes} if notes else {}),
         "unsupported": unsupported,
         "ok": not missing_required and not unknown_required and not unsupported,
-        "tools": _tool_usability(state, drawtext_crashed, covered),
+        "tools": _tool_usability(state, drawtext_crashed, covered, unsupported),
         "covered_by": covered,
         "gpu_encoders": _gpu_encoders(listings["encoders"]),
         "hw": _hw_default(),
@@ -1434,22 +1436,31 @@ def _capability_fix_hint(cap: str, drawtext_crashed: bool = False) -> str:
     return f"'{cap}' is not available; see docs/contract.md"
 
 
-def _tool_usability(state: Dict[str, str], drawtext_crashed: bool = False, covered: Optional[Dict[str, str]] = None) -> Dict[str, Dict[str, Any]]:
+def _tool_usability(state: Dict[str, str], drawtext_crashed: bool = False, covered: Optional[Dict[str, str]] = None,
+                    unsupported: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
     """Per-tool usable/missing/unknown, folded from the same capability `state` doctor already
     computed. Answers "can I run this tool on this machine today", not just "what capabilities
     exist" -- a caller reading only `available`/`missing` still has to cross-reference each tool's
     own required-capability list by hand to answer that. A required capability in `covered`
-    (libx264 replaced by VideoToolbox on this machine) blocks nothing; the tool lists it in `covered_by`."""
+    (libx264 replaced by VideoToolbox on this machine) blocks nothing; the tool lists it in `covered_by`.
+    A Python or FFmpeg below the 3.0.0 floor (`unsupported`) makes every tool unusable: each one
+    refuses to start on it."""
     covered = covered or {}
     tools: Dict[str, Dict[str, Any]] = {}
     for name, meta in TOOL_META.items():
         required = list(meta["required"])
         missing = [c for c in required if state.get(c) == "missing" and c not in covered]
         unknown = [c for c in required if state.get(c) == "unknown"]
-        entry: Dict[str, Any] = {"usable": "no" if missing else ("unknown" if unknown else "yes")}
+        entry: Dict[str, Any] = {"usable": "no" if missing or unsupported else ("unknown" if unknown else "yes")}
+        fixes = []
         if missing:
             entry["missing"] = missing
-            entry["fix"] = "; ".join(dict.fromkeys(_capability_fix_hint(c, drawtext_crashed) for c in missing))
+            fixes += [_capability_fix_hint(c, drawtext_crashed) for c in missing]
+        if unsupported:
+            entry["unsupported"] = list(unsupported)
+            fixes.append("install Python 3.10+ and FFmpeg 6.1+ (ffmpeg and ffprobe from one build)")
+        if fixes:
+            entry["fix"] = "; ".join(dict.fromkeys(fixes))
         if unknown:
             entry["unknown"] = unknown
         via = {c: covered[c] for c in required if c in covered}

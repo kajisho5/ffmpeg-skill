@@ -508,7 +508,9 @@ the tool needs from a build, not which encoder satisfies it on a given machine.
 `{"<tool>": {"usable": "yes"|"no"|"unknown", "missing": [...], "fix": "...", "unknown": [...], "covered_by": {...}}}`.
 `missing`/`unknown` list only that tool's own required capabilities that are in that state
 (`missing` is absent when there is none, same for `unknown`); `fix` is a one-line, plain-language
-remedy for each missing capability, joined with "; " when there is more than one. This exists so
+remedy for each missing capability, joined with "; " when there is more than one. Since 3.0.0 a
+Python or FFmpeg below the floor makes every tool `usable: "no"`, with doctor's `unsupported`
+lines repeated under the tool's `unsupported` and the upgrade in `fix`. This exists so
 a caller does not have to cross-reference `available`/`missing` against each tool's own required
 capabilities by hand to answer "can I run `caption.py` on this machine right now" -- `doctor`
 passing overall does not mean every tool is usable (a plain Homebrew `ffmpeg` on macOS is `ok`

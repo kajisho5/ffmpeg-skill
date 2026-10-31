@@ -1927,6 +1927,11 @@ class ContractTests(unittest.TestCase):
             doc = _contract.doctor()
         self.assertTrue(any(x.startswith("error: ffprobe 5.1 ") for x in doc["unsupported"]), doc["unsupported"])
         self.assertFalse(doc["ok"])
+        self.assertTrue(all(t["usable"] == "no" and t["unsupported"] for t in doc["tools"].values()))
+        lines = {"ffmpeg": "5.1.1", "ffprobe": "5.1.1"}   # both named, not folded into one line
+        with mock.patch.object(_contract, "_version_line", side_effect=lambda name: lines[name]):
+            doc = _contract.doctor()
+        self.assertEqual(sorted(x.split()[1] for x in doc["unsupported"] if "5.1" in x), ["FFmpeg", "ffprobe"])
 
     def test_npm_package_omits_the_maintainer_diary(self):
         """docs/design-decisions.md: references/process-pitfalls.md stays out of the npm package.
