@@ -16,6 +16,12 @@ under `removed` with the version that deprecated each, and `deprecated` is empty
 `contract_version` is 2.0. 3.0.0 ships before the 90-day half of the deprecation window passed;
 the waiver is written in `docs/contract.md`.
 
+### Added
+
+- `probe` reports the source's start timecode: `timecode: {value, drop_frame, source}`, from the
+  video stream's `timecode` tag, then a `tmcd` data stream, then the container (`null`s when none
+  carries one). Additive; requested by nle-bridge-skill for OTIO/EDL/FCP7 source timecodes.
+
 ### Removed
 
 - Running on FFmpeg 5.x (deprecated in 2.14.0). `requirements.ffmpeg` and `ffprobe` are `>=6.1`.

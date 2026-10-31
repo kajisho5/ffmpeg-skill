@@ -748,6 +748,7 @@ lost 40 s of sound with no error):
 | `probe.start_time` | `probe.py` and every output probe | where the file's timeline starts (the container's start time; MPEG-TS starts at about 1.4 s). A `-ss`, a cut's `--start` and the decode check's reads count from here |
 | `probe.stream_counts` | `probe.py` and every output probe | `{video, audio}`: how many picture streams (a cover picture is not one) and sound streams the file carries |
 | `probe.video.tagged_duration` | `probe.py` and every output probe | the video stream's DURATION tag in seconds (Matroska/WebM give no stream duration), as `audio.tagged_duration` since 2.20 |
+| `probe.timecode` | `probe.py` and every output probe | `{value, drop_frame, source}` (added in 3.0.0): the source's start timecode, the first `HH:MM:SS[:;.]FF` `timecode` tag from the video stream, then a `tmcd` data stream, then the container. `drop_frame` is true for a `;` or `.` before the frames field; `source` is `stream:<ffprobe index>` or `format`. All three are `null` when nothing carries one; a malformed tag is skipped, not repaired |
 
 Keys added after 2.21.1, all additive (requests on X: a map of what a silence cut removed, and a
 pointer to cuts that may sit in a breath):

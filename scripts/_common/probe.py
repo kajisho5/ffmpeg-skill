@@ -135,6 +135,34 @@ def verify_output(path: str) -> Dict[str, Any]:
     return meta
 
 
+_TIMECODE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})([:;.])(\d{2,3})$")
+
+
+def _tag(entry: Dict[str, Any], key: str) -> Optional[str]:
+    return next((v for k, v in (entry.get("tags") or {}).items() if k.lower() == key), None)
+
+
+def start_timecode(streams: List[Dict[str, Any]], fmt: Dict[str, Any],
+                   video: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The first well-formed `timecode` tag, from the video stream, then a `tmcd` data stream,
+    then the container: {value, drop_frame, source}. `drop_frame` is the `;` (or `.`) separator
+    before the frames field; `source` is `stream:<ffprobe index>` or `format`. None when no
+    source carries one (all three null). A tag that is not HH:MM:SS[:;.]FF is skipped, not
+    repaired."""
+    candidates = []
+    if video is not None:
+        candidates.append((video, f"stream:{video.get('index')}"))
+    candidates += [(s, f"stream:{s.get('index')}") for s in streams
+                   if s.get("codec_type") == "data" and str(s.get("codec_tag_string", "")).lower() == "tmcd"]
+    candidates.append((fmt, "format"))
+    for entry, source in candidates:
+        value = _tag(entry, "timecode")
+        m = _TIMECODE.match(value.strip()) if isinstance(value, str) else None
+        if m:
+            return {"value": value.strip(), "drop_frame": m.group(4) in ";.", "source": source}
+    return {"value": None, "drop_frame": None, "source": None}
+
+
 def probe(path: str, role: str = "input") -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
@@ -230,6 +258,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "title": (ch.get("tags") or {}).get("title"),
         } for n, ch in enumerate(raw.get("chapters") or [])],
         "tags": {k.lower(): v for k, v in (fmt.get("tags") or {}).items() if k.lower() in ("title", "artist", "album", "comment", "date", "genre")},
+        # the source's start timecode (a camera's 10:00:00:00), for an edit list or an NLE relink
+        "timecode": start_timecode(streams, fmt, video),
         # every subtitle stream in file order: index n here is `-map 0:s:n`
         "subtitle_stream_details": [{
             "index": n,
