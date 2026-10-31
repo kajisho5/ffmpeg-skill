@@ -377,6 +377,27 @@ class AnalysisTests(MediaFixtures):
         with mock.patch.object(content_probe, "run_analysis", lambda *a, **k: failed):
             self.assertIsNone(content_probe.detect_flashes(str(clip)))
 
+    def test_content_passes_skip_cover_art(self):
+        """Every --content decode selects V:0 (attached pictures excluded, as probe does), so cover
+        art ahead of the playable video is never what the black, frozen, flash or first-frame rows
+        measure."""
+        from unittest import mock
+        seen = []
+        def fake(cmd, *a, **k):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, b"", b"")
+        with mock.patch.object(content_probe, "run_analysis", fake), \
+                mock.patch.object(content_probe, "die", side_effect=RuntimeError):
+            with self.assertRaises(RuntimeError):
+                content_probe.detect_content("in.mp4", 3.0, audio=False)
+            content_probe.detect_flashes("in.mp4")
+            content_probe.first_frame_stats("in.mp4")
+        self.assertEqual(len(seen), 3, seen)
+        for cmd in seen:
+            joined = " ".join(map(str, cmd))
+            self.assertIn("0:V:0", joined, cmd)
+            self.assertNotIn("0:v:0", joined, cmd)
+
     def test_check_content_dropouts_row(self):
         """2.17: a short run of digital silence with sound on both sides (lost audio at a join) is a
         dropouts WARN; the same gap holding -60 dB room tone is a recording's pause and PASSes, and
