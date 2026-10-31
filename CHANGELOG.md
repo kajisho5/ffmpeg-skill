@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- docs: SKILL.md restructured, no behavior change. Quick start, Workflow 0-8, ask/assume, the
+  does-not-decide line, the report template and the request table stay; the long forms moved
+  unchanged to new `references/flags.md`, `workflow.md`, `report.md`, `requests.md` and
+  `timestamps.md` (shipped in the npm package). The description is three sentences.
 
 ## 3.1.1
 

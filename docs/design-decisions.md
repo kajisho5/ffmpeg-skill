@@ -539,6 +539,8 @@ decided. Recorded here so none of it is re-proposed from scratch.
 - **P1-5 — reports copy the English boilerplate lines into non-English answers.** Accepted:
   SKILL.md's failure example now shows the Japanese rendering of `Check:`/`Look:`'s filler lines,
   so the rule ("these are sentences, not labels") has an example next to it.
+  Since the SKILL.md restructure after 3.1.1 the full Japanese five-line example lives in
+  `references/report.md`; SKILL.md keeps the rule with its Japanese `Check:`/`Look:` lines.
 - **P1-6 — eval prompt `ml2` tested a refusal, not the mux.** Accepted: `ml2` now ships a German
   SRT and a video and expects `caption|render`.
 - **P1-7 — the 42-tool MCP `tools/list` is paid for by every session.** Accepted, and **shipped**:

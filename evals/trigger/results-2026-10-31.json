@@ -1,0 +1,19 @@
+{
+ "date": "2026-10-31",
+ "skill_version": "3.1.1",
+ "iteration": "skill-md-restructure",
+ "judge": "Sonnet subagent, no tools, all 55 prompts in one batch, once per description",
+ "method": "evals/trigger/README.md catalog method (skill description + four decoys: image-tools, web-research, copywriter, meeting-notes)",
+ "prompts": "evals/trigger/prompts.json",
+ "before": {
+  "description_chars": 924,
+  "correct": 55,
+  "total": 55
+ },
+ "after": {
+  "description_chars": 399,
+  "correct": 55,
+  "total": 55
+ },
+ "note": "Same 55 choices from both descriptions: 36/36 should-trigger, 19/19 near-miss."
+}
