@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 2.24.0
+
+_Automated release: version and notes generated from pull requests merged since 2.23.1._
+
 ### Added
 
 - **`export.py --preset copy --repair` remuxes a damaged file** (a recording cut off mid-write, broken timestamps from a screen recorder): timestamps regenerated, corrupt packets dropped, negative timestamps shifted to zero, the input untouched. Decode errors and timestamp warnings are counted before and after; errors a remux cannot fix are named.
@@ -13,6 +19,7 @@
 - **`join.py --copy --transition none` joins clips by stream copy, without re-encoding,** when they already match: the same codec, size, frame rate, pixel format, colour tags, sample rate and channels in the first video and audio stream, no edit-list pre-roll, and picture and sound ending within 50 ms in each clip. Anything else is refused before ffmpeg runs, naming each clip and what differs (`reason: join_copy_mismatch`). The join is measured before it replaces anything: its video packet count must equal the clips' total and its length their summed length.
 - **`cut.py --remove A-B,...` drops ranges and keeps the rest,** the inverse of `--segments`: overlapping ranges merge, a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused.
 - **SKILL.md routes the 2.24 features from plain requests:** "under 25 MB" → `export.py --max-mb`, "remove 1:00-1:30" → `cut.py --remove`, "join without re-encoding" → `join.py --copy --transition none`, "the recording is corrupted" → `export.py --preset copy --repair`, "how much quality was lost" → `check.py --compare`. The report format now sits above the routing table so it survives context compaction; two rows already covered elsewhere (`--dry-run`, VFR phone video) were dropped to stay under the 30 KB budget.
+- Add join.py --copy, cut.py --remove, output identity, check.py --compare, export.py --max-mb and --repair (#385)
 
 ## 2.23.1
 
