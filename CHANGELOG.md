@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.0
+
+_Automated release: version and notes generated from pull requests merged since 3.0.0._
+
 ### Changed
 
 - An ffmpeg failure names its cause when ffmpeg's message does: `error.reason` `disk_full`,
@@ -27,6 +33,8 @@
 - `render.py` templates with a loudness stage (reels, shorts, ...) failed on a video with no audio
   after the picture stages had run, while the dry run said they would work. The stage is skipped
   and recorded (`loudness_no_audio`).
+- Failures say why: ffmpeg error reasons, no orphan ffmpeg, no blind re-encode, silent templates (#389)
+- ci: spread the suite over three machines per platform (#388)
 
 ## 3.0.0
 
