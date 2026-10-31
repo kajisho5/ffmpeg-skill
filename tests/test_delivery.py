@@ -41,6 +41,27 @@ class DeliveryTests(MediaFixtures):
                 if preset in ("youtube", "reels", "x", "h265"):
                     self.assertEqual(m["video"]["color_space"], "bt709")
 
+    def test_export_max_mb_fits_the_size(self):
+        """2.23: --max-mb 1 on a 10 s clip that is several MB at the preset's CRF: two passes, the
+        written file under 1 MiB and measured; a budget too small for the picture, --crf with it,
+        and a non-x264 preset are refused before anything runs."""
+        src = OUT / "max_mb_src.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:d=10",
+               "-f", "lavfi", "-i", "sine=d=10", "-c:v", "libx264", "-crf", "5", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+        out = OUT / "max_mb_out.mp4"
+        doc = json.loads(script("export.py", src, "--preset", "youtube", "--max-mb", "1", "--no-scale", "-o", out,
+                                "--overwrite", "--json").stdout)
+        self.assertLessEqual(out.stat().st_size, 1024 * 1024)
+        size = next(v for v in doc["verification"] if v.get("step") == "file_size")
+        self.assertTrue(size["ok"] and size["measured"] == out.stat().st_size, size)
+        self.assertEqual(sum("-pass" in c for c in doc["commands"]), 2)
+        for extra, said in ((["--max-mb", "0.05"], "not watchable"), (["--max-mb", "1", "--crf", "20"], "give one of them")):
+            proc = script("export.py", src, "--preset", "youtube", *extra, "-o", OUT / "max_mb_bad.mp4", "--json", expect_fail=True)
+            self.assertIn(said, json.loads(proc.stdout)["error"]["message"])
+        proc = script("export.py", src, "--preset", "h265", "--max-mb", "1", "-o", OUT / "max_mb_bad.mp4", "--json", expect_fail=True)
+        self.assertIn("x264", json.loads(proc.stdout)["error"]["message"])
+
     def test_export_list(self):
         self.assertIn("youtube", script("export.py", "--list").stdout)
 

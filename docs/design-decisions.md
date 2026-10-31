@@ -56,6 +56,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.22 — silence.py says where it cut, and where to listen](#222--silencepy-says-where-it-cut-and-where-to-listen)
 - [2.23 — join.py --copy and cut.py --remove](#223--joinpy---copy-and-cutpy---remove)
 - [2.23 — output identity and check.py --compare](#223--output-identity-and-checkpy---compare)
+- [2.23 — export.py --max-mb](#223--exportpy---max-mb)
 <!-- contents:end -->
 
 ## Time limits
@@ -2353,3 +2354,18 @@ What was decided there:
   start to be visible on ordinary footage; the worst frame and its time say where to look
   (`look.py --compare`). Code: `_common.probe.compare_pictures()`. Test:
   `test_check_compare_measures_against_a_reference`.
+
+## 2.23 — export.py --max-mb
+
+- **A size limit is a two-pass x264 encode at a computed bitrate, then measured.** The budget is
+  97% of MB MiB (the rest is the container's overhead), less the preset's own audio bitrate, over
+  the running time the export keeps (the preset's maximum when it trims). One pass at that bitrate
+  misses on content whose complexity changes; two passes are what x264 offers for a size. The
+  size is still measured, because x264's rate control is a target, not a bound: an overshoot is a
+  `file_size` verification failure and a `size_over_limit` warning, not a silent pass. Test:
+  `test_export_max_mb_fits_the_size`.
+- **What it cannot do honestly is refused.** Another encoder (the HEVC, AV1, ProRes, GIF and copy
+  presets; VideoToolbox under `--hw`, which has no two-pass mode), `--crf` (a quality, not a
+  size), a source with no duration, and a budget that leaves under 100 kb/s for the picture. A
+  size that small makes an unwatchable file the user did not ask for, so the refusal says the
+  bitrate it would have been. Same test.

@@ -496,6 +496,7 @@ DIAGNOSTIC_CODES = {
     # degraded or partial results (part 2)
     "colour_not_converted": ("warnings", "export.py: an HDR or wide-gamut source written by a preset that tags SDR BT.709 without converting it; {preset, hdr_format}"),
     "output_audio_silent": ("warnings", "export.py: the written audio is silent (-inf LUFS), so no gain meets the platform's loudness; {platform}"),
+    "size_over_limit": ("warnings", "export.py --max-mb: the written file is over the size asked for (the encoder overshot its bitrate); {size, limit}"),
     "loudness_outside_spec": ("warnings", "export.py: the written file's loudness is outside the platform's spec (normalized: after --normalize too); {platform, lufs, tp, normalized}"),
     "camera_not_started": ("fallbacks", "multicam.py: a range asked for a camera that had not started; camera 0 played it ({start, end, requested_camera, camera, starts_at}); `cuts` names the camera rendered"),
     "loudness_not_measured": ("warnings", "export.py: the written file's loudness could not be read, so the platform's loudness was not verified (loudness.ok null, a failing loudness verification step)"),

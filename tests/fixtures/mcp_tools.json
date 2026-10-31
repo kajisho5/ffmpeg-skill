@@ -204,8 +204,10 @@
   "properties": [
    "argv",
    "aspect",
+   "compare",
    "content",
    "dry_run",
+   "expect_identity",
    "fast",
    "input",
    "json_brief",
@@ -409,6 +411,7 @@
    "input",
    "json_brief",
    "list",
+   "max_mb",
    "no_hw",
    "no_scale",
    "normalize",

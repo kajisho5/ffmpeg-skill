@@ -33,6 +33,7 @@ import json
 import math
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List
 
@@ -239,6 +240,42 @@ def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dr
     return {"kept": kept, "dropped": gone}
 
 
+MIB = 1024 * 1024
+SIZE_HEADROOM = 0.97        # of the byte budget given to the streams; the rest is container overhead
+SIZE_MIN_VIDEO_KBPS = 100   # below this the picture is not worth delivering; refused instead
+
+
+def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool) -> List[str]:
+    """--max-mb: the preset's x264 line with its CRF replaced by the bitrate that fits the size,
+    for a two-pass encode. Refused where that cannot be done honestly: another codec, --crf, --hw,
+    a source with no duration, or a size too small for a watchable picture."""
+    if args.crf is not None:
+        die("--max-mb sets the bitrate from the size, --crf sets a quality: give one of them")
+    if "-c:v" not in video or video[video.index("-c:v") + 1] != "libx264" or "-crf" not in video:
+        die(f"--max-mb runs a two-pass x264 encode; --preset {args.preset} does not encode with x264"
+            + (" (--hw puts it on VideoToolbox, which has no two-pass mode)" if STATE.hw else ""))
+    if args.max_mb <= 0:
+        die(f"--max-mb must be positive, got {args.max_mb:g}")
+    dur = float(meta.get("duration") or 0.0)
+    if p["max"] and not args.allow_long:
+        dur = min(dur, float(p["max"]))
+    if dur <= 0:
+        die("--max-mb needs the source's duration, which it does not report")
+    audio_kbps = 0.0
+    if has_audio and "-b:a" in p["audio"]:
+        audio_kbps = float(p["audio"][p["audio"].index("-b:a") + 1].rstrip("k"))
+    video_kbps = args.max_mb * MIB * 8 * SIZE_HEADROOM / dur / 1000 - audio_kbps
+    if video_kbps < SIZE_MIN_VIDEO_KBPS:
+        die(f"--max-mb {args.max_mb:g} leaves {max(video_kbps, 0):.0f} kb/s for the picture over {dur:.1f}s "
+            f"(after {audio_kbps:.0f} kb/s of audio); under {SIZE_MIN_VIDEO_KBPS} kb/s it is not watchable",
+            hint="raise --max-mb, or cut the video shorter first")
+    out = list(video)
+    i = out.index("-crf")
+    out[i:i + 2] = ["-b:v", f"{video_kbps:.0f}k"]
+    info(f"--max-mb {args.max_mb:g}: {video_kbps:.0f} kb/s video + {audio_kbps:.0f} kb/s audio over {dur:.1f}s, two-pass")
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", nargs="?")
@@ -250,6 +287,9 @@ def main() -> int:
     ap.add_argument("--no-scale", action="store_true", help="keep source resolution even for platform presets")
     ap.add_argument("--allow-long", action="store_true", help="do not trim to the platform's max duration")
     ap.add_argument("--crf", type=int, help="override CRF")
+    ap.add_argument("--max-mb", type=float, metavar="MB",
+                    help="fit the file under MB megabytes (MiB): a two-pass x264 encode at the video bitrate the "
+                         "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
     ap.add_argument("--normalize", action="store_true", help="youtube/youtube4k/reels/x: when the written file misses the platform's loudness spec, run loudness.py on it (audio re-encoded, video copied) so one export delivers")
     ap.add_argument("--list", action="store_true", help="list presets and exit")
     add_common(ap, codec=False)  # the preset decides the codec; --codec would only be refused
@@ -354,6 +394,8 @@ def main() -> int:
         # A build without libx264/libx265 has no other encoder, so it goes there without --hw too
         # (hw_preset_video returns the line untouched in every other case)
         video = hw_preset_video(video, meta, bt709=tag_bt709)
+    if args.max_mb is not None:
+        video = size_video_args(args, video, p, meta, has_audio)
     cmd += video
     if args.preset != "copy":
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
@@ -379,9 +421,15 @@ def main() -> int:
         note(f"trimmed from {trimmed['from']:.3f}s to the {args.preset} maximum of {p['max']:.0f}s "
              "(use --allow-long to keep full length)")
         cmd += ["-t", f"{p['max']:.3f}"]
-    dropped = _run_keeping_non_av(cmd, output, sub_codecs, len(data)) if (subs or data) else []
-    if not (subs or data):
-        run(cmd + [output])
+    with tempfile.TemporaryDirectory(prefix="ffskill_2pass_") as passdir:
+        if args.max_mb is not None:
+            # pass 1 only writes x264's statistics; pass 2 encodes against them
+            log = os.path.join(passdir, "x264")
+            run(cmd + ["-pass", "1", "-passlogfile", log, "-an", "-sn", "-dn", "-f", "null", "-"])
+            cmd += ["-pass", "2", "-passlogfile", log]
+        dropped = _run_keeping_non_av(cmd, output, sub_codecs, len(data)) if (subs or data) else []
+        if not (subs or data):
+            run(cmd + [output])
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
@@ -463,6 +511,16 @@ def main() -> int:
             step = {"step": "duration", "property": "duration", "ok": False, "expected": {"max": p["max"]},
                     "reason": "not_measured: the written file reports no duration"}
         extra.setdefault("verification", []).append(step)
+    if args.max_mb is not None and not STATE.dry_run:
+        limit = int(args.max_mb * MIB)
+        size = os.path.getsize(output)
+        extra.setdefault("verification", []).append(
+            {"step": "file_size", "property": "size_bytes", "ok": size <= limit, "expected": {"max": limit},
+             "measured": size, "delta": size - limit, "tolerance": 0, "provenance": "user_specified"})
+        if size > limit:
+            notes.append(f"--max-mb {args.max_mb:g}: the file is {size / MIB:.2f} MiB, over the limit; the encoder overshot "
+                         f"its target bitrate on this content: export again with a lower --max-mb")
+            warn(notes[-1], "size_over_limit", size=size, limit=limit)
     # read back after --normalize, which rewrote the file
     non_av = _non_av_report(subs, sub_codecs, data, dropped, output, "write_failed")
     if non_av["dropped"]:
