@@ -3337,6 +3337,15 @@ class ContractTests(unittest.TestCase):
         clip = work / "clip.mp4"; shutil.copy(self.src, clip)
         proc = tool("silence", clip, "--edl", work / "clip_tight.mp4", "--overwrite", "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
+        # a media output that will be refused is refused before any side file is written
+        taken = work / "taken.mp4"; taken.write_bytes(b"x"); edl = work / "mc.edl"
+        for out in (taken, "--output=-report"):
+            if edl.exists():
+                edl.unlink()
+            out_args = ["-o", out] if out == taken else [out]
+            proc = tool("multicam", self.src, self.src, *out_args, "--edl", edl, "--json", check=False)
+            self.assertIn(json.loads(proc.stdout)["error"]["reason"], ("output_exists", "output_looks_like_option"))
+            self.assertFalse(edl.exists(), out)
         # two side files of one run never share a path
         proc = tool("metadata", self.src, "--auto-chapters", "--chapters-out", work / "same.txt",
                     "--description-out", work / "same.txt", "-o", work / "m2.mp4", "--json", check=False)

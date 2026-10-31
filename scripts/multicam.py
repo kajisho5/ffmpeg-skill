@@ -154,6 +154,8 @@ def main() -> int:
         media_out = args.output or default_output(args.inputs[0], "multicam", "mp4")
         guard_sidecar(args.edl, *args.inputs, siblings=(args.write_project, media_out))
         guard_sidecar(args.write_project, *args.inputs, siblings=(media_out,))
+        if args.edl or args.write_project:  # they are written before the cut: refuse its output first
+            guard_sidecar(media_out, *args.inputs)
     if args.analyze_seconds > 900:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
     if args.fps is not None and args.fps <= 0:
