@@ -347,7 +347,8 @@ def _video_packets(path: str, limit: "Optional[int]" = None) -> "List[str]":
 
 def _stream_span(path: str, kind: str) -> "Optional[Tuple[float, float]]":
     """First packet's time and last packet's time plus its duration for the first `kind` stream
-    (V or a): measured, because Matroska/WebM state no stream length and MPEG-TS only an estimate."""
+    (V or a): measured, because Matroska/WebM state no stream length and MPEG-TS only an estimate.
+    None when the packets cannot be read or one has no time: a partial span would invent a gap."""
     proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", f"{kind}:0", "-show_entries",
                 "packet=pts_time,duration_time", "-of", "csv=p=0", path], quiet=True, check=False)
     times = []
@@ -356,7 +357,7 @@ def _stream_span(path: str, kind: str) -> "Optional[Tuple[float, float]]":
         try:
             t = float(parts[0])
         except (ValueError, IndexError):
-            continue
+            return None
         try:
             d = float(parts[1])
         except (ValueError, IndexError):
@@ -377,7 +378,7 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
     if args.sample_rate or args.channels:
         die("--copy keeps every clip's own sound: --sample-rate and --channels need a re-encode, so drop --copy")
     encoder = [f for f, on in (("--codec", STATE.codec), ("--hw", STATE.hw and STATE.hw_source == "flag"),
-                               ("--quality", getattr(args, "quality", None) not in (None, getattr(args, "quality_default", None))))
+                               ("--quality", getattr(args, "quality_given", False)))
                if on]
     if encoder:
         die(f"--copy keeps every clip's own encoding: {', '.join(encoder)} choose(s) an encode, so drop --copy")
@@ -424,7 +425,10 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                 continue
             v_span, a_span = _stream_span(p, "V"), _stream_span(p, "a")
             if v_span is None or a_span is None:
-                continue
+                refuse("input", "join_copy_mismatch",
+                       f"--copy: could not measure where picture and sound start and end in {p} (a packet without a "
+                       "time), so a gap at the join could not be ruled out", hint="drop --copy to re-encode the join",
+                       clips=[{"path": p, "differs": {"av_span": "unmeasured"}}])
             (vb, ve), (ab, ae) = v_span, a_span
             if abs(vb - ab) > COPY_AV_GAP or abs(ve - ae) > COPY_AV_GAP:
                 gaps.append({"path": p, "video": [round(vb, 3), None if ve is None else round(ve, 3)],
@@ -520,7 +524,8 @@ def main() -> int:
     aud.add_argument("--channels", type=int, choices=[1, 2, 6, 8], help="output channel count (default: the widest clip)")
     add_common(ap)
     args = ap.parse_args()
-    args.quality_default = ap.get_default("quality")
+    # given at all, not only different from the default: --quality 18 asks for an encode as much as 23 does
+    args.quality_given = any(a == "--quality" or a.startswith("--quality=") for a in sys.argv[1:])
     apply_common(args)
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")

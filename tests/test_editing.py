@@ -1243,6 +1243,16 @@ class EditingTests(MediaFixtures):
         proc = script("join.py", a, b, "--copy", "--transition", "none", "--codec", "hevc", "-o", OUT / "span_hevc.mp4",
                       "--json", expect_fail=True)
         self.assertIn("--codec", json.loads(proc.stdout)["error"]["message"])
+        default_quality = re.search(r"--quality N.*?default (\d+)", script("join.py", "--help").stdout, re.S)
+        for value in ([default_quality.group(1)] if default_quality else []) + ["30"]:
+            proc = script("join.py", a, b, "--copy", "--transition", "none", "--quality", value, "-o", OUT / "span_q.mp4",
+                          "--json", expect_fail=True)
+            self.assertIn("--quality", json.loads(proc.stdout)["error"]["message"])
+        sys.path.insert(0, str(SCRIPTS))
+        import join as join_mod
+        from unittest import mock
+        with mock.patch.object(join_mod, "run", return_value=subprocess.CompletedProcess([], 0, "0.000000,0.033\nN/A,0.033\n", "")):
+            self.assertIsNone(join_mod._stream_span("x.mkv", "V"))
         subs = []
         for src in (a, b):
             t = OUT / (src.stem + "_sub.mp4")
