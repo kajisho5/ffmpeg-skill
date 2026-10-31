@@ -743,7 +743,8 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
 def presentation_times(path: str, start: float) -> "List[float]":
     """The presentation time of every frame of the first video stream (attached pictures
     excluded), in order: its packets' pts sorted, those before the stream's own start (an edit
-    list's hidden pre-roll, never shown) dropped. From packets, so no decode. [] when unreadable."""
+    list's hidden pre-roll, never shown) dropped. From packets, so no decode. [] when unreadable,
+    also when one packet has no pts: skipping it would shift every later time onto the wrong frame."""
     proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "V:0", "-show_entries", "packet=pts_time",
                 "-of", "csv=p=0", path], quiet=True, check=False)
     times = []
@@ -751,7 +752,7 @@ def presentation_times(path: str, start: float) -> "List[float]":
         try:
             times.append(float(line.split(",")[0]))
         except ValueError:
-            continue
+            return []
     return sorted(t for t in times if t >= start - 1e-6)
 
 

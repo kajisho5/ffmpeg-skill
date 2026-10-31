@@ -377,6 +377,17 @@ class AnalysisTests(MediaFixtures):
         with mock.patch.object(content_probe, "run_analysis", lambda *a, **k: failed):
             self.assertIsNone(content_probe.detect_flashes(str(clip)))
 
+    def test_presentation_times_refuse_a_packet_without_pts(self):
+        """One unreadable pts makes the whole list [] (the flashes row falls back to its "~" time)
+        rather than skipping that packet and shifting every later time onto the wrong frame."""
+        from unittest import mock
+        def fake(stdout):
+            return lambda *a, **k: subprocess.CompletedProcess([], 0, stdout, "")
+        with mock.patch.object(content_probe, "run", fake("0.2\n0.0\n0.1\n")):
+            self.assertEqual(content_probe.presentation_times("in.mp4", 0.0), [0.0, 0.1, 0.2])
+        with mock.patch.object(content_probe, "run", fake("0.0\nN/A\n0.2\n")):
+            self.assertEqual(content_probe.presentation_times("in.mp4", 0.0), [])
+
     def test_content_passes_skip_cover_art(self):
         """Every --content decode selects V:0 (attached pictures excluded, as probe does), so cover
         art ahead of the playable video is never what the black, frozen, flash or first-frame rows
