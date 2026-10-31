@@ -1764,7 +1764,7 @@ them.
 
 ### color.py — HDR to SDR, LUTs, colour tags, Dolby Vision
 ```
-color.py INPUT --to-sdr [--tonemap hable|mobius|reinhard|bt2390] [--peak 1000] [--desat 0] [-o OUT]
+color.py INPUT --to-sdr [--tonemap hable|mobius|reinhard|clip|linear|gamma] [--peak 1000] [--desat 0] [-o OUT]
 color.py INPUT --lut grade.cube [--lut-strength 0..1] [-o OUT]
 color.py INPUT --retag bt709|bt2020-pq|bt2020-hlg|bt601 [-o OUT]      # metadata only, stream copy (checked with ffprobe)
 color.py INPUT --strip-dovi [-o OUT]                                 # drop the Dolby Vision RPU, keep the HLG/HDR10 base layer (stream copy)
@@ -1790,8 +1790,8 @@ iPhone "HDR" video is Dolby Vision profile 8.4 on an HLG base layer:
 tone-maps it from the HLG base layer. When the user wants to keep HDR but
 players mis-render the DV layer, `--strip-dovi` removes it losslessly.
 `--to-sdr` does a real conversion: linearise (zscale, PQ or HLG), tone-map
-(default `hable`, `mobius` keeps more highlight detail, `bt2390` is the
-broadcast standard), then BT.709 gamma + matrix. Refuses when probe says the
+(default `hable`, `mobius` keeps more highlight detail; FFmpeg's CPU
+`tonemap` filter has no BT.2390 curve), then BT.709 gamma + matrix. Refuses when probe says the
 input is not HDR unless `--force`. `--lut` applies a 3D .cube with
 tetrahedral interpolation (Log→709 conversions, creative looks); blend with
 `--lut-strength`. Everything else in the skill assumes SDR BT.709, so run this

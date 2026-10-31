@@ -20,6 +20,7 @@ _Automated release: version and notes generated from pull requests merged since 
 
 ### Fixed
 
+- **`color.py --tonemap bt2390` is gone: it never worked.** FFmpeg's CPU `tonemap` filter has no BT.2390 curve in any version (only `tonemap_opencl` and libplacebo do), so choosing it always failed. The choices are now the filter's own curves (`hable`, `mobius`, `reinhard`, `clip`, `linear`, `gamma`), and a test checks them against the ffmpeg under test.
 - **`render.py --export-timeline` no longer expands XML entities when it reads an `.fcpxml` back.** The parse step used ElementTree, which expands entities declared in an internal DTD; on Python 3.9 and 3.10 a file of nested entities is an expansion bomb. The root element is now read with expat directly and a declared entity is refused (`timeline_parse_failed`, a `ParseError` naming the entity). The bare `<!DOCTYPE fcpxml>` the writer emits reads as before. Found by Snyk Code.
 - **SHA-1 is marked as not used for security** (`usedforsecurity=False`) where it keys caches (`batch.py`, `render.py`, the font copy in `drawtext`). The digests are unchanged, so existing caches still hit.
 - A `.snyk` policy file keeps `tests/`, `evals/` and `demos/` (never published) out of Snyk Code; `.github/` stays scanned.

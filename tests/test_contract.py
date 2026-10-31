@@ -2069,7 +2069,6 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(marker.read_text(encoding="utf-8"), "preserve me")
 
     # ------------------------------------------------------------------ integration: claims hold at run time
-    @unittest.skipIf(platform.system() == "Windows", "fake ffmpeg is a #!/bin/sh script on a POSIX-only PATH shim; not portable to Windows. The claim itself (run() never invokes ffmpeg under --dry-run) is still exercised on Windows by every --dry-run case in tests/test_all.py, just without a shim proving no *other* ffmpeg-shaped binary would have run.")
     def test_every_1_17_flag_is_reachable_off(self):
         """Each new 1.17 flag defaults to 1.16's behaviour, or is switched off by one flag.
 
@@ -2113,6 +2112,7 @@ class ContractTests(unittest.TestCase):
         self.assertIsNone(rendered.get("snap"))
         self.assertFalse(any("--snap" in c or "--cache" in c for c in rendered["commands"]))
 
+    @unittest.skipIf(platform.system() == "Windows", "fake ffmpeg is a #!/bin/sh script on a POSIX-only PATH shim; not portable to Windows. The claim itself (run() never invokes ffmpeg under --dry-run) is still exercised on Windows by every --dry-run case in tests/test_all.py, just without a shim proving no *other* ffmpeg-shaped binary would have run.")
     def test_dry_run_never_runs_ffmpeg_and_writes_nothing(self):
         """A fake ffmpeg first on PATH records every invocation; ffprobe stays real."""
         shim = self.work / "shim"

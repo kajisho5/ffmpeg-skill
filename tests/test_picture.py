@@ -1163,6 +1163,17 @@ class PictureTests(MediaFixtures):
         # refuses on SDR input unless forced
         script("color.py", self.src, "--to-sdr", expect_fail=True)
 
+    def test_every_tonemap_choice_is_a_curve_this_ffmpeg_has(self):
+        """2.24: --tonemap offered bt2390, which FFmpeg's CPU tonemap filter has never had (only
+        tonemap_opencl/libplacebo do), so choosing it always failed. Every choice must be one of
+        the filter's own curves on the ffmpeg under test."""
+        import color
+        help_text = sh("ffmpeg", "-hide_banner", "-h", "filter=tonemap").stdout
+        curves = set(re.findall(r"^\s{5}(\w+)\s+\d+\s", help_text, re.M))
+        self.assertTrue(curves, help_text)
+        self.assertEqual(set(color.TONEMAPS) - curves, set(), help_text)
+        script("color.py", self.hdr, "--to-sdr", "--tonemap", "bt2390", "-o", OUT / "sdr_bt2390.mp4", expect_fail=True)
+
     def test_to_sdr_bt2020_sdr_converts_gamut_without_tonemap(self):
         """BT.2020 primaries on an SDR transfer are not HDR: --to-sdr converts the gamut only.
         It used to tone-map them as PQ, darkening white Y 235 -> 151 and grey 126 -> 90 while

@@ -26,7 +26,9 @@ from typing import List, Optional
 from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
 
-TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
+# the curves of FFmpeg's CPU `tonemap` filter (every version from 5.1 to 9). bt2390 was listed
+# until 2.24 but exists only in tonemap_opencl/libplacebo, so choosing it always failed.
+TONEMAPS = ["hable", "mobius", "reinhard", "clip", "linear", "gamma"]
 
 # Typed primary correction: each flag is one option of one real, always-available libavfilter filter
 # (never a caller-supplied filter string). Range is this script's own safe subset of what the filter
@@ -164,7 +166,7 @@ def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str
         f"zscale=tin={trc}:pin={prim}:min={space}:rin={v.get('color_range') or 'tv'}:t=linear:npl={peak:g}",
         "format=gbrpf32le",
         "zscale=p=bt709",
-        f"tonemap=tonemap={tonemap}:desat={desat:g}" + (":peak=%g" % (peak / 100.0) if tonemap in ("bt2390",) else ""),
+        f"tonemap=tonemap={tonemap}:desat={desat:g}",
         "zscale=t=bt709:m=bt709:r=tv",
         "format=yuv420p",
     ]

@@ -12,7 +12,7 @@ toolchain on real files, not from spec sheets.
 | Android screen recording | H.264, odd sizes (720x1600, 1298x1080), 18-120 fps, strongly VFR | Conform with `fit.py --fps 30` (or 60) before anything else; check aspect with `check.py`. |
 | Zoom / Teams recordings | H.264 720p-1080p, low bitrate, long, often VFR | `silence.py` and `scenes.py` work; expect long processing on hour-long files; `--fast` for previews. |
 | OBS (mkv) | H.264/HEVC, sometimes multiple audio tracks, VFR when the source dropped frames | Only the first audio track is used; remux to mp4 first if a client needs it (`export.py`). |
-| HDR10 masters / test patterns | PQ (`smpte2084`), BT.2020, MaxCLL/MDL metadata, 10-bit | `color.py --to-sdr --tonemap hable` (or `bt2390` for broadcast); tone-mapping 4K runs about 1x realtime, so cut first. |
+| HDR10 masters / test patterns | PQ (`smpte2084`), BT.2020, MaxCLL/MDL metadata, 10-bit | `color.py --to-sdr --tonemap hable` (`mobius` keeps more highlight detail); tone-mapping 4K runs about 1x realtime, so cut first. |
 | Broadcast / ProRes .mov | ProRes 422/4444, PCM audio, 24p or 25p | Stream copy where possible; `export.py --preset prores` for masters; `check.py --platform broadcast` (EBU R128 -23 LUFS). |
 | Film / web downloads | H.264 with MP3 or AAC, 24p, letterboxed (1280x534) | `fit.py --aspect` pads; `check.py` flags non-standard aspect. |
 
