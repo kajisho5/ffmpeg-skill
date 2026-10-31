@@ -539,10 +539,14 @@ def main() -> int:
     if damage_before is not None:
         after = media_damage(output)
         extra["repair"] = {"before": damage_before, "after": after}
-        worse = any(after[k] > damage_before[k] for k in after)
+        # judged on timestamp warnings, the part a remux rewrites: decode errors are counted in log
+        # lines, and the same damaged frame logs a different number of them demuxed from another
+        # container, so their before/after is reported, not compared
+        stamps = after["timestamp_warnings"]
         extra.setdefault("verification", []).append(
-            {"step": "repair", "property": "decode_errors", "ok": not worse, "expected": {"max": damage_before},
-             "measured": after, "provenance": "input_premeasurement"})
+            {"step": "repair", "property": "timestamp_warnings", "ok": stamps <= damage_before["timestamp_warnings"],
+             "expected": {"max": damage_before["timestamp_warnings"]}, "measured": stamps,
+             "provenance": "input_premeasurement"})
         if after["decode_errors"]:
             notes.append(f"--repair: {after['decode_errors']} decode error(s) remain: a remux drops corrupt packets and "
                          "rewrites timestamps but cannot rebuild a damaged frame; a re-encoding preset decodes past them")

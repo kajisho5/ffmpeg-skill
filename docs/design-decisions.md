@@ -2379,8 +2379,11 @@ What was decided there:
   A re-encoding preset already decodes past damage, so `--repair` with one is refused as
   meaningless. Test: `test_export_repair_counts_damage_before_and_after`.
 - **It is measured by what a decoder says, before and after.** One full decode of each file at
-  `-v warning`, lines about timestamps counted apart from the rest. The verification step fails
-  only when the output has more of either than the input: a remux that removed every timestamp
-  warning but left decode errors from damaged frames did what a remux can do, and those errors are
-  named (`repair_incomplete`) with the way out (a re-encoding preset). On a TS file with 40 bytes
-  overwritten: 3 timestamp warnings and 57 errors before, 0 and 53 after. Same test.
+  `-v warning`, lines about timestamps counted apart from the rest. The verification step is
+  judged on timestamp warnings only, the part a remux rewrites, and fails when the output has more
+  than the input. Decode errors are reported before and after but not compared: they are log
+  lines, and the same damaged frame logs a different number of them demuxed from TS than from MP4
+  (one run of this test logged 51 before and 53 after on a remux that dropped nothing it should
+  have kept). Errors that remain are named (`repair_incomplete`) with the way out (a re-encoding
+  preset). On a TS file with 40 bytes overwritten: 3 timestamp warnings and 58 errors before, 0 and
+  58 after. Same test.

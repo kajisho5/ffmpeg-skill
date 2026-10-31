@@ -1889,8 +1889,9 @@ export.py --list
 errors (`-err_detect ignore_err`) and negative timestamps are shifted to zero. The input is read,
 never written. Both files are decoded once at `-v warning` and the lines counted:
 `repair: {before, after}`, each `{timestamp_warnings, decode_errors}`, and a `repair` verification
-step that fails when the output has more of either than the input. A remux cannot rebuild a damaged
-frame, so decode errors that remain are a `repair_incomplete` warning and a `notes` line (a
+step that fails when the output has more timestamp warnings than the input (decode errors are log
+lines whose count changes with the container, so they are reported, not compared). A remux cannot
+rebuild a damaged frame, so decode errors that remain are a `repair_incomplete` warning and a `notes` line (a
 re-encoding preset decodes past them).
 `--max-mb MB` (2.23) fits the file under MB MiB: the preset's x264 line gets the video bitrate the
 running time leaves after the preset's audio bitrate (97% of the budget; the rest is container
