@@ -16,6 +16,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _is_faststart, _no_fontconfig, png_size, script, sh  # noqa: E402
 from _common import default_font_file, font_for_script, probe  # noqa: E402
+import importlib  # noqa: E402
+content_probe = importlib.import_module("_common.probe")  # the module: `_common.probe` is also a function
+import check as check_module  # noqa: E402
 
 
 class AnalysisTests(MediaFixtures):
@@ -342,10 +345,21 @@ class AnalysisTests(MediaFixtures):
                "-fps_mode", "passthrough", "-c:v", "libx264", "-pix_fmt", "yuv420p", gap)
         r = self._rows(gap, "--content")
         self.assertTrue(r["flashes"]["value"].startswith("1: "), r["flashes"])
+        self.assertEqual(content_probe.detect_flashes(str(gap)), [20])
         r = self._rows(lead, "--content")
         self.assertEqual(r["first frame"]["status"], "WARN", r["first frame"])
         self.assertEqual(self._rows(cut, "--content")["first frame"]["status"], "PASS")
         self.assertNotIn("flashes", self._rows(flash))  # opt-in: the default row set is unchanged
+
+    def test_check_flash_times_on_the_look_timeline(self):
+        """The flashes row's times: index / rate plus the video's lead over the container, "~" on
+        suspected variable-rate video, and `frame N` when the stream has no frame rate."""
+        meta = {"start_time": 0.0}
+        self.assertEqual(check_module.flash_times([15, 45], {"fps": 30.0}, meta), "0.50s, 1.50s")
+        self.assertEqual(check_module.flash_times([15], {"fps": 30.0, "start_time": 0.2}, meta), "0.70s")
+        self.assertEqual(check_module.flash_times([15], {"fps": 30.0, "variable_frame_rate_suspected": True}, meta), "~0.50s")
+        self.assertEqual(check_module.flash_times([15, 16], {"fps": None}, meta), "frame 15, frame 16")
+        self.assertTrue(check_module.flash_times(list(range(7)), {"fps": 10.0}, meta).endswith(" ..."))
 
     def test_check_content_dropouts_row(self):
         """2.17: a short run of digital silence with sound on both sides (lost audio at a join) is a

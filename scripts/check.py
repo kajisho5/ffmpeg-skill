@@ -71,6 +71,17 @@ FROZEN_FAIL = 0.95                         # a frozen span covering this share =
 SILENCE_WARN, SILENCE_FAIL = 0.50, 0.95    # share of the duration below SILENT_PEAK_DBFS
 
 
+def flash_times(flashes: List[int], v: Dict[str, Any], meta: Dict[str, Any]) -> str:
+    """The flashes row's first five times: frame index / average rate on look.py's timeline (the
+    video stream's lead over the container start added), "~" where probe suspects a variable rate,
+    and `frame N` when the stream has no frame rate at all."""
+    fps = float(v.get("fps") or 0.0)
+    lead = max(0.0, float(v.get("start_time") or 0.0) - float(meta.get("start_time") or 0.0))
+    approx = "~" if v.get("variable_frame_rate_suspected") else ""
+    return ", ".join(f"{approx}{lead + n / fps:.2f}s" if fps else f"frame {n}" for n in flashes[:5]) \
+        + (" ..." if len(flashes) > 5 else "")
+
+
 def _span_total(spans: Any) -> float:
     return sum(max(0.0, e - s) for s, e in spans)
 
@@ -302,12 +313,7 @@ def main() -> int:
                     "a picture (cut.py --start a few frames in, or move a title card to frame 0)" if flat else "",
                     reason="a feed shows the first frame before anything plays, and a flat one reads as a broken upload" if flat else "")
             flashes = detect_flashes(args.input)
-            # index / average rate, on look.py's timeline (container start); "~" where the rate varies
-            fps = float(v.get("fps") or 0.0)
-            lead = max(0.0, float(v.get("start_time") or 0.0) - float(meta.get("start_time") or 0.0))
-            approx = "~" if v.get("variable_frame_rate_suspected") else ""
-            at = ", ".join(f"{approx}{lead + n / fps:.2f}s" if fps else f"frame {n}" for n in (flashes or [])[:5]) \
-                + (" ..." if flashes and len(flashes) > 5 else "")
+            at = flash_times(flashes or [], v, meta)
             if flashes is None:
                 row("flashes", "WARN", "could not measure", "no single frame unlike both its neighbours",
                     "look.py the video: no frame decoded, so nothing was compared",

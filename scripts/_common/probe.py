@@ -12,7 +12,7 @@ import re
 import statistics
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.emit import die
+from _common.emit import die, warn
 from _common.runner import STATE, dry_run_input_pending, require_tool, run, run_analysis
 
 
@@ -699,7 +699,8 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
     CONTENT_FLASH_RETURN of the smaller step. One video-only pass; ffmpeg reduces each frame to
     three 16-bit numbers (|f[n]-f[n-1]| and the two clipped halves of f[n]-f[n-2]): 6 bytes a
     frame in the captured output (1.3 MB for an hour at 60 fps), read in place. The caller turns an index into a time;
-    the comparison itself needs no frame rate. None when no frame decoded (nothing was compared)."""
+    the comparison itself needs no frame rate. None when no frame decoded or the pass failed
+    (nothing was compared; a failure is also a flash_pass_failed warning)."""
     if dry_run_input_pending(path):
         return []
     graph = (f"[0:v:0]scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray16le,split=3[a][b][c];"
@@ -711,7 +712,10 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
                          "-filter_complex", graph, "-fps_mode", "passthrough", "-f", "rawvideo", "-"],
                         check=False, text=False, record=True)
     if proc.returncode != 0:
-        die(f"flash detection failed:\n{proc.stderr.decode(errors='replace').strip()[-800:]}", kind="ffmpeg")
+        # an unmeasured row, not the end of the report: the other content rows stand
+        warn("flash detection failed: " + (proc.stderr.decode(errors="replace").strip().splitlines() or ["ffmpeg exited " + str(proc.returncode)])[-1][:300],
+             "flash_pass_failed")
+        return None
     # tblend has no output for frame 0, so record r is frame r+1: a zero record in front puts
     # every value at its own frame's index. passthrough keeps the rawvideo muxer from padding a
     # constant rate, which repeated records over timestamp gaps (a repeat is a zero step, and a
