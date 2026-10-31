@@ -427,6 +427,8 @@ class AnalysisTests(MediaFixtures):
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual({r["check"]: r["status"] for r in doc["checks"]}["identity"], "FAIL")
         self.assertEqual(doc["input_identity"]["size"], out.stat().st_size)
+        # a dry run reads the file that exists, so the identity row is there under --dry-run too
+        self.assertEqual(self._rows(out, "--no-loudness", "--expect-identity", expect, "--dry-run")["identity"]["status"], "FAIL")
 
     def test_check_compare_measures_against_a_reference(self):
         """2.24: --compare REF: identical frames PASS as identical, a heavily compressed copy WARNs

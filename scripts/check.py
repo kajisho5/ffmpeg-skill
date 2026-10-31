@@ -360,7 +360,7 @@ def main() -> int:
                 "again); a noise gate makes these on purpose" if gaps else "",
                 reason="a short stretch of digital silence in the middle of the sound is usually lost audio at a join or a glitched decode" if gaps else "")
 
-    identity = file_identity(args.input) if not STATE.dry_run else None
+    identity = None if dry_run_input_pending(args.input) else file_identity(args.input)
     if args.expect_identity:
         try:
             size, mtime_ns = (int(x) for x in args.expect_identity.split(":"))
