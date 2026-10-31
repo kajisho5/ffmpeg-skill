@@ -32,8 +32,8 @@ Every step in full: `references/workflow.md`.
 3. **Plan with `--dry-run --json`, then run.** Trust `--json` numbers, not the summary line.
 4. **Chain:** colour → cut → join → silence → fit → caption/overlay → sync → audio → loudness → export.
    A delivery request is one `render.py --template`; three or more steps: a `render.py` project.
-5. **Check** with `check.py OUTPUT --platform X`: fix format rows; fix duration, aspect, fps or loudness
-   only when the request implies it. Mention WARNs.
+5. **Check** with `check.py OUTPUT --platform X --expect-identity S:M` (the writer's `output_identity`):
+   fix format rows; fix duration, aspect, fps or loudness only when the request implies it. Mention WARNs.
 6. **Verify** from the writer's `--json` probe or `probe.py`: exit 0 and the requested numbers, or it failed.
 7. **Keep originals:** never overwrite a source; `--overwrite` only for this job's files or ones the user
    asked to replace.
@@ -101,7 +101,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "cut out the pauses", "jump cuts" | `silence.py in.mp4` |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
 | "just the real pauses, not inside a sentence" | `silence.py in.mp4 --speech-aware` |
-| "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments`) |
+| "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments` with picks.txt's lines joined by commas) |
 | "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`) |
 | "speed up here, slow-mo there" | `speedramp.py in.mp4 --segment 0-3:1.0 --segment 3-4:0.25` |
 | "freeze the last frame" | `freeze.py clip.mp4 --hold 2` |
