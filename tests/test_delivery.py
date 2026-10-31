@@ -64,17 +64,22 @@ class DeliveryTests(MediaFixtures):
         self.assertIn("x264", json.loads(proc.stdout)["error"]["message"])
 
     def test_export_repair_counts_damage_before_and_after(self):
-        """2.24: --preset copy --repair on a TS with overwritten bytes: the input is untouched, the
+        """2.24: --preset copy --repair on a recording appended to itself: the input is untouched, the
         counts are reported before and after, timestamp warnings do not grow, remaining decode errors
         are named; --repair with a re-encoding preset is refused."""
-        src = OUT / "repair_src.ts"
+        lavfi = ["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:d=3", "-f", "lavfi", "-i", "sine=d=3"]
         part = OUT / "repair_part.ts"
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:d=3",
-           "-f", "lavfi", "-i", "sine=d=3", "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-f", "mpegts", part)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *lavfi,
+           "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-f", "mpegts", part)
+        if subprocess.run(["ffprobe", "-v", "error", "-show_format", str(part)], capture_output=True).returncode != 0:
+            # the johnvansickle static ffprobe builds (5.1.1, 7.0.2) segfault on any MPEG-TS file;
+            # MPEG-PS is the other container a recorder appends to, so the test still runs there
+            part = OUT / "repair_part.mpg"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *lavfi,
+               "-c:v", "mpeg2video", "-c:a", "mp2", "-f", "mpeg", part)
         # the same recording appended to itself byte for byte, as a recorder that reconnected
-        # writes it: timestamps jump back and the continuity counters break, yet every ffprobe
-        # still opens it (bytes flipped inside packets left 5.1.1's ffprobe unable to read the
-        # file at all, which is not what --repair is about)
+        # writes it: timestamps jump back (and in TS the continuity counters break)
+        src = OUT / ("repair_src" + part.suffix)
         src.write_bytes(part.read_bytes() * 2)
         before = src.read_bytes()
         out = OUT / "repair_out.mp4"
