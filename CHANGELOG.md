@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- CI spreads the suite over three machines per platform (`tests/run_parallel.py --part I/N`, which
+  deals the shards out by their measured cost and includes `test_contract`), so a run takes about
+  a third of the 26 minutes it took on one 4-core machine. The tests themselves are unchanged.
 
 ## 3.0.0
 

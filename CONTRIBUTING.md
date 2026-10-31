@@ -44,6 +44,7 @@ git clone https://github.com/kajisho5/ffmpeg-skill
 cd ffmpeg-skill
 npm run test:fast           # tests/test_contract.py only: contract, docs, dry runs (~3-4 min)
 npm test                    # everything: real encodes (test_all.py's modules, run in parallel by tests/run_parallel.py; about 21 min on 4 cores, 35 serially) + contract
+python3 tests/run_parallel.py --part 1/3   # one of CI's three machines' share (test_contract included); about a third of the time
 npm run release-check       # packaging + installer + MCP + doctor + full suite
 python3 scripts/_contract.py doctor   # what this machine can actually run
 ```
