@@ -660,6 +660,7 @@ def _refuse_url_media(cmd: Sequence[str]) -> None:
     (output-is-input, existing output, output directory) only mean something for a local path. A
     `-f lavfi` input is a filtergraph, not a location, and is left alone; a local name that
     contains a colon still works written as `./name`."""
+    cmd = [str(a) for a in cmd]  # in-process callers pass Path objects
     base = os.path.basename(cmd[0])
     if not (base.startswith("ffmpeg") or base.startswith("ffprobe")):
         return
