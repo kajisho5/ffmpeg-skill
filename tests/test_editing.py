@@ -1251,9 +1251,19 @@ class EditingTests(MediaFixtures):
         sys.path.insert(0, str(SCRIPTS))
         import join as join_mod
         from unittest import mock
-        packets = json.dumps({"packets": [{"pts_time": "0.000000", "duration_time": "0.033"}, {"duration_time": "0.033"}]})
-        with mock.patch.object(join_mod, "run", return_value=subprocess.CompletedProcess([], 0, packets, "")):
+        def listing(*packets):
+            return mock.patch.object(join_mod, "run", return_value=subprocess.CompletedProcess(
+                [], 0, json.dumps({"packets": list(packets)}), ""))
+        with listing({"pts_time": "0.000000", "duration_time": "0.033"}, {"duration_time": "0.033"}):
             self.assertIsNone(join_mod._stream_span("x.mkv", "V"))
+        # a packet without a pts is placed by its dts
+        with listing({"pts_time": "0.000000", "duration_time": "0.5"}, {"dts_time": "0.500000", "duration_time": "0.5"}):
+            self.assertEqual(join_mod._stream_span("x.mkv", "V"), (0.0, 1.0))
+        # a long clip: the head and the tail are read, and give the same span as every packet
+        long_clip = self._av_clip(OUT / "span_long.mp4", 40, 40, 440)
+        head_tail = join_mod._stream_span(str(long_clip), "V", 40.0)
+        whole = join_mod._stream_span(str(long_clip), "V", 0.0)
+        self.assertEqual(head_tail, whole)
         subs = []
         for src in (a, b):
             t = OUT / (src.stem + "_sub.mp4")

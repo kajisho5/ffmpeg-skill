@@ -345,13 +345,22 @@ def _video_packets(path: str, limit: "Optional[int]" = None) -> "List[str]":
     return (proc.stdout or "").split() if proc.returncode == 0 else []
 
 
-def _stream_span(path: str, kind: str) -> "Optional[Tuple[float, float]]":
+SPAN_HEAD_PACKETS = 64     # enough to see the earliest presentation time past B-frame reordering
+SPAN_TAIL_SECONDS = 10.0   # read from this far before the end, so a seek that lands early still reaches it
+
+
+def _stream_span(path: str, kind: str, duration: float = 0.0) -> "Optional[Tuple[float, float]]":
     """First packet's time and last packet's time plus its duration for the first `kind` stream
     (V or a): measured, because Matroska/WebM state no stream length and MPEG-TS only an estimate.
     None when the packets cannot be read or one has no time: a partial span would invent a gap."""
-    # JSON, not csv: older ffprobe builds (5.1) print side-data rows between the packet rows in csv
-    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", f"{kind}:0", "-show_entries",
-                "packet=pts_time,dts_time,duration_time", "-of", "json", path], quiet=True, check=False)
+    # JSON, not csv: older ffprobe builds (5.1) print side-data rows between the packet rows in csv.
+    # A long clip is read at its head and its tail only: every packet of a two-hour file is
+    # hundreds of thousands of entries for two numbers
+    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", f"{kind}:0", "-show_entries",
+           "packet=pts_time,dts_time,duration_time", "-of", "json"]
+    if duration > 3 * SPAN_TAIL_SECONDS:
+        cmd += ["-read_intervals", f"%+#{SPAN_HEAD_PACKETS},{duration - SPAN_TAIL_SECONDS:.3f}%"]
+    proc = run(cmd + [path], quiet=True, check=False)
     try:
         packets = json.loads(proc.stdout or "{}").get("packets") or [] if proc.returncode == 0 else []
     except ValueError:
@@ -428,7 +437,8 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
             # MPEG-TS stream length is an estimate, so a stated duration missed or invented gaps
             if not (m.get("video") and m.get("audio")):
                 continue
-            v_span, a_span = _stream_span(p, "V"), _stream_span(p, "a")
+            length = float(m.get("duration") or 0.0)
+            v_span, a_span = _stream_span(p, "V", length), _stream_span(p, "a", length)
             if v_span is None or a_span is None:
                 refuse("input", "join_copy_mismatch",
                        f"--copy: could not measure where picture and sound start and end in {p} (a packet without a "
