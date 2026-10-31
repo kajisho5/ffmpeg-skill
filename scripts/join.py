@@ -325,15 +325,17 @@ def _copy_doc(path: str) -> "Optional[Dict[str, Any]]":
         return None
     if not isinstance(doc, dict):
         return None
-    streams = doc.get("streams") or []
+    # attached pictures (cover art) are not the picture being joined, as V:0 skips them
+    streams = [st for st in doc.get("streams") or [] if not (st.get("disposition") or {}).get("attached_pic")]
     keep = [next((st for st in streams if st.get("codec_type") == kind), None) for kind in ("video", "audio")]
     doc["streams"] = [st for st in keep if st]
     return doc
 
 
 def _video_packets(path: str, limit: "Optional[int]" = None) -> "List[str]":
-    """The flags of the first video stream's packets (all of them, or the first `limit`)."""
-    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=flags", "-of", "csv=p=0"]
+    """The flags of the first video stream's packets (all of them, or the first `limit`); cover art
+    is not that stream."""
+    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", "V:0", "-show_entries", "packet=flags", "-of", "csv=p=0"]
     if limit:
         cmd += ["-read_intervals", f"%+#{limit}"]
     proc = run(cmd + [path], quiet=True, check=False)
@@ -347,6 +349,8 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
         die("--copy joins without a transition: pass --transition none (a transition re-encodes the frames it blends)")
     if args.width or args.height or args.fps:
         die("--copy keeps every clip's own frame and rate: --width, --height and --fps need a re-encode, so drop --copy")
+    if args.sample_rate or args.channels:
+        die("--copy keeps every clip's own sound: --sample-rate and --channels need a re-encode, so drop --copy")
     output = args.output or default_output(args.inputs[0], "joined", os.path.splitext(args.inputs[0])[1].lstrip(".") or "mp4")
     guard_sidecar(output, *args.inputs)
     ext = os.path.splitext(output)[1].lower()
@@ -377,22 +381,30 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                    hint="drop --copy, or re-cut those clips with cut.py --accurate", clips=[{"path": p, "differs": {"edit_list": True}} for p in hidden])
         gaps = []
         for p, m in zip(args.inputs, metas):
-            vd, ad = (m.get("video") or {}).get("duration"), (m.get("audio") or {}).get("duration")
-            if vd and ad and abs(vd - ad) > COPY_AV_GAP:
-                gaps.append({"path": p, "video": round(vd, 3), "audio": round(ad, 3)})
+            # where each stream ends on the clip's timeline: its start plus its length
+            vs, as_ = m.get("video") or {}, m.get("audio") or {}
+            vd, ad = vs.get("duration"), as_.get("duration")
+            if vd and ad:
+                ve = float(vs.get("start_time") or 0.0) + vd
+                ae = float(as_.get("start_time") or 0.0) + ad
+                if abs(ve - ae) > COPY_AV_GAP:
+                    gaps.append({"path": p, "video": round(ve, 3), "audio": round(ae, 3)})
         if gaps:
-            listing = "; ".join(f"{g['path']} (video {g['video']:.3f}s, audio {g['audio']:.3f}s)" for g in gaps)
+            listing = "; ".join(f"{g['path']} (video ends {g['video']:.3f}s, audio {g['audio']:.3f}s)" for g in gaps)
             refuse("input", "join_copy_mismatch",
                    f"--copy: picture and sound end more than {COPY_AV_GAP * 1000:.0f} ms apart in {listing}; a copy join "
                    "would leave that gap at the next clip", hint="drop --copy, which trims both streams to one length",
-                   clips=[{"path": g["path"], "differs": {"video_duration": g["video"], "audio_duration": g["audio"]}} for g in gaps])
+                   clips=[{"path": g["path"], "differs": {"video_end": g["video"], "audio_end": g["audio"]}} for g in gaps])
+    fps = (metas[0].get("video") or {}).get("fps") or 30.0
+    note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
+    place_silent([m.get("duration") or 0.0 for m in metas], 0.0)
     with tempfile.TemporaryDirectory(prefix="ffskill_join_") as tmp:
         listfile = os.path.join(tmp, "list.txt")
         with open(listfile, "w", encoding="utf-8") as fh:
             for p in args.inputs:
                 fh.write(concat_list_line(os.path.abspath(p)) + "\n")
         joined = sibling_temp(output, "join") if not STATE.dry_run else output
-        cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]
+        cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-map", "0:V:0", "-map", "0:a:0?", "-c", "copy"]
         if ext in (".mp4", ".mov", ".m4v"):
             cmd += ["-movflags", "+faststart"]
         try:
@@ -401,12 +413,12 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
             if not STATE.dry_run:
                 want = sum(len(_video_packets(p)) for p in args.inputs)
                 got = len(_video_packets(joined))
-                verification.append({"step": "join", "property": "video_packets", "ok": got == want,
+                # nothing counted on either side is a failed read, not a match
+                verification.append({"step": "join", "property": "video_packets", "ok": got == want and want > 0,
                                      "measured": got, "expected": want, "provenance": "input_premeasurement"})
                 r = probe(joined, role="output")
                 measured = (r.get("video") or {}).get("duration") or r.get("duration")
                 expected = round(sum(m.get("duration") or 0.0 for m in metas), 3)
-                fps = (metas[0].get("video") or {}).get("fps") or 30.0
                 tol = round(n * COPY_AV_GAP + 1.0 / fps, 3)
                 verification.append({"step": "join", "property": "video_duration",
                                      "ok": measured is not None and abs(measured - expected) <= tol,

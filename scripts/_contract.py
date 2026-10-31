@@ -557,7 +557,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     if name == "check":
         extra = {"platform": {"type": "string"}, "ok": {"type": "boolean"}, "failed": {"type": "integer"}, "warnings": {"type": "integer"},
                  "input_identity": {"type": "object", "description": "2.24: {size, mtime_ns} of the file graded, the same shape as a writing tool's output_identity"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "present when no --platform was named: youtube was assumed and judgement rows are WARN"},
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "present when no --platform was named (youtube was assumed and judgement rows are WARN), or when --compare paired a different number of frames than the reference has"},
                  "checks": {"type": "array", "items": {"type": "object", "properties": {"check": {"type": "string", "description": "row name; --content adds black, frozen and silence; --compare adds similarity; --expect-identity adds identity; audio FAILs when the track is present but silent (peak <= -50 dBFS)"}, "status": {"enum": ["PASS", "WARN", "FAIL"]}, "value": {}, "expected": {}, "fix": {"type": "string"}, "kind": {"enum": ["format", "judgement"]}}}}}
     elif name == "caption":
         extra = {"transcription": {"type": "object", "description": "with --transcribe: {engine, model, language, routing (why auto chose it), detected_language when auto detected it}; when auto ran the English-only Parakeet model on English assumed, notes says so"},

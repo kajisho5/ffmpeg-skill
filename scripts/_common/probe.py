@@ -833,7 +833,7 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
 IN_BAND_CONFIG = ("mp3", "mp2")
 TS_EXTS = (".ts", ".m2ts", ".mts")
 _SIG_FIELDS = {"video": ("codec_name", "profile", "pix_fmt", "width", "height", "r_frame_rate", "time_base",
-                         "sample_aspect_ratio", "color_transfer", "color_primaries"),
+                         "sample_aspect_ratio", "color_space", "color_range", "color_transfer", "color_primaries"),
                "audio": ("codec_name", "profile", "sample_rate", "channels", "time_base")}
 
 
@@ -892,7 +892,7 @@ def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
     from _common.decision import escape_filter_path
     with tempfile.TemporaryDirectory(prefix="ffskill_compare_") as tmp:
         stats = os.path.join(tmp, "ssim.log")
-        graph = ("[0:v:0]split[a0][a1];[1:v:0]split[b0][b1];"
+        graph = ("[0:V:0]split[a0][a1];[1:V:0]split[b0][b1];"
                  f"[a0][b0]ssim=stats_file={escape_filter_path(stats, bind=False)};[a1][b1]psnr")
         proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-i", reference,
                              "-filter_complex", graph, "-f", "null", "-"], check=False, record=True)

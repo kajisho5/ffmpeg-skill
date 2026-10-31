@@ -1165,6 +1165,23 @@ class EditingTests(MediaFixtures):
             self.assertFalse(bad.exists())
         proc = script("join.py", *clips[:2], "--copy", "-o", OUT / "copy_fade.mp4", "--json", expect_fail=True)
         self.assertIn("--transition none", json.loads(proc.stdout)["error"]["message"])
+        proc = script("join.py", *clips[:2], "--copy", "--transition", "none", "--channels", "1", "-o", OUT / "copy_mono.mp4",
+                      "--json", expect_fail=True)
+        self.assertIn("--channels", json.loads(proc.stdout)["error"]["message"])
+        # equal lengths, but the sound starts 0.3 s late: it ends 0.3 s after the picture
+        late = OUT / "copy_late_sound.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=2",
+           "-f", "lavfi", "-i", "sine=f=700:d=2", "-filter_complex", "[1]adelay=300:all=1,atrim=0:2.3,asetpts=PTS-STARTPTS[a]",
+           "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-output_ts_offset", "0", late)
+        proc = script("join.py", clips[0], late, "--copy", "--transition", "none", "-o", OUT / "copy_late.mp4", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "join_copy_mismatch")
+        # a silent clip is placed in the copy join's output, as in a re-encoded one
+        quiet = OUT / "copy_quiet.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=2",
+           "-f", "lavfi", "-i", "sine=f=500:d=2", "-af", "volume=0", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", quiet)
+        doc = json.loads(script("join.py", clips[0], quiet, clips[1], "--copy", "--transition", "none", "-o",
+                                OUT / "copy_with_quiet.mp4", "--overwrite", "--json").stdout)
+        self.assertEqual([(s["at"], s["end"]) for s in doc["silent"]], [(2.0, 4.0)], doc.get("silent"))
 
     def test_cut_remove_keeps_the_rest(self):
         """2.24: --remove is --segments written the other way: dropping 1-2 and 3.5-4 (overlapping
@@ -1176,8 +1193,16 @@ class EditingTests(MediaFixtures):
         self.assertClose(probe(str(out))["video"]["duration"], 4.5, 0.1)
         proc = script("cut.py", clip, "--remove", "0-10", "-o", OUT / "removed_all.mp4", "--json", expect_fail=True)
         self.assertIn("nothing would be left", json.loads(proc.stdout)["error"]["message"])
-        proc = script("cut.py", clip, "--remove", "1-2", "--segments", "0-1", "-o", OUT / "removed_mix.mp4", "--json", expect_fail=True)
-        self.assertIn("does not combine", json.loads(proc.stdout)["error"]["message"])
+        for extra in (["--segments", "0-1"], ["--start", "0"]):
+            proc = script("cut.py", clip, "--remove", "1-2", *extra, "-o", OUT / "removed_mix.mp4", "--json", expect_fail=True)
+            self.assertIn("does not combine", json.loads(proc.stdout)["error"]["message"])
+        proc = script("cut.py", clip, "--remove", "1-2", "--snap", "beats", "-o", OUT / "removed_snap.mp4", "--json", expect_fail=True)
+        self.assertIn("--snap beats", json.loads(proc.stdout)["error"]["message"])
+        # a range starting before 0 is clamped to the file, not refused: dropping -1..2 keeps 2-6
+        lead = OUT / "removed_lead.mp4"
+        doc = json.loads(script("cut.py", clip, "--remove=-1-2", "--accurate", "-o", lead, "--overwrite", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+        self.assertClose(probe(str(lead))["video"]["duration"], 4.0, 0.1)
 
     def _av_clip(self, out, picture, tone, freq, fps=30):
         """A tiny clip: `picture` s of colour at `fps`, `tone` s of a sine at `freq` Hz, AAC audio."""

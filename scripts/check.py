@@ -81,15 +81,18 @@ def flash_times(flashes: List[int], v: Dict[str, Any], meta: Dict[str, Any], pts
     start). A flash frame's own presentation time when `pts` has it (presentation_times(): exact,
     gaps in the timestamps included); otherwise index / average rate plus the video's lead over
     the container, marked "~" (approximate), and `frame N` when there is no frame rate either."""
+    return ", ".join(frame_time(n, v, meta, pts) for n in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
+
+
+def frame_time(n: int, v: Dict[str, Any], meta: Dict[str, Any], pts: "Optional[List[float]]" = None) -> str:
+    """Frame `n` (decode order) on look.py's timeline, as flash_times() describes: exact from
+    `pts`, else "~" index / average rate plus the video's lead, else `frame N`."""
     origin = float(meta.get("start_time") or 0.0)
+    if pts and n < len(pts):
+        return f"{max(0.0, pts[n] - origin):.2f}s"
     fps = float(v.get("fps") or 0.0)
     lead = max(0.0, float(v.get("start_time") or 0.0) - origin)
-
-    def one(n: int) -> str:
-        if pts and n < len(pts):
-            return f"{max(0.0, pts[n] - origin):.2f}s"
-        return f"~{lead + n / fps:.2f}s" if fps else f"frame {n}"
-    return ", ".join(one(n) for n in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
+    return f"~{lead + n / fps:.2f}s" if fps else f"frame {n}"
 
 
 def _span_total(spans: Any) -> float:
@@ -105,6 +108,7 @@ def aspect_name(w: int, h: int) -> str:
 
 
 def main() -> int:
+    STATE_NOTES.clear()  # module state: a second main() in one process starts without the first's notes
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
@@ -367,7 +371,7 @@ def main() -> int:
             row("identity", "PASS" if same else "FAIL", f"{identity['size']}:{identity['mtime_ns']}", f"{size}:{mtime_ns}",
                 "" if same else "re-run the tool that writes this file and check what it reports, not what the path holds",
                 reason="" if same else "the file at this path is not the one the run being checked wrote")
-    if args.compare and not STATE.dry_run:
+    if args.compare and not dry_run_input_pending(args.input) and not dry_run_input_pending(args.compare):
         ref = probe(args.compare)
         rv = ref.get("video") or {}
         if not v or not rv:
@@ -383,16 +387,19 @@ def main() -> int:
                 row("similarity", "WARN", "could not measure", f"mean SSIM >= {COMPARE_SSIM_WARN:g}",
                     "look.py --compare at a few times", reason="the comparison pass failed")
             else:
-                fps = float(v.get("fps") or 0.0)
-                at = f"{cmp_['worst_frame'] / fps:.2f}s" if fps else f"frame {cmp_['worst_frame']}"
+                pts = presentation_times(args.input, float(v.get("start_time") or 0.0))
+                at = frame_time(cmp_["worst_frame"], v, meta, pts)
+                seek = "0" if at.startswith("frame") else at.lstrip("~").rstrip("s")
                 psnr = "identical" if cmp_["psnr"] == float("inf") else (f"{cmp_['psnr']:.1f} dB" if cmp_["psnr"] is not None else "?")
                 low = cmp_["ssim"] < COMPARE_SSIM_WARN
                 row("similarity", "WARN" if low else "PASS",
                     f"SSIM {cmp_['ssim']:.4f} (worst {cmp_['worst_ssim']:.4f} at {at}), PSNR {psnr}, {cmp_['frames']} frames",
                     f"mean SSIM >= {COMPARE_SSIM_WARN:g}",
-                    f"look.py --compare {args.compare} --at {at.rstrip('s') if fps else 0}" if low else "",
+                    f"look.py --compare {args.compare} --at {seek}" if low else "",
                     reason="the picture differs visibly from the reference somewhere" if low else "")
-                nref, nout = rv.get("nb_frames"), v.get("nb_frames")
+                # frames counted from the packets when a container does not state nb_frames
+                nout = v.get("nb_frames") or len(pts) or None
+                nref = rv.get("nb_frames") or len(presentation_times(args.compare, float(rv.get("start_time") or 0.0))) or None
                 if nref and nout and int(nref) != int(nout):
                     STATE_NOTES.append(f"--compare: {nout} frames against the reference's {nref}; frames were paired in "
                                        f"order, so an added or dropped frame shifts every later pair")
@@ -401,6 +408,7 @@ def main() -> int:
     notes: List[str] = []
     if not named:
         notes.append("no --platform given: youtube's spec was assumed, so judgement rows (duration, aspect, fps, resolution, loudness, true peak) are WARN, not FAIL; name a platform to enforce them")
+    notes += STATE_NOTES
     if not args.json:
         width = max(len(r["check"]) for r in rows)
         print(f"{args.input} — {args.platform}" + ("" if named else " (assumed)"))
@@ -416,7 +424,6 @@ def main() -> int:
         print(f"  {len(rows)} checks, {len(failed)} failed, {len(warned)} warnings")
         for n in notes:
             print(f"  note: {n}")
-    notes += STATE_NOTES
     extra: Dict[str, Any] = {"notes": notes} if notes else {}
     if identity is not None:
         extra["input_identity"] = identity

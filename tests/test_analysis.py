@@ -443,6 +443,22 @@ class AnalysisTests(MediaFixtures):
         self.assertIn("worst", low["value"])
         self.assertIn("not compared", self._rows(small, "--no-loudness", "--compare", ref)["similarity"]["value"])
 
+    def test_check_compare_times_the_worst_frame_and_counts_frames(self):
+        """2.24: --compare names the worst frame by its presentation time (one damaged frame at
+        2.5 s), counts frames from the packets when the container states no nb_frames (an .mkv two
+        frames short of the reference), prints that note in plain text too, and keeps the row under
+        --dry-run when both files exist."""
+        ref = self._content_clip("compare_ref.mp4", "testsrc2=size=160x90:rate=10", "sine=frequency=440:sample_rate=48000", 3)
+        hit = OUT / "compare_one_bad_frame.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ref, "-t", "2.8",
+           "-vf", "drawbox=t=fill:color=white:enable='eq(n,25)'", "-c:v", "libx264", "-crf", "12", "-an", hit)
+        row = self._rows(hit, "--no-loudness", "--compare", ref)["similarity"]
+        self.assertIn("at 2.50s", row["value"], row)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(hit), "--platform", "custom", "--no-loudness",
+                               "--compare", str(ref)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertIn("note: --compare: 28 frames against the reference's 30", proc.stdout + proc.stderr)
+        self.assertIn("similarity", self._rows(hit, "--no-loudness", "--compare", ref, "--dry-run"))
+
     def test_check_content_dropouts_row(self):
         """2.17: a short run of digital silence with sound on both sides (lost audio at a join) is a
         dropouts WARN; the same gap holding -60 dB room tone is a recording's pause and PASSes, and

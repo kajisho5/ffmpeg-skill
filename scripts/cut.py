@@ -93,7 +93,9 @@ def keep_ranges_after_removing(removed: List[Tuple[float, float]], total: float,
     return keep
 
 
-def parse_segments(spec: str, fps=None) -> List[Tuple[float, float]]:
+def parse_segments(spec: str, fps=None, clamp: bool = False) -> List[Tuple[float, float]]:
+    """START-END,... as seconds. `clamp` (--remove) lets a range start before 0, since the file
+    clamps it; --segments refuses that."""
     segs = []
     for raw in spec.split(","):
         raw = raw.strip()
@@ -103,7 +105,7 @@ def parse_segments(spec: str, fps=None) -> List[Tuple[float, float]]:
             die(f"segment '{raw}' must look like START-END (e.g. 0:05-0:12)")
         a, b = raw.rsplit("-", 1)
         start, end = _t(a, fps), _t(b, fps)
-        if start < 0:
+        if start < 0 and not clamp:
             die(f"segment '{raw}': start must be >= 0")
         if end <= start:
             die(f"segment '{raw}': end must be after start")
@@ -1294,7 +1296,7 @@ def main() -> int:
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_cut.<ext>)")
     g = ap.add_argument_group("range (single segment)")
-    g.add_argument("--start", default="0", help="start time (seconds, mm:ss or hh:mm:ss.ms). default 0")
+    g.add_argument("--start", help="start time (seconds, mm:ss or hh:mm:ss.ms). default 0")
     g.add_argument("--end", help="end time")
     g.add_argument("--duration", help="duration instead of --end")
     ap.add_argument("--segments", help="comma separated START-END list, e.g. '0:05-0:12,1:00-1:20' (joined in order)")
@@ -1351,16 +1353,20 @@ def main() -> int:
 
     fps = (meta.get("video") or {}).get("fps")
     if args.remove:
-        if args.segments or args.end or args.duration or (args.start and _t(args.start, fps, "--start")):
+        if args.segments or args.end or args.duration or args.start is not None:
             die("--remove names what to drop from the whole file: it does not combine with --segments, --start, --end or --duration")
+        if args.snap == "beats":
+            # a snapped edge of what is kept could move into a range the caller asked to drop
+            die("--remove drops exactly the ranges given: --snap beats would move the kept edges, possibly into them; "
+                "snap the ranges first (scenes.py --beats) or cut with --segments --snap beats")
         if not total:
             die(f"--remove needs the input's duration, which {args.input} does not report"
                 + (" yet (it is an earlier step's output)" if dry_run_input_pending(args.input) else ""))
-        args.segments = ",".join(f"{s:.6f}-{e:.6f}" for s, e in keep_ranges_after_removing(parse_segments(args.remove, fps), total, fps))
+        args.segments = ",".join(f"{s:.6f}-{e:.6f}" for s, e in keep_ranges_after_removing(parse_segments(args.remove, fps, clamp=True), total, fps))
     if args.segments:
         segments = parse_segments(args.segments, fps)
     else:
-        start = _t(args.start, fps, "--start")
+        start = _t(args.start or "0", fps, "--start")
         if start < 0:
             die(f"--start must not be negative, got {args.start!r}")
         if args.end and args.duration:

@@ -2358,7 +2358,7 @@ What was decided there:
 - **Three things a matching signature does not catch are checked too.** An MP4 edit list that
   hides pre-roll frames (packets flagged discard in the first 300): the concat demuxer ignores
   edit lists, so a copy join would show them. Picture and sound that end more than 50 ms apart
-  in a clip: the demuxer starts the next clip where this one's container ends, so the shorter
+  in a clip (each stream's start plus its length, so equal lengths that start apart are caught): the demuxer starts the next clip where this one's container ends, so the shorter
   stream leaves a held frame or a hole in the sound there. And the result itself: its video
   packet count against the clips' total, and its video length against their summed length
   (within 50 ms per clip plus a frame), measured on a file beside the output that is renamed
@@ -2367,7 +2367,9 @@ What was decided there:
   hands it to the same code, so a removal is cut, joined, declicked and verified exactly as the
   equivalent `--segments` would be. Overlaps merge and the ranges are clamped to the file; a
   leftover shorter than one frame (10 ms without a frame rate) is not a piece anyone asked to
-  keep. Test: `test_cut_remove_keeps_the_rest`.
+  keep. A range may start before 0 (it is clamped like the end). `--snap beats` is refused with
+  it: a snapped edge of what is kept could move into a range the caller asked to drop, and the
+  flag's promise is that those ranges are gone. Test: `test_cut_remove_keeps_the_rest`.
 
 ## 2.24 — output identity and check.py --compare
 
@@ -2383,11 +2385,12 @@ What was decided there:
   before and only reports `input_identity`. Same test.
 - **`--compare` pairs frames in decode order and reports, it does not align.** SSIM and PSNR are
   ffmpeg's own filters in one pass. Pairing by order is what those filters do; a dropped or added
-  frame shifts every later pair, so a different frame count is named in `notes` rather than
-  hidden. Frames of another size are not compared at all (WARN, "not compared"): scaling one of
+  frame shifts every later pair, so a different frame count (from `nb_frames`, or counted from
+  the packets when a container does not state it) is named in `notes` rather than hidden. Frames of another size are not compared at all (WARN, "not compared"): scaling one of
   them first would measure the scaler. The WARN line is a mean SSIM of 0.98, where differences
   start to be visible on ordinary footage; the worst frame and its time say where to look
-  (`look.py --compare`). Code: `_common.probe.compare_pictures()`. Test:
+  (`look.py --compare`), the time read as the flashes row reads it (that frame's presentation
+  time, `~` index / rate without one). Cover art is not the picture compared (`V`, not `v`). Code: `_common.probe.compare_pictures()`. Test:
   `test_check_compare_measures_against_a_reference`.
 
 ## 2.24 — export.py --max-mb

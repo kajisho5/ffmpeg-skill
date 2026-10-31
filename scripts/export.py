@@ -270,8 +270,8 @@ def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool
     if "-c:v" not in video or video[video.index("-c:v") + 1] != "libx264" or "-crf" not in video:
         die(f"--max-mb runs a two-pass x264 encode; --preset {args.preset} does not encode with x264"
             + (" (--hw puts it on VideoToolbox, which has no two-pass mode)" if STATE.hw else ""))
-    if args.max_mb <= 0:
-        die(f"--max-mb must be positive, got {args.max_mb:g}")
+    if not math.isfinite(args.max_mb) or args.max_mb <= 0:
+        die(f"--max-mb must be a positive number of MiB, got {args.max_mb:g}")
     dur = float(meta.get("duration") or 0.0)
     if p["max"] and not args.allow_long:
         dur = min(dur, float(p["max"]))

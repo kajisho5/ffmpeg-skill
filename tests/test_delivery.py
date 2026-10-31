@@ -56,7 +56,8 @@ class DeliveryTests(MediaFixtures):
         size = next(v for v in doc["verification"] if v.get("step") == "file_size")
         self.assertTrue(size["ok"] and size["measured"] == out.stat().st_size, size)
         self.assertEqual(sum("-pass" in c for c in doc["commands"]), 2)
-        for extra, said in ((["--max-mb", "0.05"], "not watchable"), (["--max-mb", "1", "--crf", "20"], "give one of them")):
+        for extra, said in ((["--max-mb", "0.05"], "not watchable"), (["--max-mb", "1", "--crf", "20"], "give one of them"),
+                            (["--max-mb", "nan"], "positive number"), (["--max-mb", "inf"], "positive number")):
             proc = script("export.py", src, "--preset", "youtube", *extra, "-o", OUT / "max_mb_bad.mp4", "--json", expect_fail=True)
             self.assertIn(said, json.loads(proc.stdout)["error"]["message"])
         proc = script("export.py", src, "--preset", "h265", "--max-mb", "1", "-o", OUT / "max_mb_bad.mp4", "--json", expect_fail=True)
