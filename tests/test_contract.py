@@ -4676,6 +4676,7 @@ class SilentPathTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             reasons |= set(re.findall(r'\brefuse\(\s*"[a-z_]+",\s*"([a-z_]+)"', text))
             reasons |= set(re.findall(r'_reject_plan\(path, digest, "([a-z_]+)"', text))
+            reasons |= set(re.findall(r'error_extra=\{"reason": "([a-z_]+)"', text))
         from _common.runner import FFMPEG_FAILURE_CLASSES   # ffmpeg failures classified from stderr in _fail()
         reasons |= {reason for _, reason, _ in FFMPEG_FAILURE_CLASSES}
         self.assertTrue(reasons)

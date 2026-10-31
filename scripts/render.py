@@ -1050,10 +1050,12 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
 
 def _has_sound(current: str, proj: Dict[str, Any], rel: Any) -> bool:
     """Whether the render carries sound at this point: measured on the intermediate when it
-    exists, otherwise (a dry run) from the sources: a clip with an audio stream, or music."""
-    if os.path.exists(current):
+    exists, otherwise (a dry run) from the sources: a clip with an audio stream, music or a
+    replacement track."""
+    if os.path.exists(current) and not STATE.dry_run:   # a dry run may find an earlier render's file there
         return bool((probe(current).get("audio") or {}).get("codec"))
-    if (proj.get("audio") or {}).get("music"):
+    au = proj.get("audio") or {}
+    if au.get("music") or au.get("replace"):
         return True
     for c in proj.get("clips") or []:
         src = rel(c["src"]) if isinstance(c, dict) and c.get("src") else None

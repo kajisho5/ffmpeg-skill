@@ -452,7 +452,7 @@ def die_no_engine(alternative: str, flag: str = "--transcribe") -> None:
     land here rather than each spelling out its own version of the same missing dependency.
     """
     die(f"no local speech-to-text engine found for {flag}.\n" + ASR_INSTALL_HINT + "\n" + alternative,
-        kind="missing_tool", reason="asr_engine_missing",
+        kind="missing_tool", error_extra={"reason": "asr_engine_missing", "details": {}},
         hint="install one of the engines above; `python3 scripts/_contract.py doctor` shows which are found")
 
 
