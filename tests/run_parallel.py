@@ -98,8 +98,8 @@ def main() -> int:
                   key=lambda j: -ROUGH_SECONDS.get(j[0], 0) / j[2])
     if args.part:
         m = re.fullmatch(r"(\d+)/(\d+)", args.part)
-        if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
-            ap.error(f"--part must be I/N with 1 <= I <= N, got {args.part!r}")
+        if not m or not 1 <= int(m.group(1)) <= int(m.group(2)) <= len(work):
+            ap.error(f"--part must be I/N with 1 <= I <= N <= {len(work)}, got {args.part!r}")
         work = split_parts(work, int(m.group(2)))[int(m.group(1)) - 1]
         names = sorted({j[0] for j in work})
     jobs = args.jobs or min(os.cpu_count() or 1, len(work))

@@ -1933,6 +1933,28 @@ class ContractTests(unittest.TestCase):
             doc = _contract.doctor()
         self.assertEqual(sorted(x.split()[1] for x in doc["unsupported"] if "5.1" in x), ["FFmpeg", "ffprobe"])
 
+    def test_ci_parts_cover_every_test_module_exactly_once(self):
+        """CI runs `run_parallel.py --part I/3` on three machines and each passes on its own exit
+        code, so a shard dropped or doubled by split_parts would go unnoticed: every item lands
+        in exactly one part, for any part count, and every test_all module plus test_contract is
+        in the work."""
+        sys.path.insert(0, str(ROOT / "tests"))
+        try:
+            import run_parallel
+            import test_all
+        finally:
+            sys.path.remove(str(ROOT / "tests"))
+        names = [m.__name__ for m in test_all.MODULES] + ["test_contract"]
+        work = [(n, k, run_parallel.SHARDS.get(n, 1)) for n in names for k in range(run_parallel.SHARDS.get(n, 1))]
+        self.assertEqual(set(run_parallel.ROUGH_SECONDS), set(names), "every module needs a cost to be balanced")
+        for n in (1, 2, 3, 5, len(work)):
+            parts = run_parallel.split_parts(work, n)
+            self.assertEqual(len(parts), n)
+            self.assertEqual(sorted(j for p in parts for j in p), sorted(work), n)
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertEqual(ci.count("--part ${{ matrix.part }}/3"), 2)
+        self.assertEqual(ci.count("part: [1, 2, 3]"), 2)
+
     def test_npm_package_omits_the_maintainer_diary(self):
         """docs/design-decisions.md: references/process-pitfalls.md stays out of the npm package.
 
