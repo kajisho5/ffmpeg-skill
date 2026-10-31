@@ -1,0 +1,1286 @@
+{
+ "date": "2026-10-31",
+ "skill_version": "3.1.1",
+ "what": "SKILL.md restructure (#392): planning-only routing check, old vs new SKILL.md",
+ "prompts": "evals/agent_prompts_24.json (99: 75 act, 24 refuse)",
+ "method": "one Sonnet subagent per SKILL.md version reads the file (and any references it points to), runs nothing, and names for every prompt the scripts it would run or that it would refuse; graded against each prompt's expect groups (any alternative of a|b) and refuse flag",
+ "old": {
+  "correct": 93,
+  "total": 99,
+  "fails": [
+   "cw2",
+   "e12-vfr",
+   "ff1",
+   "fw2",
+   "e07-hdr",
+   "bt2"
+  ]
+ },
+ "new_first": {
+  "correct": 94,
+  "total": 99,
+  "fails": [
+   "cw2",
+   "e12-vfr",
+   "ff1",
+   "fw2",
+   "ml1"
+  ]
+ },
+ "note": "ml1 (mux two SRTs) dropped the verify step: the restructure had cut 'or probe.py' from step 6; restored in the follow-up commit. cw2, e12-vfr, ff1, fw2 fail on both versions.",
+ "answers": {
+  "old": {
+   "e01-reel": {
+    "tools": [
+     "probe",
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "e02-cut-lossless": {
+    "tools": [
+     "cut",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e03-logo": {
+    "tools": [
+     "overlay",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e04-sync": {
+    "tools": [
+     "sync",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e05-lufs": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e06-silence": {
+    "tools": [
+     "silence",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e07-hdr": {
+    "tools": [
+     "color",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e08-surround": {
+    "tools": [
+     "audio",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e09-join": {
+    "tools": [
+     "join",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e10-highlights": {
+    "tools": [
+     "scenes"
+    ],
+    "refuse": false
+   },
+   "e11-ready": {
+    "tools": [
+     "check",
+     "export",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e12-vfr": {
+    "tools": [
+     "cut",
+     "check"
+    ],
+    "refuse": false
+   },
+   "j01-reel": {
+    "tools": [
+     "probe",
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "j02-60s": {
+    "tools": [
+     "probe",
+     "fit",
+     "check"
+    ],
+    "refuse": false
+   },
+   "j03-lower": {
+    "tools": [
+     "graphics",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "j04-bgm": {
+    "tools": [
+     "audio",
+     "check"
+    ],
+    "refuse": false
+   },
+   "j05-ma": {
+    "tools": [
+     "silence",
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "j06-report": {
+    "tools": [
+     "render",
+     "look",
+     "report"
+    ],
+    "refuse": false
+   },
+   "j07-probe": {
+    "tools": [
+     "probe"
+    ],
+    "refuse": false
+   },
+   "j08-project": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "r01-face": {
+    "tools": [],
+    "refuse": true
+   },
+   "r02-tts": {
+    "tools": [],
+    "refuse": true
+   },
+   "r03-download": {
+    "tools": [],
+    "refuse": true
+   },
+   "r04-translate": {
+    "tools": [],
+    "refuse": true
+   },
+   "r05-no-raw-ffmpeg": {
+    "tools": [],
+    "refuse": true
+   },
+   "c01": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "c02": {
+    "tools": [],
+    "refuse": true
+   },
+   "k01": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "k02": {
+    "tools": [],
+    "refuse": true
+   },
+   "s01": {
+    "tools": [
+     "cut",
+     "check"
+    ],
+    "refuse": false
+   },
+   "s02": {
+    "tools": [],
+    "refuse": true
+   },
+   "p01": {
+    "tools": [
+     "graphics",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "p02": {
+    "tools": [],
+    "refuse": true
+   },
+   "fr1": {
+    "tools": [
+     "graphics",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "fr2": {
+    "tools": [],
+    "refuse": true
+   },
+   "d01": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "d02": {
+    "tools": [],
+    "refuse": true
+   },
+   "a01": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "a02": {
+    "tools": [],
+    "refuse": true
+   },
+   "th1": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "hi1": {
+    "tools": [
+     "graphics",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "hi2": {
+    "tools": [],
+    "refuse": true
+   },
+   "he1": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "he2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ru1": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "ru2": {
+    "tools": [],
+    "refuse": true
+   },
+   "el1": {
+    "tools": [
+     "cut",
+     "check"
+    ],
+    "refuse": false
+   },
+   "vi1": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "vi2": {
+    "tools": [],
+    "refuse": true
+   },
+   "id1": {
+    "tools": [
+     "graphics",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "id2": {
+    "tools": [],
+    "refuse": true
+   },
+   "tr1": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "tr2": {
+    "tools": [],
+    "refuse": true
+   },
+   "it1": {
+    "tools": [
+     "cut",
+     "check"
+    ],
+    "refuse": false
+   },
+   "dl1": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl2": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl3": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl4": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl5": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl6": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl7": {
+    "tools": [
+     "loudness",
+     "metadata",
+     "check"
+    ],
+    "refuse": false
+   },
+   "dl8": {
+    "tools": [],
+    "refuse": true
+   },
+   "em1": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "em2": {
+    "tools": [
+     "graphics",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "em3": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "em4": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "sh1": {
+    "tools": [
+     "graphics",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "sh2": {
+    "tools": [
+     "graphics",
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "cw1": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "cw2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ag1": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "ag2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ch1": {
+    "tools": [
+     "metadata"
+    ],
+    "refuse": false
+   },
+   "ch2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ml1": {
+    "tools": [
+     "caption",
+     "check"
+    ],
+    "refuse": false
+   },
+   "ml2": {
+    "tools": [
+     "caption",
+     "check"
+    ],
+    "refuse": false
+   },
+   "cs1": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "cs2": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "cs3": {
+    "tools": [],
+    "refuse": true
+   },
+   "bt1": {
+    "tools": [
+     "scenes",
+     "cut",
+     "check"
+    ],
+    "refuse": false
+   },
+   "bt2": {
+    "tools": [
+     "scenes",
+     "cut",
+     "check"
+    ],
+    "refuse": false
+   },
+   "bt3": {
+    "tools": [
+     "scenes"
+    ],
+    "refuse": false
+   },
+   "fw1": {
+    "tools": [
+     "silence",
+     "check"
+    ],
+    "refuse": false
+   },
+   "fw2": {
+    "tools": [
+     "silence",
+     "check"
+    ],
+    "refuse": false
+   },
+   "fw3": {
+    "tools": [
+     "silence",
+     "check"
+    ],
+    "refuse": false
+   },
+   "bp1": {
+    "tools": [
+     "batch"
+    ],
+    "refuse": false
+   },
+   "bp2": {
+    "tools": [
+     "batch"
+    ],
+    "refuse": false
+   },
+   "rc1": {
+    "tools": [
+     "render"
+    ],
+    "refuse": false
+   },
+   "rc2": {
+    "tools": [
+     "render"
+    ],
+    "refuse": false
+   },
+   "b1": {
+    "tools": [
+     "scenes"
+    ],
+    "refuse": false
+   },
+   "b2": {
+    "tools": [
+     "silence",
+     "check"
+    ],
+    "refuse": false
+   },
+   "b3": {
+    "tools": [
+     "silence",
+     "check"
+    ],
+    "refuse": false
+   },
+   "b4": {
+    "tools": [
+     "cropdetect"
+    ],
+    "refuse": false
+   },
+   "b5": {
+    "tools": [
+     "sync",
+     "check"
+    ],
+    "refuse": false
+   },
+   "b6": {
+    "tools": [
+     "multicam",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "b7": {
+    "tools": [
+     "cropdetect"
+    ],
+    "refuse": false
+   },
+   "b8": {
+    "tools": [
+     "multicam",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "kw1": {
+    "tools": [
+     "caption",
+     "look",
+     "check"
+    ],
+    "refuse": false
+   },
+   "ff1": {
+    "tools": [
+     "render"
+    ],
+    "refuse": false
+   }
+  },
+  "new": {
+   "e01-reel": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "e02-cut-lossless": {
+    "tools": [
+     "cut"
+    ],
+    "refuse": false
+   },
+   "e03-logo": {
+    "tools": [
+     "overlay",
+     "look"
+    ],
+    "refuse": false
+   },
+   "e04-sync": {
+    "tools": [
+     "sync"
+    ],
+    "refuse": false
+   },
+   "e05-lufs": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e06-silence": {
+    "tools": [
+     "silence"
+    ],
+    "refuse": false
+   },
+   "e07-hdr": {
+    "tools": [
+     "probe",
+     "color",
+     "look"
+    ],
+    "refuse": false
+   },
+   "e08-surround": {
+    "tools": [
+     "audio",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e09-join": {
+    "tools": [
+     "join",
+     "look"
+    ],
+    "refuse": false
+   },
+   "e10-highlights": {
+    "tools": [
+     "scenes"
+    ],
+    "refuse": false
+   },
+   "e11-ready": {
+    "tools": [
+     "check",
+     "export",
+     "check"
+    ],
+    "refuse": false
+   },
+   "e12-vfr": {
+    "tools": [
+     "cut"
+    ],
+    "refuse": false
+   },
+   "j01-reel": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "j02-60s": {
+    "tools": [
+     "probe",
+     "fit",
+     "look"
+    ],
+    "refuse": false
+   },
+   "j03-lower": {
+    "tools": [
+     "graphics",
+     "look"
+    ],
+    "refuse": false
+   },
+   "j04-bgm": {
+    "tools": [
+     "audio"
+    ],
+    "refuse": false
+   },
+   "j05-ma": {
+    "tools": [
+     "silence",
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "j06-report": {
+    "tools": [
+     "render",
+     "report"
+    ],
+    "refuse": false
+   },
+   "j07-probe": {
+    "tools": [
+     "probe"
+    ],
+    "refuse": false
+   },
+   "j08-project": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "r01-face": {
+    "tools": [],
+    "refuse": true
+   },
+   "r02-tts": {
+    "tools": [],
+    "refuse": true
+   },
+   "r03-download": {
+    "tools": [],
+    "refuse": true
+   },
+   "r04-translate": {
+    "tools": [],
+    "refuse": true
+   },
+   "r05-no-raw-ffmpeg": {
+    "tools": [],
+    "refuse": true
+   },
+   "c01": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "c02": {
+    "tools": [],
+    "refuse": true
+   },
+   "k01": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "k02": {
+    "tools": [],
+    "refuse": true
+   },
+   "s01": {
+    "tools": [
+     "cut"
+    ],
+    "refuse": false
+   },
+   "s02": {
+    "tools": [],
+    "refuse": true
+   },
+   "p01": {
+    "tools": [
+     "graphics",
+     "look"
+    ],
+    "refuse": false
+   },
+   "p02": {
+    "tools": [],
+    "refuse": true
+   },
+   "fr1": {
+    "tools": [
+     "graphics",
+     "look"
+    ],
+    "refuse": false
+   },
+   "fr2": {
+    "tools": [],
+    "refuse": true
+   },
+   "d01": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "d02": {
+    "tools": [],
+    "refuse": true
+   },
+   "a01": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "a02": {
+    "tools": [],
+    "refuse": true
+   },
+   "th1": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "hi1": {
+    "tools": [
+     "graphics",
+     "look"
+    ],
+    "refuse": false
+   },
+   "hi2": {
+    "tools": [],
+    "refuse": true
+   },
+   "he1": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "he2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ru1": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "ru2": {
+    "tools": [],
+    "refuse": true
+   },
+   "el1": {
+    "tools": [
+     "cut"
+    ],
+    "refuse": false
+   },
+   "vi1": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "vi2": {
+    "tools": [],
+    "refuse": true
+   },
+   "id1": {
+    "tools": [
+     "graphics",
+     "look"
+    ],
+    "refuse": false
+   },
+   "id2": {
+    "tools": [],
+    "refuse": true
+   },
+   "tr1": {
+    "tools": [
+     "loudness",
+     "check"
+    ],
+    "refuse": false
+   },
+   "tr2": {
+    "tools": [],
+    "refuse": true
+   },
+   "it1": {
+    "tools": [
+     "cut"
+    ],
+    "refuse": false
+   },
+   "dl1": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl2": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl3": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl4": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl5": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl6": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "dl7": {
+    "tools": [
+     "loudness",
+     "metadata",
+     "check"
+    ],
+    "refuse": false
+   },
+   "dl8": {
+    "tools": [],
+    "refuse": true
+   },
+   "em1": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "em2": {
+    "tools": [
+     "graphics",
+     "look"
+    ],
+    "refuse": false
+   },
+   "em3": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "em4": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "sh1": {
+    "tools": [
+     "graphics",
+     "look"
+    ],
+    "refuse": false
+   },
+   "sh2": {
+    "tools": [
+     "graphics",
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "cw1": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "cw2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ag1": {
+    "tools": [
+     "render",
+     "look"
+    ],
+    "refuse": false
+   },
+   "ag2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ch1": {
+    "tools": [
+     "metadata"
+    ],
+    "refuse": false
+   },
+   "ch2": {
+    "tools": [],
+    "refuse": true
+   },
+   "ml1": {
+    "tools": [
+     "caption"
+    ],
+    "refuse": false
+   },
+   "ml2": {
+    "tools": [
+     "caption"
+    ],
+    "refuse": false
+   },
+   "cs1": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "cs2": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "cs3": {
+    "tools": [],
+    "refuse": true
+   },
+   "bt1": {
+    "tools": [
+     "scenes",
+     "cut"
+    ],
+    "refuse": false
+   },
+   "bt2": {
+    "tools": [
+     "scenes"
+    ],
+    "refuse": true
+   },
+   "bt3": {
+    "tools": [
+     "scenes"
+    ],
+    "refuse": false
+   },
+   "fw1": {
+    "tools": [
+     "silence"
+    ],
+    "refuse": false
+   },
+   "fw2": {
+    "tools": [
+     "silence"
+    ],
+    "refuse": false
+   },
+   "fw3": {
+    "tools": [
+     "silence"
+    ],
+    "refuse": false
+   },
+   "bp1": {
+    "tools": [
+     "batch"
+    ],
+    "refuse": false
+   },
+   "bp2": {
+    "tools": [
+     "batch"
+    ],
+    "refuse": false
+   },
+   "rc1": {
+    "tools": [
+     "render"
+    ],
+    "refuse": false
+   },
+   "rc2": {
+    "tools": [
+     "render"
+    ],
+    "refuse": false
+   },
+   "b1": {
+    "tools": [
+     "scenes"
+    ],
+    "refuse": false
+   },
+   "b2": {
+    "tools": [
+     "silence"
+    ],
+    "refuse": false
+   },
+   "b3": {
+    "tools": [
+     "silence"
+    ],
+    "refuse": false
+   },
+   "b4": {
+    "tools": [
+     "cropdetect"
+    ],
+    "refuse": false
+   },
+   "b5": {
+    "tools": [
+     "sync"
+    ],
+    "refuse": false
+   },
+   "b6": {
+    "tools": [
+     "multicam",
+     "look"
+    ],
+    "refuse": false
+   },
+   "b7": {
+    "tools": [
+     "cropdetect"
+    ],
+    "refuse": false
+   },
+   "b8": {
+    "tools": [
+     "multicam",
+     "look"
+    ],
+    "refuse": false
+   },
+   "kw1": {
+    "tools": [
+     "caption",
+     "look"
+    ],
+    "refuse": false
+   },
+   "ff1": {
+    "tools": [
+     "render"
+    ],
+    "refuse": false
+   }
+  }
+ }
+}

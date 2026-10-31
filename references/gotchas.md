@@ -9,19 +9,19 @@ detail, not an aside.
 
 The one-line form each section below starts from (SKILL.md keeps a shorter line per item).
 
-- HDR (iPhone, HDR10) re-encoded through an SDR path goes flat; the scripts keep HDR; `hdr: true` is a real PQ/HLG/DV signal, `bt2020_or_hdr: true` also BT.2020 SDR. -> [#hdr-and-colour](references/gotchas.md#hdr-and-colour)
-- Log footage (S-Log/V-Log/C-Log) is tagged SDR and looks grey: `probe.py --analyze`, then `color.py --lut` first. -> [#log-footage](references/gotchas.md#log-footage)
-- A `-c copy` cut can start on a wrong/frozen frame; `cut.py` re-encodes past a 0.5 s snap, respect it; an .mp4/.mov copy's edit list hides the pre-roll (`--no-edit-list` off). -> [#keyframe-cuts](references/gotchas.md#keyframe-cuts)
-- VFR phone/screen clips: re-encodes go CFR; `cut.py` re-encodes measured VFR (`--vfr-guard average`: 2.x rule); odd rate: `fit.py --fps`. -> [#variable-frame-rate](references/gotchas.md#variable-frame-rate)
-- Sync/multicam `confidence` under 0.3 (or a huge offset) is suspect — check every camera; these align audio, never lip sync. -> [#sync-multicam-and-drift](references/gotchas.md#sync-multicam-and-drift)
-- "Normalised" audio can still clip (check true peak); ambience at -40 LUFS or below must never be raised to a speech target. -> [#loudness-and-ambience](references/gotchas.md#loudness-and-ambience)
-- Captions burned before a crop/resize land off-frame; burned small then upscaled by `export.py` come out soft. -> [#captions-fonts-and-text-order](references/gotchas.md#captions-fonts-and-text-order)
-- Emoji need `--emoji-assets DIR` (a PNG per glyph) to render in colour; without it they come out monochrome, reported. -> [#emoji](references/gotchas.md#emoji)
-- Non-Latin text picks a font by script (`graphics.py` shapes Devanagari, Bengali, Tamil, Thai via libass; drawtext cannot); no font = failed job. -> [#fonts-by-script](references/gotchas.md#fonts-by-script)
-- `--fit crop` 16:9→9:16 throws away 70% of the width; "60 seconds" by speed or by trim are different answers — say which and why. -> [#reframing-fps-and-duration](references/gotchas.md#reframing-fps-and-duration)
-- TikTok/Reels cover the bottom fifth and right column with their own UI — templates keep text out of those zones; `look.py --safe tiktok` shows them. -> [#platform-safe-zones](references/gotchas.md#platform-safe-zones)
-- `scenes.py --highlights` ranks by loudness (or duration), never by meaning: check the sheet before trusting picks. -> [#highlights](references/gotchas.md#highlights)
-- CPU re-encodes: x264 `medium`. -> [#chaining-and-speed](references/gotchas.md#chaining-and-speed)
+- HDR (iPhone, HDR10) re-encoded through an SDR path goes flat; the scripts keep HDR; `hdr: true` is a real PQ/HLG/DV signal, `bt2020_or_hdr: true` also BT.2020 SDR. -> [#hdr-and-colour](#hdr-and-colour)
+- Log footage (S-Log/V-Log/C-Log) is tagged SDR and looks grey: `probe.py --analyze`, then `color.py --lut` first. -> [#log-footage](#log-footage)
+- A `-c copy` cut can start on a wrong/frozen frame; `cut.py` re-encodes past a 0.5 s snap, respect it; an .mp4/.mov copy's edit list hides the pre-roll (`--no-edit-list` off). -> [#keyframe-cuts](#keyframe-cuts)
+- VFR phone/screen clips: re-encodes go CFR; `cut.py` re-encodes measured VFR (`--vfr-guard average`: 2.x rule); odd rate: `fit.py --fps`. -> [#variable-frame-rate](#variable-frame-rate)
+- Sync/multicam `confidence` under 0.3 (or a huge offset) is suspect — check every camera; these align audio, never lip sync. -> [#sync-multicam-and-drift](#sync-multicam-and-drift)
+- "Normalised" audio can still clip (check true peak); ambience at -40 LUFS or below must never be raised to a speech target. -> [#loudness-and-ambience](#loudness-and-ambience)
+- Captions burned before a crop/resize land off-frame; burned small then upscaled by `export.py` come out soft. -> [#captions-fonts-and-text-order](#captions-fonts-and-text-order)
+- Emoji need `--emoji-assets DIR` (a PNG per glyph) to render in colour; without it they come out monochrome, reported. -> [#emoji](#emoji)
+- Non-Latin text picks a font by script (`graphics.py` shapes Devanagari, Bengali, Tamil, Thai via libass; drawtext cannot); no font = failed job. -> [#fonts-by-script](#fonts-by-script)
+- `--fit crop` 16:9→9:16 throws away 70% of the width; "60 seconds" by speed or by trim are different answers — say which and why. -> [#reframing-fps-and-duration](#reframing-fps-and-duration)
+- TikTok/Reels cover the bottom fifth and right column with their own UI — templates keep text out of those zones; `look.py --safe tiktok` shows them. -> [#platform-safe-zones](#platform-safe-zones)
+- `scenes.py --highlights` ranks by loudness (or duration), never by meaning: check the sheet before trusting picks. -> [#highlights](#highlights)
+- CPU re-encodes: x264 `medium`. -> [#chaining-and-speed](#chaining-and-speed)
 
 ## Colour, HDR and Log
 

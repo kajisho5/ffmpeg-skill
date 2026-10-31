@@ -5,7 +5,7 @@ The long form of SKILL.md's Quick start. `--help` on a script is still its full 
 
 ## Running the scripts
 
-Scripts live in `scripts/` next to this file; run them with `python3 <skill-dir>/scripts/<name>.py`, and delivery templates in `templates/`. This file is enough to do a job: the table below routes the request, and `--help` on the script about to run is the cheapest full flag list. A reference file costs as much as this one; open one only for a question you have: `references/scripts.md` (most flags; `--help` lists all), `references/devices.md` (iPhone HDR, GoPro, DJI, screen recordings, Zoom), `references/gotchas.md` (the long form of the one-line rules at the end). MCP: `tools/list` shows only the core 12 by default; the other 30 (per this table) stay callable by name via `tools/call`, described by `contract --json`; set `FFMPEG_SKILL_MCP_FULL=1` for all 42.
+Scripts live in `scripts/` next to SKILL.md; run them with `python3 <skill-dir>/scripts/<name>.py`, and delivery templates in `templates/`. SKILL.md is enough to do a job: SKILL.md's request table routes the request, and `--help` on the script about to run is the cheapest full flag list. A reference file costs as much as SKILL.md; open one only for a question you have: `references/scripts.md` (most flags; `--help` lists all), `references/devices.md` (iPhone HDR, GoPro, DJI, screen recordings, Zoom), `references/gotchas.md` (the long form of the one-line rules at the end of SKILL.md). MCP: `tools/list` shows only the core 12 by default; the other 30 (per SKILL.md's request table) stay callable by name via `tools/call`, described by `contract --json`; set `FFMPEG_SKILL_MCP_FULL=1` for all 42.
 
 ## Shared flags
 
