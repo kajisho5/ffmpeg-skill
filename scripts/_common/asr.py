@@ -991,7 +991,7 @@ def transcribe_words(video: str, language: "Optional[str]" = None, model: "Optio
 
 def transcribe_words_result(video: str, language: "Optional[str]" = None, model: "Optional[str]" = None,
                             audio_stream: int = 0, engine: "Optional[str]" = None,
-                            language_flag: str = "--filler-lang") -> Transcription:
+                            language_flag: str = "--filler-lang", prompt: "Optional[str]" = None) -> Transcription:
     """[{word, start, end}, ...] from a local speech engine, as a Transcription naming the engine.
 
     `model` (else $FFMPEG_SKILL_ASR_MODEL, else base: requested_model()) is the model and
@@ -1003,7 +1003,10 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
     when the engine ran but its build produced no word-level timings, so the caller can refuse
     naming that engine instead of pretending the audio had no words in it. No engine at all
     raises through die_no_engine(), the same refusal caption.py gives. `language_flag` is the
-    caller's flag for the language, named in assumed_english_note().
+    caller's flag for the language, named in assumed_english_note(). `prompt` is passed to a
+    Whisper engine as its initial prompt (whisper.cpp --prompt, faster-whisper initial_prompt,
+    openai-whisper --initial_prompt): Whisper writes clean text and leaves out "uh"/"um" unless
+    the context shows it that they are wanted, so silence.py --filler primes it with its own list.
     """
     import shutil as _shutil
     from _common.runner import SafeShutil
@@ -1058,7 +1061,7 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             base = os.path.join(tmpdir, "out")
             # whisper.cpp's own default is -l en: without "auto" it decodes any speech as English
             cmd = [cli, "-m", model_path, "-f", wav, "--output-json-full", "-of", base, "-l", lang or "auto",
-                   *WHISPER_CPP_NO_CONTEXT]
+                   *WHISPER_CPP_NO_CONTEXT] + (["--prompt", prompt] if prompt else [])
             proc = _asr_run(cmd, _subprocess, "whisper.cpp")
             if proc.returncode == 0 and os.path.exists(base + ".json"):
                 words = _words_from_whisper_cpp_json(base + ".json")
@@ -1084,7 +1087,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             def work() -> None:
                 try:
                     m = WhisperModel(model, device="cpu", compute_type="int8")
-                    segments, decoded = m.transcribe(wav, language=lang, word_timestamps=True)
+                    segments, decoded = m.transcribe(wav, language=lang, word_timestamps=True,
+                                                     **({"initial_prompt": prompt} if prompt else {}))
                     heard.append(getattr(decoded, "language", None))
                     for seg in segments:
                         for w in (getattr(seg, "words", None) or []):
@@ -1119,6 +1123,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
                    "--output_format", "json", "--output_dir", tmpdir]
             if lang:
                 cmd += ["--language", lang]
+            if prompt:
+                cmd += ["--initial_prompt", prompt]
             proc = _asr_run(cmd, _subprocess, "openai-whisper")
             doc = os.path.join(tmpdir, "audio.json")
             if proc.returncode == 0 and os.path.exists(doc):

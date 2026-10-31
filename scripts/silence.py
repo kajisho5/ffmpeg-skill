@@ -246,8 +246,12 @@ def resolve_filler(args, meta):
         # faster-whisper word_timestamps=True, openai-whisper --word_timestamps True). An SRT
         # cannot answer this question: a cue has a start and an end, a word does not.
         # The call's own result, not module state: engine, routing and notes belong to this run.
+        # Whisper leaves "uh"/"um" out of its text unless the context shows them: prime it with the
+        # filler list of the language asked for (English under auto, where most filler cuts are)
+        primer = FILLER_WORDS.get(args.filler_lang if args.filler_lang != "auto" else "en") or []
+        prompt = (", ".join(sorted(primer)[:8]).capitalize() + ". So, I mean...") if primer else None
         asr_run = _asr.transcribe_words_result(args.input, args.filler_lang if args.filler_lang != "auto" else None,
-                                               model=args.model, engine=args.engine)
+                                               model=args.model, engine=args.engine, prompt=prompt)
         words, engine = asr_run.words, asr_run.engine
         transcription = dict(asr_run.facts)
         args._asr_notes = list(asr_run.notes)

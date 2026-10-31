@@ -554,6 +554,16 @@ python3 scripts/multicam.py demos/out/fixtures/motion.mp4 demos/out/fixtures/cam
 
 ## Audio
 
+### Filler words cut from real speech (AI-generated footage)
+
+![Filler words cut from real speech (AI-generated footage)](demos/filler_en.gif)
+
+```bash
+python3 scripts/silence.py demos/out/filler_en_talk.mp4 --filler --words demos/footage/ai_talk_en.words.json --margin 0 --preset veryfast -o demos/out/filler_en_after.mp4
+```
+
+**Look for:** "Hey, er, hello there. Well, um, good morning." Right is silence.py --filler: the er and the um are gone and the sentence plays straight through. The source is AI-generated footage, not a real person.
+
 ### Silence removal
 
 ![Silence removal](demos/silence_removal.gif)

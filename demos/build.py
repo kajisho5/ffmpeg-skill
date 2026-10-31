@@ -3,7 +3,7 @@
 
 Everything here except one demo is generated from nothing -- ffmpeg's own synthetic sources
 (testsrc2, mandelbrot, life, aevalsrc) make the footage; reframe_talk reads demos/footage/ai_talk.mp4,
-a 6 s AI-generated clip (no real person), and every "after" file is produced by running
+and filler_en demos/footage/ai_talk_en.mp4: AI-generated clips (no real person), and every "after" file is produced by running
 this repo's own scripts, so a demo that renders is also a smoke test of the tool behind it.
 
     python3 demos/build.py                 # build every demo
@@ -673,6 +673,20 @@ def demo_reframe_talk(ctx):
     after = ctx.path("after.mp4")
     ctx.script("fit.py", before, "--aspect", "9:16", "--fit", "crop", "--crop-x", "0.27", "--width", "540",
                "--preset", "veryfast", "-o", after)
+    return before, after
+
+
+def demo_filler_en(ctx):
+    """English speech with two hesitations ("er" at 1.1 s, "um" at 4.4 s). The word timings are
+    the --words file faster-whisper wrote for this clip, primed with the filler list as
+    silence.py --filler --transcribe primes it (demos/footage/ai_talk_en.words.json), so the demo
+    builds without a speech engine."""
+    before = ctx.path("talk.mp4")
+    ffmpeg("-i", FOOTAGE / "ai_talk_en.mp4", "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(before))
+    after = ctx.path("after.mp4")
+    ctx.script("silence.py", before, "--filler", "--words", FOOTAGE / "ai_talk_en.words.json", "--margin", "0",
+               "--preset", "veryfast", "-o", after)
+    ctx.note("removed er (1.14-1.34 s) and um (4.44-4.78 s); %.2f s in, %.2f s out" % (duration(before), duration(after)))
     return before, after
 
 
@@ -1536,6 +1550,9 @@ _ROWS = [
     ("reframe_talk", PICTURE, "A talking head made vertical (AI-generated footage)",
      "The 9:16 frame is placed on the speaker with --crop-x 0.27 instead of the centre, where it would cut her face in half. The source is AI-generated footage, not a real person.",
      demo_reframe_talk, "video", None),
+    ("filler_en", AUDIO, "Filler words cut from real speech (AI-generated footage)",
+     "\"Hey, er, hello there. Well, um, good morning.\" Right is silence.py --filler: the er and the um are gone and the sentence plays straight through. The source is AI-generated footage, not a real person.",
+     demo_filler_en, "video", None, ("BEFORE", "--FILLER")),
     ("reframe_pad", PICTURE, "16:9 to 9:16 by padding",
      "Nothing is lost: the wide frame is kept whole and the gap above and below is filled with a blurred copy.",
      demo_reframe_pad, "video", None),

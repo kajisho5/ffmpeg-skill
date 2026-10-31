@@ -300,11 +300,13 @@ def _faster_whisper_with_words(detected=None):
         def __init__(self, *a, **k):
             pass
 
-        def transcribe(self, wav, language=None, word_timestamps=False):
+        def transcribe(self, wav, language=None, word_timestamps=False, **kw):
             mod.languages.append(language)
+            mod.prompts.append(kw.get("initial_prompt"))
             return iter([Segment()]), type("Info", (), {"language": detected})()
     mod.WhisperModel = WhisperModel
     mod.languages = []
+    mod.prompts = []
     return mod
 
 
@@ -522,6 +524,23 @@ class WhisperLanguageTests(_SrtDir, _BridgeHarness, unittest.TestCase):
             fw = _faster_whisper_with_words()
             run = self._with(["parakeet-mlx"], lambda: asr.transcribe_words_result("talk.mp4"), faster_whisper=fw)
             self.assertEqual((run.engine, fw.languages, run.facts["language"]), ("faster-whisper", ["ja"], "ja"))
+
+    def test_the_filler_prompt_reaches_each_whisper_engine(self):
+        """Whisper leaves "uh"/"um" out of its text unless primed, so silence.py --filler found
+        none on clean speech; the prompt it passes reaches whisper.cpp (--prompt) and
+        faster-whisper (initial_prompt), and nothing is passed when there is no prompt."""
+        fake = _FakeEngines(["whisper-cli"])
+        with mock.patch.object(asr, "detect_language", return_value="fr"):
+            self._with([], lambda: asr.transcribe_words_result("talk.mp4", prompt="Uh, um."), fake=fake)
+            cmd = fake.ran("whisper-cli")[0]
+            self.assertEqual(cmd[cmd.index("--prompt") + 1], "Uh, um.")
+            fake = _FakeEngines(["whisper-cli"])
+            self._with([], lambda: asr.transcribe_words_result("talk.mp4"), fake=fake)
+            self.assertNotIn("--prompt", fake.ran("whisper-cli")[0])
+            fw = _faster_whisper_with_words()
+            self._with([], lambda: asr.transcribe_words_result("talk.mp4", prompt="Uh, um."), faster_whisper=fw)
+            self._with([], lambda: asr.transcribe_words_result("talk.mp4"), faster_whisper=fw)
+            self.assertEqual(fw.prompts, ["Uh, um.", None])
 
     def test_undetected_speech_routed_to_whisper_lets_whisper_cpp_detect(self):
         fake = _FakeEngines(["whisper-cli", "parakeet-mlx"])

@@ -1,0 +1,80 @@
+{
+ "language": "en",
+ "engine": "faster-whisper base (filler-primed)",
+ "segments": [
+  {
+   "words": [
+    {
+     "word": "Hey,",
+     "start": 0.0,
+     "end": 0.76
+    },
+    {
+     "word": "er,",
+     "start": 1.14,
+     "end": 1.34
+    },
+    {
+     "word": "hello",
+     "start": 1.68,
+     "end": 1.98
+    },
+    {
+     "word": "there.",
+     "start": 1.98,
+     "end": 2.36
+    },
+    {
+     "word": "Well,",
+     "start": 3.54,
+     "end": 4.22
+    },
+    {
+     "word": "um,",
+     "start": 4.44,
+     "end": 4.78
+    },
+    {
+     "word": "good",
+     "start": 5.08,
+     "end": 5.28
+    },
+    {
+     "word": "morning.",
+     "start": 5.28,
+     "end": 5.68
+    },
+    {
+     "word": "Hope",
+     "start": 7.08,
+     "end": 7.76
+    },
+    {
+     "word": "you're",
+     "start": 7.76,
+     "end": 8.02
+    },
+    {
+     "word": "having",
+     "start": 8.02,
+     "end": 8.3
+    },
+    {
+     "word": "a",
+     "start": 8.3,
+     "end": 8.5
+    },
+    {
+     "word": "good",
+     "start": 8.5,
+     "end": 8.68
+    },
+    {
+     "word": "day.",
+     "start": 8.68,
+     "end": 9.04
+    }
+   ]
+  }
+ ]
+}
