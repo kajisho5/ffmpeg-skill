@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build the before/after demo gallery: synthetic footage in, previews out.
 
-Everything here is generated from nothing -- ffmpeg's own synthetic sources (testsrc2,
-mandelbrot, life, aevalsrc) make the footage, and every "after" file is produced by running
+Everything here except one demo is generated from nothing -- ffmpeg's own synthetic sources
+(testsrc2, mandelbrot, life, aevalsrc) make the footage; reframe_talk reads demos/footage/ai_talk.mp4,
+a 6 s AI-generated clip (no real person), and every "after" file is produced by running
 this repo's own scripts, so a demo that renders is also a smoke test of the tool behind it.
 
     python3 demos/build.py                 # build every demo
@@ -659,6 +660,18 @@ def demo_reframe_crop(ctx):
     before = FIX / "mandel.mp4"
     after = ctx.path("after.mp4")
     ctx.script("fit.py", before, "--aspect", "9:16", "--fit", "crop", "--width", "540",
+               "--preset", "veryfast", "-o", after)
+    return before, after
+
+
+FOOTAGE = ROOT / "demos" / "footage"   # the one non-synthetic source: AI-generated footage (see demos/footage/README.md)
+
+
+def demo_reframe_talk(ctx):
+    """A talking-head clip made vertical: --crop-x keeps the speaker, who sits left of centre."""
+    before = FOOTAGE / "ai_talk.mp4"
+    after = ctx.path("after.mp4")
+    ctx.script("fit.py", before, "--aspect", "9:16", "--fit", "crop", "--crop-x", "0.27", "--width", "540",
                "--preset", "veryfast", "-o", after)
     return before, after
 
@@ -1520,6 +1533,9 @@ _ROWS = [
     ("reframe_crop", PICTURE, "16:9 to 9:16 by cropping",
      "The vertical frame is cut out of the centre of the wide one -- full height, sides lost.",
      demo_reframe_crop, "video", None),
+    ("reframe_talk", PICTURE, "A talking head made vertical (AI-generated footage)",
+     "The 9:16 frame is placed on the speaker with --crop-x 0.27 instead of the centre, where it would cut her face in half. The source is AI-generated footage, not a real person.",
+     demo_reframe_talk, "video", None),
     ("reframe_pad", PICTURE, "16:9 to 9:16 by padding",
      "Nothing is lost: the wide frame is kept whole and the gap above and below is filled with a blurred copy.",
      demo_reframe_pad, "video", None),

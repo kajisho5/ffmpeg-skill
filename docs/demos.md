@@ -190,6 +190,16 @@ python3 scripts/fit.py demos/out/fixtures/mandel.mp4 --aspect 9:16 --fit crop --
 
 **Look for:** The vertical frame is cut out of the centre of the wide one -- full height, sides lost.
 
+### A talking head made vertical (AI-generated footage)
+
+![A talking head made vertical (AI-generated footage)](demos/reframe_talk.gif)
+
+```bash
+python3 scripts/fit.py demos/footage/ai_talk.mp4 --aspect 9:16 --fit crop --crop-x 0.27 --width 540 --preset veryfast -o demos/out/reframe_talk_after.mp4
+```
+
+**Look for:** The 9:16 frame is placed on the speaker with --crop-x 0.27 instead of the centre, where it would cut her face in half. The source is AI-generated footage, not a real person.
+
 ### 16:9 to 9:16 by padding
 
 ![16:9 to 9:16 by padding](demos/reframe_pad.gif)
@@ -682,7 +692,6 @@ python3 scripts/proxy.py demos/out/fixtures/mandel.mp4 --width 320 --quality 34 
 
 ```bash
 python3 scripts/render.py demos/out/fixtures/project.json --fast
-python3 scripts/render.py demos/out/fixtures/project.json --export-timeline demos/out/render_project_timeline.otio
 ```
 
 **Look for:** Clips, a transition, captions and a title card described as JSON and rendered in one pass.
