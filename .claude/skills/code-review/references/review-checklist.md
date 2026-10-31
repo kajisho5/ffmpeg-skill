@@ -52,7 +52,7 @@ wc -c SKILL.md                                            # must be < 30000
 
 ## 3. Scope and rules
 
-- [ ] No new runtime dependency; stdlib + Python 3.9+ only
+- [ ] No new runtime dependency; stdlib + Python 3.10+ only
 - [ ] No raw `ffmpeg`/`ffprobe` shell call outside `scripts/*.py`
 - [ ] No mutation of an input file
 - [ ] No AI/LLM content judgement, no cloud, no API keys
@@ -74,7 +74,7 @@ python3 scripts/_contract.py doctor
 - [ ] Any red check is its own statement: what is red, what makes it red, whether
       it was fixed, and whether it is pre-existing (run it on the base commit)
 - [ ] Cross-OS / cross-FFmpeg risk stated for changes touching ffmpeg invocation,
-      path handling, or child-process decoding (CI covers FFmpeg 5.1–9.x on
+      path handling, or child-process decoding (CI covers FFmpeg 6.1–9.x on
       Linux/macOS/Windows)
 - [ ] No skip-CI marker quoted in the PR body
 

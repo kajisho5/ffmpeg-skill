@@ -210,7 +210,7 @@ true of a deliverable that was there before the run and that ffmpeg never opened
 argument fails at graph init, before the muxer touches the output -- on 6.1+). The --overwrite
 consent added in #163 guards the success path only; the failure path had its own delete. The
 first fix (snapshot size/mtime, leave an unchanged file alone) passed on 6.1 and failed in the
-5.1.1 CI job: FFmpeg 5.x opens (truncates) the output during option parsing, before any filter
+5.1.1 CI job (removed with 5.x support in 3.0.0): FFmpeg 5.x opens (truncates) the output during option parsing, before any filter
 initialises, so ffmpeg itself had already destroyed the file. The fix that holds on every
 version is to never let ffmpeg write to an existing path: run against a hidden sibling temp
 file and os.replace() it over the original on success only. Lessons: a destructive step must

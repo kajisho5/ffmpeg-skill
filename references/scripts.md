@@ -127,14 +127,15 @@ own clock, `null` when unknown). `--compact` gives one line per file.
 
 ### cut.py — cut / join segments
 ```
-cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate] [--declick-ms 20 | --no-declick] [--edit-list] [--keep-hevc] [--vfr-guard average|sampled|off] [-o OUT]
+cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate] [--declick-ms 20 | --no-declick] [--edit-list | --no-edit-list] [--keep-hevc | --no-keep-hevc] [--vfr-guard sampled|average|off] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
 `--tolerance` (0.5 s) from the request, that segment is re-encoded automatically
 (CRF 18: x264, or x265 Main10 with the source's own tags for an HDR or BT.2020 source;
-`--keep-hevc` re-encodes an SDR HEVC source (not BT.2020: that keeps its Main10 line and colour tags) as x265 8-bit BT.709, on VideoToolbox under `--hw`;
+an SDR HEVC source (not BT.2020: that keeps its Main10 line and colour tags) stays HEVC as x265 8-bit BT.709, on VideoToolbox under `--hw`,
+by default since 3.0.0 (`--keep-hevc`; `--no-keep-hevc` uses x264 as 2.x did);
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
 between keyframes, or one that fails its check, still re-cuts).
@@ -142,16 +143,16 @@ Multiple segments are concatenated in the order given. `--remove A-B,...` (2.24)
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
-A single `.mp4`/`.mov` stream copy shifts its timestamps to zero
-(`-avoid_negative_ts make_zero`), so the picture starts at the keyframe.
-`--edit-list` keeps its MP4 edit list instead, so the picture starts at
-`--start`: `edit_list` and `stored_preroll_seconds` say so, `notes` warns that a
+A single `.mp4`/`.mov` stream copy keeps its MP4 edit list by default since
+3.0.0 (`--edit-list`), so the picture starts at `--start`; `--no-edit-list`
+shifts its timestamps to zero instead (`-avoid_negative_ts make_zero`, 2.x's
+default), so the picture starts at the keyframe. With the edit list: `edit_list` and `stored_preroll_seconds` say so, `notes` warns that a
 player which ignores edit lists shows the pre-roll, and the copy's length is
 judged by its video (a copy that starts where asked but ends past `--tolerance`
 re-encodes without offering another `--start`). `av_start_skew_seconds` is
 audio start minus video start; a stream copy gets a note when it is more than
 max(2 frames, 0.1 s) away from the source's own offset where the picture starts
-(the keyframe the copy began from; `--start` under `--edit-list`). It is
+(the keyframe the copy began from; `--start` with an edit list). It is
 reported, not repaired. `-ss`/`-t` are passed to the microsecond; `--accurate`
 seeks a second early and trims on the output side, so frames just before a
 keyframe are kept. An `--accurate` re-encode of a video does not pass
@@ -163,26 +164,28 @@ the next source frame and may keep up to one frame of timestamp. A `.mp4`/`.mov`
 edit list hides the priming. A source whose audio starts after its picture keeps
 that offset. An audio-only `--accurate` cut
 still uses `make_zero`; that priming is what `precision: codec_frame` counts
-in the length. `keyframe_snapped` is true for every stream copy (`precision`
-`packet`); `start_snapped` is measured: true when a copied picture starts more
+in the length. Since 3.0.0 `keyframe_snapped` equals `start_snapped` (2.x: true
+for every stream copy, `precision` `packet`); `start_snapped` is measured: true when a copied picture starts more
 than a frame from `--start`, or when its start could not be measured (an unknown start is
 never claimed exact); `null` under `--dry-run`.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
 `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost`, `tolerance`, `concat_fallback`);
-`--segments` adds `segment_precision`, and `least_exact_precision` is the least exact one.
+`--segments` adds `segment_precision`; `precision` and `least_exact_precision` are the least exact one
+(since 3.0.0; 2.x's `precision` was the whole run's, `packet` only when nothing re-encoded).
 A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
 `max_step_seconds`, `audio_offset_ms` per part, `audio_parts_checked`, `ok`: the
 written file measured against the source) and `segment_end_snap_seconds` (where
 each part's end moved to its keyframe).
 
-**VFR guard (`--vfr-guard`).** `average` (default): a source whose nominal and
-average frame rates differ (`variable_frame_rate_suspected`) re-encodes as
-`--accurate` (reason `vfr`), and `cut.py` then samples its packet timestamps (up
-to five 6 s windows; no decoding) into `vfr_check` (`measured`: `sampled_cfr`,
-`vfr` or `inconclusive`, plus `guard`); a `sampled_cfr` there adds a note naming
-`--vfr-guard sampled`. `sampled` samples before every copy and re-encodes only on
-`vfr` / `inconclusive` (reasons `vfr` / `vfr_inconclusive`), so a phone clip at
-29.98 against a nominal 30 copies; `off` samples and keeps the copy with a note.
+**VFR guard (`--vfr-guard`).** `sampled` (default since 3.0.0): `cut.py` samples
+the packet timestamps before every copy (up to five 6 s windows; no decoding) into
+`vfr_check` (`measured`: `sampled_cfr`, `vfr` or `inconclusive`, plus `guard`) and
+re-encodes only on `vfr` / `inconclusive` (reasons `vfr` / `vfr_inconclusive`), so a
+phone clip at 29.98 against a nominal 30 copies. `average` (2.x's default): a source
+whose nominal and average frame rates differ (`variable_frame_rate_suspected`)
+re-encodes as `--accurate` (reason `vfr`), and is then sampled into `vfr_check`; a
+`sampled_cfr` there adds a note naming `--vfr-guard sampled`. `off` samples and
+keeps the copy with a note.
 Irregular timing between the windows is not seen; `--accurate` is always available.
 
 A source with no B-frames (iPhone "Most Compatible" H.264) cuts its parts as

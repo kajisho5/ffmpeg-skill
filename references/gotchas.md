@@ -46,10 +46,11 @@ S-Log, V-Log and C-Log look grey and low-contrast but are tagged SDR. Run
 ### Keyframe cuts
 A lossless `cut.py` result may start up to one GOP (often 1–10 s) earlier than
 requested (`start_snapped: true`); the script re-encodes automatically when the
-deviation exceeds 0.5 s. With `--edit-list`, a single-segment `.mp4`/`.m4v`/`.mov` copy
-keeps the MP4 edit list instead: the pre-roll back to the keyframe is stored but
-hidden, so the picture starts at the requested time (`edit_list`,
-`stored_preroll_seconds`). A player or tool that ignores edit lists shows that
+deviation exceeds 0.5 s. A single-segment `.mp4`/`.m4v`/`.mov` copy keeps the MP4
+edit list by default (since 3.0.0; `--no-edit-list` starts the file at the keyframe
+instead): the pre-roll back to the keyframe is stored but hidden, so the picture
+starts at the requested time (`edit_list`, `stored_preroll_seconds`, and
+`start_snapped: false`). A player or tool that ignores edit lists shows that
 pre-roll. The **end** still lands on a packet boundary, a few frames long, and
 those extra frames can skip. `.mkv` output has no edit list, and a `--segments`
 join shows each part from its keyframe. On B-frame video an `.mp4`/`.mov`
@@ -65,7 +66,7 @@ a start a few frames before a keyframe can begin at that keyframe or one GOP
 earlier (`start_snapped: true` either way).
 `av_start_skew_seconds` warns when a copy's sound and picture start apart
 (Core Media HEVC once gave 3.7 s of sound with no picture); it is reported, not
-repaired: `--accurate` is the fix, or `--edit-list` for a lossless `.mp4`/`.m4v`/`.mov`. A `-c copy` cut on VFR or a
+repaired: `--accurate` is the fix, or the default edit list (not `--no-edit-list`) for a lossless `.mp4`/`.m4v`/`.mov`. A `-c copy` cut on VFR or a
 non-keyframe boundary produces a file that "works" but starts on a frozen or
 wrong frame — respect the automatic re-encode rather than forcing the copy.
 
@@ -74,10 +75,11 @@ wrong frame — respect the automatic re-encode rather than forcing the copy.
 `avg_frame_rate` disagree (phone and screen recordings). Every re-encoding
 script then adds `-fps_mode cfr` at the source's average rate. That flag is a
 whole-file average, and a phone clip at 29.98 against a nominal 30 trips it, so
-`cut.py` re-encodes on it by default and reports packet timestamps sampled in up
-to five windows (`vfr_check`), with a note when they are constant;
-`--vfr-guard sampled` switches to `--accurate` only when they are irregular or too
-few to judge, and `--vfr-guard off` keeps the copy anyway. Pick the rate
+`cut.py` decides on packet timestamps sampled in up to five windows (`vfr_check`)
+instead: by default (`--vfr-guard sampled`, since 3.0.0) it switches to
+`--accurate` only when they are irregular or too few to judge;
+`--vfr-guard average` restores 2.x's re-encode on the flag alone, and
+`--vfr-guard off` keeps the copy anyway. Pick the rate
 explicitly with `fit.py --fps 30|60` when the average is odd (e.g. 23.4 fps from
 dropped frames).
 

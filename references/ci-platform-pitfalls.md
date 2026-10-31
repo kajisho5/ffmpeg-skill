@@ -110,8 +110,11 @@ mechanism, and write the skip/relaxation reason as a full sentence
 explaining the underlying platform behaviour — not just "flaky on
 Windows" — so a future reader doesn't have to re-derive it from the CI log.
 
-## FFmpeg 5.x (the 5.1.1 static-build CI job)
+## FFmpeg 5.x (the 5.1.1 static-build CI job, removed in 3.0.0)
 
+Historical: 3.0.0 removed FFmpeg 5.x support (deprecated in 2.14.0) and this CI job with it, so
+the tools now refuse a build older than 6.1 and its version branch for `boxborderw` (below) is
+gone. Kept as a record of what 5.x did differently.
 Found the day the job was added (#146); 6.1+ behaves the same on all three OSes, so none of
 these had ever shown up before.
 
@@ -122,9 +125,9 @@ these had ever shown up before.
   sides of it disappear from its neighbourhood test. 6.1+ passes every frame regardless.
   Dropped the option; scores are also indexed by frame number now, missing frames counting as 0.
 - **`drawtext` `boxborderw=v|h` (and the four-value form) is 6.1+.** 5.x and 6.0 fail the whole
-  filter with "Error setting option boxborderw to value 9|16". `_common.drawtext_boxborderw()`
-  emits the larger single value on older builds (`_common.ffmpeg_version()` parses
-  `ffmpeg -version` once; it is the only place the tools branch on a version string). Both names
+  filter with "Error setting option boxborderw to value 9|16". Through 2.x
+  `_common.drawtext_boxborderw()` emitted the larger single value on older builds
+  (`_common.ffmpeg_version()` parses `ffmpeg -version` once); since 3.0.0 it always writes `v|h`. Both names
   are still spelled exactly that way: `_common` is a package since the refactor release after
   1.15.0, and its `__init__.py` re-exports every name the single module defined, so
   `_common.drawtext_boxborderw()`, `_common.ffmpeg_version()` and `_common.bt709_tag_args()`
