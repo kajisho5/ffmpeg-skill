@@ -68,18 +68,14 @@ class DeliveryTests(MediaFixtures):
         counts are reported before and after, timestamp warnings do not grow, remaining decode errors
         are named; --repair with a re-encoding preset is refused."""
         src = OUT / "repair_src.ts"
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:d=6",
-           "-f", "lavfi", "-i", "sine=d=6", "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-f", "mpegts", src)
-        data = bytearray(src.read_bytes())
-        # damage only video payload in the middle half: never a TS header, the PAT/PMT or audio,
-        # so every ffmpeg version still opens the file (one byte anywhere left 5.1.1's ffprobe
-        # unable to read it at all, which is not what --repair is about)
-        video = [i for i in range(0, len(data) - 187, 188)
-                 if data[i] == 0x47 and ((data[i + 1] & 0x1F) << 8 | data[i + 2]) == 0x100
-                 and len(data) // 4 <= i < 3 * len(data) // 4]
-        for k in range(40):
-            data[video[k * len(video) // 40] + 120] ^= 0xFF
-        src.write_bytes(bytes(data))
+        part = OUT / "repair_part.ts"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:d=3",
+           "-f", "lavfi", "-i", "sine=d=3", "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-f", "mpegts", part)
+        # the same recording appended to itself byte for byte, as a recorder that reconnected
+        # writes it: timestamps jump back and the continuity counters break, yet every ffprobe
+        # still opens it (bytes flipped inside packets left 5.1.1's ffprobe unable to read the
+        # file at all, which is not what --repair is about)
+        src.write_bytes(part.read_bytes() * 2)
         before = src.read_bytes()
         out = OUT / "repair_out.mp4"
         doc = json.loads(script("export.py", src, "--preset", "copy", "--repair", "-o", out, "--overwrite", "--json").stdout)
