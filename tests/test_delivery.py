@@ -94,6 +94,17 @@ class DeliveryTests(MediaFixtures):
     def _subtitle_text(self, path):
         return sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:s:0", "-f", "srt", "-").stdout
 
+    def test_a_written_data_track_is_matched_to_a_source_stream_by_codec(self):
+        """Data tracks are credited by codec, never by position: two copied streams of one codec
+        are both kept, and a muxer's own timecode track is not credited to an unrelated stream."""
+        sys.path.insert(0, str(SCRIPTS))
+        import export
+        src = [{"codec": "bin_data"}, {"codec": "bin_data"}, {"codec": "tmcd"}]
+        kept = lambda written: [export._written_data_codec(n, src, [{"codec": c} for c in written]) for n in range(3)]
+        self.assertEqual(kept(["bin_data", "bin_data"]), [True, True, False])
+        self.assertEqual(kept(["tmcd"]), [False, False, True])
+        self.assertEqual(kept(["bin_data"]), [True, False, False])
+
     def test_export_keeps_a_mov_text_track_for_youtube_and_copy(self):
         """Measured on 2.22.1: a .mp4 with a mov_text track exported with --preset youtube or copy
         came out h264 + aac only, and nothing in the result said so (found by an agent that muxes

@@ -196,12 +196,16 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
     return []  # not reached: the last rung either returns or exits
 
 
-def _written_data_codec(stream: Dict, sources: List[Dict], written: List[Dict]) -> bool:
-    """True when the written file has a data track of `stream`'s codec and no other source data
-    stream shares that codec (so the track is this stream's, not a muxer's own or a sibling's)."""
-    codec = stream.get("codec")
-    return bool(codec) and sum(1 for s in sources if s.get("codec") == codec) == 1 \
-        and any(w.get("codec") == codec for w in written)
+def _written_data_codec(n: int, sources: List[Dict], written: List[Dict]) -> bool:
+    """True when the written file holds a data track for source data stream `n`: tracks are
+    matched by codec, never by position, so with k source streams of one codec and j tracks of it
+    written, the first min(j, k) of those sources count as kept (a muxer's own timecode track is
+    not credited to an unrelated stream, and two copied streams of one codec are both kept)."""
+    codec = sources[n].get("codec")
+    if not codec:
+        return False
+    rank = sum(1 for s in sources[:n] if s.get("codec") == codec)
+    return rank < sum(1 for w in written if w.get("codec") == codec)
 
 
 def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dropped: List[str],
@@ -225,11 +229,10 @@ def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dr
                 kept.append(dict(row, output_codec=s.get("codec") if planned == "copy" else planned))
             elif kind == "subtitle" and n < len(written):
                 kept.append(dict(row, output_codec=written[n].get("codec")))
-            elif kind == "data" and _written_data_codec(s, streams, written):
-                # read back, not assumed: an MP4/MOV muxer writes a timecode (tmcd) track of its
-                # own from the source's timecode tag even when the copied one was refused, so a
-                # data track is attributed by its codec, and only to a source stream that is the
-                # one of its codec
+            elif kind == "data" and _written_data_codec(n, streams, written):
+                # read back, not assumed, and matched by codec: an MP4/MOV muxer writes a
+                # timecode (tmcd) track of its own from the source's timecode tag even when the
+                # copied one was refused
                 kept.append(dict(row, output_codec=s.get("codec")))
             else:
                 gone.append(dict(row, reason=reason if kind in dropped else "not_in_output"))
