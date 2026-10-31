@@ -4676,6 +4676,8 @@ class SilentPathTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             reasons |= set(re.findall(r'\brefuse\(\s*"[a-z_]+",\s*"([a-z_]+)"', text))
             reasons |= set(re.findall(r'_reject_plan\(path, digest, "([a-z_]+)"', text))
+        from _common.runner import FFMPEG_FAILURE_CLASSES   # ffmpeg failures classified from stderr in _fail()
+        reasons |= {reason for _, reason, _ in FFMPEG_FAILURE_CLASSES}
         self.assertTrue(reasons)
         self.assertEqual(sorted(reasons - set(_contract.ERROR_REASONS)), [], "refusal reasons missing from _contract.ERROR_REASONS")
         self.assertEqual(sorted(set(_contract.ERROR_REASONS) - reasons), [], "_contract.ERROR_REASONS lists a reason nothing refuses with")
@@ -5159,6 +5161,80 @@ class SilentFallbackTests(unittest.TestCase):
         self.assertEqual(fb["code"], "non_av_streams_dropped")
         self.assertNotEqual(fb["returncode"], 0)
         self.assertTrue(fb["error"], "the first attempt's error is kept")
+
+    def test_an_ffmpeg_failure_names_its_cause_and_is_not_encoded_twice(self):
+        """A full disk, a missing encoder or filter and an unreadable input carry error.reason and
+        a hint (kind and exit code unchanged). run_keeping_subtitles() used to run the whole encode
+        again after any first failure and blame subtitle streams the source did not have."""
+        from _common.runner import classify_ffmpeg_failure
+        self.assertEqual(classify_ffmpeg_failure("out.mp4: No space left on device")[0], "disk_full")
+        self.assertEqual(classify_ffmpeg_failure("Unknown encoder 'libx265'")[:3:2], ("encoder_missing", {"name": "libx265"}))
+        self.assertIn("libx265", classify_ffmpeg_failure("Unknown encoder 'libx265'")[1])
+        self.assertEqual(classify_ffmpeg_failure("[AVFilterGraph] No such filter: 'drawtext'")[2], {"name": "drawtext"})
+        self.assertEqual(classify_ffmpeg_failure("x.mp4: moov atom not found")[0], "input_incomplete")
+        self.assertIsNone(classify_ffmpeg_failure("Conversion failed!"))
+        if platform.system() == "Windows":
+            self.skipTest("the fake ffmpeg is a #!/bin/sh script")
+        shim = self.tmp / "fullshim"
+        shim.mkdir(exist_ok=True)
+        real = shutil.which("ffmpeg")
+        (shim / "ffmpeg").write_text(
+            '#!/bin/sh\nfor a in "$@"; do last="$a"; done\n'
+            'case "$last" in *full_out.mp4) echo "$last: No space left on device" >&2; exit 1;; esac\n'
+            f'exec "{real}" "$@"\n', encoding="utf-8")
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+        proc = tool("denoise", self.media(), "-o", self.tmp / "full_out.mp4", "--fast", "--json", env=env, check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["error"]["kind"], doc["error"]["reason"], proc.returncode), ("ffmpeg", "disk_full", 1))
+        self.assertIn("free space", doc["error"]["hint"])
+        self.assertEqual(len(doc["commands"]), 1, "a source with no subtitle or data stream is encoded once")
+        self.assertNotIn("diagnostics", doc)
+
+    def test_a_template_on_a_video_with_no_audio_skips_its_loudness_stage(self):
+        """A Reels template on a screen recording failed at loudness.py after the picture stages
+        had run, while its dry run said completed."""
+        src = self.tmp / "noaud.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:d=2", "-c:v", "libx264", "-preset", "ultrafast", src)
+        for extra in (["--dry-run"], []):
+            doc = json.loads(tool("render", "--template", "reels", src, "-o", self.tmp / f"noaud_reel{len(extra)}.mp4",
+                                  "--json", *extra).stdout)
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            self.assertIn("loudness_no_audio", [x["code"] for x in doc["diagnostics"]["skipped"]])
+            self.assertNotIn("loudness", doc["stages"])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "PR_SET_PDEATHSIG is Linux only")
+    def test_a_killed_tool_takes_its_ffmpeg_with_it(self):
+        """SIGKILL cannot be caught: a tool killed by an agent's time limit left ffmpeg running,
+        writing the output under its final name after the caller was told the run failed."""
+        import signal
+        import time
+        src = self.tmp / "long.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=1280x720:d=120", "-c:v", "libx264", "-preset", "ultrafast", src)
+        out = self.tmp / "killed_out.mp4"
+        child = subprocess.Popen([sys.executable, str(SCRIPTS / "denoise.py"), str(src), "-o", str(out)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def ffmpeg_pids():
+            pids = []
+            for d in os.listdir("/proc"):
+                try:
+                    cmdline = Path(f"/proc/{d}/cmdline").read_bytes().split(b"\0")
+                except OSError:
+                    continue
+                if cmdline and cmdline[0].endswith(b"ffmpeg") and str(out).encode() in cmdline:
+                    pids.append(int(d))
+            return pids
+        deadline = time.time() + 60
+        while not ffmpeg_pids() and time.time() < deadline and child.poll() is None:
+            time.sleep(0.2)
+        self.assertTrue(ffmpeg_pids(), "the encode never started")
+        os.kill(child.pid, signal.SIGKILL)
+        child.wait()
+        deadline = time.time() + 10
+        while ffmpeg_pids() and time.time() < deadline:
+            time.sleep(0.2)
+        self.assertEqual(ffmpeg_pids(), [], "ffmpeg outlived the tool that started it")
 
     def test_an_invalid_ffmpeg_skill_timeout_is_a_recorded_warning(self):
         """FFMPEG_SKILL_TIMEOUT=abc silently became 1800 s, and -5 silently meant no limit."""

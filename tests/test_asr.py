@@ -428,7 +428,7 @@ class EngineRefusalTests(_SrtDir, _BridgeHarness, unittest.TestCase):
     def test_nothing_installed_is_still_no_engine(self):
         msg, kind, _ = self._refusal([], lambda: asr.transcribe_result("talk.mp4", self.srt, None, "base"))
         self.assertTrue(msg.startswith("no local speech-to-text engine found for --transcribe."), msg)
-        self.assertEqual(kind, "input")
+        self.assertEqual((kind, _["reason"]), ("missing_tool", "asr_engine_missing"), "a missing dependency, not a bad argument")
         msg, kind, _ = self._refusal([], lambda: asr.transcribe_words_result("talk.mp4"))
         self.assertTrue(msg.startswith("no local speech-to-text engine found for --filler --transcribe."), msg)
 

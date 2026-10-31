@@ -6,9 +6,27 @@
 
 ### Changed
 
+- An ffmpeg failure names its cause when ffmpeg's message does: `error.reason` `disk_full`,
+  `encoder_missing`, `filter_missing` (`details.name`), `input_incomplete` (no moov atom) or
+  `input_unreadable`, with a hint. Kind and exit code are unchanged.
+- "No local speech-to-text engine found" is `kind: missing_tool`, `reason: asr_engine_missing`
+  (was `kind: input`).
 - CI spreads the suite over three machines per platform (`tests/run_parallel.py --part I/N`, which
   deals the shards out by their measured cost and includes `test_contract`), so a run takes about
   a third of the 26 minutes it took on one 4-core machine. The tests themselves are unchanged.
+
+### Fixed
+
+- A tool killed with SIGKILL (an agent's time limit) left ffmpeg running, writing the output under
+  its final name after the caller had been told the run failed. On Linux the kernel now stops
+  ffmpeg with its parent (`PR_SET_PDEATHSIG`).
+- The in-place re-encoding tools (fit, denoise, color, audio, deinterlace, ...) ran the whole encode
+  a second time after any failure and blamed subtitle streams the source did not have; they
+  retry only when the source has subtitle or data streams and the failure is not one of the
+  causes above.
+- `render.py` templates with a loudness stage (reels, shorts, ...) failed on a video with no audio
+  after the picture stages had run, while the dry run said they would work. The stage is skipped
+  and recorded (`loudness_no_audio`).
 
 ## 3.0.0
 

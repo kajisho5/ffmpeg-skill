@@ -447,11 +447,13 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
 def die_no_engine(alternative: str, flag: str = "--transcribe") -> None:
     """The one "no local speech-to-text engine" refusal, in the one set of words.
 
-    kind: input, exit 1, and the three install lines -- caption.py and silence.py both land here
-    rather than each spelling out its own version of the same missing dependency.
+    kind missing_tool (3.1.0; it was kind input, which read as a bad argument), `reason:
+    "asr_engine_missing"`, exit 1, and the three install lines -- caption.py and silence.py both
+    land here rather than each spelling out its own version of the same missing dependency.
     """
     die(f"no local speech-to-text engine found for {flag}.\n" + ASR_INSTALL_HINT + "\n" + alternative,
-        kind="input")
+        kind="missing_tool", reason="asr_engine_missing",
+        hint="install one of the engines above; `python3 scripts/_contract.py doctor` shows which are found")
 
 
 def whisper_word_timings(srt_path: Optional[str]) -> List[Tuple[float, float, str]]:

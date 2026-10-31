@@ -412,6 +412,11 @@ DIAGNOSTICS_SCHEMA = {
 # error.reason: a stable code for why a refusal happened, beside `kind` (which says what class of
 # failure it is). Every refuse() call in scripts/ names one of these (a test reads the sources).
 ERROR_REASONS = {
+    "disk_full": "kind ffmpeg: ffmpeg reported \"No space left on device\" while writing; the hint says to free space or write elsewhere; details: {}",
+    "encoder_missing": "kind ffmpeg: this ffmpeg build lacks the encoder the command named (\"Unknown encoder\"); details: {name}; the hint points at doctor",
+    "filter_missing": "kind ffmpeg: this ffmpeg build lacks a filter the command used (\"No such filter\"); details: {name}; the hint points at doctor",
+    "input_incomplete": "kind ffmpeg: the input has no index (\"moov atom not found\"): a recording cut off or a copy not finished; --repair cannot rebuild it; details: {}",
+    "input_unreadable": "kind ffmpeg: ffmpeg could not read the input as media (\"Invalid data found when processing input\"); details: {}",
     "ffmpeg_unsupported": "kind missing_tool: the ffmpeg/ffprobe on PATH reports a version older than 6.1, which 3.0.0 no longer supports (5.x was deprecated in 2.14.0); details: {version, required}",
     "output_exists": "an output already exists and --overwrite was not given; details.outputs: [{path, resolved, size, mtime_ns}]",
     "output_is_input": "the output resolves to the same file as an input; details: {output, input, resolved}",

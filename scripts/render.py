@@ -1048,6 +1048,20 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
     return 0
 
 
+def _has_sound(current: str, proj: Dict[str, Any], rel: Any) -> bool:
+    """Whether the render carries sound at this point: measured on the intermediate when it
+    exists, otherwise (a dry run) from the sources: a clip with an audio stream, or music."""
+    if os.path.exists(current):
+        return bool((probe(current).get("audio") or {}).get("codec"))
+    if (proj.get("audio") or {}).get("music"):
+        return True
+    for c in proj.get("clips") or []:
+        src = rel(c["src"]) if isinstance(c, dict) and c.get("src") else None
+        if not src or not os.path.exists(src) or (probe(src).get("audio") or {}).get("codec"):
+            return True
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project", nargs="?", help="project.json, or a plan.json written by <tool> --plan")
@@ -1543,6 +1557,11 @@ def main() -> int:
 
     # ---- loudness
     ld = proj.get("loudness")
+    if ld and not _has_sound(current, proj, rel):
+        # a template's loudness stage on a silent source (screen recording, timelapse, drone) used
+        # to fail the render after the picture stages had run, while the dry run said it would work
+        record_skip("the loudness stage is not run: the video has no audio", "loudness_no_audio", stage="loudness")
+        ld = None
     if ld:
         nxt = str(work / f"loudnorm{mid}")
         argv = [current, "-o", nxt]

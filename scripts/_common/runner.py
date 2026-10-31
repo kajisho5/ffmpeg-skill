@@ -598,6 +598,35 @@ def _cleanup_partial_output(cmd: Sequence[str]) -> None:
         pass
 
 
+# ffmpeg's own words for the failures a caller can act on. Each pattern gives `error.reason` and a
+# hint; the kind stays "ffmpeg" and the exit code 1 (docs/design-decisions.md), so a caller that
+# keyed on those sees no change. Matched against the stderr tail, the first hit wins.
+FFMPEG_FAILURE_CLASSES = (
+    (re.compile(r"No space left on device"), "disk_full",
+     "the disk the output is written to is full: free space there (or write elsewhere with -o) and run again"),
+    (re.compile(r"Unknown encoder '([^']+)'|Encoder '?([\w-]+)'? not found|Requested encoder '?([\w-]+)'? not found"),
+     "encoder_missing", "this ffmpeg build has no {0} encoder: `python3 scripts/_contract.py doctor` lists what it has and how to get a fuller build"),
+    (re.compile(r"No such filter: '([^']+)'|Filter '?([\w-]+)'? not found"),
+     "filter_missing", "this ffmpeg build has no {0} filter: `python3 scripts/_contract.py doctor` lists what it has and how to get a fuller build"),
+    (re.compile(r"moov atom not found"), "input_incomplete",
+     "the input has no index (moov atom): a recording that was cut off or a copy that has not finished; "
+     "copy it again from its source. `export --preset copy --repair` cannot rebuild a missing index"),
+    (re.compile(r"Invalid data found when processing input"), "input_unreadable",
+     "ffmpeg cannot read the input as media: check that it plays and finished copying; `check.py --content` names damaged spans in a file that does"),
+)
+
+
+def classify_ffmpeg_failure(stderr: str) -> "Optional[Tuple[str, str, Dict[str, str]]]":
+    """(reason, hint, details) for an ffmpeg stderr that names an actionable cause, else None."""
+    for pattern, reason, hint in FFMPEG_FAILURE_CLASSES:
+        m = pattern.search(stderr or "")
+        if m:
+            name = next((g for g in m.groups() if g), "")
+            details = {"name": name} if name else {}
+            return reason, hint.format(name or "that"), details
+    return None
+
+
 def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Context]" = None, retried: bool = False) -> None:
     # Partial-output cleanup already ran in the caller (_run_captured/_run_with_progress) for
     # every failed ffmpeg invocation, not just this check=True path -- see _cleanup_partial_output.
@@ -630,7 +659,11 @@ def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Conte
                 ("ffmpeg reported no encoder-open or compression-session error, so the cause is not the GPU (see the message)"
                  if why is None else f"VideoToolbox refused it ({why}) and no CPU encoder line was recorded to retry with"))
         extra = {"encoder": enc, "hw": report}
-    die(f"command failed ({returncode}): {what}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode, **extra)
+    cls = classify_ffmpeg_failure(stderr)
+    if cls:
+        extra["hint"] = cls[1]
+    die(f"command failed ({returncode}): {what}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode,
+        error_extra={"reason": cls[0], "details": cls[2]} if cls else None, **extra)
 
 
 def video_encoder_of(cmd: Sequence[str]) -> Optional[str]:
@@ -1419,6 +1452,22 @@ def child_args() -> List[str]:
     return args
 
 
+def _has_non_av_streams(cmd: Sequence[str]) -> bool:
+    """Whether the command's first input has a subtitle or data stream (True when it cannot be
+    told: the retry then runs as before)."""
+    src = next((str(cmd[i + 1]) for i, a in enumerate(cmd[:-1]) if a == "-i"), None)
+    if not src or not os.path.isfile(src):
+        return True
+    try:
+        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", src],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                             timeout=PROBE_TIMEOUT).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    kinds = {ln.strip() for ln in out.splitlines() if ln.strip()}
+    return not kinds or bool(kinds & {"subtitle", "data", "attachment"})
+
+
 def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
     """Run an ffmpeg command that already maps its video/audio, trying first to also
     stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
@@ -1435,6 +1484,11 @@ def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
     first = run(cmd + ["-map", "0:s?", "-map", "0:d?", "-c:s", "copy", "-c:d", "copy", output], check=False)
     if first.returncode == 0:
         return False
+    if classify_ffmpeg_failure(first.stderr or "") or not _has_non_av_streams(cmd):
+        # a full disk, a missing encoder or an unreadable input fails the second encode the same
+        # way: report the first failure rather than run the whole encode again and blame streams
+        # the source may not even have
+        _fail(first.args, first.returncode, first.stderr or "")
     error = " | ".join([ln.strip() for ln in (first.stderr or "").splitlines() if ln.strip()][-3:])[-500:]
     record_fallback(f"the subtitle/data streams could not be copied into {os.path.basename(output)} "
                     f"({error or 'ffmpeg exit ' + str(first.returncode)}); encoding again without them",
@@ -1451,10 +1505,29 @@ def _limit_for(cmd: Sequence[str]) -> Optional[float]:
     return STATE.timeout or None
 
 
+def _die_with_parent() -> None:
+    """Linux: have the kernel SIGKILL this child when the tool that started it dies, even by
+    SIGKILL (which no handler can catch). Without it a tool killed by an agent's time limit left
+    ffmpeg running orphaned, writing the output under its final name after the caller had been
+    told the run failed. macOS and Windows have no equivalent; SIGTERM/SIGINT are handled there
+    as everywhere (`kind: interrupted`, the child stopped)."""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, 9)  # PR_SET_PDEATHSIG, SIGKILL
+    except Exception:  # noqa: BLE001 - best effort; a child without it is what every other OS gets
+        pass
+
+
+def child_kwargs() -> Dict[str, Any]:
+    """Extra Popen arguments for an ffmpeg/ffprobe child (see _die_with_parent)."""
+    return {"preexec_fn": _die_with_parent} if sys.platform.startswith("linux") else {}
+
+
 def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     limit = _limit_for(cmd)
-    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                             **child_kwargs())
     _watch(child, cmd)
     try:
         out, err = child.communicate(timeout=limit)
@@ -1504,7 +1577,8 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
     t0 = time.time()
     limit = _limit_for(cmd)
-    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                            **child_kwargs())
     _watch(proc, cmd)
     assert proc.stdout is not None and proc.stderr is not None
     lines: "queue.Queue[Optional[str]]" = queue.Queue()

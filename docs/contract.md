@@ -788,7 +788,19 @@ auto` found engines and none transcribed, the refusal is `kind: input` with `rea
 engines auto passed over for a language that is not English), `engine` (the first one it names)
 and `engines: [{engine, reason, detail}]`, where `detail` carries an engine's own error line. A
 named `--engine` that is not installed is `kind: missing_tool`; one that is installed and failed
-is `kind: input`, `reason: "engine_failed"`, with `engine` and `detail`.
+is `kind: input`, `reason: "engine_failed"`, with `engine` and `detail`. Since 3.1.0 the "no local
+speech-to-text engine found" refusal itself is `kind: missing_tool` with `reason:
+"asr_engine_missing"` (it was `kind: input`): a missing dependency, like a named engine that is
+not installed.
+
+An ffmpeg run that fails keeps `kind: ffmpeg` and exit code 1, and since 3.1.0 carries
+`error.reason` and a `hint` when ffmpeg's own message names a cause a caller can act on
+(`_common.runner.FFMPEG_FAILURE_CLASSES`): `disk_full` ("No space left on device"),
+`encoder_missing` and `filter_missing` (`details.name`; the build lacks it, `doctor` says how to
+get one that has it), `input_incomplete` ("moov atom not found": a cut-off recording or an
+unfinished copy, which `--repair` cannot rebuild) and `input_unreadable`. A tool that copies the
+source's subtitle and data streams retried the whole encode without them after any failure; it
+now retries only when the source has such a stream and the failure is none of these.
 
 `check.py` also gains an informational `subtitles` row on **every** platform:
 `PASS` when every soft subtitle stream carries a language tag, `WARN` when one
