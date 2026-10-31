@@ -55,6 +55,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.21.1 — a stream that ends early or decodes nothing fails the check](#2211--a-stream-that-ends-early-or-decodes-nothing-fails-the-check)
 - [2.22 — silence.py says where it cut, and where to listen](#222--silencepy-says-where-it-cut-and-where-to-listen)
 - [2.23 — join.py --copy and cut.py --remove](#223--joinpy---copy-and-cutpy---remove)
+- [2.23 — output identity and check.py --compare](#223--output-identity-and-checkpy---compare)
 <!-- contents:end -->
 
 ## Time limits
@@ -2331,3 +2332,24 @@ What was decided there:
   equivalent `--segments` would be. Overlaps merge and the ranges are clamped to the file; a
   leftover shorter than one frame (10 ms without a frame rate) is not a piece anyone asked to
   keep. Test: `test_cut_remove_keeps_the_rest`.
+
+## 2.23 — output identity and check.py --compare
+
+- **An output is identified by size and modification time, not a hash.** The point is to tell
+  the file a run wrote from whatever sits at the path later (an older file a failed `--overwrite`
+  run left, a file another run replaced). Size plus `mtime_ns` changes on any rewrite and costs
+  one `stat`; a sha256 of an hour-long master costs seconds and proves nothing more for that
+  purpose. Code: `_common.emit.file_identity()`. Test:
+  `test_check_expect_identity_ties_the_check_to_one_write`.
+- **`--expect-identity` is a FAIL, not a WARN.** The row exists for the case where the file is
+  not the one the caller believes it is checking; passing the other rows on that file would be
+  the false success the flag is there to stop. Without the flag check.py grades the path as
+  before and only reports `input_identity`. Same test.
+- **`--compare` pairs frames in decode order and reports, it does not align.** SSIM and PSNR are
+  ffmpeg's own filters in one pass. Pairing by order is what those filters do; a dropped or added
+  frame shifts every later pair, so a different frame count is named in `notes` rather than
+  hidden. Frames of another size are not compared at all (WARN, "not compared"): scaling one of
+  them first would measure the scaler. The WARN line is a mean SSIM of 0.98, where differences
+  start to be visible on ordinary footage; the worst frame and its time say where to look
+  (`look.py --compare`). Code: `_common.probe.compare_pictures()`. Test:
+  `test_check_compare_measures_against_a_reference`.

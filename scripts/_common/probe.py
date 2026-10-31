@@ -789,3 +789,39 @@ def signatures_match(sigs: list, ext: str) -> bool:
                 if not (codec.startswith("pcm_") or codec in IN_BAND_CONFIG or ext in TS_EXTS):
                     return False
     return True
+
+
+# check.py --compare (2.23): the output's picture against a reference, frame by frame.
+COMPARE_SSIM_WARN = 0.98   # mean SSIM below this: a visible difference somewhere is likely
+_SSIM_SUMMARY = re.compile(r"SSIM Y:[0-9.]+ .*All:([0-9.]+)")
+_PSNR_SUMMARY = re.compile(r"PSNR y:\S+ .*average:(\S+)")
+_SSIM_FRAME = re.compile(r"n:(\d+) .*All:([0-9.]+)")
+
+
+def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
+    """SSIM (mean and the worst frame) and PSNR (mean) of `path`'s first video stream against
+    `reference`'s, frame by frame in decode order, in one pass. ffmpeg's ssim and psnr filters
+    need equal sizes; the caller checks that first. None when the pass fails."""
+    import tempfile
+    from _common.decision import escape_filter_path
+    with tempfile.TemporaryDirectory(prefix="ffskill_compare_") as tmp:
+        stats = os.path.join(tmp, "ssim.log")
+        graph = ("[0:v:0]split[a0][a1];[1:v:0]split[b0][b1];"
+                 f"[a0][b0]ssim=stats_file={escape_filter_path(stats, bind=False)};[a1][b1]psnr")
+        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-i", reference,
+                             "-filter_complex", graph, "-f", "null", "-"], check=False, record=True)
+        if proc.returncode != 0:
+            return None
+        ssim, psnr = _SSIM_SUMMARY.search(proc.stderr), _PSNR_SUMMARY.search(proc.stderr)
+        frames = []
+        try:
+            with open(stats, encoding="utf-8") as fh:
+                frames = [(int(m.group(1)), float(m.group(2))) for m in map(_SSIM_FRAME.search, fh) if m]
+        except OSError:
+            pass
+    if not ssim or not frames:
+        return None
+    worst = min(frames, key=lambda f: f[1])
+    mean_psnr = psnr.group(1) if psnr else None
+    return {"ssim": float(ssim.group(1)), "worst_ssim": worst[1], "worst_frame": worst[0] - 1, "frames": len(frames),
+            "psnr": None if mean_psnr is None else (float("inf") if mean_psnr == "inf" else float(mean_psnr))}

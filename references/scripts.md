@@ -1129,7 +1129,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1149,6 +1149,15 @@ construction, not by two lists agreeing.
 The `audio` row FAILs (under a loudness target; WARN without one) on a present-but-silent track (peak <= -50 dBFS, the join/audio
 `--silence-threshold` default): measured from the loudness pass, or with one volumedetect
 pass when `--no-loudness` (or a spec with no loudness target) skips it.
+`--expect-identity SIZE:MTIME_NS` (2.23) ties the check to one run's output: every writing tool
+reports `output_identity: {size, mtime_ns}` for the file it wrote, and check.py reports the file it
+graded as `input_identity`. With the flag an `identity` row FAILs when they differ, so a check after
+a run that failed (leaving an older file at the path) or that another run overwrote does not pass
+someone else's file. `--compare REF` (2.23) measures the picture against a reference in one pass
+(ffmpeg's `ssim` and `psnr`, frames paired in decode order): a `similarity` row with the mean SSIM,
+the worst frame and its time, and the mean PSNR (`identical` when every pixel matches); WARN under a
+mean SSIM of 0.98. Frames of another size are not compared (WARN, "not compared"); a different frame
+count is compared pair by pair and named in `notes`, since a dropped frame shifts every later pair.
 `--content` (opt-in, one decode pass) adds three rows: `black` (share of the duration that is
 black: WARN > 10%, FAIL >= 95%), `frozen` (longest frozen span: WARN > max(3 s, 30% of the
 duration), FAIL when it covers >= 95%, i.e. the whole video) and `silence` (share below

@@ -35,7 +35,8 @@ from fractions import Fraction
 from typing import Any, Dict, List
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS, detect_content, measured_level_dbfs
+from _common.probe import COMPARE_SSIM_WARN, SILENT_PEAK_DBFS, compare_pictures, detect_content, measured_level_dbfs
+from _common.emit import file_identity
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -68,6 +69,9 @@ FROZEN_FAIL = 0.95                         # a frozen span covering this share =
 SILENCE_WARN, SILENCE_FAIL = 0.50, 0.95    # share of the duration below SILENT_PEAK_DBFS
 
 
+STATE_NOTES: List[str] = []
+
+
 def _span_total(spans: Any) -> float:
     return sum(max(0.0, e - s) for s, e in spans)
 
@@ -92,6 +96,12 @@ def main() -> int:
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
                     help="also check the content (one decode pass, plus an audio-only one): black, frozen, silence and dropouts rows")
+    ap.add_argument("--compare", metavar="REFERENCE",
+                    help="also measure the picture against REFERENCE, frame by frame (SSIM and PSNR, one pass): a "
+                         "similarity row, WARN when the mean SSIM is under 0.98, with the worst frame's time")
+    ap.add_argument("--expect-identity", metavar="SIZE:MTIME_NS",
+                    help="the output_identity a writing tool reported ({size}:{mtime_ns}): an identity row FAILs when "
+                         "the file at INPUT is not that file (a later run replaced it, or a failed run left an older one)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -299,6 +309,46 @@ def main() -> int:
                 "again); a noise gate makes these on purpose" if gaps else "",
                 reason="a short stretch of digital silence in the middle of the sound is usually lost audio at a join or a glitched decode" if gaps else "")
 
+    identity = file_identity(args.input) if not STATE.dry_run else None
+    if args.expect_identity:
+        try:
+            size, mtime_ns = (int(x) for x in args.expect_identity.split(":"))
+        except ValueError:
+            die(f"--expect-identity takes SIZE:MTIME_NS from a tool's output_identity, got {args.expect_identity!r}")
+        if identity is not None:
+            same = identity == {"size": size, "mtime_ns": mtime_ns}
+            row("identity", "PASS" if same else "FAIL", f"{identity['size']}:{identity['mtime_ns']}", f"{size}:{mtime_ns}",
+                "" if same else "re-run the tool that writes this file and check what it reports, not what the path holds",
+                reason="" if same else "the file at this path is not the one the run being checked wrote")
+    if args.compare and not STATE.dry_run:
+        ref = probe(args.compare)
+        rv = ref.get("video") or {}
+        if not v or not rv:
+            row("similarity", "WARN", "not compared", "two pictures", "--compare needs a video stream in both files",
+                reason="one of the files has no picture")
+        elif (v.get("width"), v.get("height")) != (rv.get("width"), rv.get("height")):
+            row("similarity", "WARN", f"not compared: {v.get('width')}x{v.get('height')} vs {rv.get('width')}x{rv.get('height')}",
+                "the same frame size", "compare against a reference at the delivery size (fit.py or export.py it first)",
+                reason="SSIM and PSNR compare pixels, so the two frames must be the same size")
+        else:
+            cmp_ = compare_pictures(args.input, args.compare)
+            if cmp_ is None:
+                row("similarity", "WARN", "could not measure", f"mean SSIM >= {COMPARE_SSIM_WARN:g}",
+                    "look.py --compare at a few times", reason="the comparison pass failed")
+            else:
+                fps = float(v.get("fps") or 0.0)
+                at = f"{cmp_['worst_frame'] / fps:.2f}s" if fps else f"frame {cmp_['worst_frame']}"
+                psnr = "identical" if cmp_["psnr"] == float("inf") else (f"{cmp_['psnr']:.1f} dB" if cmp_["psnr"] is not None else "?")
+                low = cmp_["ssim"] < COMPARE_SSIM_WARN
+                row("similarity", "WARN" if low else "PASS",
+                    f"SSIM {cmp_['ssim']:.4f} (worst {cmp_['worst_ssim']:.4f} at {at}), PSNR {psnr}, {cmp_['frames']} frames",
+                    f"mean SSIM >= {COMPARE_SSIM_WARN:g}",
+                    f"look.py --compare {args.compare} --at {at.rstrip('s') if fps else 0}" if low else "",
+                    reason="the picture differs visibly from the reference somewhere" if low else "")
+                nref, nout = rv.get("nb_frames"), v.get("nb_frames")
+                if nref and nout and int(nref) != int(nout):
+                    STATE_NOTES.append(f"--compare: {nout} frames against the reference's {nref}; frames were paired in "
+                                       f"order, so an added or dropped frame shifts every later pair")
     failed = [r for r in rows if r["status"] == "FAIL"]
     warned = [r for r in rows if r["status"] == "WARN"]
     notes: List[str] = []
@@ -319,7 +369,10 @@ def main() -> int:
         print(f"  {len(rows)} checks, {len(failed)} failed, {len(warned)} warnings")
         for n in notes:
             print(f"  note: {n}")
+    notes += STATE_NOTES
     extra: Dict[str, Any] = {"notes": notes} if notes else {}
+    if identity is not None:
+        extra["input_identity"] = identity
     if failed:
         die(f"{len(failed)} of {len(rows)} {args.platform} checks failed: {', '.join(r['check'] for r in failed)}",
             kind="verification", output=None, dry_run=STATE.dry_run,

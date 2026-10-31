@@ -580,6 +580,17 @@ def _framecrc_frames(proc: Any, since: Optional[float] = None) -> int:
     return n
 
 
+def file_identity(path: str) -> "Optional[Dict[str, int]]":
+    """{size, mtime_ns} of a file this run wrote or measured (2.23): what ties a later check.py
+    --expect-identity to this file rather than to whatever sits at the path then. None when the
+    path is not a regular file."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns} if os.path.isfile(path) else None
+
+
 def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json.
 
@@ -594,6 +605,9 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         if meta:
             doc["probe"] = meta
+        identity = file_identity(output) if output and not ctx.dry_run else None
+        if identity:
+            doc["output_identity"] = identity
         # What this tool itself verified about its artifact (issue #189 C, "verify as part of the
         # contract"): the probe every writing tool runs, plus the measurements a tool adds
         # (`verification` extra: loudness after the write, a platform check). `verified` is true

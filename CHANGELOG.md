@@ -6,6 +6,8 @@
 
 ### Added
 
+- **Every writing tool reports `output_identity: {size, mtime_ns}`, and `check.py --expect-identity SIZE:MTIME_NS` checks against it.** A check run after a write that failed, leaving an older file at the path, or after another run replaced it, used to grade whatever was there; with the flag an `identity` row FAILs instead. check.py reports the file it graded as `input_identity`. SKILL.md's delivery check passes it.
+- **`check.py --compare REF` measures the picture against a reference:** mean SSIM, the worst frame and its time, and mean PSNR, in one pass; WARN under a mean SSIM of 0.98. Frames of another size are not compared.
 - **`join.py --copy --transition none` joins clips by stream copy, without re-encoding,** when they already match: the same codec, size, frame rate, pixel format, colour tags, sample rate and channels in the first video and audio stream, no edit-list pre-roll, and picture and sound ending within 50 ms in each clip. Anything else is refused before ffmpeg runs, naming each clip and what differs (`reason: join_copy_mismatch`). The join is measured before it replaces anything: its video packet count must equal the clips' total and its length their summed length.
 - **`cut.py --remove A-B,...` drops ranges and keeps the rest,** the inverse of `--segments`: overlapping ranges merge, a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused.
 
