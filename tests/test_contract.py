@@ -3326,7 +3326,17 @@ class ContractTests(unittest.TestCase):
         proc = tool("scenes", victim, "--highlights", "1", "--edl", victim, "--overwrite", "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
         self.assertEqual(victim.read_bytes(), before)
+        # a run that does not write the side file is not refused for it
         old.write_text("keep me\n", encoding="utf-8")
+        for name, args in (("scenes", [self.src, "--edl", old]),
+                           ("metadata", [self.src, "--title", "t", "--chapters-out", old, "-o", work / "t.mp4"])):
+            proc = tool(name, *args, "--json", check=False)
+            self.assertEqual(proc.returncode, 0, (name, proc.stdout[-400:], proc.stderr[-400:]))
+            self.assertEqual(old.read_text(encoding="utf-8"), "keep me\n", name)
+        # two side files of one run never share a path
+        proc = tool("metadata", self.src, "--auto-chapters", "--chapters-out", work / "same.txt",
+                    "--description-out", work / "same.txt", "-o", work / "m2.mp4", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
         tool("render", "--init", old, "--overwrite")
         self.assertNotEqual(old.read_text(encoding="utf-8"), "keep me\n", "--overwrite replaces an old side file")
 

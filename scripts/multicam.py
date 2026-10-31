@@ -150,8 +150,9 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
-    for side in (args.edl, args.write_project):
-        guard_sidecar(side, *args.inputs, args.output)
+    if not args.offsets_only:  # an offsets-only run writes nothing
+        guard_sidecar(args.edl, *args.inputs, siblings=(args.write_project, args.output))
+        guard_sidecar(args.write_project, *args.inputs, siblings=(args.output,))
     if args.analyze_seconds > 900:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
     if args.fps is not None and args.fps <= 0:

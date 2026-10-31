@@ -644,8 +644,9 @@ def _refuse_playlist(value: str) -> None:
     checked here."""
     head = b""
     try:
-        with open(value, "rb") as fh:
-            head = fh.read(16).lstrip(b"\xef\xbb\xbf \t\r\n")
+        if os.path.isfile(value):  # a FIFO or device would block the open
+            with open(value, "rb") as fh:
+                head = fh.read(16).lstrip(b"\xef\xbb\xbf \t\r\n")
     except OSError:
         pass
     if value.lower().endswith(_PLAYLIST_SUFFIXES) or head.startswith(_PLAYLIST_MAGIC):
@@ -965,13 +966,19 @@ def _check_existing_output(cmd: Sequence[str]) -> None:
     refuse_existing_outputs([output])
 
 
-def guard_sidecar(path: str, *inputs: str) -> None:
+def guard_sidecar(path: str, *inputs: str, siblings: Sequence[str] = ()) -> None:
     """The output guards for a file a tool writes itself rather than through ffmpeg (an EDL, a
     chapter list, a project file): not a URL or an option-shaped name, its directory exists and is
-    writable, not one of the run's inputs, and not an existing file unless --overwrite. Called
-    before the first file is written, so a dry run predicts the same refusal."""
+    writable, not one of the run's inputs, not another file the same run writes (`siblings`), and
+    not an existing file unless --overwrite. Called before the first file is written, so a dry run
+    predicts the same refusal."""
     if not path:
         return
+    for other in siblings:
+        if other and os.path.realpath(other) == os.path.realpath(path):
+            refuse("input", "output_path_taken",
+                   f"{path!r} is also another file this run writes ({other!r}); give each its own path",
+                   output=path, other=other)
     _check_output_path([path])
     refuse_output_is_input(path, *[p for p in inputs if p])
     refuse_existing_outputs([path])

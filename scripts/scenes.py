@@ -140,7 +140,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
-    guard_sidecar(args.edl, args.input)
+    if args.highlights:  # the EDL is written only with --highlights
+        guard_sidecar(args.edl, args.input, siblings=(args.sheet,))
 
     meta = probe(args.input)
     if not meta.get("video"):

@@ -191,6 +191,8 @@ def main() -> int:
         return pack_report(args)
     if not args.after:
         die("--after is required (or --pack FILE for a social pack table)")
+    output = args.output or str(Path(args.after).with_name(Path(args.after).stem + "_report.html"))
+    guard_sidecar(output, args.after, args.before, args.commands, args.notes)  # before any measurement
     after = probe(args.after)
     before = probe(args.before) if args.before else None
     # every section the report would show is either in it or accounted for: a section that could
@@ -234,8 +236,6 @@ def main() -> int:
     commands = read_text_or_die(args.commands, "--commands").splitlines() if args.commands else []
     notes = read_text_or_die(args.notes, "--notes") if args.notes else ""
     title = args.title or f"Delivery report — {Path(args.after).name}"
-    output = args.output or str(Path(args.after).with_name(Path(args.after).stem + "_report.html"))
-    guard_sidecar(output, args.after, args.before, args.commands, args.notes)
 
     def table(rows: List[List[str]]) -> str:
         return "<table>" + "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(str(v))}</td></tr>" for k, v in rows) + "</table>"

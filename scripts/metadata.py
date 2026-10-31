@@ -202,8 +202,9 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
-    for side in (args.chapters_out, args.description_out):
-        guard_sidecar(side, args.input, args.output)
+    if args.auto_chapters:  # the only mode that writes them
+        guard_sidecar(args.chapters_out, args.input, siblings=(args.description_out, args.output))
+        guard_sidecar(args.description_out, args.input, siblings=(args.output,))
 
     if args.chapters and args.clear_chapters:
         die("--chapters and --clear-chapters exclude each other")

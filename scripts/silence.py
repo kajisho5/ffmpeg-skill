@@ -471,7 +471,7 @@ def main() -> int:
                        f"--timemap {args.timemap} is the same file as {flag}; give the map its own path",
                        timemap=args.timemap, flag=flag, path=other)
         refuse_existing_outputs([args.timemap])
-    guard_sidecar(args.edl, args.input, args.words)
+    guard_sidecar(args.edl, args.input, args.words, args.filler_words, siblings=(args.output,))
 
     if args.filler_pad < 0:
         die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "
