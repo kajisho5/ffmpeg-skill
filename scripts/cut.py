@@ -57,6 +57,7 @@ from typing import List, Tuple
 
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
+from _common.probe import TS_EXTS, signatures_match, stream_signature
 from _common import sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -71,6 +72,25 @@ KEEP_HEVC = False
 def _t(value: str, fps, flag: str = "--segments") -> float:
     """time_arg() with the input's fps (SMPTE hh:mm:ss:ff, or @fps): the one parser every tool uses (1.9)."""
     return time_arg(value, flag, fps)
+
+
+def keep_ranges_after_removing(removed: List[Tuple[float, float]], total: float, fps=None) -> List[Tuple[float, float]]:
+    """--remove: what is left of [0, total] once `removed` is dropped (merged where they overlap,
+    clamped to the file). A leftover shorter than one frame (10 ms without a frame rate) is not a
+    piece anyone asked to keep. Refuses a removal that would leave nothing."""
+    least = 1.0 / fps if fps else 0.01
+    keep, cursor = [], 0.0
+    for s, e in sorted((max(0.0, s), min(total, e)) for s, e in removed):
+        if e <= cursor:
+            continue
+        if s - cursor >= least:
+            keep.append((cursor, s))
+        cursor = max(cursor, e)
+    if total - cursor >= least:
+        keep.append((cursor, total))
+    if not keep:
+        die(f"--remove drops the whole file ({total:.3f}s); nothing would be left to keep")
+    return keep
 
 
 def parse_segments(spec: str, fps=None) -> List[Tuple[float, float]]:
@@ -927,13 +947,6 @@ DECLICK_S = 0.02
 # keyframe still decodes from the keyframe BEFORE it
 SEEK_MARGIN = 1.0
 # codecs whose configuration travels in the packets, so a part with no extradata is not missing any
-IN_BAND_CONFIG = ("mp3", "mp2")
-TS_EXTS = (".ts", ".m2ts", ".mts")
-_SIG_FIELDS = {"video": ("codec_name", "profile", "pix_fmt", "width", "height", "r_frame_rate", "time_base",
-                         "sample_aspect_ratio", "color_transfer", "color_primaries"),
-               "audio": ("codec_name", "profile", "sample_rate", "channels", "time_base")}
-
-
 _PARTS: dict = {}
 
 
@@ -952,21 +965,10 @@ def _part_probe(path: str):
 
 
 def join_signature(path: str):
-    """What a stream-copy join needs to be identical across parts: each stream's type, codec
-    parameters, rotation and extradata hash. None when ffprobe cannot read the part."""
+    """What a stream-copy join needs to be identical across parts (_common.probe.stream_signature).
+    None when ffprobe cannot read the part."""
     doc = _part_probe(path)
-    if doc is None:
-        return None
-    sig = []
-    for st in doc["streams"]:
-        kind = st.get("codec_type")
-        entry = {"type": kind, "extradata_hash": st.get("extradata_hash")}
-        entry.update({f: st.get(f) for f in _SIG_FIELDS.get(kind, ("codec_name",))})
-        if kind == "video":
-            entry["rotation"] = next((sd.get("rotation") for sd in st.get("side_data_list") or []
-                                      if "rotation" in sd), None)
-        sig.append(entry)
-    return sig
+    return None if doc is None else stream_signature(doc)
 
 
 # how far a measured join step may be from the predicted one: ffprobe prints the parts' times
@@ -993,30 +995,6 @@ def predicted_join_steps(parts) -> list:
         return (c_start, c_start + c_dur, min(pts), max(pts)) if pts else None
     spans = [times(p) for p in parts]
     return [None if a is None or b is None else (a[1] - a[3]) + (b[2] - b[0]) for a, b in zip(spans, spans[1:])]
-
-
-def signatures_match(sigs: list, ext: str) -> bool:
-    """True when every part can be joined by stream copy: same streams in the same order with the
-    same parameters. A missing extradata hash only matches another missing one where the codec (or
-    an MPEG-TS output) carries its configuration in-band -- PCM has none at all."""
-    if not sigs or any(sig is None for sig in sigs):
-        return False
-    first = sigs[0]
-    for sig in sigs[1:]:
-        if len(sig) != len(first):
-            return False
-        for a, b in zip(first, sig):
-            if {k: v for k, v in a.items() if k != "extradata_hash"} != {k: v for k, v in b.items() if k != "extradata_hash"}:
-                return False
-            ha, hb = a.get("extradata_hash"), b.get("extradata_hash")
-            if ha or hb:
-                if ha != hb:
-                    return False
-            else:
-                codec = str(a.get("codec_name") or "")
-                if not (codec.startswith("pcm_") or codec in IN_BAND_CONFIG or ext in TS_EXTS):
-                    return False
-    return True
 
 
 def _fraction_rate(text: str) -> float:
@@ -1320,6 +1298,9 @@ def main() -> int:
     g.add_argument("--end", help="end time")
     g.add_argument("--duration", help="duration instead of --end")
     ap.add_argument("--segments", help="comma separated START-END list, e.g. '0:05-0:12,1:00-1:20' (joined in order)")
+    ap.add_argument("--remove", metavar="START-END[,...]",
+                    help="the inverse of --segments: drop these ranges and keep the rest, joined in order "
+                         "(e.g. '1:20-2:05,10:00-10:30'); overlapping ranges merge")
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
     ap.add_argument("--edit-list", action="store_true", help="a single-segment .mp4/.mov stream copy keeps the MP4 edit list that hides the keyframe's pre-roll, so the picture starts at --start (default: -avoid_negative_ts make_zero, the picture starts at the keyframe); a player that ignores edit lists shows the pre-roll")
     ap.add_argument("--keep-hevc", action="store_true", help="a re-encode of an SDR HEVC source stays HEVC (x265 8-bit BT.709; VideoToolbox under --hw) instead of x264 (default: x264 for SDR, x265 Main10 for HDR); --codec overrides it")
@@ -1369,6 +1350,13 @@ def main() -> int:
         forced.append("codec")
 
     fps = (meta.get("video") or {}).get("fps")
+    if args.remove:
+        if args.segments or args.end or args.duration or (args.start and _t(args.start, fps, "--start")):
+            die("--remove names what to drop from the whole file: it does not combine with --segments, --start, --end or --duration")
+        if not total:
+            die(f"--remove needs the input's duration, which {args.input} does not report"
+                + (" yet (it is an earlier step's output)" if dry_run_input_pending(args.input) else ""))
+        args.segments = ",".join(f"{s:.6f}-{e:.6f}" for s, e in keep_ranges_after_removing(parse_segments(args.remove, fps), total, fps))
     if args.segments:
         segments = parse_segments(args.segments, fps)
     else:

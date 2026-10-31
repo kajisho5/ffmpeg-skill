@@ -127,7 +127,7 @@ own clock, `null` when unknown). `--compact` gives one line per file.
 
 ### cut.py — cut / join segments
 ```
-cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,...] [--accurate] [--declick-ms 20 | --no-declick] [--edit-list] [--keep-hevc] [--vfr-guard average|sampled|off] [-o OUT]
+cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate] [--declick-ms 20 | --no-declick] [--edit-list] [--keep-hevc] [--vfr-guard average|sampled|off] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
@@ -138,7 +138,7 @@ keyframes, instant, lossless); if the snapped result deviates more than
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
 between keyframes, or one that fails its check, still re-cuts).
-Multiple segments are concatenated in the order given. Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
+Multiple segments are concatenated in the order given. `--remove A-B,...` (2.23) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start`, `--end` or `--duration`. Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
@@ -768,8 +768,21 @@ writes the resulting cut list exactly as it does today.
 ```
 join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen|none]
         [--duration 0.5] [--width W --height H] [--fps N] [--fit pad|crop] [-o OUT]
+join.py CLIP1 CLIP2 [...] --copy --transition none [-o OUT]
 join.py --list parts.txt [--on-missing fail|skip] [--on-silent warn|fail|skip] [--allow-silent N[,N]] [--silence-threshold -50] [...]
 ```
+`--copy --transition none` (2.23) joins by stream copy (the concat demuxer, `-c copy`), no
+re-encode, for clips that already match: the first video and first audio stream of every clip must
+have the same codec, profile, size, pixel format, frame rate, time base, sample aspect, colour
+tags, sample rate and channels (and the same codec configuration), no clip may hide frames
+before its start with an edit list, and in each clip picture and sound must end within 50 ms of
+each other (the demuxer starts the next clip where this one's container ends, so the shorter
+stream would leave that gap). Anything else is refused before ffmpeg runs (`kind: input`,
+`reason: join_copy_mismatch`, `details.clips: [{index?, path, differs}]` naming what differs).
+The join is written beside the output and measured before it is renamed into place: its video
+packet count must equal the clips' total and its video length their summed length. `mode` is
+`copy`. `--copy` does not take `--width`, `--height`, `--fps` or a transition, and an
+audio-only join (which resamples every clip to one format) is refused with it.
 `--list FILE` (2.2) reads the clips from a file, one per line in order, paths relative to the
 file (blank lines and `#` comments ignored; ffmpeg's `file 'x.wav'` lines accepted), for the
 segments a TTS or render step wrote. Every input -- listed or given as arguments -- is checked

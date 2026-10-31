@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`join.py --copy --transition none` joins clips by stream copy, without re-encoding,** when they already match: the same codec, size, frame rate, pixel format, colour tags, sample rate and channels in the first video and audio stream, no edit-list pre-roll, and picture and sound ending within 50 ms in each clip. Anything else is refused before ffmpeg runs, naming each clip and what differs (`reason: join_copy_mismatch`). The join is measured before it replaces anything: its video packet count must equal the clips' total and its length their summed length.
+- **`cut.py --remove A-B,...` drops ranges and keeps the rest,** the inverse of `--segments`: overlapping ranges merge, a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused.
 
 ## 2.22.5
 

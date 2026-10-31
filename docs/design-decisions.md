@@ -54,6 +54,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.20 — a length or a silence is checked against a yardstick the tool did not make](#220--a-length-or-a-silence-is-checked-against-a-yardstick-the-tool-did-not-make)
 - [2.21.1 — a stream that ends early or decodes nothing fails the check](#2211--a-stream-that-ends-early-or-decodes-nothing-fails-the-check)
 - [2.22 — silence.py says where it cut, and where to listen](#222--silencepy-says-where-it-cut-and-where-to-listen)
+- [2.23 — join.py --copy and cut.py --remove](#223--joinpy---copy-and-cutpy---remove)
 <!-- contents:end -->
 
 ## Time limits
@@ -2306,3 +2307,27 @@ What was decided there:
 - **`--timemap` is an artifact, like `--edl`.** It is written beside the cut and not under
   `--dry-run`. Its output times are the sums of the kept ranges, the same arithmetic the render
   uses. Test: `test_silence_writes_a_map_from_source_to_output_times`.
+
+## 2.23 — join.py --copy and cut.py --remove
+
+- **`--copy` is opt-in, and a mismatch is refused rather than re-encoded.** A join that
+  re-encoded by default and copied when it could would change what an existing call does, which
+  the stability promise allows only for a defect; and a caller who asked for a copy and got a
+  re-encode would learn it only from `mode`. So `--copy` either copies or refuses, naming each
+  clip that differs and how. The comparison is cut.py's `--segments` one
+  (`_common.probe.stream_signature()` / `signatures_match()`, moved there so both use it), on
+  the first video and the first audio stream, which are the streams the join maps. Test:
+  `test_join_copy_joins_matching_clips_and_refuses_a_mismatch`.
+- **Three things a matching signature does not catch are checked too.** An MP4 edit list that
+  hides pre-roll frames (packets flagged discard in the first 300): the concat demuxer ignores
+  edit lists, so a copy join would show them. Picture and sound that end more than 50 ms apart
+  in a clip: the demuxer starts the next clip where this one's container ends, so the shorter
+  stream leaves a held frame or a hole in the sound there. And the result itself: its video
+  packet count against the clips' total, and its video length against their summed length
+  (within 50 ms per clip plus a frame), measured on a file beside the output that is renamed
+  into place only when both hold. Same test.
+- **`cut.py --remove` is `--segments` written the other way.** It builds the keep list and
+  hands it to the same code, so a removal is cut, joined, declicked and verified exactly as the
+  equivalent `--segments` would be. Overlaps merge and the ranges are clamped to the file; a
+  leftover shorter than one frame (10 ms without a frame rate) is not a piece anyone asked to
+  keep. Test: `test_cut_remove_keeps_the_rest`.

@@ -741,3 +741,51 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
     if duration - cuts[-1] < min_len and len(cuts) > 1:
         cuts.pop()
     return cuts
+
+
+# What a stream-copy join compares (cut.py --segments, join.py --copy).
+IN_BAND_CONFIG = ("mp3", "mp2")
+TS_EXTS = (".ts", ".m2ts", ".mts")
+_SIG_FIELDS = {"video": ("codec_name", "profile", "pix_fmt", "width", "height", "r_frame_rate", "time_base",
+                         "sample_aspect_ratio", "color_transfer", "color_primaries"),
+               "audio": ("codec_name", "profile", "sample_rate", "channels", "time_base")}
+
+
+def stream_signature(doc: Dict[str, Any]) -> "List[Dict[str, Any]]":
+    """What a stream-copy join needs to be identical across parts, from one ffprobe document
+    (-show_streams with -show_data_hash sha256): each stream's type, codec parameters, rotation
+    and extradata hash. Shared by cut.py's --segments join and join.py --copy."""
+    sig = []
+    for st in doc.get("streams") or []:
+        kind = st.get("codec_type")
+        entry = {"type": kind, "extradata_hash": st.get("extradata_hash")}
+        entry.update({f: st.get(f) for f in _SIG_FIELDS.get(kind, ("codec_name",))})
+        if kind == "video":
+            entry["rotation"] = next((sd.get("rotation") for sd in st.get("side_data_list") or []
+                                      if "rotation" in sd), None)
+        sig.append(entry)
+    return sig
+
+
+def signatures_match(sigs: list, ext: str) -> bool:
+    """True when every part can be joined by stream copy: same streams in the same order with the
+    same parameters. A missing extradata hash only matches another missing one where the codec (or
+    an MPEG-TS output) carries its configuration in-band -- PCM has none at all."""
+    if not sigs or any(sig is None for sig in sigs):
+        return False
+    first = sigs[0]
+    for sig in sigs[1:]:
+        if len(sig) != len(first):
+            return False
+        for a, b in zip(first, sig):
+            if {k: v for k, v in a.items() if k != "extradata_hash"} != {k: v for k, v in b.items() if k != "extradata_hash"}:
+                return False
+            ha, hb = a.get("extradata_hash"), b.get("extradata_hash")
+            if ha or hb:
+                if ha != hb:
+                    return False
+            else:
+                codec = str(a.get("codec_name") or "")
+                if not (codec.startswith("pcm_") or codec in IN_BAND_CONFIG or ext in TS_EXTS):
+                    return False
+    return True
