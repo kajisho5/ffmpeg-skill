@@ -241,7 +241,7 @@ def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dr
     return {"kept": kept, "dropped": gone}
 
 
-# --repair (2.23): regenerate missing timestamps, drop packets flagged corrupt, keep demuxing past errors
+# --repair (2.24): regenerate missing timestamps, drop packets flagged corrupt, keep demuxing past errors
 REPAIR_INPUT_ARGS = ["-fflags", "+genpts+discardcorrupt", "-err_detect", "ignore_err"]
 _TIMESTAMP_WARNING = re.compile(r"(?i)\b(dts|pts)\b|timestamp")
 

@@ -208,7 +208,7 @@ the loudness pass or, when loudness is skipped, one volumedetect pass). `check -
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
 from one decode pass, and `dropouts` (2.17) from one audio-only pass; without it the row set is unchanged.
 `--compare REF` adds `similarity` (SSIM/PSNR against a reference) and `--expect-identity SIZE:MTIME_NS`
-adds `identity`, against the `output_identity` every writing tool reports (2.23). Thresholds:
+adds `identity`, against the `output_identity` every writing tool reports (2.24). Thresholds:
 `docs/design-decisions.md` ("check.py --content").
 
 ### Dry run

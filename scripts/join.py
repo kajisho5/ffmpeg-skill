@@ -307,7 +307,7 @@ def parse_allow_silent(value: Optional[str], n: int) -> List[int]:
     return out
 
 
-# join.py --copy (2.23). The concat demuxer starts each clip where the previous one's container
+# join.py --copy (2.24). The concat demuxer starts each clip where the previous one's container
 # ends, so a stream that ends early leaves a gap at the join: a held frame for the picture, a hole
 # for the sound. A clip whose picture and sound end further apart than this is refused.
 COPY_AV_GAP = 0.05

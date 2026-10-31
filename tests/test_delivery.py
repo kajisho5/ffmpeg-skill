@@ -42,7 +42,7 @@ class DeliveryTests(MediaFixtures):
                     self.assertEqual(m["video"]["color_space"], "bt709")
 
     def test_export_max_mb_fits_the_size(self):
-        """2.23: --max-mb 1 on a 10 s clip that is several MB at the preset's CRF: two passes, the
+        """2.24: --max-mb 1 on a 10 s clip that is several MB at the preset's CRF: two passes, the
         written file under 1 MiB and measured; a budget too small for the picture, --crf with it,
         and a non-x264 preset are refused before anything runs."""
         src = OUT / "max_mb_src.mp4"
@@ -63,7 +63,7 @@ class DeliveryTests(MediaFixtures):
         self.assertIn("x264", json.loads(proc.stdout)["error"]["message"])
 
     def test_export_repair_counts_damage_before_and_after(self):
-        """2.23: --preset copy --repair on a TS with overwritten bytes: the input is untouched, the
+        """2.24: --preset copy --repair on a TS with overwritten bytes: the input is untouched, the
         counts are reported before and after, timestamp warnings do not grow, remaining decode errors
         are named; --repair with a re-encoding preset is refused."""
         src = OUT / "repair_src.ts"

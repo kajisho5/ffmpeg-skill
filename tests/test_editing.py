@@ -1141,7 +1141,7 @@ class EditingTests(MediaFixtures):
         script("join.py", self.src, expect_fail=True)
 
     def test_join_copy_joins_matching_clips_and_refuses_a_mismatch(self):
-        """2.23: --copy --transition none joins clips with matching streams by stream copy (the
+        """2.24: --copy --transition none joins clips with matching streams by stream copy (the
         joined packets are the clips' packets, nothing re-encoded), and refuses a clip that differs,
         or a picture and sound that end apart, by name and before anything is written."""
         clips = [self._av_clip(OUT / f"copy_{i}.mp4", 2, 2, 300 + 200 * i) for i in range(3)]
@@ -1167,7 +1167,7 @@ class EditingTests(MediaFixtures):
         self.assertIn("--transition none", json.loads(proc.stdout)["error"]["message"])
 
     def test_cut_remove_keeps_the_rest(self):
-        """2.23: --remove is --segments written the other way: dropping 1-2 and 3.5-4 (overlapping
+        """2.24: --remove is --segments written the other way: dropping 1-2 and 3.5-4 (overlapping
         3.8-4 merged) from 6 s keeps 0-1, 2-3.5 and 4-6."""
         clip = self._av_clip(OUT / "remove_src.mp4", 6, 6, 440)
         out = OUT / "removed.mp4"

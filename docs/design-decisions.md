@@ -54,10 +54,10 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.20 — a length or a silence is checked against a yardstick the tool did not make](#220--a-length-or-a-silence-is-checked-against-a-yardstick-the-tool-did-not-make)
 - [2.21.1 — a stream that ends early or decodes nothing fails the check](#2211--a-stream-that-ends-early-or-decodes-nothing-fails-the-check)
 - [2.22 — silence.py says where it cut, and where to listen](#222--silencepy-says-where-it-cut-and-where-to-listen)
-- [2.23 — join.py --copy and cut.py --remove](#223--joinpy---copy-and-cutpy---remove)
-- [2.23 — output identity and check.py --compare](#223--output-identity-and-checkpy---compare)
-- [2.23 — export.py --max-mb](#223--exportpy---max-mb)
-- [2.23 — export.py --repair](#223--exportpy---repair)
+- [2.24 — join.py --copy and cut.py --remove](#224--joinpy---copy-and-cutpy---remove)
+- [2.24 — output identity and check.py --compare](#224--output-identity-and-checkpy---compare)
+- [2.24 — export.py --max-mb](#224--exportpy---max-mb)
+- [2.24 — export.py --repair](#224--exportpy---repair)
 <!-- contents:end -->
 
 ## Time limits
@@ -2311,7 +2311,7 @@ What was decided there:
   `--dry-run`. Its output times are the sums of the kept ranges, the same arithmetic the render
   uses. Test: `test_silence_writes_a_map_from_source_to_output_times`.
 
-## 2.23 — join.py --copy and cut.py --remove
+## 2.24 — join.py --copy and cut.py --remove
 
 - **`--copy` is opt-in, and a mismatch is refused rather than re-encoded.** A join that
   re-encoded by default and copied when it could would change what an existing call does, which
@@ -2335,7 +2335,7 @@ What was decided there:
   leftover shorter than one frame (10 ms without a frame rate) is not a piece anyone asked to
   keep. Test: `test_cut_remove_keeps_the_rest`.
 
-## 2.23 — output identity and check.py --compare
+## 2.24 — output identity and check.py --compare
 
 - **An output is identified by size and modification time, not a hash.** The point is to tell
   the file a run wrote from whatever sits at the path later (an older file a failed `--overwrite`
@@ -2356,7 +2356,7 @@ What was decided there:
   (`look.py --compare`). Code: `_common.probe.compare_pictures()`. Test:
   `test_check_compare_measures_against_a_reference`.
 
-## 2.23 — export.py --max-mb
+## 2.24 — export.py --max-mb
 
 - **A size limit is a two-pass x264 encode at a computed bitrate, then measured.** The budget is
   97% of MB MiB (the rest is the container's overhead), less the preset's own audio bitrate, over
@@ -2371,7 +2371,7 @@ What was decided there:
   size that small makes an unwatchable file the user did not ask for, so the refusal says the
   bitrate it would have been. Same test.
 
-## 2.23 — export.py --repair
+## 2.24 — export.py --repair
 
 - **Repair is a flag on the copy preset, not a tool.** It is a remux with three input flags
   (`-fflags +genpts+discardcorrupt -err_detect ignore_err`) and `-avoid_negative_ts make_zero`:

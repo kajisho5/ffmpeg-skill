@@ -138,7 +138,7 @@ keyframes, instant, lossless); if the snapped result deviates more than
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
 between keyframes, or one that fails its check, still re-cuts).
-Multiple segments are concatenated in the order given. `--remove A-B,...` (2.23) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start`, `--end` or `--duration`. Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
+Multiple segments are concatenated in the order given. `--remove A-B,...` (2.24) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start`, `--end` or `--duration`. Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
@@ -771,7 +771,7 @@ join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadebla
 join.py CLIP1 CLIP2 [...] --copy --transition none [-o OUT]
 join.py --list parts.txt [--on-missing fail|skip] [--on-silent warn|fail|skip] [--allow-silent N[,N]] [--silence-threshold -50] [...]
 ```
-`--copy --transition none` (2.23) joins by stream copy (the concat demuxer, `-c copy`), no
+`--copy --transition none` (2.24) joins by stream copy (the concat demuxer, `-c copy`), no
 re-encode, for clips that already match: the first video and first audio stream of every clip must
 have the same codec, profile, size, pixel format, frame rate, time base, sample aspect, colour
 tags, sample rate and channels (and the same codec configuration), no clip may hide frames
@@ -1149,11 +1149,11 @@ construction, not by two lists agreeing.
 The `audio` row FAILs (under a loudness target; WARN without one) on a present-but-silent track (peak <= -50 dBFS, the join/audio
 `--silence-threshold` default): measured from the loudness pass, or with one volumedetect
 pass when `--no-loudness` (or a spec with no loudness target) skips it.
-`--expect-identity SIZE:MTIME_NS` (2.23) ties the check to one run's output: every writing tool
+`--expect-identity SIZE:MTIME_NS` (2.24) ties the check to one run's output: every writing tool
 reports `output_identity: {size, mtime_ns}` for the file it wrote, and check.py reports the file it
 graded as `input_identity`. With the flag an `identity` row FAILs when they differ, so a check after
 a run that failed (leaving an older file at the path) or that another run overwrote does not pass
-someone else's file. `--compare REF` (2.23) measures the picture against a reference in one pass
+someone else's file. `--compare REF` (2.24) measures the picture against a reference in one pass
 (ffmpeg's `ssim` and `psnr`, frames paired in decode order): a `similarity` row with the mean SSIM,
 the worst frame and its time, and the mean PSNR (`identical` when every pixel matches); WARN under a
 mean SSIM of 0.98. Frames of another size are not compared (WARN, "not compared"); a different frame
@@ -1884,7 +1884,7 @@ export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook
 export.py INPUT --preset copy --repair [-o OUT]
 export.py --list
 ```
-`--repair` (2.23, `--preset copy` only) remuxes a damaged file: timestamps are regenerated
+`--repair` (2.24, `--preset copy` only) remuxes a damaged file: timestamps are regenerated
 (`-fflags +genpts`), packets flagged corrupt are dropped (`+discardcorrupt`), demuxing goes on past
 errors (`-err_detect ignore_err`) and negative timestamps are shifted to zero. The input is read,
 never written. Both files are decoded once at `-v warning` and the lines counted:
@@ -1893,7 +1893,7 @@ step that fails when the output has more timestamp warnings than the input (deco
 lines whose count changes with the container, so they are reported, not compared). A remux cannot
 rebuild a damaged frame, so decode errors that remain are a `repair_incomplete` warning and a `notes` line (a
 re-encoding preset decodes past them).
-`--max-mb MB` (2.23) fits the file under MB MiB: the preset's x264 line gets the video bitrate the
+`--max-mb MB` (2.24) fits the file under MB MiB: the preset's x264 line gets the video bitrate the
 running time leaves after the preset's audio bitrate (97% of the budget; the rest is container
 overhead) in place of its CRF, and the encode runs in two passes. The written size is measured: a
 `file_size` verification step, and a `size_over_limit` warning with a `notes` line when the encoder

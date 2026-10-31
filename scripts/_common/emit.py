@@ -581,7 +581,7 @@ def _framecrc_frames(proc: Any, since: Optional[float] = None) -> int:
 
 
 def file_identity(path: str) -> "Optional[Dict[str, int]]":
-    """{size, mtime_ns} of a file this run wrote or measured (2.23): what ties a later check.py
+    """{size, mtime_ns} of a file this run wrote or measured (2.24): what ties a later check.py
     --expect-identity to this file rather than to whatever sits at the path then. None when the
     path is not a regular file."""
     try:

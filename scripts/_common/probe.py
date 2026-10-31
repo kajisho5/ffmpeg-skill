@@ -791,7 +791,7 @@ def signatures_match(sigs: list, ext: str) -> bool:
     return True
 
 
-# check.py --compare (2.23): the output's picture against a reference, frame by frame.
+# check.py --compare (2.24): the output's picture against a reference, frame by frame.
 COMPARE_SSIM_WARN = 0.98   # mean SSIM below this: a visible difference somewhere is likely
 _SSIM_SUMMARY = re.compile(r"SSIM Y:[0-9.]+ .*All:([0-9.]+)")
 _PSNR_SUMMARY = re.compile(r"PSNR y:\S+ .*average:(\S+)")

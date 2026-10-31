@@ -312,7 +312,7 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual((r["black"]["status"], r["silence"]["status"]), ("WARN", "WARN"), r)
 
     def test_check_expect_identity_ties_the_check_to_one_write(self):
-        """2.23: a writing tool reports output_identity; check.py --expect-identity FAILs on any other
+        """2.24: a writing tool reports output_identity; check.py --expect-identity FAILs on any other
         file at that path (here: the same path rewritten by a second run), and reports input_identity."""
         src = self._content_clip("identity_src.mp4", "testsrc2=size=160x90:rate=10", "sine=frequency=440:sample_rate=48000", 2)
         out = OUT / "identity_out.mp4"
@@ -332,7 +332,7 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(doc["input_identity"]["size"], out.stat().st_size)
 
     def test_check_compare_measures_against_a_reference(self):
-        """2.23: --compare REF: identical frames PASS as identical, a heavily compressed copy WARNs
+        """2.24: --compare REF: identical frames PASS as identical, a heavily compressed copy WARNs
         under a mean SSIM of 0.98 with its worst frame, another frame size is not compared."""
         ref = self._content_clip("compare_ref.mp4", "testsrc2=size=160x90:rate=10", "sine=frequency=440:sample_rate=48000", 3)
         poor, small = OUT / "compare_poor.mp4", OUT / "compare_small.mp4"
