@@ -1,8 +1,9 @@
 # Demo gallery
 
-Every clip on this page was generated from nothing: ffmpeg's own synthetic sources make the
-footage, and each "after" is produced by running one of this repo's scripts on it. Rebuild the
-whole page's material with:
+Every clip on this page but two was generated from nothing: ffmpeg's own synthetic sources make
+the footage. The two exceptions, `reframe_talk` and `filler_en`, use AI-generated footage of
+people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
+repo's scripts on its source. Rebuild the whole page's material with:
 
 ```bash
 python3 demos/build.py            # or: npm run demo
