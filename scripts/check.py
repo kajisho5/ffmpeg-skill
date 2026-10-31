@@ -362,23 +362,6 @@ def main() -> int:
                 "again); a noise gate makes these on purpose" if gaps else "",
                 reason="a short stretch of digital silence in the middle of the sound is usually lost audio at a join or a glitched decode" if gaps else "")
 
-    identity = None if dry_run_input_pending(args.input) else file_identity(args.input)
-    if args.expect_identity:
-        try:
-            size, mtime_ns = (int(x) for x in args.expect_identity.split(":"))
-        except ValueError:
-            die(f"--expect-identity takes SIZE:MTIME_NS from a tool's output_identity, got {args.expect_identity!r}")
-        if identity is not None:
-            changed = identity != identity_before
-            same = identity == {"size": size, "mtime_ns": mtime_ns} and not changed
-            row("identity", "PASS" if same else "FAIL", f"{identity['size']}:{identity['mtime_ns']}", f"{size}:{mtime_ns}",
-                "" if same else "re-run the tool that writes this file and check what it reports, not what the path holds",
-                reason="" if same else ("the file changed while it was being checked" if changed
-                                        else "the file at this path is not the one the run being checked wrote"))
-        elif not dry_run_input_pending(args.input):
-            row("identity", "FAIL", "no regular file at this path", f"{size}:{mtime_ns}",
-                "re-run the tool that writes this file and check what it reports, not what the path holds",
-                reason="the file at this path is not the one the run being checked wrote")
     if args.compare and not dry_run_input_pending(args.input) and not dry_run_input_pending(args.compare):
         ref = probe(args.compare)
         rv = ref.get("video") or {}
@@ -411,6 +394,27 @@ def main() -> int:
                 if nref and nout and int(nref) != int(nout):
                     STATE_NOTES.append(f"--compare: {nout} frames against the reference's {nref}; frames were paired in "
                                        f"order, so an added or dropped frame shifts every later pair")
+    # read after every measurement, --compare's included, so a replacement at any point shows
+    identity = None if dry_run_input_pending(args.input) else file_identity(args.input)
+    if identity is not None and identity != identity_before and not args.expect_identity:
+        STATE_NOTES.append("the file changed while it was being checked: input_identity is the file as it was "
+                           "at the end, and the rows may describe an earlier one; check it again")
+    if args.expect_identity:
+        try:
+            size, mtime_ns = (int(x) for x in args.expect_identity.split(":"))
+        except ValueError:
+            die(f"--expect-identity takes SIZE:MTIME_NS from a tool's output_identity, got {args.expect_identity!r}")
+        if identity is not None:
+            changed = identity != identity_before
+            same = identity == {"size": size, "mtime_ns": mtime_ns} and not changed
+            row("identity", "PASS" if same else "FAIL", f"{identity['size']}:{identity['mtime_ns']}", f"{size}:{mtime_ns}",
+                "" if same else "re-run the tool that writes this file and check what it reports, not what the path holds",
+                reason="" if same else ("the file changed while it was being checked" if changed
+                                        else "the file at this path is not the one the run being checked wrote"))
+        elif not dry_run_input_pending(args.input):
+            row("identity", "FAIL", "no regular file at this path", f"{size}:{mtime_ns}",
+                "re-run the tool that writes this file and check what it reports, not what the path holds",
+                reason="the file at this path is not the one the run being checked wrote")
     failed = [r for r in rows if r["status"] == "FAIL"]
     warned = [r for r in rows if r["status"] == "WARN"]
     notes: List[str] = []

@@ -442,6 +442,18 @@ class AnalysisTests(MediaFixtures):
                 check_module.main()
         row = {r["check"]: r for r in json.loads(buf.getvalue())["checks"]}["identity"]
         self.assertEqual((row["status"], row["reason"]), ("FAIL", "the file changed while it was being checked"), row)
+        # without --expect-identity there is no identity row, but the change is still a note
+        buf = io.StringIO()
+        with mock.patch.object(check_module, "file_identity", side_effect=[first, now]), \
+                mock.patch.object(sys, "argv", argv[:4] + ["--json"]), contextlib.redirect_stdout(buf), \
+                contextlib.redirect_stderr(io.StringIO()):
+            try:
+                check_module.main()
+            except SystemExit:
+                pass
+        doc = json.loads(buf.getvalue())
+        self.assertNotIn("identity", {r["check"] for r in doc["checks"]})
+        self.assertTrue(any("changed while it was being checked" in n for n in doc.get("notes", [])), doc.get("notes"))
         # a dry run reads the file that exists, so the identity row is there under --dry-run too
         self.assertEqual(self._rows(out, "--no-loudness", "--expect-identity", expect, "--dry-run")["identity"]["status"], "FAIL")
 
