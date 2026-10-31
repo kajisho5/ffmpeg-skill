@@ -80,7 +80,11 @@ def keep_ranges_after_removing(removed: List[Tuple[float, float]], total: float,
     piece anyone asked to keep. Refuses a removal that would leave nothing."""
     least = 1.0 / fps if fps else 0.01
     keep, cursor = [], 0.0
-    for s, e in sorted((max(0.0, s), min(total, e)) for s, e in removed):
+    outside = [(s, e) for s, e in removed if min(total, e) <= min(total, max(0.0, s))]
+    if outside:
+        die("--remove " + ", ".join(f"{s:g}-{e:g}" for s, e in outside) + f" lies outside the file (0-{total:.3f}s), "
+            "so it removes nothing; check the units (seconds, mm:ss)")
+    for s, e in sorted((min(total, max(0.0, s)), min(total, e)) for s, e in removed):
         if e <= cursor:
             continue
         if s - cursor >= least:

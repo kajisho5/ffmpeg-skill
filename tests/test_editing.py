@@ -1207,6 +1207,60 @@ class EditingTests(MediaFixtures):
                                 OUT / "copy_with_quiet.mp4", "--overwrite", "--json").stdout)
         self.assertEqual([(s["at"], s["end"]) for s in doc["silent"]], [(2.0, 4.0)], doc.get("silent"))
 
+    def test_join_copy_measures_stream_spans_in_every_container(self):
+        """2.24.1: the A/V end check read stated stream lengths, which Matroska/WebM never state (a
+        1.5 s hole in the sound passed as verified) and MPEG-TS only estimate (every AAC .ts was
+        refused); identical VP9 WebM clips were refused over "extradata"; --codec was silently
+        ignored; dropped subtitle tracks were not reported."""
+        a, b = self._av_clip(OUT / "span_a.mp4", 2, 2, 300), self._av_clip(OUT / "span_b.mp4", 2, 2, 500)
+        short = self._av_clip(OUT / "span_short.mp4", 3, 1.5, 700)
+        mka = {}
+        for name, src in (("a", a), ("b", b), ("short", short)):
+            mka[name] = OUT / f"span_{name}.mkv"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-c", "copy", mka[name])
+        proc = script("join.py", mka["short"], mka["b"], "--copy", "--transition", "none", "-o", OUT / "span_bad.mkv",
+                      "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "join_copy_mismatch")
+        ts = []
+        for src in (a, b):
+            t = OUT / (src.stem + ".ts")
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-c", "copy", t)
+            ts.append(t)
+        if subprocess.run(["ffprobe", "-v", "error", "-show_format", str(ts[0])], capture_output=True).returncode == 0:
+            # the static ffprobe 5.1.1 build cannot read MPEG-TS at all
+            doc = json.loads(script("join.py", *ts, "--copy", "--transition", "none", "-o", OUT / "span_ts.ts",
+                                    "--overwrite", "--json").stdout)
+            self.assertTrue(doc["verified"], doc)
+        webm = []
+        for i in range(2):
+            w = OUT / f"span_{i}.webm"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=1",
+               "-f", "lavfi", "-i", "sine=d=1", "-c:v", "libvpx-vp9", "-deadline", "realtime", "-c:a", "libopus", w)
+            webm.append(w)
+        doc = json.loads(script("join.py", *webm, "--copy", "--transition", "none", "-o", OUT / "span_vp9.webm",
+                                "--overwrite", "--json").stdout)
+        self.assertEqual((doc["mode"], doc["verified"]), ("copy", True), doc)
+        proc = script("join.py", a, b, "--copy", "--transition", "none", "--codec", "hevc", "-o", OUT / "span_hevc.mp4",
+                      "--json", expect_fail=True)
+        self.assertIn("--codec", json.loads(proc.stdout)["error"]["message"])
+        subs = []
+        for src in (a, b):
+            t = OUT / (src.stem + "_sub.mp4")
+            srt = OUT / "span.srt"
+            srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-i", srt, "-map", "0", "-map", "1",
+               "-c", "copy", "-c:s", "mov_text", t)
+            subs.append(t)
+        doc = json.loads(script("join.py", *subs, "--copy", "--transition", "none", "-o", OUT / "span_subs.mp4",
+                                "--overwrite", "--json").stdout)
+        self.assertIs(doc.get("dropped_non_av_streams"), True, doc)
+
+    def test_cut_remove_outside_the_file_is_refused(self):
+        """2.24.1: --remove 15-20 on a 4 s file kept a range past the end and removed nothing, silently."""
+        src = self._av_clip(OUT / "remove_outside.mp4", 4, 4, 400)
+        proc = script("cut.py", src, "--remove", "15-20", "-o", OUT / "remove_outside_out.mp4", "--json", expect_fail=True)
+        self.assertIn("outside the file", json.loads(proc.stdout)["error"]["message"])
+
     def test_cut_remove_keeps_the_rest(self):
         """2.24: --remove is --segments written the other way: dropping 1-2 and 3.5-4 (overlapping
         3.8-4 merged) from 6 s keeps 0-1, 2-3.5 and 4-6."""

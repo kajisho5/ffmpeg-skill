@@ -830,7 +830,9 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
 
 
 # What a stream-copy join compares (cut.py --segments, join.py --copy).
-IN_BAND_CONFIG = ("mp3", "mp2")
+# codecs that carry no out-of-band configuration in these containers, so no extradata on
+# either side is a match, not a difference
+IN_BAND_CONFIG = ("mp3", "mp2", "vp8", "vp9")
 TS_EXTS = (".ts", ".m2ts", ".mts")
 _SIG_FIELDS = {"video": ("codec_name", "profile", "pix_fmt", "width", "height", "r_frame_rate", "time_base",
                          "sample_aspect_ratio", "color_space", "color_range", "color_transfer", "color_primaries"),
