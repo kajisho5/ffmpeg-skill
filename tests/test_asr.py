@@ -717,7 +717,8 @@ class AutoRoutingFallbackTests(_SrtDir, _BridgeHarness, unittest.TestCase):
         run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, "en", "base"), fake=fake,
                          env={"PARAKEET_OUTPUT_TEMPLATE": "{filename}_{date}"})
         self.assertEqual(run.engine, "parakeet-mlx")
-        (_, env), = fake.calls
+        # 3.0.0: the FFmpeg 6.1 floor reads `ffprobe -version` first; only the engine call matters here
+        (_, env), = [c for c in fake.calls if c[0][0].endswith("parakeet-mlx")]
         self.assertNotIn("PARAKEET_OUTPUT_TEMPLATE", env)
 
 
