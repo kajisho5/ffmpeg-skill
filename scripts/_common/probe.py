@@ -708,13 +708,18 @@ def detect_flashes(path: str) -> "Optional[List[int]]":
              "[c]tmix=frames=3:weights='1 0 -1':scale=1,scale=1:1:flags=area[q];"
              "[d][p][q]hstack=inputs=3")
     proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
-                         "-filter_complex", graph, "-f", "rawvideo", "-"], check=False, text=False, record=True)
+                         "-filter_complex", graph, "-fps_mode", "passthrough", "-f", "rawvideo", "-"],
+                        check=False, text=False, record=True)
     if proc.returncode != 0:
         die(f"flash detection failed:\n{proc.stderr.decode(errors='replace').strip()[-800:]}", kind="ffmpeg")
-    data = proc.stdout
-    n = len(data) // 6
-    if n == 0:
+    # tblend has no output for frame 0, so record r is frame r+1: a zero record in front puts
+    # every value at its own frame's index. passthrough keeps the rawvideo muxer from padding a
+    # constant rate, which repeated records over timestamp gaps (a repeat is a zero step, and a
+    # flash before a gap went unreported)
+    if len(proc.stdout) < 6:
         return None
+    data = bytes(6) + proc.stdout
+    n = len(data) // 6
     step = [0.0] * n   # step[i] = |f[i] - f[i-1]|, valid from i = 1
     skip = [0.0] * n   # skip[i] = |f[i] - f[i-2]|, valid from i = 2
     for i in range(n):

@@ -333,6 +333,15 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual((r["flashes"]["kind"], r["first frame"]["kind"]), ("judgement", "judgement"))
         for clip in (away, cut, lead, whip):
             self.assertEqual(self._rows(clip, "--content")["flashes"]["status"], "PASS", clip)
+        # a timestamp gap right after the flash: the rawvideo muxer's constant-rate padding repeated
+        # records there, which hid this flash and reported two false ones 9 frames later
+        gap = OUT / "content_flash_gap.mkv"
+        if not gap.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               moving + ":duration=6,drawbox=t=fill:color=white:enable='eq(n,20)',setpts='if(gt(N,20),PTS+1/TB,PTS)'",
+               "-fps_mode", "passthrough", "-c:v", "libx264", "-pix_fmt", "yuv420p", gap)
+        r = self._rows(gap, "--content")
+        self.assertTrue(r["flashes"]["value"].startswith("1: "), r["flashes"])
         r = self._rows(lead, "--content")
         self.assertEqual(r["first frame"]["status"], "WARN", r["first frame"])
         self.assertEqual(self._rows(cut, "--content")["first frame"]["status"], "PASS")
