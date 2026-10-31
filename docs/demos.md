@@ -703,6 +703,7 @@ python3 scripts/proxy.py demos/out/fixtures/mandel.mp4 --width 320 --quality 34 
 
 ```bash
 python3 scripts/render.py demos/out/fixtures/project.json --fast
+python3 scripts/render.py demos/out/fixtures/project.json --export-timeline demos/out/render_project_timeline.otio
 ```
 
 **Look for:** Clips, a transition, captions and a title card described as JSON and rendered in one pass.
