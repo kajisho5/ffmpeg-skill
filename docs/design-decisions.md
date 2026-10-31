@@ -2325,7 +2325,13 @@ What was decided there:
   halves of f[n] - f[n-2], whose sum is its absolute value; each is averaged to one 16-bit
   pixel. Piping the frames themselves through Python would cost memory in proportion to the
   running time; this costs 6 bytes a frame. It is a separate video-only pass, because its
-  output is raw data on stdout while the main pass is parsed from stderr.
+  output is raw data on stdout while the main pass is parsed from stderr. Raw frames carry no
+  timestamps, so a flash is found by frame index and reported at index / average frame rate:
+  exact on constant-rate video, approximate on variable-rate video (which the `vfr` row
+  already flags), and `frame N` when the stream has no frame rate at all.
+- **`first frame` and `flashes` are `kind: judgement`.** Neither has a mechanical fix: a fade
+  from black or a strobe can be the edit. A first frame that does not decode is a WARN
+  ("could not measure"), not a missing row.
 - **A flat first frame WARNs; a dark one does not by itself.** Flat means a luma spread under
   4/255 at 64x36: a black lead-in, a solid colour. Darkness alone is not the test, because a
   dark shot is still a picture. A fade from black is often the edit, so the row is a WARN whose

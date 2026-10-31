@@ -693,13 +693,14 @@ def _detect_dropouts(path: str, end: float) -> "List[Tuple[float, float]]":
     return gaps  # a gap still open at the end is a tail, never a dropout
 
 
-def detect_flashes(path: str, fps: float) -> "List[float]":
-    """Times (s) of single-frame flashes in the first video stream: frame n differs from n-1 and
+def detect_flashes(path: str) -> "List[int]":
+    """Frame indexes of single-frame flashes in the first video stream: frame n differs from n-1 and
     from n+1 by at least CONTENT_FLASH_JUMP while n-1 and n+1 differ by at most
     CONTENT_FLASH_RETURN of the smaller step. One video-only pass; ffmpeg reduces each frame to
     three 16-bit numbers (|f[n]-f[n-1]| and the two clipped halves of f[n]-f[n-2]), so a
-    feature-length input costs a few MB, not its frames."""
-    if dry_run_input_pending(path) or not fps:
+    feature-length input costs a few MB, not its frames. The caller turns an index into a time;
+    the comparison itself needs no frame rate."""
+    if dry_run_input_pending(path):
         return []
     graph = (f"[0:v:0]scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray16le,split=3[a][b][c];"
              "[a]tblend=all_mode=difference,scale=1:1:flags=area[d];"
@@ -722,7 +723,7 @@ def detect_flashes(path: str, fps: float) -> "List[float]":
         into, out = step[i], step[i + 1]
         if into >= CONTENT_FLASH_JUMP and out >= CONTENT_FLASH_JUMP \
                 and skip[i + 1] <= CONTENT_FLASH_RETURN * min(into, out):
-            flashes.append(round(i / fps, 3))
+            flashes.append(i)
     return flashes
 
 

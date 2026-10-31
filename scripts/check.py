@@ -120,7 +120,8 @@ def main() -> int:
     v, a = meta.get("video") or {}, meta.get("audio") or {}
     rows: List[Dict[str, Any]] = []
 
-    JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution"}
+    # first frame / flashes: a fade from black or a strobe can be the edit, so neither is a mechanical fix
+    JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution", "first frame", "flashes"}
 
     def row(name: str, status: str, value: Any, expect: Any, fix: str = "", reason: str = "") -> None:
         # "format" rows are safe to fix mechanically; "judgement" rows change the content
@@ -289,7 +290,10 @@ def main() -> int:
                 reason="a picture that never changes is usually a stuck frame, not the edit")
         if v:
             first = first_frame_stats(args.input)
-            if first is not None:
+            if first is None and not dry_run_input_pending(args.input):
+                row("first frame", "WARN", "could not measure", f"spread >= {CONTENT_FLAT_STD:g} (not one flat colour)",
+                    "look.py the first frame", reason="the first frame did not decode, so whether it is flat is unknown")
+            elif first is not None:
                 mean, spread = first
                 flat = spread < CONTENT_FLAT_STD
                 row("first frame", "WARN" if flat else "PASS", f"luma {mean:.0f}, spread {spread:.1f}",
@@ -297,8 +301,9 @@ def main() -> int:
                     "a fade from black is a choice; where autoplay or the preview shows the first frame, start on "
                     "a picture (cut.py --start a few frames in, or move a title card to frame 0)" if flat else "",
                     reason="a feed shows the first frame before anything plays, and a flat one reads as a broken upload" if flat else "")
-            flashes = detect_flashes(args.input, float(v.get("fps") or 0.0))
-            at = ", ".join(f"{t:.2f}s" for t in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
+            flashes = detect_flashes(args.input)
+            fps = float(v.get("fps") or 0.0)  # an average: on variable-rate video the times are approximate
+            at = ", ".join(f"{n / fps:.2f}s" if fps else f"frame {n}" for n in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
             row("flashes", "WARN" if flashes else "PASS", f"{len(flashes)}" + (f": {at}" if flashes else ""),
                 "no single frame unlike both its neighbours",
                 "look.py at those times: a stray frame at a cut or join is an edit error (re-cut with cut.py "

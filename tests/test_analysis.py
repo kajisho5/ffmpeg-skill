@@ -330,6 +330,7 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(r["flashes"]["status"], "WARN", r["flashes"])
         self.assertTrue(r["flashes"]["value"].startswith("1: 1.50s"), r["flashes"])
         self.assertIn("join", r["flashes"]["fix"])
+        self.assertEqual((r["flashes"]["kind"], r["first frame"]["kind"]), ("judgement", "judgement"))
         for clip in (away, cut, lead, whip):
             self.assertEqual(self._rows(clip, "--content")["flashes"]["status"], "PASS", clip)
         r = self._rows(lead, "--content")
