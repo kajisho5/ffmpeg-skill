@@ -300,7 +300,13 @@ class ContractTests(unittest.TestCase):
             proc = subprocess.run([sys.executable, str(ROOT / ".github" / "scripts" / "build_pages.py"), str(out)],
                                   capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertTrue((out / "index.md").is_file())
+            self.assertTrue((out / "readme.md").is_file())
+            # the landing page is site/index.html, copied as it is; its GIFs come from docs/demos
+            self.assertTrue((out / "index.html").is_file())
+            self.assertFalse((out / "index.md").exists())
+            for src in re.findall(r'(?:src|href)="([^"#?]+)', (out / "index.html").read_text(encoding="utf-8")):
+                if not re.match(r"^[a-z]+:", src) and not src.endswith(".html"):
+                    self.assertTrue((out / src).exists(), f"index.html: {src}")
             # a titled link is rewritten; a link-shaped inline code span is left as written
             sys.path.insert(0, str(ROOT / ".github" / "scripts"))
             try:

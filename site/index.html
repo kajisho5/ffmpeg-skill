@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ffmpeg-skill: give your coding agent a video editor</title>
+<meta name="description" content="An Agent Skill for Claude Code, Cursor, Codex and any MCP client: 42 local FFmpeg tools with a machine-readable contract. The agent probes the real file, edits, checks the result against the destination and looks at it. No cloud, no API keys, Python standard library only.">
+<meta name="theme-color" content="#101114">
+<link rel="icon" href="brand/favicon.ico" sizes="48x48">
+<link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="brand/apple-touch-icon.png">
+<link rel="canonical" href="https://kajisho5.github.io/ffmpeg-skill/">
+<link rel="alternate" hreflang="en" href="https://kajisho5.github.io/ffmpeg-skill/">
+<link rel="alternate" hreflang="ja" href="https://kajisho5.github.io/ffmpeg-skill/?lang=ja">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ffmpeg-skill">
+<meta property="og:description" content="Give your coding agent a video editor. Local FFmpeg, no cloud, no API keys.">
+<meta property="og:url" content="https://kajisho5.github.io/ffmpeg-skill/">
+<meta property="og:image" content="https://kajisho5.github.io/ffmpeg-skill/brand/og.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/@phosphor-icons/web@2.1.2"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "ffmpeg-skill",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "macOS, Linux, Windows",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+  "url": "https://kajisho5.github.io/ffmpeg-skill/",
+  "codeRepository": "https://github.com/kajisho5/ffmpeg-skill"
+}
+</script>
+<style>
+/* Tokens shared with Velisa: ink, paper, and one key green — the verified dot. */
+:root{
+  --ink:#101114; --ink-2:#1A1C21; --ink-line:#2A2D34; --ink-text:#FFFFFF; --ink-dim:#A3A9B4; --ink-mute:#3A3F49;
+  --paper:#FFFFFF; --mist:#F4F5F3; --line:#E4E6EA; --text:#101114; --slate:#5B6270; --slate-2:#8A909C;
+  --green:#00A63E; --green-hi:#17D16A; --green-tint:#E3F5EA; --green-ink:#0B7A33;
+  --card:#101114; --card-line:#101114;
+  --ease:cubic-bezier(0.32,0.72,0,1);
+  --font:"Manrope","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0B0C0E; --mist:#141619; --line:#24272D; --text:#F2F3F5; --slate:#A3A9B4; --slate-2:#6F7682;
+    --green:#17D16A; --green-tint:rgba(23,209,106,.12); --green-ink:#17D16A;
+    --card:#141619; --card-line:#24272D;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0B0C0E; --mist:#141619; --line:#24272D; --text:#F2F3F5; --slate:#A3A9B4; --slate-2:#6F7682;
+  --green:#17D16A; --green-tint:rgba(23,209,106,.12); --green-ink:#17D16A;
+  --card:#141619; --card-line:#24272D;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:72px}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--paper);color:var(--text);font-family:var(--font);font-size:16px;line-height:24px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-underline-offset:3px}
+img{max-width:100%}
+h1,h2,h3{font-weight:800;text-wrap:balance}
+p{text-wrap:pretty}
+code{font-family:var(--mono)}
+:lang(ja) h1,:lang(ja) h2,:lang(ja) h3,:lang(ja) p,:lang(ja) li,:lang(ja) summary{word-break:auto-phrase}
+.wrap{max-width:1280px;margin:0 auto;padding:0 16px}
+@media(min-width:768px){.wrap{padding:0 40px}}
+@media(min-width:1200px){.wrap{padding:0 80px}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.skip{position:absolute;left:16px;top:-48px;background:var(--green-hi);color:var(--ink);padding:8px 12px;border-radius:8px;z-index:100;font-weight:700;transition:top 400ms var(--ease)}
+.skip:focus{top:16px}
+:focus-visible{outline:2px solid var(--green);outline-offset:3px;border-radius:4px}
+.ink{background:var(--ink);color:var(--ink-text)}
+.ink :focus-visible{outline-color:var(--green-hi)}
+
+/* The verified dot: ends headlines in place of their full stop. */
+.dotted.has-dot::after{content:"";display:inline-block;width:.2em;height:.2em;margin-left:.07em;border-radius:9999px;background:var(--green);vertical-align:baseline}
+.ink .dotted.has-dot::after{background:var(--green-hi)}
+.eyebrow{font-size:12px;line-height:16px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--green)}
+.ink .eyebrow{color:var(--green-hi)}
+.dotlist{display:flex;flex-wrap:wrap;gap:8px 24px;font-size:14px;line-height:20px;color:var(--slate)}
+.ink .dotlist{color:var(--ink-dim)}
+.dotlist span{display:inline-flex;align-items:center;gap:8px}
+.dotlist span::before{content:"";width:7px;height:7px;border-radius:9999px;background:var(--green)}
+.ink .dotlist span::before{background:var(--green-hi)}
+
+/* Header */
+header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--ink) 92%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--ink-line);color:var(--ink-text)}
+.bar{display:flex;align-items:center;gap:20px;height:64px}
+.brand{display:flex;align-items:center;margin-right:auto;text-decoration:none}
+.brand img{height:26px;width:auto;display:block}
+@media(min-width:768px){.brand img{height:30px}}
+.nav{display:none;gap:28px;font-size:14px;line-height:20px;font-weight:500}
+.nav a{text-decoration:none;color:var(--ink-dim);transition:color 300ms var(--ease)}
+.nav a:hover{color:#FFFFFF}
+@media(min-width:1080px){.nav{display:flex}}
+.lang{display:flex;border:1px solid var(--ink-line);background:var(--ink-2);border-radius:9999px;padding:2px;font-size:12px;line-height:16px;font-weight:700}
+.lang button{border:0;background:transparent;color:var(--ink-dim);padding:5px 10px;border-radius:9999px;cursor:pointer;font:inherit;transition:background 300ms var(--ease),color 300ms var(--ease)}
+.lang button[aria-pressed="true"]{background:var(--ink-mute);color:#FFFFFF}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-family:inherit;font-weight:700;font-size:16px;line-height:24px;padding:10px 18px;border-radius:9999px;border:1.5px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap;transition:background 300ms var(--ease),color 300ms var(--ease),border-color 300ms var(--ease),transform 200ms var(--ease)}
+.btn:active{transform:translateY(1px)}
+.btn-sm{font-size:14px;line-height:20px;padding:8px 16px}
+.btn-lg{padding:12px 26px}
+.btn-key{background:var(--green-hi);color:var(--ink)}
+.btn-key:hover{background:#4BE08D}
+.btn-line{border-color:var(--line);color:var(--text)}
+.btn-line:hover{border-color:var(--text)}
+.ink .btn-line{border-color:var(--ink-mute);color:#FFFFFF}
+.ink .btn-line:hover{border-color:#FFFFFF}
+.hide-sm{display:none}
+@media(min-width:560px){.hide-sm{display:inline-flex}}
+
+/* Terminal line with a copy button */
+.term{display:flex;align-items:center;gap:8px;padding:4px 4px 4px 18px;border-radius:12px;background:var(--ink-2);border:1px solid var(--ink-line);color:#E8EAED;font-family:var(--mono);font-size:15px;line-height:20px;min-width:0;max-width:440px}
+.term code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;padding:14px 0;scrollbar-width:none}
+.term code::-webkit-scrollbar{display:none}
+.term .p{color:var(--slate-2);user-select:none}
+.copy{flex:none;display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 12px;border-radius:8px;border:1px solid var(--ink-line);background:var(--ink-mute);color:#FFFFFF;cursor:pointer;font-family:var(--font);font-size:12px;line-height:16px;font-weight:700;transition:border-color 300ms var(--ease),background 300ms var(--ease)}
+.copy:hover{border-color:#8A909C}
+.copy.done{background:var(--green-hi);color:var(--ink);border-color:var(--green-hi)}
+
+/* Hero */
+.hero{padding:48px 0 64px}
+@media(min-width:768px){.hero{padding:72px 0 80px}}
+.hero-grid{display:grid;gap:40px}
+@media(min-width:1000px){.hero-grid{grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:56px;align-items:start}}
+.hero h1{margin-top:16px;font-size:44px;line-height:1.04;letter-spacing:-0.035em}
+@media(min-width:640px){.hero h1{font-size:60px}}
+@media(min-width:1200px){.hero h1{font-size:72px}}
+:lang(ja) .hero h1{letter-spacing:-0.01em;line-height:1.24;font-size:34px}
+@media(min-width:640px){:lang(ja) .hero h1{font-size:46px}}
+@media(min-width:1200px){:lang(ja) .hero h1{font-size:46px}}
+.hero .intro{margin-top:24px;font-size:18px;line-height:28px;color:var(--ink-dim);max-width:520px}
+.hero .term{margin-top:32px}
+.hero .acts{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
+@media(max-width:559px){.hero .acts .btn{flex:1 1 100%}}
+.hero .dotlist{margin-top:28px}
+@media(max-width:559px){.hero .dotlist{flex-direction:column;gap:8px}}
+
+/* Agent session card: the README's own Reels example, tool by tool. */
+.session{min-width:0;border-radius:20px;background:var(--ink-2);border:1px solid var(--ink-line);overflow:hidden}
+.session .chrome{display:flex;align-items:center;gap:8px;height:48px;padding:0 20px;border-bottom:1px solid var(--ink-line)}
+.session .chrome i{width:10px;height:10px;border-radius:9999px;background:var(--ink-mute)}
+.session .chrome i:nth-child(1){background:#E5484D}.session .chrome i:nth-child(2){background:#B7791F}
+.session .chrome span{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--slate-2)}
+.session .body{padding:24px 24px 26px}
+@media(max-width:559px){.session .body{padding:20px 16px 22px}}
+.prompt{display:grid;grid-template-columns:auto 1fr;gap:12px;font-size:16px;line-height:24px;font-weight:600}
+.prompt::before{content:"›";font-family:var(--mono);color:var(--green-hi);font-weight:700}
+.runs{list-style:none;margin-top:24px;display:grid;gap:4px}
+.runs li{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:14px;align-items:center;min-height:32px;transition:opacity 500ms var(--ease),transform 500ms var(--ease)}
+.runs li::before{content:"";width:8px;height:8px;border-radius:9999px;background:var(--ink-mute)}
+.runs code{font-size:13.5px;line-height:20px;color:#E8EAED;white-space:nowrap;overflow-x:auto;scrollbar-width:none}
+.runs code::-webkit-scrollbar{display:none}
+.runs .tag{font-size:12px;line-height:16px;color:var(--slate-2);white-space:nowrap}
+.runs .pass{display:inline-flex;align-items:center;gap:6px;font-weight:800;letter-spacing:.06em;font-size:11px;color:var(--green-hi);background:rgba(23,209,106,.14);padding:4px 10px;border-radius:9999px}
+.runs .pass::before{content:"";width:7px;height:7px;border-radius:9999px;background:var(--green-hi)}
+@media(max-width:559px){.runs code{font-size:12px;white-space:normal;overflow-wrap:anywhere}.runs li{gap:10px;padding:3px 0}}
+.result{margin-top:16px;padding-top:18px;border-top:1px dashed var(--ink-mute);display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;transition:opacity 600ms var(--ease)}
+.result::before{content:"";width:14px;height:14px;margin:0 4px;border-radius:9999px;background:var(--green-hi);box-shadow:0 0 0 6px rgba(23,209,106,.14)}
+.result code{color:var(--green-hi);font-weight:700;font-size:13.5px;line-height:20px;overflow-wrap:anywhere}
+@media(max-width:559px){.result code{font-size:12px}}
+.session.armed .runs li{opacity:0;transform:translateY(6px)}
+.session.armed .result{opacity:0}
+.session.armed .runs li.on{opacity:1;transform:none}
+.session.armed .result.on{opacity:1}
+.session .cap{margin-top:14px;font-size:12px;line-height:18px;color:var(--slate-2)}
+
+/* Workflow strip */
+.flow{margin-top:56px;display:grid;gap:20px;padding:28px;border-radius:20px;background:var(--ink-2);border:1px solid var(--ink-line)}
+@media(min-width:1000px){.flow{grid-template-columns:minmax(0,1.3fr) repeat(4,minmax(0,1fr));gap:0;align-items:start;padding:32px 40px}}
+.flow .lead b{display:block;font-size:18px;line-height:26px;font-weight:700}
+.flow .lead span{font-size:14px;line-height:20px;color:var(--ink-dim)}
+.flow ol{display:contents;list-style:none}
+.flow li{position:relative;display:grid;grid-template-columns:16px 1fr;column-gap:12px;align-items:baseline}
+.flow li::before{content:"";grid-row:1 / 3;align-self:start;justify-self:center;margin-top:7px;width:10px;height:10px;border-radius:9999px;background:var(--ink-mute)}
+.flow li:last-child::before{width:16px;height:16px;margin-top:4px;background:var(--green-hi);box-shadow:0 0 0 6px rgba(23,209,106,.14)}
+.flow li b{font-size:16px;line-height:24px;font-weight:700}
+.flow li:last-child b{color:var(--green-hi)}
+.flow li span{grid-column:2;font-size:14px;line-height:20px;color:var(--ink-dim)}
+@media(max-width:999px){.flow li{padding-left:2px}.flow li:not(:last-child)::after{content:"";position:absolute;left:10px;top:24px;bottom:-16px;width:1px;background:var(--ink-mute)}}
+@media(min-width:1000px){.flow li{padding-right:16px}}
+
+/* Sections */
+section.blk{padding:112px 0}
+@media(max-width:767px){section.blk{padding:80px 0}}
+.h2{margin-top:16px;font-size:36px;line-height:1.08;letter-spacing:-0.035em;max-width:760px}
+@media(min-width:768px){.h2{font-size:52px;line-height:1.04}}
+:lang(ja) .h2{letter-spacing:-0.01em;line-height:1.25}
+@media(min-width:768px){:lang(ja) .h2{font-size:44px}}
+.lede{color:var(--slate);font-size:18px;line-height:28px;max-width:640px;margin-top:20px}
+.lede code,.why p code,.faq .a code{font-size:.88em;background:var(--mist);padding:1px 5px;border-radius:5px}
+.mist{background:var(--mist)}
+.mist .lede code,.mist .why p code{background:var(--paper)}
+.more-link{display:inline-flex;align-items:center;gap:8px;margin-top:40px;font-weight:700;color:var(--green-ink);text-decoration:none}
+.more-link:hover{text-decoration:underline}
+
+/* Demos */
+.demos{list-style:none;display:grid;gap:32px;margin-top:48px}
+@media(min-width:700px){.demos{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(min-width:1100px){.demos{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.demos a{display:block;text-decoration:none;min-width:0}
+.demos img{display:block;width:100%;height:auto;aspect-ratio:480/136;border-radius:14px;border:1px solid var(--line);background:#000;transition:transform 400ms var(--ease)}
+.demos a:hover img{transform:translateY(-2px)}
+.demos code{display:block;margin-top:14px;font-size:13px;line-height:20px;overflow-wrap:anywhere}
+.demos span{display:block;margin-top:4px;font-size:14px;line-height:20px;color:var(--slate)}
+
+/* Why */
+.why-grid{display:grid;gap:48px}
+@media(min-width:1000px){.why-grid{grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:80px;align-items:start}}
+.why{list-style:none;counter-reset:w;border-top:1px solid var(--line)}
+.why li{counter-increment:w;display:grid;grid-template-columns:40px 1fr;gap:0 4px;padding:22px 0;border-bottom:1px solid var(--line)}
+.why li::before{content:"0" counter(w);grid-row:1 / 3;font-family:var(--mono);font-size:13px;line-height:28px;font-weight:700;color:var(--slate-2)}
+.why h3{font-size:19px;line-height:28px;font-weight:700;letter-spacing:-0.01em}
+.why p{color:var(--slate);font-size:15px;line-height:23px;margin-top:4px}
+
+/* Tools */
+.tools{display:grid;gap:40px}
+@media(min-width:1000px){.tools{grid-template-columns:minmax(0,4fr) minmax(0,7fr);gap:72px;align-items:start}}
+.big{margin-top:16px;font-size:120px;line-height:1;font-weight:800;letter-spacing:-0.05em}
+.big::after{content:"";display:inline-block;width:.11em;height:.11em;margin-left:.06em;border-radius:9999px;background:var(--green)}
+.big + p{color:var(--slate);font-size:18px;line-height:28px;margin-top:16px;max-width:340px}
+.chips{list-style:none;display:flex;flex-wrap:wrap;gap:10px;align-content:flex-start}
+@media(min-width:1000px){.chips{padding-top:36px}}
+.chips li{display:inline-flex;align-items:center;gap:9px;padding:8px 16px;border:1px solid var(--line);border-radius:9999px;font-size:14px;line-height:20px;font-weight:600}
+.chips li::before{content:"";width:7px;height:7px;border-radius:9999px;background:var(--green)}
+
+/* Built for agents */
+.agents{margin-top:96px}
+.cards{list-style:none;display:grid;gap:16px;margin-top:32px}
+@media(min-width:900px){.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}}
+.cards li{display:flex;flex-direction:column;padding:28px;border-radius:20px;background:var(--card);border:1px solid var(--card-line);color:#FFFFFF;min-height:250px}
+.cards h3{font-size:24px;line-height:32px}
+.cards p{color:var(--ink-dim);margin-top:12px;font-size:15px;line-height:23px}
+.cards p code{color:#E8EAED;font-size:.9em}
+.cards .foot{margin-top:auto;padding-top:24px;font-family:var(--mono);font-size:13px;line-height:20px;color:var(--green-hi);font-weight:600}
+
+/* Install + FAQ */
+.pf{display:grid;gap:72px}
+@media(min-width:1000px){.pf{grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:80px}}
+.h3x{margin-top:16px;font-size:28px;line-height:34px;letter-spacing:-0.02em}
+.cmds{list-style:none;margin-top:24px;padding:10px 6px 10px 10px;border-radius:16px;background:var(--ink);border:1px solid var(--card-line);color:#E8EAED}
+.cmds li{display:grid;grid-template-columns:minmax(0,1fr) auto 38px;gap:12px;align-items:center;padding:4px 4px 4px 12px}
+.cmds code{font-size:14px;line-height:20px;white-space:nowrap;overflow-x:auto;scrollbar-width:none}
+.cmds code::-webkit-scrollbar{display:none}
+.cmds .p{color:var(--slate-2);user-select:none}
+.cmds .who{font-size:13px;line-height:16px;color:#8A909C;white-space:nowrap}
+.cmds .copy{width:38px;justify-content:center;padding:0;background:var(--ink-2)}
+.cmds .copy.done{background:var(--green-hi)}
+@media(max-width:459px){.cmds li{grid-template-columns:minmax(0,1fr) 38px}.cmds .who{display:none}}
+.note{margin-top:16px;color:var(--slate);font-size:15px;line-height:23px}
+.note a{color:var(--green-ink);font-weight:700}
+.faq{margin-top:24px;border-top:1px solid var(--line)}
+.faq details{border-bottom:1px solid var(--line)}
+.faq summary{list-style:none;cursor:pointer;padding:20px 0;font-weight:700;font-size:17px;line-height:26px;display:flex;justify-content:space-between;gap:24px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary i{flex:none;margin-top:5px;color:var(--slate);transition:transform 500ms var(--ease)}
+.faq details[open] summary i{transform:rotate(45deg)}
+.faq .a{padding:0 0 24px;color:var(--slate);max-width:600px}
+.faq .a a{color:var(--green-ink);font-weight:700}
+
+/* Ecosystem + paper */
+.duo{display:grid;gap:16px;margin-top:112px}
+@media(max-width:767px){.duo{margin-top:80px}}
+@media(min-width:900px){.duo{grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}}
+.duo > div{display:flex;flex-direction:column;padding:32px;border-radius:20px;background:var(--mist)}
+@media(max-width:559px){.duo > div{padding:24px}}
+.duo .vl{height:30px;width:auto;display:block;align-self:flex-start}
+.duo .vl-dark{display:none}
+@media (prefers-color-scheme: dark){.duo .vl{display:none}.duo .vl-dark{display:block}}
+.duo p{color:var(--slate);margin-top:20px;max-width:520px}
+.duo h3{margin-top:16px;font-size:20px;line-height:28px;font-weight:700;letter-spacing:-0.01em}
+.duo .eyebrow{color:var(--slate)}
+.duo .cite{margin-top:12px;font-size:14px;line-height:20px}
+.duo .go{margin-top:auto;padding-top:24px;font-weight:700;color:var(--green-ink);text-decoration:none}
+.duo .go:hover{text-decoration:underline}
+
+/* Close */
+.close{padding:112px 0 0}
+@media(max-width:767px){.close{padding:80px 0 0}}
+.close-grid{display:grid;gap:64px}
+@media(min-width:1000px){.close-grid{grid-template-columns:minmax(0,6fr) minmax(0,5fr);gap:80px}}
+.close .sym{width:72px;height:72px;display:block}
+.close h2{margin-top:32px;font-size:48px;line-height:1.02;letter-spacing:-0.04em}
+@media(min-width:768px){.close h2{font-size:68px}}
+:lang(ja) .close h2{letter-spacing:-0.02em;line-height:1.18}
+@media(min-width:768px){:lang(ja) .close h2{font-size:56px}}
+.close .term{margin-top:40px}
+.close .acts{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
+@media(max-width:559px){.close .acts .btn{flex:1 1 100%}}
+.docs h3{font-size:16px;line-height:24px;font-weight:700}
+.docs ul{list-style:none;margin-top:12px;border-top:1px solid var(--ink-line)}
+.docs a{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:12px 0;border-bottom:1px solid var(--ink-line);text-decoration:none;color:var(--ink-dim);transition:color 300ms var(--ease)}
+.docs a:hover{color:#FFFFFF}
+.docs a code{font-size:12px;color:var(--slate-2)}
+footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 40px;font-size:14px;line-height:20px;color:var(--ink-dim)}
+.foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px}
+.foot nav{display:flex;flex-wrap:wrap;gap:8px 24px}
+.foot a{text-decoration:none}
+.foot a:hover{color:#FFFFFF}
+</style>
+</head>
+<body>
+<a class="skip" href="#main" data-i="skip">Skip to content</a>
+
+<header class="top">
+  <div class="wrap bar">
+    <a class="brand" href="./"><img src="brand/ffmpeg-skill-horizontal-on-dark.svg" alt="ffmpeg-skill" width="106" height="30"></a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#demos" data-i="nav.demos">Demos</a>
+      <a href="#how" data-i="nav.how">How it works</a>
+      <a href="#tools" data-i="nav.tools">Tools</a>
+      <a href="#agents" data-i="nav.agents">For agents</a>
+      <a href="#faq" data-i="nav.faq">FAQ</a>
+      <a href="#docs" data-i="nav.docs">Docs</a>
+    </nav>
+    <div class="lang" role="group" aria-label="Language"><button type="button" data-lang="en" aria-pressed="true">EN</button><button type="button" data-lang="ja" aria-pressed="false">JA</button></div>
+    <a class="btn btn-key btn-sm hide-sm" href="#install" data-i="cta.install">Install</a>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero ink" aria-labelledby="hero-h">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <p class="eyebrow" data-i="hero.eye">Agent skill · local FFmpeg · 42 tools</p>
+        <h1 class="dotted" id="hero-h" data-i="hero.h">Give your coding agent a video editor.</h1>
+        <p class="intro" data-i="hero.p">Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpeg, then checks its own output.</p>
+        <div class="term"><code id="c-main"><span class="p">$ </span>npx ffmpeg-skill</code><button class="copy" type="button" data-copy="c-main"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
+        <div class="acts">
+          <a class="btn btn-key btn-lg" href="#install" data-i="cta.start">Get started</a>
+          <a class="btn btn-line btn-lg" href="https://github.com/kajisho5/ffmpeg-skill"><i class="ph ph-github-logo" aria-hidden="true"></i><span data-i="cta.gh">View on GitHub</span></a>
+        </div>
+        <div class="dotlist">
+          <span data-i="fact.1">No cloud</span>
+          <span data-i="fact.2">No API keys</span>
+          <span data-i="fact.3">Python standard library</span>
+        </div>
+      </div>
+      <figure class="session" id="session" aria-labelledby="sess-cap">
+        <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>claude code · local</span></div>
+        <div class="body">
+          <p class="prompt" data-i="sess.q">Take interview.mp4, keep 0:45–3:10 and 5:00–6:30, and make it exactly 60 seconds for Reels.</p>
+          <ol class="runs">
+            <li><code>probe.py interview.mp4</code><span class="tag" data-i="sess.t1">measured</span></li>
+            <li><code>cut.py --segments 0:45-3:10,5:00-6:30</code><span></span></li>
+            <li><code>fit.py --duration 60 --aspect 9:16 --fit crop</code><span></span></li>
+            <li><code>export.py --preset reels</code><span></span></li>
+            <li><code>check.py --platform reels</code><span class="pass">PASS</span></li>
+            <li><code>look.py</code><span class="tag" data-i="sess.t2">contact sheet</span></li>
+          </ol>
+          <p class="result"><code>final.mp4: 59.98 s, 1080×1920, 30 fps, AAC stereo</code></p>
+        </div>
+        <figcaption class="sr" id="sess-cap" data-i="sess.cap">The request from the README's quick start, and the tools the agent runs for it.</figcaption>
+      </figure>
+    </div>
+
+    <div class="flow" role="group" aria-labelledby="flow-h">
+      <p class="lead"><b id="flow-h" data-i="fl.h">The workflow it teaches</b><span data-i="fl.s">every job, in this order</span></p>
+      <ol>
+        <li><b data-i="fl.1">Probe</b><span data-i="fl.1s">measure the real file</span></li>
+        <li><b data-i="fl.2">Edit</b><span data-i="fl.2s">losslessly where possible</span></li>
+        <li><b data-i="fl.3">Check</b><span data-i="fl.3s">against the destination</span></li>
+        <li><b data-i="fl.4">Verify</b><span data-i="fl.4s">look at the result</span></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="blk" id="demos" aria-labelledby="demos-h">
+  <div class="wrap">
+    <p class="eyebrow" data-i="nav.demos">Demos</p>
+    <h2 class="h2 dotted" id="demos-h" data-i="demos.h">Left is the input. Right is what the command produced.</h2>
+    <p class="lede"><span data-i="demos.p1">Every demo is generated from synthetic footage by </span><code>demos/build.py</code><span data-i="demos.p2">, so you can rebuild every frame yourself.</span></p>
+    <ul class="demos">
+      <li><a href="docs/demos.html"><img src="docs/demos/captions_pop_karaoke.gif" alt="Animated captions with a karaoke highlight, before and after" width="480" height="136" loading="lazy"><code>caption.py --animate pop --karaoke</code><span data-i="d1">Animated captions with a karaoke highlight</span></a></li>
+      <li><a href="docs/demos.html"><img src="docs/demos/reframe_crop.gif" alt="16:9 footage reframed to 9:16, before and after" width="480" height="136" loading="lazy"><code>fit.py --aspect 9:16 --fit crop</code><span data-i="d2">16:9 reframed to 9:16</span></a></li>
+      <li><a href="docs/demos.html"><img src="docs/demos/silence_removal.gif" alt="Silence removed, before and after" width="480" height="136" loading="lazy"><code>silence.py --threshold -35</code><span data-i="d3">Silence removed, timeline shorter</span></a></li>
+      <li><a href="docs/demos.html"><img src="docs/demos/loudness.gif" alt="Waveform before and after loudness normalisation" width="480" height="136" loading="lazy"><code>loudness.py -I -14 --tp -1</code><span data-i="d4">Waveform before and after normalisation</span></a></li>
+      <li><a href="docs/demos.html"><img src="docs/demos/hdr_tonemap.gif" alt="HDR10 converted to SDR, before and after" width="480" height="136" loading="lazy"><code>color.py --to-sdr --tonemap hable</code><span data-i="d5">HDR10 to SDR</span></a></li>
+      <li><a href="docs/demos.html"><img src="docs/demos/greenscreen.gif" alt="Green screen keyed onto a generated background, before and after" width="480" height="136" loading="lazy"><code>overlay.py --chromakey 0x00b140</code><span data-i="d6">Green screen onto a generated background</span></a></li>
+    </ul>
+    <a class="more-link" href="docs/demos.html"><span data-i="demos.more">Every before/after demo, with the exact command</span><i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+  </div>
+</section>
+
+<section class="blk mist" id="how" aria-labelledby="how-h">
+  <div class="wrap why-grid">
+    <div>
+      <p class="eyebrow" data-i="nav.how">How it works</p>
+      <h2 class="h2 dotted" id="how-h" data-i="how.h">It stops guessing.</h2>
+      <p class="lede" data-i="how.p">An agent that “knows FFmpeg” still guesses: it assumes a frame rate, picks a codec the container cannot hold, re-encodes a file that only needed a stream copy, and reports “done” without opening the result.</p>
+    </div>
+    <ol class="why">
+      <li><h3 data-i="w1.h">Real files first</h3><p><span data-i="w1.p1">Every job starts with </span><code>probe.py</code><span data-i="w1.p2">. The agent decides from the measured duration, fps, resolution, colour and audio layout, not from the file name.</span></p></li>
+      <li><h3 data-i="w2.h">Structured tools, not shell strings</h3><p data-i="w2.p">Each operation is a script with typed arguments. Nothing runs through a shell, and no filter graph is accepted from the caller.</p></li>
+      <li><h3 data-i="w3.h">A contract the agent can read</h3><p><code>contract --json</code><span data-i="w3.p"> states, for every tool, what it takes, what it writes, which FFmpeg components it needs and how the result is verified.</span></p></li>
+      <li><h3 data-i="w4.h">Verification after execution</h3><p data-i="w4.p">The result is probed, checked against the destination’s spec and, when the picture changed, looked at as a contact sheet.</p></li>
+      <li><h3 data-i="w5.h">Local first</h3><p data-i="w5.p">No cloud, no API keys, no Python dependencies. Optional speech-to-text runs on an engine you install, and the audio is never uploaded.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section class="blk" id="tools" aria-labelledby="tools-h">
+  <div class="wrap">
+    <div class="tools">
+      <div>
+        <p class="eyebrow" id="tools-h" data-i="nav.tools">Tools</p>
+        <p class="big" aria-label="42">42</p>
+        <p><span data-i="tools.p1">tools that do the actual work with </span><code>ffmpeg</code> / <code>ffprobe</code><span data-i="tools.p2">.</span></p>
+      </div>
+      <ul class="chips">
+        <li data-i="c1">Cut &amp; join</li>
+        <li data-i="c2">Silence removal</li>
+        <li data-i="c3">Fit to duration &amp; aspect</li>
+        <li data-i="c4">Captions &amp; karaoke</li>
+        <li data-i="c5">Overlays &amp; motion graphics</li>
+        <li data-i="c6">HDR → SDR &amp; LUTs</li>
+        <li data-i="c7">Audio clean-up &amp; dynamics</li>
+        <li data-i="c8">Sync &amp; drift correction</li>
+        <li data-i="c9">Multicam</li>
+        <li data-i="c10">Loudness</li>
+        <li data-i="c11">Delivery checks</li>
+        <li data-i="c12">Project rendering</li>
+        <li data-i="c13">Batch folders</li>
+      </ul>
+    </div>
+
+    <div class="agents" id="agents">
+      <h2 class="eyebrow" data-i="nav.agents2">Built for agents</h2>
+      <ul class="cards">
+        <li><h3>MCP</h3><p><span data-i="ag1.p1">Every tool is an MCP tool. A core 12 is listed by default to keep the client’s context small, all 42 with </span><code>FFMPEG_SKILL_MCP_FULL=1</code><span data-i="ag1.p2">.</span></p><span class="foot">tools/list · tools/call</span></li>
+        <li><h3 data-i="ag2.h">Contract</h3><p data-i="ag2.p">One machine-readable contract describes the whole set: what each tool takes and writes, what it needs from FFmpeg, and how it is checked.</p><span class="foot">contract --json</span></li>
+        <li><h3>SPEC</h3><p data-i="ag3.p">Each tool’s input schema is derived from the script’s own argument parser, never written by hand beside it. CI fails if the docs drift.</p><span class="foot">Self-Producing Execution Contract</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="blk" id="install" aria-labelledby="install-h" style="padding-top:0">
+  <div class="wrap">
+    <div class="pf" style="padding-top:80px;border-top:1px solid var(--line)">
+      <div>
+        <p class="eyebrow" data-i="nav.install">Install</p>
+        <h2 class="h3x dotted" id="install-h" data-i="in.h">One line per agent.</h2>
+        <ul class="cmds">
+          <li><code id="i1"><span class="p">$ </span>npx ffmpeg-skill</code><span class="who">Claude Code</span><button class="copy" type="button" data-copy="i1" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
+          <li><code id="i2"><span class="p">$ </span>npx ffmpeg-skill --cursor</code><span class="who">Cursor</span><button class="copy" type="button" data-copy="i2" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
+          <li><code id="i3"><span class="p">$ </span>npx ffmpeg-skill --codex</code><span class="who">Codex</span><button class="copy" type="button" data-copy="i3" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
+          <li><code id="i4"><span class="p">$ </span>npx ffmpeg-skill --all</code><span class="who" data-i="in.all">all three</span><button class="copy" type="button" data-copy="i4" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
+          <li><code id="i5"><span class="p">$ </span>npx ffmpeg-skill doctor</code><span class="who" data-i="in.doc">check the machine</span><button class="copy" type="button" data-copy="i5" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
+        </ul>
+        <p class="note"><span data-i="in.note">Needs FFmpeg 6.1+ and Python 3.10+ on your PATH. Works offline. How to install FFmpeg itself on macOS, Linux and Windows is in the </span><a href="readme.html#install" data-i="in.link">README</a><span data-i="in.end">.</span></p>
+        <p class="status sr" role="status" aria-live="polite"></p>
+      </div>
+      <div id="faq">
+        <p class="eyebrow" data-i="nav.faq">FAQ</p>
+        <h2 class="h3x" id="faq-h" data-i="faq.h">Questions people ask first</h2>
+        <div class="faq">
+          <details><summary><span data-i="q1">Can I pass raw ffmpeg arguments, or a filter_complex?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a1">No. Each operation is a script whose flags are its own argument parser, and that parser is what the contract and the MCP schema are built from. A caller-supplied filter graph, -vf string or other ffmpeg option is not an argument any script accepts.</div></details>
+          <details><summary><span data-i="q2">Why 42 tools? Isn’t that overkill?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a2">One tool per job, because each job promises something different and the tool measures that promise after the run. An agent does not read 42 schemas: over MCP it sees a core 12 and calls the other 30 by name when a job needs one.</div></details>
+          <details><summary><span data-i="q3">What does “verified” check, and what can it not tell me?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a3">It covers what can be measured from the file: that it opens, its length, codecs, size and frame rate, and the tool’s own promise, such as loudness after normalising. A value that cannot be read fails as not_measured instead of passing. Whether it looks or sounds right is listed as unverified, so you look at the contact sheet.</div></details>
+          <details><summary><span data-i="q4">How does ffmpeg-skill compare with Remotion?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a4">They complement each other. ffmpeg-skill edits footage you already have; Remotion renders a video from React components. remotion-ffmpeg-skill joins the two: it measures with this repo, draws in Remotion, then checks and delivers with this repo again.</div></details>
+          <details><summary><span data-i="q5">Does it encode on the GPU?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a5">On Apple Silicon, with VideoToolbox, when you ask for it with --hw or FFMPEG_SKILL_HW=1. Other GPU encoders are reported by doctor when your FFmpeg has them, but no tool encodes with them.</div></details>
+        </div>
+        <a class="more-link" href="readme.html#faq" style="margin-top:28px"><span data-i="faq.more">All questions in the README</span><i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+      </div>
+    </div>
+
+    <div class="duo">
+      <div>
+        <img class="vl" src="brand/velisa-horizontal.svg" alt="Velisa" width="91" height="30">
+        <img class="vl vl-dark" src="brand/velisa-horizontal-on-dark.svg" alt="Velisa" width="91" height="30">
+        <p data-i="eco.p">On its own, it is a local FFmpeg engine. In Velisa, it is the hands: it cuts, measures and exports, and reports back in JSON. It never decides what to cut.</p>
+        <a class="go" href="https://github.com/kajisho5/Velisa"><span data-i="eco.l">Velisa</span> →</a>
+      </div>
+      <div>
+        <p class="eyebrow" data-i="paper.eye">Paper</p>
+        <h3>What Is Verification-Driven Coding?<br>A Discipline for Not Trusting Generation</h3>
+        <p class="cite">Kajiyama, S. (2026). Zenodo · doi:10.5281/zenodo.23720216</p>
+        <a class="go" href="https://doi.org/10.5281/zenodo.23720216"><span data-i="paper.l">Read the paper</span> →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="close ink" aria-labelledby="close-h">
+  <div class="wrap">
+    <div class="close-grid">
+      <div>
+        <img class="sym" src="brand/ffmpeg-skill-symbol-on-dark.svg" alt="" width="72" height="72">
+        <h2 class="dotted" id="close-h" data-i="close.h">Hand it the footage.</h2>
+        <div class="term"><code id="c-close"><span class="p">$ </span>npx ffmpeg-skill</code><button class="copy" type="button" data-copy="c-close"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
+        <div class="acts">
+          <a class="btn btn-key btn-lg" href="#install" data-i="cta.start">Get started</a>
+          <a class="btn btn-line btn-lg" href="https://github.com/kajisho5/ffmpeg-skill"><i class="ph ph-github-logo" aria-hidden="true"></i><span data-i="cta.gh">View on GitHub</span></a>
+        </div>
+      </div>
+      <nav class="docs" id="docs" aria-labelledby="docs-h">
+        <h3 id="docs-h" data-i="nav.docs">Docs</h3>
+        <ul>
+          <li><a href="docs/demos.html"><span data-i="doc.1">Demo gallery</span><code>docs/demos</code></a></li>
+          <li><a href="docs/contract.html"><span data-i="doc.2">Contract</span><code>docs/contract</code></a></li>
+          <li><a href="docs/design-decisions.html"><span data-i="doc.3">Design decisions</span><code>docs/design-decisions</code></a></li>
+          <li><a href="docs/roadmap.html"><span data-i="doc.4">Roadmap</span><code>docs/roadmap</code></a></li>
+          <li><a href="CHANGELOG.html"><span data-i="doc.5">Changelog</span><code>CHANGELOG</code></a></li>
+          <li><a href="readme.html"><span data-i="doc.6">README</span><code>readme</code></a></li>
+        </ul>
+      </nav>
+    </div>
+    <footer class="site">
+      <div class="foot">
+        <span>© 2026 kajisho5 · MIT · <span data-i="f.part">Part of Velisa</span></span>
+        <nav aria-label="Footer">
+          <a href="https://github.com/kajisho5/ffmpeg-skill">GitHub</a>
+          <a href="https://www.npmjs.com/package/ffmpeg-skill">npm</a>
+          <a href="https://github.com/sponsors/kajisho5">Sponsor</a>
+        </nav>
+      </div>
+    </footer>
+  </div>
+</section>
+
+</main>
+
+<script>
+(function () {
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  var JA = {
+    "skip": "本文へスキップ",
+    "nav.demos": "デモ", "nav.how": "しくみ", "nav.tools": "ツール", "nav.agents": "エージェント向け", "nav.agents2": "エージェントのために", "nav.faq": "よくある質問", "nav.docs": "ドキュメント", "nav.install": "インストール",
+    "cta.install": "インストール", "cta.start": "はじめる", "cta.gh": "GitHub を見る", "copy": "コピー",
+    "hero.eye": "エージェントスキル · ローカル FFmpeg · 42 ツール",
+    "hero.h": "コーディング AI に、\n動画編集ソフトを。",
+    "hero.p": "Claude Code、Cursor、Codex、そのほかの MCP クライアントが、あなたのパソコンの FFmpeg で映像を編集し、仕上がりを自分で確かめます。",
+    "fact.1": "クラウド不要", "fact.2": "API キー不要", "fact.3": "Python 標準ライブラリだけ",
+    "sess.q": "interview.mp4 の 0:45〜3:10 と 5:00〜6:30 を残して、Reels 用にちょうど 60 秒にして。",
+    "sess.t1": "実測", "sess.t2": "コンタクトシート", "sess.cap": "README のクイックスタートにある頼み方と、そのためにエージェントが実行するツール。",
+    "fl.h": "教えるのは、この手順", "fl.s": "どの作業も、この順番で",
+    "fl.1": "測る", "fl.1s": "実際のファイルを調べる", "fl.2": "編集", "fl.2s": "できるだけ無劣化で", "fl.3": "検査", "fl.3s": "出す先の基準で", "fl.4": "確認", "fl.4s": "仕上がりを見る",
+    "demos.h": "左が元の映像。右がコマンドの結果。",
+    "demos.p1": "どのデモも ", "demos.p2": " が合成した映像から作っているので、すべてのコマを自分で作り直せます。",
+    "d1": "カラオケ風に色が変わる、動く字幕", "d2": "16:9 を 9:16 に切り出し", "d3": "無音をカットして尺が短く", "d4": "音量をそろえる前とあとの波形", "d5": "HDR10 を SDR に変換", "d6": "グリーンバックを生成した背景に合成",
+    "demos.more": "すべてのビフォー・アフターと、その正確なコマンド",
+    "how.h": "当て推量を、やめさせる。",
+    "how.p": "「FFmpeg を知っている」AI でも、実は推測しています。フレームレートを決めつけ、コンテナに入らないコーデックを選び、ストリームコピーで済むファイルを再エンコードし、結果を開かずに「できました」と報告します。",
+    "w1.h": "まず実際のファイルを測る", "w1.p1": "どの作業も ", "w1.p2": " から始まります。ファイル名ではなく、実測した長さ、fps、解像度、色、音声の構成で判断します。",
+    "w2.h": "シェルの文字列ではなく、型のあるツール", "w2.p": "どの操作も、型のある引数をとるスクリプトです。シェルは通さず、呼び出し側からのフィルターグラフも受け付けません。",
+    "w3.h": "AI が読める契約", "w3.p": " が、ツールごとに受け取るもの、書き出すもの、必要な FFmpeg の部品、結果の確かめ方を示します。",
+    "w4.h": "実行したあとに確かめる", "w4.p": "結果を測り直し、出す先の仕様と照らし合わせ、絵が変わったときはコンタクトシートで目でも確認します。",
+    "w5.h": "手元で完結", "w5.p": "クラウドも API キーも、Python の追加ライブラリもいりません。音声の文字起こしは自分で入れたエンジンで動き、音声がアップロードされることはありません。",
+    "tools.p1": "個のツールが、", "tools.p2": " で実際の作業をします。",
+    "c1": "カットと結合", "c2": "無音カット", "c3": "尺と縦横比を合わせる", "c4": "字幕とカラオケ", "c5": "重ね合わせとモーショングラフィックス", "c6": "HDR → SDR と LUT",
+    "c7": "音声のクリーンアップとダイナミクス", "c8": "同期とズレ補正", "c9": "マルチカム", "c10": "ラウドネス", "c11": "納品チェック", "c12": "プロジェクト書き出し", "c13": "フォルダごとの一括処理",
+    "ag.h": "あなただけでなく、機械にも読める。",
+    "ag1.p1": "どのツールも MCP のツールです。AI に渡す情報を小さく保つため、ふだんは主要な 12 個だけを見せ、", "ag1.p2": " で 42 個すべてを見せます。",
+    "ag2.h": "契約", "ag2.p": "機械が読める 1 つの契約が、全ツールを説明します。何を受け取り何を書き出すか、FFmpeg に何が必要か、どう確かめるか。",
+    "ag3.p": "各ツールの入力の定義は、スクリプト自身の引数の定義から自動で作られます。手で書き写すことはありません。説明がずれると CI が失敗します。",
+    "in.h": "エージェントごとに 1 行。", "in.all": "3 つすべて", "in.doc": "パソコンを点検",
+    "in.note": "FFmpeg 6.1 以上と Python 3.10 以上が必要です。オフラインで動きます。FFmpeg 本体の入れ方（macOS、Linux、Windows）は ", "in.link": "README", "in.end": " にあります。",
+    "faq.h": "最初によく聞かれること",
+    "q1": "ffmpeg の引数や filter_complex をそのまま渡せますか？", "a1": "渡せません。どの操作も、自分の引数の定義を持つスクリプトで、契約と MCP の入力の定義はそこから作られます。呼び出し側のフィルターグラフや -vf の文字列など、ffmpeg のオプションを受け取るスクリプトはありません。",
+    "q2": "ツールが 42 個は多すぎませんか？", "a2": "作業ごとに約束が違うので、作業ごとに 1 つのツールにし、実行後にその約束を測っています。AI が 42 個の定義を読むわけではありません。MCP では主要な 12 個が見え、残り 30 個は必要なときに名前で呼びます。",
+    "q3": "「確認済み」は何を確かめ、何がわからないのですか？", "a3": "ファイルから測れることです。開けるか、長さ、コーデック、サイズ、フレームレート、そしてツールごとの約束（音量をそろえたあとのラウドネスなど）。読み取れない値は合格にせず not_measured として失敗にします。見た目や聞こえ方が正しいかは unverified として示すので、コンタクトシートで確認します。",
+    "q4": "Remotion とはどう違いますか？", "a4": "補い合う関係です。ffmpeg-skill は手元にある映像を編集し、Remotion は React の部品から映像を描きます。remotion-ffmpeg-skill が両方をつなぎ、このリポで測り、Remotion で描き、またこのリポで確かめて書き出します。",
+    "q5": "GPU でエンコードしますか？", "a5": "Apple Silicon の VideoToolbox を、--hw か FFMPEG_SKILL_HW=1 で頼んだときに使います。ほかの GPU エンコーダーは、お使いの FFmpeg にあれば doctor が報告しますが、それでエンコードするツールはありません。",
+    "faq.more": "README の質問をすべて見る",
+    "eco.p": "単体では、手元で動く FFmpeg のエンジンです。Velisa の中では「手」の役目で、カット、測定、書き出しをして、結果を JSON で返します。どこを切るかを決めることはしません。",
+    "eco.l": "Velisa", "paper.eye": "論文", "paper.l": "論文を読む",
+    "close.h": "映像を、渡すだけ。",
+    "doc.1": "デモ一覧", "doc.2": "契約", "doc.3": "設計の判断", "doc.4": "ロードマップ", "doc.5": "変更履歴", "doc.6": "README",
+    "f.part": "Velisa の一部"
+  };
+  var META = {
+    en: { title: document.title, desc: document.querySelector('meta[name="description"]').content },
+    ja: { title: "ffmpeg-skill：コーディング AI に、動画編集ソフトを", desc: "Claude Code、Cursor、Codex、MCP クライアントのためのエージェントスキル。ローカルの FFmpeg で動く 42 のツールと、機械が読める契約。実際のファイルを測り、編集し、出す先の基準で検査し、目で確認します。クラウドも API キーも不要。" }
+  };
+
+  var EN = {}, nodes = document.querySelectorAll("[data-i]");
+  nodes.forEach(function (el) { if (!(el.dataset.i in EN)) EN[el.dataset.i] = el.textContent; });
+  function setText(el, t) {
+    el.textContent = "";
+    t.split("\n").forEach(function (line, i) { if (i) el.appendChild(document.createElement("br")); el.appendChild(document.createTextNode(line)); });
+  }
+
+  var lang = "en";
+  function apply(l) {
+    lang = l === "ja" ? "ja" : "en";
+    document.documentElement.lang = lang;
+    nodes.forEach(function (el) { var k = el.dataset.i; setText(el, lang === "ja" && JA[k] ? JA[k] : EN[k]); });
+    document.title = META[lang].title;
+    document.querySelector('meta[name="description"]').setAttribute("content", META[lang].desc);
+    document.querySelectorAll(".lang button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.lang === lang)); });
+    dotify();
+  }
+  // Headlines end in the verified dot instead of a full stop.
+  function dotify() {
+    document.querySelectorAll(".dotted").forEach(function (el) {
+      var last = el.lastChild;
+      el.classList.remove("has-dot");
+      if (last && last.nodeType === 3 && /[.。]$/.test(last.nodeValue)) {
+        last.nodeValue = last.nodeValue.replace(/[.。]$/, "");
+        el.classList.add("has-dot");
+      }
+    });
+  }
+  document.querySelectorAll(".lang button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      apply(b.dataset.lang);
+      try { localStorage.setItem("ffmpeg-skill-lang", lang); } catch (e) {}
+      var u = new URL(location.href);
+      if (lang === "ja") u.searchParams.set("lang", "ja"); else u.searchParams.delete("lang");
+      history.replaceState(null, "", u);
+    });
+  });
+
+  // Session card: the tools appear one by one, then the measured result.
+  var sess = document.getElementById("session");
+  if (!reduce && sess) {
+    sess.classList.add("armed");
+    var rows = sess.querySelectorAll(".runs li"), res = sess.querySelector(".result");
+    rows.forEach(function (li, i) { setTimeout(function () { li.classList.add("on"); }, 500 + i * 420); });
+    setTimeout(function () { res.classList.add("on"); }, 500 + rows.length * 420 + 300);
+  }
+
+  // copy
+  var status = document.querySelector("#install .status");
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var text = document.getElementById(b.dataset.copy).textContent.replace(/^\$\s*/, "").trim();
+      function done(ok) {
+        status.textContent = ok ? (lang === "ja" ? "コピーしました" : "Copied") : (lang === "ja" ? "コピーできませんでした" : "Could not copy");
+        if (ok) { b.classList.add("done"); setTimeout(function () { b.classList.remove("done"); }, 1600); }
+      }
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+      else done(false);
+    });
+  });
+
+  var initial = new URLSearchParams(location.search).get("lang");
+  if (!initial) { try { initial = localStorage.getItem("ffmpeg-skill-lang"); } catch (e) {} }
+  apply(initial === "ja" ? "ja" : "en");
+})();
+</script>
+</body>
+</html>

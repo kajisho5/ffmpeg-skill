@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- The GitHub Pages site opens on a landing page (`site/index.html`, one static HTML file in the
+  Velisa design, English and Japanese) instead of a copy of the README. The README moved to
+  `readme.html`; the other pages are unchanged. `build_pages.py` copies `site/` to the site root
+  and fails on a relative link in it that points nowhere, as it already did for the Markdown.
 
 ## 3.1.0
 

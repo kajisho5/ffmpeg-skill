@@ -1,6 +1,6 @@
-# Publishes https://kajisho5.github.io/ffmpeg-skill/ from the repository's own Markdown.
-# .github/scripts/build_pages.py assembles the pages (README -> index, docs/*.md, CHANGELOG)
-# with their relative links rewritten; nothing on the site is written by hand. The repo's
+# Publishes https://kajisho5.github.io/ffmpeg-skill/: the landing page in site/ plus the
+# repository's own Markdown. .github/scripts/build_pages.py assembles the pages (site/index.html
+# -> index, README -> readme, docs/*.md, CHANGELOG) with their relative links checked/rewritten. The repo's
 # Settings -> Pages -> Source must be "GitHub Actions".
 name: pages
 
@@ -12,6 +12,7 @@ on:
       - "CHANGELOG.md"
       - "docs/**"
       - "brand/**"
+      - "site/**"
       - ".github/scripts/build_pages.py"
       - ".github/scripts/pages_layout.html"
       - ".github/workflows/pages.yml"
