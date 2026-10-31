@@ -326,9 +326,12 @@ def _copy_doc(path: str) -> "Optional[Dict[str, Any]]":
     if not isinstance(doc, dict):
         return None
     # attached pictures (cover art) are not the picture being joined, as V:0 skips them
-    streams = [st for st in doc.get("streams") or [] if not (st.get("disposition") or {}).get("attached_pic")]
+    every = doc.get("streams") or []
+    streams = [st for st in every if not (st.get("disposition") or {}).get("attached_pic")]
     keep = [next((st for st in streams if st.get("codec_type") == kind), None) for kind in ("video", "audio")]
     doc["streams"] = [st for st in keep if st]
+    # the concat demuxer maps every clip's packets by stream index, laid out as the first clip's
+    doc["layout"] = {"streams": len(every), "indices": [st.get("index") for st in doc["streams"]]}
     return doc
 
 
@@ -363,6 +366,13 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
         unreadable = [p for p, d in zip(args.inputs, docs) if d is None]
         if unreadable:
             die(f"--copy: could not read the streams of {', '.join(unreadable)}")
+        moved = [{"index": i, "path": p, "differs": {"stream_layout": [docs[0]["layout"], d["layout"]]}}
+                 for i, (p, d) in enumerate(zip(args.inputs, docs)) if i and d["layout"] != docs[0]["layout"]]
+        if moved:
+            refuse("input", "join_copy_mismatch",
+                   f"--copy: {', '.join(m['path'] for m in moved)} lay(s) out their streams differently from "
+                   f"{args.inputs[0]} (count or order, cover art included); the concat demuxer maps streams by position",
+                   hint="drop --copy to re-encode them to one layout", clips=moved)
         sigs = [stream_signature(d) for d in docs]
         mismatched = [{"index": i, "path": p, "differs": {k: [a.get(k), b.get(k)] for a, b in zip(sigs[0], sig)
                                                            for k in a if k != "extradata_hash" and a.get(k) != b.get(k)}
@@ -385,16 +395,16 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
             vs, as_ = m.get("video") or {}, m.get("audio") or {}
             vd, ad = vs.get("duration"), as_.get("duration")
             if vd and ad:
-                ve = float(vs.get("start_time") or 0.0) + vd
-                ae = float(as_.get("start_time") or 0.0) + ad
-                if abs(ve - ae) > COPY_AV_GAP:
-                    gaps.append({"path": p, "video": round(ve, 3), "audio": round(ae, 3)})
+                vb, ab = float(vs.get("start_time") or 0.0), float(as_.get("start_time") or 0.0)
+                if abs(vb - ab) > COPY_AV_GAP or abs((vb + vd) - (ab + ad)) > COPY_AV_GAP:
+                    gaps.append({"path": p, "video": [round(vb, 3), round(vb + vd, 3)], "audio": [round(ab, 3), round(ab + ad, 3)]})
         if gaps:
-            listing = "; ".join(f"{g['path']} (video ends {g['video']:.3f}s, audio {g['audio']:.3f}s)" for g in gaps)
+            listing = "; ".join(f"{g['path']} (video {g['video'][0]:.3f}-{g['video'][1]:.3f}s, "
+                                f"audio {g['audio'][0]:.3f}-{g['audio'][1]:.3f}s)" for g in gaps)
             refuse("input", "join_copy_mismatch",
-                   f"--copy: picture and sound end more than {COPY_AV_GAP * 1000:.0f} ms apart in {listing}; a copy join "
+                   f"--copy: picture and sound start or end more than {COPY_AV_GAP * 1000:.0f} ms apart in {listing}; a copy join "
                    "would leave that gap at the next clip", hint="drop --copy, which trims both streams to one length",
-                   clips=[{"path": g["path"], "differs": {"video_end": g["video"], "audio_end": g["audio"]}} for g in gaps])
+                   clips=[{"path": g["path"], "differs": {"video_span": g["video"], "audio_span": g["audio"]}} for g in gaps])
     fps = (metas[0].get("video") or {}).get("fps") or 30.0
     note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
     place_silent([m.get("duration") or 0.0 for m in metas], 0.0)

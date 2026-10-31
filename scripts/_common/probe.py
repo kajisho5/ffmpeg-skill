@@ -892,7 +892,9 @@ def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
     from _common.decision import escape_filter_path
     with tempfile.TemporaryDirectory(prefix="ffskill_compare_") as tmp:
         stats = os.path.join(tmp, "ssim.log")
-        graph = ("[0:V:0]split[a0][a1];[1:V:0]split[b0][b1];"
+        # frames paired by index (settb/setpts=N): ssim and psnr otherwise pair by timestamp, so a
+        # shifted or irregular timestamp would meet the wrong reference frame
+        graph = ("[0:V:0]settb=1/1000,setpts=N,split[a0][a1];[1:V:0]settb=1/1000,setpts=N,split[b0][b1];"
                  f"[a0][b0]ssim=stats_file={escape_filter_path(stats, bind=False)};[a1][b1]psnr")
         proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-i", reference,
                              "-filter_complex", graph, "-f", "null", "-"], check=False, record=True)

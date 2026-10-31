@@ -1175,6 +1175,24 @@ class EditingTests(MediaFixtures):
            "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-output_ts_offset", "0", late)
         proc = script("join.py", clips[0], late, "--copy", "--transition", "none", "-o", OUT / "copy_late.mp4", "--json", expect_fail=True)
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "join_copy_mismatch")
+        # equal ends, but the picture starts 0.3 s after the sound
+        offset = OUT / "copy_late_picture.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-itsoffset", "0.3", "-f", "lavfi", "-i",
+           "color=c=gray:s=64x48:r=30:d=1.7", "-f", "lavfi", "-i", "sine=f=700:d=2", "-map", "0:v", "-map", "1:a",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-fps_mode", "passthrough", offset)
+        proc = script("join.py", clips[0], offset, "--copy", "--transition", "none", "-o", OUT / "copy_offset.mp4", "--json", expect_fail=True)
+        self.assertIn("start or end", json.loads(proc.stdout)["error"]["message"])
+        # a cover picture between the video and the sound moves the audio to another stream index
+        cover_img = OUT / "copy_cover.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=32x32", "-frames:v", "1", cover_img)
+        covered = OUT / "copy_covered.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", clips[1], "-i", cover_img, "-map", "0:v", "-map", "1",
+           "-map", "0:a", "-c:v:0", "copy", "-c:v:1", "png", "-disposition:v:1", "attached_pic", "-c:a", "copy", covered)
+        proc = script("join.py", clips[0], covered, "--copy", "--transition", "none", "-o", OUT / "copy_cover_join.mp4",
+                      "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["reason"], "join_copy_mismatch", err)
+        self.assertIn("lay(s) out their streams", err["message"])
         # a silent clip is placed in the copy join's output, as in a re-encoded one
         quiet = OUT / "copy_quiet.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=2",

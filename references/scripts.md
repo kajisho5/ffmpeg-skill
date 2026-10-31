@@ -776,8 +776,9 @@ re-encode, for clips that already match: the first video and first audio stream 
 have the same codec, profile, size, pixel format, frame rate, time base, sample aspect, colour
 tags (matrix, range, transfer, primaries), sample rate and channels (cover art is not the video
 stream) (and the same codec configuration), no clip may hide frames
-before its start with an edit list, and in each clip picture and sound must end (start plus
-length) within 50 ms of each other (the demuxer starts the next clip where this one's container ends, so the shorter
+before its start with an edit list, every clip must lay out its streams as the first one does
+(count and order, cover art included: the concat demuxer maps by position), and in each clip
+picture and sound must start, and end (start plus length), within 50 ms of each other (the demuxer starts the next clip where this one's container ends, so the shorter
 stream would leave that gap). Anything else is refused before ffmpeg runs (`kind: input`,
 `reason: join_copy_mismatch`, `details.clips: [{index?, path, differs}]` naming what differs).
 The join is written beside the output and measured before it is renamed into place: its video

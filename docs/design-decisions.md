@@ -2355,14 +2355,18 @@ What was decided there:
   (`_common.probe.stream_signature()` / `signatures_match()`, moved there so both use it), on
   the first video and the first audio stream, which are the streams the join maps. Test:
   `test_join_copy_joins_matching_clips_and_refuses_a_mismatch`.
-- **Three things a matching signature does not catch are checked too.** An MP4 edit list that
+- **What a matching signature does not catch is checked too.** An MP4 edit list that
   hides pre-roll frames (packets flagged discard in the first 300): the concat demuxer ignores
   edit lists, so a copy join would show them. Picture and sound that end more than 50 ms apart
-  in a clip (each stream's start plus its length, so equal lengths that start apart are caught): the demuxer starts the next clip where this one's container ends, so the shorter
+  at either end of a clip (each stream's start, and its start plus its length): the demuxer starts the next clip where this one's container ends, so the shorter
   stream leaves a held frame or a hole in the sound there. And the result itself: its video
   packet count against the clips' total, and its video length against their summed length
   (within 50 ms per clip plus a frame), measured on a file beside the output that is renamed
   into place only when both hold. Same test.
+- **Clips must lay out their streams alike.** The concat demuxer maps each clip's packets by
+  stream index into the first clip's layout, so a cover picture stored between the video and the
+  sound in one clip would put that clip's sound on another stream. A different stream count or
+  order is refused before the signatures are compared. Same test.
 - **`cut.py --remove` is `--segments` written the other way.** It builds the keep list and
   hands it to the same code, so a removal is cut, joined, declicked and verified exactly as the
   equivalent `--segments` would be. Overlaps merge and the ranges are clamped to the file; a
@@ -2384,9 +2388,11 @@ What was decided there:
   the false success the flag is there to stop. Without the flag check.py grades the path as
   before and only reports `input_identity`. Same test.
 - **`--compare` pairs frames in decode order and reports, it does not align.** SSIM and PSNR are
-  ffmpeg's own filters in one pass. Pairing by order is what those filters do; a dropped or added
-  frame shifts every later pair, so a different frame count (from `nb_frames`, or counted from
-  the packets when a container does not state it) is named in `notes` rather than hidden. Frames of another size are not compared at all (WARN, "not compared"): scaling one of
+  ffmpeg's own filters in one pass. Those filters pair by timestamp, so both pictures are re-timed
+  to their frame index first (`setpts=N`): a shifted or irregular timestamp cannot meet the wrong
+  reference frame. A dropped or added frame shifts every later pair, so a different frame count
+  (from `nb_frames`, or counted from the packets when a container does not state it) is named in
+  `notes` rather than hidden. Frames of another size are not compared at all (WARN, "not compared"): scaling one of
   them first would measure the scaler. The WARN line is a mean SSIM of 0.98, where differences
   start to be visible on ordinary footage; the worst frame and its time say where to look
   (`look.py --compare`), the time read as the flashes row reads it (that frame's presentation
