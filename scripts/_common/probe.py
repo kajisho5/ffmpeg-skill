@@ -879,8 +879,9 @@ def signatures_match(sigs: list, ext: str) -> bool:
 
 # check.py --compare (2.24): the output's picture against a reference, frame by frame.
 COMPARE_SSIM_WARN = 0.98   # mean SSIM below this: a visible difference somewhere is likely
-_SSIM_SUMMARY = re.compile(r"SSIM Y:[0-9.]+ .*All:([0-9.]+)")
-_PSNR_SUMMARY = re.compile(r"PSNR y:\S+ .*average:(\S+)")
+# the channel letters follow the negotiated format: Y U V (or y u v) for YUV, R G B for RGB
+_SSIM_SUMMARY = re.compile(r"SSIM [A-Za-z]:[0-9.]+ .*All:([0-9.]+)")
+_PSNR_SUMMARY = re.compile(r"PSNR [a-z]:\S+ .*average:(\S+)")
 _SSIM_FRAME = re.compile(r"n:(\d+) .*All:([0-9.]+)")
 
 
@@ -894,8 +895,13 @@ def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
         stats = os.path.join(tmp, "ssim.log")
         # frames paired by index (settb/setpts=N): ssim and psnr otherwise pair by timestamp, so a
         # shifted or irregular timestamp would meet the wrong reference frame
-        graph = ("[0:V:0]settb=1/1000,setpts=N,split[a0][a1];[1:V:0]settb=1/1000,setpts=N,split[b0][b1];"
-                 f"[a0][b0]ssim=stats_file={escape_filter_path(stats, bind=False)};[a1][b1]psnr")
+        # shortest=1: by default the shorter file's last frame is repeated against the rest of
+        # the longer one, which measures pairs that do not exist. format=yuv444p on both: the
+        # filters otherwise take the first input's format, so an RGB file against a YUV one
+        # measured differently by argument order
+        graph = ("[0:V:0]settb=1/1000,setpts=N,format=yuv444p,split[a0][a1];"
+                 "[1:V:0]settb=1/1000,setpts=N,format=yuv444p,split[b0][b1];"
+                 f"[a0][b0]ssim=shortest=1:stats_file={escape_filter_path(stats, bind=False)};[a1][b1]psnr=shortest=1")
         proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-i", reference,
                              "-filter_complex", graph, "-f", "null", "-"], check=False, record=True)
         if proc.returncode != 0:

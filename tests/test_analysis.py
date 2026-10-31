@@ -488,6 +488,32 @@ class AnalysisTests(MediaFixtures):
         self.assertIn("note: --compare: 28 frames against the reference's 30", proc.stdout + proc.stderr)
         self.assertIn("similarity", self._rows(hit, "--no-loudness", "--compare", ref, "--dry-run"))
 
+    def test_check_compare_pairs_only_existing_frames_and_is_order_and_rotation_safe(self):
+        """2.24.1: a shorter output was paired with its last frame repeated (mean below 0.9 for 52
+        identical frames, worst frame timed past the file's end); an RGB file gave "could not
+        measure" (SSIM R:/PSNR r: lines) or another value by argument order; a phone clip stored
+        sideways was compared by its stored size, so equal pictures were "not compared"."""
+        ref = self._content_clip("compare_ref.mp4", "testsrc2=size=160x90:rate=10", "sine=frequency=440:sample_rate=48000", 3)
+        short, rgb, side, upright = (OUT / n for n in ("compare_short.mp4", "compare_rgb.mkv", "compare_side.mp4", "compare_upright.mp4"))
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ref, "-t", "1.5", "-c", "copy", short)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", ref, "-c:v", "libx264rgb", "-crf", "0", "-an", rgb)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", ref, "-c", "copy", side)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", side, "-c:v", "libx264", "-crf", "0", "-an", upright)
+        row = self._rows(short, "--no-loudness", "--compare", ref)["similarity"]
+        self.assertEqual(row["status"], "PASS", row)
+        self.assertIn("identical", row["value"])
+        self.assertNotIn(" 30 frames", row["value"])
+        there, back = (self._rows(a, "--no-loudness", "--compare", b)["similarity"] for a, b in ((rgb, ref), (ref, rgb)))
+        self.assertNotIn("could not measure", there["value"])
+        self.assertEqual(there["value"].split(" (")[0], back["value"].split(" (")[0])
+        self.assertNotIn("not compared", self._rows(upright, "--no-loudness", "--compare", side)["similarity"]["value"])
+
+    def test_check_expect_identity_empty_is_malformed_not_absent(self):
+        """2.24.1: --expect-identity "" (an unset shell variable) skipped the identity row and passed."""
+        ref = self._content_clip("compare_ref.mp4", "testsrc2=size=160x90:rate=10", "sine=frequency=440:sample_rate=48000", 3)
+        proc = script("check.py", ref, "--no-loudness", "--expect-identity", "", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
     def test_check_content_dropouts_row(self):
         """2.17: a short run of digital silence with sound on both sides (lost audio at a join) is a
         dropouts WARN; the same gap holding -60 dB room tone is a recording's pause and PASSes, and

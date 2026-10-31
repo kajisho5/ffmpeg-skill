@@ -35,7 +35,7 @@ import json
 import re
 import sys
 from fractions import Fraction
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
 from _common.probe import (COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
@@ -95,6 +95,12 @@ def frame_time(n: int, v: Dict[str, Any], meta: Dict[str, Any], pts: "Optional[L
     return f"~{lead + n / fps:.2f}s" if fps else f"frame {n}"
 
 
+def display_size(v: Dict[str, Any]) -> "Tuple[int, int]":
+    """The frame size as decoded and auto-rotated, which is what --compare's ffmpeg pass sees."""
+    w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+    return (h, w) if int(v.get("rotation") or 0) % 180 == 90 else (w, h)
+
+
 def _span_total(spans: Any) -> float:
     return sum(max(0.0, e - s) for s, e in spans)
 
@@ -146,6 +152,15 @@ def main() -> int:
         spec["tp"] = args.tp
     if args.max_mb is not None:
         spec["max_bytes"] = int(args.max_mb * 1024 * 1024)
+
+    expected_identity = None
+    if args.expect_identity is not None:
+        # parsed before any measurement; "" (an unset shell variable) is malformed, not absent
+        try:
+            size, mtime_ns = (int(x) for x in args.expect_identity.split(":"))
+        except ValueError:
+            die(f"--expect-identity takes SIZE:MTIME_NS from a tool's output_identity, got {args.expect_identity!r}")
+        expected_identity = {"size": size, "mtime_ns": mtime_ns}
 
     # read before anything is measured and again after: a file replaced mid-check is not the one graded
     identity_before = None if dry_run_input_pending(args.input) else file_identity(args.input)
@@ -368,8 +383,8 @@ def main() -> int:
         if not v or not rv:
             row("similarity", "WARN", "not compared", "two pictures", "--compare needs a video stream in both files",
                 reason="one of the files has no picture")
-        elif (v.get("width"), v.get("height")) != (rv.get("width"), rv.get("height")):
-            row("similarity", "WARN", f"not compared: {v.get('width')}x{v.get('height')} vs {rv.get('width')}x{rv.get('height')}",
+        elif display_size(v) != display_size(rv):
+            row("similarity", "WARN", "not compared: %dx%d vs %dx%d (as displayed)" % (display_size(v) + display_size(rv)),
                 "the same frame size", "compare against a reference at the delivery size (fit.py or export.py it first)",
                 reason="SSIM and PSNR compare pixels, so the two frames must be the same size")
         else:
@@ -393,17 +408,15 @@ def main() -> int:
                 nref = rv.get("nb_frames") or len(presentation_times(args.compare, float(rv.get("start_time") or 0.0))) or None
                 if nref and nout and int(nref) != int(nout):
                     STATE_NOTES.append(f"--compare: {nout} frames against the reference's {nref}; frames were paired in "
-                                       f"order, so an added or dropped frame shifts every later pair")
+                                       f"order, so an added or dropped frame shifts every later pair, and only the "
+                                       f"first {min(int(nref), int(nout))} were compared")
     # read after every measurement, --compare's included, so a replacement at any point shows
     identity = None if dry_run_input_pending(args.input) else file_identity(args.input)
-    if identity is not None and identity != identity_before and not args.expect_identity:
+    if identity is not None and identity != identity_before and expected_identity is None:
         STATE_NOTES.append("the file changed while it was being checked: input_identity is the file as it was "
                            "at the end, and the rows may describe an earlier one; check it again")
-    if args.expect_identity:
-        try:
-            size, mtime_ns = (int(x) for x in args.expect_identity.split(":"))
-        except ValueError:
-            die(f"--expect-identity takes SIZE:MTIME_NS from a tool's output_identity, got {args.expect_identity!r}")
+    if expected_identity is not None:
+        size, mtime_ns = expected_identity["size"], expected_identity["mtime_ns"]
         if identity is not None:
             changed = identity != identity_before
             same = identity == {"size": size, "mtime_ns": mtime_ns} and not changed
