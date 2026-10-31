@@ -59,6 +59,8 @@ class AnalysisTests(MediaFixtures):
                          {"value": "10:00:00:00", "drop_frame": False, "source": "stream:2"})
         self.assertEqual(pick([], {"tags": {"TIMECODE": "01:00:00.00"}}, {"index": 0, "tags": {"timecode": "not a tc"}}),
                          {"value": "01:00:00.00", "drop_frame": True, "source": "format"}, "a malformed tag is skipped")
+        self.assertEqual(pick([], {"tags": {"timecode": "02:00:00:00"}}, {"index": 0, "tags": {"timecode": "01:99:99:00"}})["source"],
+                         "format", "minutes and seconds above 59 are not a timecode")
 
     def test_probe_accepts_common_flags(self):
         out = script("probe.py", self.src, "--json", "--field", "duration").stdout.strip()

@@ -135,7 +135,7 @@ def verify_output(path: str) -> Dict[str, Any]:
     return meta
 
 
-_TIMECODE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})([:;.])(\d{2,3})$")
+_TIMECODE = re.compile(r"^(\d{2}):([0-5]\d):([0-5]\d)([:;.])(\d{2,3})$")
 
 
 def _tag(entry: Dict[str, Any], key: str) -> Optional[str]:

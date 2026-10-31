@@ -1897,22 +1897,36 @@ class ContractTests(unittest.TestCase):
         kind missing_tool and reason ffmpeg_unsupported; a git build's unreadable version is not refused."""
         src = self.out("floor_src.mp4")
         ffmpeg("-f", "lavfi", "-i", "testsrc2=s=64x48:d=1", src)
-        for banner, refused in (("ffprobe version 5.1.1 Copyright", True), ("ffprobe version N-12345-gabcdef Copyright", False)):
-            shim = self.out("floor_shim_" + ("old" if refused else "git"))
+        # a git build's libavutil major cannot tell 6.0 from 6.1 (58 = 6.x), so only < 6 is refused
+        cases = (("ffprobe version 5.1.1 Copyright", True), ("ffprobe version 6.0 Copyright", True),
+                 ("ffprobe version N-12345-gabcdef Copyright", False),
+                 ("ffprobe version N-12345-gabcdef Copyright\nlibavutil      58. 29.100 / 58. 29.100", False),
+                 ("ffprobe version N-12345-gabcdef Copyright\nlibavutil      57. 28.100 / 57. 28.100", True))
+        for n, (banner, refused) in enumerate(cases):
+            shim = self.out(f"floor_shim_{n}")
             shim.mkdir(exist_ok=True)
             if os.name == "nt":
                 self.skipTest("the ffprobe shim is a POSIX shell script")
             real = shutil.which("ffprobe")
-            (shim / "ffprobe").write_text(f'#!/bin/sh\nif [ "$1" = "-version" ]; then echo "{banner}"; exit 0; fi\nexec "{real}" "$@"\n', encoding="utf-8")
+            (shim / "ffprobe").write_text(f'#!/bin/sh\nif [ "$1" = "-version" ]; then printf "{banner}\\n"; exit 0; fi\nexec "{real}" "$@"\n', encoding="utf-8")
             (shim / "ffprobe").chmod(0o755)
             env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
             proc = subprocess.run([sys.executable, str(SCRIPTS / "probe.py"), str(src)], stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, text=True, env=env)
             if refused:
-                self.assertEqual(proc.returncode, 127, proc.stderr)
+                self.assertEqual(proc.returncode, 127, (banner, proc.stderr))
                 self.assertIn("not supported since ffmpeg-skill 3.0.0", proc.stderr)
             else:
-                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
+
+    def test_doctor_checks_ffprobe_against_the_floor_too(self):
+        """requirements name ffprobe >= 6.1 as well: an old ffprobe beside a 6.1 ffmpeg is unsupported."""
+        from unittest import mock
+        lines = {"ffmpeg": "6.1.1", "ffprobe": "5.1.1"}
+        with mock.patch.object(_contract, "_version_line", side_effect=lambda name: lines[name]):
+            doc = _contract.doctor()
+        self.assertTrue(any(x.startswith("error: ffprobe 5.1 ") for x in doc["unsupported"]), doc["unsupported"])
+        self.assertFalse(doc["ok"])
 
     def test_npm_package_omits_the_maintainer_diary(self):
         """docs/design-decisions.md: references/process-pitfalls.md stays out of the npm package.
