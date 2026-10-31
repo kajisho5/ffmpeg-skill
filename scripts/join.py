@@ -349,7 +349,7 @@ SPAN_HEAD_PACKETS = 64     # enough to see the earliest presentation time past B
 SPAN_TAIL_SECONDS = 10.0   # read from this far before the end, so a seek that lands early still reaches it
 
 
-def _stream_span(path: str, kind: str, duration: float = 0.0) -> "Optional[Tuple[float, float]]":
+def _stream_span(path: str, kind: str, duration: float = 0.0, start: float = 0.0) -> "Optional[Tuple[float, float]]":
     """First packet's time and last packet's time plus its duration for the first `kind` stream
     (V or a): measured, because Matroska/WebM state no stream length and MPEG-TS only an estimate.
     None when the packets cannot be read or one has no time: a partial span would invent a gap."""
@@ -359,7 +359,9 @@ def _stream_span(path: str, kind: str, duration: float = 0.0) -> "Optional[Tuple
     cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", f"{kind}:0", "-show_entries",
            "packet=pts_time,dts_time,duration_time", "-of", "json"]
     if duration > 3 * SPAN_TAIL_SECONDS:
-        cmd += ["-read_intervals", f"%+#{SPAN_HEAD_PACKETS},{duration - SPAN_TAIL_SECONDS:.3f}%"]
+        # read_intervals takes timestamps, so the tail starts from the file's own start time
+        # (an MPEG-TS clock can start hours in; an edit list can start it below zero)
+        cmd += ["-read_intervals", f"%+#{SPAN_HEAD_PACKETS},{start + duration - SPAN_TAIL_SECONDS:.3f}%"]
     proc = run(cmd + [path], quiet=True, check=False)
     try:
         packets = json.loads(proc.stdout or "{}").get("packets") or [] if proc.returncode == 0 else []
@@ -437,8 +439,8 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
             # MPEG-TS stream length is an estimate, so a stated duration missed or invented gaps
             if not (m.get("video") and m.get("audio")):
                 continue
-            length = float(m.get("duration") or 0.0)
-            v_span, a_span = _stream_span(p, "V", length), _stream_span(p, "a", length)
+            length, origin = float(m.get("duration") or 0.0), float(m.get("start_time") or 0.0)
+            v_span, a_span = _stream_span(p, "V", length, origin), _stream_span(p, "a", length, origin)
             if v_span is None or a_span is None:
                 refuse("input", "join_copy_mismatch",
                        f"--copy: could not measure where picture and sound start and end in {p} (a packet without a "

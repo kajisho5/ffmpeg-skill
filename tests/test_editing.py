@@ -1264,6 +1264,13 @@ class EditingTests(MediaFixtures):
         head_tail = join_mod._stream_span(str(long_clip), "V", 40.0)
         whole = join_mod._stream_span(str(long_clip), "V", 0.0)
         self.assertEqual(head_tail, whole)
+        # the tail is sought from the file's start time: a clip whose clock starts at 100 s
+        late = OUT / "span_late.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", long_clip, "-c", "copy",
+           "-output_ts_offset", "100", late)
+        start = float(probe(str(late)).get("start_time") or 0.0)
+        self.assertGreater(start, 50)
+        self.assertEqual(join_mod._stream_span(str(late), "V", 40.0, start), join_mod._stream_span(str(late), "V", 0.0))
         subs = []
         for src in (a, b):
             t = OUT / (src.stem + "_sub.mp4")
