@@ -2327,8 +2327,10 @@ What was decided there:
   running time; this costs 6 bytes a frame. It is a separate video-only pass, because its
   output is raw data on stdout while the main pass is parsed from stderr. Raw frames carry no
   timestamps, so a flash is found by frame index and reported at index / average frame rate:
-  exact on constant-rate video, approximate on variable-rate video (which the `vfr` row
-  already flags), and `frame N` when the stream has no frame rate at all.
+  exact on constant-rate video, approximate on variable-rate video (marked `~`, the same
+  suspicion the `vfr` row reports), and `frame N` when the stream has no frame rate at all.
+  The time is on `look.py --at`'s timeline: a video stream that starts after the container
+  does adds that lead. A video that decodes no frame is "could not measure", not 0 flashes.
 - **`first frame` and `flashes` are `kind: judgement`.** Neither has a mechanical fix: a fade
   from black or a strobe can be the edit. A first frame that does not decode is a WARN
   ("could not measure"), not a missing row.

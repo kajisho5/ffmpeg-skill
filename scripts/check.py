@@ -288,12 +288,12 @@ def main() -> int:
                 f"longest {longest:.1f}s", f"<= {limit:.1f}s frozen",
                 "look.py the frozen span: a still title card is fine, a stuck decode is not",
                 reason="a picture that never changes is usually a stuck frame, not the edit")
-        if v:
+        if v and not dry_run_input_pending(args.input):  # a plan's not-yet-written input: no rows, as above
             first = first_frame_stats(args.input)
-            if first is None and not dry_run_input_pending(args.input):
+            if first is None:
                 row("first frame", "WARN", "could not measure", f"spread >= {CONTENT_FLAT_STD:g} (not one flat colour)",
                     "look.py the first frame", reason="the first frame did not decode, so whether it is flat is unknown")
-            elif first is not None:
+            else:
                 mean, spread = first
                 flat = spread < CONTENT_FLAT_STD
                 row("first frame", "WARN" if flat else "PASS", f"luma {mean:.0f}, spread {spread:.1f}",
@@ -302,13 +302,22 @@ def main() -> int:
                     "a picture (cut.py --start a few frames in, or move a title card to frame 0)" if flat else "",
                     reason="a feed shows the first frame before anything plays, and a flat one reads as a broken upload" if flat else "")
             flashes = detect_flashes(args.input)
-            fps = float(v.get("fps") or 0.0)  # an average: on variable-rate video the times are approximate
-            at = ", ".join(f"{n / fps:.2f}s" if fps else f"frame {n}" for n in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
-            row("flashes", "WARN" if flashes else "PASS", f"{len(flashes)}" + (f": {at}" if flashes else ""),
-                "no single frame unlike both its neighbours",
-                "look.py at those times: a stray frame at a cut or join is an edit error (re-cut with cut.py "
-                "--accurate, or join.py again); a camera flash or a strobe in the footage is fine" if flashes else "",
-                reason="one frame that matches neither neighbour is usually a frame left over at a cut, or a decode glitch" if flashes else "")
+            # index / average rate, on look.py's timeline (container start); "~" where the rate varies
+            fps = float(v.get("fps") or 0.0)
+            lead = max(0.0, float(v.get("start_time") or 0.0) - float(meta.get("start_time") or 0.0))
+            approx = "~" if v.get("variable_frame_rate_suspected") else ""
+            at = ", ".join(f"{approx}{lead + n / fps:.2f}s" if fps else f"frame {n}" for n in (flashes or [])[:5]) \
+                + (" ..." if flashes and len(flashes) > 5 else "")
+            if flashes is None:
+                row("flashes", "WARN", "could not measure", "no single frame unlike both its neighbours",
+                    "look.py the video: no frame decoded, so nothing was compared",
+                    reason="the video did not decode, so whether it has flashes is unknown")
+            else:
+                row("flashes", "WARN" if flashes else "PASS", f"{len(flashes)}" + (f": {at}" if flashes else ""),
+                    "no single frame unlike both its neighbours",
+                    "look.py at those times: a stray frame at a cut or join is an edit error (re-cut with cut.py "
+                    "--accurate, or join.py again); a camera flash or a strobe in the footage is fine" if flashes else "",
+                    reason="one frame that matches neither neighbour is usually a frame left over at a cut, or a decode glitch" if flashes else "")
         if "silence" in cd and span:
             share = _span_total(cd["silence"]) / span
             row("silence", "FAIL" if share >= SILENCE_FAIL else ("WARN" if share > SILENCE_WARN else "PASS"),
