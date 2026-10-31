@@ -14,6 +14,21 @@
 - **`export.py --repair` miscounted damage:** "Packet corrupt (… dts = …)" counted as a timestamp warning and "Last message repeated N times" as a decode error, so a remux that made timestamps worse could pass. Every occurrence is printed and classified.
 - **`render.py --stop-after` (before the export) without `--work`** deleted the work directory at exit, and with it the file the result named; the directory is kept.
 
+## 2.24.1
+
+_Automated release: version and notes generated from pull requests merged since 2.24.0._
+
+### Fixed
+
+- **`check.py --compare` measured frames that do not exist.** A shorter output's last frame was repeated against the rest of the reference (a mean SSIM of 0.90 for 52 identical frames, the worst frame timed past the file's end); only the frames both files have are compared now, and the note says how many. An RGB file gave "could not measure" or a value that depended on argument order, and a phone clip stored sideways was compared by its stored size; both are handled.
+- **`check.py --expect-identity ""`** (an unset shell variable) skipped the identity row and passed; it is refused as malformed, before any measurement.
+- **`join.py --copy` read stated stream lengths for its A/V end check:** Matroska/WebM state none, so a clip whose sound stopped 1.5 s early joined as `verified: true`, and MPEG-TS states an estimate, so every AAC `.ts` was refused. Each stream's span is measured from its packets. Identical VP8/VP9 WebM clips are no longer refused over "extradata"; `--codec`, `--quality` and `--hw` with `--copy` are refused instead of ignored; dropped subtitle/data tracks are reported in `dropped_non_av_streams`.
+- **`cut.py --remove` with a range outside the file** kept a range past the end and removed nothing; it is refused.
+- **`export.py --preset gif --max-mb`** ignored the limit and reported `verified: true`; refused. A `--max-mb` so large it constrains nothing is refused as input instead of failing in libx264.
+- **`export.py --repair` miscounted damage:** "Packet corrupt (… dts = …)" counted as a timestamp warning and "Last message repeated N times" as a decode error, so a remux that made timestamps worse could pass. Every occurrence is printed and classified.
+- **`render.py --stop-after` (before the export) without `--work`** deleted the work directory at exit, and with it the file the result named; the directory is kept.
+- Fix the false claims found reviewing 2.24.0 (compare, copy join, max-mb, repair, stop-after) (#386)
+
 ## 2.24.0
 
 _Automated release: version and notes generated from pull requests merged since 2.23.1._
