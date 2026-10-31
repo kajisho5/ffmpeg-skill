@@ -2422,5 +2422,6 @@ What was decided there:
   lines, and the same damaged frame logs a different number of them demuxed from TS than from MP4
   (one run of this test logged 51 before and 53 after on a remux that dropped nothing it should
   have kept). Errors that remain are named (`repair_incomplete`) with the way out (a re-encoding
-  preset). On a TS file with 40 bytes overwritten: 3 timestamp warnings and 58 errors before, 0 and
-  58 after. Same test.
+  preset). On a TS file with 40 bytes of video payload overwritten (never a TS header or table, so
+  every ffmpeg version still opens it): 99 decode-error lines before, 100 after, no timestamp
+  warnings either side. Same test.

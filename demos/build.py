@@ -831,6 +831,17 @@ def demo_cut_accurate(ctx):
     return before, after
 
 
+def demo_cut_remove(ctx):
+    """--remove names what to drop and keeps the rest: 2-4 s of the clip are gone."""
+    src = FIX / "mandel.mp4"
+    after = ctx.path("after.mp4")
+    out = ctx.script("cut.py", src, "--remove", "2-4", "--accurate", "--preset", "veryfast", "--json", "-o", after,
+                     capture=True)
+    if out:
+        ctx.note("kept %.2f s; 2-4 s of the source removed" % (json.loads(out).get("output_duration") or 0.0))
+    return src, after
+
+
 def demo_cut_edit_list(ctx):
     """Two lossless copies of the same request: the default one shifts its timestamps to zero and
     shows the keyframe's pre-roll, the --edit-list one keeps the MP4 edit list that hides it, so
@@ -1564,6 +1575,9 @@ _ROWS = [
     ("cut_accurate", PICTURE, "Lossless cut vs. accurate cut",
      "Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.",
      demo_cut_accurate, "video", None, ("LOSSLESS", "--ACCURATE")),
+    ("cut_remove", PICTURE, "Cut out a range, keep the rest",
+     "cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.",
+     demo_cut_remove, "video", None, ("SOURCE", "--REMOVE 2-4")),
     ("cut_edit_list", PICTURE, "Lossless cut that starts where asked",
      "Both sides are stream copies of the same 2.05 s request. The default shifts the copy's timestamps to zero, so the keyframe's pre-roll plays first (start_snapped: true); --edit-list keeps the MP4 edit list that hides it, so the picture starts at 2.05 s (start_snapped: false, stored_preroll_seconds says how much is hidden). A player that ignores edit lists shows the pre-roll.",
      demo_cut_edit_list, "video", None, ("DEFAULT COPY", "--EDIT-LIST")),

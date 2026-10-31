@@ -261,6 +261,16 @@ python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 -
 
 **Look for:** Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.
 
+### Cut out a range, keep the rest
+
+![Cut out a range, keep the rest](demos/cut_remove.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --remove 2-4 --accurate --preset veryfast --json -o demos/out/cut_remove_after.mp4
+```
+
+**Look for:** cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.
+
 ### Lossless cut that starts where asked
 
 ![Lossless cut that starts where asked](demos/cut_edit_list.gif)
