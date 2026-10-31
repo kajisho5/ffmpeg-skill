@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from typing import Dict, List, Optional
 from _common.decision import escape_filter_path
-from _common.runner import STATE, _DRAWTEXT_PENDING, _drawtext_tmpdir, ffmpeg_exe, ffmpeg_release, ffmpeg_version, require_tool
+from _common.runner import STATE, _DRAWTEXT_PENDING, _drawtext_tmpdir, ffmpeg_exe, ffmpeg_release, require_tool
 
 
 def _on_windows() -> bool:
@@ -79,12 +79,9 @@ def drawtext_fontfile(path: str) -> str:
 
 
 def drawtext_boxborderw(vertical: int, horizontal: int) -> str:
-    """drawtext's per-side `boxborderw=top|right|bottom|left` (and the two-value `v|h` form)
-    arrived in FFmpeg 6.1; 5.x and 6.0 reject the `|` with "Error setting option boxborderw"
-    (found by the FFmpeg 5.1.1 CI job, #146). Older builds get the larger single value."""
-    if ffmpeg_version() >= (6, 1):
-        return f"{vertical}|{horizontal}"
-    return str(max(vertical, horizontal))
+    """drawtext's per-side `boxborderw` in its two-value `v|h` form (FFmpeg 6.1+, the floor since
+    3.0.0; 2.x gave 5.x and 6.0 the larger single value, which they needed)."""
+    return f"{vertical}|{horizontal}"
 
 
 # --------------------------------------------------------------------------- shaping (1.15)
@@ -184,9 +181,8 @@ def is_multiline(text: "Optional[str]") -> bool:
 
 def drawtext_center_align() -> str:
     """`:text_align=C` for a centred drawtext, so each line of a multi-line label is centred on
-    its own. The option arrived in FFmpeg 6.1 (5.x and 6.0 reject it); there the block is still
-    centred as a whole by its x expression, with its lines left-aligned inside it."""
-    return ":text_align=C" if ffmpeg_version() >= (6, 1) else ""
+    its own (FFmpeg 6.1+, the floor since 3.0.0)."""
+    return ":text_align=C"
 
 
 def drawtext_clean(text: "Optional[str]") -> str:

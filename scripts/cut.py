@@ -173,11 +173,10 @@ def least_exact(precisions: List[str]) -> str:
 def report_precision(meta: dict, dst: str, reencoded: bool, outcomes: List[dict]) -> dict:
     """The run's precision keys from its segments' outcomes.
 
-    precision         main's formula, unchanged: precision_of() for the whole run, so `packet` only
-                      when nothing re-encoded (the join included)
-    keyframe_snapped  precision == "packet": the run is a stream copy end to end, which lands on
-                      keyframes and packets. Kept with its 2.x meaning; whether a copied START
-                      really moved is start_snapped
+    precision         since 3.0.0, the least exact segment's precision (least_exact_precision);
+                      2.x reported precision_of() for the whole run
+    keyframe_snapped  since 3.0.0, start_snapped (a copied start really moved); 2.x reported
+                      "the run is a stream copy end to end" (precision_of() == "packet")
     start_snapped     measured: true when a copied segment's picture starts more than a frame from
                       its requested start; false when every start is where asked (an edit list, a
                       start on a keyframe, an audio-only copy's packet seek) or everything
@@ -186,7 +185,6 @@ def report_precision(meta: dict, dst: str, reencoded: bool, outcomes: List[dict]
                       an audio-only --segments join of copied and re-encoded parts (a video join
                       re-cuts every segment when any part re-encodes)
     segment_precision each segment's, for --segments (null for one segment)"""
-    precision = precision_of(meta, dst, reencoded)
     snaps = [o.get("start_snapped") for o in outcomes]
     if any(s is True for s in snaps):
         start_snapped = True
@@ -194,8 +192,11 @@ def report_precision(meta: dict, dst: str, reencoded: bool, outcomes: List[dict]
         start_snapped = None
     else:
         start_snapped = False
-    return {"precision": precision, "keyframe_snapped": precision == "packet", "start_snapped": start_snapped,
-            "least_exact_precision": least_exact([o["precision"] for o in outcomes]),
+    least = least_exact([o["precision"] for o in outcomes])
+    # 3.0.0: `precision` is the least exact segment's and `keyframe_snapped` says whether a copied
+    # start really moved (2.x: the run-level formula, and "the run is a stream copy end to end")
+    return {"precision": least, "keyframe_snapped": start_snapped, "start_snapped": start_snapped,
+            "least_exact_precision": least,
             "segment_precision": [o["precision"] for o in outcomes] if len(outcomes) > 1 else None}
 
 
@@ -1308,13 +1309,24 @@ def main() -> int:
                     help="the inverse of --segments: drop these ranges and keep the rest, joined in order "
                          "(e.g. '1:20-2:05,10:00-10:30'); overlapping ranges merge")
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
-    ap.add_argument("--edit-list", action="store_true", help="a single-segment .mp4/.mov stream copy keeps the MP4 edit list that hides the keyframe's pre-roll, so the picture starts at --start (default: -avoid_negative_ts make_zero, the picture starts at the keyframe); a player that ignores edit lists shows the pre-roll")
-    ap.add_argument("--keep-hevc", action="store_true", help="a re-encode of an SDR HEVC source stays HEVC (x265 8-bit BT.709; VideoToolbox under --hw) instead of x264 (default: x264 for SDR, x265 Main10 for HDR); --codec overrides it")
-    ap.add_argument("--vfr-guard", choices=["average", "sampled", "off"], default="average",
-                    help="what keeps a variable-frame-rate source from a stream copy (default average: a nominal rate "
-                         "that differs from the average re-encodes, as --accurate, and the sampled frame timing is "
-                         "reported; sampled: re-encode only when sampled packet timestamps are variable or too few "
-                         "to judge; off: measure and keep the copy, with a note)")
+    el = ap.add_mutually_exclusive_group()
+    el.add_argument("--edit-list", action="store_true",
+                    help="a single-segment .mp4/.mov stream copy keeps the MP4 edit list that hides the keyframe's pre-roll, "
+                         "so the picture starts at --start (the default since 3.0.0); a player that ignores edit lists shows the pre-roll")
+    el.add_argument("--no-edit-list", action="store_true",
+                    help="shift the copy's timestamps instead (-avoid_negative_ts make_zero, every 2.x release's default): "
+                         "the picture starts at the keyframe before --start")
+    kh = ap.add_mutually_exclusive_group()
+    kh.add_argument("--keep-hevc", action="store_true",
+                    help="a re-encode of an SDR HEVC source stays HEVC (x265 8-bit BT.709; VideoToolbox under --hw); "
+                         "the default since 3.0.0; --codec overrides it")
+    kh.add_argument("--no-keep-hevc", action="store_true",
+                    help="re-encode an SDR HEVC source with x264, as every 2.x release did (HDR still gets x265 Main10)")
+    ap.add_argument("--vfr-guard", choices=["average", "sampled", "off"], default="sampled",
+                    help="what keeps a variable-frame-rate source from a stream copy (default sampled since 3.0.0: re-encode "
+                         "only when sampled packet timestamps are variable or too few to judge; average, every 2.x "
+                         "release's default: a nominal rate that differs from the average re-encodes, as --accurate, "
+                         "and the sampled timing is reported; off: measure and keep the copy, with a note)")
     ap.add_argument("--tolerance", type=float, default=0.5, help="max seconds a lossless cut may deviate before re-encoding kicks in (default 0.5, -1 = never for a "
                          "keyframe snap; a --segments join is still re-cut for open GOPs, a later B-frame .mp4/.mov "
                          "segment starting between keyframes, or a failed join check)")
@@ -1340,7 +1352,9 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
     global KEEP_HEVC
-    KEEP_HEVC = args.keep_hevc
+    # 3.0.0 defaults: keep HEVC and the edit list unless the --no- form is given (--edit-list and
+    # --keep-hevc stay accepted, and now say what happens anyway)
+    KEEP_HEVC = not args.no_keep_hevc
 
     meta = probe(args.input)
     total = meta.get("duration") or 0.0
@@ -1492,7 +1506,7 @@ def main() -> int:
     join_check = None
     if len(segments) == 1:
         outcomes.append(cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta,
-                                edit_list_ok=args.edit_list))
+                                edit_list_ok=not args.no_edit_list))
     elif hold_needed or args.accurate:
         # Straight to one encode through the concat filter. A held frame needs the re-cut (no part
         # can carry it into a copy join); and when every part re-encodes anyway, encoding each on

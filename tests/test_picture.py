@@ -1117,8 +1117,8 @@ class PictureTests(MediaFixtures):
         and outlines included. Runs where drawtext is right (6.1+, not an affected release), so
         the single drawtext is the reference."""
         import _common
-        if _common.ffmpeg_version() < (6, 1) or _common.drawtext_draws_newline_glyph():
-            self.skipTest("needs y_align (6.1+) and a drawtext that draws multi-line text right")
+        if _common.drawtext_draws_newline_glyph():
+            self.skipTest("needs a drawtext that draws multi-line text right")
         shim = OUT / "ov_nl_shim"
         shim.mkdir(exist_ok=True)
         (shim / "ffprobe").write_text("#!/bin/sh\nif [ \"$1\" = \"-version\" ]; then printf 'ffprobe version 8.0.1\\n'; exit 0; fi\n"
@@ -4112,18 +4112,6 @@ class MultiLineDrawtextTests(unittest.TestCase):
         with open(path, "rb") as fh:
             self.assertEqual(fh.read(), b"one\ntwo\nthree")
 
-    def test_centred_lines_are_aligned_where_ffmpeg_can(self):
-        """drawtext's text_align arrived in FFmpeg 6.1; 5.x and 6.0 would reject it, and centre
-        the block as a whole with its lines left-aligned."""
-        import _common
-        saved = _common._FFMPEG_VERSION
-        try:
-            for version, expected in (((5, 1), ""), ((6, 0), ""), ((6, 1), ":text_align=C"), ((9, 0), ":text_align=C")):
-                _common._FFMPEG_VERSION = version
-                self.assertEqual(_common.drawtext_center_align(), expected, version)
-        finally:
-            _common._FFMPEG_VERSION = saved
-
     def _gray(self, path, at):
         raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(at), "-i", str(path), "-frames:v", "1",
                               "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, check=True).stdout
@@ -4167,8 +4155,7 @@ class MultiLineDrawtextTests(unittest.TestCase):
         for band in bands:
             self.assertLess(band[3], self.W - 1, "no line runs off the right edge")
             self.assertGreater(band[2], 0, "no line runs off the left edge")
-            if _common.ffmpeg_version() >= (6, 1):
-                self.assertAlmostEqual((band[2] + band[3]) / 2, self.W / 2, delta=6, msg=f"line {band} is centred")
+            self.assertAlmostEqual((band[2] + band[3]) / 2, self.W / 2, delta=6, msg=f"line {band} is centred")
         self.assertEqual(self._bands(self._gray(out, 3.0), top), [], "no text after the card's --duration")
 
 

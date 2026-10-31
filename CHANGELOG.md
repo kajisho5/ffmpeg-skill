@@ -6,6 +6,44 @@
 
 (nothing yet)
 
+## 3.0.0
+
+What 2.x announced for 3.0: the two deprecations in `contract --json`'s `deprecated` list
+(Python 3.9 since 2.10.9, FFmpeg 5.x since 2.14.0), and the `cut.py` defaults and key meanings
+recorded under "Decided for 3.0" in `docs/design-decisions.md`. No new tool; tool count still 42.
+`docs/contract.md` "What 3.0 changed" is the migration table; `contract --json` lists the removals
+under `removed` with the version that deprecated each, and `deprecated` is empty again.
+`contract_version` is 2.0. 3.0.0 ships before the 90-day half of the deprecation window passed;
+the waiver is written in `docs/contract.md`.
+
+### Removed
+
+- Running on FFmpeg 5.x (deprecated in 2.14.0). `requirements.ffmpeg` and `ffprobe` are `>=6.1`.
+  Every tool refuses an ffmpeg/ffprobe whose version it reads as older than 6.1 (`kind:
+  missing_tool`, `error.reason: ffmpeg_unsupported`, with install steps), instead of failing later
+  on an option the build lacks; a git or vendor build whose version cannot be read is not refused.
+  `doctor` lists it in a new `unsupported` key and reports `ok: false`; the npx installer prints the
+  same line. The 5.x-only spellings (`drawtext`'s single-value `boxborderw`, no `text_align`) and
+  CI's FFmpeg 5.1.1 static job are gone.
+- Running on Python 3.9 (deprecated in 2.10.9). `requirements.python` is `>=3.10`. The npx
+  installer skips an older interpreter (and warns when it finds no 3.10+); `doctor` reports an older
+  one as unsupported (`ok: false`). CI's floor job is 3.10.
+
+### Changed
+
+- `cut.py` keeps the MP4 edit list on a single `.mp4`/`.mov` stream copy by default, so the
+  picture and the sound start at `--start` (2.x shifted the timestamps with `-avoid_negative_ts
+  make_zero` and showed the keyframe's pre-roll). `--no-edit-list` restores 2.x; `--edit-list` is
+  still accepted.
+- `cut.py` re-encodes an SDR HEVC source as HEVC by default (2.x: x264). `--no-keep-hevc` restores
+  2.x; `--keep-hevc` is still accepted; `--codec` still overrides both.
+- `cut.py --vfr-guard` defaults to `sampled`: a stream copy is refused on measured packet timing,
+  not on the whole-file average rate (2.x's `average`, still available).
+- `cut.py`'s `precision` is the least exact segment's (it equals `least_exact_precision`, which
+  stays); 2.x reported the whole run's formula, which differed only for an audio-only `--segments`
+  join of copied and re-encoded parts. `keyframe_snapped` equals `start_snapped`: true only when a
+  copied start really moved, `null` under `--dry-run` (2.x: true for every stream copy end to end).
+
 ## 2.24.1
 
 _Automated release: version and notes generated from pull requests merged since 2.24.0._

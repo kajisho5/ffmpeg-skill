@@ -96,24 +96,10 @@ class DeliveryTests(MediaFixtures):
         part = OUT / "repair_part.ts"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *lavfi,
            "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-f", "mpegts", part)
-        if subprocess.run(["ffprobe", "-v", "error", "-show_format", str(part)], capture_output=True).returncode != 0:
-            # the johnvansickle static ffprobe builds (5.1.1, 7.0.2) segfault on any MPEG-TS file;
-            # MPEG-PS is the other container a recorder appends to, so the test still runs there
-            part = OUT / "repair_part.mpg"
-            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *lavfi,
-               "-c:v", "mpeg2video", "-c:a", "mp2", "-f", "mpeg", part)
         # the same recording appended to itself byte for byte, as a recorder that reconnected
-        # writes it: timestamps jump back (and in TS the continuity counters break)
-        src = OUT / ("repair_src" + part.suffix)
-        data = bytearray(part.read_bytes() * 2)
-        if part.suffix == ".mpg":
-            # 5.1.1 joins an appended program stream without a timestamp warning, so the PS copy
-            # also gets bytes flipped inside packs of the middle half (never a pack header): the
-            # MPEG-2 decoder names the damaged macroblocks in every version
-            packs = range(len(data) // 4 // 2048, 3 * len(data) // 4 // 2048)
-            for k in packs[::max(1, len(packs) // 20)]:
-                data[k * 2048 + 1024] ^= 0xFF
-        src.write_bytes(bytes(data))
+        # writes it: timestamps jump back and the continuity counters break
+        src = OUT / "repair_src.ts"
+        src.write_bytes(part.read_bytes() * 2)
         before = src.read_bytes()
         out = OUT / "repair_out.mp4"
         doc = json.loads(script("export.py", src, "--preset", "copy", "--repair", "-o", out, "--overwrite", "--json").stdout)

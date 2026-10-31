@@ -1,6 +1,6 @@
 # Runs on every pull request and on pushes to main (workflow_dispatch stays for manual runs).
 # The OSes give several FFmpeg majors: Ubuntu 24.04 apt = 6.1, Ubuntu 26.04 apt = 8.0.1, Homebrew = 8.x,
-# gyan.dev on Windows = 9.x (plus the 5.1.1 static and 7.1 Debian jobs below).
+# gyan.dev on Windows = 9.x (plus the 7.1 Debian job below).
 # The "ffmpeg listings" artifact holds each runner's `ffmpeg -filters / -encoders / -bsfs` output
 # and `doctor --json`, so a parser regression on a new FFmpeg layout is visible in the log and the
 # capture can be copied into tests/fixtures/.
@@ -30,16 +30,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.9"]
-        # The docs promise Python 3.9+; 3.9 is the floor and every OS runs it. One extra Linux
-        # job on the newest CPython proves the ceiling too (3.10-3.12 sit between the two; a
+        python: ["3.10"]
+        # The docs promise Python 3.10+ (3.0.0 removed 3.9); 3.10 is the floor and every OS runs it. One extra Linux
+        # job on the newest CPython proves the ceiling too (3.11-3.12 sit between the two; a
         # stdlib-only codebase that passes on both ends is very unlikely to break in the
         # middle). Linux only: it bills at 1x, macOS at 10x. See #146.
         include:
           - os: ubuntu-latest
             python: "3.13"
-    # ubuntu-latest is Ubuntu 26.04, which has no Python 3.9 build; keep 3.9 on the newest image that does
-    runs-on: ${{ matrix.python == '3.9' && startsWith(matrix.os, 'ubuntu') && 'ubuntu-24.04' || matrix.os }}
+    # ubuntu-latest is Ubuntu 26.04, whose setup-python builds start above 3.10; keep the floor on
+    # the newest image that has it (24.04, which also gives apt's FFmpeg 6.1, the FFmpeg floor)
+    runs-on: ${{ matrix.python == '3.10' && startsWith(matrix.os, 'ubuntu') && 'ubuntu-24.04' || matrix.os }}
     name: test (${{ matrix.os }}, py${{ matrix.python }})
     steps:
       - uses: actions/checkout@v7
@@ -117,74 +118,10 @@ jobs:
         if: "!cancelled()"
       - run: node bin/install.js
 
-  # The docs promise FFmpeg 5.0+; the matrix above only ever ran 6.1 (apt), 8.x (Homebrew) and
-  # 9.x (gyan.dev). These two Linux-only (1x cost) jobs pin the other two majors. Both are kept
-  # as plain jobs rather than matrix rows because each needs a different way of *getting*
-  # ffmpeg, and the 7.x one needs a different base image altogether. See #146.
+  # The docs promise FFmpeg 6.1+ (3.0.0 removed 5.x); the matrix above runs 6.1 (apt on Ubuntu
+  # 24.04), 8.x (Homebrew) and 9.x (gyan.dev). This Linux-only (1x cost) job pins 7.1, which
+  # needs a different base image altogether. See #146.
   #
-  # 5.1.1: John Van Sickle's static build (the same source the README recommends for Linux
-  # users without a recent apt). Verified locally before this job existed: doctor ok, the full
-  # contract and end-to-end suites pass. The tarball is pinned by version, not "release".
-  test-ffmpeg-5:
-    name: test (ubuntu-latest, py3.9, ffmpeg 5.1.1 static)
-    runs-on: ubuntu-24.04  # no Python 3.9 build for Ubuntu 26.04 (ubuntu-latest)
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.9"
-      # The tarball is pinned by version and never changes, so one download per runner image
-      # is enough: cache it, and only fetch when the cache is cold.
-      - name: Cache the ffmpeg 5.1.1 static tarball
-        id: ffcache
-        uses: actions/cache@v6
-        with:
-          path: ffmpeg.tar.xz
-          key: ffmpeg-5.1.1-amd64-static-tar-xz
-      - name: Install ffmpeg 5.1.1 (static) and fonts
-        run: |
-          sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
-          # johnvansickle.com is a single small host. Seen on 2026-09-12: a connect timeout
-          # ("Failed to connect ... after 132939 ms") and, an hour later, an HTTP 200 whose body
-          # was not an xz archive ("xz: (stdin): File format not recognized"). curl's --retry
-          # covers only the first, so verify the archive and retry the whole download until it
-          # is one, then fail loudly.
-          if [ "${{ steps.ffcache.outputs.cache-hit }}" != "true" ] || ! xz -t ffmpeg.tar.xz 2>/dev/null; then
-            ok=0
-            for attempt in 1 2 3 4 5 6; do
-              rm -f ffmpeg.tar.xz
-              curl -sSL --connect-timeout 30 --max-time 600 \
-                -o ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-5.1.1-amd64-static.tar.xz || true
-              if [ -s ffmpeg.tar.xz ] && xz -t ffmpeg.tar.xz 2>/dev/null; then ok=1; break; fi
-              echo "attempt $attempt: not a valid xz archive ($(stat -c %s ffmpeg.tar.xz 2>/dev/null || echo 0) bytes; $(head -c 120 ffmpeg.tar.xz 2>/dev/null | tr -d '\0' | tr '\n' ' ' | cut -c1-120)); retrying in 20 s"
-              sleep 20
-            done
-            [ "$ok" = 1 ] || { echo "::error::ffmpeg 5.1.1 static download failed after 6 attempts"; exit 1; }
-          else
-            echo "ffmpeg.tar.xz restored from cache"
-          fi
-          mkdir -p "$HOME/ffmpeg5" && tar -xJf ffmpeg.tar.xz -C "$HOME/ffmpeg5" --strip-components=1
-          echo "$HOME/ffmpeg5" >> "$GITHUB_PATH"
-      - name: ffmpeg version, listings and doctor
-        run: |
-          mkdir -p listings
-          ffmpeg -version | head -1 | tee listings/version.txt
-          ffmpeg -hide_banner -filters > listings/ffmpeg_filters.txt
-          ffmpeg -hide_banner -encoders > listings/ffmpeg_encoders.txt
-          ffmpeg -hide_banner -bsfs > listings/ffmpeg_bsfs.txt
-          python scripts/_contract.py doctor --json > listings/doctor.json || echo "doctor exit $?"
-          cat listings/doctor.json
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: ffmpeg-listings-ubuntu-latest-ffmpeg5
-          path: listings/
-      - run: python tests/run_parallel.py   # test_all.py's modules, sharded across the runner's cores
-      - run: python tests/test_contract.py
-        if: "!cancelled()"
-
   # 7.1.x: no maintained static build carries drawtext any more (John Van Sickle's 7.0.2 lacks
   # the filter; BtbN dropped 7.x), but Debian trixie's apt ffmpeg is 7.1 with libass, freetype
   # and zimg, so this job runs inside a trixie container. It also happens to give Python 3.13.

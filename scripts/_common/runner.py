@@ -271,6 +271,18 @@ def found_exe(name: str) -> str:
 def require_tool(name: str) -> str:
     """Return the absolute path of ffmpeg/ffprobe or exit with install steps."""
     path = ffmpeg_exe(name)[0] if name in ("ffmpeg", "ffprobe") else safe_which(name)
+    if path and name in ("ffmpeg", "ffprobe"):
+        # 3.0.0 removed FFmpeg 5.x (deprecated in 2.14.0) and the workarounds that kept it running:
+        # an older build that reports its version is refused before it can fail some other way.
+        # (0, 0) is an unreadable or git/vendor version and is not refused.
+        found = ffmpeg_version()
+        if found != (0, 0) and found < MIN_FFMPEG:
+            system = platform.system()
+            hint = INSTALL_HINTS.get(system, "  See https://ffmpeg.org/download.html")
+            die(f"FFmpeg {found[0]}.{found[1]} is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
+                f"2.14.0): use FFmpeg 6.1+. Install it for {system}:\n{hint}",
+                code=127, kind="missing_tool",
+                error_extra={"reason": "ffmpeg_unsupported", "details": {"version": f"{found[0]}.{found[1]}", "required": "6.1"}})
     if path:
         return path
     system = platform.system()
@@ -281,6 +293,9 @@ def require_tool(name: str) -> str:
         code=127, kind="missing_tool",
     )
     return ""  # unreachable
+
+
+MIN_FFMPEG = (6, 1)   # requirements.ffmpeg since 3.0.0 (_contract.MIN_FFMPEG is the same floor)
 
 
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo")

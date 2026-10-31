@@ -1077,23 +1077,15 @@ class ContractTests(unittest.TestCase):
             rv.resolve("1.0.3", ["Fix y (#152)", "Big (#154)"], labels({152: ["fix"], 154: ["major"]}))
 
     # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
-    def test_drawtext_boxborderw_spelling_follows_the_ffmpeg_version(self):
-        """drawtext's per-side `boxborderw=v|h` arrived in FFmpeg 6.1; 5.x and 6.0 reject the
-        `|` outright ("Error setting option boxborderw"), which is how graphics.py's chapter and
-        bug templates failed on the 5.1.1 CI job (#146). The helper picks the spelling from the
-        parsed `ffmpeg -version`; pinned here with the version forced, so the rule survives
-        without a 5.x binary on the machine running the tests."""
-        saved = _common._FFMPEG_VERSION
-        try:
-            for version, expected in (((5, 1), "16"), ((6, 0), "16"), ((6, 1), "9|16"), ((7, 1), "9|16"), ((0, 0), "16")):
-                _common._FFMPEG_VERSION = version
-                self.assertEqual(_common.drawtext_boxborderw(9, 16), expected, version)
-        finally:
-            _common._FFMPEG_VERSION = saved
+    def test_drawtext_uses_the_6_1_spellings(self):
+        """FFmpeg 6.1 is the floor since 3.0.0, so drawtext's per-side `boxborderw=v|h` and
+        `text_align` are used on every build (2.x fell back to a single value and no alignment on
+        5.x/6.0, which rejected both); the real ffmpeg on PATH still parses to a sane version."""
+        self.assertEqual(_common.drawtext_boxborderw(9, 16), "9|16")
+        self.assertEqual(_common.drawtext_center_align(), ":text_align=C")
         _common._FFMPEG_VERSION = None
         major, minor = _common.ffmpeg_version()
-        self.assertGreaterEqual(major, 5, "the real ffmpeg on PATH must parse to a sane version")
-        self.assertIn(_common.drawtext_boxborderw(9, 16), ("16", "9|16"))
+        self.assertTrue((major, minor) == (0, 0) or (major, minor) >= (6, 1), (major, minor))
 
     def test_skill_frontmatter_is_strict_yaml(self):
         """The description used to be an unquoted scalar containing ": " ("...natural-language
@@ -1428,7 +1420,8 @@ class ContractTests(unittest.TestCase):
         removed = self.contract["removed"]
         self.assertTrue(removed)
         for entry in removed:
-            self.assertEqual(entry["removed_in"], "2.0.0")
+            self.assertIn(entry["removed_in"], ("2.0.0", "3.0.0"))
+            self.assertLessEqual(int(entry["removed_in"].split(".")[0]), pkg_major)
         for surface in ("cli", "json", "mcp", "behaviour"):
             self.assertIn(surface, [e["where"] for e in removed])
 
@@ -1440,9 +1433,14 @@ class ContractTests(unittest.TestCase):
         text = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
         section = text.split("| What changed in 2.0.0 | Deprecated in |", 1)[1].split("\n\n", 1)[0]
         rows = [r for r in section.splitlines()[1:] if r.startswith("| ")]
-        self.assertEqual(len(rows), len(_contract.REMOVED))
-        for row, entry in zip(rows, _contract.REMOVED):
+        removed_2 = [e for e in _contract.REMOVED if e["removed_in"] == "2.0.0"]
+        self.assertEqual(len(rows), len(removed_2))
+        for row, entry in zip(rows, removed_2):
             self.assertTrue(row.split(" | ")[1].strip().startswith(entry["since"]), row[:80])
+        # "What 3.0 changed" names each 3.0.0 removal with the version that deprecated it
+        section3 = text.split("## What 3.0 changed", 1)[1].split("\n## ", 1)[0]
+        for entry in (e for e in _contract.REMOVED if e["removed_in"] == "3.0.0"):
+            self.assertTrue(any(entry["since"] in r for r in section3.splitlines() if r.startswith("| ")), entry["what"])
         example = re.search(r'"removed": \[\{"what": "\.\.\.", "since": "([^"]+)"', text)
         self.assertIsNotNone(example, "docs/contract.md: removed example not found")
         self.assertIn(example.group(1), {e["since"] for e in _contract.REMOVED})
@@ -1452,10 +1450,10 @@ class ContractTests(unittest.TestCase):
     # are what that major's own PR is checked against.
     # None: not released yet. Set it to the tag date when that version ships; a major bump fails
     # while it is None, because the 90-day window cannot be counted from an unknown date.
-    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": None}
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24"}
     # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
     # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
-    WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**"}
+    WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**", 3: "**3.0.0 waived the 90-day half of step 2.**"}
 
     def test_major_release_waits_for_the_deprecation_window(self):
         """docs/contract.md "Deprecation policy" step 2: keep a deprecated form for at least two
@@ -1829,128 +1827,92 @@ class ContractTests(unittest.TestCase):
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
-    def test_python_3_9_is_deprecated_on_every_surface(self):
-        """2.10.9 deprecates Python 3.9 per docs/contract.md's policy: an entry in `deprecated`
-        (removed in 3.0.0), the floor unchanged (3.9 still runs), and one identical warning line from
-        doctor (Python) and the npx installer (Node)."""
-        entry = [e for e in self.contract["deprecated"] if "Python 3.9" in e["what"]]
-        self.assertEqual(len(entry), 1)
-        self.assertEqual((entry[0]["since"], entry[0]["removed_in"], entry[0]["where"]), ("2.10.9", "3.0.0", "behaviour"))
-        self.assertIn("3.10", entry[0]["replacement"])
-        self.assertTrue(self.contract["requirements"]["python"].startswith(">=3.9 "), "the hard floor stays 3.9 until 3.0")
-        self.assertIn("deprecated", self.contract["requirements"]["python"])
-        self.assertEqual(_contract.python_deprecation((3, 9, 18)), _contract.PY39_DEPRECATION)
-        for vi in ((3, 10, 0), (3, 13, 1), (3, 8, 10)):
-            self.assertIsNone(_contract.python_deprecation(vi), vi)
-        line = _contract.PY39_DEPRECATION
-        self.assertTrue(line.startswith("warning: ") and "\n" not in line)
-        for needle in ("3.0", "3.10+"):
-            self.assertIn(needle, line)
+    def test_3_0_removed_python_3_9_and_ffmpeg_5_on_every_surface(self):
+        """3.0.0 settles the 2.10.9 (Python 3.9) and 2.14.0 (FFmpeg 5.x) deprecations: both move from
+        `deprecated` to `removed`, the floors are 3.10 and 6.1, doctor and the npx installer print
+        the same FFmpeg line, and CI no longer runs 3.9 or a 5.x build."""
+        self.assertEqual(self.contract["deprecated"], [])
+        removed = {e["what"]: e for e in self.contract["removed"] if e["removed_in"] == "3.0.0"}
+        py = next(e for w, e in removed.items() if "Python 3.9" in w)
+        ff = next(e for w, e in removed.items() if "FFmpeg 5.x" in w)
+        self.assertEqual((py["since"], py["where"]), ("2.10.9", "behaviour"))
+        self.assertEqual((ff["since"], ff["where"]), ("2.14.0", "behaviour"))
+        self.assertTrue(self.contract["requirements"]["python"].startswith(">=3.10 "))
+        self.assertEqual((self.contract["requirements"]["ffmpeg"], self.contract["requirements"]["ffprobe"]), (">=6.1", ">=6.1"))
+        for vi, unsupported in (((3, 9, 18), True), ((3, 8, 10), True), ((3, 10, 0), False), ((3, 13, 1), False)):
+            self.assertEqual(_contract.python_unsupported(vi) is not None, unsupported, vi)
+        for version, unsupported in (("5.1.1-static", True), ("6.0", True), ("n5.1.6", True),
+                                     ("6.1.1-3ubuntu5", False), ("8.0.1", False), ("N-12345-gabcdef", False), (None, False)):
+            self.assertEqual(_contract.ffmpeg_unsupported(version) is not None, unsupported, version)
         js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
-        self.assertIn(f"const PY39_DEPRECATION = '{line}';", js, "install.js must print the same line as doctor")
-        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn('python: ["3.9"]', ci, "deprecating 3.9 does not drop it from CI before 3.0")
-        for doc in ("README.md", "docs/contract.md", "CONTRIBUTING.md", "SKILL.md"):
-            text = (ROOT / doc).read_text(encoding="utf-8")
-            self.assertRegex(text, r"3\.9[^\n]*deprecated|deprecated[^\n]*3\.9", doc)
-
-    def test_ffmpeg_5_is_deprecated_on_every_surface(self):
-        """2.14.0 deprecates FFmpeg 5.x like Python 3.9: an entry in `deprecated` (removed in
-        3.0.0), the floor unchanged (5.0 still runs, CI keeps its 5.1.1 job), and one identical
-        warning line from doctor (Python) and the npx installer (Node), only for a 5.x release."""
-        entry = [e for e in self.contract["deprecated"] if "FFmpeg 5.x" in e["what"]]
-        self.assertEqual(len(entry), 1)
-        self.assertEqual((entry[0]["since"], entry[0]["removed_in"], entry[0]["where"]), ("2.14.0", "3.0.0", "behaviour"))
-        self.assertIn("6.1", entry[0]["replacement"])
-        self.assertTrue(self.contract["requirements"]["ffmpeg"].startswith(">=5.0 "), "the hard floor stays 5.0 until 3.0")
-        self.assertIn("deprecated", self.contract["requirements"]["ffmpeg"])
-        line = _contract.FFMPEG5_DEPRECATION
-        self.assertTrue(line.startswith("warning: ") and "\n" not in line)
-        for needle in ("2.14.0", "3.0.0", "6.1+"):
-            self.assertIn(needle, line)
-        for version in ("5.1.1-static", "5.0", "n5.1.6", "5.1.6-0+deb12u1"):
-            self.assertEqual(_contract.ffmpeg_deprecation(version), line, version)
-        for version in ("6.1.1-3ubuntu5", "8.0.1", "4.4.2", "N-12345-gabcdef", "unknown", None):
-            self.assertIsNone(_contract.ffmpeg_deprecation(version), version)
-        js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
-        self.assertIn(f"const FFMPEG5_DEPRECATION = '{line}';", js, "install.js must print the same line as doctor")
-        probe = self.out("ffmpeg_dep_probe.js")
+        self.assertIn(f"const FFMPEG_UNSUPPORTED = '{_contract.FFMPEG_UNSUPPORTED}';", js, "install.js must print the same line as doctor")
+        self.assertIn("sys.version_info >= (3, 10)", js)
+        probe = self.out("ffmpeg_floor_probe.js")
         probe.write_text(
             "const inst = require(process.argv[2]);\n"
-            "const cases = [['ffmpeg version 5.1.1-static https://johnvansickle.com/ffmpeg/  Copyright', true],\n"
-            "  ['ffmpeg version n5.0 Copyright (c) 2000-2022', true], ['ffmpeg version 6.1.1-3ubuntu5 Copyright', false],\n"
-            "  ['ffmpeg version N-12345-gabcdef Copyright', false], ['', false], [undefined, false]];\n"
-            "for (const [l, want] of cases) if ((inst.ffmpegDeprecation(l) === inst.FFMPEG5_DEPRECATION) !== want) process.exit(2);\n",
+            "const cases = [['ffmpeg version 5.1.1-static https://johnvansickle.com/ffmpeg/  Copyright', '5.1'],\n"
+            "  ['ffmpeg version 6.0 Copyright', '6.0'], ['ffmpeg version 6.1.1-3ubuntu5 Copyright', null],\n"
+            "  ['ffmpeg version N-12345-gabcdef Copyright', null], ['', null], [undefined, null]];\n"
+            "for (const [l, v] of cases) { const got = inst.ffmpegUnsupported(l);\n"
+            "  if (v === null ? got !== null : got !== inst.FFMPEG_UNSUPPORTED.replace('{v}', v)) process.exit(2); }\n",
             encoding="utf-8")
         proc = subprocess.run(["node", str(probe), str(ROOT / "bin" / "install.js")],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn("ffmpeg-5.1.1", ci, "deprecating 5.x does not drop its CI job before 3.0")
-        for doc in ("README.md", "docs/contract.md"):
+        self.assertNotIn('"3.9"', ci)
+        self.assertNotIn("ffmpeg-5", ci)
+        for doc in ("README.md", "SKILL.md", "CONTRIBUTING.md", "docs/contract.md"):
             text = (ROOT / doc).read_text(encoding="utf-8")
-            self.assertRegex(text, r"FFmpeg 5\.x[^\n]*deprecated", doc)
+            self.assertNotRegex(text, r"3\.9[^\n]*(still works|deprecated)|FFmpeg 5\.x[^\n]*(still works|is deprecated)", doc)
 
-    def test_doctor_prints_the_ffmpeg_5_warning_on_stderr_only(self):
+    def test_doctor_reports_an_unsupported_python_or_ffmpeg_and_fails(self):
+        """3.0.0: below the floor is a broken install. doctor's `unsupported` lists the line,
+        `ok` is false, and the line goes to stderr so `doctor --json` stays one JSON document."""
         import contextlib
         import io
         from unittest import mock
-        for version, expect in (("5.1.1-static", True), ("6.1.1-3ubuntu5", False), (None, False)):
-            fake = {"ffmpeg_security": {"warnings": []}, "ok": True, "missing": [], "ffmpeg": version}
+        for vi, version, bad in (((3, 9, 18, "final", 0), "6.1.1", True), ((3, 12, 1, "final", 0), "5.1.1-static", True),
+                                 ((3, 12, 1, "final", 0), "6.1.1", False)):
+            with mock.patch.object(sys, "version_info", vi):
+                lines = [x for x in (_contract.python_unsupported(), _contract.ffmpeg_unsupported(version)) if x]
+            self.assertEqual(bool(lines), bad, (vi, version))
+            fake = {"ffmpeg_security": {"warnings": []}, "ok": not lines, "missing": [], "unsupported": lines}
             out, err = io.StringIO(), io.StringIO()
             with mock.patch.object(_contract, "doctor", return_value=fake), \
                     mock.patch.object(sys, "argv", ["_contract.py", "doctor", "--json"]), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = _contract.main()
-            self.assertEqual(code, 0)
             self.assertEqual(json.loads(out.getvalue()), fake)
-            self.assertEqual(_contract.FFMPEG5_DEPRECATION in err.getvalue(), expect, version)
+            for line in lines:
+                self.assertIn(line, err.getvalue())
+            self.assertEqual(code != 0, bad, (vi, version))
+        real = _contract.doctor()
+        self.assertIn("unsupported", real)
+        if real["unsupported"]:
+            self.assertFalse(real["ok"])
 
-    def test_doctor_prints_the_python_3_9_warning_on_stderr_only(self):
-        """Deprecation warnings go to stderr (policy step 1), never into stdout: `doctor --json`
-        stays one JSON document, with no key that exists only on 3.9."""
-        import contextlib
-        import io
-        from unittest import mock
-        fake = {"ffmpeg_security": {"warnings": []}, "ok": True, "missing": []}
-        for vi, expect in (((3, 9, 18, "final", 0), True), ((3, 12, 1, "final", 0), False)):
-            out, err = io.StringIO(), io.StringIO()
-            with mock.patch.object(_contract, "doctor", return_value=fake), \
-                    mock.patch.object(sys, "argv", ["_contract.py", "doctor", "--json"]), \
-                    mock.patch.object(sys, "version_info", vi), \
-                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = _contract.main()
-            self.assertEqual(code, 0)
-            self.assertEqual(json.loads(out.getvalue()), fake)
-            self.assertEqual(_contract.PY39_DEPRECATION in err.getvalue(), expect, vi)
-
-    def test_installer_warns_once_on_python_3_9(self):
-        """bin/install.js reads major.minor from its interpreter probe and prints the deprecation
-        line after an install on 3.9; nothing on 3.10+, nor when the probe printed no version."""
-        probe = self.out("python_dep_probe.js")
-        probe.write_text(
-            "const inst = require(process.argv[2]);\n"
-            "function stubFor(ver) { return (cmd, args) => (args[0] === '-c' ? { status: 0, error: null, stdout: ver } : { status: 0 }); }\n"
-            "const seen = [];\n"
-            "const warn = (l) => seen.push(l);\n"
-            "if (inst.findPython('linux', stubFor('3.9')).version !== '3.9') process.exit(2);\n"
-            "if (inst.warnDeprecatedPython('linux', stubFor('3.9'), warn) !== inst.PY39_DEPRECATION) process.exit(3);\n"
-            "if (seen.length !== 1 || !seen[0].includes(inst.PY39_DEPRECATION)) process.exit(4);\n"
-            "if (inst.warnDeprecatedPython('linux', stubFor('3.10'), warn) !== null) process.exit(5);\n"
-            "if (inst.warnDeprecatedPython('linux', stubFor(undefined), warn) !== null) process.exit(6);\n"
-            "if (inst.warnDeprecatedPython('linux', () => ({ error: new Error('ENOENT'), status: null }), warn) !== null) process.exit(7);\n"
-            "if (seen.length !== 1) process.exit(8);\n"
-            "const ran = inst.runWithPython(['doctor'], 'linux', stubFor('3.9'));\n"
-            "if (ran.missing || ran.status !== 0) process.exit(9);\n",
-            encoding="utf-8")
-        proc = subprocess.run(["node", str(probe), str(ROOT / "bin" / "install.js")],
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
-        # the real probe prints this interpreter's major.minor
-        found = subprocess.run(["node", "-e", "console.log(JSON.stringify(require(process.argv[1]).findPython(process.platform)))",
-                                str(ROOT / "bin" / "install.js")], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if found.returncode == 0 and found.stdout.strip() and "missing" not in found.stdout:
-            self.assertRegex(json.loads(found.stdout)["version"], r"^3\.\d+$")
+    def test_every_tool_refuses_an_ffmpeg_older_than_6_1(self):
+        """3.0.0: an ffprobe that reports 5.1 makes the first ffmpeg/ffprobe lookup refuse with
+        kind missing_tool and reason ffmpeg_unsupported; a git build's unreadable version is not refused."""
+        src = self.out("floor_src.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=64x48:d=1", src)
+        for banner, refused in (("ffprobe version 5.1.1 Copyright", True), ("ffprobe version N-12345-gabcdef Copyright", False)):
+            shim = self.out("floor_shim_" + ("old" if refused else "git"))
+            shim.mkdir(exist_ok=True)
+            if os.name == "nt":
+                self.skipTest("the ffprobe shim is a POSIX shell script")
+            real = shutil.which("ffprobe")
+            (shim / "ffprobe").write_text(f'#!/bin/sh\nif [ "$1" = "-version" ]; then echo "{banner}"; exit 0; fi\nexec "{real}" "$@"\n', encoding="utf-8")
+            (shim / "ffprobe").chmod(0o755)
+            env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "probe.py"), str(src)], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, env=env)
+            if refused:
+                self.assertEqual(proc.returncode, 127, proc.stderr)
+                self.assertIn("not supported since ffmpeg-skill 3.0.0", proc.stderr)
+            else:
+                self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_npm_package_omits_the_maintainer_diary(self):
         """docs/design-decisions.md: references/process-pitfalls.md stays out of the npm package.

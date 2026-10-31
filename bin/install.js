@@ -44,32 +44,27 @@ if (has('--help') || has('-h')) {
 // Windows Python installers commonly expose `python`/`py`, not `python3`. The Microsoft Store
 // app-execution alias is a real python3.exe that spawns (no ENOENT) and exits non-zero, so a
 // missing `error` is not proof an interpreter ran. Probe with a version check, then fall through.
-// The probe also prints major.minor, so the installer can warn about a deprecated interpreter.
-const PYTHON_PROBE = ['-c', "import sys; sys.stdout.write('%d.%d' % sys.version_info[:2]); raise SystemExit(0 if sys.version_info >= (3, 9) else 1)"];
+// The probe also prints major.minor. 3.0.0 removed Python 3.9 (deprecated in 2.10.9): an older
+// interpreter fails the probe, so it is skipped like a missing one.
+const PYTHON_PROBE = ['-c', "import sys; sys.stdout.write('%d.%d' % sys.version_info[:2]); raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"];
 
-// 2.10.9 deprecates Python 3.9 (docs/contract.md "Deprecation policy"; `contract --json`'s
-// `deprecated`). The same line as scripts/_contract.py's PY39_DEPRECATION (a test keeps them equal).
-const PY39_DEPRECATION = 'warning: Python 3.9 is deprecated since ffmpeg-skill 2.10.9 (CPython 3.9 reached end of life in October 2025 and gets no security fixes); it still works in 2.x and support ends in 3.0.0: use Python 3.10+.';
+// 3.0.0 removed FFmpeg 5.x (deprecated in 2.14.0). The same line as scripts/_contract.py's
+// FFMPEG_UNSUPPORTED (a test keeps them equal); every tool refuses such a build at run time.
+const FFMPEG_UNSUPPORTED = 'error: FFmpeg {v} is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in 2.14.0): use FFmpeg 6.1+.';
 
-function pythonDeprecation(version) {
-  return version === '3.9' ? PY39_DEPRECATION : null;
-}
-
-// 2.14.0 deprecates FFmpeg 5.x the same way. The same line as scripts/_contract.py's
-// FFMPEG5_DEPRECATION (a test keeps them equal).
-const FFMPEG5_DEPRECATION = 'warning: FFmpeg 5.x is deprecated since ffmpeg-skill 2.14.0 (the 5.x branches date from 2022; Ubuntu 24.04 ships 6.1); it still works in 2.x and support ends in 3.0.0: use FFmpeg 6.1+.';
-
-// The line for `ffmpeg -version`'s first line, or null (not 5.x, or not a release number).
-function ffmpegDeprecation(versionLine) {
-  const m = /^ffmpeg version n?(\d+)\.\d+/.exec(versionLine || '');
-  return m && m[1] === '5' ? FFMPEG5_DEPRECATION : null;
+// The line for `ffmpeg -version`'s first line, or null (6.1 or later, or not a release number).
+function ffmpegUnsupported(versionLine) {
+  const m = /^ffmpeg version n?(\d+)\.(\d+)/.exec(versionLine || '');
+  if (!m) return null;
+  const major = Number(m[1]), minor = Number(m[2]);
+  return major < 6 || (major === 6 && minor < 1) ? FFMPEG_UNSUPPORTED.replace('{v}', `${major}.${minor}`) : null;
 }
 
 function pythonCandidates(platform) {
   return platform === 'win32' ? ['python3', 'python', 'py'] : ['python3'];
 }
 
-// The first candidate that runs and is 3.9+: { cmd, version } (version "3.9", or null when the
+// The first candidate that runs and is 3.10+: { cmd, version } (version "3.12", or null when the
 // probe printed nothing), or { missing: true, ... } when none is.
 function findPython(platform, spawn) {
   const candidates = pythonCandidates(platform);
@@ -93,12 +88,12 @@ function runWithPython(scriptArgs, platform, spawn) {
   return (spawn || spawnSync)(py.cmd, scriptArgs, { stdio: 'inherit' });
 }
 
-// After an install: the one-line deprecation warning when the Python the skill will run on is 3.9.
-// `doctor` prints the same line itself (from Python), so it is not repeated for that subcommand.
-function warnDeprecatedPython(platform, spawn, warn) {
+// After an install: say so when no Python 3.10+ is on PATH, since every script needs one.
+function warnMissingPython(platform, spawn, warn) {
   const py = findPython(platform, spawn);
-  const line = py.missing ? null : pythonDeprecation(py.version);
-  if (line) (warn || console.warn)(`\n  ${line}`);
+  if (!py.missing) return null;
+  const line = `warning: no Python 3.10+ interpreter was found (tried: ${py.candidates.join(', ')}); the skill's scripts need one (3.0.0 removed Python 3.9).`;
+  (warn || console.warn)(`\n  ${line}`);
   return line;
 }
 
@@ -107,7 +102,7 @@ function main() {
 if (args[0] === 'contract' || args[0] === 'doctor') {
   const py = runWithPython([path.join(ROOT, 'scripts', '_contract.py'), ...args], process.platform, spawnSync);
   if (py.missing) {
-    console.error(`error: could not find a Python 3.9+ interpreter (tried: ${py.candidates.join(', ')}). Install Python 3.9+ and ensure it is on PATH.`);
+    console.error(`error: could not find a Python 3.10+ interpreter (tried: ${py.candidates.join(', ')}). Install Python 3.10+ and ensure it is on PATH.`);
     process.exit(127);
   }
   process.exit(py.error ? 127 : (py.status == null ? 1 : py.status));
@@ -158,7 +153,7 @@ function checkFfmpeg() {
   }
   const first = r.stdout.split('\n')[0];
   console.log(`  found ${first}`);
-  const line = ffmpegDeprecation(first);
+  const line = ffmpegUnsupported(first);
   if (line) console.warn(`\n  ${line}`);
   return true;
 }
@@ -214,7 +209,7 @@ for (const t of targets) {
 
 if (!has('--uninstall')) {
   checkFfmpeg();
-  warnDeprecatedPython(process.platform, spawnSync);
+  warnMissingPython(process.platform, spawnSync);
   console.log('\nDone. Ask your agent things like "make this video 60 seconds and add captions".');
 }
 process.exit(failed ? 1 : 0);
@@ -224,4 +219,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { pythonCandidates, runWithPython, findPython, pythonDeprecation, warnDeprecatedPython, PY39_DEPRECATION, ffmpegDeprecation, FFMPEG5_DEPRECATION };
+module.exports = { pythonCandidates, runWithPython, findPython, warnMissingPython, ffmpegUnsupported, FFMPEG_UNSUPPORTED, PYTHON_PROBE };
