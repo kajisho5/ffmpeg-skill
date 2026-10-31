@@ -25,7 +25,10 @@ duration that is black: WARN > 10%, FAIL >= 95%), frozen (longest frozen span: W
 max(3 s, 30% of the duration), FAIL when the whole video is frozen) and silence (share
 below -50 dBFS: WARN > 50%, FAIL >= 95%); and, from one more audio-only pass (2.17),
 dropouts (gaps of digital silence, <= -80 dBFS for 20 ms to 1 s with sound on both sides:
-WARN when there is any). Without it the row set is unchanged.
+WARN when there is any); and, from one more video pass and a one-frame decode (2.23), flashes
+(single frames that differ from both neighbours while they match each other: WARN when there is
+any) and first frame (one flat colour, the frame a feed's autoplay shows first: WARN). Without it
+the row set is unchanged.
 """
 import argparse
 import json
@@ -35,7 +38,7 @@ from fractions import Fraction
 from typing import Any, Dict, List
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS, detect_content, measured_level_dbfs
+from _common.probe import CONTENT_FLAT_STD, SILENT_PEAK_DBFS, detect_content, detect_flashes, first_frame_stats, measured_level_dbfs
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -91,7 +94,7 @@ def main() -> int:
     ap.add_argument("--max-mb", type=float, help="override max file size in MB")
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
-                    help="also check the content (one decode pass, plus an audio-only one): black, frozen, silence and dropouts rows")
+                    help="also check the content (one decode pass, plus an audio-only and a video-only one): black, frozen, silence, dropouts, flashes and first frame rows")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -284,6 +287,23 @@ def main() -> int:
                 f"longest {longest:.1f}s", f"<= {limit:.1f}s frozen",
                 "look.py the frozen span: a still title card is fine, a stuck decode is not",
                 reason="a picture that never changes is usually a stuck frame, not the edit")
+        if v:
+            first = first_frame_stats(args.input)
+            if first is not None:
+                mean, spread = first
+                flat = spread < CONTENT_FLAT_STD
+                row("first frame", "WARN" if flat else "PASS", f"luma {mean:.0f}, spread {spread:.1f}",
+                    f"spread >= {CONTENT_FLAT_STD:g} (not one flat colour)",
+                    "a fade from black is a choice; where autoplay or the preview shows the first frame, start on "
+                    "a picture (cut.py --start a few frames in, or move a title card to frame 0)" if flat else "",
+                    reason="a feed shows the first frame before anything plays, and a flat one reads as a broken upload" if flat else "")
+            flashes = detect_flashes(args.input, float(v.get("fps") or 0.0))
+            at = ", ".join(f"{t:.2f}s" for t in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
+            row("flashes", "WARN" if flashes else "PASS", f"{len(flashes)}" + (f": {at}" if flashes else ""),
+                "no single frame unlike both its neighbours",
+                "look.py at those times: a stray frame at a cut or join is an edit error (re-cut with cut.py "
+                "--accurate, or join.py again); a camera flash or a strobe in the footage is fine" if flashes else "",
+                reason="one frame that matches neither neighbour is usually a frame left over at a cut, or a decode glitch" if flashes else "")
         if "silence" in cd and span:
             share = _span_total(cd["silence"]) / span
             row("silence", "FAIL" if share >= SILENCE_FAIL else ("WARN" if share > SILENCE_WARN else "PASS"),

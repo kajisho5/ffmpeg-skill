@@ -303,13 +303,39 @@ class AnalysisTests(MediaFixtures):
                "-f", "lavfi", "-i", tone + ",volume=enable='gte(t,2)':volume=0", "-t", "6",
                "-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac", mixed)
         r = self._rows(normal, "--content")
-        self.assertEqual([r[k]["status"] for k in ("black", "frozen", "silence", "dropouts")], ["PASS"] * 4, r)
+        self.assertEqual([r[k]["status"] for k in ("black", "frozen", "silence", "dropouts", "first frame", "flashes")],
+                         ["PASS"] * 6, r)
         self.assertEqual(self._rows(black, "--content")["black"]["status"], "FAIL")
         self.assertEqual(self._rows(frozen, "--content")["frozen"]["status"], "FAIL")
         self.assertEqual(self._rows(part, "--content")["frozen"]["status"], "WARN")
         self.assertEqual(self._rows(silent, "--content")["silence"]["status"], "FAIL")
         r = self._rows(mixed, "--content")
         self.assertEqual((r["black"]["status"], r["silence"]["status"]), ("WARN", "WARN"), r)
+
+    def test_check_content_flashes_and_first_frame_rows(self):
+        """2.23: one frame unlike both neighbours (which match each other) is a flashes WARN with its
+        time; a hard cut, a cut away and back after several frames, and moving footage are not. A
+        first frame of one flat colour (a black lead-in) is a first-frame WARN. Fast motion, where every
+        frame jumps as far as a flash does, is not a flash because its frames never return. Neither row FAILs:
+        a strobe or a fade from black can be the edit."""
+        tone = "sine=frequency=440:sample_rate=48000"
+        moving = "testsrc2=size=160x90:rate=10"
+        flash = self._content_clip("content_flash.mp4", moving + ",drawbox=t=fill:color=white:enable='eq(n,15)'", tone)
+        away = self._content_clip("content_cut_away.mp4", moving + ",drawbox=t=fill:color=red:enable='between(n,15,18)'", tone)
+        cut = self._content_clip("content_hard_cut.mp4", moving + ",drawbox=t=fill:color=navy:enable='gte(n,30)'", tone)
+        lead = self._content_clip("content_black_lead.mp4", moving + ",drawbox=t=fill:color=black:enable='lt(n,3)'", tone)
+        # every frame jumps as far as a flash does, but never comes back: the neighbour rule keeps it out
+        whip = self._content_clip("content_whip.mp4", moving + ",scroll=horizontal=0.13", tone)
+        r = self._rows(flash, "--content")
+        self.assertEqual(r["flashes"]["status"], "WARN", r["flashes"])
+        self.assertTrue(r["flashes"]["value"].startswith("1: 1.50s"), r["flashes"])
+        self.assertIn("join", r["flashes"]["fix"])
+        for clip in (away, cut, lead, whip):
+            self.assertEqual(self._rows(clip, "--content")["flashes"]["status"], "PASS", clip)
+        r = self._rows(lead, "--content")
+        self.assertEqual(r["first frame"]["status"], "WARN", r["first frame"])
+        self.assertEqual(self._rows(cut, "--content")["first frame"]["status"], "PASS")
+        self.assertNotIn("flashes", self._rows(flash))  # opt-in: the default row set is unchanged
 
     def test_check_content_dropouts_row(self):
         """2.17: a short run of digital silence with sound on both sides (lost audio at a join) is a

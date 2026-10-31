@@ -54,6 +54,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.20 — a length or a silence is checked against a yardstick the tool did not make](#220--a-length-or-a-silence-is-checked-against-a-yardstick-the-tool-did-not-make)
 - [2.21.1 — a stream that ends early or decodes nothing fails the check](#2211--a-stream-that-ends-early-or-decodes-nothing-fails-the-check)
 - [2.22 — silence.py says where it cut, and where to listen](#222--silencepy-says-where-it-cut-and-where-to-listen)
+- [2.23 — check.py --content's flashes and first-frame rows](#223--checkpy---contents-flashes-and-first-frame-rows)
 <!-- contents:end -->
 
 ## Time limits
@@ -2306,3 +2307,27 @@ What was decided there:
 - **`--timemap` is an artifact, like `--edl`.** It is written beside the cut and not under
   `--dry-run`. Its output times are the sums of the kept ranges, the same arithmetic the render
   uses. Test: `test_silence_writes_a_map_from_source_to_output_times`.
+
+## 2.23 — check.py --content's flashes and first-frame rows
+
+- **A flash is one frame unlike both neighbours that match each other, and it only WARNs.** The
+  rule is a step of at least 12/255 mean luma into the frame and out of it (on 64x36 grey
+  frames, where moving footage stays at a few units and a cut moves tens), with the frames on
+  either side within a quarter of the smaller step of each other. The return test is what
+  separates a flash from fast motion: a whip pan steps as far on every frame, but its frames
+  never come back, and with the test switched off it reported 58 flashes in 6 s. A hard cut steps once,
+  and a cut away and back holds more than one frame; neither is a flash. A camera flash in the
+  footage or a deliberate strobe is real, which is why the row never FAILs and its fix says
+  so. Code: `_common.probe.detect_flashes()`. Test:
+  `test_check_content_flashes_and_first_frame_rows`.
+- **The flash pass reduces each frame to three numbers inside ffmpeg.** `tblend` gives
+  |f[n] - f[n-1]|; two `tmix` branches with weights -1 0 1 and 1 0 -1 give the two clipped
+  halves of f[n] - f[n-2], whose sum is its absolute value; each is averaged to one 16-bit
+  pixel. Piping the frames themselves through Python would cost memory in proportion to the
+  running time; this costs 6 bytes a frame. It is a separate video-only pass, because its
+  output is raw data on stdout while the main pass is parsed from stderr.
+- **A flat first frame WARNs; a dark one does not by itself.** Flat means a luma spread under
+  4/255 at 64x36: a black lead-in, a solid colour. Darkness alone is not the test, because a
+  dark shot is still a picture. A fade from black is often the edit, so the row is a WARN whose
+  fix starts with "a fade from black is a choice", for the destinations where autoplay or the
+  preview shows frame 0. Code: `_common.probe.first_frame_stats()`. Same test.

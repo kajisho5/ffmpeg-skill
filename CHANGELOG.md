@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`check.py --content` reports single-frame flashes and a flat first frame.** `flashes` lists the times of frames that differ from both neighbours while the neighbours match each other (a stray frame left at a cut, a white or black frame at a join, a decode glitch); a hard cut, a cut away and back, and fast motion are not flashes. `first frame` WARNs when the first frame is one flat colour, which is what a feed's autoplay and preview show first. Both rows only WARN, because a camera flash, a strobe or a fade from black can be the edit. They cost one more video-only pass and a one-frame decode, and only with `--content`.
 
 ## 2.22.5
 

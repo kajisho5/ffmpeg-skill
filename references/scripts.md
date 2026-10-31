@@ -1142,7 +1142,12 @@ duration), FAIL when it covers >= 95%, i.e. the whole video) and `silence` (shar
 -50 dBFS: WARN > 50%, FAIL >= 95%); since 2.17 one more audio-only pass adds `dropouts`
 (gaps of digital silence, <= -80 dBFS for 20 ms to 1 s with sound on both sides -- lost audio
 at a join, a glitched decode; WARN when there is any, never FAIL, because a noise gate makes
-them on purpose). A render project enables it with `"check": {"platform":
+them on purpose); since 2.23 one more video pass adds `flashes` (single frames that differ from
+both neighbours by >= 12/255 mean luma while the neighbours differ by at most a quarter of that
+-- a stray frame at a cut, a decode glitch; WARN when there is any, with the first five times,
+never FAIL, because a camera flash or a strobe is real) and a one-frame decode adds `first frame`
+(WARN when it is one flat colour, luma spread < 4/255: the frame a feed's autoplay shows first).
+A render project enables it with `"check": {"platform":
 "reels", "content": true}`.
 
 ### batch.py — same recipe over a folder, cached

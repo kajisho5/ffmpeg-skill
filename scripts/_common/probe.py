@@ -605,6 +605,15 @@ CONTENT_DROPOUT_MIN, CONTENT_DROPOUT_MAX = 0.02, 1.0   # seconds
 CONTENT_DROPOUT_EDGE = 0.05      # a gap this close to the start or end is a lead-in/out, not a dropout
 CONTENT_DROPOUT_PAD = 2.0        # zeros appended before the dropout pass; > MAX, so a tail that runs into it never counts
 
+# 2.23: a flash is one frame that differs from both of its neighbours while they match each other
+# (a stray frame from another shot, a white or black frame at a join, a decode glitch). Measured on
+# 64x36 grey frames as the mean absolute luma difference (0-255): moving footage stays at a few
+# units, a cut or a flash moves the whole frame by tens.
+CONTENT_FLASH_JUMP = 12.0        # both steps into and out of the frame are at least this
+CONTENT_FLASH_RETURN = 0.25      # ...and the frames either side differ by at most this share of the smaller step
+CONTENT_FLAT_STD = 4.0           # first frame: luma standard deviation (0-255) below this is one flat colour
+_DIFF_W, _DIFF_H = 64, 36
+
 _BLACK_RE = re.compile(r"black_start:\s*([0-9.]+)\s+black_end:\s*([0-9.]+)")
 _FREEZE_RE = re.compile(r"lavfi\.freezedetect\.freeze_(start|end):\s*([0-9.]+)")
 
@@ -682,6 +691,53 @@ def _detect_dropouts(path: str, end: float) -> "List[Tuple[float, float]]":
             if inside and CONTENT_DROPOUT_MIN <= e - s <= CONTENT_DROPOUT_MAX:
                 gaps.append((s, e))
     return gaps  # a gap still open at the end is a tail, never a dropout
+
+
+def detect_flashes(path: str, fps: float) -> "List[float]":
+    """Times (s) of single-frame flashes in the first video stream: frame n differs from n-1 and
+    from n+1 by at least CONTENT_FLASH_JUMP while n-1 and n+1 differ by at most
+    CONTENT_FLASH_RETURN of the smaller step. One video-only pass; ffmpeg reduces each frame to
+    three 16-bit numbers (|f[n]-f[n-1]| and the two clipped halves of f[n]-f[n-2]), so a
+    feature-length input costs a few MB, not its frames."""
+    if dry_run_input_pending(path) or not fps:
+        return []
+    graph = (f"[0:v:0]scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray16le,split=3[a][b][c];"
+             "[a]tblend=all_mode=difference,scale=1:1:flags=area[d];"
+             "[b]tmix=frames=3:weights='-1 0 1':scale=1,scale=1:1:flags=area[p];"
+             "[c]tmix=frames=3:weights='1 0 -1':scale=1,scale=1:1:flags=area[q];"
+             "[d][p][q]hstack=inputs=3")
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                         "-filter_complex", graph, "-f", "rawvideo", "-"], check=False, text=False, record=True)
+    if proc.returncode != 0:
+        die(f"flash detection failed:\n{proc.stderr.decode(errors='replace').strip()[-800:]}", kind="ffmpeg")
+    data = proc.stdout
+    n = len(data) // 6
+    step = [0.0] * n   # step[i] = |f[i] - f[i-1]|, valid from i = 1
+    skip = [0.0] * n   # skip[i] = |f[i] - f[i-2]|, valid from i = 2
+    for i in range(n):
+        d, p, q = (int.from_bytes(data[i * 6 + k:i * 6 + k + 2], "little") / 256.0 for k in (0, 2, 4))
+        step[i], skip[i] = d, p + q
+    flashes = []
+    for i in range(1, n - 1):
+        into, out = step[i], step[i + 1]
+        if into >= CONTENT_FLASH_JUMP and out >= CONTENT_FLASH_JUMP \
+                and skip[i + 1] <= CONTENT_FLASH_RETURN * min(into, out):
+            flashes.append(round(i / fps, 3))
+    return flashes
+
+
+def first_frame_stats(path: str) -> "Optional[Tuple[float, float]]":
+    """(mean, standard deviation) of the first frame's luma, 0-255, at 64x36; None when it does
+    not decode or the input is a pending dry-run placeholder."""
+    if dry_run_input_pending(path):
+        return None
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                         "-map", "0:v:0", "-frames:v", "1", "-vf", f"scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray",
+                         "-f", "rawvideo", "-"], check=False, text=False, record=True)
+    px = list(proc.stdout[:_DIFF_W * _DIFF_H])
+    if proc.returncode != 0 or len(px) < _DIFF_W * _DIFF_H:
+        return None
+    return statistics.fmean(px), statistics.pstdev(px)
 
 
 SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")

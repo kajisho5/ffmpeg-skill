@@ -206,7 +206,8 @@ rows carry `kind: format` (fix it) or `kind: judgement` (decide with the user).
 The `audio` row FAILs (WARN when no loudness target applies) when the track is present but silent (peak at or below -50 dBFS, from
 the loudness pass or, when loudness is skipped, one volumedetect pass). `check --content`
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
-from one decode pass, and `dropouts` (2.17) from one audio-only pass; without it the row set is unchanged. Thresholds:
+from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
+video-only pass and a one-frame decode; without it the row set is unchanged. Thresholds:
 `docs/design-decisions.md` ("check.py --content").
 
 ### Dry run
