@@ -94,6 +94,10 @@ movement vs. audio) — there is no face or mouth detection anywhere in this ski
 High confidence means the audio matched well, not that the picture looks right;
 whether lip sync is correct needs a look at the video, not the reported offset.
 
+`multicam.py --switch energy` cuts to the loudest camera, a stand-in for who is
+talking, not speaker identification: it works when each speaker has their own
+camera's mic, and a shared room mic or a loud audience picks the wrong camera.
+
 Don't mix files with different frame rates or sample rates in one
 `cut.py --segments` join without re-encoding (`--accurate`). After `sync.py`,
 verify by running it again on the output: offset (and drift ppm with

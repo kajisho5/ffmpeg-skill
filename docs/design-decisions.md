@@ -727,7 +727,10 @@ reachable with `--filler-extra`, which says what adding one costs. `なんか` i
 because it is the most common Japanese filler and leaving it out makes the flag useless for
 Japanese; it is orthographically identical to the pronoun use, so every run that removes one
 warns and `--filler-keep なんか` takes it back out. The asymmetry is deliberate: English has
-usable fillers without `like`, Japanese does not have usable fillers without `なんか`.
+usable fillers without `like`, Japanese does not have usable fillers without `なんか`. For the
+same reason Chinese `啊` is out of the `zh` list: it is a sentence-final particle far more often
+than a hesitation, so cutting it changes sentences; `--filler-extra 啊` adds it for a speaker who
+uses it as one.
 
 **There is no heuristic filler fallback without word timings.** "Remove the 0.3 s blips that look
 like an 'um'" would cut real speech — short words, breaths, the start of a sentence — and it
