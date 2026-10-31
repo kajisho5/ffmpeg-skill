@@ -981,7 +981,8 @@ def guard_sidecar(path: str, *inputs: str, siblings: Sequence[str] = ()) -> None
     if not path:
         return
     for other in siblings:
-        if other and os.path.realpath(other) == os.path.realpath(path):
+        if other and (os.path.realpath(other) == os.path.realpath(path)
+                      or (os.path.exists(other) and os.path.exists(path) and os.path.samefile(other, path))):
             refuse("input", "output_path_taken",
                    f"{path!r} is also another file this run writes ({other!r}); give each its own path",
                    output=path, other=other)

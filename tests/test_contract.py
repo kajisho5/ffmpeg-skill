@@ -3350,6 +3350,15 @@ class ContractTests(unittest.TestCase):
         proc = tool("metadata", self.src, "--auto-chapters", "--chapters-out", work / "same.txt",
                     "--description-out", work / "same.txt", "-o", work / "m2.mp4", "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
+        # nor two names of one file (a hard link)
+        same, alias = work / "same.txt", work / "alias.txt"
+        same.write_text("keep me\n", encoding="utf-8")
+        if not alias.exists():
+            os.link(same, alias)
+        proc = tool("metadata", self.src, "--auto-chapters", "--chapters-out", same, "--description-out", alias,
+                    "-o", work / "m3.mp4", "--overwrite", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
+        self.assertEqual(same.read_text(encoding="utf-8"), "keep me\n")
         # a hard link is another name for the input: it is refused like the input itself
         link = work / "link.mp4"
         if not link.exists():
