@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`1.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`2.22.2`) | any release |
+| `skill.version` | the npm / package.json version (`2.22.4`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -131,7 +131,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [{"what": "running on Python 3.9 (the requirements.python floor)", "since": "2.10.9", "replacement": "Python 3.10 or later; ...", "removed_in": "3.0.0", "where": "behaviour"},
                  {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "2.22.2", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "2.22.4", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.9 (standard library only; 3.9 deprecated since 2.10.9, removed in 3.0.0; 3.10+ recommended)", "ffmpeg": ">=5.0 (5.x deprecated since 2.14.0, removed in 3.0.0; 6.1+ recommended)", "ffprobe": ">=5.0"},
@@ -729,6 +729,14 @@ pointer to cuts that may sit in a breath):
 | `timemap` | `silence.py --timemap FILE` | the path the time map was written to (`.json`: `{kept: [{source_start, source_end, output_start, output_end}], removed: [{source_start, source_end, output_time}]}`; `.csv`: `type,source_start,source_end,output_start,output_end` rows, a removed row's output columns both its cut point). Output times are computed from the millisecond-rounded cut bounds, not measured on the written file: the render keeps whole video frames and audio blocks, so each kept range can differ by up to one frame (about 20-40 ms) and the difference can add up over many cuts. Nothing is written under `--dry-run` |
 | `cut_points` | `silence.py` (every run that cuts) | per cut, `{source_time, output_time, edge, rms_dbfs}`: the RMS level 50 ms either side of the cut on the source, the loudest channel (`null` for digital silence), `edge` `out` where the source is left and `in` where it is picked up; `filler: true` on an edge that sits on a removed filler word. The whole key is `null` when the source could not be decoded for the measurement (`cut_levels_unmeasured` warning): unmeasured, not silent |
 | `cut_warnings` | `silence.py` | the `cut_points` (not filler cuts) whose level is within `silence.CUT_SOUND_MARGIN_DB` (10 dB) of `--threshold`: a breath or a word's weak tail may be cut there. A `cut_near_sound` warning names them. `verified` is unchanged: this is where to listen, not a measured failure |
+
+Keys added after 2.22.1, additive (an agent muxing soft subtitles before a platform export found
+the track gone and nothing in the result saying so):
+
+| key | tool | what it holds |
+|---|---|---|
+| `non_av_streams` | `export.py` | the source's subtitle and data streams: `{kept: [{type, index, codec, language, output_codec}], dropped: [{type, index, codec, language, reason}]}` (`index` is the n-th stream of its type; `language` on subtitles). Read back from the written file; under `--dry-run`, as planned. A subtitle track is copied when the container holds it, else converted to the container's text track (`mov_text` in .mp4/.mov, SubRip in .mkv); a platform trim cuts it with the picture. `reason`: `write_failed` (the attempt that mapped it failed and the encode ran again without it; the error is in its `non_av_streams_dropped` fallback, whose `dropped` says data alone first, then subtitles too), `gif`, `not_in_output` |
+| `dropped_non_av_streams` | `export.py` | `true` when `non_av_streams.dropped` is not empty (a `notes` line too), as on the tools that use `run_keeping_subtitles()` |
 
 Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 

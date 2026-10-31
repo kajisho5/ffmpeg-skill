@@ -1875,6 +1875,17 @@ a failing `{step: loudness, ok: false, reason: not_measured}` and a
 `loudness_not_measured` warning, so the export is `verified: false` rather than
 unchecked.
 
+Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are kept
+when the container can hold them: copied as they are, or a text track converted to the
+container's own (mov_text in .mp4/.mov, SubRip in .mkv). A platform trim cuts the track at the
+same point as the picture. A data stream the container refuses is dropped on its own retry, so
+the subtitles are not lost with it (`non_av_streams_dropped` fallback). `non_av_streams: {kept,
+dropped}` lists each source stream with its codec, its `output_codec` or the `reason` it was
+dropped (`write_failed`, `gif`, `not_in_output`), read back from the written file; `dropped_non_av_streams`
+is true when any was dropped, with a `notes` line. A GIF holds none. When the source has such a
+stream, the picture and the sound are mapped explicitly: the first video stream that is not a
+cover picture and the first audio stream, the ones `probe` describes.
+
 Since 1.14 each social destination is its own preset rather than an alias: `tiktok`
 (1080x1920, max 600 s), `shorts` (1080x1920, max 180 s), `reels` (1080x1920, max 90 s),
 `linkedin` (1080x1080), `facebook` (1920x1080), each with its platform's loudness spec from the
