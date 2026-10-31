@@ -49,7 +49,7 @@ ALLOWED_STEP_SCRIPTS = {p.name for p in HERE.glob("*.py") if not p.name.startswi
 
 def file_key(path: Path) -> str:
     st = path.stat()
-    h = hashlib.sha1()
+    h = hashlib.sha1(usedforsecurity=False)  # a change detector, not a secret
     h.update(f"{path.name}|{st.st_size}|{int(st.st_mtime)}".encode())
     with open(path, "rb") as fh:  # first and last MB: cheap and good enough to detect changes
         h.update(fh.read(1 << 20))
@@ -75,7 +75,7 @@ def recipe_key(recipe: Dict[str, Any]) -> str:
             # content, so say so (each item that needs it then fails on reading it)
             warn(f"recipe.project {recipe['project']} could not be read ({exc}); the cache key covers the recipe only",
                  "recipe_project_unreadable", path=str(recipe["project"]), error=str(exc))
-    return hashlib.sha1((json.dumps(recipe, sort_keys=True) + "\0" + project_content).encode()).hexdigest()[:12]
+    return hashlib.sha1((json.dumps(recipe, sort_keys=True) + "\0" + project_content).encode(), usedforsecurity=False).hexdigest()[:12]
 
 
 def gpu_key() -> str:

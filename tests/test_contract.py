@@ -5263,6 +5263,26 @@ class SilentFallbackTests(unittest.TestCase):
         self.assertTrue(tlmod.parses(str(good), "otio"))
         self.assertEqual(len(_common.STATE.warnings), 2)
 
+    def test_a_timeline_that_declares_an_entity_is_refused_not_expanded(self):
+        """The fcpxml read-back used ElementTree, which expands entities declared in an internal
+        DTD: on Python 3.9/3.10 a file of nested entities ("billion laughs") is an expansion bomb.
+        A declaration is now refused; the bare `<!DOCTYPE fcpxml>` to_fcpxml writes still reads."""
+        from _common import timeline as tlmod
+        bomb = self.tmp / "bomb.fcpxml"
+        bomb.write_text('<?xml version="1.0"?>\n<!DOCTYPE fcpxml [\n <!ENTITY a "aaaaaaaaaa">\n'
+                        ' <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">\n]>\n<fcpxml>&b;</fcpxml>\n', encoding="utf-8")
+        self.assertFalse(tlmod.parses(str(bomb), "fcpxml"))
+        w = _common.STATE.warnings[-1]
+        self.assertEqual(w["code"], "timeline_parse_failed")
+        self.assertIn("ParseError", w["error"])
+        self.assertIn("entity", w["error"])
+        plain = self.tmp / "plain.fcpxml"
+        plain.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n<fcpxml version="1.10"/>\n', encoding="utf-8")
+        self.assertTrue(tlmod.parses(str(plain), "fcpxml"))
+        other = self.tmp / "other.fcpxml"
+        other.write_text("<xmeml/>", encoding="utf-8")
+        self.assertEqual(tlmod.parse_error(str(other), "fcpxml"), "the root element is <xmeml>, not <fcpxml>")
+
     def test_the_font_drawn_with_is_reported_and_a_substitute_recorded(self):
         """fonts.default_font_file() returned whatever fontconfig (or the Windows Fonts folder)
         answered; a family that is not installed was drawn in another without a word."""

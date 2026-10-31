@@ -492,13 +492,42 @@ def parses(path: str, fmt: str) -> bool:
     return why is None
 
 
+def _xml_root_tag(data: bytes) -> str:
+    """The root element of a well-formed XML document, read with expat directly.
+
+    ElementTree expands entities declared in an internal DTD, and on Python 3.9/3.10 (both
+    supported) that is an entity-expansion ("billion laughs") risk on a file the tool did not
+    write. A timeline never declares an entity (to_fcpxml writes a bare `<!DOCTYPE fcpxml>`), so
+    a declaration is refused rather than expanded. Errors are ElementTree's ParseError, so a
+    failure reads the same as before."""
+    from xml.etree.ElementTree import ParseError
+    from xml.parsers import expat
+    parser = expat.ParserCreate()
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    root: List[str] = []
+
+    def start(name: str, _attrs: Any) -> None:
+        if not root:
+            root.append(name)
+
+    def entity(name: str, *_rest: Any) -> None:
+        raise ParseError(f"the document declares the entity {name!r}; a timeline never declares one")
+
+    parser.StartElementHandler = start
+    parser.EntityDeclHandler = entity
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError as exc:
+        raise ParseError(str(exc)) from None
+    return root[0]
+
+
 def parse_error(path: str, fmt: str) -> Optional[str]:
     """Why `path` does not read back as `fmt`, or None when it does (parses() without the record)."""
     try:
         text = Path(path).read_text(encoding="utf-8")
         if fmt == "fcpxml":
-            import xml.etree.ElementTree as ET
-            tag = ET.fromstring(text.encode("utf-8")).tag
+            tag = _xml_root_tag(text.encode("utf-8"))
             return None if tag == "fcpxml" else f"the root element is <{tag}>, not <fcpxml>"
         if fmt == "otio":
             doc = json.loads(text)
