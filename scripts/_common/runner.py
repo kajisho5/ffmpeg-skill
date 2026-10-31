@@ -633,6 +633,27 @@ def looks_like_url(value: str) -> bool:
     return bool(_URL_SCHEME.match(value)) and not value.startswith("pipe:")
 
 
+_PLAYLIST_SUFFIXES = (".m3u8", ".m3u", ".ffconcat")
+_PLAYLIST_MAGIC = (b"#EXTM3U", b"ffconcat")
+
+
+def _refuse_playlist(value: str) -> None:
+    """Refuse an input that ffmpeg would read as a playlist (HLS .m3u8, an ffconcat list) rather
+    than as media. A playlist names other files by path, so a media file handed to the skill could
+    pull in any file the user can read. The skill's own concat lists pass `-f concat` and are not
+    checked here."""
+    head = b""
+    try:
+        with open(value, "rb") as fh:
+            head = fh.read(16).lstrip(b"\xef\xbb\xbf \t\r\n")
+    except OSError:
+        pass
+    if value.lower().endswith(_PLAYLIST_SUFFIXES) or head.startswith(_PLAYLIST_MAGIC):
+        refuse("input", "media_path_is_playlist",
+               f"{value!r} is a playlist (HLS or ffconcat), which ffmpeg would follow to the files it names; "
+               "this skill takes media files only. Pass the media file itself", path=value)
+
+
 def _refuse_url_media(cmd: Sequence[str]) -> None:
     """Refuse an ffmpeg/ffprobe command that names a URL as an input or as its output, before it
     runs or is recorded. This skill reads and writes local files only, and the path guards below
@@ -650,10 +671,14 @@ def _refuse_url_media(cmd: Sequence[str]) -> None:
         elif a == "-i":
             if fmt != "lavfi":
                 values.append(cmd[i + 1])
+            if fmt is None:
+                _refuse_playlist(cmd[i + 1])
             fmt = None
     last = cmd[-1]
     if not last.startswith("-"):
         values.append(last)
+        if base.startswith("ffprobe"):  # ffprobe's input is its last argument
+            _refuse_playlist(last)
     for value in values:
         if looks_like_url(value):
             refuse("input", "media_path_is_url",
@@ -722,8 +747,13 @@ def _check_output_path(cmd: Sequence[str]) -> None:
     say so as `kind: input` before ffmpeg runs, instead of the muxer's "No such file or directory"
     as `kind: ffmpeg` (which reads as an encoder failure) or an `OUTPUT_INVALID` after the fact."""
     output = cmd[-1]
-    if output == "-" or output.startswith("pipe:") or output.startswith("-"):
+    if output == "-" or output.startswith("pipe:"):
         return
+    if output.startswith("-"):
+        # ffmpeg would read it as an option (-report writes a log file, -y overwrites)
+        refuse("input", "output_looks_like_option",
+               f"output {output!r} starts with '-', which ffmpeg would read as an option; pass ./{output} for a file of that name",
+               output=output)
     if looks_like_url(output):
         refuse("input", "media_path_is_url",
                f"output {output!r} would be opened by ffmpeg as a URL, not as a local file; pass a plain path "
@@ -932,6 +962,18 @@ def _check_existing_output(cmd: Sequence[str]) -> None:
     if output in ("-",) or output.startswith("pipe:") or output.startswith("-"):
         return
     refuse_existing_outputs([output])
+
+
+def guard_sidecar(path: str, *inputs: str) -> None:
+    """The output guards for a file a tool writes itself rather than through ffmpeg (an EDL, a
+    chapter list, a project file): not a URL or an option-shaped name, its directory exists and is
+    writable, not one of the run's inputs, and not an existing file unless --overwrite. Called
+    before the first file is written, so a dry run predicts the same refusal."""
+    if not path:
+        return
+    _check_output_path([path])
+    refuse_output_is_input(path, *[p for p in inputs if p])
+    refuse_existing_outputs([path])
 
 
 def refuse_existing_outputs(paths: Sequence[str]) -> None:
@@ -1149,6 +1191,8 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
     """
     ctx = ctx or STATE
     is_ffmpeg = _is_ffmpeg(cmd)
+    if not is_ffmpeg:
+        _refuse_url_media(cmd)  # ffprobe reads a URL or a playlist as readily as ffmpeg does
     if is_ffmpeg:
         # an encoder line that converts a BT.601 source to the BT.709 it is tagged with carries
         # that conversion as a -vf; it joins the tool's own graph here, before anything records

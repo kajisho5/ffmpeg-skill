@@ -23,7 +23,7 @@ import sys
 from typing import Dict, List, Optional, Tuple
 
 # `detect_scenes` moved into _common/probe.py in 1.16.0 (see silence.py); the body is unchanged.
-from _common import (detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
+from _common import (guard_sidecar, detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
                      ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
                      rms_envelope, BEAT_MIN_CONFIDENCE, decode_gray_frames, frame_flow, label_shot_flow)
 from _common import drawtext_fontfile  # noqa: E402
@@ -140,6 +140,7 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    guard_sidecar(args.edl, args.input)
 
     meta = probe(args.input)
     if not meta.get("video"):

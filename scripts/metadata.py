@@ -30,7 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from _common import (add_common, apply_common, default_output, description_block, detect_scenes, detect_silences,
+from _common import (guard_sidecar, add_common, apply_common, default_output, description_block, detect_scenes, detect_silences,
                      die, emit, ffmpeg_base, fmt_chapter_time, info, propose_chapters, time_arg, probe, run,
                      STATE, read_text_or_die)
 
@@ -202,6 +202,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    for side in (args.chapters_out, args.description_out):
+        guard_sidecar(side, args.input, args.output)
 
     if args.chapters and args.clear_chapters:
         die("--chapters and --clear-chapters exclude each other")

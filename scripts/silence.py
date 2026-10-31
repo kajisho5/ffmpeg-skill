@@ -23,7 +23,7 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
                      FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common.emit import warn
-from _common import refuse_existing_outputs, refuse_output_is_input, _check_output_path
+from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
 
@@ -471,6 +471,7 @@ def main() -> int:
                        f"--timemap {args.timemap} is the same file as {flag}; give the map its own path",
                        timemap=args.timemap, flag=flag, path=other)
         refuse_existing_outputs([args.timemap])
+    guard_sidecar(args.edl, args.input, args.words)
 
     if args.filler_pad < 0:
         die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "

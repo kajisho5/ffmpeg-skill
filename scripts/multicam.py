@@ -31,7 +31,7 @@ import math
 import sys
 from typing import Dict, List, Tuple
 
-from _common import label_chain, matrix_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
+from _common import guard_sidecar, label_chain, matrix_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import record_fallback, warn
 from sync import measure_offset
 
@@ -150,6 +150,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    for side in (args.edl, args.write_project):
+        guard_sidecar(side, *args.inputs, args.output)
     if args.analyze_seconds > 900:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
     if args.fps is not None and args.fps <= 0:

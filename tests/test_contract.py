@@ -3302,6 +3302,57 @@ class ContractTests(unittest.TestCase):
             tool(*args, env=env, cwd=trap, check=False)
         self.assertFalse(marker.exists(), "a program in the working directory ran in place of the real tool")
 
+    def test_a_side_file_never_replaces_an_input_or_an_existing_file(self):
+        """EDLs, chapter lists, project files and reports are written by the tools themselves, not
+        by ffmpeg, so they missed the run() guards: they replaced an existing file, or the input,
+        without --overwrite. Each is now refused like a video output, and --overwrite still
+        replaces an old side file."""
+        work = self.out("side_files"); work.mkdir(exist_ok=True)
+        old = work / "old.txt"
+        cases = [
+            ("silence", [self.src, "--list", "--edl", old]),
+            ("scenes", [self.src, "--highlights", "1", "--edl", old]),
+            ("metadata", [self.src, "--auto-chapters", "--chapters-out", old, "-o", work / "m.mp4"]),
+            ("report", ["--after", self.src, "--no-sheets", "-o", old]),
+            ("render", ["--init", old]),
+        ]
+        for name, args in cases:
+            old.write_text("keep me\n", encoding="utf-8")
+            proc = tool(name, *args, "--json", check=False)
+            err = json.loads(proc.stdout).get("error") or {}
+            self.assertEqual((err.get("kind"), err.get("reason")), ("input", "output_exists"), (name, proc.stderr[-400:]))
+            self.assertEqual(old.read_text(encoding="utf-8"), "keep me\n", name)
+        victim = work / "victim.mp4"; shutil.copy(self.src, victim); before = victim.read_bytes()
+        proc = tool("scenes", victim, "--highlights", "1", "--edl", victim, "--overwrite", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
+        self.assertEqual(victim.read_bytes(), before)
+        old.write_text("keep me\n", encoding="utf-8")
+        tool("render", "--init", old, "--overwrite")
+        self.assertNotEqual(old.read_text(encoding="utf-8"), "keep me\n", "--overwrite replaces an old side file")
+
+    def test_a_playlist_input_and_an_option_shaped_output_are_refused(self):
+        """A playlist (HLS .m3u8, ffconcat) is not media: ffmpeg and ffprobe follow it to the files
+        it names, so a "video" handed to the skill could read any file the user can. It is refused
+        by name and by its first bytes, through probe as well as the encoding tools. An output that
+        starts with '-' would reach ffmpeg as an option (-report writes a log file)."""
+        work = self.out("playlist_guard"); work.mkdir(exist_ok=True)
+        named = work / "list.m3u8"
+        named.write_text(f"#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n{self.src}\n#EXT-X-ENDLIST\n", encoding="utf-8")
+        disguised = work / "clip.mp4"
+        disguised.write_bytes(named.read_bytes())
+        concat = work / "parts.txt"
+        concat.write_text(f"ffconcat version 1.0\nfile '{self.src}'\n", encoding="utf-8")
+        for path in (named, disguised, concat):
+            for name, args in (("probe", [path]), ("fit", [path, "--aspect", "1:1", "-o", work / "out.mp4"])):
+                proc = tool(name, *args, "--json", check=False)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_is_playlist"), (name, path, proc.stderr))
+        self.assertFalse((work / "out.mp4").exists())
+        proc = tool("fit", self.src, "--aspect", "1:1", "-o=-report", "--json", check=False, cwd=work)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual((err["kind"], err["reason"]), ("input", "output_looks_like_option"))
+        self.assertEqual([p.name for p in work.glob("ffmpeg-*.log")], [], "the output reached ffmpeg as -report")
+
     def test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output(self):
         """The path guards read -o as a path, ffmpeg reads a value with a protocol prefix as a URL.
         The skill reads and writes local files only, so such an input or output is refused as

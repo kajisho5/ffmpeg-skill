@@ -74,7 +74,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
+from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, found_exe
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
 import subprocess
@@ -1101,6 +1101,7 @@ def main() -> int:
         list_templates()
         return 0
     if args.init:
+        guard_sidecar(args.init)
         Path(args.init).write_text(json.dumps(TEMPLATE, indent=2) + "\n", encoding="utf-8")
         info(f"wrote {args.init}; edit clips/src and run: render.py {args.init}")
         print(args.init)
@@ -1139,6 +1140,7 @@ def main() -> int:
     validate_project(proj, timeline=bool(args.export_timeline), stop_after=args.stop_after)
     if args.write_project:
         # Only the filled project: the point is to edit it before rendering, so nothing runs.
+        guard_sidecar(args.write_project, args.project)
         try:
             Path(args.write_project).write_text(json.dumps(proj, indent=2) + "\n", encoding="utf-8")
         except OSError as exc:
