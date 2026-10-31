@@ -851,7 +851,7 @@ dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ff
 tool used to print to stderr only (emoji fallbacks, silent or short inputs, memory-heavy jobs,
 `--strip-dovi` without Dolby Vision, `render.py`'s frame-from-preset and `--normalize` defaults).
 `render.py`'s plan, check and cache records (`check_dry_run`, `check_output_unparsed`, `cache_entry_damaged`, ...),
-`export.py`'s `loudness_not_measured`, `loudness_outside_spec` and `colour_not_converted`, `multicam.py`'s
+`export.py`'s `loudness_not_measured`, `loudness_outside_spec`, `colour_not_converted`, `size_over_limit` and `repair_incomplete`, `multicam.py`'s
 `camera_not_started`, `report.py`'s `report_section_missing` and `batch.py`'s cache records
 (`batch_cache_reset`, `batch_cache_output_changed`, ...) are listed there too. Every one of them
 still prints its stderr line; the record is additive.

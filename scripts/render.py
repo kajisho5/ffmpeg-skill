@@ -1192,7 +1192,12 @@ def main() -> int:
         work.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         die(f"cannot create the work directory {work}: {e}")
-    if not args.keep and not args.work:
+    # --stop-after before the export reports a stage file inside the work directory as its output:
+    # removing the directory at exit deleted the file the result named (and its output_identity)
+    previewing = bool(args.stop_after) and args.stop_after != "export" and not STATE.dry_run
+    if previewing and not args.keep and not args.work:
+        info(f"--stop-after {args.stop_after}: keeping the work directory {work}, since the result's output is in it")
+    if not args.keep and not args.work and not previewing:
         # a failed or dry run used to leave <output>_work_<pid>/ behind (sweep F15): the
         # auto-named directory is ours alone, so remove it on every exit path
         import atexit

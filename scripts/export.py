@@ -249,16 +249,20 @@ _TIMESTAMP_WARNING = re.compile(r"(?i)\b(dts|pts)\b|timestamp")
 def media_damage(path: str) -> Dict[str, int]:
     """One full decode of `path` at -v warning: lines about timestamps (non-monotonic DTS, invalid
     PTS) and every other error line, counted. What --repair is measured by, before and after."""
-    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-v", "warning", "-i", path, "-f", "null", "-"],
+    # repeat+: every occurrence on its own line, not "Last message repeated N times", which hid
+    # N timestamp warnings and was itself counted as a decode error
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-v", "repeat+warning", "-i", path, "-f", "null", "-"],
                         check=False, record=True)
     lines = [ln for ln in (proc.stderr or "").splitlines() if ln.strip()]
-    stamps = sum(1 for ln in lines if _TIMESTAMP_WARNING.search(ln))
+    # "Packet corrupt (stream = 0, dts = ...)" names a dts but is damage, not a timestamp problem
+    stamps = sum(1 for ln in lines if _TIMESTAMP_WARNING.search(ln) and "corrupt" not in ln.lower())
     return {"timestamp_warnings": stamps, "decode_errors": len(lines) - stamps}
 
 
 MIB = 1024 * 1024
 SIZE_HEADROOM = 0.97        # of the byte budget given to the streams; the rest is container overhead
 SIZE_MIN_VIDEO_KBPS = 100   # below this the picture is not worth delivering; refused instead
+SIZE_MAX_VIDEO_KBPS = 400_000  # 400 Mb/s: above any delivery line, and libx264 refuses far larger values
 
 
 def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool) -> List[str]:
@@ -281,6 +285,9 @@ def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool
     if has_audio and "-b:a" in p["audio"]:
         audio_kbps = float(p["audio"][p["audio"].index("-b:a") + 1].rstrip("k"))
     video_kbps = args.max_mb * MIB * 8 * SIZE_HEADROOM / dur / 1000 - audio_kbps
+    if video_kbps > SIZE_MAX_VIDEO_KBPS:
+        die(f"--max-mb {args.max_mb:g} allows {video_kbps / 1000:.0f} Mb/s over {dur:.1f}s, beyond any delivery bitrate; "
+            "a limit that large constrains nothing", hint="drop --max-mb (the preset's quality setting applies)")
     if video_kbps < SIZE_MIN_VIDEO_KBPS:
         die(f"--max-mb {args.max_mb:g} leaves {max(video_kbps, 0):.0f} kb/s for the picture over {dur:.1f}s "
             f"(after {audio_kbps:.0f} kb/s of audio); under {SIZE_MIN_VIDEO_KBPS} kb/s it is not watchable",
@@ -365,6 +372,9 @@ def main() -> int:
             vf.append(f"scale={p['w']}:-2")
     if args.repair and args.preset != "copy":
         die("--repair is a remux: use it with --preset copy (a re-encoding preset already rebuilds every frame)")
+    if args.max_mb is not None and args.preset == "gif":
+        # the GIF branch below returns before the size is ever applied or measured
+        die("--max-mb runs a two-pass x264 encode; --preset gif does not encode with x264 (shorten or shrink the GIF instead)")
     cmd = ffmpeg_base() + (REPAIR_INPUT_ARGS if args.repair else []) + ["-i", args.input]
     # Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are
     # kept where the container can hold them: ffmpeg's default stream selection takes one video

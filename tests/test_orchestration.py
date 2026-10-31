@@ -591,6 +591,12 @@ class OrchestrationTests(MediaFixtures):
         out = json.loads(script("render.py", proj, "--fast", "--stop-after", "join", "--work", OUT / "rw", "--json").stdout)
         self.assertEqual(out["stages"], ["clips", "join"])
         self.assertTrue(Path(out["output"]).exists())
+        # 2.24.1: without --work the auto-named directory was removed at exit, deleting the file
+        # the result named (and described by output_identity)
+        out = json.loads(script("render.py", proj, "--fast", "--stop-after", "join", "--json").stdout)
+        self.assertTrue(Path(out["output"]).exists(), out["output"])
+        self.assertEqual(Path(out["output"]).stat().st_size, out["output_identity"]["size"])
+        shutil.rmtree(Path(out["output"]).parent, ignore_errors=True)
 
     def test_render_every_stage_flag_and_every_refusal(self):
         """render.py's stage branches that test_render_project does not take (silence, captions

@@ -41,6 +41,31 @@ class DeliveryTests(MediaFixtures):
                 if preset in ("youtube", "reels", "x", "h265"):
                     self.assertEqual(m["video"]["color_space"], "bt709")
 
+    def test_export_max_mb_refuses_gif_and_a_limit_that_constrains_nothing(self):
+        """2.24.1: --preset gif returned before --max-mb was applied, so a 0.7 MB GIF passed a 1 KB
+        limit as verified; --max-mb 1e9 reached libx264 as an impossible bitrate (kind ffmpeg)."""
+        for preset, size, ext in (("gif", "0.001", "gif"), ("youtube", "1e9", "mp4")):
+            proc = script("export.py", self.src, "--preset", preset, "--max-mb", size, "-o", OUT / f"maxmb_{preset}.{ext}",
+                          "--json", expect_fail=True)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual(err["kind"], "input", err)
+            self.assertIn("--max-mb", err["message"])
+
+    def test_export_repair_classifies_damage_lines(self):
+        """2.24.1: "Packet corrupt (stream = 0, dts = N)" names a dts but is damage, and "Last message
+        repeated N times" hid N lines and was itself counted as a decode error; repeat+warning
+        prints each occurrence."""
+        sys.path.insert(0, str(SCRIPTS))
+        import export
+        from unittest import mock
+        stderr = ("[mpegts @ 0x1] Packet corrupt (stream = 0, dts = 393000).\n"
+                  "[vist#0:0/h264 @ 0x2] timestamp discontinuity (stream id=256): -2999999, new offset= 2999999\n"
+                  "[null @ 0x3] Application provided invalid, non monotonically increasing dts to muxer in stream 1\n"
+                  "[null @ 0x3] Application provided invalid, non monotonically increasing dts to muxer in stream 1\n")
+        with mock.patch.object(export, "run_analysis", return_value=subprocess.CompletedProcess([], 0, "", stderr)) as ran:
+            self.assertEqual(export.media_damage("x.ts"), {"timestamp_warnings": 3, "decode_errors": 1})
+        self.assertIn("repeat+warning", ran.call_args[0][0])
+
     def test_export_max_mb_fits_the_size(self):
         """2.24: --max-mb 1 on a 10 s clip that is several MB at the preset's CRF: two passes, the
         written file under 1 MiB and measured; a budget too small for the picture, --crf with it,
