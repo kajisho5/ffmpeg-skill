@@ -39,7 +39,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         # reframe_talk: before and after side by side; grid.py labels each cell with its file name
-        before = work / "Before 16x9.mp4"
+        before = work / "Before 640x430.mp4"
         after = work / "After fit --aspect 9x16 --crop-x 0.27.mp4"
         shutil.copy(need(OUT / "reframe_talk_before.mp4"), before)
         shutil.copy(need(OUT / "reframe_talk_after.mp4"), after)

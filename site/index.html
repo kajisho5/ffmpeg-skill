@@ -388,9 +388,9 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
   <div class="wrap">
     <p class="eyebrow" data-i="nav.demos">Demos</p>
     <h2 class="h2 dotted" id="demos-h" data-i="demos.h">Left is the input. Right is what the command produced.</h2>
-    <p class="lede"><span data-i="demos.p1">The two videos run the tools on AI-generated footage; the previews below are generated from synthetic footage. All of it is rebuilt by </span><code>demos/build.py</code><span data-i="demos.p2">, so you can make every frame yourself.</span></p>
+    <p class="lede"><span data-i="demos.p1">The two videos run the tools on AI-generated footage; the previews below are generated from synthetic footage. The previews are rebuilt by </span><code>demos/build.py</code><span data-i="demos.p2"> and the two videos by demos/pages_videos.py from its output, so you can make every frame yourself.</span></p>
     <ul class="reel">
-      <li><video src="media/reframe_talk.mp4" poster="media/reframe_talk.jpg" width="1280" height="432" controls muted loop playsinline preload="metadata" aria-label="A talking-head clip reframed from 16:9 to 9:16 with the speaker kept in frame, side by side (AI-generated footage)"></video><code>fit.py --aspect 9:16 --fit crop --crop-x 0.27</code><span data-i="v1">Real speech, made vertical: the crop follows the speaker, not the centre. AI-generated footage.</span></li>
+      <li><video src="media/reframe_talk.mp4" poster="media/reframe_talk.jpg" width="1280" height="432" controls muted loop playsinline preload="metadata" aria-label="A 640×430 talking-head clip reframed to 9:16 with the speaker kept in frame, side by side (AI-generated footage)"></video><code>fit.py --aspect 9:16 --fit crop --crop-x 0.27</code><span data-i="v1">Real speech, made vertical: the crop follows the speaker, not the centre. AI-generated footage.</span></li>
       <li><video src="media/filler_en.mp4" poster="media/filler_en.jpg" width="854" height="480" controls playsinline preload="metadata" aria-label="English speech with two filler words, then the same speech with them cut (AI-generated footage)"></video><code>silence.py --filler --transcribe</code><span data-i="v2">Turn the sound on: "er" and "um" play, then they are gone. AI-generated footage.</span></li>
     </ul>
     <ul class="demos">
@@ -561,7 +561,7 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
     "fl.h": "教えるのは、この手順", "fl.s": "どの作業も、この順番で",
     "fl.1": "測る", "fl.1s": "実際のファイルを調べる", "fl.2": "編集", "fl.2s": "できるだけ無劣化で", "fl.3": "検査", "fl.3s": "出す先の基準で", "fl.4": "確認", "fl.4s": "仕上がりを見る",
     "demos.h": "左が元の映像。右がコマンドの結果。",
-    "demos.p1": "上の 2 本の動画は AI 生成の映像に、下のプレビューは合成した映像にツールをかけたものです。どれも ", "demos.p2": " で作り直せるので、すべてのコマを自分で再現できます。",
+    "demos.p1": "上の 2 本の動画は AI 生成の映像に、下のプレビューは合成した映像にツールをかけたものです。プレビューは ", "demos.p2": " で、2 本の動画はその出力から demos/pages_videos.py で作り直せるので、すべてのコマを自分で再現できます。",
     "v1": "実際の話し声の映像を縦長に。切り抜きは中央ではなく話し手に合わせています。AI 生成の映像です。",
     "v2": "音を出して聞いてください。「er」「um」が入った声のあとに、それを切った声が流れます。AI 生成の映像です。",
     "d1": "カラオケ風に色が変わる、動く字幕", "d2": "16:9 を 9:16 に切り出し", "d3": "無音をカットして尺が短く", "d4": "音量をそろえる前とあとの波形", "d5": "HDR10 を SDR に変換", "d6": "グリーンバックを生成した背景に合成",
