@@ -46,9 +46,10 @@ wide-gamut SDR file (1.x's `hdr`), and `hdr_format` names that in-between case
 still carries wide-gamut primaries, so an SDR-only client or platform expecting BT.709 needs
 `color.py --to-sdr` first -- `export.py` only retags BT.709, it does not convert (eval 24 h1).
 `export.py` platform presets are SDR and warn on HDR input.
-iPhone `.mov` files also carry timecode/metadata tracks; scripts keep one audio
-track (most map the first; `cut.py` takes ffmpeg's default pick, the one with the most
-channels), so extra tracks are dropped, on a stream copy as on a re-encode
+iPhone `.mov` files also carry timecode/metadata tracks; the editing tools keep one
+audio track (most map the first; `cut.py` takes ffmpeg's default pick, the one with the
+most channels; `color.py --strip-dovi` copies every track), so extra tracks are dropped,
+on a stream copy as on a re-encode
 (`cut.py` reports it: `dropped_audio_streams`, an `audio_tracks_dropped` warning). Keep ProRes masters
 at source colour: `export.py --preset prores` does not retag.
 
