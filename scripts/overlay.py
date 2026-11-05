@@ -30,6 +30,7 @@ import sys
 from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
+from _common import still_input_args  # noqa: E402
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, matrix_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
 from _common.fonts import font_choice, record_font_choice
@@ -372,7 +373,7 @@ def main() -> int:
         if enable:
             ov += f":enable='{enable}'"
         # -loop 1 turns the still into a timed stream so fade/enable expressions see real timestamps
-        cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", "-i", args.image]
+        cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", *still_input_args(args.image), "-i", args.image]
         # the RGBA still is converted to the BT.709 the output is tagged with (overlay's own
         # RGB-to-YUV step used BT.601), and an untagged main is labelled BT.709 (tags only) so
         # 7.1+'s negotiation does not convert one picture to the other's "unknown" matrix

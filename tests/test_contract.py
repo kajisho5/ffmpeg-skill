@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 import warnings
 from pathlib import Path
 
@@ -2608,7 +2609,12 @@ class ContractTests(unittest.TestCase):
         out-of-range --denoise-strength; render refuses speed 0; batch lists .ogg/.opus/.ts;
         report's 0 s is 0 s; ffmpeg_version has a probe timeout. (speed 0 was already "unset", not a
         division by zero as reported; a negative speed did reach fit.py.)"""
-        self.assertEqual(_common.concat_list_line("C:\\Users\\t\\part000.mp4"), "file 'C:/Users/t/part000.mp4'")
+        from _common import decision as _decision
+        with unittest.mock.patch.object(_decision, "_on_windows", return_value=True):
+            self.assertEqual(_common.concat_list_line("C:\\Users\\t\\part000.mp4"), "file 'C:/Users/t/part000.mp4'")
+        with unittest.mock.patch.object(_decision, "_on_windows", return_value=False):
+            # #408: on POSIX the backslash is part of the name, and the quoted form keeps it
+            self.assertEqual(_common.concat_list_line("/a\\b/c.mp4"), "file '/a\\b/c.mp4'")
         self.assertEqual(_common.concat_list_line("/a/it's.mp4"), "file '/a/it'\\''s.mp4'")
         for tc in ("00:00:00:29", "00:00:01:00", "01:00:00:00", "00:59:56:12"):
             secs = _common.parse_time(tc, 29.97)
@@ -3417,9 +3423,17 @@ class ContractTests(unittest.TestCase):
         for url in ("tcp:127.0.0.1:9?x=.mkv", "http://127.0.0.1:9/../../x.mkv", "file:other.mp4", "FILE:x.mp4",
                     "rtmp://h/live", "concat:a.ts|b.ts", "data:video/mp4;base64,AA=="):
             self.assertTrue(runner.looks_like_url(url), url)
-        for path in ("C:\\clips\\a.mp4", "C:/clips/a.mp4", "./clip:1.mp4", "clips/a:b.mp4", "pipe:1", "-", "a.mp4",
+        for path in ("./clip:1.mp4", "clips/a:b.mp4", "pipe:1", "-", "a.mp4",
                      "/abs/a.mp4", "sine=frequency=440:sample_rate=48000"):
             self.assertFalse(runner.looks_like_url(path), path)
+        # a drive letter is a path on Windows only; elsewhere ffmpeg reads `x:` as a protocol too,
+        # so it is refused with the ./name hint instead of failing as "Protocol not found" (#408)
+        with unittest.mock.patch.object(runner.os, "name", "nt"):
+            for path in ("C:\\clips\\a.mp4", "C:/clips/a.mp4"):
+                self.assertFalse(runner.looks_like_url(path), path)
+        with unittest.mock.patch.object(runner.os, "name", "posix"):
+            self.assertTrue(runner.looks_like_url("x:y.mp4"))
+            self.assertFalse(runner.looks_like_url("./x:y.mp4"))
         # a listener that must never hear from ffmpeg
         srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1); srv.settimeout(0.5)
         port = srv.getsockname()[1]
@@ -6418,6 +6432,121 @@ class MessageNeutralizingTests(unittest.TestCase):
         sys.argv = ["x"]
         self.assertEqual(self.emit.neutralize("tag: a\x1b[31mb\u202ec"), "tag: a\\x1b[31mb\\u202ec")
         self.assertEqual(self.emit.shown("a\u2028b"), "a\\u2028b")
+
+
+class SideFileGuardTests(unittest.TestCase):
+    """#408: files a tool writes or removes itself get the output guards (never the input, never
+    an existing file without --overwrite, never a file this run did not create), and a path is
+    read by ffmpeg as the name the guards checked (`%`, a POSIX backslash, edge whitespace)."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls.tmp = Path(tempfile.mkdtemp(prefix="ffskill_side_"))
+        cls.src = cls.tmp / "src.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25", "-f", "lavfi", "-i", "sine=d=2",
+               "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", cls.src)
+        cls.srt = cls.tmp / "cues.srt"
+        cls.srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello\n", encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def copy(self, name):
+        dst = self.tmp / name
+        shutil.copy(self.src, dst)
+        return dst
+
+    def failed(self, proc):
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed", proc.stdout[-500:])
+        return doc["error"]
+
+    def test_waveform_never_removes_a_file_it_did_not_write(self):
+        named = self.copy("wf_titled.mp4")  # the old fixed intermediate name, here the input
+        bystander = self.copy("wf_vis.mp4")
+        before = named.stat().st_size
+        tool("waveform", named, "--title", "Hi", "-o", self.tmp / "wf.mp4", "--fast", "--json")
+        self.assertEqual(named.stat().st_size, before, "the input is untouched")
+        self.assertTrue(bystander.exists(), "a file beside the output that this run did not write stays")
+        self.assertEqual([p.name for p in self.tmp.glob(".wf.ffskill-*")], [], "the hidden intermediates are removed")
+
+    def test_plan_is_guarded_like_an_output(self):
+        victim = self.copy("plan_in.mp4")
+        err = self.failed(tool("fit", victim, "--aspect", "1:1", "-o", self.tmp / "plan_out.mp4", "--plan", victim,
+                               "--json", check=False))
+        self.assertEqual(err["reason"], "output_is_input")
+        self.assertIn("ISO Media", sh("file", victim, check=False).stdout or "ISO Media")
+        old = self.tmp / "old_plan.json"
+        old.write_text("{}", encoding="utf-8")
+        err = self.failed(tool("fit", victim, "--aspect", "1:1", "-o", self.tmp / "plan_out.mp4", "--plan", old,
+                               "--json", check=False))
+        self.assertEqual(err["reason"], "output_exists")
+        self.assertEqual(old.read_text(encoding="utf-8"), "{}")
+
+    def test_graphics_caption_and_verify_side_files_never_replace_the_input(self):
+        g_in = self.copy("g_in.mp4")
+        err = self.failed(tool("graphics", g_in, "--template", "title", "--title", "Hello", "--text-render", "ass", "--write-ass", g_in,
+                               "-o", self.tmp / "g_out.mp4", "--overwrite", "--json", check=False))
+        self.assertEqual(err["kind"], "input", err)
+        c_in = self.copy("c_in.mp4")
+        err = self.failed(tool("caption", c_in, "--srt", self.srt, "--animate", "pop", "--write-ass", c_in,
+                               "-o", self.tmp / "c_out.mp4", "--overwrite", "--json", check=False))
+        self.assertEqual(err["reason"], "output_is_input", err)
+        err = self.failed(tool("caption", c_in, "--srt", self.srt, "--animate", "pop", "--write-ass",
+                               self.tmp / "missing_dir" / "x.ass", "-o", self.tmp / "c_out.mp4", "--json", check=False))
+        self.assertEqual(err["kind"], "input", err)
+        v_in = self.copy("v_in.mp4")
+        err = self.failed(tool("verify", v_in, "--quick", "--seconds", "1", "--report", v_in, "--json", check=False))
+        self.assertEqual(err["reason"], "output_is_input", err)
+        for f in (g_in, c_in, v_in):
+            self.assertGreater(f.stat().st_size, 10000, f)
+
+    def test_render_pack_table_is_not_replaced_without_overwrite(self):
+        clip = self.copy("pk.mp4")
+        table = self.tmp / "pk_pack.md"
+        table.write_text("hand-written\n", encoding="utf-8")
+        err = self.failed(tool("render", clip, "--template", "youtube,x", "--dry-run", "--json", check=False))
+        self.assertEqual(err["reason"], "output_exists", err)
+        self.assertEqual(table.read_text(encoding="utf-8"), "hand-written\n")
+
+    def test_a_percent_in_an_image_path_is_the_file_itself(self):
+        literal = self.tmp / "shot%d.png"
+        numbered = self.tmp / "shot1.png"
+        numbered.write_bytes(b"keep")
+        doc = json.loads(tool("look", self.src, "--at", "0.5", "-o", literal, "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertTrue(literal.exists())
+        self.assertEqual(numbered.read_bytes(), b"keep", "image2's sequence expansion did not reach shot1.png")
+        red, blue = self.tmp / "logo%d.png", self.tmp / "logo1.png"
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", "-update", "1", red)
+        ffmpeg("-f", "lavfi", "-i", "color=blue:s=32x32", "-frames:v", "1", blue)
+        out = self.tmp / "logo_out.mp4"
+        tool("overlay", self.src, "--image", red, "--position", "top-left", "--margin", "0", "-o", out, "--fast", "--json")
+        px = subprocess.run(["ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(out), "-vf", "crop=8:8:8:8,format=rgb24",
+                             "-frames:v", "1", "-f", "rawvideo", "-"], capture_output=True).stdout[:3]
+        self.assertGreater(px[0], 150, f"the red literal logo%d.png was drawn, not logo1.png: {px.hex()}")
+        self.assertLess(px[2], 100, px.hex())
+
+    @unittest.skipIf(os.name == "nt", "a backslash is a separator on Windows")
+    def test_a_posix_backslash_and_edge_whitespace_reach_ffmpeg_as_named(self):
+        d = self.tmp / "a\\b"
+        d.mkdir(exist_ok=True)
+        srt = d / " c\\d.srt"
+        shutil.copy(self.srt, srt)
+        doc = json.loads(tool("caption", self.src, "--srt", srt, "-o", d / "out.mp4", "--fast", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        doc = json.loads(tool("caption", self.src, "--srt", " c\\d.srt", "-o", "out2.mp4",
+                              "--fast", "--json", cwd=d).stdout)
+        self.assertEqual(doc["status"], "completed")
+
+    @unittest.skipIf(os.name == "nt", "a one-letter prefix is a drive letter on Windows")
+    def test_a_one_letter_prefix_is_refused_with_the_dot_slash_hint(self):
+        shutil.copy(self.src, self.tmp / "x:y.mp4")
+        err = self.failed(tool("probe", "x:y.mp4", "--json", check=False, cwd=self.tmp))
+        self.assertEqual(err["reason"], "media_path_is_url", err)
+        self.assertIn("./name", err["message"])
 
 
 if __name__ == "__main__":

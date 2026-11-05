@@ -27,6 +27,7 @@ import argparse
 import math
 import sys
 
+from _common import still_input_args  # noqa: E402
 from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg, fmt_secs
 
 
@@ -115,7 +116,7 @@ def main() -> int:
         ]
 
     output = args.output or default_output(args.input, "insert", "mp4")
-    cmd = ffmpeg_base() + ["-loop", "1", "-i", args.input, "-t", f"{target:.3f}", "-vf", ",".join(vf)]
+    cmd = ffmpeg_base() + ["-loop", "1", *still_input_args(args.input), "-i", args.input, "-t", f"{target:.3f}", "-vf", ",".join(vf)]
     # the SDR line, whatever the image is; its RGB (PNG) or BT.601 (JPEG) pixels are converted to
     # the BT.709 that line is tagged with
     cmd += video_args(None, args.crf, args.preset, source=meta)
