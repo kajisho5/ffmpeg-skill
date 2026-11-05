@@ -550,15 +550,24 @@ output; the result says so with `dropped_non_av_streams: true`.
 
 ### loop.py — repeat a clip
 ```
-loop.py INPUT --times N | --duration T [--boomerang] [-o OUT]
+loop.py INPUT --times N | --duration T [--crossfade S | --boomerang] [-o OUT]
 ```
 `--times` repeats the whole clip that many times back to back (2 =
 original + 1 repeat). `--duration` instead loops (and trims the last
 repeat) to hit an exact target length. For a background loop, an ambient
-bed, or filling a fixed slot length with a short clip. Does not smooth the
-loop point (no crossfade at the seam) -- a clip that doesn't already loop
-cleanly will show a visible cut/pop at each repeat, which is a property of
-the source material this tool cannot fix.
+bed, or filling a fixed slot length with a short clip. Without `--crossfade`
+the loop point is not smoothed: a clip that doesn't already loop cleanly
+shows a visible cut/pop at each repeat.
+`--crossfade S` makes the clip loop first: its last S seconds (whole frames)
+fade into its first S, picture and sound, so each seam continues the motion.
+One repeat is then the clip minus S (a 4 s clip with `--crossfade 1` repeats
+every 3 s), S may be at most half the clip, and `--times 1` writes one
+seamless loop file. The repeat is written losslessly to a temporary file
+first, so the output still has a single lossy encode.
+Every run except `--boomerang` measures the first seam of the written file
+(`seam`: the picture step across it against the typical step between
+neighbouring frames, and the sound level step in dB) and checks the length
+against the request (`expected_duration`, within 1.5 frames).
 `--boomerang` plays the clip forward, then backward (frames 0..N-1, then
 N-2..1, repeated), so any clip loops without a jump and neither turnaround
 frame is shown twice. `--times` then counts round trips (1 is allowed), and

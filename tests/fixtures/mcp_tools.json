@@ -662,6 +662,7 @@
    "argv",
    "boomerang",
    "codec",
+   "crossfade",
    "dry_run",
    "duration",
    "fast",

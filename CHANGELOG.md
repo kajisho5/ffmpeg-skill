@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`loop.py --crossfade S`** fades the clip's last S seconds into its first S, picture and sound, so every repeat meets the next without a jump; `--times 1` writes one seamless loop file (#422). Every loop now reports its first seam measured (`seam`: picture step against the typical frame-to-frame step, sound level step) and checks its length against the request (`expected_duration`) and its streams.
 
 ## 3.1.6
 
