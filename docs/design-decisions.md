@@ -62,7 +62,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — export.py --repair](#224--exportpy---repair)
 - [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
-- [Unreleased — the same mechanisms, where the earlier fixes did not reach (#414)](#unreleased--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
+- [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 <!-- contents:end -->
 
 ## Time limits
@@ -2701,7 +2701,7 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   repeat against an output that costs a whole clip per repeat, so any count whose list strains
   memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.
 
-## Unreleased — the same mechanisms, where the earlier fixes did not reach (#414)
+## 3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)
 
 - **`silence.py --margin` is kept around silences only, not around filler spans.** A filler cut is
   the word plus `--filler-pad`; taking 0.2 s off each side as well turned every word narrower than
