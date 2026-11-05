@@ -1878,7 +1878,15 @@ Run `loudness.py` after this for final levels.
 ### loudness.py — EBU R128 normalisation
 ```
 loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--measure-only] [-o OUT]
+loudness.py INPUT --versions=streaming,ebu-r128,broadcast-jp[,-16/-1.5] [--lra 11]
 ```
+`--versions` writes one file per target from the one master, each a full
+two-pass normalisation measured after: `streaming` (-14 LUFS / -1 dBTP),
+`ebu-r128` (-23 / -1), `broadcast-jp` (-24 LKFS / -1, ARIB TR-B32), or any
+`LUFS/TP` pair (write `--versions=...` when the list starts with a `-`). Files are `<name>_loudnorm_<target>.<ext>` (`-o` is refused);
+the result's `versions` lists each target, file and measurement, its
+verification steps carry a `version` key, and `verified` holds only when every
+version met its own target.
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the

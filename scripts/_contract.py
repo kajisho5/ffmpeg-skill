@@ -639,7 +639,9 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "loudness":
         extra = {"measured": {"type": "object", "description": "the loudnorm measurement of the input (input_i, input_tp, input_lra, input_thresh, target_offset); with --measure-only it is the whole result"},
                  "targets": {"type": "object", "description": "the requested lufs / tp / lra"},
-                 "result": {"type": "object", "description": "the written file measured again (input_i, input_tp, input_lra, ...), plus tp_ceiling_used, audio_bitrate_used and encodes"}}
+                 "result": {"type": "object", "description": "the written file measured again (input_i, input_tp, input_lra, ...), plus tp_ceiling_used, audio_bitrate_used and encodes"},
+                 "versions": {"type": "array", "description": "--versions only (output is then null): one row per target, {target, output, targets, result}; every row's loudness and duration steps are in verification with a `version` key, and verified is true only when every version met its own target"},
+                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "--versions only: the files written, in the order asked"}}
     elif name == "color":
         extra = {"dropped_non_av_streams": {"type": "boolean"},
                  "sdr_path": {"enum": ["tonemap", "gamut"], "description": "--to-sdr only: tonemap for PQ / HLG / Dolby Vision (and --force on an untagged file); gamut for BT.2020 primaries on an SDR transfer, converted to BT.709 without a tone map"},

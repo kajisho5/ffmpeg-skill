@@ -697,7 +697,8 @@
    "plan",
    "sample_rate",
    "timeout",
-   "tp"
+   "tp",
+   "versions"
   ],
   "required": []
  },
