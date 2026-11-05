@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.3
+
+_Automated release: version and notes generated from pull requests merged since 3.1.2._
+
 ### Fixed
 
 - A command-line argument carrying a line break or a control character (a crafted file name) reached
@@ -21,6 +27,7 @@
 - `grid.py` (labels, the default) and `scenes.py --sheet` (timecode stamps) failed on a build
   without `drawtext`, as `look.py` did in #394. Both draw the picture without the text and record
   the fallback (`grid_no_drawtext`, `scenes_sheet_no_drawtext`) and a notes line.
+- Escape control characters from arguments in messages; report dropped audio tracks from every tool; grid/scenes without drawtext (#405)
 
 ## 3.1.2
 
