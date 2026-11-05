@@ -762,6 +762,17 @@ class EditingTests(MediaFixtures):
         m = probe(str(out))
         self.assertClose(m["duration"], 20.0, 0.1)
 
+    def test_loop_refuses_an_output_that_is_its_input(self):
+        """The concat list is the only -i, so run()'s own check never saw the source: with
+        --overwrite, -o naming the input replaced it with its own loop (#416 review)."""
+        victim = OUT / "loop_victim.mp4"
+        shutil.copy(self.src, victim)
+        before = victim.read_bytes()
+        proc = script("loop.py", victim, "--times", "2", "-o", victim, "--overwrite", "--json", expect_fail=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
+        self.assertEqual(victim.read_bytes(), before)
+
     def test_loop_times_too_small_refused(self):
         script("loop.py", self.src, "--times", "1", expect_fail=True)
 

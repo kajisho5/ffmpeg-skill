@@ -27,7 +27,7 @@ import os
 import sys
 import tempfile
 
-from _common import concat_list_line, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common import concat_list_line, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, refuse_output_is_input, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
 from _common.decision import av_trim
 
@@ -138,6 +138,8 @@ def main() -> int:
     has_audio = bool(meta.get("audio")) and not args.boomerang
     notes = []
     output = args.output or default_output(args.input, "loop")
+    # the concat list is the only -i, so run() never sees the source next to -o (#416 review)
+    refuse_output_is_input(output, args.input)
 
     if args.times is not None:
         if args.times < (1 if args.boomerang else 2):
