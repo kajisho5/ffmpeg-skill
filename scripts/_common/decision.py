@@ -474,7 +474,7 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
         return _x264_raw(crf, preset, keep_bt709)
     if codec == "hevc":
         if hdr:
-            x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
+            x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1{hdr10_x265_params(v)}" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
             return ["-c:v", "libx265", "-preset", preset, "-crf", str(_clamped_crf("libx265", crf + 2, 51, crf)), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
                     "-x265-params", x265] + hdr_tags + ["-movflags", "+faststart"]
         params, extra = _sdr_bt709("libx265") if keep_bt709 else ("", [])
@@ -485,7 +485,8 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
         if "libsvtav1" in ffmpeg_encoders():
             args = ["-c:v", "libsvtav1", "-preset", str(SVT_PRESET.get(preset, 6)), "-crf", str(_clamped_crf("libsvtav1", crf, 63, crf)), "-pix_fmt", pix]
             if hdr:
-                args += hdr_tags
+                svt = hdr10_svtav1_params(v)
+                args += (["-svtav1-params", svt] if svt else []) + hdr_tags
             elif keep_bt709:
                 params, extra = _sdr_bt709("libsvtav1")
                 args += (["-svtav1-params", params] if params else []) + extra
@@ -506,6 +507,42 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
         return ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"] + (hdr_tags if hdr else [])
     die(f"unknown --codec {codec!r} (one of {', '.join(CODECS)})")
     return []
+
+
+def hdr10_x265_params(v: Dict[str, Any]) -> str:
+    """The source's HDR10 static metadata as x265 options (":master-display=...:max-cll=..."), or "".
+    FFmpeg before 7.0 does not pass the decoded frames' mastering-display / content-light side data
+    to libx265, so without these a 6.1 re-encode wrote PQ video with neither (#401). Given on 7+ too,
+    where they restate what FFmpeg would pass. x265 units: chromaticity 0.00002, luminance 0.0001 cd/m2."""
+    md, cl = _hdr10_parts(v)
+    out = ""
+    if md:
+        c = lambda k: round(md[k] * 50000)
+        out += (f":master-display=G({c('green_x')},{c('green_y')})B({c('blue_x')},{c('blue_y')})R({c('red_x')},{c('red_y')})"
+                f"WP({c('white_point_x')},{c('white_point_y')})L({round(md['max_luminance'] * 10000)},{round(md['min_luminance'] * 10000)})")
+    if cl:
+        out += f":max-cll={cl['max_content']},{cl['max_average']}"
+    return out
+
+
+def hdr10_svtav1_params(v: Dict[str, Any]) -> str:
+    """The same for SVT-AV1 (-svtav1-params), which takes chromaticities and cd/m2 as decimals."""
+    md, cl = _hdr10_parts(v)
+    parts = []
+    if md:
+        f = lambda k: f"{md[k]:.5g}"
+        parts.append(f"mastering-display=G({f('green_x')},{f('green_y')})B({f('blue_x')},{f('blue_y')})R({f('red_x')},{f('red_y')})"
+                     f"WP({f('white_point_x')},{f('white_point_y')})L({f('max_luminance')},{f('min_luminance')})")
+    if cl:
+        parts.append(f"content-light={cl['max_content']},{cl['max_average']}")
+    return ":".join(parts)
+
+
+def _hdr10_parts(v: Dict[str, Any]) -> "Tuple[Optional[Dict[str, float]], Optional[Dict[str, int]]]":
+    st = v.get("hdr10_static") or {}
+    if v.get("color_transfer") != "smpte2084":
+        return None, None
+    return st.get("mastering_display"), st.get("content_light")
 
 
 def _clamped_crf(encoder: str, value: int, top: int, requested: int) -> int:
@@ -667,7 +704,7 @@ def _x265_hdr_default(v: Dict[str, Any], crf: int, preset: str) -> List[str]:
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"
     trc = v.get("color_transfer") or "arib-std-b67"
-    x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
+    x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1{hdr10_x265_params(v)}" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
     return ["-c:v", "libx265", "-preset", preset, "-crf", str(min(51, crf + 2)), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
             "-x265-params", x265, "-colorspace", cs, "-color_primaries", prim, "-color_trc", trc, "-movflags", "+faststart"]
 

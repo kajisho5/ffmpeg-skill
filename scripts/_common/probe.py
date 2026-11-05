@@ -317,6 +317,10 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "hdr_format": (("Dolby Vision %s" % (("profile %s" % dovi["profile"]) if dovi and dovi.get("profile") is not None else "")).strip() if dovi else
                            "HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
             "dolby_vision": dovi,
+            # HDR10 static metadata (mastering display, content light level) as the encoders take it:
+            # FFmpeg before 7 does not hand it from the decoded frames to libx265 / libsvtav1, so the
+            # tools pass it explicitly (decision.hdr10_x265_params). None when the source has none.
+            "hdr10_static": _hdr10_static(ffprobe, path, video) if trc == "smpte2084" else None,
             "color_space": video.get("color_space"),
             "color_primaries": video.get("color_primaries"),
             "color_transfer": video.get("color_transfer"),
@@ -358,8 +362,44 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
     if role == "input" and out.get("audio_streams"):
         STATE.audio_inputs.add(os.path.realpath(path))
     if role == "input" and getattr(STATE, "first_input", None) is None:
-        STATE.first_input = (path, len(out.get("audio_streams") or []))
+        STATE.first_input = (path, len(out.get("audio_streams") or []),
+                             (out.get("video") or {}).get("hdr10_static"))
     return out
+
+
+def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[Dict[str, Any]]":
+    """A PQ stream's mastering display and content light level, from the stream (an mdcv/clli box,
+    a Matroska colour element) or else its first frame (the HEVC SEI / AV1 metadata OBU): one
+    frame is decoded. Chromaticities are CIE 1931 x/y, luminances cd/m2. None when it has neither."""
+    sides = list(stream.get("side_data_list") or [])
+    if not any(_side_kind(sd) for sd in sides):
+        proc = run([ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1", "-show_frames",
+                    "-show_entries", "frame=side_data_list", "-of", "json", path], quiet=True, check=False)
+        frames: List[Dict[str, Any]] = []
+        if proc.returncode == 0:
+            try:
+                frames = json.loads(proc.stdout or "{}").get("frames") or []
+            except ValueError:
+                pass
+        sides = list((frames[0].get("side_data_list") or []) if frames else [])
+    out: Dict[str, Any] = {}
+    for sd in sides:
+        kind = _side_kind(sd)
+        if kind == "mastering" and "mastering_display" not in out:
+            vals = {k: _fraction(str(sd.get(k))) for k in ("red_x", "red_y", "green_x", "green_y", "blue_x", "blue_y",
+                                                            "white_point_x", "white_point_y", "min_luminance", "max_luminance")}
+            if all(v is not None for v in vals.values()):
+                out["mastering_display"] = {k: float(v) for k, v in vals.items()}
+        elif kind == "light" and "content_light" not in out:
+            mc, ma = _to_int(sd.get("max_content")), _to_int(sd.get("max_average"))
+            if mc is not None and ma is not None:
+                out["content_light"] = {"max_content": mc, "max_average": ma}
+    return out or None
+
+
+def _side_kind(sd: Dict[str, Any]) -> "Optional[str]":
+    t = str(sd.get("side_data_type") or "")
+    return "mastering" if t == "Mastering display metadata" else "light" if t == "Content light level metadata" else None
 
 
 def _bit_depth(pix_fmt: Optional[str]) -> int:
