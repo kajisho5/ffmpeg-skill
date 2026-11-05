@@ -6490,6 +6490,14 @@ class SideFileGuardTests(unittest.TestCase):
         for f in (g_in, c_in, v_in):
             self.assertGreater(f.stat().st_size, 10000, f)
 
+    def test_render_pack_table_is_not_replaced_without_overwrite(self):
+        clip = self.copy("pk.mp4")
+        table = self.tmp / "pk_pack.md"
+        table.write_text("hand-written\n", encoding="utf-8")
+        err = self.failed(tool("render", clip, "--template", "youtube,x", "--dry-run", "--json", check=False))
+        self.assertEqual(err["reason"], "output_exists", err)
+        self.assertEqual(table.read_text(encoding="utf-8"), "hand-written\n")
+
     def test_a_percent_in_an_image_path_is_the_file_itself(self):
         literal = self.tmp / "shot%d.png"
         numbered = self.tmp / "shot1.png"
