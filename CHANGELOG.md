@@ -91,6 +91,31 @@
 - A JPEG with an EXIF Orientation tag (a phone's portrait photo) was sized as landscape by
   `insert.py` and `sequence.py`, which cropped a sideways window out of the upright picture
   ffmpeg decodes. `probe()` now reads a still's rotation off its decoded frame (#411).
+- Review of #416: `freeze.py` without `--at` (the clip's end) held nothing in `--mode insert` (the
+  picture kept its length, the sound gained the hold); it now holds the last frame as `--mode extend`
+  does. On a variable frame rate a hold whose one-frame window held no frame (frames at 0.033 and
+  0.100, `--at 0.06`) was lost too; the hold is now the first frame at or after the cut (#409, #411).
+- `silence.py` with more than 32 kept ranges replaced its input under `-o <input> --overwrite`: the
+  chunked join's last command never names the source, so the same-file check did not see it. It is
+  now refused up front. Its `keep`, `kept_duration`, `removed_seconds` and `--edl` described the
+  unsnapped bounds while the render and `--timemap` held frame times (0.385-2.115 for 0.4-2.1), and
+  an EDL bound rounded past its frame re-cut one frame late; all now describe the rendered ranges,
+  frame times written down to the millisecond (#409).
+- `insert.py` noted the square-pixel scale of a non-square-pixel still but never ran it, so the still
+  lost a band top and bottom; `cropdetect.py`, `sequence.py` and `waveform.py --image` squared the
+  picture without the `notes` line. The EXIF-rotation probe read a still named `photo%02d.jpg` as an
+  image sequence and found no rotation (#411).
+- `straighten.py --fit crop` pre-scaled by a square's factor (|cos|+|sin|) and left two corners black
+  on a 16:9 frame; it now scales by |cos| + max(W/H, H/W)|sin| of the displayed frame (#411).
+- `speedramp.py` accepted a segment whose two ends fall on one frame (1.01-1.02 at 30 fps) and
+  applied its factor to no frame; it is now refused as an input error (#409).
+- `graphics.py` placed a PNG emoji on a wrapped line as if the label were one line (first line's y,
+  the earlier lines' width added to x); a title wrapped taller than the frame, and `overlay.py --text`
+  wrapped taller than the frame or placed too near the edge to wrap, lost text without a word (now a
+  `notes` line); the lower-third bar's 62 % floor ran past the right margin at a large `--scale`; a
+  grid label in a cell with room for one em was not shortened; `broll.py` scaled a 1-pixel-wide
+  A-roll to width 0 (kept as 1) and failed; and the SMPTE hint named the first timecoded input's
+  start timecode for a time in another input (a B-roll's `--from`) (#411).
 
 ## 3.1.5
 

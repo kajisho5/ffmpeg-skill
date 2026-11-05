@@ -388,7 +388,9 @@ def main(force_route: Optional[str] = None) -> int:
                      + [text_width_em(ln) * h2 for ln in (lt_title or "").split("\n")])
         name_h = block_h(lt_name, h1)
         bar_h = name_h + (block_h(lt_title, h2) + pad if lt_title else 0) + pad * 2
-        bar_w = max(int(base * 0.62), min(room, int(widest + 0.999) + 2 * tx_pad))
+        # the 62 % floor never takes the bar past the right margin (#416 review: at a large --scale
+        # it did)
+        bar_w = max(1, min(room, max(int(base * 0.62), int(widest + 0.999) + 2 * tx_pad)))
         y0 = H - m_bottom - bar_h
         # slide in from the left over 0.4 s, slide out over 0.3 s (overlay evaluates x per frame)
         x_expr = f"if(lt(t,{s:.3f}+0.4),-{bar_w}+({bar_w}+{m_left})*((t-{s:.3f})/0.4),if(gt(t,{e:.3f}-0.3),{m_left}-({bar_w}+{m_left})*(1-({e:.3f}-t)/0.3),{m_left}))"
@@ -438,6 +440,12 @@ def main(force_route: Optional[str] = None) -> int:
         title_h = block_h(title_t, h1)
         sub_y = title_h // 2 + int(base * 0.03)
         sub_extra = block_h(sub_t, h2) - h2 if sub_t else 0
+        tall = title_h + (sub_y - title_h // 2 + block_h(sub_t, h2) if sub_t else 0)
+        if tall > H:
+            # the wrap measures width only; a centred block taller than the frame loses its first
+            # and last lines off the edges (#416 review)
+            note(f"the wrapped title{' and subtitle' if sub_t else ''} are about {tall} px tall, taller than the "
+                 f"{H} px frame: the lines past its edges are not drawn -- shorten the text or lower --scale")
         add_text(title_t,
                  f"drawtext={drawtext_text_opts(title_t)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if sub_t else 0}:alpha='{fade_a}':{en}",
                  size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2,
@@ -604,52 +612,62 @@ def main(force_route: Optional[str] = None) -> int:
         seen: List[str] = []
         for el in elements:
             el["box_px"] = int(round(el["size"] * scale_em))
-            line = el["text"]
-            clusters = emoji_clusters(line)
-            if not clusters or emoji_mode not in ("png",):
+            if not emoji_clusters(el["text"]) or emoji_mode not in ("png",):
                 continue
-            line_w = text_width_em(line, scale_em) * el["size"]
+            # a wrapped label is several lines: each is measured from its own start and sits one
+            # line pitch below the last (#416 review: they were measured as one line, on the first)
+            all_lines = el["text"].split("\n")
             align = int(el.get("align", 7))
-            left = el["x"] if align in (7, 4, 1) else (
-                el["x"] - line_w / 2.0 if align in (8, 5, 2) else el["x"] - line_w)
             line_h = el["size"] * 1.2
-            y_top = el["y"] if align in (7, 8, 9) else (
-                el["y"] - line_h / 2.0 if align in (4, 5, 6) else el["y"] - line_h)
-            # An RTL line is rendered right-to-left: measure the suffix, not the logical prefix.
-            rtl = detect_script(line) in BIDI_SCRIPTS
-            rebuilt, cursor = "", 0
-            for idx, cluster in clusters:
-                name = emoji_codepoint_name(cluster)
-                if name not in seen:
-                    seen.append(name)
-                asset = emoji_asset_for(cluster, emoji_assets)
-                if not asset:
-                    if name not in missing:
-                        missing.append(name)
-                    rebuilt += line[cursor:idx + len(cluster)]
-                    cursor = idx + len(cluster)
+            block = len(all_lines) * line_h
+            block_top = el["y"] if align in (7, 8, 9) else (
+                el["y"] - block / 2.0 if align in (4, 5, 6) else el["y"] - block)
+            rebuilt_lines = []
+            for k, line in enumerate(all_lines):
+                clusters = emoji_clusters(line)
+                if not clusters:
+                    rebuilt_lines.append(line)
                     continue
-                if rtl:
-                    prefix_px = line_w - text_width_em(line[:idx] + cluster, scale_em) * el["size"]
-                else:
-                    prefix_px = text_width_em(line[:idx], scale_em) * el["size"]
-                if el.get("x_expr"):
-                    # the lower-third slides: the emoji rides the same expression the bar does
-                    x = f"({el['x_expr']})+{prefix_px:.0f}"
-                else:
-                    x = int(round(max(0.0, min(left + prefix_px, W - el["box_px"]))))
-                emoji_overlays.append({"asset": asset, "cluster": name, "x": x,
-                                       "y": int(round(max(0.0, min(y_top + (line_h - el["box_px"]) / 2.0,
-                                                                   H - el["box_px"])))),
-                                       "start": round(el["start"], 3), "end": round(el["end"], 3),
-                                       "box": el["box_px"],
-                                       # every template fades its text in and out over 0.3 s
-                                       # (fade_a above); the PNG rides the same envelope.
-                                       "fade_in": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3),
-                                       "fade_out": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3)})
-                rebuilt += line[cursor:idx] + EMOJI_SENTINEL
-                cursor = idx + len(cluster)
-            el["text"] = rebuilt + line[cursor:]
+                line_w = text_width_em(line, scale_em) * el["size"]
+                left = el["x"] if align in (7, 4, 1) else (
+                    el["x"] - line_w / 2.0 if align in (8, 5, 2) else el["x"] - line_w)
+                y_top = block_top + k * line_h
+                # An RTL line is rendered right-to-left: measure the suffix, not the logical prefix.
+                rtl = detect_script(line) in BIDI_SCRIPTS
+                rebuilt, cursor = "", 0
+                for idx, cluster in clusters:
+                    name = emoji_codepoint_name(cluster)
+                    if name not in seen:
+                        seen.append(name)
+                    asset = emoji_asset_for(cluster, emoji_assets)
+                    if not asset:
+                        if name not in missing:
+                            missing.append(name)
+                        rebuilt += line[cursor:idx + len(cluster)]
+                        cursor = idx + len(cluster)
+                        continue
+                    if rtl:
+                        prefix_px = line_w - text_width_em(line[:idx] + cluster, scale_em) * el["size"]
+                    else:
+                        prefix_px = text_width_em(line[:idx], scale_em) * el["size"]
+                    if el.get("x_expr"):
+                        # the lower-third slides: the emoji rides the same expression the bar does
+                        x = f"({el['x_expr']})+{prefix_px:.0f}"
+                    else:
+                        x = int(round(max(0.0, min(left + prefix_px, W - el["box_px"]))))
+                    emoji_overlays.append({"asset": asset, "cluster": name, "x": x,
+                                           "y": int(round(max(0.0, min(y_top + (line_h - el["box_px"]) / 2.0,
+                                                                       H - el["box_px"])))),
+                                           "start": round(el["start"], 3), "end": round(el["end"], 3),
+                                           "box": el["box_px"],
+                                           # every template fades its text in and out over 0.3 s
+                                           # (fade_a above); the PNG rides the same envelope.
+                                           "fade_in": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3),
+                                           "fade_out": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3)})
+                    rebuilt += line[cursor:idx] + EMOJI_SENTINEL
+                    cursor = idx + len(cluster)
+                rebuilt_lines.append(rebuilt + line[cursor:])
+            el["text"] = "\n".join(rebuilt_lines)
         # `or 60` would swallow --emoji-max 0, the one value meaning "none at all".
         _max = 60 if args.emoji_max is None else int(args.emoji_max)
         if len(emoji_overlays) > _max:

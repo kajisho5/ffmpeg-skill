@@ -24,7 +24,7 @@ import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note
-from _common.probe import square_pixels, square_pixels_note
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 
 def main() -> int:
@@ -70,11 +70,16 @@ def main() -> int:
         rotate = drawn_chain(f"rotate={radians:.8f}:fillcolor={args.fill_color}:{geometry}", meta, [args.fill_color],
                              f"rotate={radians:.8f}:fillcolor=black:{geometry}")
     else:
-        # Pre-scale the frame up by a safe, conservative factor (|cos|+|sin|, the exact growth
-        # factor for a square, over-generous for a rectangle) so the rotated content fully
-        # covers the original W:H window with no black corner, then rotate in place (canvas
-        # stays at the scaled size) and crop back down to the original W:H, centred.
-        s = abs(math.cos(radians)) + abs(math.sin(radians))
+        # Pre-scale the frame up so the rotated content fully covers the original W:H window with
+        # no black corner, then rotate in place (canvas stays at the scaled size) and crop back
+        # down to the original W:H, centred. The window turned back by the angle must fit inside
+        # the scaled frame: W*cos + H*sin <= s*W and W*sin + H*cos <= s*H, so
+        # s = |cos| + max(W/H, H/W) * |sin| for the displayed (squared, upright) frame. Through
+        # 3.1.5 it was |cos| + |sin|, a square's factor, which left two corners black on 16:9
+        # (#416 review).
+        dw, dh = display_size(meta["video"])
+        aspect = max(dw / dh, dh / dw) if dw and dh else 1.0
+        s = abs(math.cos(radians)) + aspect * abs(math.sin(radians))
         # crop dimensions must round down to even (4:2:0 chroma); trunc(.../2)*2 floors to the
         # nearest even value instead of leaving an odd width/height that the encoder would refuse.
         rotate = f"scale=iw*{s:.8f}:ih*{s:.8f},rotate={radians:.8f},crop=trunc(iw/{s:.8f}/2)*2:trunc(ih/{s:.8f}/2)*2"

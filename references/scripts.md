@@ -513,7 +513,8 @@ freeze.py INPUT --hold T [--at T] [--mode insert|extend] [-o OUT]
 how long the freeze lasts. `--mode insert` (default) inserts the hold at
 `--at`, pushing everything after it later by `--hold` seconds. `--mode
 extend` only works with `--at` at (or past) the clip's end and just makes
-the last frame last `--hold` seconds longer, with nothing pushed. Audio is
+the last frame last `--hold` seconds longer, with nothing pushed; `--mode insert` at
+the clip's end (no `--at`) does the same. Audio is
 silent during the held frame in `--mode insert` (there is no source audio
 for a frozen moment that didn't exist before). `--mode insert` drops a
 subtitle/data track rather than copy it with timestamps that no longer match

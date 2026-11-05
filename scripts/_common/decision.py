@@ -199,28 +199,37 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
     return total
 
 
-def time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
+def time_arg(value: str, flag: str, fps: Optional[float] = None,
+             source: Optional[Dict[str, Any]] = None) -> float:
     """parse_time() for a command-line flag: SMPTE hh:mm:ss:ff resolves with the input's fps when
     the caller has one, and every parse failure is a `kind: input` refusal naming the flag (so
-    `--json` callers get a failure document, never a traceback)."""
+    `--json` callers get a failure document, never a traceback). `source` is the probe of the
+    input the time is in when that is not the first one (a B-roll's --from, an overlay layer's
+    --place range): the SMPTE hint then names that input's start timecode and length."""
     try:
         seconds = parse_time(value, fps)
     except MissingFpsError as e:
         die(f"{flag} {value!r}: {e}")
     except ValueError as e:
         die(f"{flag} {value!r}: {e} (use seconds, mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff at the source's fps or with an explicit @fps suffix)")
-    _remember_smpte_hint(value, flag, fps, seconds)
+    _remember_smpte_hint(value, flag, fps, seconds, source)
     return seconds
 
 
-def _remember_smpte_hint(value: str, flag: str, fps: Optional[float], seconds: float) -> None:
+def _remember_smpte_hint(value: str, flag: str, fps: Optional[float], seconds: float,
+                         source: Optional[Dict[str, Any]] = None) -> None:
     """An hh:mm:ss:ff time counts from the file's first frame (00:00:00:00), not from a camera's
     start timecode (docs/design-decisions.md, time grammar). When one reads past the end of a
     source that carries a start timecode it was almost certainly typed off the source's own
     burned-in or NLE timecode: keep a hint naming the frame it would be from the source's start,
     which die() adds to the refusal a tool then raises for the out-of-range time (#411). The
-    grammar itself, and what a valid time means, are unchanged."""
-    tc = getattr(STATE, "source_timecode", None)
+    grammar itself, and what a valid time means, are unchanged. A time in another input than the
+    first is judged against that input's own timecode and length (#416 review)."""
+    if source is not None:
+        own = (source.get("timecode") or {}).get("value")
+        tc = (own, source.get("duration")) if own else None
+    else:
+        tc = getattr(STATE, "source_timecode", None)
     text = value.strip().rpartition("@")[0] if "@" in value else value.strip()
     if not tc or len(text.split(":")) != 4:
         return

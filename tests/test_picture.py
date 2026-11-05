@@ -5128,6 +5128,14 @@ class GeometryAuditPictureTests(unittest.TestCase):
         h1 = int(360 * 0.11)
         for line in lines[0]:
             self.assertLessEqual(text_width_em(line) * h1, 640 * 0.9 + 1e-6, lines[0])
+        self.assertFalse(any("taller than" in n for n in doc.get("notes") or []), doc.get("notes"))
+
+    def test_graphics_title_says_when_the_wrapped_block_is_taller_than_the_frame(self):
+        """#416 review: the title wraps with no line limit, and a block taller than the frame lost
+        its first and last lines off the edges without a word."""
+        doc = json.loads(script("graphics.py", self.src, "--template", "title", "--title", " ".join(["a long title"] * 30),
+                                "--text-render", "ass", "--dry-run", "-o", OUT / "g416p_tall.mp4", "--json").stdout)
+        self.assertTrue(any("taller than the 360 px frame" in n for n in doc.get("notes") or []), doc.get("notes"))
 
     def test_graphics_lower_third_wraps_inside_the_margins_and_widens_its_bar(self):
         from _common import text_width_em
@@ -5139,10 +5147,32 @@ class GeometryAuditPictureTests(unittest.TestCase):
         for line in name_lines:
             self.assertLessEqual(text_width_em(line) * h1, 640 - 2 * margin - 2 * pad + 1e-6, name_lines)
 
+    def test_graphics_lower_third_bar_stays_inside_the_margins_at_a_large_scale(self):
+        """#416 review: the bar's 62 % floor of the short side won over the room between the
+        margins: at --scale 3 on 640x360 it was 669 px wide from x=48, past the right margin."""
+        doc = json.loads(script("graphics.py", self.src, "--template", "lower-third", "--name", "Ann", "--scale", "3",
+                                "--text-render", "ass", "--dry-run", "-o", OUT / "g416p_lt_bar.mp4", "--json").stdout)
+        bar_w = int(re.findall(r"color=c=[^:]+:s=(\d+)x\d+", " ".join(doc["commands"]))[0])
+        self.assertLessEqual(bar_w, 640 - 2 * 48)
+
     def test_graphics_chapter_chip_wraps_between_the_margins(self):
         doc = self._graphics("chapter", "--template", "chapter", "--scale", "2",
                              "--title", "Part 2 — Setting up the whole studio from scratch")
         self.assertGreater(len(self._ass_lines(doc)[0]), 1, self._ass_lines(doc))
+
+    def test_graphics_places_a_png_emoji_on_its_own_wrapped_line(self):
+        """#416 review: a wrapped label was measured as one line, so an emoji on its last line kept
+        the first line's y and an x that counted every earlier line's width (clamped to the edge)."""
+        title = "\U0001F389 This episode title is far too long to fit across one line of the frame \U0001F44D"
+        out = OUT / "g416p_title_emoji.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "title", "--title", title,
+                                "--emoji", "png", "--emoji-assets", _emoji_assets(), "--text-render", "ass",
+                                "-o", out, "--dry-run", "--json").stdout)
+        graph = [c for c in doc["commands"] if "overlay=" in c][-1]
+        (x1, y1), (x2, y2) = [(int(x), int(y)) for x, y in re.findall(r"overlay=x=(\d+):y=(\d+)", graph)[-2:]]
+        h1 = int(360 * 0.11)
+        self.assertGreater(y2 - y1, h1, (x1, y1, x2, y2))  # a line or more below the first emoji
+        self.assertLess(x2, 640 - int(round(h1)) - 1, (x1, y1, x2, y2))  # not pinned to the right edge
 
     def test_overlay_text_wraps_to_the_frame(self):
         """drawtext never wraps: through 3.1.3 a long --text ran off the right edge silently."""
@@ -5154,6 +5184,18 @@ class GeometryAuditPictureTests(unittest.TestCase):
         # nothing drawn in the right margin
         for y in range(20, 90, 4):
             self.assertLess(max(frame_rgb(out, 0.5, 316, y)), 60, y)
+
+    def test_overlay_text_says_when_it_still_does_not_fit(self):
+        """#416 review: the wrap checked only the width, so a block taller than the frame lost
+        lines without a word, and a position too near the edge to wrap in was drawn off it."""
+        def notes(*argv):
+            doc = json.loads(script("overlay.py", self.black, "--text", *argv, "--border", "0", "--dry-run",
+                                    "-o", OUT / "g416p_ov_fit.mp4", "--json").stdout)
+            return " ".join(doc.get("notes") or [])
+        long = " ".join(["many words that will wrap"] * 8)
+        self.assertIn("taller", notes(long, "--font-size", "40", "--position", "bottom-left"))
+        self.assertIn("does not fit", notes("Edge", "--font-size", "24", "--position", "300,10"))
+        self.assertNotIn("fit", notes("Fits", "--font-size", "24", "--position", "top-left"))
 
     def test_text_tools_draw_on_square_pixels(self):
         """caption, overlay --text and graphics drew on the 180x180 storage of a SAR 16:9 source,
@@ -5189,6 +5231,14 @@ class GeometryAuditPictureTests(unittest.TestCase):
                                 "--cell-height", "180", "-o", out, "--json").stdout)
         self.assertTrue(any("shortened" in n for n in doc.get("notes") or []), doc.get("notes"))
         self.assertGreater(min(frame_rgb(out, 0.5, 2, 170)), 200)
+
+    def test_grid_shortens_a_label_in_a_cell_with_room_for_one_em(self):
+        """#416 review: when the cell left an em or less, the whole filename came back unshortened
+        and, right-aligned, lost its start (and the note did not count it)."""
+        sys.path.insert(0, str(SCRIPTS))
+        from grid import _fit_label
+        self.assertEqual(_fit_label("camera_A001", 40, 16), "c")
+        self.assertEqual(_fit_label("A", 40, 16), "A")
 
     def test_grid_label_font_covers_its_script(self):
         from _common import script_font_status

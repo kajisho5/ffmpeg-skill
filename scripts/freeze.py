@@ -63,7 +63,10 @@ def main() -> int:
     v0 = stream_starts(meta)[0]
     rate = frame_rate(meta) or fps
     cut_at = grid_at_or_after(at, v0, rate)
-    if args.mode == "extend":
+    # no frame at or after --at (no --at holds at the clip's end): the insert tail would be empty
+    # and the hold lost, so hold the last frame as --mode extend does (#416 review)
+    vend = v0 + (meta["video"].get("duration") or dur - v0)
+    if args.mode == "extend" or cut_at >= vend - 0.5 / rate:
         # tpad's stop_duration clones the last frame for the given duration; no PTS surgery
         # needed since it only ever appends past the real end.
         vf = f"tpad=stop_mode=clone:stop_duration={args.hold:.3f}"
@@ -100,9 +103,13 @@ def main() -> int:
         # freeze came out 1.97 s on 7.1). Cloning before setpts and concatenating the hold before
         # the tail reads the same on every version; the tail's first frame then shows n + 1 times,
         # as tpad's start clone showed it.
+        # The held frame is the first frame at or after the cut, whatever its time: on a variable
+        # frame rate a nominal one-frame window around cut_at can hold no frame (frames at 0.033
+        # and 0.100, --at 0.06), and the hold was lost (#416 review). A second trim keeps that one
+        # frame; on a constant rate it is the frame at cut_at, as before.
         half = 0.5 / rate
-        hold_v = (f"trim=start={cut_at - half:.6f}:end={cut_at + half:.6f},"
-                  f"tpad=stop_mode=clone:stop={n - 1},setpts=PTS-{cut_at:.6f}/TB")
+        hold_v = (f"trim=start={cut_at - half:.6f},trim=end_frame=1,"
+                  f"tpad=stop_mode=clone:stop={n - 1},setpts=PTS-STARTPTS")
         vf = (f"[0:v]split=3[a][b][c];[a]{head_v}[head];"
               f"[b]{hold_v}[hold];[c]{tail_v}[tail];"
               f"[head][hold][tail]concat=n=3:v=1:a=0,{frame_durations(meta, rate)}[outv]")

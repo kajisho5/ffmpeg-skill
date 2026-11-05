@@ -738,8 +738,9 @@ def _is_still(fmt: Dict[str, Any], video: Dict[str, Any]) -> bool:
 
 def _still_rotation(path: str) -> int:
     """The display rotation of a still's first decoded frame (an EXIF Orientation), 0 if none."""
-    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1",
-                "-show_entries", "frame_side_data=rotation", "-of", "json", path], quiet=True, check=False)
+    proc = run([require_tool("ffprobe"), "-v", "error", *still_input_args(path), "-select_streams", "v:0",
+                "-read_intervals", "%+#1", "-show_entries", "frame_side_data=rotation", "-of", "json", path],
+               quiet=True, check=False)
     try:
         frames = json.loads(proc.stdout or "{}").get("frames") or []
         for sd in (frames[0].get("side_data_list") or []) if frames else []:

@@ -67,7 +67,7 @@ def main() -> int:
     if (w % 2 or h % 2) and w and h:
         # an odd-sized A-roll cannot be encoded 4:2:0 at its own size, and the run-time even-scale
         # retry does not reach a filter_complex: through 3.1.3 this failed as kind "ffmpeg" (#411)
-        ew, eh = w - w % 2, h - h % 2
+        ew, eh = max(2, w - w % 2), max(2, h - h % 2)  # never 0, which scale reads as "keep" (#416 review)
         record_fallback(f"the A-roll is {w}x{h}, which 4:2:0 cannot hold: scaled to {ew}x{eh}",
                         "odd_dimensions_scaled_even", output=args.output or default_output(args.input, "broll"), scale=f"scale={ew}:{eh}")
         a_chain = (a_chain + "," if a_chain else "") + f"scale={ew}:{eh},setsar=1"
@@ -85,13 +85,13 @@ def main() -> int:
         meta_b = probe(path)
         if not meta_b.get("video"):
             die(f"{path} has no video stream")
-        at = time_arg(args.at[i], "--at", fps)
-        start_b = time_arg(per(args.from_, i, "0"), "--from", fps)
+        at = time_arg(args.at[i], "--at", fps, source=meta_a)
+        start_b = time_arg(per(args.from_, i, "0"), "--from", fps, source=meta_b)
         if args.end:
-            end = time_arg(per(args.end, i, "0"), "--end", fps)
+            end = time_arg(per(args.end, i, "0"), "--end", fps, source=meta_a)
             length = end - at
         else:
-            length = time_arg(per(args.duration, i, "4"), "--duration", fps)
+            length = time_arg(per(args.duration, i, "4"), "--duration", fps, source=meta_a)
         if length <= 0:
             die(f"cutaway {i + 1}: length must be > 0 (at {at:g}s, got {length:g}s)")
         if dur_a and at >= dur_a:

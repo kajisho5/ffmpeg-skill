@@ -35,6 +35,7 @@ from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_m
 from _common.emit import note, warn
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.wrap import wrap_text
+from _common import text_width_em
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
 
@@ -76,7 +77,7 @@ def position_exprs(pos: str, margin: int, text_mode: bool, margins: Optional[dic
     return x, y
 
 
-def _wrap_to_frame(args, frame_w: int, margins: Optional[dict]) -> str:
+def _wrap_to_frame(args, frame_w: int, margins: Optional[dict], frame_h: int = 0) -> str:
     """--text broken into lines that fit between the frame's side margins at --font-size, by the
     same phrase rules graphics.py and caption.py wrap with; text that fits comes back unchanged.
     drawtext never wraps, so through 3.1.3 a long line ran off the frame with no word (#411). The
@@ -95,6 +96,11 @@ def _wrap_to_frame(args, frame_w: int, margins: Optional[dict]) -> str:
     inset = 2 * args.border + (24 if args.box else 0)  # the border on both sides, boxborderw=12
     room = frame_w - left - right - inset
     if room <= args.font_size:
+        # a position this close to the edge leaves no room to wrap in: say the text runs off
+        # rather than draw it past the edge without a word (#416 review)
+        if max(text_width_em(ln) for ln in text.split("\n")) * args.font_size > max(room, 0):
+            note(f"--text does not fit: --position {args.position} leaves {max(room, 0)} px to the frame's edge "
+                 f"at --font-size {args.font_size}, so the text runs past it")
         return text
     lines: List[str] = []
     for para in text.split("\n"):
@@ -104,6 +110,12 @@ def _wrap_to_frame(args, frame_w: int, margins: Optional[dict]) -> str:
     if wrapped != text:
         note(f"--text is wider than the frame at --font-size {args.font_size} "
              f"({frame_w} px, {left}/{right} px margins): wrapped to {len(lines)} lines")
+        # the wrap only measures width: a block taller than the frame loses the lines past its
+        # edge (at a bottom position, the first ones), so that is said too (#416 review)
+        tall = args.font_size + (len(lines) - 1) * int(args.font_size * 1.2)
+        if frame_h and tall > frame_h:
+            note(f"the {len(lines)} wrapped lines are about {tall} px tall, taller than the {frame_h} px frame: "
+                 f"the lines past its edge are not drawn -- lower --font-size or shorten --text")
     return wrapped
 
 
@@ -184,7 +196,8 @@ def per_line_drawtext(lines: List[str], x: str, y: str, font_opt: str, args: arg
 _PLACE_TIME = r"[^@\-]+(?:@[0-9.]+)?"
 
 
-def parse_placements(specs: List[str], main_fps: Optional[float], layer_fps: Optional[float]) -> List[tuple]:
+def parse_placements(specs: List[str], main_fps: Optional[float], layer_fps: Optional[float],
+                     layer_meta: Optional[dict] = None, main_meta: Optional[dict] = None) -> List[tuple]:
     """--place SRC_START-SRC_END@AT -> [(src_start, src_end, at)], refusing empty, negative or
     overlapping placements (two pieces on screen at once would stack in an order nobody asked for).
     SRC_START/SRC_END are positions in the layer, so an hh:mm:ss:ff timecode there counts the
@@ -194,9 +207,9 @@ def parse_placements(specs: List[str], main_fps: Optional[float], layer_fps: Opt
         m = re.fullmatch(rf"\s*({_PLACE_TIME})-({_PLACE_TIME})@({_PLACE_TIME})\s*", spec)
         if not m:
             die(f"--place {spec!r}: use SRC_START-SRC_END@AT, e.g. 0-2.5@12 (times are not negative)")
-        a = time_arg(m.group(1), "--place", layer_fps)
-        b = time_arg(m.group(2), "--place", layer_fps)
-        at = time_arg(m.group(3), "--place", main_fps)
+        a = time_arg(m.group(1), "--place", layer_fps, source=layer_meta)
+        b = time_arg(m.group(2), "--place", layer_fps, source=layer_meta)
+        at = time_arg(m.group(3), "--place", main_fps, source=main_meta)
         if b <= a:
             die(f"--place {spec!r}: the layer range ends before it starts")
         out.append((a, b, at))
@@ -433,7 +446,7 @@ def main() -> int:
         if not pip_meta.get("video"):
             die(f"--video {args.video} has no video stream")
         layer_fps = pip_meta["video"].get("fps")
-        placements = parse_placements(args.place, fps, layer_fps) if args.place else []
+        placements = parse_placements(args.place, fps, layer_fps, pip_meta, meta) if args.place else []
         # bounds from the video streams (a longer audio track would let a range run past the last
         # picture); the container duration only when a stream has none
         layer_dur = pip_meta["video"].get("duration") or pip_meta.get("duration")
@@ -501,7 +514,7 @@ def main() -> int:
         else:
             cmd += ["-shortest"]
     else:
-        args.text = _wrap_to_frame(args, vw, safe_margins)
+        args.text = _wrap_to_frame(args, vw, safe_margins, vh)
         x, y = position_exprs(args.position, args.margin, text_mode=True, margins=safe_margins)
         # 1.15: the text goes in a FILE with expansion off, so `'` and `%` survive verbatim
         # (they used to be dropped by escape_drawtext) and no character can reach the graph parser.

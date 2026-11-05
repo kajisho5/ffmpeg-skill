@@ -2563,9 +2563,11 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   measured bound sits microseconds off a frame, and the re-cut's "first frame at or after" would
   then drop that frame), so a range holds whole frames between its bounds; the old `between()` kept
   both boundary frames, one frame more per range (7.1 s where 7.0 s was kept). The joins sit in the `--margin` the tool keeps, so `DECLICK_S` is 0 for it, as 2.17.2
-  decided. Code: `silence.main()`, `silence.rendered_ranges()`. Tests:
+  decided. `keep`, `kept_duration`, `removed_seconds` and `--edl` report those rendered ranges too,
+  an EDL frame time written down to the millisecond so `cut.py --segments` re-cuts the same frame
+  (#416 review). Code: `silence.main()`, `silence.rendered_ranges()`. Tests:
   `test_silence_keeps_sync_and_its_time_map_over_many_ranges`,
-  `test_silence_keeps_a_late_sound_where_it_was`.
+  `test_silence_keeps_a_late_sound_where_it_was`, `test_silence_reports_and_exports_the_ranges_it_renders`.
 - **`decode_pcm_mono` pads a sound that starts late, so its samples are on the file's clock.**
   `sync.py` measured a track 0.3 s late at +2.279 s for +2.000 s, `--replace-audio` placed it 270 ms
   late, and `multicam.py --audio` rebased the chosen camera's sound to its first sample. The decode
@@ -2658,12 +2660,20 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   T), not the frame before it, so a freeze on a cut holds the new shot. The held frame is a segment
   of its own, cloned (`tpad`) before its `setpts`, as `reverse.py`'s held last frame is: from FFmpeg
   7.0 `setpts` leaves the frame rate unknown and frame durations 0, so a clone after it lands on
-  one timestamp and is dropped. Test: `test_freeze_at_holds_the_frame_shown_at_that_time`.
+  one timestamp and is dropped. The held frame is taken as the first frame after the cut's
+  half-frame tolerance (`trim=end_frame=1`), not a one-frame window, so a variable-frame-rate gap
+  at the cut still yields one; with no frame at or after T (no `--at`: the clip's end) `--mode
+  insert` holds the last frame as `--mode extend` does. Tests:
+  `test_freeze_at_holds_the_frame_shown_at_that_time`, `test_freeze_without_at_holds_the_last_frame`,
+  `test_freeze_holds_a_frame_on_a_variable_frame_rate_gap`.
 - **hh:mm:ss:ff still counts from the file's first frame, not from a start timecode** (the time
   grammar above is unchanged). When a four-part time reads past the end of a source that carries
   a start timecode, the refusal's `hint` says so and names the frame from the file's start that
-  the source timecode is. Code: `_common.decision._remember_smpte_hint()`, `emit.die()`. Test:
-  `test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode`.
+  the source timecode is. A time in another input than the first (a B-roll's `--from`, an
+  overlay layer's `--place` range) is judged against that input's own timecode and length
+  (`time_arg(..., source=meta)`). Code: `_common.decision._remember_smpte_hint()`, `emit.die()`.
+  Tests: `test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode`,
+  `test_the_smpte_hint_names_the_timecode_of_the_input_the_time_is_in`.
 - **look.py's contact sheet reads its stamps off the file's own timestamps** (`-copyts
   -start_at_zero`), not pts plus the seek: an input `-ss` resets an MPEG-TS's timestamps
   differently from an MP4's, and the sheet of a TS was stamped one seek late. `scenes.py --sheet`
@@ -2676,3 +2686,16 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   runner's code): the runner's even-scale retry reaches a `-vf` only, and broll's
   `filter_complex` failed unclassified. Test:
   `test_broll_scales_an_odd_sized_a_roll_to_even_and_records_it`.
+- **Wrapping measures width; height is said, not fitted** (#416 review). `overlay.py --text` and
+  `graphics.py --template title` wrap to the width and do not shrink the font to the height: a
+  block that comes out taller than the frame, or text placed too near an edge to wrap at all, is
+  drawn as asked and named in `notes` (the size is the caller's choice; the estimate is the
+  averaged advance table's). Tests: `test_overlay_text_says_when_it_still_does_not_fit`,
+  `test_graphics_title_says_when_the_wrapped_block_is_taller_than_the_frame`.
+- **`straighten.py --fit crop` scales by |cos| + max(W/H, H/W) |sin|** of the displayed frame: the
+  window turned back by the angle must fit the scaled frame on both axes; |cos| + |sin| is a
+  square's factor and left two corners black on 16:9 (#416 review). Test:
+  `test_straighten_crop_fit_covers_all_four_corners_of_a_wide_frame`.
+- **`loop.py` has no repeat cap** (#416 review): the concat list costs one ~100-byte line per
+  repeat against an output that costs a whole clip per repeat, so any count whose list strains
+  memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.

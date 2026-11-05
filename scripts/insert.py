@@ -121,6 +121,8 @@ def main() -> int:
             f"fps={args.fps:g}",
         ]
 
+    if square_pixels(meta["video"]):
+        vf.insert(0, square_pixels(meta["video"]))  # the scale and crop above size the squared picture
     output = args.output or default_output(args.input, "insert", "mp4")
     cmd = ffmpeg_base() + ["-loop", "1", *still_input_args(args.input), "-i", args.input, "-t", f"{target:.3f}", "-vf", ",".join(vf)]
     # the SDR line, whatever the image is; its RGB (PNG) or BT.601 (JPEG) pixels are converted to

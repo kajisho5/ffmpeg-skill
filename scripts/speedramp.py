@@ -101,6 +101,10 @@ def main() -> int:
         vlabel, alabel = f"v{i}", f"a{i}"
         to_eof = i == len(segments) - 1 and last_runs_to_eof
         seg_end = None if to_eof else (bounds[i + 1] if i + 1 < len(bounds) else grid_at_or_after(end, v0, rate))
+        if seg_end is not None and seg_end <= bounds[i] + 1e-6:
+            # both ends on the same frame: the trims would be empty and the factor reach no frame
+            die(f"--segment {start:g}-{end:g}:{factor:g} holds no frame: both ends fall on the frame at "
+                f"{bounds[i]:.3f}s; widen it or merge it into a neighbour")
         vtrim, atrim = av_trim(bounds[i], seg_end, rate)
         vparts.append(f"[0:v]{vtrim},setpts=PTS/{factor:.6f}[{vlabel}]")
         labels.append(f"[{vlabel}]")

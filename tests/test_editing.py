@@ -591,6 +591,16 @@ class EditingTests(MediaFixtures):
         data = frame.read_bytes()
         self.assertFalse(all(b == 0 for b in data), "top-left corner is pure black -- straighten left a visible gap")
 
+    def test_straighten_crop_fit_covers_all_four_corners_of_a_wide_frame(self):
+        """#416 review: the pre-scale was |cos|+|sin|, a square's factor; a 16:9 frame turned 10
+        degrees needs |cos| + 16/9 |sin| (1.293, not 1.158), and two corners came out black."""
+        src = tiny_clip(OUT / "straighten_white.mp4", "color=c=white:s=320x180:r=30", seconds=0.5)
+        out = OUT / "straighten_white_10.mp4"
+        script("straighten.py", src, "--degrees", "10", "-o", out, "--overwrite")
+        v = probe(str(out))["video"]
+        for x, y in ((1, 1), (v["width"] - 2, 1), (1, v["height"] - 2), (v["width"] - 2, v["height"] - 2)):
+            self.assertGreater(min(frame_rgb(out, 0.2, x, y)), 200, (x, y))
+
     def test_straighten_pad_fit_grows_the_frame(self):
         out = OUT / "straighten2.mp4"
         script("straighten.py", self.src, "--degrees", "-8", "--fit", "pad", "-o", out)
@@ -705,6 +715,13 @@ class EditingTests(MediaFixtures):
 
     def test_speedramp_must_start_at_zero_refused(self):
         script("speedramp.py", self.src, "--segment", "1-12:1.0", expect_fail=True)
+
+    def test_speedramp_refuses_a_segment_that_holds_no_frame(self):
+        """#416 review: 1.01-1.02 at 30 fps puts both ends on the frame at 1.0333, so the segment's
+        trims were empty and its 0.5x reached no frame, with the run reported as done."""
+        proc = script("speedramp.py", self.src, "--segment", "0-1.01:1", "--segment", "1.01-1.02:0.5",
+                      "--segment", "1.02-12:1", "--dry-run", "--json", expect_fail=True)
+        self.assertIn("holds no frame", json.loads(proc.stdout)["error"]["message"])
 
     def test_speedramp_last_segment_inside_the_coverage_slack_keeps_its_end(self):
         """The last segment omitted its end bound, and the coverage check allows that end to sit
@@ -2584,6 +2601,31 @@ class OneClockTests(MediaFixtures):
                "--margin", "0.1", "--preset", "veryfast", "-o", out, "--overwrite")
         self.assertInSync(av_offsets_ms(out, beep_db=-12), msg="silence, late sound")
 
+    def test_silence_refuses_an_output_that_is_its_input_when_the_join_is_chunked(self):
+        """#416 review: above 32 kept ranges the join's last command concats a chunk list, never
+        naming the source, so `-o <input> --overwrite` replaced the source with the cut."""
+        src = OUT / "silence_alias.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "aevalsrc='if(lt(mod(t,1),0.5),0.5*sin(440*2*PI*t),0)':d=40:s=48000", "-c:a", "pcm_s16le", src)
+        before = src.read_bytes()
+        proc = script("silence.py", src, "--min-silence", "0.3", "-o", src, "--overwrite", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
+        self.assertEqual(src.read_bytes(), before)
+
+    def test_silence_reports_and_exports_the_ranges_it_renders(self):
+        """#416 review: `keep`, `kept_duration` and `--edl` carried the unsnapped bounds (0.385-2.115)
+        while the render and --timemap held frame times (0.4-2.1); an EDL bound rounded up past its
+        frame (0.3667 written 0.367) re-cut one frame later in cut.py --segments."""
+        src = self._fx("talk", talk=True)
+        edl, tm = OUT / "clock_talk_snap.txt", OUT / "clock_talk_snap.json"
+        for margin, first in (("0.115", "0.400"), ("0.13", "0.366")):
+            doc = json.loads(script("silence.py", src, "--min-silence", "0.5", "--margin", margin, "--list",
+                                    "--edl", edl, "--timemap", tm, "--json", "--overwrite").stdout)
+            kept = json.loads(tm.read_text())["kept"]
+            self.assertEqual(doc["keep"], [[k["source_start"], k["source_end"]] for k in kept])
+            self.assertAlmostEqual(doc["kept_duration"], kept[-1]["output_end"], delta=0.0015)
+            self.assertTrue(edl.read_text().startswith(first + "-"), edl.read_text())
+
     def test_freeze_keeps_a_late_sound_and_a_late_picture_in_sync(self):
         """Each stream was rebased to its own start: +279 ms for a sound 0.3 s late, -100 ms for a
         picture 0.1 s late, both at --at and at the end."""
@@ -3045,6 +3087,15 @@ class GeometryAuditTests(unittest.TestCase):
         codes = [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks") or []]
         self.assertEqual(codes, ["odd_dimensions_scaled_even"])
 
+    def test_broll_scales_a_one_pixel_wide_a_roll_to_two(self):
+        """#416 review: 1 - 1 % 2 is 0, which scale reads as "keep the input's size", so a 1x181
+        A-roll stayed 1 px wide and the run failed."""
+        one = tiny_clip(OUT / "g416_one.mp4", "color=c=gray:s=1x181:r=30,format=yuv444p", pix_fmt="yuv444p")
+        out = OUT / "g416_broll_one.mp4"
+        script("broll.py", one, "--insert", self.blue, "--at", "0.2", "--duration", "0.3", "-o", out, "--overwrite")
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (2, 180))
+
     def test_freeze_at_holds_the_frame_shown_at_that_time(self):
         """--at 1 on a cut at 1.0 s holds the first frame of the new shot (blue), not the last
         frame of the previous one (red), which 3.1.3 held."""
@@ -3054,6 +3105,28 @@ class GeometryAuditTests(unittest.TestCase):
         self.assertGreater(rgb[2], 180, rgb)
         self.assertLess(rgb[0], 80, rgb)
         self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.1)
+
+    def test_freeze_without_at_holds_the_last_frame(self):
+        """#416 review: with no --at (the clip's end) insert mode cut its tail at the first frame
+        at or after the end, which does not exist: the picture stayed 1 s and only the sound
+        gained the hold. It now holds the last frame, as --mode extend does."""
+        out = OUT / "g416_freeze_end.mp4"
+        script("freeze.py", self.blue, "--hold", "1", "-o", out, "--overwrite")
+        v = probe(str(out))["video"]
+        self.assertAlmostEqual(v["duration"], 2.0, delta=0.05)
+        self.assertEqual(v["nb_frames"], 60)
+
+    def test_freeze_holds_a_frame_on_a_variable_frame_rate_gap(self):
+        """#416 review: frames at 0.033 and 0.100 (one dropped) and --at 0.06: the hold took the
+        one-frame window around 0.067, which held no frame, so the picture gained nothing while
+        the sound gained the second. The hold is now the first frame at or after the cut."""
+        src = OUT / "g416_vfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=2",
+           "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=2", "-vf", "select='not(eq(n,2))'",
+           "-fps_mode", "vfr", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", src)
+        out = OUT / "g416_vfr_freeze.mp4"
+        script("freeze.py", src, "--at", "0.06", "--hold", "1", "-o", out, "--overwrite")
+        self.assertAlmostEqual(probe(str(out))["video"]["duration"], 3.0, delta=0.1)
 
     def test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode(self):
         """The grammar is unchanged (hh:mm:ss:ff counts from the file's first frame); the refusal
@@ -3067,6 +3140,17 @@ class GeometryAuditTests(unittest.TestCase):
         # a time inside the file is not touched
         script("cut.py", self.tc, "--start", "00:00:01:00", "--end", "00:00:02:00", "-o", OUT / "g411_tc_cut.mp4")
 
+    def test_the_smpte_hint_names_the_timecode_of_the_input_the_time_is_in(self):
+        """#416 review: the hint used the first timecoded input's start and length for every flag,
+        so a B-roll's --from was explained against the A-roll's timecode."""
+        b = tiny_clip(OUT / "g416_tc_b.mp4", "testsrc2=s=160x90:r=30", "-timecode", "02:00:00:00", seconds=3)
+        proc = script("broll.py", self.tc, "--insert", b, "--at", "0", "--from", "02:00:01:00", "--duration", "1",
+                      "-o", OUT / "g416_tc_broll.mp4", "--json", expect_fail=True)
+        hint = json.loads(proc.stdout)["error"].get("hint") or ""
+        self.assertIn("02:00:00:00", hint)
+        self.assertIn("--from 02:00:01:00 is 00:00:01:00", hint)
+        self.assertNotIn("01:00:00:00", hint)
+
     def test_insert_turns_an_exif_rotated_still_upright(self):
         """ffmpeg turns an Orientation 6 JPEG upright on decode; probe now reads the rotation off
         the decoded frame, so insert sizes the portrait picture instead of cropping a landscape
@@ -3076,6 +3160,42 @@ class GeometryAuditTests(unittest.TestCase):
         script("insert.py", self.exif, "--duration", "0.5", "-o", out)
         v = probe(str(out))["video"]
         self.assertEqual((v["width"], v["height"]), (180, 320))
+
+    def test_an_exif_rotated_still_with_a_percent_in_its_name_is_read_upright(self):
+        """#416 review: the rotation probe read `photo%02d.jpg` as an image2 sequence (no
+        `-pattern_type none`), found no frame and reported 0."""
+        pct = OUT / "g411_exif%02d.jpg"
+        shutil.copyfile(self.exif, pct)
+        self.assertIn(probe(str(pct))["video"]["rotation"], (90, -90))
+
+    def test_cropdetect_sequence_and_waveform_say_they_squared_the_pixels(self):
+        """#416 review: the three measured or drew on the squared frame without the `notes` line
+        every other geometry tool writes."""
+        def notes(*argv):
+            return " ".join(json.loads(script(*argv, "--json").stdout).get("notes") or [])
+        self.assertIn("non-square pixels", notes("cropdetect.py", self.sar))
+        frames = OUT / "g416_sar_seq"
+        frames.mkdir(exist_ok=True)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=180x180:r=5",
+           "-vf", "setsar=16/9", "-frames:v", "2", "-start_number", "1", frames / "f%02d.png")
+        self.assertIn("non-square pixels", notes("sequence.py", "--dir", frames, "--pattern", "f%02d.png",
+                                                 "--start-number", "1", "-o", OUT / "g416_seq.mp4", "--overwrite"))
+        self.assertIn("non-square pixels", notes("waveform.py", self.sar, "--image", frames / "f01.png",
+                                                 "-o", OUT / "g416_wave.mp4", "--overwrite"))
+
+    def test_insert_squares_a_non_square_pixel_still_before_it_fills_the_frame(self):
+        """#416 review: insert noted the square-pixel scale but never ran it, so a 180x180 SAR 16:9
+        still was filled into 320x180 as a square picture and lost a band top and bottom."""
+        still = OUT / "g416_sar_still.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=180x180",
+           "-vf", "drawbox=y=160:h=20:c=blue:t=fill,setsar=16/9", "-frames:v", "1", still)
+        out = OUT / "g416_insert_sar.mp4"
+        script("insert.py", still, "--duration", "0.5", "-o", out, "--overwrite")
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (320, 180))
+        rgb = frame_rgb(out, 0.2, 160, 175)  # the blue band along the bottom is still there
+        self.assertGreater(rgb[2], 180, rgb)
+        self.assertLess(rgb[0], 80, rgb)
 
 
 if __name__ == "__main__":

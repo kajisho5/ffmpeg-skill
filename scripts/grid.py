@@ -44,8 +44,10 @@ def _fit_label(stem: str, cell_width: int, font_size: int) -> str:
     cell used to lose its start off the left edge and show only its tail (#411). The width is the
     averaged advance table's estimate."""
     room = (cell_width - 2 * LABEL_MARGIN - 8) / float(max(1, font_size))
-    if room <= 1 or text_width_em(stem) <= room:
+    if text_width_em(stem) <= room:
         return stem
+    if room <= 1:
+        return stem[:1]  # no room for an ellipsis: keep the start, as a shortened label does (#416 review)
     head = stem
     while head and text_width_em(head + "\u2026") > room:
         head = head[:-1]

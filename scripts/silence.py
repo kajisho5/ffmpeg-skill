@@ -14,6 +14,7 @@ Examples:
 """
 import argparse
 import json
+import math
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -114,6 +115,12 @@ def rendered_ranges(keeps: List[Tuple[float, float]], meta: Dict[str, Any], dura
     def snap(t: float) -> float:
         return min(v0 + round((t - v0) * rate) / rate, duration)
     return [(a, b) for a, b in ((snap(s), snap(e)) for s, e in keeps) if b > a]
+
+
+def _edl_time(t: float, on_frames: bool) -> str:
+    """An EDL bound: a frame time truncated to the millisecond (below 1000 fps the frame at or
+    after it is still that frame), any other time rounded as before."""
+    return f"{math.floor(t * 1000 + 1e-6) / 1000:.3f}" if on_frames else f"{t:.3f}"
 
 
 def time_map(keeps: List[Tuple[float, float]], duration: float) -> Dict[str, Any]:
@@ -520,7 +527,11 @@ def main() -> int:
     # time-range removal, so it reuses keep_ranges() and the same select chain.
     removals = merge_spans(list(silences) + list(filler_ranges))
     keeps = keep_ranges(removals, duration, args.margin, args.min_keep)
-    kept = sum(e - s for s, e in keeps)
+    # what the render holds (on a picture, each bound on its nearest frame): the report, the EDL
+    # and the time map all describe these, so a re-cut or a sum of `keep` is the rendered edit
+    video_out = bool(meta.get("video")) and not (media_out and is_audio_output(media_out))
+    held = rendered_ranges(keeps, meta, duration, video_out)
+    kept = sum(e - s for s, e in held)
     removed = max(0.0, duration - kept)
     # `removed_seconds` keeps the meaning it has had since this tool existed: the seconds of
     # SILENCE this run removes. It must not quietly start counting filler time as well, because a
@@ -530,11 +541,11 @@ def main() -> int:
     silence_only = removed
     if args.filler:
         silence_keeps = keep_ranges(merge_spans(list(silences)), duration, args.margin, args.min_keep)
-        silence_only = max(0.0, duration - sum(e - s for s, e in silence_keeps))
+        silence_only = max(0.0, duration - sum(e - s for s, e in rendered_ranges(silence_keeps, meta, duration, video_out)))
     kinds = silence_kinds(args.input, silences, duration, args.threshold)
     summary = {
         "silences": [[round(s, 3), None if e == float("inf") else round(e, 3)] for s, e in silences],
-        "keep": [[round(s, 3), round(e, 3)] for s, e in keeps],
+        "keep": [[round(s, 3), round(e, 3)] for s, e in held],
         "input_duration": round(duration, 3),
         "kept_duration": round(kept, 3),
         "removed_seconds": round(silence_only, 3),
@@ -590,8 +601,6 @@ def main() -> int:
             summary["hint"] = f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; try a higher --threshold (e.g. -25) or a shorter --min-silence"
         info("hint: " + summary["hint"])
 
-    video_out = bool(meta.get("video")) and not (media_out and is_audio_output(media_out))
-    held = rendered_ranges(keeps, meta, duration, video_out)
     tm = time_map(held, duration)
     points: Any = False  # False: not measured (a dry run over a pending input); None: the decode failed
     if not (STATE.dry_run and not os.path.exists(args.input)):
@@ -624,8 +633,11 @@ def main() -> int:
     if args.edl:
         if not STATE.dry_run:  # the EDL is an artifact like the cut itself: a plan writes nothing
             with open(args.edl, "w", encoding="utf-8") as fh:
-                for s, e in keeps:
-                    fh.write(f"{s:.3f}-{e:.3f}\n")
+                on_frames = bool(video_out and frame_rate(meta))
+                for s, e in held:
+                    # a frame-time bound is written down to the millisecond, not rounded up past
+                    # its frame: cut.py --segments cuts at the first frame at or after it (#416 review)
+                    fh.write(f"{_edl_time(s, on_frames)}-{_edl_time(e, on_frames)}\n")
         info(f"wrote {args.edl}")
 
     if args.list or args.filler_list:
@@ -641,6 +653,9 @@ def main() -> int:
         info("no removable silence found; output would equal the input")
 
     output = args.output or default_output(args.input, "tight")
+    # the join of more than 32 ranges concats a list of chunks, so its last command never names the
+    # source and run()'s own check cannot see -o replace it (#416 review)
+    refuse_output_is_input(output, args.input)
     # The kept ranges are re-cut from the source as cut.py --segments --accurate cuts them (#409):
     # each range is its own seeked input, both streams cut on the same frame-grid bounds and shifted
     # by one constant, the sound padded to the range's origin, at most 32 ranges per ffmpeg call.

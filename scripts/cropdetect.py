@@ -34,8 +34,8 @@ from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis, decode_gray_frames, frame_flow
-from _common.emit import warn
-from _common.probe import display_size, square_pixels
+from _common.emit import note, warn
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 MOTION_CENTRE_FPS = 2.0
 MOTION_CENTRE_W, MOTION_CENTRE_H = 64, 36
@@ -151,6 +151,8 @@ def main() -> int:
     # 176x320 crop look taller than a 320x180 source. A non-square-pixel source is measured
     # squared at its display aspect, the frame crop.py then crops (#411).
     sw, sh = display_size(meta["video"])
+    if square_pixels_note(meta["video"]):
+        note(square_pixels_note(meta["video"]))
     duration = meta.get("duration") or 0.0
 
     failed: List[Dict] = []
