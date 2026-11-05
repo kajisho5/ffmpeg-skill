@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.1.6`) | any release |
+| `skill.version` | the npm / package.json version (`3.1.7`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.1.6", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.1.7", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -786,8 +786,10 @@ Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 | `matched_untimed`, `matched_too_long` | `silence.py --filler` (inside `filler`) | listed words that were not cut: no usable timing in the transcript (also a `filler_words_untimed` warning), or longer than a filler (`FILLER_MAX_WORD`, a held vowel) |
 
 `caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
-and produced no cue, the refusal is `"<engine> found no speech in <input>"` with `kind: input`,
-`reason: "no_speech"` and `engine` in the failure document — distinct from the "no local
+and produced no cue (for `--filler`: a Whisper transcript with no text at all; text without word
+timings is a build without them, refused as such), the refusal is `"<engine> found no speech in
+<input>"` with `kind: input`, `reason: "no_speech"` and `engine` in the failure document (the
+three ASR reasons below are in `error.reason` too, with `error.details`) — distinct from the "no local
 speech-to-text engine found" refusal, which now only means no engine was found. When `--engine
 auto` found engines and none transcribed, the refusal is `kind: input` with `reason:
 "engine_failed"` (one ran and failed) or `"english_only"` (the only engines found were Parakeet
@@ -865,8 +867,9 @@ A refusal also carries `error.reason`, a stable snake_case code for *why*
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,
 `media_path_is_url`, `media_path_is_playlist` (an HLS or ffconcat playlist given as media),
 `output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
-`render.py`'s `plan_*` reasons, and `--codec av1`/`prores`'s `encoder_missing` and
-`encoder_list_unreadable`), and `error.details`, the facts the message is written from, so a
+`render.py`'s `plan_*` reasons, `--codec av1`/`prores`'s `encoder_missing` and
+`encoder_list_unreadable`, and `--transcribe`'s `asr_engine_missing`, `no_speech`, `engine_failed`
+and `english_only`), and `error.details`, the facts the message is written from, so a
 caller never parses the prose:
 
 ```

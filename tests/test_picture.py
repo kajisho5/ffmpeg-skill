@@ -648,6 +648,49 @@ class PictureTests(MediaFixtures):
                 self.assertIn("FontName=DejaVu Sans", " ".join(doc["commands"]),
                               "the caller's font stands when coverage is unknown")
 
+    def test_caption_hands_ffmpeg_the_cues_it_read(self):
+        """#414: with nothing to lay out, the caller's SRT went to ffmpeg's SRT reader, which reads
+        another grammar: `00:01,000` (no hours) was refused as input_unreadable, and `00:00:01,5`
+        burned at 1.005 s where the tool counted 1.5 s. Such a file is burned (and muxed) as the
+        copy the tool writes; a file in the grammar both read is still given as it is."""
+        for name, body, want in (("nohour", "1\n00:01,000 --> 00:02,500\nhi\n\n", "00:00:01,000 --> 00:00:02,500"),
+                                 ("shortms", "1\n00:00:01,5 --> 00:00:02,5\nhi\n\n", "00:00:01,500 --> 00:00:02,500")):
+            with self.subTest(name=name):
+                src_srt = OUT / f"grammar_{name}.srt"
+                src_srt.write_text(body, encoding="utf-8")
+                out = OUT / f"grammar_{name}.mp4"
+                adjusted = OUT / f"grammar_{name}_adjusted.srt"
+                if adjusted.exists():
+                    adjusted.unlink()
+                doc = json.loads(script("caption.py", self._small(), "--srt", src_srt, "--fast", "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertIn(want, adjusted.read_text(encoding="utf-8"))
+                burned = [c for c in doc["commands"] if "-vf" in c]
+                self.assertIn(adjusted.name, burned[0])
+                mux = OUT / f"grammar_{name}.mkv"
+                doc = json.loads(script("caption.py", self._small(), "--srt", src_srt, "--srt", f"{src_srt}:fr",
+                                        "--mode", "mux", "-o", mux, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertTrue(all(src_srt.name not in (t["file"] or "") for t in doc["tracks"]), doc["tracks"])
+                for stream in (0, 1):  # both tracks: the first goes through _adjusted.srt, the second _track1.srt
+                    muxed = sh("ffmpeg", "-v", "error", "-i", mux, "-map", f"0:s:{stream}", "-f", "srt", "-").stdout
+                    # the muxed track's start, give or take the container's own start (a few ms of audio priming)
+                    got = re.search(r"(\d+):(\d+):(\d+),(\d+) -->", muxed).groups()
+                    h, m, sec, ms = (int(x) for x in got)
+                    self.assertAlmostEqual(h * 3600 + m * 60 + sec + ms / 1000, 1.0 if name == "nohour" else 1.5,
+                                           delta=0.05, msg=f"track {stream}")
+        plain = OUT / "grammar_plain.srt"
+        plain.write_text("1\n00:00:01.000 --> 00:00:02.000\nhi\n\n", encoding="utf-8")
+        doc = json.loads(script("caption.py", self._small(), "--srt", plain, "--fast", "-o", OUT / "grammar_plain.mp4",
+                                "--dry-run", "--json").stdout)
+        self.assertIn(plain.name, [c for c in doc["commands"] if "-vf" in c][0], "a file both read alike is burned as it is")
+        # "-->" in a cue's text is dialogue to both readers (#427 review), not a timing line to judge
+        arrow = OUT / "grammar_arrow.srt"
+        arrow.write_text("1\n00:00:01,000 --> 00:00:02,000\nnext --> left\n\n", encoding="utf-8")
+        doc = json.loads(script("caption.py", self._small(), "--srt", arrow, "--fast", "-o", OUT / "grammar_arrow.mp4",
+                                "--dry-run", "--json").stdout)
+        self.assertIn(arrow.name, [c for c in doc["commands"] if "-vf" in c][0], "dialogue with --> is no reason to copy")
+
     def test_caption_dry_run_plans_the_same_file_the_real_run_burns(self):
         """--dry-run/--plan must describe the job the real run executes: when --offset/--max-lines/
         --min-duration adjust a hand-written SRT, the planned command names the adjusted copy (the
@@ -1023,6 +1066,80 @@ class PictureTests(MediaFixtures):
             streams = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
                          "-of", "csv=p=0", out).stdout.strip()
             self.assertEqual(streams, expect_codec, f"{ext} output")
+
+    def test_caption_mux_converts_an_existing_track_for_the_container(self):
+        """#414: an existing subtitle track was always copied, so subrip from .mkv into .mp4 and
+        mov_text into .mkv failed unclassified; it is converted as export.py converts it, and what
+        no conversion makes fit (H.264 into .webm) is refused as kind input."""
+        srt = OUT / "mux_conv_cues.srt"
+        script("caption.py", "--text", self.cues, "--write-srt", srt)
+        existing_srt = OUT / "mux_conv_existing.srt"
+        existing_srt.write_text("1\n00:00:03,000 --> 00:00:04,000\nExisting subtitle\n\n", encoding="utf-8")
+        cases = (("subrip", ".mkv", ".mp4", "mov_text"), ("mov_text", ".mp4", ".mkv", "subrip"))
+        for have, src_ext, out_ext, want in cases:
+            with self.subTest(have=have, out=out_ext):
+                src = OUT / f"mux_conv_src_{have}{src_ext}"
+                # the existing track is tagged with a two-letter code and a title, which MPEG-4 cannot store
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-i", existing_srt,
+                   "-map", "0:v", "-map", "0:a?", "-map", "1", "-c", "copy", "-c:s", "srt" if have == "subrip" else "mov_text",
+                   "-metadata:s:s:0", "language=en", "-metadata:s:s:0", "title=Existing", src)
+                out = OUT / f"mux_conv_out_{have}{out_ext}"
+                doc = json.loads(script("caption.py", src, "--srt", srt, "--mode", "mux", "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                streams = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                             "-of", "csv=p=0", out).stdout.split()
+                self.assertEqual(streams, [want, want])
+                self.assertEqual(doc["tracks"][0]["kept_from_input"], True)
+                self.assertEqual(doc["tracks"][0]["codec"], "srt" if want == "subrip" else want)
+                existing = sh("ffmpeg", "-v", "error", "-i", out, "-map", "0:s:0", "-f", "srt", "-").stdout
+                added = sh("ffmpeg", "-v", "error", "-i", out, "-map", "0:s:1", "-f", "srt", "-").stdout
+                self.assertIn("Existing subtitle", existing)
+                self.assertNotIn("Existing subtitle", added)
+                # each track is reported with the language and title the written file carries (#427 review)
+                tags = json.loads(sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream_tags",
+                                     "-of", "json", out).stdout)["streams"]
+                for track, stream in zip(doc["tracks"], tags):
+                    self.assertEqual(track["language"], (stream.get("tags") or {}).get("language"), doc["tracks"])
+                    if track["kept_from_input"]:
+                        self.assertEqual(track["title"], (stream.get("tags") or {}).get("title"), doc["tracks"])
+        # an EIA-608 caption track (QuickTime c608) is text: converted into .mp4, kept as it is in .mov
+        scc = OUT / "mux_conv_608.scc"
+        scc.write_text("Scenarist_SCC V1.0\n\n00:00:00:00\t9420 9420 94ae 94ae 9452 9452 97a1 97a1 c845 4c4c cf80 942f 942f\n\n"
+                       "00:00:02:00\t942c 942c\n", encoding="utf-8")
+        src608 = OUT / "mux_conv_src_608.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-i", scc,
+           "-map", "0:v", "-map", "0:a?", "-map", "1", "-c", "copy", src608)
+        for out_ext, want in ((".mp4", "mov_text"), (".mov", "eia_608")):
+            with self.subTest(have="eia_608", out=out_ext):
+                out = OUT / f"mux_conv_out_608{out_ext}"
+                doc = json.loads(script("caption.py", src608, "--srt", srt, "--mode", "mux", "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                streams = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                             "-of", "csv=p=0", out).stdout.split()
+                self.assertEqual(streams, [want, "mov_text"])
+        proc = script("caption.py", self.src, "--srt", srt, "--mode", "mux", "-o", OUT / "mux_conv.webm", "--json",
+                      expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn(".webm", err["message"])
+
+    def test_caption_webm_mux_checks_the_audio_stream_it_copies(self):
+        """#427 review: the WebM guard read the first audio stream's codec, not --audio-stream's."""
+        src = OUT / "mux_webm_two_audio.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10",
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "1", "-map", "0:v", "-map", "1:a", "-map", "1:a",
+           "-c:v", "libvpx-vp9", "-deadline", "realtime", "-c:a:0", "aac", "-c:a:1", "libopus", src)
+        srt = OUT / "mux_webm_cues.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:00,800\nhi\n\n", encoding="utf-8")
+        out = OUT / "mux_webm_two_audio.webm"
+        doc = json.loads(script("caption.py", src, "--srt", srt, "--mode", "mux", "--audio-stream", "1", "-o", out,
+                                "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        proc = script("caption.py", src, "--srt", srt, "--mode", "mux", "--audio-stream", "0", "-o", out,
+                      "--dry-run", "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("aac", err["message"])
 
     def test_caption_mux_refuses_ass_and_animation(self):
         script("caption.py", self.src, "--ass", "/nonexistent.ass", "--mode", "mux", "-o", OUT / "x.mp4", expect_fail=True)
@@ -3449,6 +3566,36 @@ class WindowsNirmalaTests(unittest.TestCase):
                         unittest.mock.patch.dict(os.environ, {"WINDIR": empty}):
                     self.assertIsNone(fonts._script_font_uncached("hi"))
                     self.assertEqual(fonts.script_font_status("hi"), "missing")
+
+
+class WindowsFamilyResolutionTests(unittest.TestCase):
+    """#414: an explicit --font on Windows was resolved by file-name prefix, so "Malgun Gothic"
+    became YuGothM.ttc (no Hangul) and "Times New Roman" arial.ttf, each reported as
+    font_substituted "not installed here". The family's own file comes from the table of what
+    Windows installs under which name."""
+
+    def test_an_installed_family_resolves_to_its_own_file(self):
+        import _common.fonts as fonts
+        with tempfile.TemporaryDirectory() as tmp:
+            fonts_dir = Path(tmp) / "Fonts"
+            fonts_dir.mkdir()
+            for n in ("arial.ttf", "malgun.ttf", "msyh.ttc", "msjh.ttc", "YuGothM.ttc", "YuGothR.ttc", "Nirmala.ttc",
+                      "leelawui.ttf", "times.ttf", "cour.ttf", "segoeui.ttf", "tahoma.ttf", "simsun.ttc"):
+                (fonts_dir / n).write_bytes(b"x")
+            with unittest.mock.patch("platform.system", return_value="Windows"), \
+                    unittest.mock.patch.dict(os.environ, {"WINDIR": tmp}):
+                for family, file in (("Malgun Gothic", "malgun.ttf"), ("Microsoft YaHei", "msyh.ttc"),
+                                     ("Microsoft JhengHei", "msjh.ttc"), ("Yu Gothic", "YuGothR.ttc"),
+                                     ("Nirmala UI", "Nirmala.ttc"), ("Leelawadee UI", "leelawui.ttf"),
+                                     ("Times New Roman", "times.ttf"), ("Courier New", "cour.ttf"),
+                                     ("Segoe UI", "segoeui.ttf"), ("SimSun", "simsun.ttc")):
+                    with self.subTest(family=family):
+                        found = fonts.resolve_font(family)
+                        self.assertEqual(Path(found["file"]).name, file)
+                        self.assertFalse(found["substituted"])
+                # a family that is not there is still a substitution
+                gone = fonts.resolve_font("Gulim")
+                self.assertTrue(gone["substituted"])
 
 
 class WindowsFontPathTests(unittest.TestCase):

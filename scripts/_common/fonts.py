@@ -61,6 +61,13 @@ def resolve_font(font_name: str) -> "Dict[str, object]":
         # common CJK system fonts when the request looks CJK (so Japanese text does not render as
         # boxes in Arial), and Arial only as the last resort.
         wanted = _family_key(font_name)
+        # The family's own file first, from the table of what Windows installs under which file
+        # name (#414): "Malgun Gothic" is malgun.ttf and "Times New Roman" times.ttf, which no
+        # file-name prefix finds -- the prefix rule resolved them to YuGothM.ttc and arial.ttf and
+        # reported a font that is installed as substituted.
+        for name in windows_family_files(wanted):
+            if (fonts / name).is_file():
+                return {"file": str(fonts / name), "family": font_name, "substituted": False, "via": "windows_fonts"}
         try:
             files = sorted(fonts.iterdir()) if fonts.is_dir() else []
         except OSError:
@@ -197,6 +204,25 @@ WINDOWS_FONTS = {
     "ru": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
     "el": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
 }
+
+
+# Latin families Windows installs that WINDOWS_FONTS (a per-script table) does not name, by the
+# file each one is installed as: a file name that does not start with the family's name
+WINDOWS_LATIN_FONTS = [("arial.ttf", "Arial"), ("times.ttf", "Times New Roman"), ("cour.ttf", "Courier New"),
+                       ("segoeui.ttf", "Segoe UI"), ("tahoma.ttf", "Tahoma"), ("verdana.ttf", "Verdana"),
+                       ("georgia.ttf", "Georgia"), ("calibri.ttf", "Calibri"), ("cambria.ttc", "Cambria"),
+                       ("consola.ttf", "Consolas"), ("trebuc.ttf", "Trebuchet MS"), ("comic.ttf", "Comic Sans MS"),
+                       ("impact.ttf", "Impact"), ("seguiemj.ttf", "Segoe UI Emoji")]
+
+
+def windows_family_files(wanted_key: str) -> "List[str]":
+    """The Windows Fonts file names of the family whose _family_key() is `wanted_key`, best first,
+    from WINDOWS_FONTS and WINDOWS_LATIN_FONTS ([] for a family neither names)."""
+    out: "List[str]" = []
+    for name, family in [e for entries in WINDOWS_FONTS.values() for e in entries] + WINDOWS_LATIN_FONTS:
+        if wanted_key and _family_key(family) == wanted_key and name not in out:
+            out.append(name)
+    return out
 
 
 _SCRIPT_RANGES = (

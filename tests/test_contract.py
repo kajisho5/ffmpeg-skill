@@ -4794,6 +4794,7 @@ class SilentPathTests(unittest.TestCase):
             reasons |= set(re.findall(r'\brefuse\(\s*"[a-z_]+",\s*"([a-z_]+)"', text))
             reasons |= set(re.findall(r'_reject_plan\(path, digest, "([a-z_]+)"', text))
             reasons |= set(re.findall(r'error_extra=\{"reason": "([a-z_]+)"', text))
+            reasons |= _die_reasons(text)
         from _common.runner import FFMPEG_FAILURE_CLASSES   # ffmpeg failures classified from stderr in _fail()
         reasons |= {reason for _, reason, _ in FFMPEG_FAILURE_CLASSES}
         self.assertTrue(reasons)
@@ -4804,6 +4805,65 @@ class SilentPathTests(unittest.TestCase):
                    runner.refuse_existing_outputs, runner._OutputLock.__enter__):
             src = inspect.getsource(fn)
             self.assertNotRegex(src, r"(?<![\w.])die\(", f"{fn.__qualname__} refuses in prose only (use refuse())")
+
+
+def _die_reasons(text):
+    """#414: the reasons a die(...) call names with `reason=` or `error_extra={"reason": ...}`, a
+    literal or a module-level NAME = "code" constant, read off the AST (a regex over refuse() alone
+    missed asr.py's no_speech, engine_failed and english_only)."""
+    import ast
+    tree = ast.parse(text)
+    consts = {t.id: node.value.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+              and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+              for t in node.targets if isinstance(t, ast.Name)}
+    found = set()
+
+    def leaves(value):
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            found.add(value.value)
+        elif isinstance(value, ast.Name) and value.id in consts:
+            found.add(consts[value.id])
+        elif isinstance(value, ast.IfExp):
+            leaves(value.body)
+            leaves(value.orelse)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None)
+        if name != "die":
+            continue
+        for kw in node.keywords:
+            if kw.arg == "reason":
+                leaves(kw.value)
+            elif kw.arg == "error_extra" and isinstance(kw.value, ast.Dict):
+                for k, v in zip(kw.value.keys, kw.value.values):
+                    if isinstance(k, ast.Constant) and k.value == "reason":
+                        leaves(v)
+    return {r for r in found if re.fullmatch(r"[a-z_]+", r)}
+
+
+class OutputSchemaDriftTests(unittest.TestCase):
+    """#414: contract --json left out output keys the tools emit and contract.md documents."""
+
+    def test_the_keys_issue_414_named_are_in_the_output_schemas(self):
+        def props(name):
+            return set(_contract.output_schema(name, {})["properties"])
+        self.assertLessEqual({"timecode", "chapters", "subtitle_stream_details"}, props("probe"))
+        self.assertLessEqual({"mode", "requested_start", "requested_end", "requested_segments", "requested_duration",
+                              "output_duration", "duration_delta_seconds", "nearest_keyframes", "snap",
+                              "dropped_non_av_streams"}, props("cut"))
+        self.assertLessEqual({"cut_points", "cut_warnings", "removed_seconds_total", "timemap", "silence_kinds",
+                              "silence_breakdown"}, props("silence"))
+        self.assertLessEqual({"no_speech", "engine_failed", "english_only"}, set(_contract.ERROR_REASONS))
+
+    def test_every_tool_that_reports_dropped_non_av_streams_publishes_it(self):
+        emitting = {p.stem for p in SCRIPTS.glob("*.py") if not p.stem.startswith("_")
+                    and "dropped_non_av_streams" in p.read_text(encoding="utf-8")}
+        self.assertTrue(emitting)
+        for name in sorted(emitting):
+            with self.subTest(tool=name):
+                self.assertIn("dropped_non_av_streams", _contract.output_schema(name, {})["properties"])
+        self.assertEqual(sorted(emitting - _contract.NON_AV_STREAM_TOOLS), [])
 
 
 class SilentResultTests(unittest.TestCase):
