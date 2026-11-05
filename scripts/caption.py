@@ -44,7 +44,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_units,
                         resolve as resolve_platform)
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
-from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, load_brand, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs
+from _common.emit import refuse  # noqa: E402
+from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, load_brand, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs, guard_sidecar
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 # The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
 # shares them). They stay caption.py's public names -- every caller and test that reached for
@@ -1276,28 +1277,52 @@ def main() -> int:
     # next to the output was replaced on a re-run, even one ffmpeg's check then refused.
     # Side files whose existence depends on the cues (an _adjusted.srt, an emoji-forced ASS) are
     # checked again where they are written, still before that write.
-    claimed: set = set()
+    claimed: Dict[str, str] = {}  # real path -> which artifact of this run holds it
 
-    def claim(paths) -> None:
-        todo = [p for p in paths if p and os.path.realpath(p) not in claimed]
+    def claim(items) -> None:
+        """Reserve (path, artifact) pairs: the same artifact claiming its path again is a no-op,
+        another artifact of this run claiming it is refused (#413 review: --write-srt and
+        --write-ass naming one file, the SRT then replaced by the ASS)."""
+        todo = []
+        for path, owner in items:
+            if not path:
+                continue
+            real = os.path.realpath(path)
+            held = claimed.get(real)
+            if held is None and os.path.exists(real):
+                # a second name for the same file (a hard link) is the same path (#413 review)
+                held = next((o for r, o in claimed.items()
+                             if os.path.exists(r) and os.path.samefile(r, real)), None)
+            if held is None:
+                claimed[real] = owner
+                todo.append(path)
+            elif held != owner:
+                refuse("input", "output_path_taken",
+                       f"{path!r} is named for both the {held} and the {owner} this run writes; give each its own path",
+                       output=path, other=held)
         refuse_existing_outputs(todo)
-        claimed.update(os.path.realpath(p) for p in todo)
+        # and the rest of the side-file guards (#408): never an input, the video, a missing
+        # directory or an option-shaped name, even under --overwrite
+        side_inputs = [q for q in (args.input, getattr(args, "text", None), getattr(args, "ass", None),
+                                   getattr(args, "brand", None), *(t[0] for t in srt_tracks)) if isinstance(q, str)]
+        for path in todo:
+            guard_sidecar(path, *side_inputs)
 
     planned_out = args.output or (default_output(args.input, "captioned") if args.input else None)
-    up_front: List[str] = []
+    up_front: List[Tuple[str, str]] = []
     if args.transcribe:
-        up_front.append(args.write_srt or os.path.splitext(planned_out)[0] + ".srt")
+        up_front.append((args.write_srt or os.path.splitext(planned_out)[0] + ".srt", "SRT"))
     elif args.text:
-        up_front.append(args.write_srt or (os.path.splitext(planned_out)[0] + ".srt" if args.input
-                                           else os.path.splitext(args.text)[0] + ".srt"))
+        up_front.append((args.write_srt or (os.path.splitext(planned_out)[0] + ".srt" if args.input
+                                            else os.path.splitext(args.text)[0] + ".srt"), "SRT"))
     if args.input:
         if (args.animate != "none" or args.karaoke) and not args.ass:
-            up_front.append(args.write_ass or os.path.splitext(planned_out)[0] + ".ass")
+            up_front.append((args.write_ass or os.path.splitext(planned_out)[0] + ".ass", "ASS"))
         if args.ass and args.offset and os.path.exists(args.ass):
-            up_front.append(os.path.splitext(planned_out)[0] + "_offset.ass")
+            up_front.append((os.path.splitext(planned_out)[0] + "_offset.ass", "offset ASS"))
         # -o naming the input itself keeps its own, more specific refusal (_check_no_overwrite_input)
         if os.path.realpath(planned_out) != os.path.realpath(args.input):
-            up_front.append(planned_out)
+            up_front.append((planned_out, "video"))
     claim(up_front)
     if args.transcribe:
         # the sidecar goes next to the output like the --text one, not into the source folder
@@ -1358,7 +1383,7 @@ def main() -> int:
         adjusted, changed = lay_out(parse_srt(srt_path))
         if changed:
             new_srt = os.path.splitext(output)[0] + "_adjusted.srt"
-            claim([new_srt])
+            claim([(new_srt, "adjusted SRT")])
             if STATE.dry_run:
                 info(f"[dry-run] would write {new_srt} ({len(adjusted)} cues, adjusted from {os.path.basename(srt_path)})")
             else:
@@ -1563,7 +1588,7 @@ def main() -> int:
         if args.karaoke and not getattr(args, "_word_timings", None):
             args._word_timings = whisper_word_timings(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
-        claim([ass_path])
+        claim([(ass_path, "ASS")])
         w, h = meta["video"]["width"], meta["video"]["height"]
         if meta["video"].get("rotation") in (90, -90, 270, -270):
             w, h = h, w

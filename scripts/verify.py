@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, add_common, apply_common, die, emit, info, probe
+from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac", ".aac"}
@@ -160,9 +160,14 @@ def main() -> int:
     files = collect(args.paths)
     tmp = None
     if args.out:
+        # made first, so a --report inside a new --out folder passes the guard below (#413 review)
         outdir = Path(args.out)
         outdir.mkdir(parents=True, exist_ok=True)
-    else:
+    if args.report:
+        # a file this run writes itself (#408): not one of the media it verifies (a folder's
+        # files included), nor an existing file without --overwrite
+        guard_sidecar(args.report, *args.paths, *map(str, files))
+    if not args.out:
         tmp = tempfile.TemporaryDirectory(prefix="ffskill_verify_")
         outdir = Path(tmp.name)
 

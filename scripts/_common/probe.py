@@ -13,7 +13,7 @@ import statistics
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, warn
-from _common.runner import STATE, dry_run_input_pending, require_tool, run, run_analysis
+from _common.runner import STATE, dry_run_input_pending, require_tool, run, run_analysis, still_input_args
 
 
 def fingerprint(path: str) -> Dict[str, Any]:
@@ -187,7 +187,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(
-        [ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
+        [ffprobe, "-v", "error", *still_input_args(path),
+         "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
         quiet=True,
         check=False,
     )

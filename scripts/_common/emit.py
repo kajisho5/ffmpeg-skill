@@ -915,13 +915,22 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         platform = {"youtube": "youtube", "youtube4k": "youtube", "reels": "reels", "x": "x"}.get(cleaned[cleaned.index("--preset") + 1])
     if platform and output and tool != "check":
         verify.append({"tool": "check", "platform": platform})
+    plan_inputs = _plan_inputs(ctx.commands, cleaned, ctx)
+    real = os.path.realpath(path)
+    # every file the plan names (#413 review): its inputs, side inputs included (an SRT, a still),
+    # and the output it promises, a default name too, which apply_common could not know
+    for named in plan_inputs + ([output] if output else []):
+        if os.path.realpath(named) == real:
+            refuse("input", "output_is_input" if named != output else "output_path_taken",
+                   f"--plan {path!r} is also {'the output' if named == output else 'an input'} of this run "
+                   f"({named!r}); give the plan its own path", output=path, other=named)
     doc = {
         "plan_version": PLAN_VERSION,
         "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": tool,
         "argv": cleaned,
         "cwd": os.getcwd(),
-        "inputs": [fingerprint(p) for p in _plan_inputs(ctx.commands, cleaned, ctx)],
+        "inputs": [fingerprint(p) for p in plan_inputs],
         # inputs that did not exist yet, so carry no fingerprint (render.py reports them on execution)
         "unbound_inputs": _plan_unbound_inputs(ctx.commands, ctx),
         "commands": list(ctx.commands),

@@ -681,13 +681,15 @@ spawns; the alternative is a second subtitle renderer that drifts from the first
 Since 2.2.4 they are launched as `render.py` launches its stages: `run_tool()` with
 `child_args()` and `--json`, so `--overwrite`, `--timeout`, `--fast` and `--dry-run` reach
 them, and a failed stage is re-raised with the child's own kind, exit code and hint (a private
-launcher had forwarded only `--dry-run` and called every failure `kind: ffmpeg`). The `_vis` /
-`_titled` intermediates are removed on the failure path too, and a missing `--srt`/`--text`
+launcher had forwarded only `--dry-run` and called every failure `kind: ffmpeg`). The `vis` /
+`titled` intermediates are hidden, pid-named siblings of the output (`sibling_temp`, #408) and are
+removed on the failure path too: through 3.1.3 they were `<out>_vis` / `<out>_titled`, and the
+removal took whatever file had that name, the input or a file of the caller's included. A missing `--srt`/`--text`
 is refused before the visualisation is encoded. Under `--dry-run` only, `--title` passes
 graphics.py an explicit `--end` (the source's duration) because the `_vis` file it would probe
 was never written; a real run's commands are unchanged. Tests:
 `test_waveform_srt_and_title_rerun_with_overwrite`, `test_waveform_title_dry_run_completes`,
-`test_waveform_missing_srt_is_input_before_any_encode`.
+`test_waveform_missing_srt_is_input_before_any_encode`, `test_waveform_never_removes_a_file_it_did_not_write`.
 
 **`--auto-chapters` lives in `metadata.py`, and the detectors moved into `_common`.**
 `metadata.py` already owns the chapter format, the `-c copy` graph and the written-vs-asked-for

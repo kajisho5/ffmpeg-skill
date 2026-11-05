@@ -342,6 +342,11 @@ def render_pack(names: List[str], args) -> int:
     and platform check), so the pack reports per-platform results rather than one verdict."""
     stem = Path(args.input).with_suffix("").name
     outdir = Path(args.output).parent if args.output else Path(args.input).resolve().parent
+    # the table is a file this run writes itself (#408): an existing one is refused without
+    # --overwrite, before the first destination renders
+    if outdir.is_dir():  # a missing folder is the destinations' own refusal (and a dry run's plan)
+        side = [v for k, v in vars(args).items() if k != "output" and isinstance(v, str) and os.path.isfile(v)]
+        guard_sidecar(str(outdir / f"{stem}_pack.md"), args.input, *side)
     dests = {name: str((load_template(name).get("check") or {}).get("platform") or name) for name in names}
     rows: List[Dict[str, Any]] = []
     outputs: List[str] = []
@@ -399,6 +404,9 @@ def render_pack(names: List[str], args) -> int:
     lines += ["", f"{len(rows)} destinations from one edit ({os.path.basename(args.input)}).",
               "Rendered by ffmpeg-skill; `report.py --pack` turns this table into an HTML report."]
     if not STATE.dry_run:
+        if not outdir.is_dir():
+            die(f"pack: the output folder {outdir} does not exist, so the table was not written", kind="input",
+                pack=rows, outputs=outputs)
         Path(pack).write_text("\n".join(lines) + "\n", encoding="utf-8")
     info(("[dry-run] would write " if STATE.dry_run else "wrote ") + pack)
     if failed:
