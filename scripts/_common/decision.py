@@ -359,6 +359,22 @@ def frame_rate(meta: Optional[Dict[str, Any]]) -> float:
     return rate
 
 
+def frame_durations(meta: Optional[Dict[str, Any]], rate: float) -> str:
+    """An `fps` filter at the video's own rate (r_frame_rate as a fraction when it is one), the
+    last filter of a graph whose frames sit on that rate's grid: it moves none of them, and gives
+    each frame its duration back. From FFmpeg 7.0 setpts sets every frame's duration to 0 and
+    leaves the frame rate unknown, so the last frame of a graph that ends after a setpts (av_trim)
+    was written with no duration and the picture read a frame short (3.967 s for 120 frames)."""
+    v = (meta or {}).get("video") or {}
+    try:
+        q = Fraction(str(v.get("r_frame_rate") or ""))
+    except (ValueError, ZeroDivisionError):
+        q = None
+    if q is not None and abs(float(q) - rate) < 1e-6:
+        return f"fps={q.numerator}/{q.denominator}"
+    return f"fps={rate:.6f}"
+
+
 def grid_at_or_after(t: float, v0: float, rate: float) -> float:
     """The time of the first frame at or after `t` on a constant-rate grid starting at `v0`."""
     if not rate:

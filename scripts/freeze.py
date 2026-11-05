@@ -19,7 +19,7 @@ Examples:
 import argparse
 import sys
 
-from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
 
 
@@ -82,7 +82,7 @@ def main() -> int:
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
         # resuming the rest of the clip: split the timeline at `at` and hold the remainder's
-        # FIRST frame -- the frame shown at `at` -- for --hold seconds via tpad's start clone.
+        # FIRST frame -- the frame shown at `at` -- for --hold seconds (a segment of its own, below).
         # Through 3.1.3 the head's last frame was held, the frame before `at`: at a cut, the last
         # frame of the previous shot (#411).
         n = max(1, round(args.hold * fps))
@@ -93,9 +93,19 @@ def main() -> int:
         actual_hold = n / fps
         head_v, head_a = av_trim(v0, cut_at, rate)
         tail_v, tail_a = av_trim(cut_at, None, rate)
-        vf = (f"[0:v]split[a][b];[a]{head_v}[head];"
-              f"[b]{tail_v},tpad=start_mode=clone:start={n}[frozen];"
-              f"[head][frozen]concat=n=2:v=1:a=0[outv]")
+        # The hold is its own segment: the frame at cut_at, cut on the input's clock and cloned to
+        # n frames there (tpad's stop clone), then shifted like the tail. From FFmpeg 7.0 setpts
+        # leaves its output's frame rate unknown and its frames' durations 0, so the earlier tpad
+        # start clone after av_trim's setpts stamped every clone 0 and the hold was dropped (a 3 s
+        # freeze came out 1.97 s on 7.1). Cloning before setpts and concatenating the hold before
+        # the tail reads the same on every version; the tail's first frame then shows n + 1 times,
+        # as tpad's start clone showed it.
+        half = 0.5 / rate
+        hold_v = (f"trim=start={cut_at - half:.6f}:end={cut_at + half:.6f},"
+                  f"tpad=stop_mode=clone:stop={n - 1},setpts=PTS-{cut_at:.6f}/TB")
+        vf = (f"[0:v]split=3[a][b][c];[a]{head_v}[head];"
+              f"[b]{hold_v}[hold];[c]{tail_v}[tail];"
+              f"[head][hold][tail]concat=n=3:v=1:a=0,{frame_durations(meta, rate)}[outv]")
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:
             af = (f"[0:a]asplit[aa][ab];[aa]{head_a}[ahead];"

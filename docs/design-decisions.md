@@ -2655,8 +2655,10 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   delivery), so its marks are not shaped. Tests: `test_grid_keeps_the_start_of_a_long_label`,
   `test_grid_label_font_covers_its_script`.
 - **`freeze.py --at T` holds the frame shown at T** (the first frame whose time is at or after
-  T), not the frame before it, so a freeze on a cut holds the new shot. Test:
-  `test_freeze_at_holds_the_frame_shown_at_that_time`.
+  T), not the frame before it, so a freeze on a cut holds the new shot. The held frame is a segment
+  of its own, cloned (`tpad`) before its `setpts`, as `reverse.py`'s held last frame is: from FFmpeg
+  7.0 `setpts` leaves the frame rate unknown and frame durations 0, so a clone after it lands on
+  one timestamp and is dropped. Test: `test_freeze_at_holds_the_frame_shown_at_that_time`.
 - **hh:mm:ss:ff still counts from the file's first frame, not from a start timecode** (the time
   grammar above is unchanged). When a four-part time reads past the end of a source that carries
   a start timecode, the refusal's `hint` says so and names the frame from the file's start that

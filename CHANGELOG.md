@@ -6,6 +6,12 @@
 
 ### Fixed
 
+- On FFmpeg 7.0+, `freeze.py --at` lost its hold (`--at 1 --hold 1` on a 2 s clip came out 1.97 s, and
+  the sound ran a second past the picture) and `reverse.py` did not hold the last frame of a picture
+  shorter than its sound (408 ms off): from 7.0 `setpts` leaves the frame rate unknown and the frame
+  durations 0, so a `tpad` clone after it adds nothing. Both now clone before the shift; the graph
+  is the same on every version, and both end on an `fps` at the source's rate, which gives back the
+  frame durations `setpts` clears (the last frame was written with none: 3.967 s for 4 s) (#409, #411).
 - `color.py --lut` shifted every colour even with an identity LUT (2FAE4E came out 249A4B): libavfilter's
   own conversion into `lut3d`'s RGB read the frame's BT.709 tag and the one back used BT.601. Both legs
   are now explicit BT.709 conversions through float RGB, and a `--lut-strength` blend is made in that

@@ -17,7 +17,7 @@ import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
-from _common.decision import av_clip_length, av_trim, frame_rate, stream_starts
+from _common.decision import av_clip_length, av_trim, frame_durations, frame_rate, stream_starts
 
 
 def main() -> int:
@@ -51,15 +51,18 @@ def main() -> int:
         # padded with silence to that end; the end is a frame time because a copied cut's stated
         # video length can run past its last frame (7.517 s for frames ending at 7.5). One graph for
         # both streams, as pad.py's padding needs. areverse keeps its input's timestamps in order,
-        # so the reversed sound is retimed by its samples.
+        # so the reversed sound is retimed by its samples. The hold (tpad) runs before av_trim's
+        # setpts: from FFmpeg 7.0 setpts leaves its output's frame rate unknown and its frames'
+        # durations 0, so a tpad after it clones nothing (the picture stayed 0.6 s short on 7.1);
+        # the closing fps gives the frames their durations back (frame_durations).
         rate = frame_rate(meta) or meta["video"].get("fps") or 30.0
         length = av_clip_length(meta, rate)
         vlen = meta["video"].get("duration") or length
         end = math.ceil(length * rate - 1e-6) / rate
         vtrim, atrim = av_trim(stream_starts(meta)[0], None)
         cmd += ["-filter_complex",
-                f"[0:v:0]{vtrim},tpad=stop_mode=clone:stop_duration={max(0.0, end - vlen) + 2 / rate:.6f},"
-                f"trim=end={end - 0.5 / rate:.6f},reverse[v];"
+                f"[0:v:0]tpad=stop_mode=clone:stop_duration={max(0.0, end - vlen) + 2 / rate:.6f},{vtrim},"
+                f"trim=end={end - 0.5 / rate:.6f},reverse,{frame_durations(meta, rate)}[v];"
                 f"[0:a:0]{atrim},apad=whole_dur={end:.6f},atrim=end={end:.6f},areverse,asetpts=N/SR/TB[a]",
                 "-map", "[v]", "-map", "[a]"]
     else:
