@@ -41,6 +41,21 @@ class DeliveryTests(MediaFixtures):
                 if preset in ("youtube", "reels", "x", "h265"):
                     self.assertEqual(m["video"]["color_space"], "bt709")
 
+    def test_export_dnxhr_masters_read_back_codec_profile_and_pixel_format(self):
+        """#419: DNxHR presets beside prores, each checked after the write by codec, profile and
+        pixel format (an editing master is asked for by all three), at the source's size and rate."""
+        for preset, profile, pix in (("dnxhr-sq", "DNXHR SQ", "yuv422p"), ("dnxhr-hqx", "DNXHR HQX", "yuv422p10le"),
+                                     ("dnxhr-444", "DNXHR 444", "yuv444p10le"), ("prores", "HQ", "yuv422p10le")):
+            with self.subTest(preset=preset):
+                doc = json.loads(script("export.py", self.src, "--preset", preset, "--json",
+                                        "-o", OUT / f"export_master_{preset}.mov").stdout)
+                self.assertTrue(doc["verified"])
+                step = next(s for s in doc["verification"] if s["step"] == "codec")
+                self.assertTrue(step["ok"])
+                self.assertEqual(step["measured"]["profile"], profile)
+                self.assertEqual(step["measured"]["pix_fmt"], pix)
+                self.assertEqual((doc["probe"]["video"]["width"], doc["probe"]["video"]["height"]), (1280, 720))
+
     def test_export_max_mb_refuses_gif_and_a_limit_that_constrains_nothing(self):
         """2.24.1: --preset gif returned before --max-mb was applied, so a 0.7 MB GIF passed a 1 KB
         limit as verified; --max-mb 1e9 reached libx264 as an impossible bitrate (kind ffmpeg)."""

@@ -15,6 +15,9 @@ Presets:
   youtube-av1 1080p AV1 (libsvtav1, libaom fallback); missing_tool when neither is built
   x         1280x720 H.264 CRF 22, AAC 128k, max 140 s (Twitter/X)
   prores    ProRes 422 HQ .mov, PCM 16-bit audio (editing master)
+  dnxhr-lb / dnxhr-sq / dnxhr-hq   DNxHR 8-bit 4:2:2 .mov, PCM 16-bit audio
+  dnxhr-hqx DNxHR HQX 10-bit 4:2:2;  dnxhr-444  DNxHR 444 10-bit 4:4:4
+            (editing masters at the source's size and rate, like prores)
   h265      HEVC CRF 24 (libx265) with hvc1 tag for Apple compatibility
   gif       480px wide palette-optimised GIF at 12 fps (short previews)
   copy      stream copy, no re-encode: same codecs, container and colour
@@ -25,6 +28,7 @@ Examples:
   python3 export.py final.mp4 --preset reels --fit crop
   python3 export.py final.mp4 --preset reels --normalize   # meet the platform's loudness in the same call
   python3 export.py final.mp4 --preset prores -o master.mov
+  python3 export.py final.mp4 --preset dnxhr-hq -o master.mov
   python3 export.py final.mp4 --preset copy -o delivered.mp4
   python3 export.py --list
 """
@@ -89,7 +93,18 @@ PRESETS: Dict[str, Dict] = {
     "youtube4k": dict(_from_table("youtube", w=3840, h=2160, max=None), ext="mp4", video=_H264_HIGH, audio=_AAC_192, desc="2160p H.264, AAC 192k"),
     "reels": dict(_from_table("reels"), ext="mp4", video=_social(), audio=_AAC_128, desc="9:16 1080x1920, 30fps, max 90s (Instagram Reels)"),
     "x": dict(_from_table("x"), ext="mp4", video=_social("22"), audio=["-c:a", "aac", "-b:a", "128k", "-ar", "44100"], desc="720p H.264, max 140s (Twitter/X)"),
-    "prores": {"w": None, "h": None, "ext": "mov", "video": ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"], "audio": ["-c:a", "pcm_s16le"], "max": None, "desc": "ProRes 422 HQ master, PCM audio, source resolution"},
+    "prores": {"w": None, "h": None, "ext": "mov", "video": ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"], "audio": ["-c:a", "pcm_s16le"], "max": None, "intermediate": True,
+               "expect": {"codec": "prores", "profile": "HQ", "pix_fmt": "yuv422p10le"}, "desc": "ProRes 422 HQ master, PCM audio, source resolution"},
+    # DNxHR (the dnxhd encoder's resolution-independent profiles): editing masters like prores, at
+    # the source's size and rate; the written profile and pixel format are checked after the write
+    **{f"dnxhr-{name}": {"w": None, "h": None, "ext": "mov",
+                         "video": ["-c:v", "dnxhd", "-profile:v", f"dnxhr_{name}", "-pix_fmt", pix],
+                         "audio": ["-c:a", "pcm_s16le"], "max": None, "intermediate": True,
+                         "expect": {"codec": "dnxhd", "profile": f"DNXHR {name.upper()}", "pix_fmt": pix},
+                         "desc": f"DNxHR {name.upper()} master ({desc}), PCM audio, source resolution"}
+       for name, pix, desc in (("lb", "yuv422p", "8-bit 4:2:2, low bandwidth"), ("sq", "yuv422p", "8-bit 4:2:2, standard"),
+                               ("hq", "yuv422p", "8-bit 4:2:2, high quality"), ("hqx", "yuv422p10le", "10-bit 4:2:2"),
+                               ("444", "yuv444p10le", "10-bit 4:4:4"))},
     "h265": {"w": None, "h": None, "ext": "mp4", "video": ["-c:v", "libx265", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"], "audio": ["-c:a", "aac", "-b:a", "160k"], "max": None, "desc": "HEVC CRF 24, hvc1 tag, source resolution"},
     "gif": {"w": 480, "h": None, "ext": "gif", "video": [], "audio": [], "max": None, "desc": "480px palette GIF, 12fps"},
     "copy": {"w": None, "h": None, "ext": None, "video": ["-c:v", "copy"], "audio": ["-c:a", "copy"], "max": None, "desc": "stream copy, no re-encode (source codecs/container/colour tags unchanged)"},
@@ -348,7 +363,7 @@ def main() -> int:
         die(f"--preset {args.preset} delivers HDR and this source is SDR ({meta['video'].get('codec')}, "
             f"{meta['video'].get('color_transfer') or 'untagged'})",
             hint="use --preset youtube for an SDR delivery; there is no way to invent HDR range from an SDR master")
-    if meta["video"].get("bt2020_or_hdr") and args.preset not in ("prores", "copy", "youtube-hdr"):
+    if meta["video"].get("bt2020_or_hdr") and not p.get("intermediate") and args.preset not in ("copy", "youtube-hdr"):
         # 2.0: `hdr` is a real PQ/HLG/DV signal; bt2020_or_hdr also covers BT.2020 SDR, which is
         # not HDR but still needs converting before BT.709 tags describe it (eval 24 h1)
         kind = "HDR" if meta["video"].get("hdr") else "wide-gamut SDR, not HDR"
@@ -427,8 +442,8 @@ def main() -> int:
         video[video.index("-crf") + 1] = str(args.crf)
     if STATE.fast and "-preset" in video and not p.get("codec"):
         video[video.index("-preset") + 1] = "veryfast"
-    # a fixed preset's line is tagged BT.709 (prores, an editing master, keeps the source's tags)
-    tag_bt709 = args.preset not in ("prores",) and not p.get("codec")
+    # a fixed preset's line is tagged BT.709 (prores and dnxhr, editing masters, keep the source's tags)
+    tag_bt709 = not p.get("intermediate") and not p.get("codec")
     if not p.get("codec") and video:
         # --hw (never $FFMPEG_SKILL_HW here) puts a fixed preset on VideoToolbox: the same codec,
         # its CRF mapped to -q:v, the preset's frame rate kept; tags come with the VT line itself.
@@ -445,8 +460,8 @@ def main() -> int:
             cmd += cfr_args(meta)
         if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
-        if args.preset != "prores":
-            # every line but the prores master's says BT.709 (the fixed presets' tags above, an
+        if not p.get("intermediate"):
+            # every line but an editing master's (prores, dnxhr) says BT.709 (the fixed presets' tags above, an
             # SDR hevc/av1 line's own): a BT.601 source's pixels are converted to match, in front
             # of the -vf above (run() folds the two); an untagged, BT.709 or HDR source adds nothing
             cmd += bt709_matrix_args(meta)
@@ -478,6 +493,14 @@ def main() -> int:
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
     extra: Dict[str, object] = {"trimmed": trimmed} if trimmed else {}
+    encoder = video[video.index("-c:v") + 1] if "-c:v" in video else None
+    if p.get("expect") and not STATE.dry_run and encoder == p["video"][p["video"].index("-c:v") + 1]:
+        # an editing master is asked for by codec, profile and pixel format: read all three back
+        # (a VideoToolbox prores line under --hw writes its own pixel format, so it is not compared)
+        measured = {"codec": v.get("codec"), "profile": v.get("profile"), "pix_fmt": v.get("pix_fmt")}
+        extra.setdefault("verification", []).append(
+            {"step": "codec", "property": "codec_profile_pix_fmt", "ok": measured == p["expect"],
+             "expected": dict(p["expect"]), "measured": measured, "provenance": "specification"})
     platform = PLATFORM_OF.get(args.preset)
     if platform and has_audio and not STATE.dry_run:
         # Every eval run that exported for a platform then had to come back with loudness.py: the
