@@ -22,6 +22,29 @@
   without `drawtext`, as `look.py` did in #394. Both draw the picture without the text and record
   the fallback (`grid_no_drawtext`, `scenes_sheet_no_drawtext`) and a notes line.
 
+## 3.1.3
+
+_Automated release: version and notes generated from pull requests merged since 3.1.2._
+
+### Fixed
+
+- A command-line argument carrying a line break or a control character (a crafted file name) reached
+  `error.message`, `error.hint` and the diagnostics verbatim, where a newline could open what reads
+  as a new line of instructions for the calling agent. Such an argument is now written escaped
+  (`\n`, `\x1b`, `\u202e`) wherever a message prints it, as given, resolved or as a file name, and
+  any C0/C1 control, line separator or bidi mark left in a message is escaped too. Ordinary paths,
+  Windows backslashes included, and the line breaks a tool writes itself (an ffmpeg stderr tail)
+  read as before (#400).
+- Every writing tool, not only `cut.py`, kept one audio track of a source with several without
+  saying so (fit, color, loudness, audio, overlay, ...: the shape of #397). `emit()` now compares
+  the first input's audio tracks with the written file's and records an `audio_tracks_dropped`
+  warning and a notes line when the output kept sound but fewer tracks; a run told to drop the sound
+  (`--no-audio`, a picture-only output) reports nothing.
+- `grid.py` (labels, the default) and `scenes.py --sheet` (timecode stamps) failed on a build
+  without `drawtext`, as `look.py` did in #394. Both draw the picture without the text and record
+  the fallback (`grid_no_drawtext`, `scenes_sheet_no_drawtext`) and a notes line.
+- Escape control characters from arguments in messages; report dropped audio tracks from every tool; grid/scenes without drawtext (#405)
+
 ## 3.1.2
 
 _Automated release: version and notes generated from pull requests merged since 3.1.1._
