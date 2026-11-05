@@ -6477,7 +6477,7 @@ class SideFileGuardTests(unittest.TestCase):
         err = self.failed(tool("fit", victim, "--aspect", "1:1", "-o", self.tmp / "plan_out.mp4", "--plan", victim,
                                "--json", check=False))
         self.assertEqual(err["reason"], "output_is_input")
-        self.assertIn("ISO Media", sh("file", victim, check=False).stdout or "ISO Media")
+        self.assertEqual(victim.read_bytes()[4:8], b"ftyp", "the input is still the MP4 it was")
         old = self.tmp / "old_plan.json"
         old.write_text("{}", encoding="utf-8")
         err = self.failed(tool("fit", victim, "--aspect", "1:1", "-o", self.tmp / "plan_out.mp4", "--plan", old,
