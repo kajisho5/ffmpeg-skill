@@ -60,6 +60,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — output identity and check.py --compare](#224--output-identity-and-checkpy---compare)
 - [2.24 — export.py --max-mb](#224--exportpy---max-mb)
 - [2.24 — export.py --repair](#224--exportpy---repair)
+- [3.1.4 — both streams on one clock (#409)](#314--both-streams-on-one-clock-409)
 <!-- contents:end -->
 
 ## Time limits
@@ -164,9 +165,10 @@ exists. When a decision changes, edit the entry in the same PR.
   still takes the HDR path chosen from the first video stream's probe. The cost: a source whose
   frame *size* or pixel format changes mid-stream is no longer refused by concat's own "parameters do
   not match" error; on 6.1 the first-format graph then crashes or stalls the encoder (the stall is
-  bounded by `--timeout`). No other tool builds this structure: `join.py`, `multicam.py` and
-  `broll.py` open different files without `-ss`; `speedramp.py`, `freeze.py` and `loop.py` split one
-  input. Code: `cut._join_chunk()`. Test:
+  bounded by `--timeout`). `silence.py` renders through the same `_join_chunk` (#409), so it has
+  the flag too. No other tool builds this structure: `join.py`, `multicam.py` and `broll.py` open
+  different files without `-ss`; `speedramp.py` and `freeze.py` split one input, and `loop.py`
+  reads one concat list. Code: `cut._join_chunk()`. Test:
   `test_every_segment_input_of_an_accurate_join_keeps_the_graph_format` (the planned command, any
   FFmpeg) and `test_an_accurate_join_across_a_colour_tag_change_completes` (the run; it only fails
   where the deadlock reproduces).
@@ -1804,13 +1806,14 @@ not a new file format this tool would have to maintain.
   both streams runs on 5.1.1, 6.1.1, 7.0.2, 8.0.1 and 8.1.3. A command
   compared with 2.10.8's differs by design. Code: `pad.main()`. Test:
   `test_pad_with_sound_is_one_filter_graph`.
-- **`silence.py` selects the sound with two `ametadata` filters, not `aselect`.** 8.0 and 8.0.1's
-  `aselect` passes every frame. The first `ametadata` tags a frame when the same `between()`
-  expression (as a timeline `enable`, so the same per-frame `t`) is true and the second keeps the
-  tagged frames, which is what `aselect` keeps. `asplit` + an `atrim` per range + `concat` was
-  tried and works, but costs about 81 command bytes per range against 56: at `--max-cuts 400` on
-  an hour-long file that is past Windows' 32767-character command line. `asegment`'s timestamp
-  mode compares pts with a sample count and is right only for a stream that starts at 0. Code:
+- **`silence.py` never selects the sound with `aselect`.** 8.0 and 8.0.1's `aselect` passes every
+  frame. Through 3.1.3 the tool tagged the kept frames with one `ametadata` and kept them with a
+  second, in one graph; `asplit` + an `atrim` per range + `concat` was rejected because at
+  `--max-cuts 400` its command passed Windows' 32767-character line. That one-graph render was
+  replaced for #409 (below): the kept ranges now go through `cut.py`'s `--segments --accurate`
+  re-cut, which trims each range from its own seeked input and runs at most 32 ranges per ffmpeg
+  call, so neither `aselect` nor the long command comes back. `asegment`'s timestamp mode compares
+  pts with a sample count and is right only for a stream that starts at 0. Code:
   `silence.main()`. Test: `test_silence_removal_cuts_the_sound_with_the_picture`.
 - **On 8.0, 8.0.1 and 8.1.0, a multi-line `graphics.py` label goes through libass under
   `--text-render auto`**, decided after the template has wrapped its labels (so `main()` runs
@@ -2359,8 +2362,11 @@ What was decided there:
   template that sets its own margin (`templates/podcast.json`, 0.15) keeps it. Test: the default
   check in `test_silence_reports_the_level_at_every_cut_and_warns_near_speech`.
 - **`--timemap` is an artifact, like `--edl`.** It is written beside the cut and not under
-  `--dry-run`. Its output times are the sums of the kept ranges, the same arithmetic the render
-  uses. Test: `test_silence_writes_a_map_from_source_to_output_times`.
+  `--dry-run`. Its output times are the sums of the ranges the render holds: with a picture, each
+  kept range with its bounds moved to the nearest frame time (the bounds the re-cut is given,
+  #409), with sound alone the kept range as asked. Tests:
+  `test_silence_writes_a_map_from_source_to_output_times`,
+  `test_silence_keeps_sync_and_its_time_map_over_many_ranges`.
 
 ## 2.23 — check.py --content's flashes and first-frame rows
 
@@ -2481,3 +2487,64 @@ What was decided there:
   preset). On a TS file with 40 bytes of video payload overwritten (never a TS header or table, so
   every ffmpeg version still opens it): 99 decode-error lines before, 100 after, no timestamp
   warnings either side. Same test.
+
+## 3.1.4 — both streams on one clock (#409)
+
+ffmpeg shifts every stream of an input by one constant, so a filter graph sees a sound that starts
+0.3 s after its picture at 0.3. Every item below had rebased a stream to its own first sample
+(`PTS-STARTPTS`), or cut each stream on its own grid, and lost that offset while reporting
+`verified: true`. Each now does what `cut.py --segments --accurate` does ("Both streams of a segment
+shift by one constant", above): both streams cut on the same bounds, shifted by the same constant,
+and a late sound padded with silence (`aresample=async=1:first_pts=0`), through the helpers in
+`_common/decision.py` (`stream_starts`, `frame_rate`, `grid_at_or_after`, `av_trim`,
+`av_clip_length`). Each was measured with a one-frame flash and a 40 ms beep at the same instant.
+
+- **`silence.py` renders through `cut.py`'s re-cut, without its declick fade.** The one-pass
+  select/ametadata graph rounded every kept range twice, the picture to whole frames and the sound
+  to whole AAC frames, so the errors added up: 150 ms over 21 ranges of a 61 s source, and the
+  `--timemap` with them; its `asetpts=N/SR` moved a late sound 280 ms early. `cut.join_from_source`
+  is exact on both and handles the late sound, the 32-input limit and the chunking, so the tool
+  calls it rather than a second copy. Each kept bound first moves to the nearest frame time (a
+  measured bound sits microseconds off a frame, and the re-cut's "first frame at or after" would
+  then drop that frame), so a range holds whole frames between its bounds; the old `between()` kept
+  both boundary frames, one frame more per range (7.1 s where 7.0 s was kept). The joins sit in the `--margin` the tool keeps, so `DECLICK_S` is 0 for it, as 2.17.2
+  decided. Code: `silence.main()`, `silence.rendered_ranges()`. Tests:
+  `test_silence_keeps_sync_and_its_time_map_over_many_ranges`,
+  `test_silence_keeps_a_late_sound_where_it_was`.
+- **`decode_pcm_mono` pads a sound that starts late, so its samples are on the file's clock.**
+  `sync.py` measured a track 0.3 s late at +2.279 s for +2.000 s, `--replace-audio` placed it 270 ms
+  late, and `multicam.py --audio` rebased the chosen camera's sound to its first sample. The decode
+  now ends in `aresample=async=1:first_pts=0` for every caller (scenes.py's envelopes and cut.py's
+  beat grid included, which were off the same way); `sync.py`'s writes and `multicam.py`'s audio
+  chain place the sound on its own file's clock before they delay it. Code:
+  `_common/probe.py` `decode_pcm_mono`, `sync.main()`, `multicam.main()`. Test:
+  `test_a_late_sound_is_measured_and_placed_on_its_files_clock`.
+- **`freeze.py` and `speedramp.py` cut on frame times and shift both streams together.** The head
+  starts at the first frame and every boundary is the first frame at or after the asked time; sound
+  before the first frame is dropped, as in a join. `freeze` was off by +279 ms (late sound) and
+  -100 ms (late picture); `speedramp` by +570 ms at 0.5x, the factor scaling the offset. Code:
+  `freeze.main()`, `speedramp.main()`. Tests: `test_freeze_keeps_a_late_sound_and_a_late_picture_in_sync`,
+  `test_speedramp_keeps_a_late_sound_in_sync`.
+- **`join.py` and `broll.py --audio b|mix` shift the sound by the picture's start.** #338 started
+  each clip's picture at 0, and the sound was rebased on its own, so a sound 0.3 s late joined
+  279 ms early; `broll` did the same with B's sound. A clip's length (`clip_length`, now
+  `av_clip_length`) counts where its sound ends from the first frame, so a late sound that runs past
+  the picture is not cut. Code: `join.clip_length()`, `join.main()`, `broll.main()`. Tests:
+  `test_join_keeps_a_late_sound_where_it_was`, `test_broll_b_audio_keeps_a_late_sound_in_sync`.
+- **`reverse.py` reverses both streams about one end, a frame time.** Each stream was reversed about
+  its own end: a sound 0.6 s longer than its picture came out 396 ms off. Both now start at the
+  first frame and end at the first frame time at or after the clip's length, the last frame held
+  and the sound padded. The end is a frame time because a stream copy's stated video length can
+  run past its last frame (7.517 s for frames that end at 7.5), which would leave the picture's end
+  a fraction of a frame from the sound's; such a clip gains one held frame. The reversed sound is
+  retimed by its samples (`asetpts=N/SR/TB`). Code: `reverse.main()`. Test:
+  `test_reverse_turns_both_streams_about_one_end`.
+- **`loop.py` repeats through the concat demuxer, not `-stream_loop`.** `-stream_loop` takes a
+  repeat's length from its streams' spans, leaving out the last video frame when there is sound, so
+  with a late sound each repeat lost a frame and the sound slid (795 of 810 frames, 43-51 ms). A
+  concat list naming the file once per repeat places each repeat at the file's duration. The concat
+  demuxer counts an MP4's hidden AAC priming into its start (-21 ms) where the MP4 demuxer does not,
+  and a frame-rate time base rounded the picture's 21 ms move to 33 ms, so the first frame's place
+  on the list's clock is measured (`concat_first_frame`, one ffprobe) and both streams shift by it;
+  `min_hard_comp=0.001` fills a late sound's gap at every repeat, however short. Code:
+  `loop.main()`. Test: `test_loop_keeps_a_late_sound_in_sync_on_every_repeat`.

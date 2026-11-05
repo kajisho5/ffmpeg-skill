@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
 from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, place_output, refuse, sibling_temp, draws_chroma, drawn_chain, label_chain, matrix_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import warn
+from _common.decision import av_clip_length, av_trim, stream_starts
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -103,16 +104,11 @@ def overlap_report(durs: List[float], expected: Optional[float]) -> Dict[str, An
 
 def clip_length(meta: Dict[str, Any], fps: float) -> float:
     """The one length a clip holds in a join, for its picture and its sound alike: the
-    video stream's, or the audio stream's when the sound runs more than a frame past the picture
-    (narration is never cut; an AAC tail adds no frame). The container duration (audio priming,
-    a longer track) is only the fallback when a stream length is unknown (a pending input)."""
-    v = (meta.get("video") or {}).get("duration")
-    a = (meta.get("audio") or {}).get("duration")
-    if not v:
-        return meta.get("duration") or 0.0
-    if a and fps and a > v + 1.0 / fps:
-        return a
-    return v
+    video stream's, or up to where the sound ends when it runs more than a frame past the picture
+    (narration is never cut; an AAC tail adds no frame), counted from the first frame. The container
+    duration (audio priming, a longer track) is only the fallback when a stream length is unknown
+    (a pending input). Shared with reverse.py as av_clip_length."""
+    return av_clip_length(meta, fps)
 
 
 def find_duplicates(paths: List[str]) -> List[Dict[str, Any]]:
@@ -741,7 +737,12 @@ def main() -> int:
         info(f"channel counts differ ({', '.join(str(c) for c in chans)}); every clip becomes {layout}")
     for i in range(n):
         parts.append(f"[{i}:v]{convert[i]}{geo(i)},setsar=1,setpts=PTS-STARTPTS,fps={fps:g},format={pixfmt},settb=AVTB[v{i}]")
-        parts.append(f"[{audio_src[i]}]aformat=sample_rates=48000:channel_layouts={layout},asetpts=PTS-STARTPTS[a{i}]")
+        # the sound is shifted by the picture's start, not to its own (#409): #338 started each
+        # clip's picture at 0, and a per-stream PTS-STARTPTS then moved a sound that starts 0.3 s
+        # after its picture 0.3 s early. Sound before the first frame is dropped and a late sound
+        # is padded, as cut.py's re-cut does; a generated silent track starts at 0 already.
+        shift = (av_trim(stream_starts(metas[i])[0], None)[1] + ",") if metas[i].get("audio") else ""
+        parts.append(f"[{audio_src[i]}]{shift}aformat=sample_rates=48000:channel_layouts={layout},asetpts=PTS-STARTPTS[a{i}]")
 
     # pad the shorter stream to the clip's length: the audio with silence, the picture by holding
     # its last frame, then cut both there -- each clip boundary is then the same for both chains

@@ -19,6 +19,7 @@ Examples:
 import argparse
 import sys
 
+from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
 
 
@@ -55,6 +56,13 @@ def main() -> int:
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, "freeze")
 
+    # Both streams are cut at the same frame time and shifted by the same constants (#409): the
+    # head runs from the first frame, the tail from the first frame at or after --at. Rebasing each
+    # stream to its own start moved a sound that starts 0.3 s late 0.279 s early, and a picture that
+    # starts 0.1 s late 0.1 s early (147 frames for 150).
+    v0 = stream_starts(meta)[0]
+    rate = frame_rate(meta) or fps
+    cut_at = grid_at_or_after(at, v0, rate)
     if args.mode == "extend":
         # tpad's stop_duration clones the last frame for the given duration; no PTS surgery
         # needed since it only ever appends past the real end.
@@ -62,7 +70,7 @@ def main() -> int:
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
             cmd += ["-map", "0:a:0?", "-af", f"apad=pad_dur={args.hold:.3f}"]
-    elif at == 0:
+    elif at == 0 or cut_at <= v0 + 1e-6:
         # A freeze at the very start has no preceding "head" segment to hold on to (the
         # split/trim/concat approach below needs a non-empty head, which trim=end=0 can't give
         # it -- ffmpeg fails filtering an empty stream). Symmetric to --mode extend at the other
@@ -81,14 +89,16 @@ def main() -> int:
         # the video actually holds for, a permanent A/V drift from this point on. Pad audio by
         # the same, frame-rounded duration the video actually gets.
         actual_hold = n / fps
-        vf = (f"[0:v]split[a][b];[a]trim=end={at:.3f},setpts=PTS-STARTPTS[head];"
-              f"[b]trim=start={at:.3f},setpts=PTS-STARTPTS[tail];"
+        head_v, head_a = av_trim(v0, cut_at, rate)
+        tail_v, tail_a = av_trim(cut_at, None, rate)
+        vf = (f"[0:v]split[a][b];[a]{head_v}[head];"
+              f"[b]{tail_v}[tail];"
               f"[head]tpad=stop_mode=clone:stop={n}[frozen];"
               f"[frozen][tail]concat=n=2:v=1:a=0[outv]")
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:
-            af = (f"[0:a]asplit[aa][ab];[aa]atrim=end={at:.3f},asetpts=PTS-STARTPTS[ahead];"
-                  f"[ab]atrim=start={at:.3f},asetpts=PTS-STARTPTS[atail];"
+            af = (f"[0:a]asplit[aa][ab];[aa]{head_a}[ahead];"
+                  f"[ab]{tail_a}[atail];"
                   f"[ahead]apad=pad_dur={actual_hold:.6f}[afrozen];"
                   f"[afrozen][atail]concat=n=2:v=0:a=1[outa]")
             cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", f"{vf};{af}", "-map", "[outv]", "-map", "[outa]"]

@@ -273,6 +273,81 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
     return p
 
 
+# ------------------------------------------------------- both streams on one clock (#409)
+#
+# ffmpeg shifts every stream of an input by one constant (the file's start_time), so a filter graph
+# sees a sound that starts 0.3 s after its picture at 0.3. A per-stream `PTS-STARTPTS` moved that
+# sound 0.3 s early. cut.py's re-cut is the reference: both streams are cut on the same bounds,
+# shifted by the same constant, and the audio is padded to the origin
+# (docs/design-decisions.md, "Both streams of a segment shift by one constant").
+
+def stream_starts(meta: Optional[Dict[str, Any]]) -> Tuple[float, float]:
+    """Where the video and the audio start on the clock a filter graph reads the input on (each
+    stream's start_time minus the file's); 0.0 for a stream whose start is unknown."""
+    from _common.emit import file_origin
+    meta = meta or {}
+    origin = file_origin(meta)
+    out = []
+    for kind in ("video", "audio"):
+        start = (meta.get(kind) or {}).get("start_time")
+        out.append(float(start) - origin if isinstance(start, (int, float)) else 0.0)
+    return out[0], out[1]
+
+
+def frame_rate(meta: Optional[Dict[str, Any]]) -> float:
+    """The video's frame rate as cut.py's grid takes it: r_frame_rate, else fps; 0.0 when unknown."""
+    v = (meta or {}).get("video") or {}
+    try:
+        num, _, den = str(v.get("r_frame_rate") or "").partition("/")
+        rate = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        rate = 0.0
+    if not 0 < rate <= 240:  # a time base (90000/1), not a rate
+        rate = float(v.get("fps") or 0.0)
+    return rate
+
+
+def grid_at_or_after(t: float, v0: float, rate: float) -> float:
+    """The time of the first frame at or after `t` on a constant-rate grid starting at `v0`."""
+    if not rate:
+        return t
+    return v0 + math.ceil((t - v0) * rate - 1e-6) / rate
+
+
+def av_trim(start: float, end: Optional[float], rate: float = 0.0, fill_gaps: bool = False) -> Tuple[str, str]:
+    """The video and the audio filters that cut one segment [start, end) of the graph clock out of
+    both streams and shift both by the same constant, so an offset between them survives; `end`
+    None runs to the stream's end. The picture's trim sits half a frame before each bound (the
+    bounds are frame times: grid_at_or_after), so no FFmpeg version rounds a boundary frame in or
+    out; the audio is padded to the segment's origin when it starts later. `fill_gaps` also fills
+    every later gap in the sound with silence, however short (aresample's default only fills one
+    longer than 0.1 s and stretches the sound by a sample a second for the rest)."""
+    half = 0.5 / rate if rate else 0.0
+    pad = "aresample=async=1:min_hard_comp=0.001:first_pts=0" if fill_gaps else "aresample=async=1:first_pts=0"
+    vend = f":end={end - half:.6f}" if end is not None else ""
+    aend = f":end={end:.6f}" if end is not None else ""
+    return (f"trim=start={start - half:.6f}{vend},setpts=PTS-{start:.6f}/TB",
+            f"atrim=start={start:.6f}{aend},asetpts=PTS-{start:.6f}/TB,{pad}")
+
+
+def av_clip_length(meta: Optional[Dict[str, Any]], fps: float) -> float:
+    """The one length a clip holds once both streams start at its first frame (av_trim from the
+    video's start): the video's, or where the sound ends when it runs more than a frame past the
+    picture (narration is never cut; an AAC tail adds no frame). The container duration is only the
+    fallback when the video's length is unknown (a pending input)."""
+    meta = meta or {}
+    v = (meta.get("video") or {}).get("duration")
+    a = (meta.get("audio") or {}).get("duration")
+    if not v:
+        return meta.get("duration") or 0.0
+    if a:
+        v0, a0 = stream_starts(meta)
+        a = a + a0 - v0  # where the sound ends, counted from the first frame
+    if a and fps and a > v + 1.0 / fps:
+        return a
+    return v
+
+
 def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> List[str]:
     """Force a constant frame rate on output when the source looks VFR (or fps is given).
 

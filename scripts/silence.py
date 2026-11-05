@@ -3,7 +3,8 @@
 
 Detects quiet stretches with ffmpeg's silencedetect, keeps a margin on each
 side so words are not clipped, drops gaps shorter than --min-silence, and
-writes a frame-accurate re-encode in one pass (select, and ametadata for the sound).
+writes a frame-accurate re-encode: the kept ranges are re-cut from the source the way
+cut.py --segments --accurate cuts them (both streams on one set of frame-grid bounds).
 
 Examples:
   python3 silence.py talk.mp4                                 # -35 dB, gaps >= 0.6 s, 0.2 s margin
@@ -25,7 +26,8 @@ from _common import asr as _asr
 from _common.emit import warn
 from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
-from _common import detect_silences as detect, STATE, video_args, add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, ffmpeg_base, info, is_audio_output, print_json, probe, run, X264_PRESETS, measured_level_dbfs, fmt_secs
+from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
+from _common.decision import frame_rate, stream_starts
 
 
 
@@ -97,16 +99,32 @@ def keep_ranges(silences: List[Tuple[float, float]], duration: float, margin: fl
     return keeps
 
 
+def rendered_ranges(keeps: List[Tuple[float, float]], meta: Dict[str, Any], duration: float,
+                    video_out: bool) -> List[Tuple[float, float]]:
+    """The source ranges the render holds, and is given: with a picture, each bound moves to the
+    nearest frame time, for the sound too, so cut.py's re-cut (which cuts at the first frame at or
+    after a bound) cuts exactly there. A measured bound sits a few microseconds off a frame
+    (silencedetect's 4.00002), which "at or after" would have turned into a whole frame dropped.
+    Sound alone is cut where asked. --timemap is built from these, so its times are the output's."""
+    rate = frame_rate(meta) if video_out else 0.0
+    if not rate:
+        return list(keeps)
+    v0 = stream_starts(meta)[0]
+
+    def snap(t: float) -> float:
+        return min(v0 + round((t - v0) * rate) / rate, duration)
+    return [(a, b) for a, b in ((snap(s), snap(e)) for s, e in keeps) if b > a]
+
+
 def time_map(keeps: List[Tuple[float, float]], duration: float) -> Dict[str, Any]:
     """Each kept range with its time in the source and in the output, and each removed range with
-    the output time it was cut at: re-timing subtitles, or finding a removed sentence again."""
+    the output time it was cut at: re-timing subtitles, or finding a removed sentence again.
+    `keeps` are the ranges the render holds (rendered_ranges): the output advances by each one's
+    exact length, rounded only for display."""
     kept: List[Dict[str, float]] = []
     removed: List[Dict[str, float]] = []
     out, prev = 0.0, 0.0
     for s, e in keeps:
-        # the render cuts on bounds rounded to the millisecond (between(t,s,e) below): advance by
-        # that rounded length, or every off-grid range adds its own error to every later time
-        s, e = round(s, 3), round(e, 3)
         if s - prev > 0.0005:
             removed.append({"source_start": round(prev, 3), "source_end": round(s, 3), "output_time": round(out, 3)})
         kept.append({"source_start": round(s, 3), "source_end": round(e, 3),
@@ -572,7 +590,9 @@ def main() -> int:
             summary["hint"] = f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; try a higher --threshold (e.g. -25) or a shorter --min-silence"
         info("hint: " + summary["hint"])
 
-    tm = time_map(keeps, duration)
+    video_out = bool(meta.get("video")) and not (media_out and is_audio_output(media_out))
+    held = rendered_ranges(keeps, meta, duration, video_out)
+    tm = time_map(held, duration)
     points: Any = False  # False: not measured (a dry run over a pending input); None: the decode failed
     if not (STATE.dry_run and not os.path.exists(args.input)):
         points = cut_levels(args.input, tm, duration, list(filler_ranges))
@@ -615,29 +635,25 @@ def main() -> int:
         else:
             print_json(summary)
         return 0
-    if not keeps:
+    if not keeps or not held:
         die("nothing would be kept; raise --threshold (e.g. -45) or check the audio")
     if not silences or removed < 0.05:
         info("no removable silence found; output would equal the input")
 
     output = args.output or default_output(args.input, "tight")
-    expr = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in keeps)
-    vf = f"select='{expr}',setpts=N/FRAME_RATE/TB"
-    # Not `aselect='{expr}'`: FFmpeg 8.0 and 8.0.1 (Ubuntu 26.04's apt build) ship an aselect that
-    # passes every frame through (its activate callback was lost when the filter was converted;
-    # fixed in 8.0.2/8.1), which cut the picture and left the sound whole. Tagging the frames the
-    # expression keeps (timeline `enable`, the same per-frame t) and selecting the tagged ones keeps
-    # exactly the frames aselect keeps, on every release, in a command no longer than before.
-    af = (f"ametadata=mode=add:key=ffskill_keep:value=1:enable='{expr}',"
-          "ametadata=mode=select:key=ffskill_keep,asetpts=N/SR/TB")
-    cmd = ffmpeg_base() + ["-i", args.input]
-    audio_only = is_audio_output(output) or not meta.get("video")
-    if audio_only:
-        cmd += ["-vn"]
-    else:
-        cmd += ["-vf", vf] + video_args(meta, args.crf, args.preset) + cfr_args(meta)
-    cmd += ["-af", af] + audio_codec_for(output) + [output]
-    run(cmd)
+    # The kept ranges are re-cut from the source as cut.py --segments --accurate cuts them (#409):
+    # each range is its own seeked input, both streams cut on the same frame-grid bounds and shifted
+    # by one constant, the sound padded to the range's origin, at most 32 ranges per ffmpeg call.
+    # The one-pass select/ametadata graph this replaced rounded every range twice, the picture to
+    # whole frames and the sound to whole AAC frames, and the errors added up (150 ms over 21 ranges
+    # on a 61 s source); its asetpts=N/SR also moved a sound that starts late by its whole offset.
+    # No declick fade: the joins sit in the --margin the tool keeps, as they always have.
+    # imported here, not at the top: the contract and MCP load every tool's parser on its own
+    import cut as _cut
+    _cut.DECLICK_S = 0.0
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="ffskill_silence_") as tmp:
+        _cut.join_from_source(args.input, held, output, meta, args.crf, args.preset, tmp)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{kept:.3f}s)")
     finish_time_map()
