@@ -238,6 +238,11 @@ def main() -> int:
         current = render
         if args.title:
             titled = titled_tmp if (args.srt or args.text) else output
+            if titled == titled_tmp:
+                # graphics.py's libass route writes <its output stem>_gfx.ass beside it (#413 review)
+                titled_ass = os.path.splitext(titled)[0] + "_gfx.ass"
+                if not os.path.exists(titled_ass):
+                    intermediates.append(titled_ass)
             # a dry run rendered no _vis file for graphics.py to probe, so its default --end (the
             # clip's end) came out 0 and the plan failed: give it the source's duration, which
             # is what -t caps the render at. A real run is unchanged.

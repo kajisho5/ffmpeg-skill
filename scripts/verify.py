@@ -157,11 +157,11 @@ def main() -> int:
     if STATE.plan:
         die("verify.py does not support --plan: its steps run for real (it ignores --dry-run too)")
 
-    if args.report:
-        # a file this run writes itself (#408): not one of the media it verifies, nor an existing
-        # file without --overwrite
-        guard_sidecar(args.report, *args.paths)
     files = collect(args.paths)
+    if args.report:
+        # a file this run writes itself (#408): not one of the media it verifies (a folder's
+        # files included), nor an existing file without --overwrite
+        guard_sidecar(args.report, *args.paths, *map(str, files))
     tmp = None
     if args.out:
         outdir = Path(args.out)

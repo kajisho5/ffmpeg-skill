@@ -6503,6 +6503,28 @@ class SideFileGuardTests(unittest.TestCase):
         for f in (g_in, c_in, v_in):
             self.assertGreater(f.stat().st_size, 10000, f)
 
+    def test_review_gaps_plan_side_inputs_and_colliding_sidecars(self):
+        """#413 review: --plan naming a side input (an SRT) or the default output is refused, and
+        two side files of one caption run naming the same path are refused before either is written."""
+        cues = self.tmp / "plan_cues.srt"
+        shutil.copy(self.srt, cues)
+        before = cues.read_bytes()
+        err = self.failed(tool("caption", self.src, "--srt", cues, "-o", self.tmp / "pc_out.mp4", "--plan", cues,
+                               "--overwrite", "--json", check=False))
+        self.assertEqual(err["reason"], "output_is_input", err)
+        self.assertEqual(cues.read_bytes(), before)
+        default = self.tmp / "src_captioned.mp4"
+        err = self.failed(tool("caption", self.src, "--srt", cues, "--plan", default, "--json", check=False))
+        self.assertEqual(err["reason"], "output_path_taken", err)
+        self.assertFalse(default.exists())
+        text = self.tmp / "cues.txt"
+        text.write_text("0-1 Hello\n", encoding="utf-8")
+        both = self.tmp / "both.sub"
+        err = self.failed(tool("caption", self.src, "--text", text, "--animate", "pop", "--write-srt", both,
+                               "--write-ass", both, "-o", self.tmp / "both.mp4", "--json", check=False))
+        self.assertEqual(err["reason"], "output_path_taken", err)
+        self.assertFalse(both.exists())
+
     def test_render_pack_table_is_not_replaced_without_overwrite(self):
         clip = self.copy("pk.mp4")
         table = self.tmp / "pk_pack.md"

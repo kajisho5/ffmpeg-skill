@@ -1720,7 +1720,7 @@ def still_input_args(path: str) -> List[str]:
     """`-pattern_type none` for a still read through image2 whose name has a `%` in it (#408):
     image2 otherwise reads `logo%d.png` as a numbered sequence and opens `logo1.png`, a file the
     run's guards and fingerprints never looked at. Empty for every other name."""
-    return ["-pattern_type", "none"] if "%" in os.path.basename(str(path)) else []
+    return ["-pattern_type", "none"] if "%" in str(path) else []
 
 
 def sibling_temp(dst: str, tag: str) -> str:
