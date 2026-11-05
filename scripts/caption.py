@@ -1289,6 +1289,10 @@ def main() -> int:
                 continue
             real = os.path.realpath(path)
             held = claimed.get(real)
+            if held is None and os.path.exists(real):
+                # a second name for the same file (a hard link) is the same path (#413 review)
+                held = next((o for r, o in claimed.items()
+                             if os.path.exists(r) and os.path.samefile(r, real)), None)
             if held is None:
                 claimed[real] = owner
                 todo.append(path)

@@ -6474,10 +6474,11 @@ class SideFileGuardTests(unittest.TestCase):
 
     def test_plan_is_guarded_like_an_output(self):
         victim = self.copy("plan_in.mp4")
+        before = victim.read_bytes()
         err = self.failed(tool("fit", victim, "--aspect", "1:1", "-o", self.tmp / "plan_out.mp4", "--plan", victim,
                                "--json", check=False))
         self.assertEqual(err["reason"], "output_is_input")
-        self.assertEqual(victim.read_bytes()[4:8], b"ftyp", "the input is still the MP4 it was")
+        self.assertEqual(victim.read_bytes(), before, "the input is still the MP4 it was, byte for byte")
         old = self.tmp / "old_plan.json"
         old.write_text("{}", encoding="utf-8")
         err = self.failed(tool("fit", victim, "--aspect", "1:1", "-o", self.tmp / "plan_out.mp4", "--plan", old,
@@ -6524,6 +6525,24 @@ class SideFileGuardTests(unittest.TestCase):
                                "--write-ass", both, "-o", self.tmp / "both.mp4", "--json", check=False))
         self.assertEqual(err["reason"], "output_path_taken", err)
         self.assertFalse(both.exists())
+        # two names for one file (a hard link) are one path, even under --overwrite
+        srt_name, ass_name = self.tmp / "link_a.srt", self.tmp / "link_b.ass"
+        srt_name.write_text("keep\n", encoding="utf-8")
+        os.link(srt_name, ass_name)
+        err = self.failed(tool("caption", self.src, "--text", text, "--animate", "pop", "--write-srt", srt_name,
+                               "--write-ass", ass_name, "-o", self.tmp / "link.mp4", "--overwrite", "--json",
+                               check=False))
+        self.assertEqual(err["reason"], "output_path_taken", err)
+        self.assertEqual(srt_name.read_text(encoding="utf-8"), "keep\n")
+
+    def test_verify_report_inside_a_new_out_folder(self):
+        """#413 review: --out is created before the --report guard, so a report inside it is accepted."""
+        v_in = self.copy("vr_in.mp4")
+        report = self.tmp / "vr_new" / "sub" / "r.md"
+        doc = json.loads(tool("verify", v_in, "--quick", "--seconds", "1", "--out", report.parent,
+                              "--report", report, "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+        self.assertTrue(report.is_file())
 
     def test_render_pack_table_is_not_replaced_without_overwrite(self):
         clip = self.copy("pk.mp4")
