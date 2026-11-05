@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.7
+
+_Automated release: version and notes generated from pull requests merged since 3.1.6._
+
 ### Fixed
 
 - `silence.py --filler` never cut a filler word narrower than about 0.36 s but reported it as
@@ -60,6 +66,7 @@
   now also carry `error.reason`/`error.details` (the top-level `reason` stays), and the test that
   lists every refusal reason reads `die(..., reason=...)` calls too (#414).
 - Review follow-ups: `caption.py --mode mux` reports each track's language/title as the written file carries them, checks the `--audio-stream` it copies for `.webm`, converts an EIA-608 track (kept as is in `.mov`), and no longer copies an SRT whose cue text holds `-->`; `silence.py` refuses a non-finite or negative `--margin`; a Whisper segment with no `text` is not `no_speech`; a start timecode the source rate cannot have is read as none, and the EDL `M2` speed is at the clip's own rate (#414).
+- Subtitles, transcription, timeline export, Windows fonts and contract drift (#414) (#427)
 
 ## 3.1.6
 
