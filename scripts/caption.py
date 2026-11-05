@@ -45,7 +45,7 @@ from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_unit
                         resolve as resolve_platform)
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
 from _common.emit import refuse  # noqa: E402
-from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, load_brand, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs, guard_sidecar
+from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, layer_base_chain, load_brand, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs, guard_sidecar
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 # The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
 # shares them). They stay caption.py's public names -- every caller and test that reached for
@@ -53,6 +53,7 @@ from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_
 from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.emit import warn
+from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.fonts import font_choice, record_font_choice
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
@@ -1139,9 +1140,9 @@ def main() -> int:
 
     play_w = play_h = None
     if meta and meta.get("video"):
-        play_w, play_h = meta["video"]["width"], meta["video"]["height"]
-        if meta["video"].get("rotation") in (90, -90, 270, -270):
-            play_w, play_h = play_h, play_w
+        # the displayed frame: rotation applied, non-square pixels squared (#411) -- the burn
+        # below draws on the square-pixel picture, so a cue is not stretched by the player's SAR
+        play_w, play_h = display_size(meta["video"])
     # A --plan or --dry-run written before the input exists has no geometry to fit against, and a
     # plan that describes a different FontSize from the run that executes it is not a plan. When
     # --platform names a destination, that destination's frame IS the geometry the real run will
@@ -1589,9 +1590,7 @@ def main() -> int:
             args._word_timings = whisper_word_timings(srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
         claim([(ass_path, "ASS")])
-        w, h = meta["video"]["width"], meta["video"]["height"]
-        if meta["video"].get("rotation") in (90, -90, 270, -270):
-            w, h = h, w
+        w, h = display_size(meta["video"])
         if not STATE.dry_run:  # the generated ASS is an artifact of this run: a plan writes nothing
             write_ass(cues_for_ass, ass_path, args, w, h, video=args.input if meta.get("audio") else None)
         info(f"wrote {ass_path} ({len(cues_for_ass)} cues, animate={args.animate}, karaoke={args.karaoke})")
@@ -1681,9 +1680,12 @@ def main() -> int:
         vf = drawn_chain(vf, meta, [args.color, args.outline_color]
                          + ([args.highlight_color, args.upcoming_color] if args.karaoke else []))
 
+    if square_pixels((meta or {}).get("video")):
+        vf = square_pixels(meta["video"]) + "," + vf
+        side_notes.append(square_pixels_note(meta["video"]))
     cmd = ffmpeg_base() + ["-i", args.input]
     chains, emoji_inputs = (emoji_filter_chain(emoji_plan or {}, "vsub", "vout", to_yuv=rgb_chain_to_bt709(meta),
-                                               base_chain=label_chain(meta, meta) if rgb_chain_to_bt709(meta) else "")
+                                               base_chain=layer_base_chain(meta))
                             if emoji_plan else ([], []))
     if chains:
         for spec in emoji_inputs:

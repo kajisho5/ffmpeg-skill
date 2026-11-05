@@ -319,7 +319,11 @@ the stored width and height plus that rotation. A tool that places or measures
 a rectangle (`fit.py`, `crop.py`, `cropdetect.py`, `broll.py`, `overlay.py
 --scale-percent` / `--platform`, `look.py --safe`) uses the displayed size,
 the two swapped for 90° and 270°, because ffmpeg applies the tag before the
-filter graph.
+filter graph. A JPEG's EXIF Orientation counts as that rotation too. Footage that
+stores non-square pixels (DV, HDV/XDCAM 1440x1080, DVD) is reported with its
+`sample_aspect_ratio`; every tool that sizes, places or draws on the picture
+first scales it to square pixels at its display aspect (its height kept, a
+`notes` line says so), so rectangles and margins are in that displayed frame.
 
 ## Planning
 

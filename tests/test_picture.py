@@ -21,7 +21,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, frame_rgb, sar_clip, tiny_clip, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
 from _common import default_font_file, detect_script, escape_filter_path, font_family_for_script, font_for_script, probe  # noqa: E402
 
 
@@ -3142,6 +3142,209 @@ class DrawnColourTests(unittest.TestCase):
                 self.assertEqual(outs[0][1], outs[1][1], f"{tool}: the chroma beside the drawing changed")
 
 
+class ColourAuditGTests(unittest.TestCase):
+    """#410 (audit G): the colour paths #159/#325/#332-#334 left. Each output is decoded with the matrix
+    and range its own tags name (RgbAndStillConversionTests._patches), or read as RGB (a PNG, a GIF),
+    and the patches are compared with the colours the source holds.
+
+    Full range comes in two shapes: `yuvj` (H.264/HEVC/JPEG), which every scale here converts by
+    name, and a plain format tagged `pc`, which is how VP9 and AV1 full range and any 10-bit full
+    range decode. The fixtures use FFV1 in Matroska for the second: always built, lossless, and it
+    decodes as plain yuv420p/yuv420p10le tagged pc, as VP9 does."""
+
+    COLOURS = RgbAndStillConversionTests.COLOURS
+    GREY = (128, 128, 128)
+
+    @classmethod
+    def setUpClass(cls):
+        encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE, text=True).stdout
+        if "libx264" not in encoders:
+            raise unittest.SkipTest("this ffmpeg build has no libx264")
+        cls.dir = OUT / "audit_g"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        d, bar = cls.dir, RgbAndStillConversionTests.BAR
+        row = b"".join(bytes(cls.COLOURS[x // bar]) for x in range(3 * bar))
+        (d / "bars.ppm").write_bytes(b"P6\n%d %d\n255\n" % (3 * bar, bar) + row * bar)
+        q = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error")
+        sh(*q, "-i", d / "bars.ppm", "-pix_fmt", "rgb24", d / "bars.png")
+        # 2 s of the bars at 384x128, the same noise under each for multicam's alignment
+        loop = (*q, "-loop", "1", "-framerate", "25", "-i", d / "bars.png", "-f", "lavfi", "-i",
+                "anoisesrc=d=2:seed=7:amplitude=0.3", "-t", "2")
+        bars = "scale=384:128:flags=neighbor:out_color_matrix=bt709:out_range={},format={}"
+        x264 = ("-c:v", "libx264", "-preset", "ultrafast", "-crf", "1", "-pix_fmt", "yuv420p")
+        bt709 = ("-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709")
+        sh(*loop, "-vf", bars.format("tv", "yuv420p"), *x264, "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
+           "-c:a", "aac", "-shortest", d / "tv.mp4")
+        # untagged: BT.709 pixels relabelled unknown (from 7.1 the scale's own label would reach x264)
+        sh(*loop, "-vf", bars.format("tv", "yuv420p") + ",setparams=colorspace=unknown", *x264, "-c:a", "aac", "-shortest",
+           d / "un.mp4")
+        for name, fmt in (("pc", "yuv420p"), ("pc10", "yuv420p10le")):
+            sh(*loop, "-vf", bars.format("pc", fmt), "-c:v", "ffv1", "-color_range", "pc", *bt709, "-c:a", "pcm_s16le",
+               "-shortest", d / f"{name}.mkv")
+            v = probe(str(d / f"{name}.mkv"))["video"]
+            assert (v["pix_fmt"], v.get("color_range")) == (fmt, "pc"), v
+        # a 1280x720 full-range grey main for graphics.py's templates
+        sh(*q, "-f", "lavfi", "-i", "color=c=0x808080:s=1280x720:r=25:d=3", "-f", "lavfi", "-i", "sine=d=3", "-vf",
+           "scale=out_color_matrix=bt709:out_range=pc,format=yuv420p", "-c:v", "ffv1", "-color_range", "pc", *bt709,
+           "-c:a", "pcm_s16le", "-shortest", d / "bigpc.mkv")
+
+    def _assert(self, label, got, want, mean=3.0, worst=8.0):
+        diffs = [abs(a - b) for g, w in zip(got, want) for a, b in zip(g, w)]
+        shown = [tuple(round(c) for c in g) for g in got]
+        self.assertLess(sum(diffs) / len(diffs), mean, f"{label}: {shown} != {want}")
+        self.assertLess(max(diffs), worst, f"{label}: {shown} != {want}")
+
+    def _video(self, label, out, rects, want, t=0.5, **tol):
+        self._assert(label, RgbAndStillConversionTests._patches(out, rects, t), want, **tol)
+
+    @staticmethod
+    def _rgb(path, rects):
+        """Mean RGB of each rect of an RGB picture (a PNG, a GIF's first frame)."""
+        w = int(probe(str(path))["video"]["width"])
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        out = []
+        for x0, y0, x1, y1 in rects:
+            px = [raw[(y * w + x) * 3:(y * w + x) * 3 + 3] for y in range(y0, y1) for x in range(x0, x1)]
+            out.append(tuple(sum(p[i] for p in px) / len(px) for i in range(3)))
+        return out
+
+    def test_color_lut_identity_returns_the_picture(self):
+        """Item 1: lut3d takes RGB, and libavfilter's own conversions around it disagreed (in by the
+        frame's BT.709 tag, out by swscale's BT.601 default), so an identity LUT shifted every colour
+        (2FAE4E -> 249A4B). Both legs are now explicit BT.709, as the picture is."""
+        cube = self.dir / "identity.cube"
+        cube.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        for src in ("tv.mp4", "un.mp4", "pc.mkv"):
+            for strength in ("1", "0.5"):
+                out = self.dir / f"lut_{Path(src).stem}_{strength}.mp4"
+                doc = json.loads(script("color.py", self.dir / src, "--lut", cube, "--lut-strength", strength, "--fast", "--json",
+                                        "-o", out).stdout)
+                self.assertIn("scale=in_color_matrix=bt709,format=gbrpf32le", doc["commands"][-1])
+                with self.subTest(source=src, strength=strength):
+                    self._video("color --lut", out, RgbAndStillConversionTests._bars(0, 0, 2), self.COLOURS)
+
+    def test_color_lut_on_prores_keeps_a_bt601_sources_matrix(self):
+        """#416 review: --codec prores keeps a BT.601 source's matrix and tags (no conversion), so
+        legs pinned to BT.709 read and wrote its samples with the wrong coefficients."""
+        cube = self.dir / "identity.cube"
+        cube.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        src = self.dir / "s601.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.dir / "tv.mp4", "-vf",
+           "scale=out_color_matrix=bt601,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "1",
+           "-colorspace", "smpte170m", "-color_primaries", "smpte170m", "-color_trc", "smpte170m", "-an", src)
+        doc = json.loads(script("color.py", src, "--lut", cube, "--codec", "prores", "--json", "--dry-run",
+                                "-o", self.dir / "lut_601.mov").stdout)
+        self.assertIn("scale=in_color_matrix=bt601,format=gbrpf32le", doc["commands"][-1])
+        self.assertIn("scale=out_color_matrix=bt601:out_range=tv", doc["commands"][-1])
+        doc = json.loads(script("color.py", src, "--lut", cube, "--json", "--dry-run", "-o", self.dir / "lut_601.mp4").stdout)
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrpf32le", doc["commands"][-1], "h264 converts to BT.709 first")
+
+    def test_color_correct_defaults_leave_grey_grey(self):
+        """Item 7: colortemperature at 6500 K, documented as unchanged, was always in the chain and
+        tinted grey 808080 to 7E7E7B. At 6500 the term is left out."""
+        out = self.dir / "correct_defaults.mp4"
+        doc = json.loads(script("color.py", self.dir / "tv.mp4", "--correct", "--fast", "--json", "-o", out).stdout)
+        self.assertNotIn("colortemperature", doc["commands"][-1])
+        grey = self.dir / "grey.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x808080:s=128x64:r=25:d=1",
+           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "1", "-pix_fmt", "yuv420p", grey)
+        out = self.dir / "correct_grey.mp4"
+        script("color.py", grey, "--correct", "--fast", "-o", out)
+        self._video("color --correct", out, [(16, 16, 112, 48)], [self.GREY], mean=1.5, worst=2.5)
+        out = self.dir / "correct_warm.mp4"
+        script("color.py", grey, "--correct", "--temperature", "5000", "--fast", "-o", out)
+        r, _g, b = RgbAndStillConversionTests._patches(out, [(16, 16, 112, 48)])[0]
+        self.assertGreater(r - b, 10, "--temperature still reaches colortemperature when it is not 6500")
+
+    def test_mixing_tools_take_a_full_range_clip_to_limited_range(self):
+        """Item 2: concat, xfade, xstack and overlay mix samples, so a full-range clip in a plain
+        format beside a limited one was shown in the other's range (C03028 -> C9251B). Every SDR picture
+        they mix is now taken to limited range first. Every order, every clip."""
+        d, rects = self.dir, RgbAndStillConversionTests._bars(0, 0, 2)
+        for a, b in (("pc.mkv", "tv.mp4"), ("tv.mp4", "pc.mkv"), ("tv.mp4", "pc10.mkv")):
+            tag = f"{Path(a).stem}_{Path(b).stem}"
+            out = d / f"join_{tag}.mp4"
+            script("join.py", d / a, d / b, "--transition", "none", "--fast", "-o", out)
+            for t, name in ((0.5, a), (2.5, b)):
+                with self.subTest(tool="join.py", order=(a, b), clip=name):
+                    self._video("join", out, rects, self.COLOURS, t)
+            out = d / f"grid_{tag}.mp4"
+            script("grid.py", d / a, d / b, "--cols", "2", "--rows", "1", "--cell-width", "384", "--cell-height", "128",
+                   "--label", "none", "--fast", "-o", out)
+            for c, name in enumerate((a, b)):
+                with self.subTest(tool="grid.py", order=(a, b), cell=name):
+                    self._video("grid", out, RgbAndStillConversionTests._bars(384 * c, 0, 2), self.COLOURS)
+            out = d / f"broll_{tag}.mp4"
+            script("broll.py", d / a, "--insert", d / b, "--at", "0.5", "--duration", "1", "--fast", "-o", out)
+            for t, name in ((0.2, a), (1.0, b)):
+                with self.subTest(tool="broll.py", order=(a, b), clip=name):
+                    self._video("broll", out, rects, self.COLOURS, t)
+            out = d / f"multicam_{tag}.mp4"
+            script("multicam.py", d / a, d / b, "--switch", "0-1:0,1-2:1", "--fast", "-o", out)
+            for t, name in ((0.5, a), (1.5, b)):
+                with self.subTest(tool="multicam.py", order=(a, b), clip=name):
+                    self._video("multicam", out, rects, self.COLOURS, t)
+
+    def test_a_colour_drawn_on_a_full_range_picture_lands_in_its_range(self):
+        """Items 3 and 4: before FFmpeg 7.1 the drawing filters take the range from the pixel format
+        alone, so on a plain-format full-range picture black was drawn as 101010 and white as EBEBEB,
+        and rgb_island() converted a 10-bit full-range picture (or one 6.1's scale had already made
+        limited) with the wrong range, oversaturating a colour. 7.1+ draws in the link's range."""
+        for src in ("pc.mkv", "pc10.mkv"):
+            for colour, want in (("black", (0, 0, 0)), ("white", (255, 255, 255)), ("0x2878C8", (40, 120, 200))):
+                out = self.dir / f"pad_{Path(src).stem}_{colour}.mp4"
+                script("pad.py", self.dir / src, "--end", "0.5", "--color", colour, "--fast", "-o", out)
+                with self.subTest(source=src, colour=colour):
+                    self._video("pad.py --end", out, [(20, 20, 364, 108)], [want], 2.2)
+                out = self.dir / f"fit_{Path(src).stem}_{colour}.mp4"
+                script("fit.py", self.dir / src, "--width", "384", "--height", "384", "--fit", "pad", "--pad-color", colour,
+                       "--fast", "-o", out)
+                with self.subTest(tool="fit.py", source=src, colour=colour):
+                    self._video("fit.py", out, [(20, 20, 364, 100)] + RgbAndStillConversionTests._bars(0, 128, 2),
+                                [want] + self.COLOURS)
+
+    def test_converted_layers_on_a_full_range_main_land_in_its_range(self):
+        """Item 5: graphics.py's boxes and bars with chroma, emoji PNGs and overlay --image are RGB
+        layers converted to limited-range BT.709; on a full-range main they were composited in its
+        range (30B050 -> 37A757). The main is taken to limited range under them."""
+        d = self.dir
+        colour = (40, 120, 200)
+        brand = d / "brand_2878C8.json"
+        brand.write_text(json.dumps({"colors": {"primary": "2878C8", "background": "2878C8", "text": "FFFFFF"}}), encoding="utf-8")
+        out = d / "gfx_lower_third_pc.mp4"
+        doc = json.loads(script("graphics.py", d / "bigpc.mkv", "--template", "lower-third", "--brand", brand, "--name", "N",
+                                "--start", "0", "--end", "3", "--fast", "--json", "-o", out).stdout)
+        m = re.search(r"s=(\d+)x(\d+).*?s=(\d+)x\2.*?,(\d+)\)\)\S*?:y=(\d+)", " ".join(doc["commands"]))
+        _bw, bh, aw, x, y = (int(g) for g in m.groups())
+        self._video("graphics.py lower-third", out,
+                    [(x + 2, y + 4, x + aw - 2, y + bh - 4), (x + aw + 2, y + 4, x + aw + 14, y + bh - 4), (20, 20, 300, 200)],
+                    [colour, DrawnColourTests._blend(colour, 0.85), self.GREY], 1.5)
+
+    def test_rgb_views_of_an_untagged_source_read_it_as_bt709(self):
+        """Item 6: look.py's frames and contact sheet, scenes.py --sheet and export.py --preset gif
+        convert to RGB, and that conversion read an untagged source as BT.601 (C03028 -> B31F28) while
+        every encode here takes it as BT.709. Its frames are now labelled BT.709 first."""
+        d, src = self.dir, self.dir / "un.mp4"
+
+        def bars(scale, x=0, y=0):
+            return [(int(x + (k * 128 + 16) * scale), int(y + 16 * scale), int(x + ((k + 1) * 128 - 16) * scale),
+                     int(y + 112 * scale)) for k in range(3)]
+        frame = d / "look_un.png"
+        script("look.py", src, "--at", "0.5", "--width", "384", "--no-timecode", "-o", frame)
+        self._assert("look.py --at", self._rgb(frame, bars(1)), self.COLOURS)
+        sheet = d / "look_un_sheet.png"
+        script("look.py", src, "--tiles", "1x1", "--width", "384", "--no-timecode", "-o", sheet)
+        self._assert("look.py sheet", self._rgb(sheet, bars(1, 2, 2)), self.COLOURS)
+        scenes = d / "scenes_un.png"
+        script("scenes.py", src, "--sheet", scenes, "--no-timecode", "--overwrite")
+        self._assert("scenes.py --sheet", self._rgb(scenes, bars(1280 / 384, 2, 2)), self.COLOURS)
+        gif = d / "export_un.gif"
+        script("export.py", src, "--preset", "gif", "-o", gif)
+        # bayer-dithered to a 256-colour palette: a looser bound (the BT.601 read was 13-24 off)
+        self._assert("export.py --preset gif", self._rgb(gif, bars(480 / 384)), self.COLOURS, mean=4.0, worst=10.0)
+
+
 class ScriptFontTests(unittest.TestCase):
     """1.12: which script text is written in, and a font file that actually covers it."""
 
@@ -3864,8 +4067,8 @@ class LookInkTests(unittest.TestCase):
 
 
 class GraphicsSliceOverlongTests(unittest.TestCase):
-    """graphics.py's own `wrapped()` helper (used by lower-third, title, sticker, hook and meme
-    labels) now turns on the same `slice_overlong` escape hatch caption.py's burn path turned on
+    """graphics.py's own `wrapped()` helper (used by lower-third, title, chapter, bug, sticker, hook
+    and meme labels; lower-third, title, chapter and bug since #411) now turns on the same `slice_overlong` escape hatch caption.py's burn path turned on
     in 1.18.4, so a single unbreakable overlong atom drawn through a template no longer renders
     past the frame's safe width."""
 
@@ -4897,6 +5100,171 @@ class WhisperDefaultModelTests(unittest.TestCase):
             script("caption.py", clip, "--transcribe", "-o", Path(d, "out.mp4"), env=env)
             args = seen.read_text(encoding="utf-8").split("\n")
             self.assertEqual(args[args.index("-m") + 1], str(model))
+
+
+class GeometryAuditPictureTests(unittest.TestCase):
+    """Issue #411 (audit H) for the text-drawing tools: graphics title / lower-third / chapter
+    wrap with the shared wrapped() helper, overlay --text wraps to the frame, the non-square-pixel
+    source is drawn on in square pixels, and grid labels pick a font by script and keep their
+    start. Every fixture is a short lavfi clip built here."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = tiny_clip(OUT / "g411p_src.mp4", "testsrc2=s=640x360:r=30", seconds=2, audio=True)
+        cls.black = tiny_clip(OUT / "g411p_black.mp4", "color=c=black:s=320x180:r=30", seconds=1)
+        cls.sar = sar_clip(OUT / "g411p_sar.mp4", seconds=1, audio=True)
+        cls.white = tiny_clip(OUT / "g411p_white.mp4", "color=c=white:s=320x180:r=30", seconds=1)
+
+    def _ass_lines(self, doc):
+        """The text of every Dialogue line of the template's ASS, one list of \\N-lines each."""
+        ass = Path(doc["ass"]).read_text(encoding="utf-8-sig")
+        out = []
+        for line in ass.splitlines():
+            if line.startswith("Dialogue:"):
+                out.append(re.sub(r"\{[^}]*\}", "", line.split(",", 9)[-1]).split("\\N"))
+        return out
+
+    def _graphics(self, name, *args):
+        out = OUT / f"g411p_{name}.mp4"
+        return json.loads(script("graphics.py", self.src, *args, "--text-render", "ass", "-o", out, "--json").stdout)
+
+    def test_graphics_title_wraps_a_long_title_and_subtitle(self):
+        from _common import text_width_em
+        title = "This episode title is far too long to fit across one line of the frame"
+        doc = self._graphics("title", "--template", "title", "--title", title,
+                             "--subtitle", "and its subtitle is long enough to run past both edges of the frame at this size, too")
+        lines = self._ass_lines(doc)
+        self.assertGreater(len(lines[0]), 1, lines)
+        self.assertGreater(len(lines[1]), 1, lines)
+        h1 = int(360 * 0.11)
+        for line in lines[0]:
+            self.assertLessEqual(text_width_em(line) * h1, 640 * 0.9 + 1e-6, lines[0])
+        self.assertFalse(any("taller than" in n for n in doc.get("notes") or []), doc.get("notes"))
+
+    def test_graphics_title_says_when_the_wrapped_block_is_taller_than_the_frame(self):
+        """#416 review: the title wraps with no line limit, and a block taller than the frame lost
+        its first and last lines off the edges without a word."""
+        doc = json.loads(script("graphics.py", self.src, "--template", "title", "--title", " ".join(["a long title"] * 30),
+                                "--text-render", "ass", "--dry-run", "-o", OUT / "g416p_tall.mp4", "--json").stdout)
+        self.assertTrue(any("taller than the 360 px frame" in n for n in doc.get("notes") or []), doc.get("notes"))
+
+    def test_graphics_lower_third_wraps_inside_the_margins_and_widens_its_bar(self):
+        from _common import text_width_em
+        name = "Maximiliana Alexandrovna Konstantinopolskaya-Wittgenstein"
+        doc = self._graphics("lt", "--template", "lower-third", "--name", name, "--title", "Analyst")
+        name_lines = self._ass_lines(doc)[0]
+        self.assertGreater(len(name_lines), 1, name_lines)
+        h1, margin, pad = int(360 * 0.055), 48, int(360 * 0.035)
+        for line in name_lines:
+            self.assertLessEqual(text_width_em(line) * h1, 640 - 2 * margin - 2 * pad + 1e-6, name_lines)
+
+    def test_graphics_lower_third_bar_stays_inside_the_margins_at_a_large_scale(self):
+        """#416 review: the bar's 62 % floor of the short side won over the room between the
+        margins: at --scale 3 on 640x360 it was 669 px wide from x=48, past the right margin."""
+        doc = json.loads(script("graphics.py", self.src, "--template", "lower-third", "--name", "Ann", "--scale", "3",
+                                "--text-render", "ass", "--dry-run", "-o", OUT / "g416p_lt_bar.mp4", "--json").stdout)
+        bar_w = int(re.findall(r"color=c=[^:]+:s=(\d+)x\d+", " ".join(doc["commands"]))[0])
+        self.assertLessEqual(bar_w, 640 - 2 * 48)
+
+    def test_graphics_chapter_chip_wraps_between_the_margins(self):
+        doc = self._graphics("chapter", "--template", "chapter", "--scale", "2",
+                             "--title", "Part 2 — Setting up the whole studio from scratch")
+        self.assertGreater(len(self._ass_lines(doc)[0]), 1, self._ass_lines(doc))
+
+    def test_graphics_places_a_png_emoji_on_its_own_wrapped_line(self):
+        """#416 review: a wrapped label was measured as one line, so an emoji on its last line kept
+        the first line's y and an x that counted every earlier line's width (clamped to the edge)."""
+        title = "\U0001F389 This episode title is far too long to fit across one line of the frame \U0001F44D"
+        out = OUT / "g416p_title_emoji.mp4"
+        doc = json.loads(script("graphics.py", self.src, "--template", "title", "--title", title,
+                                "--emoji", "png", "--emoji-assets", _emoji_assets(), "--text-render", "ass",
+                                "-o", out, "--dry-run", "--json").stdout)
+        graph = [c for c in doc["commands"] if "overlay=" in c][-1]
+        (x1, y1), (x2, y2) = [(int(x), int(y)) for x, y in re.findall(r"overlay=x=(\d+):y=(\d+)", graph)[-2:]]
+        h1 = int(360 * 0.11)
+        self.assertGreater(y2 - y1, h1, (x1, y1, x2, y2))  # a line or more below the first emoji
+        self.assertLess(x2, 640 - int(round(h1)) - 1, (x1, y1, x2, y2))  # not pinned to the right edge
+
+    def test_overlay_text_wraps_to_the_frame(self):
+        """drawtext never wraps: through 3.1.3 a long --text ran off the right edge silently."""
+        out = OUT / "g411p_ov_wrap.mp4"
+        doc = json.loads(script("overlay.py", self.black, "--text", "A long overlay line that runs past the edge",
+                                "--font-size", "24", "--position", "top-left", "--border", "0",
+                                "-o", out, "--json").stdout)
+        self.assertTrue(any("wrapped to" in n for n in doc.get("notes") or []), doc.get("notes"))
+        # nothing drawn in the right margin
+        for y in range(20, 90, 4):
+            self.assertLess(max(frame_rgb(out, 0.5, 316, y)), 60, y)
+
+    def test_overlay_text_says_when_it_still_does_not_fit(self):
+        """#416 review: the wrap checked only the width, so a block taller than the frame lost
+        lines without a word, and a position too near the edge to wrap in was drawn off it."""
+        def notes(*argv):
+            doc = json.loads(script("overlay.py", self.black, "--text", *argv, "--border", "0", "--dry-run",
+                                    "-o", OUT / "g416p_ov_fit.mp4", "--json").stdout)
+            return " ".join(doc.get("notes") or [])
+        long = " ".join(["many words that will wrap"] * 8)
+        self.assertIn("taller", notes(long, "--font-size", "40", "--position", "bottom-left"))
+        self.assertIn("does not fit", notes("Edge", "--font-size", "24", "--position", "300,10"))
+        self.assertNotIn("fit", notes("Fits", "--font-size", "24", "--position", "top-left"))
+
+    def test_text_tools_draw_on_square_pixels(self):
+        """caption, overlay --text and graphics drew on the 180x180 storage of a SAR 16:9 source,
+        so the player stretched every glyph 1.78x wide; they now draw on the 320x180 picture."""
+        srt = OUT / "g411p.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+        runs = {
+            "caption": ("caption.py", self.sar, "--srt", srt),
+            "overlay": ("overlay.py", self.sar, "--text", "Hello"),
+            "graphics": ("graphics.py", self.sar, "--template", "bug", "--title", "LIVE"),
+        }
+        for name, (tool, *args) in runs.items():
+            with self.subTest(tool=name):
+                out = OUT / f"g411p_sq_{name}.mp4"
+                script(tool, *args, "-o", out)
+                v = probe(str(out))["video"]
+                self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+
+    def test_grid_squares_a_non_square_pixel_cell(self):
+        out = OUT / "g411p_grid_sar.mp4"
+        script("grid.py", self.sar, self.sar, "--cols", "2", "--rows", "1", "--cell-width", "320",
+               "--cell-height", "180", "--label", "none", "-o", out)
+        rgb = frame_rgb(out, 0.5, 6, 90)  # the left edge of the first cell: picture, not a pad bar
+        self.assertGreater(rgb[0], 180, rgb)
+
+    def test_grid_keeps_the_start_of_a_long_label(self):
+        """A right-aligned label wider than its cell lost its start off the left edge; it is now
+        shortened from the end, so the cell's bottom-left corner stays clear."""
+        long = OUT / "g411p_an_extremely_long_camera_filename_A001_C002_20261105_take_three.mp4"
+        shutil.copyfile(self.white, long)
+        out = OUT / "g411p_grid_long.mp4"
+        doc = json.loads(script("grid.py", long, self.white, "--cols", "2", "--rows", "1", "--cell-width", "320",
+                                "--cell-height", "180", "-o", out, "--json").stdout)
+        self.assertTrue(any("shortened" in n for n in doc.get("notes") or []), doc.get("notes"))
+        self.assertGreater(min(frame_rgb(out, 0.5, 2, 170)), 200)
+
+    def test_grid_shortens_a_label_in_a_cell_with_room_for_one_em(self):
+        """#416 review: when the cell left an em or less, the whole filename came back unshortened
+        and, right-aligned, lost its start (and the note did not count it)."""
+        sys.path.insert(0, str(SCRIPTS))
+        from grid import _fit_label
+        self.assertEqual(_fit_label("camera_A001", 40, 16), "c")
+        self.assertEqual(_fit_label("A", 40, 16), "A")
+
+    def test_grid_label_font_covers_its_script(self):
+        from _common import script_font_status
+        if script_font_status("ja") != "available":
+            raise unittest.SkipTest("no font on this machine covers Japanese; tests never install fonts")
+        named = OUT / "東京.mp4"
+        shutil.copyfile(self.white, named)
+        out = OUT / "g411p_grid_ja.mp4"
+        doc = json.loads(script("grid.py", named, named, "--cols", "2", "--rows", "1", "-o", out, "--json").stdout)
+        self.assertEqual(doc["font_used"]["how"], "script", doc["font_used"])
 
 
 if __name__ == "__main__":

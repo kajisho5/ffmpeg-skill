@@ -52,6 +52,90 @@ def sh(*cmd, expect_fail=False, env=None):
     return proc
 
 
+# A/V sync fixtures (#409): a one-frame white flash and a 40 ms 1 kHz beep at the same instant,
+# every second from 0.5 s, so flash minus beep is the A/V offset. `talk` adds three quiet "speech"
+# stretches with silence between them for silence.py, and moves the flash/beep into each one.
+_FLASH = "lt(mod(t-0.5\\,1)\\,0.03)*gte(t\\,0.5)"
+_BEEP = "if(lt(mod(t-0.5\\,1)\\,0.04)*gte(t\\,0.5)\\,sin(2*PI*1000*t)\\,0)"
+_TALK_FLASH = "between(t\\,1.2\\,1.23)+between(t\\,4.2\\,4.23)+between(t\\,7.2\\,7.23)"
+_TALK_BEEP = ("0.1*(between(t\\,0.5\\,2.0)+between(t\\,3.5\\,5.0)+between(t\\,6.5\\,8.0))*sin(2*PI*300*t)"
+              "+0.9*(lt(abs(t-1.22)\\,0.02)+lt(abs(t-4.22)\\,0.02)+lt(abs(t-7.22)\\,0.02))*sin(2*PI*1000*t)")
+
+
+def make_flash_beep(path, *, audio_late=0.0, video_late=0.0, video_short=0.0, talk=False):
+    """A tiny H.264/AAC clip whose flash and beep coincide. audio_late: the sound track starts that
+    much after the picture (its samples from that source time on); video_late: the picture starts
+    that much after the sound; video_short: the picture ends that much before the sound."""
+    dur = 9 if talk else 4
+    vsrc = (f"color=c=black:s=160x120:r=30:d={dur - video_short:g},"
+            f"drawbox=c=white:t=fill:enable='{_TALK_FLASH if talk else _FLASH}'")
+    asrc = f"aevalsrc='{_TALK_BEEP if talk else _BEEP}':s=48000:d={dur}"
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", vsrc]
+    if audio_late:
+        cmd += ["-itsoffset", f"{audio_late:g}", "-f", "lavfi", "-i", f"{asrc},atrim=start={audio_late:g},asetpts=PTS-STARTPTS"]
+    else:
+        cmd += ["-f", "lavfi", "-i", asrc]
+    if video_late:
+        cmd += ["-vf", f"trim=start={video_late:g}", "-fps_mode", "passthrough"]
+    sh(*cmd, "-c:v", "libx264", "-preset", "veryfast", "-g", "30", "-pix_fmt", "yuv420p",
+       "-c:a", "aac", "-b:a", "128k", path)
+    return path
+
+
+def make_tones_take(path, *, start=0.0, audio_late=0.0, dur=10.0):
+    """A camera take of the TONES bed (not periodic, so sync.py's correlation has one answer): its
+    picture and its clock start at `start` on the bed, and its sound track starts `audio_late`
+    after its picture, with the bed's samples from start + audio_late on."""
+    a0 = start + audio_late
+    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+       "-f", "lavfi", "-i", f"color=c=gray:s=160x120:r=30:d={dur:g}",
+       *(["-itsoffset", f"{audio_late:g}"] if audio_late else []),
+       "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000:d={start + dur:g},atrim=start={a0:g},asetpts=PTS-STARTPTS",
+       "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", path)
+    return path
+
+
+def flash_times(path):
+    """The time of every flash in `path`'s picture (a frame whose mean luma jumps above 100)."""
+    proc = sh("ffmpeg", "-hide_banner", "-nostats", "-loglevel", "info", "-i", path, "-map", "0:v:0",
+              "-vf", "signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG", "-f", "null", "-")
+    flashes, t, prev = [], None, False
+    for line in proc.stderr.splitlines():
+        m = re.search(r"pts_time:([-\d.]+)", line)
+        if m:
+            t = float(m.group(1))
+            continue
+        m = re.search(r"lavfi\.signalstats\.YAVG=([\d.]+)", line)
+        if m and t is not None:
+            on = float(m.group(1)) > 100
+            if on and not prev:
+                flashes.append(t)
+            prev = on
+    return flashes
+
+
+def av_offsets_ms(path, beep_db=-30):
+    """Flash minus nearest beep onset, in ms, for every flash in `path` (both read from the file's
+    own timestamps: the picture's luma per frame, the sound's silencedetect ends)."""
+    flashes = flash_times(path)
+    proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:a:0",
+              "-af", f"silencedetect=n={beep_db}dB:d=0.02", "-f", "null", "-")
+    beeps = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", proc.stderr)]
+    assert flashes and beeps, f"{path}: flashes {flashes}, beeps {beeps}"
+    return [round((f - min(beeps, key=lambda b: abs(b - f))) * 1000) for f in flashes]
+
+
+def stream_spans(path):
+    """{codec_type: (start_time, duration, frames or packets)} of `path`'s first video and audio."""
+    doc = json.loads(sh("ffprobe", "-v", "error", "-count_packets", "-show_entries",
+                        "stream=codec_type,start_time,duration,nb_read_packets", "-of", "json", path).stdout)
+    out = {}
+    for s in doc["streams"]:
+        out.setdefault(s["codec_type"], (float(s.get("start_time") or 0), float(s.get("duration") or 0),
+                                         int(s.get("nb_read_packets") or 0)))
+    return out
+
+
 def png_size(path) -> tuple:
     with open(path, "rb") as fh:
         head = fh.read(24)
@@ -80,6 +164,54 @@ def script(name, *args, **kw):
     if names_output and "--overwrite" not in args and "--help" not in args:
         args = args + ("--overwrite",)
     return sh(sys.executable, SCRIPTS / name, *args, **kw)
+
+def tiny_clip(path, source, *extra, seconds=1, audio=False, pix_fmt="yuv420p"):
+    """A tiny lavfi clip for a geometry test (#411): `source` is a lavfi video graph such as
+    "color=c=red:s=180x180:r=30"; `extra` goes before the output (a -vf, -timecode ...)."""
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", source]
+    if audio:
+        cmd += ["-f", "lavfi", "-i", "sine=f=440:sample_rate=48000"]
+    cmd += ["-t", str(seconds), *extra, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", pix_fmt]
+    cmd += (["-c:a", "aac", "-shortest"] if audio else [])
+    sh(*cmd, path)
+    return path
+
+
+def sar_clip(path, colour="red", size="180x180", sar="16/9", seconds=1, audio=False):
+    """A clip that stores non-square pixels: 180x180 at SAR 16:9 is a 320x180 picture on screen."""
+    return tiny_clip(path, f"color=c={colour}:s={size}:r=30", "-vf", f"setsar={sar}", seconds=seconds, audio=audio)
+
+
+def exif_rotated_jpeg(path, orientation=6, size="320x180"):
+    """A JPEG of a testsrc frame carrying an EXIF Orientation tag (6: shown turned 90 degrees
+    clockwise, a phone's portrait shot), written by inserting the APP1 segment by hand."""
+    plain = Path(str(path) + ".plain.jpg")
+    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=s={size}",
+       "-frames:v", "1", plain)
+    data = plain.read_bytes()
+    ifd = (b"\x00\x01" + b"\x01\x12" + b"\x00\x03" + b"\x00\x00\x00\x01"
+           + orientation.to_bytes(2, "big") + b"\x00\x00" + b"\x00\x00\x00\x00")
+    tiff = b"MM\x00*\x00\x00\x00\x08" + ifd
+    body = b"Exif\x00\x00" + tiff
+    app1 = b"\xff\xe1" + (len(body) + 2).to_bytes(2, "big") + body
+    Path(path).write_bytes(data[:2] + app1 + data[2:])
+    plain.unlink()
+    return path
+
+
+def frame_rgb(video, t, x, y, *, vf=None):
+    """The RGB triple at (x, y) of the frame at `t` seconds, read as a player shows it
+    (square pixels at the display aspect when `vf` squares them)."""
+    cmd = ["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(video), "-frames:v", "1"]
+    cmd += (["-vf", vf] if vf else [])
+    proc = subprocess.run(cmd + ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    size = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                           "stream=width,height", "-of", "csv=p=0", str(video)],
+                          stdout=subprocess.PIPE, text=True).stdout.strip().split(",")
+    w = int(size[0])
+    off = (y * w + x) * 3
+    return tuple(proc.stdout[off:off + 3])
+
 
 # ---------------------------------------------------------------------------- fonts by script (1.12)
 

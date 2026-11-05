@@ -30,6 +30,7 @@ from xml.sax.saxutils import escape as _xml_escape
 
 from _common.decision import MissingFpsError, aspect_ratio, frame_size, parse_time
 from _common.emit import warn
+from _common.probe import display_size
 
 FORMATS = {".edl": "edl", ".fcpxml": "fcpxml", ".otio": "otio"}
 # Common NTSC rates are stored as the exact ratio an editor expects, not as 29.97.
@@ -101,12 +102,12 @@ def _seconds(value: Any, what: str, fps: Optional[float]) -> float:
 
 
 def _picture(meta: Dict[str, Any]) -> Optional[Tuple[int, int]]:
-    """A source's displayed width x height (rotation metadata swaps them, as fit.py reads it)."""
-    video = meta.get("video") or {}
-    w, h = int(video.get("width") or 0), int(video.get("height") or 0)
+    """A source's displayed width x height, as fit.py reads it: rotation metadata swaps them, and
+    non-square pixels are squared at the display aspect (probe.display_size(), #411)."""
+    w, h = display_size(meta.get("video") or {})
     if not (w and h):
         return None
-    return (h, w) if video.get("rotation") in (90, -90, 270, -270) else (w, h)
+    return (w, h)
 
 
 def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[str, Any]:

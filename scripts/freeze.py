@@ -19,6 +19,7 @@ Examples:
 import argparse
 import sys
 
+from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
 
 
@@ -55,14 +56,24 @@ def main() -> int:
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, "freeze")
 
-    if args.mode == "extend":
+    # Both streams are cut at the same frame time and shifted by the same constants (#409): the
+    # head runs from the first frame, the tail from the first frame at or after --at. Rebasing each
+    # stream to its own start moved a sound that starts 0.3 s late 0.279 s early, and a picture that
+    # starts 0.1 s late 0.1 s early (147 frames for 150).
+    v0 = stream_starts(meta)[0]
+    rate = frame_rate(meta) or fps
+    cut_at = grid_at_or_after(at, v0, rate)
+    # no frame at or after --at (no --at holds at the clip's end): the insert tail would be empty
+    # and the hold lost, so hold the last frame as --mode extend does (#416 review)
+    vend = v0 + (meta["video"].get("duration") or dur - v0)
+    if args.mode == "extend" or cut_at >= vend - 0.5 / rate:
         # tpad's stop_duration clones the last frame for the given duration; no PTS surgery
         # needed since it only ever appends past the real end.
         vf = f"tpad=stop_mode=clone:stop_duration={args.hold:.3f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
             cmd += ["-map", "0:a:0?", "-af", f"apad=pad_dur={args.hold:.3f}"]
-    elif at == 0:
+    elif at == 0 or cut_at <= v0 + 1e-6:
         # A freeze at the very start has no preceding "head" segment to hold on to (the
         # split/trim/concat approach below needs a non-empty head, which trim=end=0 can't give
         # it -- ffmpeg fails filtering an empty stream). Symmetric to --mode extend at the other
@@ -73,22 +84,39 @@ def main() -> int:
             cmd += ["-map", "0:a:0?", "-af", f"adelay={int(args.hold * 1000)}:all=1"]
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
-        # resuming the rest of the clip: split the timeline at `at`, freeze-frame the first
-        # part's last frame for --hold seconds via tpad, concat with the remainder.
+        # resuming the rest of the clip: split the timeline at `at` and hold the remainder's
+        # FIRST frame -- the frame shown at `at` -- for --hold seconds (a segment of its own, below).
+        # Through 3.1.3 the head's last frame was held, the frame before `at`: at a cut, the last
+        # frame of the previous shot (#411).
         n = max(1, round(args.hold * fps))
         # The video hold length is rounded to a whole number of frames (n / fps), but the audio
         # side used to pad by the raw --hold value -- up to half a frame duration off from what
         # the video actually holds for, a permanent A/V drift from this point on. Pad audio by
         # the same, frame-rounded duration the video actually gets.
         actual_hold = n / fps
-        vf = (f"[0:v]split[a][b];[a]trim=end={at:.3f},setpts=PTS-STARTPTS[head];"
-              f"[b]trim=start={at:.3f},setpts=PTS-STARTPTS[tail];"
-              f"[head]tpad=stop_mode=clone:stop={n}[frozen];"
-              f"[frozen][tail]concat=n=2:v=1:a=0[outv]")
+        head_v, head_a = av_trim(v0, cut_at, rate)
+        tail_v, tail_a = av_trim(cut_at, None, rate)
+        # The hold is its own segment: the frame at cut_at, cut on the input's clock and cloned to
+        # n frames there (tpad's stop clone), then shifted like the tail. From FFmpeg 7.0 setpts
+        # leaves its output's frame rate unknown and its frames' durations 0, so the earlier tpad
+        # start clone after av_trim's setpts stamped every clone 0 and the hold was dropped (a 3 s
+        # freeze came out 1.97 s on 7.1). Cloning before setpts and concatenating the hold before
+        # the tail reads the same on every version; the tail's first frame then shows n + 1 times,
+        # as tpad's start clone showed it.
+        # The held frame is the first frame at or after the cut, whatever its time: on a variable
+        # frame rate a nominal one-frame window around cut_at can hold no frame (frames at 0.033
+        # and 0.100, --at 0.06), and the hold was lost (#416 review). A second trim keeps that one
+        # frame; on a constant rate it is the frame at cut_at, as before.
+        half = 0.5 / rate
+        hold_v = (f"trim=start={cut_at - half:.6f},trim=end_frame=1,"
+                  f"tpad=stop_mode=clone:stop={n - 1},setpts=PTS-STARTPTS")
+        vf = (f"[0:v]split=3[a][b][c];[a]{head_v}[head];"
+              f"[b]{hold_v}[hold];[c]{tail_v}[tail];"
+              f"[head][hold][tail]concat=n=3:v=1:a=0,{frame_durations(meta, rate)}[outv]")
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:
-            af = (f"[0:a]asplit[aa][ab];[aa]atrim=end={at:.3f},asetpts=PTS-STARTPTS[ahead];"
-                  f"[ab]atrim=start={at:.3f},asetpts=PTS-STARTPTS[atail];"
+            af = (f"[0:a]asplit[aa][ab];[aa]{head_a}[ahead];"
+                  f"[ab]{tail_a}[atail];"
                   f"[ahead]apad=pad_dur={actual_hold:.6f}[afrozen];"
                   f"[afrozen][atail]concat=n=2:v=0:a=1[outa]")
             cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", f"{vf};{af}", "-map", "[outv]", "-map", "[outa]"]

@@ -38,9 +38,10 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List
 
-from _common import STATE, run_analysis, add_common, apply_common, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
+from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
+from _common.probe import square_pixels, square_pixels_note
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
@@ -358,6 +359,9 @@ def main() -> int:
     out_ext = Path(output).suffix.lstrip(".").lower()
 
     vf: List[str] = []
+    # A GIF is RGB: an untagged SDR source is labelled BT.709 (tags only) for palettegen's conversion,
+    # which read "unknown" as BT.601 (C03028 came out B31F28, #410); a tagged one is read by its tag
+    gif_label = bt709_label_filter(meta) if args.preset == "gif" else None
     if p["w"] and not args.no_scale:
         if p["h"]:
             if args.fit == "crop":
@@ -370,6 +374,11 @@ def main() -> int:
             vf.append("setsar=1")
         else:
             vf.append(f"scale={p['w']}:-2")
+        # sized in square pixels: a non-square-pixel master is squared at its display aspect
+        # first, or the preset's frame would squash it (#411)
+        if square_pixels(meta["video"]):
+            vf.insert(0, square_pixels(meta["video"]))
+            note(square_pixels_note(meta["video"]))
     if args.repair and args.preset != "copy":
         die("--repair is a remux: use it with --preset copy (a re-encoding preset already rebuilds every frame)")
     if args.max_mb is not None and args.preset == "gif":
@@ -387,7 +396,7 @@ def main() -> int:
         cmd += ["-map", "0:V:0"] + (["-map", "0:a:0"] if has_audio else [])
 
     if args.preset == "gif":
-        chain = ",".join(["fps=12"] + vf) if vf else "fps=12"
+        chain = ",".join(([gif_label] if gif_label else []) + ["fps=12"] + vf)
         fc = f"[0:v]{chain},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
         cmd += ["-filter_complex", fc, "-loop", "0", output]
         run(cmd)

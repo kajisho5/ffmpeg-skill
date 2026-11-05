@@ -31,8 +31,10 @@ import math
 import sys
 from typing import Dict, List, Tuple
 
-from _common import guard_sidecar, label_chain, matrix_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
-from _common.emit import record_fallback, warn
+from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
+from _common.emit import note, record_fallback, warn
+from _common.decision import av_trim
+from _common.probe import display_size, square_pixels, square_pixels_note
 from sync import measure_offset
 
 ENERGY_WINDOW_S = 0.25  # --switch energy: loudness measured over this window on the reference timeline
@@ -263,14 +265,16 @@ def main() -> int:
         info(f"wrote {args.edl}")
 
     v0 = metas[0]["video"]
-    w, h = args.width or v0["width"], args.height or v0["height"]
-    if v0.get("rotation") in (90, -90, 270, -270) and not (args.width or args.height):
-        w, h = h, w
+    # camera 0's displayed frame: rotation applied, non-square pixels squared (#411)
+    w, h = args.width or display_size(v0)[0], args.height or display_size(v0)[1]
     fps = args.fps or v0.get("fps") or 30.0
     fps = round(fps) if abs(fps - round(fps)) < 0.02 else fps
     pixfmt = "yuv420p10le" if v0.get("bt2020_or_hdr") else "yuv420p"
     geo = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:g},format={pixfmt}"
 
+    for p, m in zip(args.inputs, metas):
+        if square_pixels(m.get("video")):
+            note(square_pixels_note(m["video"], p))
     cmd = ffmpeg_base()
     for p in args.inputs:
         cmd += ["-i", p]
@@ -283,6 +287,8 @@ def main() -> int:
     convert = [matrix_chain(m, metas[0]) for m in metas]
     if any(convert):
         convert = [c or label_chain(m, metas[0]) for c, m in zip(convert, metas)]
+    # concat mixes samples: a full-range camera beside a limited one is taken to limited range (#410)
+    convert = [c + range_chain(m, metas[0]) for c, m in zip(convert, metas)]
     # what is actually rendered: a range whose camera has not started yet plays camera 0, and the
     # result says so (`cuts` names the camera on screen, diagnostics.fallbacks the one asked for)
     rendered: List[Tuple[float, float, int]] = []
@@ -296,7 +302,8 @@ def main() -> int:
                             requested_camera=c, camera=0, starts_at=round(offsets[c], 3))
             c, src_s, src_e = 0, s, e
         rendered.append((s, e, c))
-        parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts=PTS-STARTPTS,{convert[c]}{geo}[v{i}]")
+        sq = (square_pixels(metas[c]["video"]) + ",") if square_pixels(metas[c]["video"]) else ""
+        parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts=PTS-STARTPTS,{convert[c]}{sq}{geo}[v{i}]")
         labels.append(f"[v{i}]")
         project_clips.append({"src": args.inputs[c], "in": round(src_s, 3), "out": round(src_e, 3)})
     parts.append("".join(labels) + f"concat=n={len(filled)}:v=1:a=0[vout]")
@@ -306,7 +313,9 @@ def main() -> int:
     # applied before asetrate/aresample rescale that axis -- otherwise the trim lands at the wrong
     # point once the stream's timebase has already been stretched/compressed by the drift ratio
     # (mirrors sync.py, which seeks with -ss, an input-level operation, before its drift_af filters).
-    afx = [f"atrim=start={a_start:.4f}", "asetpts=PTS-STARTPTS"]
+    # shifted by a_start, not to its own first sample: a sound that starts after its file's start
+    # keeps that offset (padded with silence), as the offset was measured on the file's clock (#409)
+    afx = [av_trim(a_start, None)[1]]
     if abs(ratios[a] - 1.0) > 1e-7:
         sr = metas[a]["audio"].get("sample_rate") or 48000
         afx += [f"asetrate={sr * ratios[a]:.6f}", f"aresample={sr}"]

@@ -61,6 +61,7 @@ from typing import List, Tuple
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
 from _common.probe import TS_EXTS, signatures_match, stream_signature
+from _common.decision import grid_at_or_after
 from _common import warn, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -1013,10 +1014,9 @@ def _fraction_rate(text: str) -> float:
     return float(num) / float(den or 1)
 
 
-def _grid_at_or_after(t: float, v0: float, rate: float) -> float:
-    """The time of the first frame at or after `t` on a constant-rate grid starting at `v0`."""
-    import math
-    return v0 + math.ceil((t - v0) * rate - 1e-6) / rate
+# the first frame at or after t on the source's grid; shared with the tools that cut both streams
+# on one set of bounds (#409)
+_grid_at_or_after = grid_at_or_after
 
 
 def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str,

@@ -35,12 +35,12 @@ import os
 import sys
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS
+from _common.probe import SILENT_PEAK_DBFS, square_pixels, square_pixels_note
 from _common import still_input_args  # noqa: E402
 from _common import (add_common, apply_common, aac_args, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
-from _common.emit import absorb_stage_hw, warn
+from _common.emit import absorb_stage_hw, note, warn
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -184,7 +184,12 @@ def main() -> int:
             plate = pad_filters(args.width, args.height,
                                 "blur" if args.image_fit == "blur" else "color",
                                 args.background, 20)
-        graph = f"[1:v]{plate},format=rgba[plate];[0:a:{args.audio_stream}]{vf},format=rgba"
+        # a non-square-pixel still is squared at its display aspect before it is fitted (#411)
+        plate_v = probe(args.image, role="input").get("video") if not STATE.dry_run else None
+        plate_sq = square_pixels(plate_v)
+        if plate_sq:
+            note(square_pixels_note(plate_v, "--image"))
+        graph = f"[1:v]{plate_sq + ',' if plate_sq else ''}{plate},format=rgba[plate];[0:a:{args.audio_stream}]{vf},format=rgba"
         if args.opacity < 1.0:
             graph += f",colorchannelmixer=aa={args.opacity:g}"
         # the composite is RGBA (the plate is): converted to the BT.709 the output is tagged with,
