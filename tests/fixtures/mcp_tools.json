@@ -643,6 +643,7 @@
    "compare",
    "dry_run",
    "fast",
+   "guides",
    "ink",
    "input",
    "json_brief",

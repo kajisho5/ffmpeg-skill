@@ -6,6 +6,7 @@
 
 ### Added
 
+- **`look.py --guides title,action,4:3`** draws broadcast safe-area outlines (93 % action, 90 % title, and the 4:3 centre cut with its own) on the preview PNG, never into a video, alongside `--safe PLATFORM` (#423).
 - **`export.py --preset key-fill`** writes a fill and a key (the alpha as a luma matte) from one alpha source in one run, ProRes 422 HQ with the source's start timecode; it checks both hold the same frames, size, rate and length, checks the key's level against the source's alpha, and reports both SHA-256 hashes (#418).
 - **Alpha masters in `export.py`**: `--preset prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha` keep the source's alpha (a source without one is refused), take `--alpha-mode straight|premultiplied`, and read the alpha back from a written frame (`alpha` verification step) (#417). Image sequences (PNG/EXR) are not included.
 - **`loudness.py --versions streaming,ebu-r128,broadcast-jp`** (or `LUFS/TP` pairs) writes one normalised file per target from one master, each measured after; `verified` holds only when every version met its own target (#421).
