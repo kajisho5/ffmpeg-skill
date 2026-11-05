@@ -62,7 +62,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — export.py --repair](#224--exportpy---repair)
 - [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
-- [3.1.6 — earlier fixes, where they had not reached (#415)](#316--earlier-fixes-where-they-had-not-reached-415)
+- [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 <!-- contents:end -->
 
 ## Time limits
@@ -2702,7 +2702,7 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   repeat against an output that costs a whole clip per repeat, so any count whose list strains
   memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.
 
-## Unreleased — earlier fixes, where they had not reached (#415)
+## 3.1.8 — earlier fixes, where they had not reached (#415)
 
 - **A file a child tool of this run wrote is this run's own.** render.py's export stage is a child
   process, so the delivery it wrote was not in render's `STATE.written`, and the chapters stage's
