@@ -115,7 +115,9 @@ def die_no_speech(engine: str, video: str) -> None:
     """An engine ran and heard nothing: kind input, `reason: "no_speech"`, naming the engine and
     the input -- not the "no engine found" refusal (one was found) and not "no cues found in"
     the engine's own temporary SRT (a path the caller never gave and that is already deleted)."""
+    # the reason is error.reason as every refusal's is (#414), and stays top-level where 2.x put it
     die(f"{engine} found no speech in {video}", kind="input", reason=NO_SPEECH_REASON, engine=engine,
+        error_extra={"reason": NO_SPEECH_REASON, "details": {"engine": engine}},
         hint="check that the input (and --audio-stream) carries the speech, or write the cues by hand with --text")
 
 
@@ -135,6 +137,7 @@ def die_engine_failed(engine: str, video: str, tried: "List[Dict[str, str]]", in
     detail = next((t["detail"] for t in tried if t["engine"] == engine), "failed")
     die(f"--engine {engine} could not transcribe {video}: {engine} {detail}", kind="input",
         reason=ENGINE_FAILED_REASON, engine=engine, detail=detail,
+        error_extra={"reason": ENGINE_FAILED_REASON, "details": {"engine": engine, "detail": detail}},
         hint="fix the engine (its own message is in detail), or use --engine auto to fall back to another installed engine")
 
 
@@ -152,7 +155,9 @@ def die_engines_failed(tried: "List[Dict[str, str]]", video: str, flag: str, alt
     die(f"no installed speech-to-text engine could transcribe {video} for {flag}:\n"
         + "\n".join(f"  {t['engine']} {t['detail']}" for t in tried) + "\n" + alternative,
         kind="input", reason=ENGINE_FAILED_REASON if failed else ENGLISH_ONLY_REASON,
-        engine=(failed or tried)[0]["engine"], engines=[dict(t) for t in tried], hint=hint)
+        engine=(failed or tried)[0]["engine"], engines=[dict(t) for t in tried], hint=hint,
+        error_extra={"reason": ENGINE_FAILED_REASON if failed else ENGLISH_ONLY_REASON,
+                     "details": {"engine": (failed or tried)[0]["engine"], "engines": [dict(t) for t in tried]}})
 
 
 def _failed(engine: str, detail: str) -> "Dict[str, str]":
@@ -317,15 +322,11 @@ def _transcribe_in(tmpdir: str, video: str, out_srt: str, language: Optional[str
                    parakeet_model: Optional[str] = None) -> Transcription:
     """`model` is what the Whisper engines run; the Parakeet engines are offered `parakeet_model`
     (default `model`), which differs only for a Parakeet model from $FFMPEG_SKILL_ASR_MODEL."""
-    from _common import run_analysis, STATE
+    from _common import STATE
     pmodel = model if parakeet_model is None else parakeet_model
     language = engine_language(language)
     wav = os.path.join(tmpdir, "audio.wav")
-    # A wav in our own temp dir: a measurement input for the engine, not a deliverable, so it
-    # is not a run() call (no --dry-run gate, not recorded), but it keeps the time limit and
-    # reports an unreadable input as kind ffmpeg instead of a CalledProcessError traceback.
-    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
-                  "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
+    engine_wav(ffmpeg, video, audio_stream, wav)
     # every engine found that did not transcribe, and why: the refusal names them rather than
     # telling the caller to install what is installed
     tried: "List[Dict[str, str]]" = []
@@ -980,6 +981,34 @@ def _heard_nothing(text: str, key: str) -> bool:
     return isinstance(doc, dict) and doc.get(key) == []
 
 
+def _whisper_heard_nothing(path: str, key: str) -> bool:
+    """True when a Whisper engine's JSON is well formed and none of its segments (`key`:
+    whisper.cpp's "transcription", openai-whisper's "segments") holds any text: the engine heard
+    no speech (#414). A document with text and no word timings is a build without them, not
+    silence, and stays the "no word-level timings" refusal."""
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(doc, dict) or not isinstance(doc.get(key), list):
+        return False
+    return not any(isinstance(seg, dict) and str(seg.get("text") or "").strip() for seg in doc[key])
+
+
+def engine_wav(ffmpeg: str, video: str, audio_stream: int, wav: str) -> None:
+    """The 16 kHz mono WAV an engine transcribes, on the file's clock: a sound that starts after
+    the file's start is padded with silence to its place (aresample first_pts=0, as
+    decode_pcm_mono() does since #409), so every cue and word time counts from the file's start,
+    not from the sound's first sample (#414: a sound 0.276 s late gave cues 0.276 s early).
+    A measurement input in our own temp dir, not a deliverable, so not a run() call (no
+    --dry-run gate, not recorded); it keeps the time limit and reports an unreadable input as
+    kind ffmpeg instead of a CalledProcessError traceback."""
+    from _common import run_analysis
+    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
+                  "-map", f"0:a:{audio_stream}", "-vn", "-af", "aresample=async=1:first_pts=0",
+                  "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
+
+
 def transcribe_words(video: str, language: "Optional[str]" = None, model: "Optional[str]" = None,
                      audio_stream: int = 0, engine: "Optional[str]" = None) -> "Tuple[List[Dict[str, Any]], Optional[str]]":
     """transcribe_words_result()'s (words, engine) alone: the call shape this function has had
@@ -1021,9 +1050,7 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
     tmpdir = _tempfile.mkdtemp(prefix="ffskill_asrw_")
     try:
         wav = os.path.join(tmpdir, "audio.wav")
-        run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
-                      "-map", f"0:a:{audio_stream}", "-vn", "-ac", "1", "-ar", "16000",
-                      "-c:a", "pcm_s16le", wav])
+        engine_wav(ffmpeg, video, audio_stream, wav)
 
         tried: "List[Dict[str, str]]" = []  # engines found that gave no words, and why
 
@@ -1065,6 +1092,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             proc = _asr_run(cmd, _subprocess, "whisper.cpp")
             if proc.returncode == 0 and os.path.exists(base + ".json"):
                 words = _words_from_whisper_cpp_json(base + ".json")
+                if not words and _whisper_heard_nothing(base + ".json", "transcription"):
+                    die_no_speech("whisper.cpp", video)
                 info(f"word timings from whisper.cpp ({len(words)} words)")
                 return Transcription(words=words, engine="whisper.cpp",
                                      facts=dict(facts, engine="whisper.cpp", model=model_path,
@@ -1083,6 +1112,7 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             collected: list = []
             crashed: list = []
             heard: list = []
+            spoke: list = []  # a segment with text: speech was heard, word timings or not
 
             def work() -> None:
                 try:
@@ -1091,6 +1121,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
                                                      **({"initial_prompt": prompt} if prompt else {}))
                     heard.append(getattr(decoded, "language", None))
                     for seg in segments:
+                        if str(getattr(seg, "text", "") or "").strip():
+                            spoke.append(True)
                         for w in (getattr(seg, "words", None) or []):
                             collected.append({"word": str(w.word).strip(),
                                               "start": float(w.start), "end": float(w.end)})
@@ -1109,6 +1141,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
                 tried.append(_failed("faster-whisper", "found but failed: " + line))
                 failed = failed or "faster-whisper"
             else:
+                if not collected and not spoke:
+                    die_no_speech("faster-whisper", video)
                 info(f"word timings from faster-whisper ({len(collected)} words)")
                 return Transcription(words=[w for w in collected if w["word"]], engine="faster-whisper",
                                      facts=dict(facts, engine="faster-whisper", model=model,
@@ -1129,6 +1163,8 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
             doc = os.path.join(tmpdir, "audio.json")
             if proc.returncode == 0 and os.path.exists(doc):
                 words = _words_from_openai_whisper_json(doc)
+                if not words and _whisper_heard_nothing(doc, "segments"):
+                    die_no_speech("openai-whisper", video)
                 info(f"word timings from openai-whisper ({len(words)} words)")
                 return Transcription(words=words, engine="openai-whisper",
                                      facts=dict(facts, engine="openai-whisper", model=model,
