@@ -32,7 +32,7 @@ import sys
 from typing import List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
-from _common import (require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
+from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
                      ffmpeg_base, info, label_chain, load_brand, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
@@ -648,6 +648,9 @@ def main(force_route: Optional[str] = None) -> int:
                             "overlays": len(emoji_overlays)}
         ass_path = args.write_ass or os.path.splitext(output)[0] + "_gfx.ass"
         require_filter("ass", "drawing this text through libass")  # before the sidecar is written
+        # a file this run writes itself: never the input or the video, a missing directory or an
+        # existing file without --overwrite is refused before anything is written (#408)
+        guard_sidecar(ass_path, args.input, siblings=(output,))
         if STATE.dry_run:
             info(f"[dry-run] would write {ass_path} ({len(elements)} text elements)")
         else:

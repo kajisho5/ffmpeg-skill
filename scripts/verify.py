@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, add_common, apply_common, die, emit, info, probe
+from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac", ".aac"}
@@ -157,6 +157,10 @@ def main() -> int:
     if STATE.plan:
         die("verify.py does not support --plan: its steps run for real (it ignores --dry-run too)")
 
+    if args.report:
+        # a file this run writes itself (#408): not one of the media it verifies, nor an existing
+        # file without --overwrite
+        guard_sidecar(args.report, *args.paths)
     files = collect(args.paths)
     tmp = None
     if args.out:

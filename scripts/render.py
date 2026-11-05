@@ -342,6 +342,9 @@ def render_pack(names: List[str], args) -> int:
     and platform check), so the pack reports per-platform results rather than one verdict."""
     stem = Path(args.input).with_suffix("").name
     outdir = Path(args.output).parent if args.output else Path(args.input).resolve().parent
+    # the table is a file this run writes itself (#408): an existing one is refused without
+    # --overwrite, before the first destination renders
+    guard_sidecar(str(outdir / f"{stem}_pack.md"), args.input)
     dests = {name: str((load_template(name).get("check") or {}).get("platform") or name) for name in names}
     rows: List[Dict[str, Any]] = []
     outputs: List[str] = []

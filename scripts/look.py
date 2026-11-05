@@ -240,7 +240,7 @@ def main() -> int:
             fc = (f"[0:v]scale={half}:-2{tcs}[a];[1:v]scale={half}:-2{tcs}[b];"
                   f"[a][b]scale2ref=w=iw:h=ih[a2][b2];[a2][b2]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-ss", f"{sec:.3f}", "-i", args.compare,
-                                   "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", out]
+                                   "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     elif args.at:
@@ -254,7 +254,7 @@ def main() -> int:
                 # several frames, or -o given as a stem/prefix without an image extension
                 out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", out]
+            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     else:
@@ -281,7 +281,7 @@ def main() -> int:
         tc_sheet = tc.replace(timecode_filter(font_prefix), timecode_filter(font_prefix, seek)) if seek else tc
         vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',scale={tile_w}:-2{tc_sheet},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        cmd = ffmpeg_base() + ["-ss", f"{seek:.6f}", "-i", args.input, "-vf", vf, "-frames:v", "1", out]
+        cmd = ffmpeg_base() + ["-ss", f"{seek:.6f}", "-i", args.input, "-vf", vf, "-frames:v", "1", "-update", "1", out]
         run(cmd)
         outputs.append(out)
         info(f"contact sheet: {n} frames every {step:.2f}s")

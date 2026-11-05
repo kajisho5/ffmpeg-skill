@@ -36,9 +36,10 @@ import sys
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common.probe import SILENT_PEAK_DBFS
+from _common import still_input_args  # noqa: E402
 from _common import (add_common, apply_common, aac_args, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
-                     fmt_secs, child_args, run_tool, measured_level_dbfs)
+                     fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common.emit import absorb_stage_hw, warn
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
@@ -207,14 +208,15 @@ def main() -> int:
     if args.title or args.srt or args.text:
         # the visualisation is rendered first and the label/captions are drawn on it by the tools
         # that own those code paths, so neither is re-implemented here
-        stem, ext = os.path.splitext(output)
-        render = stem + "_vis" + ext
+        # hidden, pid-named siblings (#408): a fixed `<out>_vis` name was removed afterwards
+        # whoever had written it, the input or another file of the caller's included
+        render = sibling_temp(output, "vis")
     cmd = ffmpeg_base() + ["-i", args.input]
     if args.image:
         # -framerate before -loop: a looped still defaults to 25 fps, and overlay takes its rate
         # from the FIRST input -- so without this the file came out 25 fps however loud --fps or
         # --platform said otherwise (the colour-plate path never had the bug: `color=` carries r=).
-        cmd += ["-framerate", f"{args.fps:g}", "-loop", "1", "-i", args.image]
+        cmd += ["-framerate", f"{args.fps:g}", "-loop", "1", *still_input_args(args.image), "-i", args.image]
     cmd += ["-filter_complex", vf]
     if args.image:
         cmd += ["-map", "[v]"]
@@ -227,15 +229,15 @@ def main() -> int:
     if meta.get("duration"):
         cmd += ["-t", f"{float(meta['duration']):.3f}"]
     cmd += ["-shortest", render]
-    stem, ext = os.path.splitext(output)
-    intermediates = [p for p in (render, stem + "_titled" + ext) if p != output]
+    titled_tmp = sibling_temp(output, "titled")
+    intermediates = [p for p in (render, titled_tmp) if p != output]
     try:
         run(cmd)
 
         stages = ["waveform"]
         current = render
         if args.title:
-            titled = stem + "_titled" + ext if (args.srt or args.text) else output
+            titled = titled_tmp if (args.srt or args.text) else output
             # a dry run rendered no _vis file for graphics.py to probe, so its default --end (the
             # clip's end) came out 0 and the plan failed: give it the source's duration, which
             # is what -t caps the render at. A real run is unchanged.

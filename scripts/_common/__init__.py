@@ -59,7 +59,7 @@ from _common.runner import (
     ffmpeg_bsfs, ffmpeg_filters, ffmpeg_list_error, require_filter, filter_missing_hint, ffmpeg_release, ffmpeg_version, flush_drawtext_textfiles, INSTALL_HINTS, install_signal_handlers, _is_ffmpeg, _limit_for,
     _odd_dimension_retry, _on_signal, _OutputLock, _pid_dead, place_output, PROBE_TIMEOUT, _progress_line,
     read_text_or_die, refuse_output_is_input, _remember_output, require_tool, run, run_analysis, _run_captured,
-    run_keeping_subtitles, run_tool, _run_with_progress, shell_quote, sibling_temp, _SIGNALS_INSTALLED, _stage_existing_output,
+    run_keeping_subtitles, run_tool, _run_with_progress, shell_quote, sibling_temp, still_input_args, _SIGNALS_INSTALLED, _stage_existing_output,
     STATE, _timed_out, _unwatch, _watch, X264_PRESETS
 )
 from _common.emit import (
@@ -212,7 +212,7 @@ __all__ = [
     "decode_gray_frames", "frame_flow", "label_shot_flow", "MOTION_GRID", "MOTION_SEARCH", "MOTION_STATIC_PX", "MOTION_PAN_SPREAD",
     "_run_captured", "run_keeping_subtitles", "run_tool", "_run_with_progress", "_SCRIPT_FONT_CACHE",
     "_script_font_entry", "script_font_for_text", "script_font_status", "_script_font_uncached", "_SCRIPT_RANGES",
-    "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote", "sibling_temp",
+    "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote", "sibling_temp", "still_input_args",
     "_SIGNALS_INSTALLED", "signed_time_arg", "_stage_existing_output", "STATE", "SVT_PRESET", "text_width_em",
     "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "validate_color", "verify_output",
     "source_codec_video_args", "drawn_chain", "draws_chroma", "drawn_stream_format", "is_neutral_color", "rgb_island", "label_chain", "matrix_chain", "rgb_chain_to_bt709", "bt709_label_filter", "rgb_to_bt709_filter", "is_rgb", "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",

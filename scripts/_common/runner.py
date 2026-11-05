@@ -440,6 +440,13 @@ def apply_common(args: "argparse.Namespace") -> None:
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
+    if STATE.plan:
+        # the plan is a file this run writes itself: the side-file guards apply (#408), so it
+        # never replaces an input, the output or an existing file without --overwrite
+        named = [getattr(args, k, None) for k in ("input", "inputs", "reference", "compare")]
+        inputs = [p for v in named for p in (v if isinstance(v, (list, tuple)) else [v]) if isinstance(p, str)]
+        out = getattr(args, "output", None)
+        guard_sidecar(STATE.plan, *inputs, siblings=(out,) if isinstance(out, str) else ())
     if getattr(args, "timeout", None) is not None:
         STATE.timeout = max(0.0, float(args.timeout))
     else:
@@ -682,11 +689,15 @@ def video_encoder_of(cmd: Sequence[str]) -> Optional[str]:
 # while every guard here reads it as a path. Two or more letters, so a Windows
 # drive letter (`C:\x.mp4`) is a path; `pipe:` is the skill's own stdout/stdin and stays allowed.
 _URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
+# Off Windows there are no drive letters, and ffmpeg reads a one-letter `x:y.mp4` as protocol `x`
+# too (#408: it then failed as "Protocol not found", with no hint that ./x:y.mp4 works)
+_URL_SCHEME_POSIX = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def looks_like_url(value: str) -> bool:
     """True for a value ffmpeg would open through a protocol rather than as a local file."""
-    return bool(_URL_SCHEME.match(value)) and not value.startswith("pipe:")
+    scheme = _URL_SCHEME if os.name == "nt" else _URL_SCHEME_POSIX
+    return bool(scheme.match(value)) and not value.startswith("pipe:")
 
 
 _PLAYLIST_SUFFIXES = (".m3u8", ".m3u", ".ffconcat")
@@ -1702,6 +1713,13 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
                 pass
             die(f"could not place {dst}: {e}", kind="output")
     _remember_output(cmd)
+
+
+def still_input_args(path: str) -> List[str]:
+    """`-pattern_type none` for a still read through image2 whose name has a `%` in it (#408):
+    image2 otherwise reads `logo%d.png` as a numbered sequence and opens `logo1.png`, a file the
+    run's guards and fingerprints never looked at. Empty for every other name."""
+    return ["-pattern_type", "none"] if "%" in os.path.basename(str(path)) else []
 
 
 def sibling_temp(dst: str, tag: str) -> str:

@@ -127,12 +127,18 @@ class MissingFpsError(ValueError):
     silently swallowing a mistyped/missing --fps as an auto-timed line of digits."""
 
 
+def _on_windows() -> bool:
+    """Whether a backslash in a path is a separator (Windows) or a character of the name."""
+    return os.name == "nt"
+
+
 def concat_list_line(path: str) -> str:
     """One `file '...'` line for the concat demuxer. The demuxer reads backslash as an escape
     inside the quoted form, so a Windows path (C:\\Users\\...\\part000.mp4) must be written
     with forward slashes -- ffmpeg opens either spelling on Windows -- and a single quote in the
     name is closed, escaped and reopened. Shared by cut.py (multi-segment) and sequence.py."""
-    escaped = str(path).replace("\\", "/").replace("'", "'\\''")
+    # only on Windows: on POSIX the quoted form takes a backslash literally, and it is part of the name (#408)
+    escaped = (str(path).replace("\\", "/") if _on_windows() else str(path)).replace("'", "'\\''")
     return f"file '{escaped}'"
 
 
@@ -252,8 +258,8 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
     must survive both passes needs two levels of escaping, so a Windows drive letter `D:/x.srt` is
     written `D\\\\:/x.srt`; with a single backslash the second pass still splits at the colon and
     ffmpeg reads `/x.srt` as the next option (`Unable to parse "original_size" option value`).
-    Backslashes are turned into forward slashes first (ffmpeg accepts them on Windows), so a backslash
-    never has to be escaped itself; `,`, `;`, `[` and `]` are graph-level characters and survive with
+    On Windows backslashes are turned into forward slashes first (ffmpeg accepts them there); on
+    POSIX a backslash is part of the name and is escaped through both passes (#408); `,`, `;`, `[` and `]` are graph-level characters and survive with
     one backslash. `'` is special: the graph parser also treats a quote as the start of a quoted
     token, so a single `\\'` is consumed by the first pass and "Ryo's Mac/cues.srt" reaches the
     filter as "Ryos Mac/cues.srt" (Unable to open ...). Three backslashes survive both passes
@@ -265,11 +271,23 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
     if bind and os.path.isfile(path) and path not in STATE.plan_inputs:
         STATE.plan_inputs.append(path)  # a plan binds subtitle/LUT/font files too (review 6)
     p = str(Path(path))
-    p = p.replace("\\", "/")
+    if _on_windows():
+        p = p.replace("\\", "/")
+    else:
+        # on POSIX a backslash is a character of the name (#408): turning it into `/` opened a
+        # different path, so it is escaped through both passes instead
+        p = p.replace("\\", "\\\\\\\\")
     p = p.replace(":", "\\\\:")
     p = p.replace("'", "\\\\\\'")
     for ch in (",", ";", "[", "]"):
         p = p.replace(ch, "\\" + ch)
+    # the graph parser trims unescaped whitespace at either end of a value (#408: a relative
+    # " lead.srt" opened "lead.srt"); both passes keep an escaped one
+    lead = len(p) - len(p.lstrip())
+    trail = len(p) - len(p.rstrip())
+    if lead or trail:
+        body = p[lead:len(p) - trail] if trail else p[lead:]
+        p = "".join("\\\\" + c for c in p[:lead]) + body + "".join("\\\\" + c for c in p[len(p) - trail:] if trail)
     return p
 
 
