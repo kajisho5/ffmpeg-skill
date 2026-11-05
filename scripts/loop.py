@@ -21,11 +21,15 @@ Examples:
   python3 loop.py wave.mp4 --boomerang --times 4
 """
 import argparse
+import json
 import math
+import os
 import sys
+import tempfile
 
-from _common import add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common import concat_list_line, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
+from _common.decision import av_trim
 
 
 # The loop filter's size is capped at 32767 frames, so one boomerang cycle (2N-2 frames) must fit.
@@ -95,6 +99,21 @@ def _nominal_rate(v) -> str:
     return f"{counted:g}" if 0 < counted <= MAX_PLAUSIBLE_FPS else "30"
 
 
+def concat_first_frame(listfile: str) -> float:
+    """Where the first frame sits on the clock ffmpeg reads a concat list on: the list's first video
+    start minus its start_time. The concat demuxer counts an MP4's hidden AAC priming packet into its
+    start (-0.021 s) where the MP4 demuxer does not, so ffmpeg moves both streams 21 ms later, and a
+    frame-rate time base then rounded the picture's move to 33 ms (12 ms off). 0.0 when unmeasured."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-f", "concat", "-safe", "0", "-i", listfile,
+                "-select_streams", "v:0", "-show_entries", "stream=start_time:format=start_time", "-of", "json"],
+               quiet=True, check=False)
+    try:
+        doc = json.loads(proc.stdout or "")
+        return float(doc["streams"][0]["start_time"]) - float(doc["format"]["start_time"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        return 0.0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -137,10 +156,24 @@ def main() -> int:
         if meta.get("audio"):
             notes.append("audio dropped: a boomerang plays half its sound backwards -- add a bed with audio.py")
     else:
-        # -stream_loop repeats the whole input read (video and audio together) at the demuxer level
-        # -- exact and lossless-in-intent for a re-encode target, unlike a filter-graph loop that
-        # would need separate video/audio filters kept in lockstep by hand.
-        cmd = ffmpeg_base() + ["-stream_loop", str(stream_loop), "-i", args.input]
+        # The concat demuxer reads the clip once per repeat and starts each repeat at the previous
+        # one's start plus the file's duration (#409): both streams keep their offset from the
+        # file's start in every repeat. -stream_loop took the repeat's length from its streams'
+        # spans without the last video frame, so a sound that starts 0.3 s late shortened every
+        # repeat by a frame and slid against the picture (346 frames for 360, 68 ms off).
+        # Both streams start at the first frame, shifted by one constant (av_trim), and the gap a
+        # late sound leaves at each repeat's start is filled with silence, at any length.
+        workdir = tempfile.TemporaryDirectory(prefix="ffskill_loop_")
+        listfile = os.path.join(workdir.name, "loop.txt")
+        with open(listfile, "w", encoding="utf-8") as fh:
+            fh.write((concat_list_line(os.path.abspath(args.input)) + "\n") * (stream_loop + 1))
+        vtrim, atrim = av_trim(concat_first_frame(listfile), None, fill_gaps=True)
+        cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
+        if has_audio:
+            cmd += ["-filter_complex", f"[0:v:0]{vtrim}[v];[0:a:0]{atrim}[a]",
+                    "-map", "[v]", "-map", "[a]"]
+        else:
+            cmd += ["-map", "0:v:0", "-vf", vtrim]
     if target is not None:
         cmd += ["-t", f"{target:.3f}"]
     cmd += video_args(meta, args.crf, args.preset)
@@ -150,7 +183,11 @@ def main() -> int:
     else:
         cmd += ["-an"]
     cmd.append(output)
-    run(cmd)
+    try:
+        run(cmd)
+    finally:
+        if not args.boomerang:
+            workdir.cleanup()
 
     result = probe(output, role="output")
     v = result["video"]

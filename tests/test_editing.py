@@ -16,7 +16,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, exif_rotated_jpeg, frame_rgb, sar_clip, script, sh, tiny_clip  # noqa: E402
+from _fixtures import av_offsets_ms, flash_times, make_flash_beep, make_tones_take, stream_spans  # noqa: E402
 from _common import probe  # noqa: E402
 
 
@@ -719,16 +720,17 @@ class EditingTests(MediaFixtures):
         doc = json.loads(script("speedramp.py", src, "--segment", "0-1:1", "--segment", "1-1.6:2",
                                 "--preset", "ultrafast", "--json", "-o", out).stdout)
         graph = " ".join(doc["commands"])
-        self.assertIn("trim=start=1.000:end=1.600", graph)
-        self.assertIn("atrim=start=1.000:end=1.600", graph)
+        # both streams cut on the frame times 1.0 and 1.6 (the picture's trim half a frame early, #409)
+        self.assertIn("trim=start=0.983333:end=1.583333,setpts=PTS-1.000000/TB", graph)
+        self.assertIn("atrim=start=1.000000:end=1.600000,asetpts=PTS-1.000000/TB", graph)
         self.assertClose(probe(str(out))["duration"], 1.3, 0.15)
         # an end that is the file's end still runs to the last packet (no end bound to clip it)
         plan = json.loads(script("speedramp.py", src, "--segment", "0-2:1", "--dry-run", "--json",
                                  "-o", OUT / "ramp_slack_eof.mp4").stdout)
         joined = " ".join(plan["commands"])
-        self.assertIn("trim=start=0.000", joined)
-        self.assertNotIn("trim=start=0.000:end=", joined)
-        self.assertNotIn("atrim=start=0.000:end=", joined)
+        self.assertIn("trim=start=-0.016667,setpts", joined)
+        self.assertIn("atrim=start=0.000000,asetpts", joined)
+        self.assertNotIn(":end=", joined)
 
     # ---------------------------------------------------------------- loop
     def test_loop_times_multiplies_duration(self):
@@ -1106,8 +1108,9 @@ class EditingTests(MediaFixtures):
             streams = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration",
                                     "-of", "json", out).stdout)["streams"]
             for s in streams:
-                # 7.1 s at the 2.22 default --margin 0.2 (6.75 s at 0.15)
-                self.assertClose(float(s["duration"]), 7.1, 0.1, f"{name} {s['codec_type']}")
+                # 7.0 s kept at the 2.22 default --margin 0.2 (6.75 s at 0.15); through 3.1.3 the
+                # select graph kept both boundary frames of every range and wrote 7.1 s (#409)
+                self.assertClose(float(s["duration"]), 7.0, 0.05, f"{name} {s['codec_type']}")
 
     def test_silence_on_wav_input_keeps_pcm_not_forced_aac(self):
         """silence.py's final ffmpeg command used to unconditionally append aac_args() (-c:a aac)
@@ -2538,6 +2541,127 @@ class EditingTests(MediaFixtures):
         self.assertNotIn("removed_seconds_total", data)
 
 
+class OneClockTests(MediaFixtures):
+    """#409: a tool that cuts, repeats, reverses or re-times both streams keeps them on one clock.
+    Each fixture has a one-frame flash and a 40 ms beep at the same instant, so flash minus beep is
+    the A/V offset; the late-sound, late-picture and long-sound variants are the shapes a stream
+    copy or a camera leaves. Every case below came out 100-570 ms off with `verified: true`."""
+
+    def _fx(self, name, **kw):
+        return make_flash_beep(OUT / f"clock_{name}.mp4", **kw)
+
+    def assertInSync(self, offsets, expected=0, tol=5, msg=""):
+        self.assertTrue(offsets, msg)
+        for o in offsets:
+            self.assertLessEqual(abs(o - expected), tol, f"{msg}: flash-beep {offsets} ms")
+
+    def test_silence_keeps_sync_and_its_time_map_over_many_ranges(self):
+        """The one-pass select/ametadata render rounded every kept range twice (the picture to
+        frames, the sound to AAC frames), so the sound drifted 5, 40, 75 ms over three ranges and
+        the picture ran 0.1 s past it; the time map, built from millisecond bounds, missed the
+        picture's length too. The ranges are now re-cut as cut.py --segments --accurate cuts them."""
+        src = self._fx("talk", talk=True)
+        out, tm = OUT / "clock_talk_tight.mp4", OUT / "clock_talk_tight.json"
+        for p in (out, tm):
+            if p.exists():
+                p.unlink()
+        script("silence.py", src, "--min-silence", "0.5", "--margin", "0.1", "--preset", "veryfast",
+               "--timemap", tm, "-o", out)
+        self.assertInSync(av_offsets_ms(out, beep_db=-12), msg="silence")
+        spans = stream_spans(out)
+        self.assertAlmostEqual(spans["video"][1], spans["audio"][1], delta=0.025)
+        kept = json.loads(tm.read_text())["kept"]
+        self.assertAlmostEqual(kept[-1]["output_end"], spans["video"][1], delta=0.002)
+        # each source flash, carried through the map, is where the output shows it
+        for src_t, out_t in zip((1.2, 4.2, 7.2), flash_times(out)):
+            k = next(k for k in kept if k["source_start"] <= src_t < k["source_end"])
+            self.assertAlmostEqual(k["output_start"] + src_t - k["source_start"], out_t, delta=0.002)
+
+    def test_silence_keeps_a_late_sound_where_it_was(self):
+        """asetpts=N/SR started a sound that begins 0.3 s after its picture at 0: +280 ms."""
+        out = OUT / "clock_talk_late_tight.mp4"
+        script("silence.py", self._fx("talk_late", talk=True, audio_late=0.3), "--min-silence", "0.5",
+               "--margin", "0.1", "--preset", "veryfast", "-o", out, "--overwrite")
+        self.assertInSync(av_offsets_ms(out, beep_db=-12), msg="silence, late sound")
+
+    def test_freeze_keeps_a_late_sound_and_a_late_picture_in_sync(self):
+        """Each stream was rebased to its own start: +279 ms for a sound 0.3 s late, -100 ms for a
+        picture 0.1 s late, both at --at and at the end."""
+        for name, kw in (("alate", {"audio_late": 0.3}), ("vlate", {"video_late": 0.1})):
+            src = self._fx(name, **kw)
+            for extra in (["--at", "1.2"], []):
+                out = OUT / f"clock_freeze_{name}{len(extra)}.mp4"
+                script("freeze.py", src, "--hold", "1", *extra, "--preset", "veryfast", "-o", out, "--overwrite")
+                self.assertInSync(av_offsets_ms(out), msg=f"freeze {name} {extra}")
+        self.assertEqual(stream_spans(OUT / "clock_freeze_alate2.mp4")["video"][2], 150)
+
+    def test_speedramp_keeps_a_late_sound_in_sync(self):
+        """Each segment's streams were rebased on their own, then sped up: a sound 0.3 s late came
+        out +300 ms in a 1x segment (+570 ms at 0.5x), a picture 0.1 s late -79 ms. The flash in the
+        1x segment is compared with the same ramp of an in-sync source (atempo's own offset is
+        outside this fix)."""
+        segs = ["--segment", "0-1:1", "--segment", "1-4:0.5"]
+        firsts = {}
+        for name, kw in (("sync", {}), ("alate", {"audio_late": 0.3}), ("vlate", {"video_late": 0.1})):
+            out = OUT / f"clock_ramp_{name}.mp4"
+            script("speedramp.py", self._fx(name, **kw), *segs, "--preset", "veryfast", "-o", out, "--overwrite")
+            firsts[name] = av_offsets_ms(out)[0]
+        self.assertLessEqual(abs(firsts["alate"] - firsts["sync"]), 5, firsts)
+        self.assertLessEqual(abs(firsts["vlate"] - firsts["sync"]), 5, firsts)
+
+    def test_join_keeps_a_late_sound_where_it_was(self):
+        """#338 started each clip's picture at 0 and rebased its sound on its own: a clip whose
+        sound starts 0.3 s late joined 279 ms early."""
+        for name, kw in (("alate", {"audio_late": 0.3}), ("vlate", {"video_late": 0.1}), ("long", {"video_short": 0.6})):
+            out = OUT / f"clock_join_{name}.mp4"
+            script("join.py", self._fx(name, **kw), self._fx("sync"), "--transition", "none",
+                   "--preset", "veryfast", "-o", out, "--overwrite")
+            self.assertInSync(av_offsets_ms(out), msg=f"join {name}")
+
+    def test_broll_b_audio_keeps_a_late_sound_in_sync(self):
+        """B's sound was rebased to its own first sample while its picture landed on --at: +279 ms."""
+        for audio in ("b", "mix"):
+            out = OUT / f"clock_broll_{audio}.mp4"
+            script("broll.py", self._fx("sync"), "--insert", self._fx("alate", audio_late=0.3), "--at", "1",
+                   "--duration", "2", "--audio", audio, "--preset", "veryfast", "-o", out, "--overwrite")
+            self.assertInSync(av_offsets_ms(out), msg=f"broll --audio {audio}")
+
+    def test_reverse_turns_both_streams_about_one_end(self):
+        """Each stream was reversed about its own end: a sound 0.6 s past its picture came out
+        +396 ms. Reversed, a flash frame [t, t+1/30) and a beep [t, t+0.04) start 6.7 ms apart."""
+        for name, kw in (("long", {"video_short": 0.6}), ("alate", {"audio_late": 0.3}), ("vlate", {"video_late": 0.1})):
+            out = OUT / f"clock_reverse_{name}.mp4"
+            script("reverse.py", self._fx(name, **kw), "--preset", "veryfast", "-o", out, "--overwrite")
+            self.assertInSync(av_offsets_ms(out), expected=7, msg=f"reverse {name}")
+            spans = stream_spans(out)
+            self.assertAlmostEqual(spans["video"][1], spans["audio"][1], delta=0.025)
+
+    def test_loop_keeps_a_late_sound_in_sync_on_every_repeat(self):
+        """-stream_loop shortened every repeat of a clip whose sound starts late by a frame and slid
+        the sound (346 of 360 frames, 1 then 68 ms); the concat list repeats the file's whole length,
+        and an in-sync AAC source is not moved by the list's priming either."""
+        for name, kw in (("alate", {"audio_late": 0.3}), ("sync", {})):
+            out = OUT / f"clock_loop_{name}.mp4"
+            script("loop.py", self._fx(name, **kw), "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite")
+            offsets = av_offsets_ms(out)
+            self.assertEqual(len(offsets), 12, offsets)
+            self.assertInSync(offsets, msg=f"loop {name}")
+            self.assertEqual(stream_spans(out)["video"][2], 360)
+
+    def test_multicam_audio_from_a_camera_whose_sound_starts_late(self):
+        """The camera's sound was measured from its first sample, not its file's start (+1.274 s for
+        a camera 1.0 s in whose sound starts 0.3 s late, so its picture was cut 274 ms late), and
+        its sound was then rebased to that first sample before the delay."""
+        ref = make_tones_take(OUT / "clock_cam0.mp4", dur=8)
+        cam = make_tones_take(OUT / "clock_cam1.mp4", start=1.0, audio_late=0.3, dur=7)
+        out = OUT / "clock_multicam.mp4"
+        doc = json.loads(script("multicam.py", ref, cam, "--switch", "0-8:0", "--audio", "1", "--preset", "veryfast",
+                                "-o", out, "--overwrite", "--json").stdout)
+        self.assertAlmostEqual(doc["offsets_seconds"][1], 1.0, delta=0.01, msg=doc["offsets_seconds"])
+        again = json.loads(script("sync.py", ref, out, "--json").stdout)
+        self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
+
+
 class FillerSpansTests(unittest.TestCase):
     """1.17: which words become removal spans, as pure arithmetic on measured timings."""
 
@@ -2840,6 +2964,118 @@ class Hdr10StaticMetadataTests(unittest.TestCase):
         self.assertEqual(len(warns), 1, doc)
         self.assertEqual(warns[0]["dropped"], lost)
         self.assertIn(warns[0]["message"], doc["notes"])
+
+
+class GeometryAuditTests(unittest.TestCase):
+    """Issue #411 (audit H): non-square pixels, odd-sized and EXIF-rotated inputs, freeze's frame
+    and the SMPTE hint. Every fixture is a one-to-three-second lavfi clip built here."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        # 180x180 stored at SAR 16:9: a 320x180 red picture on screen
+        cls.sar = sar_clip(OUT / "g411_sar.mp4", audio=True)
+        cls.blue = tiny_clip(OUT / "g411_blue.mp4", "color=c=blue:s=320x180:r=30", audio=True)
+        cls.odd = tiny_clip(OUT / "g411_odd.mp4", "color=c=gray:s=321x181:r=30,format=yuv444p", seconds=2, pix_fmt="yuv444p")
+        # red for the first second, blue from 1.0 s: a cut at exactly t = 1
+        cls.shot = tiny_clip(OUT / "g411_shot.mp4", "color=c=red:s=160x90:r=30,drawbox=c=blue:t=fill:enable='gte(t,1)'",
+                             seconds=2)
+        cls.tc = tiny_clip(OUT / "g411_tc.mp4", "testsrc2=s=160x90:r=30", "-timecode", "01:00:00:00", seconds=3)
+        cls.exif = exif_rotated_jpeg(OUT / "g411_exif6.jpg")
+
+    def _red(self, rgb):
+        self.assertGreater(rgb[0], 180, rgb)
+        self.assertLess(rgb[2], 80, rgb)
+
+    def test_probe_reports_the_pixel_aspect_and_the_square_display_size(self):
+        from _common import display_size, square_pixels
+        v = probe(str(self.sar))["video"]
+        self.assertEqual(v["sample_aspect_ratio"], "16:9")
+        self.assertEqual(display_size(v), (320, 180))
+        self.assertEqual(square_pixels(v), "scale=320:180,setsar=1")
+        self.assertEqual(probe(str(self.blue))["video"]["sample_aspect_ratio"], "1:1")
+
+    def test_fit_fills_the_frame_with_a_non_square_pixel_source(self):
+        """Through 3.1.3 the 180x180 storage was fitted as a square picture: a 16:9 frame got
+        pillarbox bars beside a squashed picture."""
+        out = OUT / "g411_fit.mp4"
+        doc = json.loads(script("fit.py", self.sar, "--width", "320", "--height", "180", "-o", out, "--json").stdout)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+        self._red(frame_rgb(out, 0.5, 6, 90))
+        self.assertTrue(any("non-square pixels" in n for n in doc.get("notes") or []), doc.get("notes"))
+
+    def test_crop_takes_its_rectangle_in_the_displayed_frame(self):
+        out = OUT / "g411_crop.mp4"
+        script("crop.py", self.sar, "--x", "160", "--y", "0", "--width", "160", "--height", "180", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (160, 180, "1:1"))
+
+    def test_join_sizes_to_the_displayed_frame(self):
+        out = OUT / "g411_join.mp4"
+        script("join.py", self.sar, self.sar, "--transition", "none", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+
+    def test_broll_squares_a_non_square_pixel_a_roll(self):
+        out = OUT / "g411_broll.mp4"
+        script("broll.py", self.sar, "--insert", self.blue, "--at", "0", "--duration", "0.4", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+        self._red(frame_rgb(out, 0.7, 6, 90))
+
+    def test_multicam_sizes_to_the_displayed_frame(self):
+        out = OUT / "g411_multicam.mp4"
+        script("multicam.py", self.sar, self.sar, "--auto", "0.5", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+
+    def test_broll_scales_an_odd_sized_a_roll_to_even_and_records_it(self):
+        """The even-dimension retry only reaches a -vf; broll's filter_complex failed as kind
+        "ffmpeg" on a 321x181 A-roll through 3.1.3."""
+        out = OUT / "g411_broll_odd.mp4"
+        doc = json.loads(script("broll.py", self.odd, "--insert", self.blue, "--at", "0.5", "--duration", "0.5",
+                                "-o", out, "--json").stdout)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (320, 180))
+        codes = [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks") or []]
+        self.assertEqual(codes, ["odd_dimensions_scaled_even"])
+
+    def test_freeze_at_holds_the_frame_shown_at_that_time(self):
+        """--at 1 on a cut at 1.0 s holds the first frame of the new shot (blue), not the last
+        frame of the previous one (red), which 3.1.3 held."""
+        out = OUT / "g411_freeze.mp4"
+        script("freeze.py", self.shot, "--at", "1", "--hold", "1", "-o", out)
+        rgb = frame_rgb(out, 1.5, 80, 45)
+        self.assertGreater(rgb[2], 180, rgb)
+        self.assertLess(rgb[0], 80, rgb)
+        self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.1)
+
+    def test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode(self):
+        """The grammar is unchanged (hh:mm:ss:ff counts from the file's first frame); the refusal
+        now says so and names the frame the caller probably meant."""
+        proc = script("cut.py", self.tc, "--start", "01:00:01:00", "--end", "01:00:02:00",
+                      "-o", OUT / "g411_tc_cut.mp4", "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("01:00:00:00", err.get("hint") or "")
+        self.assertIn("--start 01:00:01:00 is 00:00:01:00", err.get("hint") or "")
+        # a time inside the file is not touched
+        script("cut.py", self.tc, "--start", "00:00:01:00", "--end", "00:00:02:00", "-o", OUT / "g411_tc_cut.mp4")
+
+    def test_insert_turns_an_exif_rotated_still_upright(self):
+        """ffmpeg turns an Orientation 6 JPEG upright on decode; probe now reads the rotation off
+        the decoded frame, so insert sizes the portrait picture instead of cropping a landscape
+        window out of it."""
+        self.assertIn(probe(str(self.exif))["video"]["rotation"], (90, -90))
+        out = OUT / "g411_insert.mp4"
+        script("insert.py", self.exif, "--duration", "0.5", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (180, 320))
 
 
 if __name__ == "__main__":

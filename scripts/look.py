@@ -22,6 +22,8 @@ from _common import STATE, require_tool, add_common, apply_common, default_font_
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
+from _common.color import bt709_label_filter  # noqa: E402
+from _common.probe import display_size, square_pixels, square_pixels_note  # noqa: E402
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -39,6 +41,12 @@ def timecode_filter(font_prefix: str, offset: float = 0.0) -> str:
     if offset > 0:
         return f"drawtext=text='%{{pts\\:hms\\:{offset:.6f}}}':{font_prefix}{FONT}"
     return f"drawtext=text='%{{pts\\:hms}}':{font_prefix}{FONT}"
+
+
+def _half_height(half: int, size: "tuple") -> int:
+    """The even height a `half`-wide picture of displayed `size` scales to (16:9 when unknown)."""
+    w, h = size
+    return max(2, int(round(half * (h / w if w and h else 9 / 16) / 2)) * 2)
 
 
 def _png_size(png_path: str) -> "Optional[tuple]":
@@ -189,10 +197,7 @@ def main() -> int:
     if args.safe:
         z = PLATFORMS[args.safe]["safe"]
         frame = PLATFORMS[args.safe]["frame"]
-        src = meta["video"]
-        dw, dh = src.get("width") or 0, src.get("height") or 0
-        if src.get("rotation") in (90, -90, 270, -270):
-            dw, dh = dh, dw
+        dw, dh = display_size(meta["video"])
         if dw and dh and abs(dw / dh - frame["w"] / frame["h"]) > 0.02:
             info(f"--safe {args.safe}: this source is {dw}x{dh}, not {args.safe}'s "
                  f"{frame['w']}x{frame['h']} -- the zones are drawn as fractions of the frame you gave, "
@@ -221,11 +226,25 @@ def main() -> int:
         tc = "," + tm.rstrip(",") + tc
         info("HDR source: frames are tone-mapped to SDR for display")
     outputs: List[str] = []
+    # An untagged SDR source is BT.709 (what players and every encoder line here take it as), but the
+    # conversion to the PNG's RGB reads "unknown" as BT.601: C03028 came out B31F28 (#410). Its
+    # frames are labelled first (tags only), so that conversion reads them as BT.709.
+    lab = bt709_label_filter(meta)
+    lab = lab + "," if lab else ""
+    # every picture is squared at its display aspect before it is scaled (#411): a DV or HDV
+    # frame's stored size is not the picture a player shows
+    square = square_pixels(meta["video"])
+    sq = square + "," if square else ""
+    if square:
+        note(square_pixels_note(meta["video"]))
 
     if args.compare:
         if not args.at:
             die("--compare needs --at TIME")
-        probe(args.compare)
+        cmeta = probe(args.compare)
+        lab2 = bt709_label_filter(cmeta)
+        lab2 = lab2 + "," if lab2 else ""
+        csq = (square_pixels(cmeta.get("video")) + ",") if square_pixels(cmeta.get("video")) else ""
         for idx, t in enumerate(args.at):
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
             if args.output and len(args.at) == 1:
@@ -238,8 +257,15 @@ def main() -> int:
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
             tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp
-            fc = (f"[0:v]scale={half}:-2{tcs}[a];[1:v]scale={half}:-2{tcs}[b];"
-                  f"[a][b]scale2ref=w=iw:h=ih[a2][b2];[a2][b2]hstack=inputs=2[out]")
+            # each picture keeps its own aspect inside a half-width box as tall as the taller of the
+            # two (letterboxed, not stretched): through 3.1.3 scale2ref forced the first to the
+            # second's size, so a 4:3 beside a 16:9 came out squashed (#411)
+            box_h = max(_half_height(half, display_size(meta["video"])),
+                        _half_height(half, display_size(cmeta.get("video"))))
+            fit = (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease,"
+                   f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1")
+            fc = (f"[0:v]{lab}{sq}{fit}{tcs}[a];[1:v]{lab2}{csq}{fit}{tcs}[b];"
+                  f"[a][b]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-ss", f"{sec:.3f}", *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]
             run(cmd)
@@ -255,7 +281,7 @@ def main() -> int:
                 # several frames, or -o given as a stem/prefix without an image extension
                 out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
+            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-vf", f"{lab}{sq}scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     else:
@@ -278,11 +304,14 @@ def main() -> int:
         # sample at the middle of each slice so the first/last tiles are not black lead-in/out frames
         # with only a handful of frames a mid-slice seek skips past them all: start at 0 instead
         seek = 0.0 if frames_avail < 4 else step / 2
-        # the seek resets pts to 0, so the burned-in timecode gets the seek added back
-        tc_sheet = tc.replace(timecode_filter(font_prefix), timecode_filter(font_prefix, seek)) if seek else tc
-        vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',scale={tile_w}:-2{tc_sheet},"
+        # -copyts -start_at_zero keeps each frame's own timestamp through the seek, counted from
+        # the file's start, so the stamp is the frame's pts as it is. What an input -ss alone
+        # resets pts to differs by container: an MPEG-TS (which starts at 1.4 s) came out
+        # labelled one seek late when the seek was added back (#411)
+        tc_sheet = tc
+        vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',{lab}{sq}scale={tile_w}:-2{tc_sheet},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        cmd = ffmpeg_base() + ["-ss", f"{seek:.6f}", *still_input_args(args.input), "-i", args.input, "-vf", vf, "-frames:v", "1", "-update", "1", out]
+        cmd = ffmpeg_base() + ["-copyts", "-start_at_zero", "-ss", f"{seek:.6f}", *still_input_args(args.input), "-i", args.input, "-vf", vf, "-frames:v", "1", "-update", "1", out]
         run(cmd)
         outputs.append(out)
         info(f"contact sheet: {n} frames every {step:.2f}s")

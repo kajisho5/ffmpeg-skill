@@ -38,7 +38,8 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
                     *, check: bool = True) -> List[float]:
     """Decode (part of) a file's audio to mono float samples in [-1, 1) at `sample_rate` via a
     single ffmpeg pass under --timeout. Shared by scenes.py (audio envelope for cut scoring) and
-    sync.py (cross-correlation); an undecodable input is kind ffmpeg when check=True, else []."""
+    sync.py (cross-correlation); an undecodable input is kind ffmpeg when check=True, else [].
+    The samples are on the file's clock: a sound that starts late is padded at its head."""
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if start:
@@ -46,7 +47,10 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     cmd += ["-i", path]
     if seconds is not None:
         cmd += ["-t", f"{seconds:.3f}"]
-    cmd += ["-vn", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
+    # first_pts=0 pads a sound that starts after the file's start (or after `start`) with silence,
+    # so sample i is at start + i / sample_rate on the file's clock: sync.py measured a track that
+    # starts 0.3 s late 0.279 s off, and --replace-audio placed it that far late (#409)
+    cmd += ["-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
         if check:
@@ -284,6 +288,12 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
                 rotation = int(video["tags"]["rotate"])
             except ValueError:
                 pass
+        if not rotation and _is_still(fmt, video):
+            # an EXIF Orientation reaches ffmpeg as the decoded frame's display matrix, not as
+            # stream side data, so -show_streams has no rotation for a phone's portrait JPEG;
+            # ffmpeg still turns the picture upright on decode, and every tool that sizes the
+            # frame has to know it did (#411)
+            rotation = _still_rotation(path)
         pix = video.get("pix_fmt") or ""
         trc = video.get("color_transfer") or ""
         prim = video.get("color_primaries") or ""
@@ -301,6 +311,10 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "width": w,
             "height": h,
             "display_aspect": video.get("display_aspect_ratio") or _aspect_string(w, h),
+            # the stored pixel's shape (DV, HDV 1440x1080, DVD and XDCAM store non-square pixels);
+            # every tool that sizes or draws on the picture works on square pixels at the display
+            # aspect (square_pixels() / display_size() below)
+            "sample_aspect_ratio": _sar_string(video.get("sample_aspect_ratio")),
             "fps": round(fps, 3) if fps else None,
             "r_frame_rate": video.get("r_frame_rate"),
             "avg_frame_rate": video.get("avg_frame_rate"),
@@ -369,6 +383,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
     if role == "input" and getattr(STATE, "first_input", None) is None:
         STATE.first_input = (path, len(out.get("audio_streams") or []),
                              (out.get("video") or {}).get("hdr10_static"))
+    if role == "input" and out["timecode"].get("value") and getattr(STATE, "source_timecode", None) is None:
+        STATE.source_timecode = (out["timecode"]["value"], duration)
     return out
 
 
@@ -656,6 +672,82 @@ def _fraction(v: Optional[str]) -> Optional[Fraction]:
         return f if f > 0 else None
     except (ValueError, ZeroDivisionError):
         return None
+
+
+def _sar_string(v: Optional[str]) -> str:
+    """ffprobe's sample_aspect_ratio as "N:D", "1:1" when unset (0:1, N/A, missing)."""
+    f = _fraction((v or "").replace(":", "/"))
+    return f"{f.numerator}:{f.denominator}" if f else "1:1"
+
+
+def pixel_aspect(video: Optional[Dict[str, Any]]) -> Fraction:
+    """The stored pixel's width over its height (the SAR); 1 when the stream does not say."""
+    return _fraction(str((video or {}).get("sample_aspect_ratio") or "").replace(":", "/")) or Fraction(1)
+
+
+def _square_size(video: Optional[Dict[str, Any]]) -> "Tuple[int, int, Fraction]":
+    """(width, height, SAR) of the frame the filter graph receives: rotation applied (ffmpeg
+    autorotates on decode, and its transpose turns the SAR over too), pixels not yet squared."""
+    video = video or {}
+    w, h = int(video.get("width") or 0), int(video.get("height") or 0)
+    sar = pixel_aspect(video)
+    if video.get("rotation") in (90, -90, 270, -270):
+        w, h, sar = h, w, 1 / sar
+    return w, h, sar
+
+
+def display_size(video: Optional[Dict[str, Any]]) -> "Tuple[int, int]":
+    """The displayed frame in square pixels: rotation applied, and a non-square-pixel picture
+    widened or narrowed to its display aspect at its own height (1440x1080 at 4:3 is 1920x1080,
+    720x480 at 8:9 is 640x480). It is the frame square_pixels() hands the rest of a graph, so a
+    tool sizes, places and draws in it. 0x0 when unknown (a dry run's pending input)."""
+    w, h, sar = _square_size(video)
+    if w and h and sar != 1:
+        w = max(2, int(round(w * sar / 2)) * 2)
+    return w, h
+
+
+def square_pixels(video: Optional[Dict[str, Any]]) -> str:
+    """The filter that makes a non-square-pixel picture square at its display aspect
+    ("scale=640:360,setsar=1"), or "" when the pixels are square already. A tool that scales,
+    crops, places or draws starts its video chain with it, so every such tool agrees on one
+    frame (display_size()) and nothing is squashed or drawn stretched (#411). Tools that only
+    re-encode keep the stored size and its SAR, which the encoder writes through."""
+    w, h, sar = _square_size(video)
+    if not (w and h) or sar == 1:
+        return ""
+    dw, dh = display_size(video)
+    return f"scale={dw}:{dh},setsar=1"
+
+
+def square_pixels_note(video: Optional[Dict[str, Any]], what: str = "the input") -> Optional[str]:
+    """The notes line for a square_pixels() scale, or None when there is none."""
+    if not square_pixels(video):
+        return None
+    w, h, _ = _square_size(video)
+    dw, dh = display_size(video)
+    return (f"{what} stores non-square pixels (SAR {(video or {}).get('sample_aspect_ratio')}): "
+            f"its {w}x{h} picture was scaled to {dw}x{dh} square pixels, its display aspect")
+
+
+def _is_still(fmt: Dict[str, Any], video: Dict[str, Any]) -> bool:
+    """A single picture read by an image demuxer (image2, jpeg_pipe, png_pipe, ...)."""
+    name = fmt.get("format_name") or ""
+    return name == "image2" or name.endswith("_pipe")
+
+
+def _still_rotation(path: str) -> int:
+    """The display rotation of a still's first decoded frame (an EXIF Orientation), 0 if none."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1",
+                "-show_entries", "frame_side_data=rotation", "-of", "json", path], quiet=True, check=False)
+    try:
+        frames = json.loads(proc.stdout or "{}").get("frames") or []
+        for sd in (frames[0].get("side_data_list") or []) if frames else []:
+            if "rotation" in sd:
+                return int(round(float(sd["rotation"])))
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return 0
 
 
 def _aspect_string(w: Optional[int], h: Optional[int]) -> Optional[str]:

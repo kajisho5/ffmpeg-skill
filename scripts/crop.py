@@ -22,6 +22,8 @@ import argparse
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
+from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.emit import note
 
 
 def main() -> int:
@@ -51,15 +53,18 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    sw, sh = meta["video"]["width"], meta["video"]["height"]
-    if meta["video"].get("rotation") in (90, -90, 270, -270):
-        sw, sh = sh, sw
+    # the rectangle is in the displayed frame cropdetect.py reports: rotation applied, and a
+    # non-square-pixel source squared at its display aspect first (#411)
+    sw, sh = display_size(meta["video"])
     if args.x + args.width > sw or args.y + args.height > sh:
         die(f"crop rectangle ({args.x},{args.y},{args.width}x{args.height}) exceeds the source frame ({sw}x{sh})")
     has_audio = bool(meta.get("audio"))
 
     output = args.output or default_output(args.input, "crop")
     vf = [f"crop={args.width}:{args.height}:{args.x}:{args.y}", "setsar=1"]
+    if square_pixels(meta["video"]):
+        vf.insert(0, square_pixels(meta["video"]))
+        note(square_pixels_note(meta["video"]))
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", ",".join(vf)]
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta, args.fps)

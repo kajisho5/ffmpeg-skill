@@ -79,6 +79,8 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
 
     `error_extra` goes inside `error` (refuse() passes `reason` and `details` there); the
     collector's records (warn() and friends) are merged into the document as emit() merges them."""
+    if extra.get("hint") is None and kind == "input" and getattr(ctx or STATE, "smpte_hint", None):
+        extra["hint"] = (ctx or STATE).smpte_hint  # an hh:mm:ss:ff flag read past a timecoded source's end (#411)
     hint = neutralize(extra.pop("hint", None))
     msg = neutralize(msg)
     ctx = ctx or STATE  # 1.10: the optional per-request Context (2.0 makes it required); STATE is the default instance

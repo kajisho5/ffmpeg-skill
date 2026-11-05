@@ -60,6 +60,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — output identity and check.py --compare](#224--output-identity-and-checkpy---compare)
 - [2.24 — export.py --max-mb](#224--exportpy---max-mb)
 - [2.24 — export.py --repair](#224--exportpy---repair)
+- [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
+- [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
 <!-- contents:end -->
 
 ## Time limits
@@ -164,9 +166,10 @@ exists. When a decision changes, edit the entry in the same PR.
   still takes the HDR path chosen from the first video stream's probe. The cost: a source whose
   frame *size* or pixel format changes mid-stream is no longer refused by concat's own "parameters do
   not match" error; on 6.1 the first-format graph then crashes or stalls the encoder (the stall is
-  bounded by `--timeout`). No other tool builds this structure: `join.py`, `multicam.py` and
-  `broll.py` open different files without `-ss`; `speedramp.py`, `freeze.py` and `loop.py` split one
-  input. Code: `cut._join_chunk()`. Test:
+  bounded by `--timeout`). `silence.py` renders through the same `_join_chunk` (#409), so it has
+  the flag too. No other tool builds this structure: `join.py`, `multicam.py` and `broll.py` open
+  different files without `-ss`; `speedramp.py` and `freeze.py` split one input, and `loop.py`
+  reads one concat list. Code: `cut._join_chunk()`. Test:
   `test_every_segment_input_of_an_accurate_join_keeps_the_graph_format` (the planned command, any
   FFmpeg) and `test_an_accurate_join_across_a_colour_tag_change_completes` (the run; it only fails
   where the deadlock reproduces).
@@ -285,14 +288,49 @@ exists. When a decision changes, edit the entry in the same PR.
   the drawbox's pixels); `background.py`'s `color`/`gradients` and `waveform.py`'s plate and RGBA waves are
   converted where they are made. Only a colour whose 8-bit YUV differs between the two matrices
   (`is_neutral_color()`: not a grey, not graphics.py's near-black 101418) changes a command, so the
-  default black pads, white text and black/grey boxes plan what they did. Not converted: a GIF export
-  (untagged, and palettegen reads the pad back with the BT.601 it was drawn in), a prores or HDR line,
+  default black pads, white text and black/grey boxes plan what they did -- except, before 7.1, on a
+  full-range picture in a plain format (next entry), where greys were drawn in the wrong range too.
+  Not converted: a GIF export (its pad, if a GIF preset ever had one, would be drawn and read back
+  with the same BT.601), a prores or HDR line,
   a caller's own `--ass` file (its colours and YCbCr header are the file's, as libass/FFmpeg read
-  them), and the PNG contact sheets of `look.py`/`scenes.py` (RGB outputs, not tagged video). Code:
+  them), and the drawn marks on the PNG contact sheets of `look.py`/`scenes.py` (RGB outputs, not
+  tagged video; since #410 their picture is read as BT.709, so `look.py --safe`'s red shading, drawn
+  by drawbox in BT.601, is a few codes off on an untagged source). Code:
   `_common/color.py` (`is_neutral_color`, `rgb_island`), `_common/decision.py` (`drawn_chain`,
   `pad_filters`), and each drawing tool. Tests: `test_a_pad_fill_or_background_lands_in_the_bt709_its_output_is_tagged_with`,
   `test_drawn_text_and_boxes_land_in_the_bt709_their_output_is_tagged_with`,
   `test_a_picture_that_only_passes_through_keeps_its_pixels`, `test_drawn_colours_are_drawn_in_bt709`.
+- **Where pictures are mixed, or drawn on before FFmpeg 7.1, a full-range picture is taken to limited
+  range first (#410).** Full range comes as a `yuvj` format (H.264/HEVC/JPEG), which every `scale`
+  and `format=yuv420p` here converts by name, or as a plain format tagged `pc` (VP9 and AV1 full
+  range, any 10-bit full range), which passes through untouched. concat, xfade, xstack and overlay
+  mix samples, not colours, so such a clip beside a limited one in `join`, `multicam`, `grid`, `broll`
+  or `overlay --video` was shown in the other's range (C03028 came out C9251B on 6.1), and so were the
+  limited-range RGB layers #333 converts (graphics.py's boxes and bars, emoji, `overlay --image`)
+  over a full-range main (30B050 came out 37A757). Each such picture's chain now ends with
+  `scale=out_range=tv` (`range_chain()`, `layer_base_chain()`; a `yuvj` one also gets its plain format
+  name), so every picture the filter mixes is limited and the output is limited, tagged so. The input
+  range is left to `scale`, which reads it from each frame: 6.1's scale already turns a full-range
+  plain-format frame limited at any resize, so a stated `in_range=pc` would convert some frames twice.
+  Before 7.1 `ff_draw` also takes the range from the pixel format alone, so black was drawn 101010 and
+  white EBEBEB on such a picture, and `rgb_island()` read a picture 6.1 had already made limited (or a
+  10-bit one, drawn on as 8-bit) as full range, oversaturating a colour; `drawn_chain()` takes it to
+  limited range there and draws in limited range, greys included. 7.1+ draws in the link's range and
+  its drawing commands are unchanged. A one-input re-encode with no drawing keeps the range it had
+  ("The range is left as it is" above still holds for the matrix conversion). Not done for an HDR or
+  prores line, as `matrix_chain()`. Code: `_common/color.py` (`is_full_range`,
+  `limited_range_filter`, `as_limited`), `_common/decision.py` (`range_chain`, `layer_base_chain`,
+  `drawn_chain`). Tests: `test_mixing_tools_take_a_full_range_clip_to_limited_range`,
+  `test_a_colour_drawn_on_a_full_range_picture_lands_in_its_range`,
+  `test_converted_layers_on_a_full_range_main_land_in_its_range`, `test_audit_g_colour_plans`,
+  `test_drawn_colours_are_drawn_in_bt709`.
+- **An untagged SDR source is labelled BT.709 where a tool turns it into RGB for a picture file
+  (#410).** `look.py`'s frames, compare images and contact sheet, `scenes.py --sheet` and
+  `export.py --preset gif` let FFmpeg convert to RGB, and that conversion reads "unknown" as BT.601
+  (C03028 came out B31F28) while every encoder line here takes untagged SDR as BT.709. The frames are
+  labelled first (`bt709_label_filter()`, tags only), as #333's mixing filters do; a tagged source is
+  read by its own tag, an HDR one is tone-mapped as before. Test:
+  `test_rgb_views_of_an_untagged_source_read_it_as_bt709`.
 - **`color.py --retag` rewrites the colour description the stream itself carries, and checks it.**
   H.264, HEVC, MPEG-2, AV1 and VP9 keep it in the bitstream (VUI, sequence header, frame header).
   Decoders, ffprobe included, read that before the container's `colr`/Colour. Through 2.10.10 the
@@ -326,6 +364,15 @@ exists. When a decision changes, edit the entry in the same PR.
 - **`--correct` converts through bt601 on both legs** (not bt709), because on every tested
   FFmpeg the 709 round trip through 8-bit 4:2:0 loses ~5 dB more than 601. Code:
   `color.py _rgb_stage()`. Test: `test_color_correct_identity_holds_on_a_bt709_tagged_source`.
+  `--temperature` at its default 6500 adds no term: `colortemperature=temperature=6500` is not an
+  identity (it tinted grey 808080 to 7E7E7B, #410). Test: `test_color_correct_defaults_leave_grey_grey`.
+- **`--lut` converts through BT.709 on both legs, in float RGB** (#410). A LUT maps the RGB the picture
+  really shows, so its legs are the picture's own matrix (BT.709, or BT.601/RGB already converted to
+  it on the encoder line), not --correct's working space. Left to libavfilter they disagreed (in by
+  the frame's tag, out by swscale's BT.601 default) and an identity LUT shifted every colour (2FAE4E
+  to 249A4B); with `gbrpf32le` an identity LUT returns what `--lut-strength 0` does on 6.1, 8- and
+  10-bit, limited and full range. A blend (`--lut-strength` below 1) is made in that RGB too. Code:
+  `color.py lut_legs()`. Test: `test_color_lut_identity_returns_the_picture`.
 
 ## Outputs and files
 
@@ -1814,13 +1861,14 @@ not a new file format this tool would have to maintain.
   both streams runs on 5.1.1, 6.1.1, 7.0.2, 8.0.1 and 8.1.3. A command
   compared with 2.10.8's differs by design. Code: `pad.main()`. Test:
   `test_pad_with_sound_is_one_filter_graph`.
-- **`silence.py` selects the sound with two `ametadata` filters, not `aselect`.** 8.0 and 8.0.1's
-  `aselect` passes every frame. The first `ametadata` tags a frame when the same `between()`
-  expression (as a timeline `enable`, so the same per-frame `t`) is true and the second keeps the
-  tagged frames, which is what `aselect` keeps. `asplit` + an `atrim` per range + `concat` was
-  tried and works, but costs about 81 command bytes per range against 56: at `--max-cuts 400` on
-  an hour-long file that is past Windows' 32767-character command line. `asegment`'s timestamp
-  mode compares pts with a sample count and is right only for a stream that starts at 0. Code:
+- **`silence.py` never selects the sound with `aselect`.** 8.0 and 8.0.1's `aselect` passes every
+  frame. Through 3.1.3 the tool tagged the kept frames with one `ametadata` and kept them with a
+  second, in one graph; `asplit` + an `atrim` per range + `concat` was rejected because at
+  `--max-cuts 400` its command passed Windows' 32767-character line. That one-graph render was
+  replaced for #409 (below): the kept ranges now go through `cut.py`'s `--segments --accurate`
+  re-cut, which trims each range from its own seeked input and runs at most 32 ranges per ffmpeg
+  call, so neither `aselect` nor the long command comes back. `asegment`'s timestamp mode compares
+  pts with a sample count and is right only for a stream that starts at 0. Code:
   `silence.main()`. Test: `test_silence_removal_cuts_the_sound_with_the_picture`.
 - **On 8.0, 8.0.1 and 8.1.0, a multi-line `graphics.py` label goes through libass under
   `--text-render auto`**, decided after the template has wrapped its labels (so `main()` runs
@@ -2369,8 +2417,11 @@ What was decided there:
   template that sets its own margin (`templates/podcast.json`, 0.15) keeps it. Test: the default
   check in `test_silence_reports_the_level_at_every_cut_and_warns_near_speech`.
 - **`--timemap` is an artifact, like `--edl`.** It is written beside the cut and not under
-  `--dry-run`. Its output times are the sums of the kept ranges, the same arithmetic the render
-  uses. Test: `test_silence_writes_a_map_from_source_to_output_times`.
+  `--dry-run`. Its output times are the sums of the ranges the render holds: with a picture, each
+  kept range with its bounds moved to the nearest frame time (the bounds the re-cut is given,
+  #409), with sound alone the kept range as asked. Tests:
+  `test_silence_writes_a_map_from_source_to_output_times`,
+  `test_silence_keeps_sync_and_its_time_map_over_many_ranges`.
 
 ## 2.23 — check.py --content's flashes and first-frame rows
 
@@ -2491,3 +2542,135 @@ What was decided there:
   preset). On a TS file with 40 bytes of video payload overwritten (never a TS header or table, so
   every ffmpeg version still opens it): 99 decode-error lines before, 100 after, no timestamp
   warnings either side. Same test.
+
+## 3.1.5 — both streams on one clock (#409)
+
+ffmpeg shifts every stream of an input by one constant, so a filter graph sees a sound that starts
+0.3 s after its picture at 0.3. Every item below had rebased a stream to its own first sample
+(`PTS-STARTPTS`), or cut each stream on its own grid, and lost that offset while reporting
+`verified: true`. Each now does what `cut.py --segments --accurate` does ("Both streams of a segment
+shift by one constant", above): both streams cut on the same bounds, shifted by the same constant,
+and a late sound padded with silence (`aresample=async=1:first_pts=0`), through the helpers in
+`_common/decision.py` (`stream_starts`, `frame_rate`, `grid_at_or_after`, `av_trim`,
+`av_clip_length`). Each was measured with a one-frame flash and a 40 ms beep at the same instant.
+
+- **`silence.py` renders through `cut.py`'s re-cut, without its declick fade.** The one-pass
+  select/ametadata graph rounded every kept range twice, the picture to whole frames and the sound
+  to whole AAC frames, so the errors added up: 150 ms over 21 ranges of a 61 s source, and the
+  `--timemap` with them; its `asetpts=N/SR` moved a late sound 280 ms early. `cut.join_from_source`
+  is exact on both and handles the late sound, the 32-input limit and the chunking, so the tool
+  calls it rather than a second copy. Each kept bound first moves to the nearest frame time (a
+  measured bound sits microseconds off a frame, and the re-cut's "first frame at or after" would
+  then drop that frame), so a range holds whole frames between its bounds; the old `between()` kept
+  both boundary frames, one frame more per range (7.1 s where 7.0 s was kept). The joins sit in the `--margin` the tool keeps, so `DECLICK_S` is 0 for it, as 2.17.2
+  decided. Code: `silence.main()`, `silence.rendered_ranges()`. Tests:
+  `test_silence_keeps_sync_and_its_time_map_over_many_ranges`,
+  `test_silence_keeps_a_late_sound_where_it_was`.
+- **`decode_pcm_mono` pads a sound that starts late, so its samples are on the file's clock.**
+  `sync.py` measured a track 0.3 s late at +2.279 s for +2.000 s, `--replace-audio` placed it 270 ms
+  late, and `multicam.py --audio` rebased the chosen camera's sound to its first sample. The decode
+  now ends in `aresample=async=1:first_pts=0` for every caller (scenes.py's envelopes and cut.py's
+  beat grid included, which were off the same way); `sync.py`'s writes and `multicam.py`'s audio
+  chain place the sound on its own file's clock before they delay it. Code:
+  `_common/probe.py` `decode_pcm_mono`, `sync.main()`, `multicam.main()`. Test:
+  `test_a_late_sound_is_measured_and_placed_on_its_files_clock`.
+- **`freeze.py` and `speedramp.py` cut on frame times and shift both streams together.** The head
+  starts at the first frame and every boundary is the first frame at or after the asked time; sound
+  before the first frame is dropped, as in a join. `freeze` was off by +279 ms (late sound) and
+  -100 ms (late picture); `speedramp` by +570 ms at 0.5x, the factor scaling the offset. Code:
+  `freeze.main()`, `speedramp.main()`. Tests: `test_freeze_keeps_a_late_sound_and_a_late_picture_in_sync`,
+  `test_speedramp_keeps_a_late_sound_in_sync`.
+- **`join.py` and `broll.py --audio b|mix` shift the sound by the picture's start.** #338 started
+  each clip's picture at 0, and the sound was rebased on its own, so a sound 0.3 s late joined
+  279 ms early; `broll` did the same with B's sound. A clip's length (`clip_length`, now
+  `av_clip_length`) counts where its sound ends from the first frame, so a late sound that runs past
+  the picture is not cut. Code: `join.clip_length()`, `join.main()`, `broll.main()`. Tests:
+  `test_join_keeps_a_late_sound_where_it_was`, `test_broll_b_audio_keeps_a_late_sound_in_sync`.
+- **`reverse.py` reverses both streams about one end, a frame time.** Each stream was reversed about
+  its own end: a sound 0.6 s longer than its picture came out 396 ms off. Both now start at the
+  first frame and end at the first frame time at or after the clip's length, the last frame held
+  and the sound padded. The end is a frame time because a stream copy's stated video length can
+  run past its last frame (7.517 s for frames that end at 7.5), which would leave the picture's end
+  a fraction of a frame from the sound's; such a clip gains one held frame. The reversed sound is
+  retimed by its samples (`asetpts=N/SR/TB`). Code: `reverse.main()`. Test:
+  `test_reverse_turns_both_streams_about_one_end`.
+- **`loop.py` repeats through the concat demuxer, not `-stream_loop`.** `-stream_loop` takes a
+  repeat's length from its streams' spans, leaving out the last video frame when there is sound, so
+  with a late sound each repeat lost a frame and the sound slid (795 of 810 frames, 43-51 ms). A
+  concat list naming the file once per repeat places each repeat at the file's duration. The concat
+  demuxer counts an MP4's hidden AAC priming into its start (-21 ms) where the MP4 demuxer does not,
+  and a frame-rate time base rounded the picture's 21 ms move to 33 ms, so the first frame's place
+  on the list's clock is measured (`concat_first_frame`, one ffprobe) and both streams shift by it;
+  `min_hard_comp=0.001` fills a late sound's gap at every repeat, however short. Code:
+  `loop.main()`. Test: `test_loop_keeps_a_late_sound_in_sync_on_every_repeat`.
+
+## 3.1.5 — square pixels, and the geometry audit (#411)
+
+- **A tool that sizes, crops, places or draws on the picture works on square pixels at the
+  display aspect; a tool that only re-encodes keeps the stored size and its SAR.** DV, HDV and
+  XDCAM 1440x1080, and DVD store non-square pixels (`sample_aspect_ratio`, which `probe.py` now
+  reports). Every scaling tool used to fit the stored size as if its pixels were square and then
+  `setsar=1`, so the picture came out squashed, and caption / overlay / graphics drew glyphs the
+  player then stretched 1.78x. Of the two consistent answers (normalise, or carry the SAR through
+  every graph), normalising is the one a filter graph can keep: `overlay`, `xstack`, `hstack`,
+  `concat`, `drawtext` and libass all place in stored pixels, so carrying the SAR would mean
+  correcting every coordinate and every font size in every tool. So the picture is scaled to
+  square pixels first, keeping its height (1440x1080 at 4:3 is 1920x1080; 720x480 at 8:9 is
+  640x480; the width rounds to even), and every size, rectangle and margin is in that frame --
+  the frame `look.py` shows and `cropdetect.py` measures, so `crop.py --x/--y/--width/--height`
+  and `redact.py` rectangles mean what a reader of the sheet sees. A tool that does not touch
+  geometry (`cut`, `color`, `denoise`, `pad`, `freeze`, `export --no-scale`, a stream copy) keeps
+  the stored size: the encoder writes the SAR through and the player shows it right. The scale is
+  said once in `notes` ("stores non-square pixels (SAR 16:9): its 360x360 picture was scaled to
+  640x360 square pixels"). Code: `_common.probe.display_size()`, `square_pixels()`,
+  `square_pixels_note()`, used by fit, export, crop, join, broll, multicam, insert, sequence,
+  grid, look, scenes --sheet, caption, overlay, graphics, redact, proxy, cropdetect, straighten,
+  waveform --image and render's timeline frame. Tests: `GeometryAuditTests` (test_editing.py),
+  `GeometryAuditPictureTests.test_text_tools_draw_on_square_pixels`,
+  `test_grid_squares_a_non_square_pixel_cell`, `GeometryAuditAnalysisTests.test_look_shows_a_non_square_pixel_source_at_its_display_aspect`,
+  `GeometryAuditDeliveryTests`.
+- **An EXIF-rotated still is sized as ffmpeg shows it, upright.** FFmpeg 6.1 already reads the
+  JPEG Orientation tag into the decoded frame's display matrix and autorotates on decode, but
+  `-show_streams` has no rotation for it, so `insert.py` cropped a landscape window out of a
+  portrait photo. `probe()` reads the first decoded frame's rotation for a still (an image2 or
+  `*_pipe` demuxer: one extra ffprobe of one frame) and reports it as `rotation`, so every tool's
+  existing rotation handling applies; the picture itself is left to ffmpeg's autorotate, exactly
+  as for a phone video (2.10.7). Code: `_common.probe._still_rotation()`. Test:
+  `test_insert_turns_an_exif_rotated_still_upright`.
+- **`overlay.py --text` wraps a line wider than the frame, and says so.** drawtext never wraps;
+  graphics.py and caption.py break text with the shared phrase wrapper, and overlay now does too,
+  between the side margins (an explicit `x,y` position counts from x) at `--font-size`, with
+  `slice_overlong`. Text that fits is unchanged; a wrapped run says "wrapped to N lines" in
+  `notes`, since the width is the averaged advance table's estimate. graphics.py's `title`,
+  `lower-third`, `chapter` and `bug` now go through its `wrapped()` as `sticker`, `hook` and `meme`
+  already did, and the lower-third bar widens (up to the margins) to the widest wrapped line.
+  Tests: `test_overlay_text_wraps_to_the_frame`, `test_graphics_title_wraps_a_long_title_and_subtitle`,
+  `test_graphics_lower_third_wraps_inside_the_margins_and_widens_its_bar`,
+  `test_graphics_chapter_chip_wraps_between_the_margins`.
+- **A grid label is drawn with a font that covers its own script, and a label wider than its
+  cell is shortened from the end with an ellipsis.** The label is right-aligned, so a long one
+  used to lose its start off the cell's left edge; the start is the part that tells takes apart.
+  `font_used` is the first label's choice; labels that needed different fonts are named in a
+  note. Thai is drawn by drawtext here (a filename label on a comparison artefact, not a
+  delivery), so its marks are not shaped. Tests: `test_grid_keeps_the_start_of_a_long_label`,
+  `test_grid_label_font_covers_its_script`.
+- **`freeze.py --at T` holds the frame shown at T** (the first frame whose time is at or after
+  T), not the frame before it, so a freeze on a cut holds the new shot. Test:
+  `test_freeze_at_holds_the_frame_shown_at_that_time`.
+- **hh:mm:ss:ff still counts from the file's first frame, not from a start timecode** (the time
+  grammar above is unchanged). When a four-part time reads past the end of a source that carries
+  a start timecode, the refusal's `hint` says so and names the frame from the file's start that
+  the source timecode is. Code: `_common.decision._remember_smpte_hint()`, `emit.die()`. Test:
+  `test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode`.
+- **look.py's contact sheet reads its stamps off the file's own timestamps** (`-copyts
+  -start_at_zero`), not pts plus the seek: an input `-ss` resets an MPEG-TS's timestamps
+  differently from an MP4's, and the sheet of a TS was stamped one seek late. `scenes.py --sheet`
+  picks each scene's first frame by its time, not by start x average fps as a frame number,
+  which named another frame on a variable-frame-rate source. `look.py --compare` letterboxes both
+  pictures into boxes as tall as the taller one instead of stretching the first to the second's
+  size. Tests: `test_contact_sheet_stamps_count_from_the_file_start_on_mpeg_ts`,
+  `test_scenes_sheet_picks_each_scene_start_by_time_on_vfr`, `test_compare_keeps_each_pictures_aspect`.
+- **broll.py scales an odd-sized A-roll to even up front** (`odd_dimensions_scaled_even`, the
+  runner's code): the runner's even-scale retry reaches a `-vf` only, and broll's
+  `filter_complex` failed unclassified. Test:
+  `test_broll_scales_an_odd_sized_a_roll_to_even_and_records_it`.

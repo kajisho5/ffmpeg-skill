@@ -23,6 +23,8 @@ import math
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common.emit import note
+from _common.probe import square_pixels, square_pixels_note
 
 
 def main() -> int:
@@ -77,6 +79,11 @@ def main() -> int:
         # nearest even value instead of leaving an odd width/height that the encoder would refuse.
         rotate = f"scale=iw*{s:.8f}:ih*{s:.8f},rotate={radians:.8f},crop=trunc(iw/{s:.8f}/2)*2:trunc(ih/{s:.8f}/2)*2"
 
+    # a rotation of non-square pixels is a shear on screen: the picture is squared at its
+    # display aspect first (#411)
+    if square_pixels(meta["video"]):
+        rotate = square_pixels(meta["video"]) + "," + rotate
+        note(square_pixels_note(meta["video"]))
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", rotate, "-map", "0:v:0"]
     if has_audio:
         cmd += ["-map", f"0:a:{args.audio_stream}?"]

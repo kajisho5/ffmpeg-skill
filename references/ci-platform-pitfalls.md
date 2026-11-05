@@ -178,8 +178,9 @@ these had ever shown up before.
   pads audio should do the same.
 - **FFmpeg 8.0 and 8.0.1's `aselect` passes every frame through** (its `activate` callback was lost
   in the filter conversion; fixed in 8.0.2/8.1). Nothing fails: the picture is cut and the sound is
-  not. silence.py tags the kept frames with `ametadata=mode=add:...:enable='<expr>'` and keeps them with
-  `ametadata=mode=select`; do not use `aselect` for removal.
+  not. Do not use `aselect` for removal: cut each range with `atrim` (silence.py re-cuts its ranges
+  through cut.py's `--segments --accurate` path; through 3.1.3 it tagged the kept frames with
+  `ametadata=mode=add` and kept them with `ametadata=mode=select`).
 - **FFmpeg 8.0, 8.0.1 and 8.1.0 draw the font's missing-glyph box at each line break of a multi-line
   `drawtext`** (each line is shaped with its newline; fixed in 8.0.2/8.1.1). `ffmpeg_version()` cannot
   tell 8.1.0 from 8.1.1; `drawtext_draws_newline_glyph()` reads the point release. graphics.py routes

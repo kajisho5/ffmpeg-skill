@@ -14,8 +14,8 @@ import argparse
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.color import (bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
-                           is_neutral_color, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
+from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
+                           is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.emit import die, record_fallback, refuse, warn
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -204,12 +204,46 @@ def time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
     the caller has one, and every parse failure is a `kind: input` refusal naming the flag (so
     `--json` callers get a failure document, never a traceback)."""
     try:
-        return parse_time(value, fps)
+        seconds = parse_time(value, fps)
     except MissingFpsError as e:
         die(f"{flag} {value!r}: {e}")
     except ValueError as e:
         die(f"{flag} {value!r}: {e} (use seconds, mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff at the source's fps or with an explicit @fps suffix)")
-    return 0.0  # unreachable
+    _remember_smpte_hint(value, flag, fps, seconds)
+    return seconds
+
+
+def _remember_smpte_hint(value: str, flag: str, fps: Optional[float], seconds: float) -> None:
+    """An hh:mm:ss:ff time counts from the file's first frame (00:00:00:00), not from a camera's
+    start timecode (docs/design-decisions.md, time grammar). When one reads past the end of a
+    source that carries a start timecode it was almost certainly typed off the source's own
+    burned-in or NLE timecode: keep a hint naming the frame it would be from the source's start,
+    which die() adds to the refusal a tool then raises for the out-of-range time (#411). The
+    grammar itself, and what a valid time means, are unchanged."""
+    tc = getattr(STATE, "source_timecode", None)
+    text = value.strip().rpartition("@")[0] if "@" in value else value.strip()
+    if not tc or len(text.split(":")) != 4:
+        return
+    start_tc, duration = tc
+    rate = fps
+    if "@" in value:
+        try:
+            rate = float(value.rpartition("@")[2])
+        except ValueError:
+            return
+    try:
+        start = parse_time(re.sub(r"[;.](\d+)$", r":\1", start_tc), rate)
+    except ValueError:
+        return
+    if not duration or seconds <= duration or seconds < start:
+        return
+    within = seconds - start
+    where = (f"{flag} {text} is {fmt_smpte_time(within, rate)} from the file's start"
+             if within <= duration else f"{flag} {text} is past the end of this {duration:.3f} s file even so")
+    prefix = (f"hh:mm:ss:ff times count from the file's first frame (00:00:00:00), not from the source's "
+              f"start timecode {start_tc}: ")
+    before = STATE.smpte_hint[len(prefix):] + "; " if STATE.smpte_hint and STATE.smpte_hint.startswith(prefix) else ""
+    STATE.smpte_hint = prefix + before + where
 
 
 def signed_time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
@@ -289,6 +323,81 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
         body = p[lead:len(p) - trail] if trail else p[lead:]
         p = "".join("\\\\" + c for c in p[:lead]) + body + "".join("\\\\" + c for c in p[len(p) - trail:] if trail)
     return p
+
+
+# ------------------------------------------------------- both streams on one clock (#409)
+#
+# ffmpeg shifts every stream of an input by one constant (the file's start_time), so a filter graph
+# sees a sound that starts 0.3 s after its picture at 0.3. A per-stream `PTS-STARTPTS` moved that
+# sound 0.3 s early. cut.py's re-cut is the reference: both streams are cut on the same bounds,
+# shifted by the same constant, and the audio is padded to the origin
+# (docs/design-decisions.md, "Both streams of a segment shift by one constant").
+
+def stream_starts(meta: Optional[Dict[str, Any]]) -> Tuple[float, float]:
+    """Where the video and the audio start on the clock a filter graph reads the input on (each
+    stream's start_time minus the file's); 0.0 for a stream whose start is unknown."""
+    from _common.emit import file_origin
+    meta = meta or {}
+    origin = file_origin(meta)
+    out = []
+    for kind in ("video", "audio"):
+        start = (meta.get(kind) or {}).get("start_time")
+        out.append(float(start) - origin if isinstance(start, (int, float)) else 0.0)
+    return out[0], out[1]
+
+
+def frame_rate(meta: Optional[Dict[str, Any]]) -> float:
+    """The video's frame rate as cut.py's grid takes it: r_frame_rate, else fps; 0.0 when unknown."""
+    v = (meta or {}).get("video") or {}
+    try:
+        num, _, den = str(v.get("r_frame_rate") or "").partition("/")
+        rate = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        rate = 0.0
+    if not 0 < rate <= 240:  # a time base (90000/1), not a rate
+        rate = float(v.get("fps") or 0.0)
+    return rate
+
+
+def grid_at_or_after(t: float, v0: float, rate: float) -> float:
+    """The time of the first frame at or after `t` on a constant-rate grid starting at `v0`."""
+    if not rate:
+        return t
+    return v0 + math.ceil((t - v0) * rate - 1e-6) / rate
+
+
+def av_trim(start: float, end: Optional[float], rate: float = 0.0, fill_gaps: bool = False) -> Tuple[str, str]:
+    """The video and the audio filters that cut one segment [start, end) of the graph clock out of
+    both streams and shift both by the same constant, so an offset between them survives; `end`
+    None runs to the stream's end. The picture's trim sits half a frame before each bound (the
+    bounds are frame times: grid_at_or_after), so no FFmpeg version rounds a boundary frame in or
+    out; the audio is padded to the segment's origin when it starts later. `fill_gaps` also fills
+    every later gap in the sound with silence, however short (aresample's default only fills one
+    longer than 0.1 s and stretches the sound by a sample a second for the rest)."""
+    half = 0.5 / rate if rate else 0.0
+    pad = "aresample=async=1:min_hard_comp=0.001:first_pts=0" if fill_gaps else "aresample=async=1:first_pts=0"
+    vend = f":end={end - half:.6f}" if end is not None else ""
+    aend = f":end={end:.6f}" if end is not None else ""
+    return (f"trim=start={start - half:.6f}{vend},setpts=PTS-{start:.6f}/TB",
+            f"atrim=start={start:.6f}{aend},asetpts=PTS-{start:.6f}/TB,{pad}")
+
+
+def av_clip_length(meta: Optional[Dict[str, Any]], fps: float) -> float:
+    """The one length a clip holds once both streams start at its first frame (av_trim from the
+    video's start): the video's, or where the sound ends when it runs more than a frame past the
+    picture (narration is never cut; an AAC tail adds no frame). The container duration is only the
+    fallback when the video's length is unknown (a pending input)."""
+    meta = meta or {}
+    v = (meta.get("video") or {}).get("duration")
+    a = (meta.get("audio") or {}).get("duration")
+    if not v:
+        return meta.get("duration") or 0.0
+    if a:
+        v0, a0 = stream_starts(meta)
+        a = a + a0 - v0  # where the sound ends, counted from the first frame
+    if a and fps and a > v + 1.0 / fps:
+        return a
+    return v
 
 
 def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> List[str]:
@@ -661,6 +770,28 @@ def label_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, An
     return f + "," if f else ""
 
 
+def range_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]]) -> str:
+    """For a picture that a mixing filter (concat, xfade, xstack, overlay) puts beside or under
+    another, encoded through video_args(line_meta): the conversion to limited range its chain
+    takes after its matrix_chain()/label_chain() ("<filter>," -- limited_range_filter), or "" (a
+    limited, RGB or HDR picture, or a line that does not tag BT.709). Every SDR picture such a
+    tool mixes is then limited range, whatever each one was: the filters mix samples, not colours."""
+    if STATE.codec == "prores" or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
+        return ""
+    f = limited_range_filter(meta)
+    return f + "," if f else ""
+
+
+def layer_base_chain(meta: Optional[Dict[str, Any]]) -> str:
+    """The chain in front of the picture `meta` probes where converted RGB layers (rgb_chain_to_bt709:
+    a still, an emoji PNG, a box of chroma) are overlaid on it: an untagged picture's BT.709 label
+    (label_chain) and, for a full-range one, its conversion to the limited range the layers are
+    made in (range_chain). "" when the line converts no layer (HDR, prores)."""
+    if not rgb_chain_to_bt709(meta):
+        return ""
+    return label_chain(meta, meta) + range_chain(meta, meta)
+
+
 def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva420p") -> str:
     """For a picture the tool's own graph has made RGB(A) -- a still's `format=rgba` chain
     (overlay.py --image, an emoji PNG) or an RGBA composite (waveform.py's --image plate) -- that
@@ -695,14 +826,25 @@ def drawn_chain(colour_chain: str, meta: Optional[Dict[str, Any]], colours: Sequ
 
     Unchanged: a chain whose colours are all greys (the same YUV under every matrix: the default
     black pads and white text), a line that does not tag BT.709 (HDR, prores). `labelled`: the
-    caller's graph already labels this picture (label_chain()) earlier in the same chain."""
+    caller's graph already labels this picture (label_chain()) earlier in the same chain.
+
+    Before 7.1 `ff_draw` also takes the range from the pixel format alone: full for `yuvj`, limited
+    for every other, so on a full-range picture in a plain format (VP9/AV1 full range, 10-bit full
+    range) even black and white were drawn limited (pad black read 101010, #410), and 6.1's scale
+    has often made such a picture limited before the drawing anyway. There the picture is first
+    taken to limited range (range_chain(), which reads the range from the frames), and the
+    drawing, the colours and rgb_island() all work in limited range. 7.1+ draws in the link's
+    range and is left as it is."""
     line = meta if line_meta == "same" else line_meta
+    pre = ""
+    if ffmpeg_version() < (7, 1) and not str(((meta or {}).get("video") or {}).get("pix_fmt") or "").startswith("yuvj"):
+        pre = range_chain(meta, line)
     if not draws_chroma(colours, line):
-        return colour_chain
+        return pre + colour_chain
     if ffmpeg_version() >= (7, 1):
         return ("" if labelled else label_chain(meta, line)) + colour_chain
-    pix_fmt, full = drawn_stream_format(meta)
-    return rgb_island(colour_chain, neutral_chain, pix_fmt, full, tag)
+    pix_fmt, full = drawn_stream_format(as_limited(meta) if pre else meta)
+    return pre + rgb_island(colour_chain, neutral_chain, pix_fmt, full, tag)
 
 
 def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium",

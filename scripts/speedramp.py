@@ -19,6 +19,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
+from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 
 MAX_SPEED = 20.0
@@ -89,15 +90,22 @@ def main() -> int:
     # the last factor. The end bound is omitted only when the stated end is the file's end
     # (within 50 ms): a trim a few milliseconds short of the last packet drops that packet.
     last_runs_to_eof = abs(segments[-1][1] - dur) <= 0.05
+    # Every boundary is a frame time and both streams of a segment are cut on it and shifted by the
+    # same constant before the speed change (#409), as cut.py's re-cut does. Rebasing each stream
+    # of each segment to its own first sample moved a sound that starts 0.3 s late 0.3 s early, and
+    # the factor scaled that (+570 ms at 0.5x). The first segment starts at the first frame.
+    v0 = stream_starts(meta)[0]
+    rate = frame_rate(meta)
+    bounds = [v0] + [grid_at_or_after(end, v0, rate) for _, end, _ in segments[:-1]]
     for i, (start, end, factor) in enumerate(segments):
         vlabel, alabel = f"v{i}", f"a{i}"
-        end_expr = f"{end:.3f}" if not (i == len(segments) - 1 and last_runs_to_eof) else None
-        trim = f"trim=start={start:.3f}" + (f":end={end_expr}" if end_expr else "")
-        vparts.append(f"[0:v]{trim},setpts=(PTS-STARTPTS)/{factor:.6f}[{vlabel}]")
+        to_eof = i == len(segments) - 1 and last_runs_to_eof
+        seg_end = None if to_eof else (bounds[i + 1] if i + 1 < len(bounds) else grid_at_or_after(end, v0, rate))
+        vtrim, atrim = av_trim(bounds[i], seg_end, rate)
+        vparts.append(f"[0:v]{vtrim},setpts=PTS/{factor:.6f}[{vlabel}]")
         labels.append(f"[{vlabel}]")
         if has_audio:
-            atrim = f"atrim=start={start:.3f}" + (f":end={end_expr}" if end_expr else "")
-            aparts.append(f"[0:a]{atrim},asetpts=PTS-STARTPTS,{atempo_chain(factor)}[{alabel}]")
+            aparts.append(f"[0:a]{atrim},{atempo_chain(factor)}[{alabel}]")
 
     if has_audio:
         concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(segments)))

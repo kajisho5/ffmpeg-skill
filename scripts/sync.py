@@ -34,6 +34,7 @@ from typing import Dict, List
 
 from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
+from _common.decision import stream_starts
 
 SR = 8000  # decode sample rate
 
@@ -355,6 +356,11 @@ def main() -> int:
         if abs(drift_ratio - 1.0) > 1e-7:
             # the second file runs long by drift_ratio -> play it faster by that ratio (pitch shift is ~ppm, inaudible)
             drift_af = [f"asetrate={sec_sr * drift_ratio:.6f}", f"aresample={sec_sr}"]
+        # the offset is measured between the files' clocks (decode_pcm_mono pads a late sound), so
+        # the second's sound is placed on its own clock first: one that starts 0.3 s after its
+        # file's start keeps that 0.3 s instead of being delayed from its first sample (#409).
+        # Only then, so the command for an ordinary file is the one it always was.
+        on_clock = ["aresample=async=1:first_pts=0"] if stream_starts(second_meta)[1] > 0.0005 else []
 
         if args.replace_audio:
             cmd = ffmpeg_base() + ["-i", args.reference]
@@ -367,7 +373,7 @@ def main() -> int:
             # its length instead of -shortest, which cut the reference's tail whenever the second
             # file started earlier (head_trim > 0) or was simply shorter
             ref_dur = probe(args.reference).get("duration")
-            af_parts = drift_af + ([f"adelay={delay_ms}:all=1"] if delay_ms > 0 else []) + ["apad"]
+            af_parts = on_clock + drift_af + ([f"adelay={delay_ms}:all=1"] if delay_ms > 0 else []) + ["apad"]
             cmd += ["-af", ",".join(af_parts)]
             cmd += aac_args() + (["-t", f"{ref_dur:.3f}"] if ref_dur else ["-shortest"]) + [output]
             proc = run(cmd, check=False)
@@ -391,7 +397,7 @@ def main() -> int:
                 if head_trim > 0:
                     cmd += ["-ss", f"{head_trim:.4f}"]
                 cmd += ["-i", args.second]
-                af_parts = list(drift_af)
+                af_parts = on_clock + drift_af
                 if delay_ms > 0:
                     af_parts.append(f"adelay={delay_ms}:all=1")
                 if has_video:

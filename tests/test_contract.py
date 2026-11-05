@@ -2316,6 +2316,22 @@ class ContractTests(unittest.TestCase):
                                                     "c2='255*gt(val,0)'[_dm];[_dp1][_dc2][_dm]maskedmerge"), island)
                 self.assertEqual(dc("drawtext=x=1", un, ["red"], tag="t7"),
                                  _common.rgb_island("drawtext=x=1", "null", "yuv420p", False, "t7"))
+            # #410: a full-range picture in a plain format (VP9/AV1 full range, 10-bit pc). Before 7.1
+            # ff_draw drew it in limited range (black 101010), so it is taken to limited range first and
+            # drawn there, greys included; 7.1+ draws in the link's range and plans what it did.
+            pc, pc10 = meta(color_range="pc"), meta(pix_fmt="yuv420p10le", color_range="pc")
+            for version in ((6, 1), (7, 0)):
+                _common._FFMPEG_VERSION = version
+                for m in (pc, pc10):
+                    self.assertEqual(dc(pad, m, ["black"], black), "scale=out_range=tv," + pad, (version, m))
+                    self.assertEqual(dc(pad, m, ["red"], black),
+                                     "scale=out_range=tv," + _common.rgb_island(pad, black, "yuv420p", False, "d"), (version, m))
+                self.assertEqual(dc(pad, full, ["black"], black), pad)  # yuvj: ff_draw reads full range from the format
+            for version in ((7, 1), (8, 1)):
+                _common._FFMPEG_VERSION = version
+                for m in (pc, pc10):
+                    self.assertEqual(dc(pad, m, ["black"], black), pad, (version, m))
+                    self.assertEqual(dc(pad, m, ["red"], black), "setparams=colorspace=bt709," + pad, (version, m))
             for version in ((6, 1), (8, 1)):
                 _common._FFMPEG_VERSION = version
                 self.assertEqual(dc(pad, un, ["black", "white@0.5", "0x808080", None], black), pad)  # greys
@@ -2337,7 +2353,8 @@ class ContractTests(unittest.TestCase):
             ("fit", [self.src, "--width", "320", "--height", "320", "--pad-color", "red"], 1, (1, 0), 0),
             ("fit", [self.src, "--width", "320", "--height", "320"], 0, (0, 0), 0),
             ("export", [self.src, "--preset", "reels", "--pad-color", "0x2878C8"], 1, (1, 0), 0),
-            ("export", [self.src, "--preset", "gif", "--pad-color", "red"], 0, (0, 0), 0),  # palettegen reads BT.601 back
+            # a GIF has no pad (480 px wide, no height); its untagged source is labelled BT.709 for palettegen (#410)
+            ("export", [self.src, "--preset", "gif", "--pad-color", "red"], 1, (0, 1), 0),
             ("pad", [self.src, "--start", "1", "--color", "red"], 1, (1, 0), 0),
             ("pad", [self.src, "--start", "1", "--color", "0x101010"], 0, (0, 0), 0),
             ("straighten", [self.src, "--degrees", "2", "--fit", "pad", "--fill-color", "0x00FF00"], 1, (1, 0), 0),
@@ -2369,6 +2386,67 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(commands.count("maskedmerge"), islands, commands)
                 self.assertEqual(commands.count("setparams=colorspace=bt709"), old_labels, commands)
                 self.assertEqual(commands.count(conv) - 2 * islands, convs, commands)  # an island converts twice
+
+    def test_audit_g_colour_plans(self):
+        """#410, planned: --lut's lut3d sits between explicit BT.709 legs (an identity LUT shifted every
+        colour); --correct leaves colortemperature out at its documented-unchanged 6500 K; a full-range
+        clip in a plain format is taken to limited range by every tool that mixes it with another (and a
+        limited one plans what it did); a converted layer's main is taken there too; look.py and a GIF
+        label an untagged source BT.709 for their RGB; a 1x1 grid is refused before ffmpeg runs
+        (xstack takes two inputs or more)."""
+        def meta(**v):
+            return {"file": "src", "video": dict({"bt2020_or_hdr": False}, **v)}
+        rc, lim = _common.range_chain, "scale=out_range=tv,"
+        self.assertEqual(rc(meta(pix_fmt="yuv420p", color_range="pc"), None), lim)
+        self.assertEqual(rc(meta(pix_fmt="yuv420p10le", color_range="pc"), None), lim)
+        self.assertEqual(rc(meta(pix_fmt="yuvj420p", color_range="pc"), None), "scale=out_range=tv,format=yuv420p,")
+        self.assertEqual(rc(meta(pix_fmt="yuvj444p"), None), "scale=out_range=tv,format=yuv444p,")
+        for m in (meta(pix_fmt="yuv420p"), meta(pix_fmt="yuv420p", color_range="tv"), meta(pix_fmt="rgb24", color_range="pc"),
+                  meta(pix_fmt="yuv420p10le", color_range="pc", bt2020_or_hdr=True), meta(), None):
+            self.assertEqual(rc(m, None), "", m)
+        self.assertEqual(rc(meta(pix_fmt="yuv420p", color_range="pc"), meta(bt2020_or_hdr=True)), "")  # an HDR line
+        self.assertEqual(_common.as_limited(meta(pix_fmt="yuvj420p", color_range="pc"))["video"]["pix_fmt"], "yuv420p")
+        self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_range="pc")), "setparams=colorspace=bt709," + lim)
+        self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_space="bt709")), "")
+
+        pc = OUT / "c_source_pc.mkv"
+        if not pc.exists():
+            ffmpeg("-i", self.src, "-t", "2", "-vf", "scale=out_range=pc,format=yuv420p", "-c:v", "ffv1", "-color_range", "pc",
+                   "-c:a", "pcm_s16le", pc)
+        cube = OUT / "c_identity.cube"
+        cube.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        legs = ("scale=in_color_matrix=bt709,format=gbrpf32le", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p")
+        cases = [  # (tool, args, {string in the plan: how many times})
+            ("color", [self.src, "--lut", cube], {legs[0]: 1, legs[1]: 1}),
+            ("color", [self.src, "--lut", cube, "--lut-strength", "0.4"], {legs[0] + ",split[o][g]": 1, legs[1]: 1}),
+            ("color", [self.src, "--correct"], {"colortemperature": 0}),
+            ("color", [self.src, "--correct", "--temperature", "5600"], {"colortemperature=temperature=5600": 1}),
+            ("join", [self.src, pc], {lim: 1}),
+            ("join", [pc, self.camb, "--transition", "fade"], {lim: 1}),
+            ("join", [self.src, self.camb], {"out_range": 0}),
+            ("grid", [pc, self.src, "--cols", "2", "--rows", "1"], {lim: 1}),
+            ("multicam", [self.src, pc, "--switch", "0-1:1"], {lim: 1}),
+            ("broll", [pc, "--insert", self.src, "--at", "0.5", "--duration", "0.5"], {lim: 1}),
+            ("broll", [self.src, "--insert", pc, "--at", "0.5", "--duration", "0.5"], {lim: 1}),
+            ("overlay", [pc, "--video", self.src], {lim: 1}),
+            ("overlay", [pc, "--image", self.logo], {lim: 1}),
+            ("overlay", [self.src, "--image", self.logo], {"out_range=tv,": 1}),  # the logo's own conversion only
+            ("look", [self.src, "--at", "1"], {"setparams=colorspace=bt709:range=tv,scale=": 1}),
+            ("export", [self.src, "--preset", "gif"], {"[0:v]setparams=colorspace=bt709:range=tv,fps=12": 1}),
+        ]
+        for k, (name, args, want) in enumerate(cases):
+            with self.subTest(tool=name, args=[Path(str(a)).name for a in args]):
+                ext = {"look": ".png", "export": ".gif"}.get(name, ".mp4")
+                proc = tool(name, *args, "-o", self.out(f"audit_g_{k}{ext}"), "--dry-run", "--json", check=False)
+                self.assertEqual(proc.returncode, 0, proc.stderr[-600:])
+                commands = " ".join(json.loads(proc.stdout)["commands"])
+                for s, count in want.items():
+                    self.assertEqual(commands.count(s), count, f"{s!r} in {commands}")
+        proc = tool("grid", self.src, "--cols", "1", "--rows", "1", "-o", self.out("audit_g_1x1.mp4"), "--json", check=False)
+        self.assertEqual(proc.returncode, 1)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["error"]["kind"], doc["commands"]), ("input", []), doc)
+        self.assertIn("at least two", doc["error"]["message"])
 
     def test_json_success_and_failure_shapes_and_exit_codes(self):
         doc = json.loads(tool("cut", self.wav, "--start", "1", "--end", "3", "-o", self.out("shape.wav"), "--json").stdout)
@@ -3580,14 +3658,17 @@ class ContractTests(unittest.TestCase):
     def test_look_sheet_timecode_counts_from_the_seek(self):
         """A contact sheet starts reading at half a slice (-ss before -i), which resets pts to 0 at
         the seek point: the burned-in labels were half a slice early (8 s, 3x2: a tile showing
-        0.667 s labelled 0.000). The timecode now adds the seek back; a sheet that starts at 0
-        (a clip with only a handful of frames) keeps the plain pts."""
+        0.667 s labelled 0.000). 1.x added the seek back, which an MPEG-TS's seek does not reset
+        the same way (#411): the sheet now keeps the file's own timestamps counted from its start
+        (-copyts -start_at_zero) and stamps the plain pts; a sheet that starts at 0 (a clip with
+        only a handful of frames) does the same."""
         doc = json.loads(tool("look", self.src, "--tiles", "3x2", "--dry-run", "--json",
                               "-o", self.out("tc_sheet.png")).stdout)
         cmd = doc["commands"][0]
         seek = re.search(r"-ss (\d+\.\d+) ", cmd).group(1)
         self.assertGreater(float(seek), 0)
-        self.assertIn(f"pts\\:hms\\:{seek}", cmd)
+        self.assertIn("-copyts -start_at_zero -ss", cmd)
+        self.assertIn("pts\\:hms}", cmd)
         one = self.out("tc_one_frame.mp4")
         ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-frames:v", "1", "-c:v", "libx264",
                "-preset", "veryfast", "-pix_fmt", "yuv420p", one)
@@ -4297,16 +4378,17 @@ def garbage_payload(p):
         self.assertTrue(any(d["code"] == "cut_near_sound" for d in hard["diagnostics"]["warnings"]))
 
     def test_silence_time_map_and_cut_levels_hold_at_the_edges(self):
-        """Review of the 2.22 change: the map advanced by unrounded lengths while the render cuts on
-        millisecond-rounded bounds; a filler merged into a silence exempted the silence's own edge
+        """Review of the 2.22 change: the map advanced by unrounded lengths while the render cut on
+        millisecond-rounded bounds (since #409 the render cuts on the exact frame times the map is
+        built from, so the map advances by exact lengths again); a filler merged into a silence exempted the silence's own edge
         from the warning; a mono downmix read an antiphase stereo cut as silence; a failed decode
         read as digital silence; --timemap replaced an existing file without --overwrite."""
         import importlib
         silence = importlib.import_module("silence")
         tm = silence.time_map([(0.0, 1.0004), (2.0006, 3.0)], 3.0)
         a, b = tm["kept"]
-        self.assertEqual((a["output_end"], b["output_start"]), (1.0, 1.0))
-        self.assertEqual(round(b["output_end"] - b["output_start"], 3), round(b["source_end"] - b["source_start"], 3))
+        # the output advances by each held range's exact length (1.0004 + 0.9994), rounded only to print
+        self.assertEqual((a["output_end"], b["output_start"], b["output_end"]), (1.0, 1.0, 2.0))
         # left and right in antiphase: a mono mix is digital silence, either channel is not
         wav = self.out("anti.wav")
         ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.3*sin(2*PI*440*t)|-0.3*sin(2*PI*440*t)':s=48000:d=3", wav)

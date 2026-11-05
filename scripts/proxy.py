@@ -26,6 +26,8 @@ import argparse
 import sys
 
 from _common import add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, fmt_secs
+from _common.emit import note
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 
 def even(n: float) -> int:
@@ -56,15 +58,17 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    sw, sh = meta["video"]["width"], meta["video"]["height"]
-    if meta["video"].get("rotation") in (90, -90, 270, -270):
-        sw = sh
+    # the displayed width: rotation applied, non-square pixels squared first (#411)
+    sw = display_size(meta["video"])[0]
+    square = square_pixels(meta["video"])
+    if square:
+        note(square_pixels_note(meta["video"]))
     has_audio = bool(meta.get("audio")) and not args.no_audio
 
     out_w = even(sw * args.scale) if args.scale is not None else even(args.width)
     output = args.output or default_output(args.input, "proxy")
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", f"scale={out_w}:-2"]
+    cmd = ffmpeg_base() + ["-i", args.input, "-vf", (square + "," if square else "") + f"scale={out_w}:-2"]
     cmd += video_args(meta, args.crf, "veryfast")
     cmd += cfr_args(meta, args.fps)
     cmd += ["-map", "0:v:0"] + (["-map", "0:a:0", "-c:a", "aac", "-b:a", "96k"] if has_audio else ["-an"])

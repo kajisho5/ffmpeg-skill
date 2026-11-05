@@ -70,7 +70,8 @@ from _common.emit import (
 from _common.probe import (
     analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
     _fraction, keyframes_near, classify_frame_timing, measure_frame_timing, SCORE_RE, SIL_RE, decode_gray_frames,
-    measured_level_dbfs, AUDIO_MEDIA_EXT, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output
+    measured_level_dbfs, AUDIO_MEDIA_EXT, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output,
+    display_size, pixel_aspect, square_pixels, square_pixels_note
 )
 from _common.decision import (
     aac_args, add_pad_fill_args, aspect_ratio, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
@@ -84,7 +85,7 @@ from _common.decision import (
     _onset_strength, _pick_onsets, _autocorrelation_peak, _grid_score,
     brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
     fmt_secs, fmt_smpte_time, fmt_srt_time, frame_size, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
-    signed_time_arg, source_codec_video_args, drawn_chain, draws_chroma, label_chain, matrix_chain, rgb_chain_to_bt709, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
+    signed_time_arg, source_codec_video_args, drawn_chain, draws_chroma, label_chain, layer_base_chain, matrix_chain, range_chain, rgb_chain_to_bt709, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
 from _common.asr import (
     ASR_ENGINES, ASR_INSTALL_HINT, _asr_run, die_no_engine, parse_srt, transcribe, _transcribe_in,
@@ -93,7 +94,7 @@ from _common.asr import (
 )
 from _common.color import (
     bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, color_hex, _COLOR_TOKEN_RE, drawn_stream_format, fold_bt709_matrix,
-    is_neutral_color, is_rgb, NON_BT709_MATRICES, rgb_island, rgb_to_bt709_filter, _sdr_bt709, validate_color
+    as_limited, is_full_range, is_neutral_color, is_rgb, limited_range_filter, NON_BT709_MATRICES, rgb_island, rgb_to_bt709_filter, _sdr_bt709, validate_color
 )
 from _common.text import (
     ADVANCE_EM, BIDI_SCRIPTS, _char_em, char_script, default_font_file, detect_script, drawtext_boxborderw, drawtext_center_align, drawtext_fontfile,
@@ -215,7 +216,7 @@ __all__ = [
     "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote", "sibling_temp", "still_input_args",
     "_SIGNALS_INSTALLED", "signed_time_arg", "_stage_existing_output", "STATE", "SVT_PRESET", "text_width_em",
     "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "validate_color", "verify_output",
-    "source_codec_video_args", "drawn_chain", "draws_chroma", "drawn_stream_format", "is_neutral_color", "rgb_island", "label_chain", "matrix_chain", "rgb_chain_to_bt709", "bt709_label_filter", "rgb_to_bt709_filter", "is_rgb", "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
+    "source_codec_video_args", "drawn_chain", "draws_chroma", "drawn_stream_format", "is_neutral_color", "rgb_island", "label_chain", "layer_base_chain", "matrix_chain", "range_chain", "as_limited", "is_full_range", "limited_range_filter", "rgb_chain_to_bt709", "bt709_label_filter", "rgb_to_bt709_filter", "is_rgb", "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
     "_x264_raw", "_ZWJ",
     "absorb_stage", "audit", "note", "_plan_unbound_inputs", "record_fallback", "record_skip", "refuse", "warn",
     "ASR_ENGINES", "ASR_INSTALL_HINT", "_asr_run", "die_no_engine", "parse_srt", "transcribe",
@@ -229,5 +230,6 @@ __all__ = [
     "PENALTY_IDEOGRAPHS", "PENALTY_NEUTRAL", "PENALTY_OKURIGANA", "PENALTY_PARTICLE", "PENALTY_SENTENCE_END",
     "_rebalance", "_rebalance_phrase", "SAFE_WIDTH_FRACTION", "_split_hyphens", "_slice_atom", "_particle_ends",
     "_particle_starts", "wrap_text", "wrap_variants", "WRAP_MODES",
-    "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION", "ass_units_local"
+    "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION", "ass_units_local",
+    "display_size", "pixel_aspect", "square_pixels", "square_pixels_note"
 ]
