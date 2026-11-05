@@ -38,7 +38,8 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
                     *, check: bool = True) -> List[float]:
     """Decode (part of) a file's audio to mono float samples in [-1, 1) at `sample_rate` via a
     single ffmpeg pass under --timeout. Shared by scenes.py (audio envelope for cut scoring) and
-    sync.py (cross-correlation); an undecodable input is kind ffmpeg when check=True, else []."""
+    sync.py (cross-correlation); an undecodable input is kind ffmpeg when check=True, else [].
+    The samples are on the file's clock: a sound that starts late is padded at its head."""
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if start:
@@ -46,7 +47,10 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     cmd += ["-i", path]
     if seconds is not None:
         cmd += ["-t", f"{seconds:.3f}"]
-    cmd += ["-vn", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
+    # first_pts=0 pads a sound that starts after the file's start (or after `start`) with silence,
+    # so sample i is at start + i / sample_rate on the file's clock: sync.py measured a track that
+    # starts 0.3 s late 0.279 s off, and --replace-audio placed it that far late (#409)
+    cmd += ["-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
         if check:

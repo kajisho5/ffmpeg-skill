@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _is_faststart, _no_fontconfig, png_size, script, sh  # noqa: E402
+from _fixtures import make_tones_take  # noqa: E402
 from _common import default_font_file, font_for_script, probe  # noqa: E402
 import importlib  # noqa: E402
 content_probe = importlib.import_module("_common.probe")  # the module: `_common.probe` is also a function
@@ -193,6 +194,20 @@ class AnalysisTests(MediaFixtures):
         data = json.loads(script("sync.py", self.src, same, "--json").stdout)
         self.assertAlmostEqual(data["offset_seconds"], 0.0, delta=5e-4)
         self.assertEqual(data["meaning"], "second starts together with the reference")
+
+    def test_a_late_sound_is_measured_and_placed_on_its_files_clock(self):
+        """#409: decode_pcm_mono did not pad a sound that starts after its file's start, so a take
+        whose clock starts 1.0 s into the reference and whose sound starts 0.3 s after its picture
+        measured +1.3 s (sample 0 taken for the file's 0), and --replace-audio placed the sound that
+        far off. The offset is between the files' clocks, and the written sound keeps it."""
+        ref = make_tones_take(OUT / "sync_clock_ref.mp4", dur=8)
+        take = make_tones_take(OUT / "sync_clock_take.mp4", start=1.0, audio_late=0.3, dur=7)
+        data = json.loads(script("sync.py", ref, take, "--json").stdout)
+        self.assertAlmostEqual(data["offset_seconds"], 1.0, delta=0.01, msg=data)
+        out = OUT / "sync_clock_replaced.mp4"
+        script("sync.py", ref, take, "--replace-audio", "-o", out)
+        again = json.loads(script("sync.py", ref, out, "--json").stdout)
+        self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
 
     def test_sync_replace_audio_stream_copy_writes_faststart_mp4(self):
         """Same shape as #275/#277: --replace-audio stream-copies the reference's video with

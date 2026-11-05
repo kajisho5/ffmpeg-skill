@@ -33,6 +33,7 @@ from typing import Dict, List, Tuple
 
 from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import record_fallback, warn
+from _common.decision import av_trim
 from sync import measure_offset
 
 ENERGY_WINDOW_S = 0.25  # --switch energy: loudness measured over this window on the reference timeline
@@ -308,7 +309,9 @@ def main() -> int:
     # applied before asetrate/aresample rescale that axis -- otherwise the trim lands at the wrong
     # point once the stream's timebase has already been stretched/compressed by the drift ratio
     # (mirrors sync.py, which seeks with -ss, an input-level operation, before its drift_af filters).
-    afx = [f"atrim=start={a_start:.4f}", "asetpts=PTS-STARTPTS"]
+    # shifted by a_start, not to its own first sample: a sound that starts after its file's start
+    # keeps that offset (padded with silence), as the offset was measured on the file's clock (#409)
+    afx = [av_trim(a_start, None)[1]]
     if abs(ratios[a] - 1.0) > 1e-7:
         sr = metas[a]["audio"].get("sample_rate") or 48000
         afx += [f"asetrate={sr * ratios[a]:.6f}", f"aresample={sr}"]

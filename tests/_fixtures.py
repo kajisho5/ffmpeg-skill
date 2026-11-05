@@ -52,6 +52,90 @@ def sh(*cmd, expect_fail=False, env=None):
     return proc
 
 
+# A/V sync fixtures (#409): a one-frame white flash and a 40 ms 1 kHz beep at the same instant,
+# every second from 0.5 s, so flash minus beep is the A/V offset. `talk` adds three quiet "speech"
+# stretches with silence between them for silence.py, and moves the flash/beep into each one.
+_FLASH = "lt(mod(t-0.5\\,1)\\,0.03)*gte(t\\,0.5)"
+_BEEP = "if(lt(mod(t-0.5\\,1)\\,0.04)*gte(t\\,0.5)\\,sin(2*PI*1000*t)\\,0)"
+_TALK_FLASH = "between(t\\,1.2\\,1.23)+between(t\\,4.2\\,4.23)+between(t\\,7.2\\,7.23)"
+_TALK_BEEP = ("0.1*(between(t\\,0.5\\,2.0)+between(t\\,3.5\\,5.0)+between(t\\,6.5\\,8.0))*sin(2*PI*300*t)"
+              "+0.9*(lt(abs(t-1.22)\\,0.02)+lt(abs(t-4.22)\\,0.02)+lt(abs(t-7.22)\\,0.02))*sin(2*PI*1000*t)")
+
+
+def make_flash_beep(path, *, audio_late=0.0, video_late=0.0, video_short=0.0, talk=False):
+    """A tiny H.264/AAC clip whose flash and beep coincide. audio_late: the sound track starts that
+    much after the picture (its samples from that source time on); video_late: the picture starts
+    that much after the sound; video_short: the picture ends that much before the sound."""
+    dur = 9 if talk else 4
+    vsrc = (f"color=c=black:s=160x120:r=30:d={dur - video_short:g},"
+            f"drawbox=c=white:t=fill:enable='{_TALK_FLASH if talk else _FLASH}'")
+    asrc = f"aevalsrc='{_TALK_BEEP if talk else _BEEP}':s=48000:d={dur}"
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", vsrc]
+    if audio_late:
+        cmd += ["-itsoffset", f"{audio_late:g}", "-f", "lavfi", "-i", f"{asrc},atrim=start={audio_late:g},asetpts=PTS-STARTPTS"]
+    else:
+        cmd += ["-f", "lavfi", "-i", asrc]
+    if video_late:
+        cmd += ["-vf", f"trim=start={video_late:g}", "-fps_mode", "passthrough"]
+    sh(*cmd, "-c:v", "libx264", "-preset", "veryfast", "-g", "30", "-pix_fmt", "yuv420p",
+       "-c:a", "aac", "-b:a", "128k", path)
+    return path
+
+
+def make_tones_take(path, *, start=0.0, audio_late=0.0, dur=10.0):
+    """A camera take of the TONES bed (not periodic, so sync.py's correlation has one answer): its
+    picture and its clock start at `start` on the bed, and its sound track starts `audio_late`
+    after its picture, with the bed's samples from start + audio_late on."""
+    a0 = start + audio_late
+    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+       "-f", "lavfi", "-i", f"color=c=gray:s=160x120:r=30:d={dur:g}",
+       *(["-itsoffset", f"{audio_late:g}"] if audio_late else []),
+       "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000:d={start + dur:g},atrim=start={a0:g},asetpts=PTS-STARTPTS",
+       "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", path)
+    return path
+
+
+def flash_times(path):
+    """The time of every flash in `path`'s picture (a frame whose mean luma jumps above 100)."""
+    proc = sh("ffmpeg", "-hide_banner", "-nostats", "-loglevel", "info", "-i", path, "-map", "0:v:0",
+              "-vf", "signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG", "-f", "null", "-")
+    flashes, t, prev = [], None, False
+    for line in proc.stderr.splitlines():
+        m = re.search(r"pts_time:([-\d.]+)", line)
+        if m:
+            t = float(m.group(1))
+            continue
+        m = re.search(r"lavfi\.signalstats\.YAVG=([\d.]+)", line)
+        if m and t is not None:
+            on = float(m.group(1)) > 100
+            if on and not prev:
+                flashes.append(t)
+            prev = on
+    return flashes
+
+
+def av_offsets_ms(path, beep_db=-30):
+    """Flash minus nearest beep onset, in ms, for every flash in `path` (both read from the file's
+    own timestamps: the picture's luma per frame, the sound's silencedetect ends)."""
+    flashes = flash_times(path)
+    proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:a:0",
+              "-af", f"silencedetect=n={beep_db}dB:d=0.02", "-f", "null", "-")
+    beeps = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", proc.stderr)]
+    assert flashes and beeps, f"{path}: flashes {flashes}, beeps {beeps}"
+    return [round((f - min(beeps, key=lambda b: abs(b - f))) * 1000) for f in flashes]
+
+
+def stream_spans(path):
+    """{codec_type: (start_time, duration, frames or packets)} of `path`'s first video and audio."""
+    doc = json.loads(sh("ffprobe", "-v", "error", "-count_packets", "-show_entries",
+                        "stream=codec_type,start_time,duration,nb_read_packets", "-of", "json", path).stdout)
+    out = {}
+    for s in doc["streams"]:
+        out.setdefault(s["codec_type"], (float(s.get("start_time") or 0), float(s.get("duration") or 0),
+                                         int(s.get("nb_read_packets") or 0)))
+    return out
+
+
 def png_size(path) -> tuple:
     with open(path, "rb") as fh:
         head = fh.read(24)

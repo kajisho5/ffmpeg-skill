@@ -21,6 +21,7 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
+from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 
 
@@ -139,7 +140,12 @@ def main() -> int:
                 parts.append(f"[0:a:0]aformat=sample_rates=48000:channel_layouts=stereo{gate}[a0]")
                 layers.append("[a0]")
             for i, c in enumerate(cutaways):
-                parts.append(f"[{i + 1}:a:0]atrim=start={c['from']:.3f}:duration={c['length']:.3f},asetpts=PTS-STARTPTS,"
+                # B's sound is shifted by the same constant as its picture, whose first frame (the
+                # first at or after --from) lands on --at; rebasing the sound to its own first
+                # sample moved a track that starts 0.3 s late 0.279 s early (#409)
+                v0b = stream_starts(c["meta"])[0]
+                first = max(v0b, grid_at_or_after(c["from"], v0b, frame_rate(c["meta"])))
+                parts.append(f"[{i + 1}:a:0]{av_trim(first, c['from'] + c['length'])[1]},"
                              f"aformat=sample_rates=48000:channel_layouts=stereo,adelay={int(c['at'] * 1000)}|{int(c['at'] * 1000)}[ab{i}]")
                 layers.append(f"[ab{i}]")
             parts.append(f"{''.join(layers)}amix=inputs={len(layers)}:normalize=0:dropout_transition=0,atrim=duration={dur_a:.3f}[aout]")

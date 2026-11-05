@@ -4375,16 +4375,17 @@ def garbage_payload(p):
         self.assertTrue(any(d["code"] == "cut_near_sound" for d in hard["diagnostics"]["warnings"]))
 
     def test_silence_time_map_and_cut_levels_hold_at_the_edges(self):
-        """Review of the 2.22 change: the map advanced by unrounded lengths while the render cuts on
-        millisecond-rounded bounds; a filler merged into a silence exempted the silence's own edge
+        """Review of the 2.22 change: the map advanced by unrounded lengths while the render cut on
+        millisecond-rounded bounds (since #409 the render cuts on the exact frame times the map is
+        built from, so the map advances by exact lengths again); a filler merged into a silence exempted the silence's own edge
         from the warning; a mono downmix read an antiphase stereo cut as silence; a failed decode
         read as digital silence; --timemap replaced an existing file without --overwrite."""
         import importlib
         silence = importlib.import_module("silence")
         tm = silence.time_map([(0.0, 1.0004), (2.0006, 3.0)], 3.0)
         a, b = tm["kept"]
-        self.assertEqual((a["output_end"], b["output_start"]), (1.0, 1.0))
-        self.assertEqual(round(b["output_end"] - b["output_start"], 3), round(b["source_end"] - b["source_start"], 3))
+        # the output advances by each held range's exact length (1.0004 + 0.9994), rounded only to print
+        self.assertEqual((a["output_end"], b["output_start"], b["output_end"]), (1.0, 1.0, 2.0))
         # left and right in antiphase: a mono mix is digital silence, either channel is not
         wav = self.out("anti.wav")
         ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.3*sin(2*PI*440*t)|-0.3*sin(2*PI*440*t)':s=48000:d=3", wav)
