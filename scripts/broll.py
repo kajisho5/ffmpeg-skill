@@ -158,7 +158,7 @@ def main() -> int:
                 # sample moved a track that starts 0.3 s late 0.279 s early (#409)
                 v0b = stream_starts(c["meta"])[0]
                 first = max(v0b, grid_at_or_after(c["from"], v0b, frame_rate(c["meta"])))
-                parts.append(f"[{i + 1}:a:0]{av_trim(first, c['from'] + c['length'])[1]},"
+                parts.append(f"[{i + 1}:a:0]{av_trim(first, first + c['length'])[1]},"
                              f"aformat=sample_rates=48000:channel_layouts=stereo,adelay={int(c['at'] * 1000)}|{int(c['at'] * 1000)}[ab{i}]")
                 layers.append(f"[ab{i}]")
             parts.append(f"{''.join(layers)}amix=inputs={len(layers)}:normalize=0:dropout_transition=0,atrim=duration={dur_a:.3f}[aout]")

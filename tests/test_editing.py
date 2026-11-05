@@ -2668,6 +2668,16 @@ class OneClockTests(MediaFixtures):
                    "--duration", "2", "--audio", audio, "--preset", "veryfast", "-o", out, "--overwrite")
             self.assertInSync(av_offsets_ms(out), msg=f"broll --audio {audio}")
 
+    def test_broll_b_audio_lasts_the_whole_cutaway_when_from_is_between_frames(self):
+        """The sound started at B's first frame at or after --from but ended at --from + length,
+        so --from 1.01 at 30 fps left the last 23 ms of the cutaway without B's sound (#416 review)."""
+        src = self._fx("sync")
+        doc = json.loads(script("broll.py", src, "--insert", src, "--at", "1", "--from", "1.01", "--duration", "1",
+                                "--audio", "b", "-o", OUT / "clock_broll_from.mp4", "--dry-run", "--json").stdout)
+        m = re.search(r"\[1:a:0\]atrim=start=([0-9.]+):end=([0-9.]+)", json.dumps(doc))
+        self.assertIsNotNone(m, doc)
+        self.assertAlmostEqual(float(m.group(2)) - float(m.group(1)), 1.0, delta=0.001)
+
     def test_reverse_turns_both_streams_about_one_end(self):
         """Each stream was reversed about its own end: a sound 0.6 s past its picture came out
         +396 ms. Reversed, a flash frame [t, t+1/30) and a beep [t, t+0.04) start 6.7 ms apart."""
