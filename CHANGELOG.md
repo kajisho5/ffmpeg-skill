@@ -6,6 +6,7 @@
 
 ### Added
 
+- **`export.py --preset key-fill`** writes a fill and a key (the alpha as a luma matte) from one alpha source in one run, ProRes 422 HQ with the source's start timecode; it checks both hold the same frames, size, rate and length, checks the key's level against the source's alpha, and reports both SHA-256 hashes (#418).
 - **Alpha masters in `export.py`**: `--preset prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha` keep the source's alpha (a source without one is refused), take `--alpha-mode straight|premultiplied`, and read the alpha back from a written frame (`alpha` verification step) (#417). Image sequences (PNG/EXR) are not included.
 - **`loudness.py --versions streaming,ebu-r128,broadcast-jp`** (or `LUFS/TP` pairs) writes one normalised file per target from one master, each measured after; `verified` holds only when every version met its own target (#421).
 - **`export.py --preset dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444`**: DNxHR editing masters (.mov, PCM audio, source size and rate) beside `prores`. These presets and `prores` now read the written codec, profile and pixel format back as a `codec` verification step (#419). DNxHD at its fixed broadcast sizes and bitrates is not included.

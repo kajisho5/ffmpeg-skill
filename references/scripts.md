@@ -1907,7 +1907,7 @@ integrated loudness ended more than 1 LU from the target because of it.
 
 ### export.py — delivery presets
 ```
-export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444|prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha|h265|gif|copy
+export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444|prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha|key-fill|h265|gif|copy
                 [--fit pad|crop] [--no-scale] [--allow-long] [--crf N | --max-mb MB] [--normalize] [-o OUT]
 export.py INPUT --preset copy --repair [-o OUT]
 export.py --list
@@ -1919,6 +1919,12 @@ and `hap-alpha` (an ffmpeg built with snappy; width and height multiples of 4) r
 without alpha, take `--alpha-mode straight|premultiplied` (default straight, reported as
 `alpha_mode`), and compare the mean alpha of the first written frame with the source's (`alpha`
 step). PNG/EXR image sequences are not written by `export.py`.
+`--preset key-fill` writes a switcher's key/fill pair from an alpha source in one run: the fill
+(`-o`, the colour; `--alpha-mode premultiplied` premultiplies it) and the key (`<out stem>_key.mov`,
+the alpha as a luma matte: alpha 255 is video white, 0 black), both ProRes 422 HQ with the source's
+start timecode. It checks both have the same size, frame count, rate and length (`key_fill_pair`)
+and the key's level against the source's alpha (`key_level`), and reports both SHA-256 hashes
+(`fill_sha256`, `key.sha256`).
 `--repair` (2.24, `--preset copy` only) remuxes a damaged file: timestamps are regenerated
 (`-fflags +genpts`), packets flagged corrupt are dropped (`+discardcorrupt`), demuxing goes on past
 errors (`-err_detect ignore_err`) and negative timestamps are shifted to zero. The input is read,

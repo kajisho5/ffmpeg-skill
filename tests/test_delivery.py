@@ -71,6 +71,16 @@ class DeliveryTests(MediaFixtures):
                 self.assertEqual(doc["alpha_mode"], "straight")
                 step = next(s for s in doc["verification"] if s["step"] == "alpha")
                 self.assertAlmostEqual(step["measured"], 159.5, delta=2.0)
+        # #418: a key/fill pair holds the same frames; the key is the alpha as a luma matte
+        doc = json.loads(script("export.py", src, "--preset", "key-fill", "--json", "--overwrite",
+                                "-o", OUT / "alpha_fill.mov").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(doc["key"]["output"], str(OUT / "alpha_fill_key.mov"))
+        steps = {s["step"]: s for s in doc["verification"]}
+        self.assertTrue(steps["key_fill_pair"]["ok"])
+        self.assertAlmostEqual(steps["key_level"]["measured"], 159.5, delta=2.0)
+        self.assertEqual(len(doc["key"]["sha256"]), 64)
+        self.assertNotEqual(doc["key"]["sha256"], doc["fill_sha256"])
         doc = json.loads(script("export.py", src, "--preset", "qtrle", "--alpha-mode", "premultiplied", "--json",
                                 "--overwrite", "-o", OUT / "alpha_pm.mov").stdout)
         self.assertEqual(doc["alpha_mode"], "premultiplied")

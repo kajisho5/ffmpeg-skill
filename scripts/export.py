@@ -18,6 +18,7 @@ Presets:
   dnxhr-lb / dnxhr-sq / dnxhr-hq   DNxHR 8-bit 4:2:2 .mov, PCM 16-bit audio
   dnxhr-hqx DNxHR HQX 10-bit 4:2:2;  dnxhr-444  DNxHR 444 10-bit 4:4:4
             (editing masters at the source's size and rate, like prores)
+  key-fill  fill + key pair (<out>, <out stem>_key.mov) from an alpha source
   prores4444 / prores4444xq / qtrle / vp9-alpha / hap-alpha
             masters that keep the source's alpha (refused without one);
             --alpha-mode straight|premultiplied; alpha read back after
@@ -49,7 +50,8 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import square_pixels, square_pixels_note
-from _common.runner import ffmpeg_encoders, run_analysis as _run_analysis
+from _common.runner import ffmpeg_encoders, guard_sidecar, run_analysis as _run_analysis
+from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
@@ -129,6 +131,12 @@ PRESETS: Dict[str, Dict] = {
     "hap-alpha": {"w": None, "h": None, "ext": "mov", "alpha": True, "intermediate": True,
                   "video": ["-c:v", "hap", "-format", "hap_alpha"], "audio": ["-c:a", "pcm_s16le"], "max": None,
                   "expect": {"codec": "hap"}, "desc": "HAP Alpha (needs an ffmpeg built with snappy; size a multiple of 4), PCM audio"},
+    # Key and fill for a switcher's downstream keyer (#418): two ProRes 422 HQ files from one alpha
+    # source, the fill (colour) and the key (the alpha as a luma matte), frame for frame.
+    "key-fill": {"w": None, "h": None, "ext": "mov", "alpha": True, "intermediate": True, "keyfill": True,
+                 "video": ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"],
+                 "audio": ["-c:a", "pcm_s16le"], "max": None,
+                 "desc": "fill + key pair (<out> and <out stem>_key.mov), ProRes 422 HQ, frame for frame, for a switcher's keyer"},
     "h265": {"w": None, "h": None, "ext": "mp4", "video": ["-c:v", "libx265", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"], "audio": ["-c:a", "aac", "-b:a", "160k"], "max": None, "desc": "HEVC CRF 24, hvc1 tag, source resolution"},
     "gif": {"w": 480, "h": None, "ext": "gif", "video": [], "audio": [], "max": None, "desc": "480px palette GIF, 12fps"},
     "copy": {"w": None, "h": None, "ext": None, "video": ["-c:v", "copy"], "audio": ["-c:a", "copy"], "max": None, "desc": "stream copy, no re-encode (source codecs/container/colour tags unchanged)"},
@@ -184,6 +192,73 @@ def alpha_mean(path: str, codec: "str | None" = None, at: float = 0.0) -> "float
     if proc.returncode != 0 or not data:
         return None
     return sum(data) / len(data)
+
+
+def key_path(fill: str) -> str:
+    stem, _ = os.path.splitext(fill)
+    return f"{stem}_key.mov"
+
+
+def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[str], has_audio: bool,
+              source_alpha, notes: List[str]) -> int:
+    """--preset key-fill: one decode split into the fill (the colour, straight or premultiplied)
+    and the key (alphaextract: alpha 255 is video white, 0 black), both ProRes 422 HQ in one ffmpeg
+    run so they hold the same frames; the source's start timecode is written on both. Checked
+    after: the same frame count, size, rate and length, the key's mean level against the source's
+    alpha, and both files hashed (output_identity, key.identity)."""
+    key = key_path(output)
+    guard_sidecar(key, args.input, siblings=[output])
+    fill_chain = ",".join(vf + (["premultiply=inplace=1"] if args.alpha_mode == "premultiplied" else []) + ["format=yuv422p10le"])
+    key_chain = ",".join(vf + ["alphaextract", "format=yuv422p10le"])
+    tc = ((meta.get("timecode") or {}).get("value"))
+    tc_args = ["-timecode", tc] if tc else []
+    cmd = cmd + ["-filter_complex", f"[0:v:0]split[f][k];[f]{fill_chain}[fill];[k]{key_chain}[key]"]
+    cmd += ["-map", "[fill]"] + (["-map", "0:a:0"] if has_audio else []) + p["video"] + tc_args + cfr_args(meta)
+    cmd += (p["audio"] if has_audio else ["-an"]) + [output]
+    cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key]
+    run(cmd)
+    extra: Dict[str, object] = {"alpha_mode": args.alpha_mode or "straight", "key": {"output": key}}
+    if STATE.dry_run:
+        emit(output, **extra)
+        return 0
+    fill_m, key_m = probe(output, role="output"), probe(key, role="output")
+    fv, kv = fill_m["video"], key_m["video"]
+    pair = {k: [fv.get(k), kv.get(k)] for k in ("width", "height", "nb_frames", "r_frame_rate")}
+    pair["duration"] = [round(fill_m.get("duration") or 0, 3), round(key_m.get("duration") or 0, 3)]
+    same = all(a == b and a not in (None, 0) for a, b in pair.values())
+    steps = [{"step": "key_fill_pair", "property": "frames_size_rate_length", "ok": same, "measured": pair,
+              "provenance": "output_measurement"}]
+    key_level = _luma_mean(key)
+    steps.append({"step": "key_level", "property": "key_mean_vs_source_alpha", "ok": key_level is not None and source_alpha is not None
+                  and abs(key_level - source_alpha) <= 2.0, "expected": None if source_alpha is None else round(source_alpha, 2),
+                  "measured": None if key_level is None else round(key_level, 2), "tolerance": 2.0,
+                  "provenance": "input_premeasurement"})
+    extra["key"] = {"output": key, "identity": file_identity(key), "sha256": _sha256(key), "timecode": tc}
+    extra["fill_sha256"] = _sha256(output)
+    info(f"wrote {output} (fill) and {key} (key), {fv['width']}x{fv['height']}, {fv.get('nb_frames')} frames each")
+    emit(output, verification=steps, expect_streams={"video": 1, "audio": 1 if has_audio else 0}, **extra,
+         **({"notes": notes} if notes else {}))
+    return 0
+
+
+def _sha256(path: str) -> str:
+    """The whole file's SHA-256: a key/fill pair is handed to a playout system as two files that
+    must stay a pair, and the hashes let it check that neither was replaced."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _luma_mean(path: str) -> "float | None":
+    """The mean level (0-255, full range) of a file's first frame, on a 64x36 grey copy."""
+    proc = _run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                          "-frames:v", "1", "-vf", "format=gray,scale=64:36:flags=area", "-f", "rawvideo", "-"],
+                         check=False, text=False)
+    data = proc.stdout or b""
+    return sum(data) / len(data) if proc.returncode == 0 and data else None
 
 
 def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: str, spec: Dict, normalized: bool = False) -> None:
@@ -492,6 +567,8 @@ def main() -> int:
         emit(output, non_av_streams=non_av, dropped_non_av_streams=bool(non_av["dropped"]), **({"notes": notes} if notes else {}))
         return 0
 
+    if p.get("keyfill"):
+        return _key_fill(args, p, meta, output, cmd, vf, has_audio, source_alpha, notes)
     if p.get("alpha") and args.alpha_mode == "premultiplied":
         vf.append("premultiply=inplace=1")
     if vf:
