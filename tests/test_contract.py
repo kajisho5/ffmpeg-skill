@@ -6570,6 +6570,12 @@ class SideFileGuardTests(unittest.TestCase):
         self.assertEqual(doc["status"], "completed")
         self.assertTrue(literal.exists())
         self.assertEqual(numbered.read_bytes(), b"keep", "image2's sequence expansion did not reach shot1.png")
+        # a video (or a GIF) with a % in its name is not read by image2: no -pattern_type, which its
+        # demuxer would reject ("Option pattern_type not found")
+        clip = self.tmp / "take%d.mp4"
+        shutil.copy(self.src, clip)
+        doc = json.loads(tool("look", clip, "--at", "0.5", "-o", self.tmp / "take.png", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
         red, blue = self.tmp / "logo%d.png", self.tmp / "logo1.png"
         ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", "-update", "1", red)
         ffmpeg("-f", "lavfi", "-i", "color=blue:s=32x32", "-frames:v", "1", blue)

@@ -1716,11 +1716,20 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
     _remember_output(cmd)
 
 
+# extensions ffmpeg opens through the image2 demuxer, the only one that expands `%d` in a name
+# and the only one that has a `pattern_type` option (gif, avif, mp4... reject it: "Option
+# pattern_type not found")
+_IMAGE2_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".dpx", ".exr", ".tga",
+               ".ppm", ".pgm", ".pbm", ".pam", ".sgi", ".jp2", ".j2k", ".xbm", ".xpm", ".pcx", ".qoi")
+
+
 def still_input_args(path: str) -> List[str]:
-    """`-pattern_type none` for a still read through image2 whose name has a `%` in it (#408):
+    """`-pattern_type none` for a still read through image2 whose path has a `%` in it (#408):
     image2 otherwise reads `logo%d.png` as a numbered sequence and opens `logo1.png`, a file the
-    run's guards and fingerprints never looked at. Empty for every other name."""
-    return ["-pattern_type", "none"] if "%" in str(path) else []
+    run's guards and fingerprints never looked at. Empty for every other path, a video or a GIF
+    with a `%` in its name included: their demuxers never expand it and reject the option."""
+    p = str(path)
+    return ["-pattern_type", "none"] if "%" in p and os.path.splitext(p)[1].lower() in _IMAGE2_EXT else []
 
 
 def sibling_temp(dst: str, tag: str) -> str:
@@ -1729,7 +1738,12 @@ def sibling_temp(dst: str, tag: str) -> str:
     crosses a filesystem."""
     d, base = os.path.split(dst)
     stem, ext = os.path.splitext(base)
-    return os.path.join(d, f".{stem}.ffskill-{tag}-{os.getpid()}{ext}")
+    path = os.path.join(d, f".{stem}.ffskill-{tag}-{os.getpid()}{ext}")
+    n = 1
+    while os.path.lexists(path):  # a leftover of an earlier run with this pid: not ours to replace
+        n += 1
+        path = os.path.join(d, f".{stem}.ffskill-{tag}-{os.getpid()}-{n}{ext}")
+    return path
 
 
 _DRAWTEXT_TMPDIR: "Optional[str]" = None
