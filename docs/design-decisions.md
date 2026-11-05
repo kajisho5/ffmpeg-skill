@@ -62,7 +62,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — export.py --repair](#224--exportpy---repair)
 - [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
-- [3.1.6 — the same mechanisms, where the earlier fixes did not reach (#414)](#316--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
+- [Unreleased — the same mechanisms, where the earlier fixes did not reach (#414)](#unreleased--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 <!-- contents:end -->
 
 ## Time limits
