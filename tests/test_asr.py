@@ -485,6 +485,34 @@ class EngineRefusalTests(_SrtDir, _BridgeHarness, unittest.TestCase):
             _, kind, _ = self._refusal([], lambda: asr.transcribe_words_result("talk.mp4", engine=engine))
             self.assertEqual(kind, "missing_tool", engine)
 
+    def test_word_timings_from_silence_are_no_speech_not_a_build_without_them(self):
+        """#414: silence.py --filler --transcribe on silent audio blamed the whisper build."""
+        def faster(segments):
+            mod = type(sys)("faster_whisper")
+
+            class WhisperModel:
+                def __init__(self, *a, **k):
+                    pass
+
+                def transcribe(self, wav, **kw):
+                    return iter(segments), type("Info", (), {"language": "en"})()
+            mod.WhisperModel = WhisperModel
+            return mod
+        msg, kind, extra = self._refusal([], lambda: asr.transcribe_words_result("talk.mp4", "en"), faster_whisper=faster([]))
+        self.assertEqual((kind, extra["reason"], extra["engine"]), ("input", asr.NO_SPEECH_REASON, "faster-whisper"))
+        # text with no word timings is a build without them: the engine is returned, the caller refuses
+        spoke = type("Seg", (), {"text": " hello", "words": []})()
+        run = self._with([], lambda: asr.transcribe_words_result("talk.mp4", "en"), faster_whisper=faster([spoke]))
+        self.assertEqual((run.words, run.engine), ([], "faster-whisper"))
+        with tempfile.TemporaryDirectory() as d:
+            doc = Path(d, "o.json")
+            doc.write_text(json.dumps({"transcription": []}), encoding="utf-8")
+            self.assertTrue(asr._whisper_heard_nothing(str(doc), "transcription"))
+            doc.write_text(json.dumps({"transcription": [{"text": " hi", "tokens": []}]}), encoding="utf-8")
+            self.assertFalse(asr._whisper_heard_nothing(str(doc), "transcription"))
+            doc.write_text("not json", encoding="utf-8")
+            self.assertFalse(asr._whisper_heard_nothing(str(doc), "transcription"))
+
     def test_the_failure_line_reads_parakeet_mlx_errors_from_stdout(self):
         proc = subprocess.CompletedProcess([], 1, _FakeEngines.MLX_ERROR, "Fetching 5 files:   0%|\n")
         self.assertEqual(asr._failure_line(proc, errors_on_stdout=True),
@@ -1208,6 +1236,96 @@ class ParakeetEngineTests(MediaFixtures):
                                 "--engine", "parakeet.cpp", env=self.env()).stdout)
         self.assertEqual(doc["filler"]["source"], "parakeet:parakeet.cpp")
         self.assertEqual([r["word"] for r in doc["filler"]["removed"]], ["um"])
+
+
+class FakeWhisperCppTests(MediaFixtures):
+    """#414: caption.py / silence.py drive a fake whisper-cli that times the first loud sample of
+    the WAV it is given, on a PATH that holds only it and ffmpeg."""
+
+    FAKE = r"""
+        import json, struct, sys, wave
+        a = sys.argv[1:]
+        w = wave.open(a[a.index("-f") + 1]); n = w.getnframes(); rate = w.getframerate()
+        samples = struct.unpack("<%dh" % n, w.readframes(n))
+        onset = next((i for i, s in enumerate(samples) if abs(s) > 3000), None)
+        base = a[a.index("-of") + 1]
+        def ts(x):
+            ms = int(round(x * 1000)); h, r = divmod(ms, 3600000); m, r = divmod(r, 60000); s, ms = divmod(r, 1000)
+            return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
+        t = None if onset is None else onset / rate
+        if "-osrt" in a:
+            open(base + ".srt", "w").write("" if t is None else "1\n%s --> %s\nbeep\n\n" % (ts(t), ts(t + 0.5)))
+        if "--output-json-full" in a:
+            toks = [] if t is None else [{"text": " um", "offsets": {"from": int(t * 1000), "to": int(t * 1000) + 300}},
+                                         {"text": " hello", "offsets": {"from": int(t * 1000) + 300, "to": int(t * 1000) + 800}}]
+            segs = [{"text": " um hello", "tokens": toks}] if toks else []
+            json.dump({"result": {"language": "en"}, "transcription": segs}, open(base + ".json", "w"))
+        """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.bin = Path(tempfile.mkdtemp(prefix="ffskill_fakewcpp_"))
+        for tool in ("ffmpeg", "ffprobe", "fc-match", "fc-list"):
+            if shutil.which(tool):
+                os.symlink(shutil.which(tool), cls.bin / tool)
+        cli = cls.bin / "whisper-cli"
+        cli.write_text(f"#!{sys.executable}\n" + textwrap.dedent(cls.FAKE))
+        cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
+        cls.shim = Path(tempfile.mkdtemp(prefix="ffskill_nofw_"))
+        (cls.shim / "sitecustomize.py").write_text("import sys\nsys.modules['faster_whisper'] = None\n", encoding="utf-8")
+        d = Path(tempfile.mkdtemp(prefix="ffskill_latesnd_"))
+        cls.tmp = d
+        # a 0.4 s beep 0.7 s into a sound that starts 0.3 s after the picture: 1.0 s on the file's clock
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "sine=f=1000:d=0.4,adelay=700|700,apad=whole_dur=3.7,volume=0.9", "-c:a", "pcm_s16le", d / "beep.wav")
+        cls.late = d / "late.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=160x90:r=25:d=4",
+           "-itsoffset", "0.3", "-i", d / "beep.wav", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", cls.late)
+        cls.silent = d / "silent.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=160x90:r=25:d=3",
+           "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "3", "-c:v", "libx264", "-preset", "ultrafast",
+           "-c:a", "aac", cls.silent)
+        cls.mute = d / "mute.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=160x90:r=25:d=2",
+           "-c:v", "libx264", "-preset", "ultrafast", cls.mute)
+
+    @classmethod
+    def tearDownClass(cls):
+        for d in (cls.bin, cls.shim, cls.tmp):
+            shutil.rmtree(d, ignore_errors=True)
+        super().tearDownClass()
+
+    def env(self):
+        return dict(os.environ, PATH=f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin",
+                    PYTHONPATH=os.pathsep.join(p for p in (str(self.shim), os.environ.get("PYTHONPATH")) if p),
+                    **{asr.ASR_ENGINE_ENV: "whisper.cpp", asr.ASR_MODEL_ENV: ""})
+
+    def test_a_late_sound_is_transcribed_on_the_files_clock(self):
+        """The 16 kHz WAV was cut from the sound's first sample: a beep at 1.0 s was timed at 0.7."""
+        script("caption.py", self.late, "--transcribe", "--language", "en", "--fast", "--json",
+               "-o", OUT / "wcpp_late.mp4", env=self.env())
+        start = asr.parse_srt(str(OUT / "wcpp_late.srt"))[0][0]
+        self.assertAlmostEqual(start, 1.0, delta=0.03)
+        doc = json.loads(script("silence.py", self.late, "--filler", "--transcribe", "--filler-lang", "en",
+                                "--filler-list", "--json", env=self.env()).stdout)
+        self.assertAlmostEqual(doc["filler"]["removed"][0]["start"], 1.0 - 0.02, delta=0.03)
+
+    def test_silence_filler_on_silent_audio_is_no_speech(self):
+        proc = script("silence.py", self.silent, "--filler", "--transcribe", "--filler-lang", "en",
+                      "--filler-list", "--json", env=self.env(), expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["error"]["kind"], doc["reason"], doc["engine"]),
+                         ("input", asr.NO_SPEECH_REASON, "whisper.cpp"))
+        self.assertNotIn("word timestamps", doc["error"]["message"])
+
+    def test_caption_transcribe_without_a_sound_is_an_input_refusal(self):
+        for extra in ((), ("--dry-run",)):
+            proc = script("caption.py", self.mute, "--transcribe", *extra, "--json",
+                          "-o", OUT / "wcpp_mute.mp4", env=self.env(), expect_fail=True)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual(err["kind"], "input", err)
+            self.assertIn("no audio stream", err["message"])
 
 
 if __name__ == "__main__":

@@ -440,6 +440,9 @@ ERROR_REASONS = {
     "encoder_missing": "--codec av1/prores: the build's encoder list was read and has no encoder for the codec (kind missing_tool; details: {codec, encoders}); or ffmpeg itself reported \"Unknown encoder\" for the encoder the command named (kind ffmpeg; details: {name}; the hint points at doctor)",
     "asr_engine_missing": "kind missing_tool: --transcribe (caption.py, silence.py --filler) found no local speech-to-text engine; the message lists the install lines; details: {}",
     "encoder_list_unreadable": "--codec av1/prores: the build's encoder list could not be read, so whether it has the encoder is unknown (kind ffmpeg); details: {codec, encoders, error}",
+    "no_speech": "kind input: --transcribe (caption.py, silence.py --filler) ran a local speech engine that heard no speech in the input; details: {engine}; also top-level reason and engine",
+    "engine_failed": "kind input: --transcribe: an installed speech engine ran and failed (a named --engine, or every engine --engine auto found); details: {engine, detail | engines: [{engine, reason, detail}]}; also top-level reason, engine and detail/engines",
+    "english_only": "kind input: --transcribe under --engine auto found only Parakeet engines, which it runs for English speech only, and the language is not English; details: {engine, engines}; also top-level reason, engine and engines",
 }
 
 # The codes of the collector's records (docs/design-decisions.md, "Nothing happens silently"):
@@ -547,13 +550,23 @@ FONT_USED_SCHEMA = {
 }
 
 
+# the tools whose --json carries `dropped_non_av_streams` (a test reads the sources)
+NON_AV_STREAM_TOOLS = frozenset({"audio", "broll", "color", "cut", "deinterlace", "denoise", "export", "fit", "freeze",
+                                 "graphics", "join", "loudness", "overlay", "pad", "proxy", "redact", "speedramp",
+                                 "sphere", "straighten"})
+
+
 def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str, Any]:
     """What the tool prints on stdout with --json (keys observed in the implementation). `hw`: the
     tool takes --hw, so its `notes` can also carry a VideoToolbox encode's quality line."""
     if name == "probe":
         return {"type": "object", "description": "one probe document, or an array of them for several inputs",
                 "properties": {"file": {"type": "string"}, "format": {"type": "string"}, "duration": {"type": "number"}, "size_bytes": {"type": "integer"},
-                               "video": {"type": ["object", "null"]}, "audio": {"type": ["object", "null"]}}, "additionalProperties": True}
+                               "video": {"type": ["object", "null"]}, "audio": {"type": ["object", "null"]},
+                               "timecode": {"type": "object", "description": "3.0.0: the source's start timecode {value, drop_frame, source}: the first HH:MM:SS[:;.]FF timecode tag from the video stream, then a tmcd data stream, then the container; all three null when none carries one"},
+                               "chapters": {"type": "array", "description": "the container's chapter markers [{index, start, end, title}]"},
+                               "subtitle_stream_details": {"type": "array", "description": "every subtitle stream in file order [{index (the n of -map 0:s:n), codec, language, title}]"}},
+                "additionalProperties": True}
     base = {"status": {"enum": ["completed"]}, "output": {"type": ["string", "null"], "description": "path written, or null"},
             "dry_run": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}, "description": "every ffmpeg command line planned or run"},
             "probe": {"type": "object", "description": "probe of the output when a file was written"},
@@ -594,6 +607,13 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "speech": {"type": "array", "description": "--speech (1.18): [{time, speech_music_ratio}]"}}
     elif name == "silence":
         extra = {"silences": {"type": "array"}, "keep": {"type": "array"}, "input_duration": {"type": "number"}, "kept_duration": {"type": "number"}, "removed_seconds": {"type": "number"},
+                 "removed_seconds_total": {"type": "number", "description": "--filler: seconds removed in all, silence plus filler words (removed_seconds stays the silence alone)"},
+                 "cut_points": {"type": ["array", "null"], "description": "2.22: per cut {source_time, output_time, edge (out|in), rms_dbfs (the loudest channel 50 ms either side on the source; null for digital silence), filler (true on a removed filler word's edge)}; null when the source could not be decoded for it (cut_levels_unmeasured warning)"},
+                 "cut_warnings": {"type": ["array", "null"], "description": "the cut_points (not filler cuts) within 10 dB of --threshold: where to listen (a cut_near_sound warning); verified is unchanged"},
+                 "timemap": {"type": "string", "description": "--timemap FILE: the source-to-output time map written (JSON or CSV)"},
+                 "silence_kinds": {"type": "array", "description": "2.20: per detected silence, digital (at or below -90 dBFS) or below_threshold"},
+                 "silence_breakdown": {"type": "object", "description": "2.20: {digital, below_threshold}: the count and seconds of each, with the level that defines it"},
+                 "hint": {"type": "string", "description": "when nothing sat below --threshold: the track's measured level and the --threshold that would find its pauses"},
                  "speech_aware": {"type": "object", "description": "--speech-aware (1.18): {min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}"},
                  "filler": {"type": "object", "description": "--filler: {lang, source (whisper-json:FILE | whisper:ENGINE | parakeet:ENGINE), engine, transcription (with --transcribe: {engine, model, language, routing}), removed, removed_count, matched_untimed (listed words in the transcript with no usable timing, not removed), matched_too_long (listed words longer than a filler, kept), ...}"},
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "--filler --transcribe under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
@@ -651,6 +671,15 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "--boomerang on a source with audio: the audio was dropped"}}
     elif name == "cut":
         extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
+                 "mode": {"enum": ["copy", "hybrid", "accurate"], "description": "copy: nothing re-encoded at any stage, the join included; accurate: --accurate was asked for or forced; hybrid: asked for lossless but a segment or the join re-encoded anyway (reencode_reason says why)"},
+                 "requested_start": {"type": ["number", "null"], "description": "one segment: the requested start, clamped to the media's duration (null for --segments)"},
+                 "requested_end": {"type": ["number", "null"], "description": "one segment: the requested end, clamped to the media's duration (null for --segments)"},
+                 "requested_segments": {"type": ["array", "null"], "description": "--segments: [[start, end], ...] requested, clamped to the media's duration (null for one segment)"},
+                 "requested_duration": {"type": "number", "description": "the requested length, as expected_duration"},
+                 "output_duration": {"type": ["number", "null"], "description": "the written file's length, measured (null under --dry-run)"},
+                 "duration_delta_seconds": {"type": ["number", "null"], "description": "output_duration minus requested_duration (null under --dry-run)"},
+                 "nearest_keyframes": {"type": ["array", "null"], "description": "the keyframes within 5 s of a start whose stream copy snapped past --tolerance and was re-encoded (null otherwise)"},
+                 "snap": {"type": ["object", "null"], "description": "--snap beats: {mode, tolerance, confidence, tempo_bpm, grid, grid_points, moved, snapped, unchanged, source}; null otherwise"},
                  "dropped_audio_streams": {"type": "integer", "description": "audio tracks of the source this cut did not write (cut writes one, on a stream copy as on a re-encode); 0 for a source with one or none. A notes line and an audio_tracks_dropped warning say so too"},
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},
                  "precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
@@ -696,6 +725,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
     if name in ("overlay", "graphics", "caption", "grid"):
         extra["font_used"] = FONT_USED_SCHEMA
+    if name in NON_AV_STREAM_TOOLS and "dropped_non_av_streams" not in extra:
+        extra["dropped_non_av_streams"] = {"type": "boolean", "description": "true when the source's subtitle or data streams could not be kept and were left out (a non_av_streams_dropped fallback says why); export.py's non_av_streams lists them"}
     if name == "cropdetect":
         extra.update({"windows": {"type": "integer", "description": "sampled windows (--samples)"},
                       "windows_failed": {"type": "integer", "description": "windows ffmpeg could not decode and that were skipped (a cropdetect_windows_failed warning when > 0); every window failing is a kind ffmpeg failure"}})

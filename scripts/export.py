@@ -42,6 +42,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import square_pixels, square_pixels_note
+from _common.runner import subtitle_codec_for
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
@@ -142,19 +143,10 @@ def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: s
 
 # Text subtitle codecs ffmpeg can convert to the container's own text track: mov_text is the one
 # text track MP4/MOV hold, Matroska holds SubRip/ASS/WebVTT as they are but not mov_text.
-_TEXT_SUBTITLES = frozenset({"mov_text", "subrip", "srt", "ass", "ssa", "webvtt", "text"})
-_MP4_FAMILY = frozenset({"mp4", "m4v", "mov"})
-
-
-def _subtitle_codec(codec: str, out_ext: str) -> str:
-    """The -c:s for one source subtitle stream: copy when the output container holds it as it is,
-    else the container's own text format (a bitmap track is tried as a copy; a container that
-    refuses it is the fallback below)."""
-    if out_ext in _MP4_FAMILY and codec in _TEXT_SUBTITLES and codec != "mov_text":
-        return "mov_text"
-    if out_ext == "mkv" and codec == "mov_text":
-        return "srt"
-    return "copy"
+# the -c:s for one source subtitle stream (#380), shared with caption.py --mode mux (#414): copy
+# when the output container holds it as it is, else the container's own text format (a bitmap
+# track is tried as a copy; a container that refuses it is the fallback below)
+_subtitle_codec = subtitle_codec_for
 
 
 def _data_streams(path: str) -> List[Dict[str, object]]:

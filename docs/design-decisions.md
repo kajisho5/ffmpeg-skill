@@ -62,6 +62,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — export.py --repair](#224--exportpy---repair)
 - [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
+- [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 <!-- contents:end -->
 
 ## Time limits
@@ -2699,3 +2700,54 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
 - **`loop.py` has no repeat cap** (#416 review): the concat list costs one ~100-byte line per
   repeat against an output that costs a whole clip per repeat, so any count whose list strains
   memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.
+
+## 3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)
+
+- **`silence.py --margin` is kept around silences only, not around filler spans.** A filler cut is
+  the word plus `--filler-pad`; taking 0.2 s off each side as well turned every word narrower than
+  2 x `--margin` inside out (overlapping keep ranges, kept longer than the input, the word still
+  there and reported as removed). The margin is applied to each silence before the merge
+  (`inside_margin`), and a silence too narrow to hold two margins removes nothing. Code:
+  `silence.inside_margin()`, `silence.keep_ranges()`. Tests:
+  `test_filler_margin_does_not_swallow_a_short_filler`,
+  `test_a_silence_narrower_than_two_margins_removes_nothing`.
+- **A transcript is on the file's clock.** The speech engine's 16 kHz WAV (and `--karaoke`'s
+  word-energy decode) pads a sound that starts late (`aresample=async=1:first_pts=0`), as
+  `decode_pcm_mono` does since #409, so cue and word times count from the file's start. A Whisper
+  transcript with no text is `no_speech` for `--filler` as for `caption.py`; one with text and no
+  word timings is still a build without them. Code: `asr.engine_wav()`,
+  `asr._whisper_heard_nothing()`. Tests: `FakeWhisperCppTests`,
+  `test_word_timings_from_silence_are_no_speech_not_a_build_without_them`.
+- **An exported timeline counts source positions from each source's start timecode, at its own
+  rate.** Project times still count from the file's first frame (the time grammar is unchanged);
+  the export adds the source's start timecode, so a conform finds the frames: EDL source
+  timecodes are the clip's own frames from its timecode (drop-frame labels, `;`, where the source's
+  timecode is drop-frame; the record side stays `FCM: NON-DROP FRAME`), the FCPXML asset `start`
+  is that timecode and OTIO's `available_range` starts there. An `out` past a source's end ends
+  at it, with a note, because the render's `cut.py` clamps it; an `in` at or past the end is
+  refused as `cut.py` refuses it. A chapter `metadata.py` would refuse (at or past the end, or not
+  after the one before) is refused, which is what "Neither path accepts a time the other refuses"
+  already said. A music bed's own timecode is not read (an audio file rarely carries one). Code:
+  `timeline.build()`, `timeline.start_tc_frames()`, `timeline._tc_label()`. Tests:
+  `test_the_source_start_timecode_is_carried_into_every_format`,
+  `test_edl_source_timecodes_are_at_each_clips_own_rate`,
+  `test_a_clip_out_past_the_media_end_ends_at_the_media_end`,
+  `test_a_chapter_metadata_py_refuses_is_refused_not_dropped`.
+- **caption.py rewrites a caller's SRT only when ffmpeg would read it differently.** ffmpeg's SRT
+  demuxer requires hours and reads the milliseconds field as an integer (`,5` is 5 ms), where
+  `parse_srt()` accepts `mm:ss,ms` and reads `,5` as 500 ms. A file whose every timing line is
+  `hh:mm:ss[,.]mmm` reads the same to both and is still given to ffmpeg as it is (no side file for
+  a BOM, CRLF or a period separator); any other goes as the `_adjusted.srt` copy the tool writes
+  (an extra `--mode mux` track as `_trackN.srt`). Always writing the copy would add a side file to
+  every run for files both readers agree on. Code: `caption.srt_timings_shared_grammar()`. Test:
+  `test_caption_hands_ffmpeg_the_cues_it_read`.
+- **`--mode mux` keeps every existing subtitle track, converted where the container needs it.**
+  The rule is export.py's (#380), now `_common.runner.subtitle_codec_for()`, plus WebVTT for
+  `.webm`. A track no conversion fits (a bitmap track in MPEG-4 or WebM) and a WebM mux of a
+  picture or sound WebM cannot hold are refused up front as `kind: input`; a mux never drops a
+  track the caller did not ask to drop. Test:
+  `test_caption_mux_converts_an_existing_track_for_the_container`.
+- **An explicit `--font` on Windows is looked up in the family table first**
+  (`WINDOWS_FONTS` and `WINDOWS_LATIN_FONTS`), then by file-name prefix: Windows installs most
+  families under file names that do not start with the family's name. Code:
+  `fonts.windows_family_files()`. Test: `WindowsFamilyResolutionTests`.

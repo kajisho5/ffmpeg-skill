@@ -1486,6 +1486,37 @@ def _has_non_av_streams(cmd: Sequence[str]) -> bool:
     return not kinds or bool(kinds & {"subtitle", "data", "attachment"})
 
 
+TEXT_SUBTITLES = frozenset({"mov_text", "subrip", "srt", "ass", "ssa", "webvtt", "text"})
+MP4_FAMILY = frozenset({"mp4", "m4v", "mov"})
+
+
+def subtitle_codec_for(codec: str, out_ext: str) -> str:
+    """The -c:s for one source subtitle stream going into a container with extension `out_ext`
+    (no dot): copy when the container holds it as it is, else the container's own text format --
+    mov_text in MPEG-4, srt in Matroska for a mov_text track, webvtt in WebM. A bitmap track is
+    returned as copy; subtitle_container_holds() says whether that copy can work."""
+    out_ext = out_ext.lstrip(".").lower()
+    if out_ext in MP4_FAMILY and codec in TEXT_SUBTITLES and codec != "mov_text":
+        return "mov_text"
+    if out_ext == "mkv" and codec == "mov_text":
+        return "srt"
+    if out_ext == "webm" and codec in TEXT_SUBTITLES and codec != "webvtt":
+        return "webvtt"
+    return "copy"
+
+
+def subtitle_container_holds(codec: str, out_ext: str) -> bool:
+    """Whether a subtitle stream of `codec` can be written to an `out_ext` container at all,
+    converted by subtitle_codec_for() where it must be: Matroska takes any, MPEG-4 a text track or
+    DVD bitmaps, WebM only text (as WebVTT)."""
+    out_ext = out_ext.lstrip(".").lower()
+    if out_ext in MP4_FAMILY:
+        return codec in TEXT_SUBTITLES or codec == "dvd_subtitle"
+    if out_ext == "webm":
+        return codec in TEXT_SUBTITLES
+    return True
+
+
 def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
     """Run an ffmpeg command that already maps its video/audio, trying first to also
     stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
