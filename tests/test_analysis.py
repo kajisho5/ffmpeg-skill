@@ -70,6 +70,8 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(pick([tmcd1], {}, v25)["value"], "01:00:00:00")
         self.assertIsNone(pick([], {}, v25)["value"])
         self.assertEqual(pick([], {}, dict(v25, r_frame_rate="30000/1001"))["value"], "01:00:00:29")
+        # the rate probe()'s fps uses: avg_frame_rate first (25 here, though r_frame_rate says 50)
+        self.assertEqual(pick([tmcd1], {}, dict(v25, avg_frame_rate="25/1", r_frame_rate="50/1"))["value"], "01:00:00:00")
 
     def test_probe_accepts_common_flags(self):
         out = script("probe.py", self.src, "--json", "--field", "duration").stdout.strip()

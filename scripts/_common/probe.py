@@ -147,13 +147,17 @@ def _tag(entry: Dict[str, Any], key: str) -> Optional[str]:
 
 
 def _nominal_fps(video: Optional[Dict[str, Any]]) -> Optional[int]:
-    """The integer timecode rate of the picture (30 for 29.97), from r_frame_rate; None unknown."""
-    try:
-        num, _, den = str((video or {}).get("r_frame_rate") or "").partition("/")
-        rate = float(num) / float(den or 1)
-    except (ValueError, ZeroDivisionError):
-        return None
-    return int(round(rate)) if 0 < rate <= 240 else None
+    """The integer timecode rate of the picture (30 for 29.97), from avg_frame_rate, else
+    r_frame_rate: the order probe()'s `fps` uses, which the timeline export validates against."""
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        try:
+            num, _, den = str((video or {}).get(key) or "").partition("/")
+            rate = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if 0 < rate <= 240:
+            return int(round(rate))
+    return None
 
 
 def start_timecode(streams: List[Dict[str, Any]], fmt: Dict[str, Any],
