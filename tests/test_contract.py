@@ -6415,6 +6415,19 @@ class MessageNeutralizingTests(unittest.TestCase):
         self.emit._merge_collector(doc, Context())
         self.assertEqual(doc["notes"], ["listed twice: out\\nFORGED.mp4"])
 
+    def test_a_plain_note_is_escaped_on_stderr_too(self):
+        """CodeRabbit on #405: note() wrote its line to stderr as given (batch.py's unverified
+        item names); it is made inert as die() and warn() messages are."""
+        import contextlib, io
+        from _common.runner import Context
+        sys.argv = ["x", "a\nFORGED.mp4"]
+        ctx, err = Context(), io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.emit.note("did not verify: a\nFORGED.mp4", ctx=ctx)
+        self.assertEqual(err.getvalue(), "did not verify: a\\nFORGED.mp4\n")
+        self.assertEqual(ctx.notes, ["did not verify: a\\nFORGED.mp4"])
+        self.assertEqual(self.emit.shown("dir\nname.mp4"), "dir\\nname.mp4")
+
     def test_control_and_bidi_characters_are_escaped_wherever_they_come_from(self):
         sys.argv = ["x"]
         self.assertEqual(self.emit.neutralize("tag: a\x1b[31mb\u202ec"), "tag: a\\x1b[31mb\\u202ec")
