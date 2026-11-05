@@ -114,9 +114,21 @@ def frame_size(ratio: Optional[Fraction], width: Optional[int], height: Optional
 SVT_PRESET = {"ultrafast": 12, "superfast": 11, "veryfast": 10, "faster": 9, "fast": 8, "medium": 6, "slow": 4, "slower": 3, "veryslow": 2, "placebo": 1}
 
 
+# Source containers the tools' own encoders (x264/x265/SVT-AV1 and AAC) cannot be written into: WebM
+# takes only VP8/VP9/AV1 and Vorbis/Opus. A default output name keeps the source's extension
+# except for these, whose default is .mp4 (#415): the dry run planned `clip_loudnorm.webm` and the
+# real run then failed in the muxer.
+NO_DEFAULT_ENCODE_EXT = {".webm"}
+
+
 def default_output(input_path: str, suffix: str, ext: Optional[str] = None) -> str:
     p = Path(input_path)
-    new_ext = ext if ext else p.suffix.lstrip(".") or "mp4"
+    if ext:
+        new_ext = ext
+    elif p.suffix.lower() in NO_DEFAULT_ENCODE_EXT:
+        new_ext = "mp4"
+    else:
+        new_ext = p.suffix.lstrip(".") or "mp4"
     return str(p.with_name(f"{p.stem}_{suffix}.{new_ext}"))
 
 

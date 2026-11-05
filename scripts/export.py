@@ -38,6 +38,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List
 
+from _common.runner import fail_if_classified, kept_clause, mark_delivered
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
@@ -183,6 +184,9 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
         attempt = run(cmd + extra + [output], check=False)
         if attempt.returncode == 0:
             return dropped
+        # a full disk or a missing encoder fails every rung the same way: that error, not a
+        # fallback that blames the subtitles and encodes again (#415, #389's rule)
+        fail_if_classified(attempt)
         error = " | ".join([ln.strip() for ln in (attempt.stderr or "").splitlines() if ln.strip()][-3:])[-500:]
         going = rungs[n + 1][1]
         record_fallback(f"{os.path.basename(output)} could not hold the source's {' and '.join(t for t in ('subtitle', 'data') if t in going)} "
@@ -498,6 +502,7 @@ def main() -> int:
                 # a private name: <stem>_loudnorm.<ext> is loudness.py's own default output, so a
                 # real file of that name next to the export was overwritten and renamed away (review 7)
                 tmp = str(Path(output).with_name(f".{Path(output).stem}.normalize-{os.getpid()}{Path(output).suffix}"))
+                mark_delivered(output)  # a stop from here on keeps the export and says so (#415)
                 proc = run_tool([str(HERE / "loudness.py"), output, "-I", f"{spec['lufs']:g}", "--tp", f"{spec['tp']:g}", "-o", tmp, "--json"] + child_args())
                 try:
                     child = json.loads(proc.stdout)
@@ -508,7 +513,12 @@ def main() -> int:
                     err = child.get("error") or {}
                     if os.path.exists(tmp):
                         os.remove(tmp)
-                    die(f"--normalize: loudness.py failed: {err.get('message') or proc.stderr.strip()[-300:]}",
+                    # the child's "nothing was written" is about its own temp file; this run's export is
+                    # on disk, and the child's exit code (124 timeout, 130/143 interrupted) is the
+                    # run's, as render.py and waveform.py pass a stage's on (#415)
+                    why = (err.get("message") or proc.stderr.strip()[-300:]).replace("; nothing was written", "")
+                    die(f"--normalize: loudness.py failed: {why} ({kept_clause()})",
+                        code=int(child.get("exit_code") or proc.returncode or 1) if proc.returncode else 1,
                         kind=err.get("kind") or "ffmpeg", output=output, hint=err.get("hint"))
                 os.replace(tmp, output)
                 m = measure_loudness(output)
