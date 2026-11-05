@@ -13,6 +13,56 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE
 
 
+# Characters that never belong in a message a calling agent reads (#400): C0 controls (a line
+# break is one), DEL and C1, the Unicode line/paragraph separators and the bidi embedding,
+# override and isolate marks. A path or other argument carrying one would otherwise reach
+# error.message / a diagnostic verbatim, where a newline can start what reads as a new line of
+# instructions and a bidi override can reorder what is shown.
+_UNSAFE = frozenset([chr(c) for c in range(0x20) if c not in (0x09, 0x0A)] + [chr(0x7F)]
+                    + [chr(c) for c in range(0x80, 0xA0)]
+                    + ["\u2028", "\u2029", "\u200e", "\u200f"] + [chr(c) for c in range(0x202A, 0x202F)]
+                    + [chr(c) for c in range(0x2066, 0x206A)])
+_LINE_BREAKS = frozenset("\n")
+
+
+def shown(value: Any) -> str:
+    """`value` as text with every unsafe character (and any line break) written as an escape
+    (\\n, \\x1b, \\u202e). A clean value comes back unchanged, so an ordinary path, a Windows one
+    with backslashes included, reads exactly as before."""
+    text = str(value)
+    if not any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in text):
+        return text
+    return "".join((ch.encode("unicode_escape").decode("ascii") if (ch in _UNSAFE or ch in _LINE_BREAKS) else ch)
+                   for ch in text)
+
+
+def _argument_forms(arg: str) -> List[str]:
+    """The spellings a message may print an argument in: as given, resolved, and its file name."""
+    forms = {arg}
+    try:
+        forms.update({os.path.abspath(arg), os.path.realpath(arg), os.path.basename(arg)})
+    except (OSError, ValueError):
+        pass
+    return sorted((f for f in forms if f), key=len, reverse=True)
+
+
+def neutralize(msg: Any) -> Any:
+    """A message with caller-supplied text made inert (#400): every command-line argument that
+    carries a line break or an unsafe character is replaced by its shown() form wherever it
+    appears (as given, resolved or as a file name), then any unsafe character left is escaped.
+    Line breaks the tool itself wrote (an ffmpeg stderr tail) stay; one inside an argument does not."""
+    if not isinstance(msg, str):
+        return msg
+    for arg in sys.argv[1:]:
+        if isinstance(arg, str) and any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in arg):
+            for form in _argument_forms(arg):
+                if form in msg and (form != os.path.basename(arg) or any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in form)):
+                    msg = msg.replace(form, shown(form))
+    if any(ch in _UNSAFE for ch in msg):
+        msg = "".join(ch.encode("unicode_escape").decode("ascii") if ch in _UNSAFE else ch for ch in msg)
+    return msg
+
+
 def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]" = None,
         error_extra: "Optional[Dict[str, Any]]" = None, **extra: Any) -> "None":
     """Exit with a message. Under --json also print a machine-readable failure document
@@ -26,7 +76,8 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
 
     `error_extra` goes inside `error` (refuse() passes `reason` and `details` there); the
     collector's records (warn() and friends) are merged into the document as emit() merges them."""
-    hint = extra.pop("hint", None)
+    hint = neutralize(extra.pop("hint", None))
+    msg = neutralize(msg)
     ctx = ctx or STATE  # 1.10: the optional per-request Context (2.0 makes it required); STATE is the default instance
     _set_current_ctx(ctx)  # the atexit hook has no argument: it reads the ctx emit()/die() last used
     ctx.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
@@ -72,6 +123,7 @@ def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code
 
 def _record(bucket: str, msg: str, code: str, ctx: "Optional[Context]", data: Dict[str, Any], prefix: str) -> Dict[str, Any]:
     ctx = ctx or STATE
+    msg = neutralize(msg)
     entry: Dict[str, Any] = {"code": code, "message": msg}
     entry.update(data)
     # once per run: a decision taken for every encode of a job (an AV1 encoder fallback, a CRF
