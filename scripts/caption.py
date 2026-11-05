@@ -1304,7 +1304,7 @@ def main() -> int:
         # and the rest of the side-file guards (#408): never an input, the video, a missing
         # directory or an option-shaped name, even under --overwrite
         side_inputs = [q for q in (args.input, getattr(args, "text", None), getattr(args, "ass", None),
-                                   *(t[0] for t in srt_tracks)) if isinstance(q, str)]
+                                   getattr(args, "brand", None), *(t[0] for t in srt_tracks)) if isinstance(q, str)]
         for path in todo:
             guard_sidecar(path, *side_inputs)
 

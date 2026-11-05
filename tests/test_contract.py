@@ -6534,6 +6534,16 @@ class SideFileGuardTests(unittest.TestCase):
                                check=False))
         self.assertEqual(err["reason"], "output_path_taken", err)
         self.assertEqual(srt_name.read_text(encoding="utf-8"), "keep\n")
+        # the --brand file is an input too: a side file naming it (or a hard link to it) is refused
+        brand = self.tmp / "cap_brand.json"
+        brand.write_text("{}\n", encoding="utf-8")
+        alias = self.tmp / "cap_brand_link.srt"
+        os.link(brand, alias)
+        for target in (brand, alias):
+            err = self.failed(tool("caption", self.src, "--text", text, "--brand", brand, "--write-srt", target,
+                                   "-o", self.tmp / "brand_out.mp4", "--overwrite", "--json", check=False))
+            self.assertEqual(err["reason"], "output_is_input", err)
+        self.assertEqual(brand.read_text(encoding="utf-8"), "{}\n")
 
     def test_verify_report_inside_a_new_out_folder(self):
         """#413 review: --out is created before the --report guard, so a report inside it is accepted."""
