@@ -3224,6 +3224,22 @@ class ColourAuditGTests(unittest.TestCase):
                 with self.subTest(source=src, strength=strength):
                     self._video("color --lut", out, RgbAndStillConversionTests._bars(0, 0, 2), self.COLOURS)
 
+    def test_color_lut_on_prores_keeps_a_bt601_sources_matrix(self):
+        """#416 review: --codec prores keeps a BT.601 source's matrix and tags (no conversion), so
+        legs pinned to BT.709 read and wrote its samples with the wrong coefficients."""
+        cube = self.dir / "identity.cube"
+        cube.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        src = self.dir / "s601.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.dir / "tv.mp4", "-vf",
+           "scale=out_color_matrix=bt601,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "1",
+           "-colorspace", "smpte170m", "-color_primaries", "smpte170m", "-color_trc", "smpte170m", "-an", src)
+        doc = json.loads(script("color.py", src, "--lut", cube, "--codec", "prores", "--json", "--dry-run",
+                                "-o", self.dir / "lut_601.mov").stdout)
+        self.assertIn("scale=in_color_matrix=bt601,format=gbrpf32le", doc["commands"][-1])
+        self.assertIn("scale=out_color_matrix=bt601:out_range=tv", doc["commands"][-1])
+        doc = json.loads(script("color.py", src, "--lut", cube, "--json", "--dry-run", "-o", self.dir / "lut_601.mp4").stdout)
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrpf32le", doc["commands"][-1], "h264 converts to BT.709 first")
+
     def test_color_correct_defaults_leave_grey_grey(self):
         """Item 7: colortemperature at 6500 K, documented as unchanged, was always in the chain and
         tinted grey 808080 to 7E7E7B. At 6500 the term is left out."""

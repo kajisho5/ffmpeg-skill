@@ -158,7 +158,11 @@ def _rgb_stage(filters: list) -> str:
             + ",scale=out_color_matrix=bt601,format=yuv420p")
 
 
-def lut_legs() -> "tuple":
+# swscale's names for the non-BT.709 matrices a --codec prores re-encode keeps (it does not convert)
+_SWS_MATRIX = {"smpte170m": "bt601", "bt470bg": "bt601", "smpte240m": "smpte240m", "fcc": "fcc"}
+
+
+def lut_legs(meta=None) -> "tuple":
     """(to RGB, back to YUV) around --lut's lut3d: explicit BT.709 conversions through float RGB,
     the matrix the picture holds when it reaches them (an untagged or BT.709 source as it is, a
     BT.601 or RGB one after x264_args(source=...)'s conversion), limited range on the way out.
@@ -170,8 +174,13 @@ def lut_legs() -> "tuple":
     _rgb_stage) these legs use the BT.709 the picture is: an identity LUT then returns every sample
     as --lut-strength 0, which applies none, does (6.1, BT.709/BT.601/untagged, limited and full
     range, 8- and 10-bit). The input range is read from the frames, as every scale here reads it."""
-    return ("scale=in_color_matrix=bt709,format=gbrpf32le",
-            "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p")
+    # --codec prores keeps a BT.601 (or other non-BT.709) source's matrix and tags instead of
+    # converting it (decision.video_args), so the legs use that matrix (#416 review)
+    matrix = "bt709"
+    if STATE.codec == "prores":
+        matrix = _SWS_MATRIX.get(((meta or {}).get("video") or {}).get("color_space"), "bt709")
+    return (f"scale=in_color_matrix={matrix},format=gbrpf32le",
+            f"scale=out_color_matrix={matrix}:out_range=tv,format=yuv420p")
 
 
 def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:
@@ -460,7 +469,7 @@ def main() -> int:
         if not (0.0 <= args.lut_strength <= 1.0):
             die(f"--lut-strength {args.lut_strength:g} is outside 0..1")
         lut = f"lut3d=file={escape_filter_path(args.lut)}:interp=tetrahedral"
-        to_rgb, to_yuv = lut_legs()
+        to_rgb, to_yuv = lut_legs(meta)
         if args.lut_strength == 0.0:
             # 0 means "no LUT at all" -- without this branch, 0 (falling outside the open interval
             # below) landed in the same "apply the LUT at full strength" fallback as an out-of-range
