@@ -13,6 +13,59 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE
 
 
+# Characters that never belong in a message a calling agent reads (#400): C0 controls (a line
+# break is one), DEL and C1, the Unicode line/paragraph separators and the bidi embedding,
+# override and isolate marks. A path or other argument carrying one would otherwise reach
+# error.message / a diagnostic verbatim, where a newline can start what reads as a new line of
+# instructions and a bidi override can reorder what is shown.
+_UNSAFE = frozenset([chr(c) for c in range(0x20) if c not in (0x09, 0x0A)] + [chr(0x7F)]
+                    + [chr(c) for c in range(0x80, 0xA0)]
+                    + ["\u2028", "\u2029", "\u200e", "\u200f"] + [chr(c) for c in range(0x202A, 0x202F)]
+                    + [chr(c) for c in range(0x2066, 0x206A)])
+_LINE_BREAKS = frozenset("\n")
+
+
+def shown(value: Any) -> str:
+    """`value` as text with every unsafe character (and any line break) written as an escape
+    (\\n, \\x1b, \\u202e). A clean value comes back unchanged, so an ordinary path, a Windows one
+    with backslashes included, reads exactly as before."""
+    text = str(value)
+    if not any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in text):
+        return text
+    return "".join((ch.encode("unicode_escape").decode("ascii") if (ch in _UNSAFE or ch in _LINE_BREAKS) else ch)
+                   for ch in text)
+
+
+def _argument_forms(arg: str) -> List[str]:
+    """The spellings a message may print an argument in: as given, resolved, and its file name;
+    for `--opt=value`, the same for the value, which is what a tool prints back."""
+    given = [arg] + ([arg.split("=", 1)[1]] if arg.startswith("-") and "=" in arg else [])
+    forms = set(given)
+    for a in given:
+        try:
+            forms.update({os.path.abspath(a), os.path.realpath(a), os.path.basename(a)})
+        except (OSError, ValueError):
+            pass
+    return sorted((f for f in forms if f), key=len, reverse=True)
+
+
+def neutralize(msg: Any) -> Any:
+    """A message with caller-supplied text made inert (#400): every command-line argument that
+    carries a line break or an unsafe character is replaced by its shown() form wherever it
+    appears (as given, resolved or as a file name), then any unsafe character left is escaped.
+    Line breaks the tool itself wrote (an ffmpeg stderr tail) stay; one inside an argument does not."""
+    if not isinstance(msg, str):
+        return msg
+    for arg in sys.argv[1:]:
+        if isinstance(arg, str) and any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in arg):
+            for form in _argument_forms(arg):
+                if form in msg and (form != os.path.basename(arg) or any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in form)):
+                    msg = msg.replace(form, shown(form))
+    if any(ch in _UNSAFE for ch in msg):
+        msg = "".join(ch.encode("unicode_escape").decode("ascii") if ch in _UNSAFE else ch for ch in msg)
+    return msg
+
+
 def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]" = None,
         error_extra: "Optional[Dict[str, Any]]" = None, **extra: Any) -> "None":
     """Exit with a message. Under --json also print a machine-readable failure document
@@ -26,7 +79,8 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
 
     `error_extra` goes inside `error` (refuse() passes `reason` and `details` there); the
     collector's records (warn() and friends) are merged into the document as emit() merges them."""
-    hint = extra.pop("hint", None)
+    hint = neutralize(extra.pop("hint", None))
+    msg = neutralize(msg)
     ctx = ctx or STATE  # 1.10: the optional per-request Context (2.0 makes it required); STATE is the default instance
     _set_current_ctx(ctx)  # the atexit hook has no argument: it reads the ctx emit()/die() last used
     ctx.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
@@ -61,6 +115,28 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
     sys.exit(code)
 
 
+def _report_dropped_audio_tracks(meta: Dict[str, Any], ctx: "Context") -> None:
+    """The tools write one audio track: a source with several must say how many did not come
+    along (#397, every tool, not only cut.py). Only when the output kept sound at all: a tool told
+    to drop it (--no-audio, a picture-only output) left nothing out by surprise."""
+    first = getattr(STATE, "first_input", None)
+    if not first or first[1] < 2 or not meta:
+        return
+    if len(getattr(STATE, "audio_inputs", None) or ()) > 1:
+        return  # several sources with sound: which one's tracks the output carries is the tool's own choice
+    kept = len(meta.get("audio_streams") or [])
+    if not kept or kept >= first[1]:
+        return
+    if any(w.get("code") == "audio_tracks_dropped" for w in ctx.warnings):
+        return  # the tool said it already (cut.py, with its own field)
+    warn(f"the source has {first[1]} audio tracks; this output kept {kept} and left {first[1] - kept} out "
+         "(the tools write one audio track; --audio-stream N picks which, where a tool takes it)",
+         "audio_tracks_dropped", ctx=ctx, source=first[1], kept=kept, dropped=first[1] - kept)
+    note_line = ctx.warnings[-1]["message"] if ctx.warnings else None
+    if note_line and note_line not in ctx.notes:
+        ctx.notes.append(note_line)
+
+
 def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code: int = 1,
            ctx: "Optional[Context]" = None, extra: "Optional[Dict[str, Any]]" = None, **details: Any) -> "None":
     """die() for a refusal a caller has to act on: `error.reason` is a stable snake_case code for
@@ -72,6 +148,7 @@ def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code
 
 def _record(bucket: str, msg: str, code: str, ctx: "Optional[Context]", data: Dict[str, Any], prefix: str) -> Dict[str, Any]:
     ctx = ctx or STATE
+    msg = neutralize(msg)
     entry: Dict[str, Any] = {"code": code, "message": msg}
     entry.update(data)
     # once per run: a decision taken for every encode of a job (an AV1 encoder fallback, a CRF
@@ -116,6 +193,9 @@ def _merge_collector(doc: Dict[str, Any], ctx: "Context") -> None:
     extra_notes = [n for n in ctx.notes if n not in (doc.get("notes") or [])]
     if extra_notes:
         doc["notes"] = list(doc.get("notes") or []) + extra_notes
+    if doc.get("notes"):
+        # a tool's own notes can quote an input path (join.py's duplicates): made inert as messages are (#400)
+        doc["notes"] = [neutralize(n) for n in doc["notes"]]
     diag = {k: list(getattr(ctx, k)) for k in ("warnings", "fallbacks", "skipped") if getattr(ctx, k)}
     if diag:
         merged = dict(doc.get("diagnostics") or {})
@@ -601,6 +681,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
     meta: Dict[str, Any] = {}
     if output and not ctx.dry_run:
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
+        _report_dropped_audio_tracks(meta, ctx)
     if ctx.json:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         if meta:

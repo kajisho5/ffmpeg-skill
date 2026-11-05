@@ -27,6 +27,8 @@ from _common import (guard_sidecar, detect_scenes, STATE, add_common, apply_comm
                      ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
                      rms_envelope, BEAT_MIN_CONFIDENCE, decode_gray_frames, frame_flow, label_shot_flow)
 from _common import drawtext_fontfile  # noqa: E402
+from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
+from _common.emit import note, record_fallback  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -287,6 +289,13 @@ def main() -> int:
         fps = meta["video"].get("fps") or 30.0
         expr = "+".join(f"eq(n\\,{int(round(sc['start'] * fps))})" for sc in scenes)
         stamp = ""
+        if not args.no_timecode and ffmpeg_filters() and "drawtext" not in ffmpeg_filters():
+            # as look.py (#394): the sheet needs drawtext only for its stamps
+            args.no_timecode = True
+            record_fallback("this ffmpeg build has no drawtext filter, so the --sheet has no timecode stamps "
+                            "(the same as --no-timecode)", "scenes_sheet_no_drawtext")
+            note("--sheet without timecode stamps: this ffmpeg build has no drawtext filter ("
+                 + filter_missing_hint("drawtext") + ")")
         if not args.no_timecode:
             default_font = default_font_file("DejaVu Sans")
             font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
@@ -297,7 +306,7 @@ def main() -> int:
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet
 
-    if args.json:
+    if STATE.json:  # --json-brief too: emit() is what adds the diagnostics (scenes_sheet_no_drawtext)
         emit(None, **result)
     else:
         print_json(result)

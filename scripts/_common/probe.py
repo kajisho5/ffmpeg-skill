@@ -355,6 +355,10 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "language": (a.get("tags") or {}).get("language"),
             "title": (a.get("tags") or {}).get("title"),
         } for n, a in enumerate(s for s in streams if s.get("codec_type") == "audio")]
+    if role == "input" and out.get("audio_streams"):
+        STATE.audio_inputs.add(os.path.realpath(path))
+    if role == "input" and getattr(STATE, "first_input", None) is None:
+        STATE.first_input = (path, len(out.get("audio_streams") or []))
     return out
 
 

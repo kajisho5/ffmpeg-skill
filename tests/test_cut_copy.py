@@ -2066,6 +2066,26 @@ class DroppedAudioTrackTests(unittest.TestCase):
                 self.assertTrue(any("2 audio tracks" in n for n in d["notes"]), d["notes"])
                 self.assertEqual(len(probe(str(out))["audio_streams"]), 1)
 
+    def test_every_writing_tool_reports_the_tracks_it_left_out(self):
+        """The one-track rule is every tool's, so the report is emit()'s, not only cut.py's."""
+        d = json.loads(script("fit.py", str(self.two), "--height", "18", "-o", str(DIR / "two_fit.mov"),
+                              "--overwrite", "--json").stdout)
+        self.assertEqual([w["code"] for w in d["diagnostics"]["warnings"]].count("audio_tracks_dropped"), 1)
+        self.assertTrue(any("2 audio tracks" in n for n in d["notes"]), d["notes"])
+        # told to drop the sound: nothing was left out by surprise
+        d = json.loads(script("proxy.py", str(self.two), "--no-audio", "-o", str(DIR / "two_proxy.mp4"),
+                              "--overwrite", "--json").stdout)
+        self.assertNotIn("audio_tracks_dropped", [w["code"] for w in (d.get("diagnostics") or {}).get("warnings", [])])
+
+    def test_a_tool_that_picks_among_sources_with_sound_reports_nothing(self):
+        """CodeRabbit on #405: grid.py takes the sound of --audio-from only, so the first input's
+        track count says nothing about what this output left out."""
+        one = DIR / "one_audio_grid.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", str(self.two), "-map", "0:v", "-map", "0:a:0", "-c", "copy", one)
+        d = json.loads(script("grid.py", str(self.two), str(one), "--cols", "2", "--rows", "1", "--label", "none",
+                              "--audio-from", "1", "-o", str(DIR / "two_grid.mp4"), "--overwrite", "--json").stdout)
+        self.assertNotIn("audio_tracks_dropped", [w["code"] for w in (d.get("diagnostics") or {}).get("warnings", [])])
+
     def test_a_single_track_source_reports_nothing(self):
         src = DIR / "one_audio.mp4"
         sh("ffmpeg", "-y", "-v", "error", "-i", str(self.two), "-map", "0:v", "-map", "0:a:0", "-c", "copy", src)

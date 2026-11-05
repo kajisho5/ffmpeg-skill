@@ -5015,6 +5015,58 @@ class LeanBuildTests(unittest.TestCase):
         self.assertTrue(sheet.exists())
 
 
+class LeanBuildSheetTests(unittest.TestCase):
+    """#394's shape in grid.py (--label auto) and scenes.py (--sheet): drawtext is needed only for
+    the labels/stamps, so a build without it still gets the picture, and is told what was left out."""
+
+    def setUp(self):
+        from _common import runner
+        self.runner = runner
+        self.saved = runner._FILTERS
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        self.src = OUT / "lean_sheet_src.mp4"
+        if not self.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:d=4", "-c:v", "libx264", str(self.src))
+        self.runner._FILTERS = set(self.runner.ffmpeg_filters()) - {"drawtext"}
+
+    def tearDown(self):
+        self.runner._FILTERS = self.saved
+
+    def _run(self, module, argv):
+        from _common import STATE
+        mod = __import__(module)
+        out = io.StringIO()
+        try:
+            with unittest.mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    mod.main()
+                except SystemExit as e:
+                    self.assertEqual(e.code or 0, 0, out.getvalue()[-800:])
+        finally:
+            STATE.reset()
+        return json.loads(out.getvalue())
+
+    def test_grid_draws_unlabelled_cells(self):
+        doc = self._run("grid", ["grid.py", str(self.src), str(self.src), "--cols", "2", "--rows", "1",
+                                 "-o", str(OUT / "lean_grid.mp4"), "--overwrite", "--json"])
+        self.assertEqual(doc["status"], "completed")
+        self.assertIn("grid_no_drawtext", [f["code"] for f in doc["diagnostics"]["fallbacks"]])
+        self.assertNotIn("drawtext", " ".join(doc["commands"]))
+
+    def test_scenes_sheet_has_no_stamps(self):
+        doc = self._run("scenes", ["scenes.py", str(self.src), "--sheet", str(OUT / "lean_scenes.png"),
+                                   "--overwrite", "--json"])
+        self.assertIn("scenes_sheet_no_drawtext", [f["code"] for f in doc["diagnostics"]["fallbacks"]])
+        self.assertNotIn("drawtext", " ".join(doc["commands"]))
+        # --json-brief goes through emit() too, so the fallback is in that document as well
+        brief = self._run("scenes", ["scenes.py", str(self.src), "--sheet", str(OUT / "lean_scenes.png"),
+                                     "--overwrite", "--json-brief"])
+        self.assertIn("scenes_sheet_no_drawtext", json.dumps(brief))
+
+
 class EmojiGlyphProbeTests(unittest.TestCase):
     """#395: "no colour pixels" is a monochrome glyph OR the empty .notdef box; the probe tells
     them apart by comparing the emoji with a code point no font has."""

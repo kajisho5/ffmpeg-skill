@@ -29,6 +29,8 @@ from _common import add_common, apply_common, aac_args, cfr_args, default_output
     draws_chroma, drawn_chain, escape_drawtext, ffmpeg_base, info, label_chain, matrix_chain, probe, run, validate_color, video_args
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
+from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
+from _common.emit import note, record_fallback  # noqa: E402
 
 LABEL_MARGIN = 10
 
@@ -56,6 +58,13 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.label == "auto" and ffmpeg_filters() and "drawtext" not in ffmpeg_filters():
+        # the labels are the only drawtext in the grid: without the filter (Homebrew's plain
+        # ffmpeg) draw the grid unlabelled and say so, as look.py does for its stamps (#394)
+        args.label = "none"
+        record_fallback("this ffmpeg build has no drawtext filter, so the cells are not labelled "
+                        "(the same as --label none)", "grid_no_drawtext")
+        note("no cell labels: this ffmpeg build has no drawtext filter (" + filter_missing_hint("drawtext") + ")")
 
     n = args.cols * args.rows
     if args.cols <= 0 or args.rows <= 0:
