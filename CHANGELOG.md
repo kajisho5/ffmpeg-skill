@@ -6,6 +6,66 @@
 
 ### Fixed
 
+- `silence.py --filler` never cut a filler word narrower than about 0.36 s but reported it as
+  removed: `--margin` was taken off each side of the filler span too, which turned it inside out
+  (`kept_duration` longer than the input). The margin is now kept around silences only; a filler
+  cut is the word plus `--filler-pad`. A silence narrower than two margins removes nothing instead
+  of overlapping its neighbours (#414).
+- Transcripts were early by the sound's start offset in `caption.py --transcribe` and
+  `silence.py --filler --transcribe`: the engine's 16 kHz WAV began at the sound's first sample, so
+  with a sound 0.276 s after the picture every cue landed 0.276 s early and `--filler` cut the wrong
+  276 ms. The WAV (and `--karaoke`'s word-energy decode) is now padded to the file's clock
+  (`aresample=async=1:first_pts=0`, as #409 did for `decode_pcm_mono`) (#414).
+- `silence.py --filler --transcribe` on silent audio blamed the Whisper build ("produced no
+  word-level timings") instead of refusing with `reason: "no_speech"` as contract.md promises;
+  a Whisper engine whose transcript holds no text is now `no_speech` (#414).
+- `caption.py --transcribe` on a video with no audio stream failed unclassified (`kind: ffmpeg`,
+  "Stream map '0:a:0' matches no streams"); it is refused as `kind: input` before any engine
+  runs, dry run included, as `silence.py` refuses it (#414).
+- `render.py --export-timeline` (#414):
+  - ignored the source's start timecode: a camera file tagged `01:00:00;00` was exported with
+    source in/out `00:00:01:00`, outside the media for a conform. EDL source timecodes now count
+    from it (drop-frame labels where the source's timecode is drop-frame), the FCPXML asset
+    `start` and OTIO `available_range` start at it;
+  - counted EDL source timecodes at the sequence rate, so a 25 fps clip in a 29.97 sequence got
+    frame `:29`; each clip's source timecode is now at its own rate;
+  - kept a clip `out` past the end of its media (10 s of a 6 s clip, where the render clamps);
+    the clip now ends at the media's end, with a note, and an `in` at or past the end is refused
+    as `cut.py` refuses it;
+  - dropped a chapter at or past the end silently, while the render's `metadata.py` refuses it;
+    such a chapter, or one that does not come after the one before it, is now refused
+    (`kind: input`).
+- `caption.py --mode mux` copied an input's own subtitle tracks whatever the output container, so
+  subrip from `.mkv` into `.mp4` ("Could not find tag for codec subrip") and mov_text into `.mkv`
+  failed unclassified. Existing tracks are now converted per container as `export.py` converts
+  them (#380's rule, now shared in `_common/runner.py`, with WebVTT for `.webm`), a track no
+  container conversion fits (a bitmap one in `.mp4`/`.webm`) is refused as `kind: input`, and so
+  is a `.webm` mux of a picture or sound WebM cannot hold (H.264/AAC) (#414).
+- `caption.py` handed a caller's SRT that needed no layout change straight to ffmpeg's SRT reader,
+  which reads another grammar than the tool: `00:01,000` (no hours) was refused as
+  `input_unreadable`, and `00:00:01,5` was burned at 1.005 s where the tool counted 1.5 s. A file
+  whose timing lines are not in the grammar both share is burned and muxed as the copy the tool
+  writes (`<out>_adjusted.srt`; an extra `--mode mux` track as `<out>_trackN.srt`) (#414).
+- On Windows an explicit `--font` was resolved by file-name prefix, so installed families were
+  missed and reported as `font_substituted` "not installed here": `Malgun Gothic` resolved to
+  `YuGothM.ttc` (no Hangul), `Microsoft YaHei`, `Nirmala UI`, `Leelawadee UI` and `Times New
+  Roman` to `arial.ttf`. The family's own file is now looked up first in the table of what Windows
+  installs under which name (`WINDOWS_FONTS`, plus the common Latin families) (#414).
+- `contract --json` left out output keys the tools emit and contract.md documents
+  (`dropped_non_av_streams` on 19 tools; cut's `mode`, `requested_*`, `output_duration`,
+  `duration_delta_seconds`, `nearest_keyframes`, `snap`; silence's `cut_points`, `cut_warnings`,
+  `removed_seconds_total`, `timemap`, `silence_kinds`, `silence_breakdown`, `hint`; probe's
+  `timecode`, `chapters`, `subtitle_stream_details`) and three error reasons the ASR refusals
+  emit (`no_speech`, `engine_failed`, `english_only`). They are published, those three refusals
+  now also carry `error.reason`/`error.details` (the top-level `reason` stays), and the test that
+  lists every refusal reason reads `die(..., reason=...)` calls too (#414).
+
+## 3.1.6
+
+_Automated release: version and notes generated from pull requests merged since 3.1.5._
+
+### Fixed
+
 - On FFmpeg 7.0+, `freeze.py --at` lost its hold (`--at 1 --hold 1` on a 2 s clip came out 1.97 s, and
   the sound ran a second past the picture) and `reverse.py` did not hold the last frame of a picture
   shorter than its sound (408 ms off): from 7.0 `setpts` leaves the frame rate unknown and the frame
@@ -116,59 +176,7 @@
   grid label in a cell with room for one em was not shortened; `broll.py` scaled a 1-pixel-wide
   A-roll to width 0 (kept as 1) and failed; and the SMPTE hint named the first timecoded input's
   start timecode for a time in another input (a B-roll's `--from`) (#411).
-- `silence.py --filler` never cut a filler word narrower than about 0.36 s but reported it as
-  removed: `--margin` was taken off each side of the filler span too, which turned it inside out
-  (`kept_duration` longer than the input). The margin is now kept around silences only; a filler
-  cut is the word plus `--filler-pad`. A silence narrower than two margins removes nothing instead
-  of overlapping its neighbours (#414).
-- Transcripts were early by the sound's start offset in `caption.py --transcribe` and
-  `silence.py --filler --transcribe`: the engine's 16 kHz WAV began at the sound's first sample, so
-  with a sound 0.276 s after the picture every cue landed 0.276 s early and `--filler` cut the wrong
-  276 ms. The WAV (and `--karaoke`'s word-energy decode) is now padded to the file's clock
-  (`aresample=async=1:first_pts=0`, as #409 did for `decode_pcm_mono`) (#414).
-- `silence.py --filler --transcribe` on silent audio blamed the Whisper build ("produced no
-  word-level timings") instead of refusing with `reason: "no_speech"` as contract.md promises;
-  a Whisper engine whose transcript holds no text is now `no_speech` (#414).
-- `caption.py --transcribe` on a video with no audio stream failed unclassified (`kind: ffmpeg`,
-  "Stream map '0:a:0' matches no streams"); it is refused as `kind: input` before any engine
-  runs, dry run included, as `silence.py` refuses it (#414).
-- `render.py --export-timeline` (#414):
-  - ignored the source's start timecode: a camera file tagged `01:00:00;00` was exported with
-    source in/out `00:00:01:00`, outside the media for a conform. EDL source timecodes now count
-    from it (drop-frame labels where the source's timecode is drop-frame), the FCPXML asset
-    `start` and OTIO `available_range` start at it;
-  - counted EDL source timecodes at the sequence rate, so a 25 fps clip in a 29.97 sequence got
-    frame `:29`; each clip's source timecode is now at its own rate;
-  - kept a clip `out` past the end of its media (10 s of a 6 s clip, where the render clamps);
-    the clip now ends at the media's end, with a note, and an `in` at or past the end is refused
-    as `cut.py` refuses it;
-  - dropped a chapter at or past the end silently, while the render's `metadata.py` refuses it;
-    such a chapter, or one that does not come after the one before it, is now refused
-    (`kind: input`).
-- `caption.py --mode mux` copied an input's own subtitle tracks whatever the output container, so
-  subrip from `.mkv` into `.mp4` ("Could not find tag for codec subrip") and mov_text into `.mkv`
-  failed unclassified. Existing tracks are now converted per container as `export.py` converts
-  them (#380's rule, now shared in `_common/runner.py`, with WebVTT for `.webm`), a track no
-  container conversion fits (a bitmap one in `.mp4`/`.webm`) is refused as `kind: input`, and so
-  is a `.webm` mux of a picture or sound WebM cannot hold (H.264/AAC) (#414).
-- `caption.py` handed a caller's SRT that needed no layout change straight to ffmpeg's SRT reader,
-  which reads another grammar than the tool: `00:01,000` (no hours) was refused as
-  `input_unreadable`, and `00:00:01,5` was burned at 1.005 s where the tool counted 1.5 s. A file
-  whose timing lines are not in the grammar both share is burned and muxed as the copy the tool
-  writes (`<out>_adjusted.srt`; an extra `--mode mux` track as `<out>_trackN.srt`) (#414).
-- On Windows an explicit `--font` was resolved by file-name prefix, so installed families were
-  missed and reported as `font_substituted` "not installed here": `Malgun Gothic` resolved to
-  `YuGothM.ttc` (no Hangul), `Microsoft YaHei`, `Nirmala UI`, `Leelawadee UI` and `Times New
-  Roman` to `arial.ttf`. The family's own file is now looked up first in the table of what Windows
-  installs under which name (`WINDOWS_FONTS`, plus the common Latin families) (#414).
-- `contract --json` left out output keys the tools emit and contract.md documents
-  (`dropped_non_av_streams` on 19 tools; cut's `mode`, `requested_*`, `output_duration`,
-  `duration_delta_seconds`, `nearest_keyframes`, `snap`; silence's `cut_points`, `cut_warnings`,
-  `removed_seconds_total`, `timemap`, `silence_kinds`, `silence_breakdown`, `hint`; probe's
-  `timecode`, `chapters`, `subtitle_stream_details`) and three error reasons the ASR refusals
-  emit (`no_speech`, `engine_failed`, `english_only`). They are published, those three refusals
-  now also carry `error.reason`/`error.details` (the top-level `reason` stays), and the test that
-  lists every refusal reason reads `die(..., reason=...)` calls too (#414).
+- Colour, A/V sync and geometry: the round-1 audit fixes (#410, #409, #411) (#416)
 
 ## 3.1.5
 
