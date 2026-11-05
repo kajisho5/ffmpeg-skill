@@ -311,6 +311,7 @@ CODECS = ("h264", "hevc", "av1", "prores")
 
 _ENCODERS: Optional[set] = None
 _BSFS: Optional[set] = None
+_FILTERS: Optional[set] = None
 
 
 class Context:
@@ -1803,6 +1804,40 @@ def ffmpeg_bsfs() -> set:
     return _BSFS
 
 
+def ffmpeg_filters() -> set:
+    """Names from `ffmpeg -filters`, read once, empty when it cannot be read (the reason is kept and
+    recorded as ffmpeg_encoders() keeps it); from ffprobe under --dry-run, for the reason
+    ffmpeg_encoders() gives. The row is recognised by its io-spec token (`V->V`, `|->V`), so the
+    flag-column width of FFmpeg 6/7 (three) and 8+ (two) does not matter."""
+    global _FILTERS
+    if _FILTERS is None:
+        _FILTERS = _read_ff_list("-filters", r"^\s*(?:[A-Z.|]{1,6}\s+)?([A-Za-z0-9_]+)\s+\S*->\S*")
+    return _FILTERS
+
+
+def require_filter(name: str, why: str) -> None:
+    """Refuse before ffmpeg runs (under --dry-run too) when this build has no `name` filter, with
+    the same kind/reason/hint a run that hit "No such filter" gets (#393). A list that could not be
+    read refuses nothing: an unreadable list is not a missing filter (ffmpeg_list_error)."""
+    names = ffmpeg_filters()
+    if not names or name in names:
+        return
+    die(f"this ffmpeg build has no {name} filter, which {why} needs", code=1, kind="ffmpeg",
+        error_extra={"reason": "filter_missing", "details": {"name": name}},
+        hint=filter_missing_hint(name))
+
+
+def filter_missing_hint(name: str) -> str:
+    """The filter_missing hint, with the platform's fuller-build line doctor prints for it."""
+    base = f"this ffmpeg build has no {name} filter: `python3 scripts/_contract.py doctor` lists what it has and how to get a fuller build"
+    system = platform.system()
+    if system == "Darwin":
+        return base + "; on macOS: brew install ffmpeg-full, then put $(brew --prefix ffmpeg-full)/bin first on PATH"
+    if system == "Windows":
+        return base + "; on Windows: winget install Gyan.FFmpeg (the full build)"
+    return base
+
+
 # why the last read of a capability list came back empty: "-encoders"/"-bsfs" -> reason
 _LIST_ERRORS: Dict[str, str] = {}
 
@@ -1812,7 +1847,7 @@ def ffmpeg_list_error(flag: str) -> Optional[str]:
     it was read (or not yet asked for). Only while the cached list is empty: a list a test or a
     later read filled in has nothing to explain."""
     flag = "-" + flag.lstrip("-")
-    cache = _ENCODERS if flag == "-encoders" else _BSFS if flag == "-bsfs" else None
+    cache = {"-encoders": _ENCODERS, "-bsfs": _BSFS, "-filters": _FILTERS}.get(flag)
     return None if cache else _LIST_ERRORS.get(flag)
 
 
@@ -1838,7 +1873,7 @@ def _read_ff_list(flag: str, pattern: str) -> set:
         why = f"{tool} {flag} could not run: {exc}"
     if why:
         _LIST_ERRORS[flag] = why
-        what = "encoder" if flag == "-encoders" else "bitstream filter"
+        what = {"-encoders": "encoder", "-bsfs": "bitstream filter"}.get(flag, "filter")
         warn(f"could not read this ffmpeg build's {what} list ({why}); nothing that needs it can be confirmed, which is not the same as the build lacking it",
              "ffmpeg_list_unreadable", list=flag.lstrip("-"), tool=tool, error=why)
     return names

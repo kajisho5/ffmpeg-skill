@@ -5992,7 +5992,7 @@ class DoctorDetectionTests(unittest.TestCase):
         d = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--json", check=False).stdout)
         emoji = d["fonts"]["emoji"]
         self.assertEqual(set(emoji), {"mode", "color_font", "color_font_file", "libass_color",
-                                      "assets", "detail", "fix"})
+                                      "libass_glyph", "assets", "detail", "fix"})
         self.assertIn(emoji["mode"], ("color", "png", "mono", "none"))
         self.assertIn(emoji["libass_color"], (True, False, None))
         self.assertTrue(emoji["detail"])

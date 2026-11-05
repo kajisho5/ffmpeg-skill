@@ -4,6 +4,28 @@
 
 ## Unreleased
 
+### Fixed
+
+- A build without libass (Homebrew's plain `ffmpeg`) failed `caption.py` with an unclassified
+  parse error ("No option name near ...") after a `--dry-run` that passed, and `render.py`'s
+  caption stage the same way. `caption.py` (and `graphics.py`'s libass route) asks the build for
+  the filter first, dry run included, and refuses with `kind: ffmpeg`, `reason: filter_missing`
+  and the fuller-build line; the subtitle path is passed as `subtitles=filename=` / `ass=filename=`,
+  so a run that still reaches ffmpeg gets "No such filter" (#393).
+- `look.py` on a build without `drawtext` failed its default sheet while `doctor` called `look`
+  usable. The sheet is drawn without timecode stamps, recorded as fallback `look_no_drawtext` and
+  a notes line (#394).
+- Emoji that libass drew as empty `.notdef` boxes (Apple Color Emoji on macOS) were reported as
+  `emoji_monochrome` with `verified: true`. `doctor`'s `fonts.emoji` gains `libass_glyph`, from a
+  render compared with a code point no font has (a `--fonts-dir` is searched too); when it is
+  false and no emoji assets resolve the mode is `none` (`png` with assets): `caption.py --emoji auto` leaves the emoji out of the drawn text with an
+  `emoji_not_drawn` warning, as on a machine with no emoji face, and `--emoji mono` refuses (#395).
+- An SRT given to `caption.py --text` (or `render.py --cues`) was burned in line by line, cue
+  numbers and timing lines included, as `verified: true`. A bare `A --> B` timing line marks the
+  file as an SRT and is refused with a pointer to `--srt` (`kind: input`) (#396).
+- `cut.py` kept one audio track of a source with several, silently, on a stream copy too. The
+  result says so: `dropped_audio_streams`, an `audio_tracks_dropped` warning and a notes line (#397).
+
 ### Changed
 
 - docs: SKILL.md restructured, no behavior change. Quick start, Workflow 0-8, ask/assume, the

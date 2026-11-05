@@ -19,6 +19,8 @@ from typing import List, Optional
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common import STATE, require_tool, add_common, apply_common, default_font_file, die, emit, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_analysis, time_arg
 from _common import drawtext_fontfile  # noqa: E402
+from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
+from _common.emit import note, record_fallback  # noqa: E402
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -162,6 +164,14 @@ def main() -> int:
     # a resolvable font file, given as fontfile=, is the only form confirmed not to crash drawtext's
     # own fontconfig resolution on some real Windows ffmpeg builds (#100); font= is the fallback when
     # nothing can be resolved, unchanged from before this existed.
+    if not args.no_timecode and ffmpeg_filters() and "drawtext" not in ffmpeg_filters():
+        # a build without drawtext (Homebrew's plain ffmpeg) cannot stamp the timecodes, but the
+        # sheet itself only needs tile: draw it without them and say so, rather than failing the
+        # step every picture change ends with (#394)
+        args.no_timecode = True
+        record_fallback("this ffmpeg build has no drawtext filter, so the sheet has no timecode stamps "
+                        "(the same as --no-timecode)", "look_no_drawtext")
+        note("no timecode stamps: this ffmpeg build has no drawtext filter (" + filter_missing_hint("drawtext") + ")")
     if args.no_timecode:
         font_prefix, tc = "", ""   # nothing is drawn, so no font is resolved or copied
     else:

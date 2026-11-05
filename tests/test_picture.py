@@ -4,6 +4,7 @@
     python3 tests/test_picture.py       # this group alone
     python3 tests/test_all.py            # every group
 """
+import argparse
 import collections
 import contextlib
 import io
@@ -4900,3 +4901,203 @@ class WhisperDefaultModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class LeanBuildTests(unittest.TestCase):
+    """#393-#396: what a build without libass/drawtext, or a file handed to the wrong flag, says.
+    The lean build is a mocked filter list: every runner has the filters, so the refusals are
+    pinned where they are decided."""
+
+    def setUp(self):
+        from _common import runner
+        self.runner = runner
+        self.saved = runner._FILTERS
+
+    def tearDown(self):
+        self.runner._FILTERS = self.saved
+
+    def _refusal(self, fn):
+        calls = []
+
+        def fake_die(msg, code=1, kind="input", **extra):
+            calls.append((msg, kind, extra))
+            raise SystemExit(code)
+
+        with unittest.mock.patch.object(self.runner, "die", fake_die), self.assertRaises(SystemExit):
+            fn()
+        return calls[0]
+
+    def test_require_filter_refuses_a_filter_the_build_lacks_with_the_runtime_reason(self):
+        self.runner._FILTERS = {"scale", "tile"}
+        msg, kind, extra = self._refusal(lambda: self.runner.require_filter("subtitles", "burning captions"))
+        self.assertEqual(kind, "ffmpeg")
+        self.assertEqual(extra["error_extra"], {"reason": "filter_missing", "details": {"name": "subtitles"}})
+        self.assertIn("doctor", extra["hint"])
+        self.assertIn("subtitles", msg)
+
+    def test_an_unreadable_filter_list_refuses_nothing(self):
+        self.runner._FILTERS = set()
+        self.runner.require_filter("subtitles", "burning captions")  # no SystemExit
+
+    def test_the_filter_list_is_read_from_this_build(self):
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        self.runner._FILTERS = None
+        names = self.runner.ffmpeg_filters()
+        self.assertIn("scale", names)
+        self.assertIn("anull", names)
+
+    def test_caption_names_the_subtitle_file_as_an_option(self):
+        """subtitles=<path> (positional) fails at parse time on a build without the filter, with a
+        message that names no filter; subtitles=filename=<path> gets "No such filter" (#393)."""
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        srt = OUT / "lean_subs.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:01,500\nHello\n", encoding="utf-8")
+        src = OUT / "lean_src.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:d=2", "-c:v", "libx264", str(src))
+        proc = script("caption.py", str(src), "--srt", str(srt), "-o", str(OUT / "lean_out.mp4"), "--dry-run", "--json")
+        self.assertIn("subtitles=filename=", proc.stderr + proc.stdout)
+
+    def test_an_srt_given_as_a_cue_file_is_refused_with_a_pointer_to_srt(self):
+        """#396: read as a cue file, an SRT's numbers and timing lines are burned in as captions."""
+        OUT.mkdir(parents=True, exist_ok=True)
+        srt = OUT / "as_text.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:02,500\nHello\n\n2\n00:00:03,000 --> 00:00:05,000\nWorld\n",
+                       encoding="utf-8")
+        proc = script("caption.py", "--text", str(srt), "--write-srt", str(OUT / "as_text_out.srt"), "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "failed")
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("--srt", doc["error"]["message"])
+        dropf = OUT / "drop_frame.txt"
+        dropf.write_text("00:01:00;00 --> 00:01:02;00 Hello\n", encoding="utf-8")
+        proc = script("caption.py", "--text", str(dropf), "--write-srt", str(OUT / "drop_frame_out.srt"), "--json",
+                      expect_fail=True)
+        self.assertIn("drop-frame", json.loads(proc.stdout)["error"]["message"])
+        # a cue file with its text on the line of its times is unchanged
+        cues = OUT / "same_line.txt"
+        cues.write_text("00:00:00,500 --> 00:00:02,500 Hello\n0:03-0:05 World\n", encoding="utf-8")
+        script("caption.py", "--text", str(cues), "--write-srt", str(OUT / "same_line_out.srt"))
+        self.assertIn("Hello", (OUT / "same_line_out.srt").read_text(encoding="utf-8"))
+
+    def test_look_draws_the_sheet_without_timecodes_on_a_build_without_drawtext(self):
+        """#394: the default sheet needs drawtext only for its stamps; without it the step every
+        picture change ends with must still give a sheet, and say what it left out."""
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        src = OUT / "lean_src.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:d=2", "-c:v", "libx264", str(src))
+        import look
+        from _common import STATE
+        real = self.runner.ffmpeg_filters()
+        self.runner._FILTERS = set(real) - {"drawtext"}
+        sheet = OUT / "lean_sheet.png"
+        out = io.StringIO()
+        argv = ["look.py", str(src), "-o", str(sheet), "--tiles", "2x1", "--overwrite", "--json"]
+        try:
+            with unittest.mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    look.main()
+                except SystemExit as e:
+                    self.assertEqual(e.code or 0, 0, out.getvalue()[-800:])
+        finally:
+            STATE.reset()
+        doc = json.loads(out.getvalue())
+        self.assertEqual(doc["status"], "completed")
+        self.assertIn("look_no_drawtext", [f["code"] for f in doc["diagnostics"]["fallbacks"]])
+        self.assertNotIn("drawtext", " ".join(doc["commands"]))
+        self.assertTrue(sheet.exists())
+
+
+class EmojiGlyphProbeTests(unittest.TestCase):
+    """#395: "no colour pixels" is a monochrome glyph OR the empty .notdef box; the probe tells
+    them apart by comparing the emoji with a code point no font has."""
+
+    def setUp(self):
+        import _common
+        self.c = _common
+        _common._EMOJI_SUPPORT_CACHE.clear()
+
+    def tearDown(self):
+        self.c._EMOJI_SUPPORT_CACHE.clear()
+
+    def _support(self, emoji_frame, nothing_frame, fonts_dir=None):
+        from _common import emoji as emoji_mod
+        frames = {"\U0001F389": emoji_frame, "\U0010FFFD": nothing_frame}
+        seen = self.seen = []
+        with unittest.mock.patch.object(emoji_mod, "_libass_color_probe", return_value=False), \
+                unittest.mock.patch.object(emoji_mod, "_libass_render", side_effect=lambda exe, ch, fd=None: (seen.append(fd), frames[ch])[1]), \
+                unittest.mock.patch.object(emoji_mod, "_emoji_color_font", return_value=("Apple Color Emoji", "/x.ttc", True)), \
+                unittest.mock.patch.object(emoji_mod, "ffmpeg_exe", return_value=("ffmpeg",)):
+            return emoji_mod.emoji_support(probe=True, fonts_dir=fonts_dir)
+
+    def test_a_render_that_matches_the_missing_glyph_is_no_glyph(self):
+        box = bytes([0]) * 100 + bytes([255]) * 50 + bytes([0]) * 100
+        s = self._support(box, box)
+        self.assertIs(s["libass_glyph"], False)
+        self.assertEqual(s["mode"], "none")
+        self.assertIn("no emoji glyph", s["detail"])
+
+    def test_a_blank_render_is_no_glyph(self):
+        blank = bytes(300)
+        self.assertIs(self._support(blank, blank)["libass_glyph"], False)
+
+    def test_a_render_that_differs_is_a_monochrome_glyph(self):
+        glyph = bytes([0]) * 120 + bytes([200]) * 30 + bytes([0]) * 100
+        s = self._support(glyph, bytes(250))
+        self.assertIs(s["libass_glyph"], True)
+        self.assertEqual(s["mode"], "mono")
+
+    def test_the_probe_searches_the_callers_fonts_dir(self):
+        glyph = bytes([0]) * 120 + bytes([200]) * 30 + bytes([0]) * 100
+        self._support(glyph, bytes(250), fonts_dir="/my/fonts")
+        self.assertEqual(self.seen, ["/my/fonts", "/my/fonts"])
+
+    def _plan_refusal(self, want, assets):
+        import caption
+        support = {"mode": "png" if assets else "none", "libass_color": False, "libass_glyph": False,
+                   "detail": "Apple Color Emoji: no glyph", "assets": assets, "color_font": "Apple Color Emoji",
+                   "color_font_file": None, "fix": ""}
+        calls = []
+
+        def fake_die(msg, code=1, kind="input", **extra):
+            calls.append((msg, kind))
+            raise SystemExit(code)
+
+        args = argparse.Namespace(emoji=want, emoji_assets=assets, fonts_dir=None)
+        with unittest.mock.patch.object(caption, "emoji_support", return_value=support), \
+                unittest.mock.patch.object(caption, "resolve_emoji_assets", return_value=assets), \
+                unittest.mock.patch.object(caption, "die", fake_die):
+            try:
+                caption.plan_emoji([(0.0, 2.0, "Emoji \U0001F3AC")], args, 0, 0)
+            except SystemExit:
+                return calls[0]
+        return None
+
+    def test_mono_refuses_even_with_assets_and_auto_with_assets_does_not(self):
+        self.assertIsNotNone(self._plan_refusal("mono", "/assets"))
+        self.assertIsNone(self._plan_refusal("auto", "/assets"))
+
+    def test_caption_auto_leaves_undrawable_emoji_out_and_says_so(self):
+        """#395: an auto run burns no empty boxes; it drops the emoji, as with no emoji face at
+        all, and records why. --emoji mono asked for the glyph and is refused."""
+        import caption
+        support = {"mode": "none", "libass_color": False, "libass_glyph": False, "detail": "Apple Color Emoji: no glyph",
+                   "assets": None, "color_font": "Apple Color Emoji", "color_font_file": None, "fix": ""}
+        warned = []
+        args = argparse.Namespace(emoji="auto", emoji_assets=None, fonts_dir=None)
+        with unittest.mock.patch.object(caption, "emoji_support", return_value=support), \
+                unittest.mock.patch.object(caption, "resolve_emoji_assets", return_value=None), \
+                unittest.mock.patch.object(caption, "warn", lambda msg, code, **k: warned.append(code)), \
+                contextlib.redirect_stderr(io.StringIO()):
+            cues, plan = caption.plan_emoji([(0.0, 2.0, "Emoji \U0001F3AC\u2705")], args, 640, 360)
+        self.assertEqual(plan["mode"], "none")
+        self.assertEqual(cues[0][2], "Emoji")
+        self.assertEqual(warned, ["emoji_not_drawn"])
+        self.assertIsNotNone(self._plan_refusal("mono", None))
