@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.6
+
+_Automated release: version and notes generated from pull requests merged since 3.1.5._
+
 ### Fixed
 
 - On FFmpeg 7.0+, `freeze.py --at` lost its hold (`--at 1 --hold 1` on a 2 s clip came out 1.97 s, and
@@ -116,6 +122,7 @@
   grid label in a cell with room for one em was not shortened; `broll.py` scaled a 1-pixel-wide
   A-roll to width 0 (kept as 1) and failed; and the SMPTE hint named the first timecoded input's
   start timecode for a time in another input (a B-roll's `--from`) (#411).
+- Colour, A/V sync and geometry: the round-1 audit fixes (#410, #409, #411) (#416)
 
 ## 3.1.5
 
