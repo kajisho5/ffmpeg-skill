@@ -2275,7 +2275,9 @@ class EditingTests(MediaFixtures):
             self.assertLessEqual(b, c, keep)
         self.assertLess(data["kept_duration"], data["input_duration"] - 0.3)
         self.assertGreater(data["removed_seconds_total"], 0.3)
-        self.assertEqual(keep[0], [0.0, 0.66])
+        # the "um" starts at 0.68, less the 0.02 s pad: 0.66, which the render holds on its nearest
+        # frame (30 fps: 0.6667), and `keep` describes the rendered range since #416
+        self.assertEqual(keep[0], [0.0, 0.667])
 
     def test_a_silence_narrower_than_two_margins_removes_nothing(self):
         sys.path.insert(0, str(SCRIPTS))
