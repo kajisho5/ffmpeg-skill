@@ -1266,12 +1266,22 @@ class FakeWhisperCppTests(MediaFixtures):
     def setUpClass(cls):
         super().setUpClass()
         cls.bin = Path(tempfile.mkdtemp(prefix="ffskill_fakewcpp_"))
-        for tool in ("ffmpeg", "ffprobe", "fc-match", "fc-list"):
-            if shutil.which(tool):
-                os.symlink(shutil.which(tool), cls.bin / tool)
-        cli = cls.bin / "whisper-cli"
-        cli.write_text(f"#!{sys.executable}\n" + textwrap.dedent(cls.FAKE))
-        cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
+        cls.tool_dirs = []
+        if os.name == "nt":
+            # no symlinks or shebangs on Windows: the real tools' own folders go on PATH, and the
+            # fake engine is a .cmd that runs the script (CreateProcess runs a .cmd through cmd.exe)
+            body = cls.bin / "whisper_cli.py"
+            body.write_text(textwrap.dedent(cls.FAKE), encoding="utf-8")
+            (cls.bin / "whisper-cli.cmd").write_text(f'@"{sys.executable}" "{body}" %*\n@exit /b %ERRORLEVEL%\n',
+                                                     encoding="utf-8")
+            cls.tool_dirs = sorted({os.path.dirname(shutil.which(t)) for t in ("ffmpeg", "ffprobe") if shutil.which(t)})
+        else:
+            for tool in ("ffmpeg", "ffprobe", "fc-match", "fc-list"):
+                if shutil.which(tool):
+                    os.symlink(shutil.which(tool), cls.bin / tool)
+            cli = cls.bin / "whisper-cli"
+            cli.write_text(f"#!{sys.executable}\n" + textwrap.dedent(cls.FAKE))
+            cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
         cls.shim = Path(tempfile.mkdtemp(prefix="ffskill_nofw_"))
         (cls.shim / "sitecustomize.py").write_text("import sys\nsys.modules['faster_whisper'] = None\n", encoding="utf-8")
         d = Path(tempfile.mkdtemp(prefix="ffskill_latesnd_"))
@@ -1297,7 +1307,8 @@ class FakeWhisperCppTests(MediaFixtures):
         super().tearDownClass()
 
     def env(self):
-        return dict(os.environ, PATH=f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin",
+        system = self.tool_dirs + [os.environ.get("SystemRoot", r"C:\Windows") + r"\System32"] if os.name == "nt" else ["/usr/bin", "/bin"]
+        return dict(os.environ, PATH=os.pathsep.join([str(self.bin)] + system),
                     PYTHONPATH=os.pathsep.join(p for p in (str(self.shim), os.environ.get("PYTHONPATH")) if p),
                     **{asr.ASR_ENGINE_ENV: "whisper.cpp", asr.ASR_MODEL_ENV: ""})
 
