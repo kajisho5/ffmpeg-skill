@@ -32,7 +32,7 @@ import sys
 from typing import List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
-from _common import (aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
+from _common import (require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
                      ffmpeg_base, info, label_chain, load_brand, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
@@ -244,6 +244,10 @@ def main(force_route: Optional[str] = None) -> int:
                 f"({support['detail']}) -- pass --emoji-assets DIR for colour, or --emoji mono", kind="input")
         if args.emoji == "png" and not emoji_assets:
             die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
+        if args.emoji == "mono" and not emoji_assets and support.get("libass_glyph") is False:
+            die("--emoji mono: this ffmpeg draws no emoji glyph through libass "
+                f"({support['detail']}), so they would come out as empty boxes -- pass --emoji-assets DIR "
+                "for colour, or --emoji none", kind="input")
     if args.text_render == "drawtext" and shaping:
         die(f"{LANGUAGE_NAMES.get(_script, _script)} text cannot be shaped by drawtext on any ffmpeg "
             "build (the marks are reordered by harfbuzz, which drawtext does not use): drop "
@@ -682,7 +686,8 @@ def main(force_route: Optional[str] = None) -> int:
         chains = list(fc) if fc else [f"[0:v]{text or 'null'}[vout]"]
         last = "vout"
         if route == "ass":
-            vf = f"ass={escape_filter_path(ass_path)}"
+            require_filter("ass", "drawing this text through libass")
+            vf = f"ass=filename={escape_filter_path(ass_path)}"
             fdir = ass_fonts_dir()
             if fdir:
                 vf += f":fontsdir={escape_filter_path(fdir)}"

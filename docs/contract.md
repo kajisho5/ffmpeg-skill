@@ -596,14 +596,18 @@ line to one screen width; a longer explanation, and the per-script files, are `-
 Japanese or Korean.
 
 Since 1.15 `fonts` also carries `emoji`: `{"mode": "color"|"png"|"mono"|"none", "color_font": "Noto
-Color Emoji"|null, "color_font_file": "..."|null, "libass_color": true|false|null, "assets":
+Color Emoji"|null, "color_font_file": "..."|null, "libass_color": true|false|null, "libass_glyph": true|false|null, "assets":
 "/path"|null, "detail": "...", "fix": "..."}`. `libass_color` comes from a **render probe** — one
 64x64 frame with an emoji cue through `subtitles=`, chroma-tested — because an installed colour
 emoji family proves nothing: Noto Color Emoji installs cleanly on builds whose libass still draws a
 monochrome outline. `null` means the probe was not run: `contract --json --static` (and every other
 static/JSON-only path) skips it, exactly as it skips the rest of the environment detection. `mode`
 is `color` when the probe says colour, else `png` when an emoji assets directory resolves, else
-`mono` when some installed face has a glyph, else `none`. Informational like the rest of `fonts`:
+`mono` when some installed face has a glyph, else `none`. Since 3.1.2 `libass_glyph` asks a second
+question when there is no colour: does libass draw an emoji glyph at all, or only what it draws for
+U+10FFFD, a code point no font has (the empty `.notdef` box Apple Color Emoji gives libass on macOS)?
+`false` makes `mode` `none`, and `caption.py --emoji auto|mono` refuses (`kind: input`) rather than
+burn empty boxes. Informational like the rest of `fonts`:
 it never moves `ok` or any tool's `usable`.
 
 `caption.py`, `graphics.py` and `overlay.py` gained `--emoji auto|color|png|mono|none`,

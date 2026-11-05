@@ -233,6 +233,43 @@ def _libass_color_probe() -> "Optional[bool]":
     return False
 
 
+def _libass_render(exe: str, char: str) -> "Optional[bytes]":
+    """One 96x96 rgb24 frame of `char` drawn through libass (subtitles=), or None when it failed."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        srt = os.path.join(td, "g.srt")
+        with open(srt, "w", encoding="utf-8") as fh:
+            fh.write(f"1\n00:00:00,000 --> 00:00:01,000\n{char}\n")
+        try:
+            proc = subprocess.run(
+                [exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                 "-i", "color=c=black:s=96x96:d=0.04",
+                 "-vf", "subtitles=" + escape_filter_path(srt, bind=False) + ":force_style='FontSize=64,Alignment=5'",
+                 "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+    if proc.returncode != 0 or len(proc.stdout) < 96 * 96 * 3:
+        return None
+    return proc.stdout
+
+
+def _libass_glyph_probe() -> "Optional[bool]":
+    """Does libass draw an emoji GLYPH at all, or only what it draws for a character no face has?
+    "No colour pixels" (_libass_color_probe False) covers both a monochrome glyph and the empty
+    .notdef box: Apple Color Emoji (an sbix bitmap face) gives libass no usable glyph, and the box
+    is white (#395). So the emoji is compared with U+10FFFD, a code point no font carries: the same
+    frame, or nothing lit, is no glyph. None: the probe could not run."""
+    exe = ffmpeg_exe("ffmpeg")[0]
+    if not exe:
+        return None
+    emoji, nothing = _libass_render(exe, "\U0001F389"), _libass_render(exe, "\U0010FFFD")
+    if emoji is None or nothing is None:
+        return None
+    lit = any(emoji[i] > 60 for i in range(0, len(emoji)))
+    return bool(lit and emoji != nothing)
+
+
 def emoji_support(assets: "Optional[str]" = None, probe: bool = True) -> "Dict[str, Any]":
     """What this machine can actually do with emoji, cached per process.
 
@@ -247,11 +284,15 @@ def emoji_support(assets: "Optional[str]" = None, probe: bool = True) -> "Dict[s
         return dict(_EMOJI_SUPPORT_CACHE[key])
     family, file, fc_answered = _emoji_color_font()
     libass_color = _libass_color_probe() if probe else None
+    # a colour render is a glyph; without one, ask whether libass draws one at all (#395)
+    libass_glyph = True if libass_color else (_libass_glyph_probe() if probe and libass_color is False else None)
     assets_dir = assets if (assets and os.path.isdir(assets)) else None
     if libass_color:
         mode = "color"
     elif assets_dir:
         mode = "png"
+    elif family and libass_glyph is False:
+        mode = "none"
     elif family:
         mode = "mono"
     elif not fc_answered:
@@ -264,6 +305,9 @@ def emoji_support(assets: "Optional[str]" = None, probe: bool = True) -> "Dict[s
         detail = "no fontconfig on this machine; the PNG overlay path needs none"
     elif libass_color:
         detail = f"{family or 'an installed face'} renders in colour through libass on this ffmpeg"
+    elif family and libass_glyph is False:
+        detail = (f"{family} installed but libass draws no emoji glyph from it on this build (the render "
+                  "matches a code point no font has: an empty box or nothing)")
     elif family and libass_color is False:
         detail = f"{family} installed but libass renders it monochrome on this build"
     elif family and libass_color is None:
@@ -273,7 +317,7 @@ def emoji_support(assets: "Optional[str]" = None, probe: bool = True) -> "Dict[s
     else:
         detail = "no colour emoji family installed and no --emoji-assets directory"
     result = {"mode": mode, "color_font": family, "color_font_file": file,
-              "libass_color": libass_color, "assets": assets_dir,
+              "libass_color": libass_color, "libass_glyph": libass_glyph, "assets": assets_dir,
               "detail": detail, "fix": EMOJI_ASSET_HINT}
     _EMOJI_SUPPORT_CACHE[key] = result
     return dict(result)

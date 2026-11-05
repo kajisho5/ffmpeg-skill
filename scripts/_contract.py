@@ -213,7 +213,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                                             {"capability": "ffmpeg", "when": "--beats (one audio decode for the onset pass)"}],
                    video_required=True, audio_only=False, visual=False, verify=[], produces_artifact=True, idempotency="bit_exact", deterministic=True),
     "look": dict(role="verification", inputs=["video artifact"], outputs=["PNG contact sheet / frames / side-by-side"],
-                 required=FF + ["filter:tile"], optional=[{"capability": "filter:drawtext", "when": "timecode stamps (default; --no-timecode to skip)"},
+                 required=FF + ["filter:tile"], optional=[{"capability": "filter:drawtext", "when": "timecode stamps (default; without drawtext the sheet is drawn without them, fallback look_no_drawtext)"},
                                                           {"capability": "filter:drawbox", "when": "--safe NAME (the platform's occluded zones)"}, {"capability": "filter:zscale", "when": "HDR source"}, {"capability": "filter:tonemap", "when": "HDR source"}],
                  video_required=True, audio_only=False, visual=False, verify=[], produces_artifact=True, idempotency="bit_exact", deterministic=True),
     "render": dict(role="execution", inputs=["project.json (clips, transitions, captions, overlays, audio, loudness, export, check)", "media asset plus --template NAME (a shipped delivery template)"], outputs=["final video artifact", "one artifact per destination plus a pack table (--template all)", "work directory of stage outputs (--keep / --work)", "editor timeline (.fcpxml / .edl / .otio) instead of a render (--export-timeline)"],
@@ -463,6 +463,8 @@ DIAGNOSTIC_CODES = {
     "av1_encoder_libaom": ("fallbacks", "--codec av1 on a build without libsvtav1: libaom-av1 encoded instead; {wanted, used}"),
     "crf_clamped": ("warnings", "the CRF handed to the encoder was above its maximum and was capped (the HEVC HDR line adds 2); {encoder, requested, asked, used}"),
     # fonts and text
+    "audio_tracks_dropped": ("warnings", "cut.py: the source has more audio tracks than the cut wrote (one); {source, kept, dropped}"),
+    "look_no_drawtext": ("fallbacks", "look.py on a build without the drawtext filter: the sheet was drawn without timecode stamps, as with --no-timecode"),
     "font_substituted": ("fallbacks", "the asked font family is not installed: fontconfig or the Windows Fonts folder gave another (font_used names it); {asked, file, family, via}"),
     "font_lacks_script": ("warnings", "an explicit --font does not cover the text's script and is kept as asked; {font, script}"),
     "font_coverage_unverified": ("warnings", "whether a font covers the text's script could not be checked (no fontconfig / fc-scan); {script, fonts_dir?}"),
@@ -645,6 +647,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "--boomerang on a source with audio: the audio was dropped"}}
     elif name == "cut":
         extra = {"expected_duration": {"type": "number", "description": "seconds requested"},
+                 "dropped_audio_streams": {"type": "integer", "description": "audio tracks of the source this cut did not write (cut writes one, on a stream copy as on a re-encode); 0 for a source with one or none. A notes line and an audio_tracks_dropped warning say so too"},
                  "duration_error_ms": {"type": ["number", "null"], "description": "written minus requested, measured by ffprobe (null under --dry-run)"},
                  "precision": {"enum": ["packet", "sample", "codec_frame", "frame"],
                                "description": "since 3.0.0 the least exact segment's (as least_exact_precision; 2.x: the whole run's, packet only when nothing re-encoded): packet: stream copy on a packet/keyframe boundary; sample: decoded audio trimmed to the sample, lossless output; codec_frame: sample-trimmed then framed by a lossy encoder (priming delay adds to the length); frame: re-encoded video"},

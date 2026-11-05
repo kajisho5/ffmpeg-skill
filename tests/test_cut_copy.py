@@ -2039,3 +2039,35 @@ class VfrGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class DroppedAudioTrackTests(unittest.TestCase):
+    """#397: cut writes one audio track, on a stream copy as on a re-encode; a source with more
+    says how many did not come along instead of passing as if nothing was lost."""
+
+    @classmethod
+    def setUpClass(cls):
+        DIR.mkdir(parents=True, exist_ok=True)
+        cls.two = DIR / "two_audio.mov"
+        if not cls.two.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s={W}x{H}:r={FPS}:d=6",
+               "-f", "lavfi", "-i", "sine=f=440:d=6", "-f", "lavfi", "-i", "sine=f=880:d=6",
+               "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-g", str(FPS), "-c:a", "aac", cls.two)
+
+    def test_a_stream_copy_and_a_re_encode_both_report_the_track_left_out(self):
+        for extra in ([], ["--accurate"]):
+            with self.subTest(extra=extra):
+                out = DIR / ("two_part%s.mov" % ("_acc" if extra else ""))
+                d = cut_json(str(self.two), "--start", "1", "--end", "4", *extra, "-o", str(out), "--overwrite")
+                self.assertEqual(d["status"], "completed")
+                self.assertEqual(d["dropped_audio_streams"], 1)
+                self.assertIn("audio_tracks_dropped", [w["code"] for w in d["diagnostics"]["warnings"]])
+                self.assertTrue(any("2 audio tracks" in n for n in d["notes"]), d["notes"])
+                self.assertEqual(len(probe(str(out))["audio_streams"]), 1)
+
+    def test_a_single_track_source_reports_nothing(self):
+        src = DIR / "one_audio.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", str(self.two), "-map", "0:v", "-map", "0:a:0", "-c", "copy", src)
+        d = cut_json(str(src), "--start", "1", "--end", "4", "-o", str(DIR / "one_part.mp4"), "--overwrite")
+        self.assertEqual(d["dropped_audio_streams"], 0)
+        self.assertNotIn("audio_tracks_dropped", [w["code"] for w in (d.get("diagnostics") or {}).get("warnings", [])])

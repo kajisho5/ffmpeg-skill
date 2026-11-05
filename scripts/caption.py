@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_units,
                         resolve as resolve_platform)
 from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
-from _common import emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, load_brand, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs
+from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, load_brand, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 # The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
 # shares them). They stay caption.py's public names -- every caller and test that reached for
@@ -78,10 +78,22 @@ TIME_RE = re.compile(
 )
 
 
+# an SRT timing line: the times alone, the cue text on the lines after it
+SRT_TIMING_RE = re.compile(r"^\s*\d+:\d{2}:\d{2}[,.]\d+\s*-->\s*\d+:\d{2}:\d{2}[,.]\d+\s*$")
+
+
 def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[float] = None) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
     cursor = 0.0
-    for raw in read_text_or_die(path, "--text").lstrip("\ufeff").splitlines(True):
+    lines = read_text_or_die(path, "--text").lstrip("\ufeff").splitlines(True)
+    for n, raw in enumerate(lines, 1):
+        if SRT_TIMING_RE.match(raw.rstrip("\r\n")):
+            # a cue file puts the text on the line with its times; this line has the times alone, so
+            # the file is an SRT. Read as a cue file, its numbers and timing lines would be burned in
+            # as captions, auto-timed 3 s apart (#396)
+            die(f"--text: {path} is an SRT file (line {n} is a timing line with no text: "
+                f"'{raw.strip()}'); pass it as --srt (render.py: --srt, not --cues)", kind="input")
+    for raw in lines:
         line = raw.rstrip("\n")
         if not line.strip():
             continue
@@ -208,6 +220,12 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
             kind="input")
     if want == "png" and not assets:
         die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
+    if want in ("auto", "mono") and not assets and support.get("libass_glyph") is False:
+        # the render would be empty boxes (tofu), which is a failed job; dropping the emoji instead
+        # would change the cue text, which caption.py never does unasked (#395)
+        die(f"--emoji {want}: this ffmpeg draws no emoji glyph through libass ({support['detail']}), so "
+            f"{len(clusters_all)} emoji would come out as empty boxes -- pass --emoji-assets DIR for colour, "
+            "or --emoji none to leave them out of the drawn text", kind="input")
     plan = {"mode": mode, "count": len(clusters_all),
             "clusters": sorted({emoji_codepoint_name(cl) for cl in clusters_all}),
             "assets": assets, "missing": [], "overlays": []}
@@ -1097,6 +1115,10 @@ def main() -> int:
             die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
         if args.audio_stream and not audio_streams:
             die("--audio-stream needs an input with audio streams")
+        if args.mode != "mux":
+            # before any transcription or sidecar: a build without libass fails these at parse time
+            # with a message that names no filter (#393), so ask the build first, dry run included
+            require_filter("ass" if args.ass else "subtitles", "burning captions")
     fps_for_tc = args.fps
     if fps_for_tc is None and meta is not None:
         fps_for_tc = meta.get("video", {}).get("fps")
@@ -1586,8 +1608,11 @@ def main() -> int:
             side_notes.append(msg)
         caption_stats["cues_burned"] = burned
         caption_stats["cues_outside"] = outside
+    require_filter("ass" if args.ass else "subtitles", "burning captions")
+    # the path as a named option: with a positional first value a build without the filter fails at
+    # parse time ("No option name near ...") instead of saying "No such filter" (#393)
     if args.ass:
-        vf = f"ass={escape_filter_path(args.ass)}"
+        vf = f"ass=filename={escape_filter_path(args.ass)}"
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
     else:
@@ -1608,7 +1633,7 @@ def main() -> int:
             f"MarginV={args.margin}",
         ]
         force = ",".join(style).replace("\\", "\\\\").replace("'", "\\'")
-        vf = f"subtitles={escape_filter_path(srt_path)}:force_style='{force}'"
+        vf = f"subtitles=filename={escape_filter_path(srt_path)}:force_style='{force}'"
         if args.fonts_dir:
             vf += f":fontsdir={escape_filter_path(args.fonts_dir)}"
     if generated_ass or not args.ass:

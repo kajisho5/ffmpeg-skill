@@ -47,7 +47,8 @@ still carries wide-gamut primaries, so an SDR-only client or platform expecting 
 `color.py --to-sdr` first -- `export.py` only retags BT.709, it does not convert (eval 24 h1).
 `export.py` platform presets are SDR and warn on HDR input.
 iPhone `.mov` files also carry timecode/metadata tracks; scripts map only the
-first audio track, so extra tracks are dropped on re-encode. Keep ProRes masters
+first audio track, so extra tracks are dropped, on a stream copy as on a re-encode
+(`cut.py` reports it: `dropped_audio_streams`, an `audio_tracks_dropped` warning). Keep ProRes masters
 at source colour: `export.py --preset prores` does not retag.
 
 Re-encoding an HDR (iPhone, HDR10) source through an SDR path flattens the
@@ -230,6 +231,11 @@ directory of PNGs — and on most builds only the second one exists.
   `doctor --json` → `.fonts.emoji` (`mode`: `color` / `png` / `mono` / `none`,
   plus `libass_color` from that render). `contract --json --static` is the way
   to get the contract without running it; `doctor` itself always probes.
+- **No colour pixels is not a monochrome glyph.** Apple Color Emoji (an sbix
+  face) gives libass no glyph on macOS, and it draws the empty `.notdef` box.
+  `libass_glyph` compares the emoji render with U+10FFFD, a code point no font
+  has: the same frame is no glyph, `mode: none`, and `caption.py` refuses
+  rather than burn boxes (`--emoji-assets DIR`, or `--emoji none`).
 - **drawtext cannot load an emoji font at all.** Not a degraded render: a
   CBDT/sbix face fails filter initialisation outright (`Could not set font size
   to 48 pixels: invalid library handle`, and at the font's own strike
