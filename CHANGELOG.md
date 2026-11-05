@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.5
+
+_Automated release: version and notes generated from pull requests merged since 3.1.4._
+
 ### Fixed
 
 - Files a tool writes or removes itself had escaped the output guards (#408, the class of #111,
@@ -27,6 +33,7 @@
   - a relative filter path starting or ending with a space lost it; the space is escaped;
   - a one-letter `x:name.mp4` off Windows passed as a drive letter and then failed in ffmpeg as
     "Protocol not found"; it is refused as a URL with the `./name` hint.
+- Side files and paths get the output guards (#408) (#413)
 
 ## 3.1.4
 
