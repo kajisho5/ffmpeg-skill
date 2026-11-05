@@ -7,8 +7,13 @@
 <meta name="description" content="{{ site.description }}">
 <meta property="og:title" content="{{ page.title | default: site.title }}">
 <meta property="og:description" content="{{ site.description }}">
-<meta property="og:image" content="https://raw.githubusercontent.com/kajisho5/ffmpeg-skill/main/assets/social-preview.png">
-<link rel="icon" href="{{ '/brand/app-icon.png' | relative_url }}">
+<meta property="og:image" content="https://kajisho5.github.io/ffmpeg-skill/brand/og.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="{{ '/brand/favicon.ico' | relative_url }}" sizes="48x48">
+<link rel="icon" href="{{ '/brand/favicon.svg' | relative_url }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ '/brand/apple-touch-icon.png' | relative_url }}">
 <style>
 :root {
   --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
@@ -54,7 +59,7 @@ footer { max-width: 980px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
 </head>
 <body>
 <nav><div class="in">
-  <a class="brand" href="{{ '/' | relative_url }}">ffmpeg-skill</a>
+  <a class="brand" href="{{ '/' | relative_url }}"><img src="{{ '/brand/favicon.svg' | relative_url }}" alt="" width="20" height="20" style="vertical-align:-4px;margin-right:6px">ffmpeg-skill</a>
   <a href="{{ '/readme.html' | relative_url }}">README</a>
   <a href="{{ '/docs/demos.html' | relative_url }}">Demos</a>
   <a href="{{ '/docs/contract.html' | relative_url }}">Contract</a>

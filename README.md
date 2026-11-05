@@ -1,14 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/app-icon-dark.png">
-    <img src="brand/app-icon.png" width="128" alt="ffmpeg-skill app icon">
-  </picture>
-</p>
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/ffmpeg-skill-wordmark-white.svg">
-    <img src="brand/logo/ffmpeg-skill-wordmark-black.svg" height="48" alt="ffmpeg-skill">
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/ffmpeg-skill-horizontal-on-dark.svg">
+    <img src="brand/logo/ffmpeg-skill-horizontal.svg" height="72" alt="ffmpeg-skill">
   </picture>
 </p>
 
@@ -17,6 +10,7 @@ Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpe
 No cloud · No API keys · Python standard library</p>
 
 <p align="center">
+  <a href="https://kajisho5.github.io/ffmpeg-skill/"><b>Website</b></a> ·
   <a href="#quick-start"><b>Quick start</b></a> ·
   <a href="docs/demos.md">Demos</a> ·
   <a href="#tools">Tools</a> ·
@@ -30,6 +24,10 @@ No cloud · No API keys · Python standard library</p>
   <a href="#ffmpeg-compatibility"><img src="https://img.shields.io/badge/ffmpeg-6.1%20%7C%207.1%20%7C%208%20%7C%209%20tested-orange" alt="FFmpeg 6.1, 7.1, 8 and 9 tested in CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
   <a href="https://github.com/sponsors/kajisho5"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors" alt="Sponsor"></a>
+</p>
+
+<p align="center">
+  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v3: give your coding agent a video editor. An agent runs probe, cut, fit, export and check, and the final file is measured: 59.98 s, 1080x1920, 30 fps."></a>
 </p>
 
 ```bash
