@@ -306,7 +306,7 @@ def main() -> int:
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet
 
-    if args.json:
+    if STATE.json:  # --json-brief too: emit() is what adds the diagnostics (scenes_sheet_no_drawtext)
         emit(None, **result)
     else:
         print_json(result)

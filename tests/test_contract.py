@@ -3817,7 +3817,7 @@ class ContractTests(unittest.TestCase):
         writes bytes to the output and THEN exits non-zero, simulating that timing."""
         shim = self.work / "shim_partial"
         shim.mkdir(exist_ok=True)
-        (shim / "ffmpeg").write_text("#!/bin/sh\nfor last; do :; done\ncase \"$last\" in -|*null*) exit 1;; esac\n"
+        (shim / "ffmpeg").write_text("#!/bin/sh\nfor last; do :; done\ncase \"$last\" in -*|*null*) exit 1;; esac\n"
                                       "printf 'partial-mp4-bytes' > \"$last\"\necho 'mid-encode failure' >&2\nexit 1\n")
         (shim / "ffmpeg").chmod(0o755)
         env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
@@ -3835,7 +3835,7 @@ class ContractTests(unittest.TestCase):
         """A fake ffmpeg that exits 0 but writes an empty file: every writing tool must still fail."""
         shim = self.work / "shim0"
         shim.mkdir(exist_ok=True)
-        (shim / "ffmpeg").write_text("#!/bin/sh\nfor last; do :; done\ncase \"$last\" in -|*null*) exit 0;; esac\n: > \"$last\"\nexit 0\n")
+        (shim / "ffmpeg").write_text("#!/bin/sh\nfor last; do :; done\ncase \"$last\" in -*|*null*) exit 0;; esac\n: > \"$last\"\nexit 0\n")
         (shim / "ffmpeg").chmod(0o755)
         env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
         cases = {
@@ -6389,6 +6389,17 @@ class MessageNeutralizingTests(unittest.TestCase):
         self.assertEqual(self.emit.neutralize(r"input not found: C:\Users\me\clip.mp4"),
                          r"input not found: C:\Users\me\clip.mp4")
         self.assertEqual(self.emit.neutralize("command failed\nlast stderr line"), "command failed\nlast stderr line")
+
+    def test_an_option_value_and_a_tools_own_notes_are_escaped(self):
+        """CodeRabbit on #405: `--output=<value>` is printed back as the value alone, and a
+        tool's notes (join.py's duplicate inputs) quote input paths."""
+        sys.argv = ["x", "--output=out\nFORGED.mp4"]
+        self.assertEqual(self.emit.neutralize("not an audio extension: out\nFORGED.mp4"),
+                         "not an audio extension: out\\nFORGED.mp4")
+        doc = {"notes": ["listed twice: out\nFORGED.mp4"]}
+        from _common.runner import Context
+        self.emit._merge_collector(doc, Context())
+        self.assertEqual(doc["notes"], ["listed twice: out\\nFORGED.mp4"])
 
     def test_control_and_bidi_characters_are_escaped_wherever_they_come_from(self):
         sys.argv = ["x"]

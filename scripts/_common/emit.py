@@ -37,12 +37,15 @@ def shown(value: Any) -> str:
 
 
 def _argument_forms(arg: str) -> List[str]:
-    """The spellings a message may print an argument in: as given, resolved, and its file name."""
-    forms = {arg}
-    try:
-        forms.update({os.path.abspath(arg), os.path.realpath(arg), os.path.basename(arg)})
-    except (OSError, ValueError):
-        pass
+    """The spellings a message may print an argument in: as given, resolved, and its file name;
+    for `--opt=value`, the same for the value, which is what a tool prints back."""
+    given = [arg] + ([arg.split("=", 1)[1]] if arg.startswith("-") and "=" in arg else [])
+    forms = set(given)
+    for a in given:
+        try:
+            forms.update({os.path.abspath(a), os.path.realpath(a), os.path.basename(a)})
+        except (OSError, ValueError):
+            pass
     return sorted((f for f in forms if f), key=len, reverse=True)
 
 
@@ -119,6 +122,8 @@ def _report_dropped_audio_tracks(meta: Dict[str, Any], ctx: "Context") -> None:
     first = getattr(STATE, "first_input", None)
     if not first or first[1] < 2 or not meta:
         return
+    if len(getattr(STATE, "audio_inputs", None) or ()) > 1:
+        return  # several sources with sound: which one's tracks the output carries is the tool's own choice
     kept = len(meta.get("audio_streams") or [])
     if not kept or kept >= first[1]:
         return
@@ -188,6 +193,9 @@ def _merge_collector(doc: Dict[str, Any], ctx: "Context") -> None:
     extra_notes = [n for n in ctx.notes if n not in (doc.get("notes") or [])]
     if extra_notes:
         doc["notes"] = list(doc.get("notes") or []) + extra_notes
+    if doc.get("notes"):
+        # a tool's own notes can quote an input path (join.py's duplicates): made inert as messages are (#400)
+        doc["notes"] = [neutralize(n) for n in doc["notes"]]
     diag = {k: list(getattr(ctx, k)) for k in ("warnings", "fallbacks", "skipped") if getattr(ctx, k)}
     if diag:
         merged = dict(doc.get("diagnostics") or {})

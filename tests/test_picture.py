@@ -5061,6 +5061,10 @@ class LeanBuildSheetTests(unittest.TestCase):
                                    "--overwrite", "--json"])
         self.assertIn("scenes_sheet_no_drawtext", [f["code"] for f in doc["diagnostics"]["fallbacks"]])
         self.assertNotIn("drawtext", " ".join(doc["commands"]))
+        # --json-brief goes through emit() too, so the fallback is in that document as well
+        brief = self._run("scenes", ["scenes.py", str(self.src), "--sheet", str(OUT / "lean_scenes.png"),
+                                     "--overwrite", "--json-brief"])
+        self.assertIn("scenes_sheet_no_drawtext", json.dumps(brief))
 
 
 class EmojiGlyphProbeTests(unittest.TestCase):

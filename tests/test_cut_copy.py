@@ -2077,6 +2077,15 @@ class DroppedAudioTrackTests(unittest.TestCase):
                               "--overwrite", "--json").stdout)
         self.assertNotIn("audio_tracks_dropped", [w["code"] for w in (d.get("diagnostics") or {}).get("warnings", [])])
 
+    def test_a_tool_that_picks_among_sources_with_sound_reports_nothing(self):
+        """CodeRabbit on #405: grid.py takes the sound of --audio-from only, so the first input's
+        track count says nothing about what this output left out."""
+        one = DIR / "one_audio_grid.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", str(self.two), "-map", "0:v", "-map", "0:a:0", "-c", "copy", one)
+        d = json.loads(script("grid.py", str(self.two), str(one), "--cols", "2", "--rows", "1", "--label", "none",
+                              "--audio-from", "1", "-o", str(DIR / "two_grid.mp4"), "--overwrite", "--json").stdout)
+        self.assertNotIn("audio_tracks_dropped", [w["code"] for w in (d.get("diagnostics") or {}).get("warnings", [])])
+
     def test_a_single_track_source_reports_nothing(self):
         src = DIR / "one_audio.mp4"
         sh("ffmpeg", "-y", "-v", "error", "-i", str(self.two), "-map", "0:v", "-map", "0:a:0", "-c", "copy", src)
