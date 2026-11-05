@@ -786,8 +786,10 @@ Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 | `matched_untimed`, `matched_too_long` | `silence.py --filler` (inside `filler`) | listed words that were not cut: no usable timing in the transcript (also a `filler_words_untimed` warning), or longer than a filler (`FILLER_MAX_WORD`, a held vowel) |
 
 `caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
-and produced no cue, the refusal is `"<engine> found no speech in <input>"` with `kind: input`,
-`reason: "no_speech"` and `engine` in the failure document — distinct from the "no local
+and produced no cue (for `--filler`: a Whisper transcript with no text at all; text without word
+timings is a build without them, refused as such), the refusal is `"<engine> found no speech in
+<input>"` with `kind: input`, `reason: "no_speech"` and `engine` in the failure document (the
+three ASR reasons below are in `error.reason` too, with `error.details`) — distinct from the "no local
 speech-to-text engine found" refusal, which now only means no engine was found. When `--engine
 auto` found engines and none transcribed, the refusal is `kind: input` with `reason:
 "engine_failed"` (one ran and failed) or `"english_only"` (the only engines found were Parakeet
@@ -865,8 +867,9 @@ A refusal also carries `error.reason`, a stable snake_case code for *why*
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,
 `media_path_is_url`, `media_path_is_playlist` (an HLS or ffconcat playlist given as media),
 `output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
-`render.py`'s `plan_*` reasons, and `--codec av1`/`prores`'s `encoder_missing` and
-`encoder_list_unreadable`), and `error.details`, the facts the message is written from, so a
+`render.py`'s `plan_*` reasons, `--codec av1`/`prores`'s `encoder_missing` and
+`encoder_list_unreadable`, and `--transcribe`'s `asr_engine_missing`, `no_speech`, `engine_failed`
+and `english_only`), and `error.details`, the facts the message is written from, so a
 caller never parses the prose:
 
 ```

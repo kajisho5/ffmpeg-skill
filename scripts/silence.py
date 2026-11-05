@@ -83,10 +83,29 @@ def speech_aware_silences(path: str, threshold: float, min_silence: float) -> "T
     return boundaries, breaths
 
 
+def inside_margin(silences: List[Tuple[float, float]], duration: float, margin: float) -> List[Tuple[float, float]]:
+    """Each silence with --margin kept on both sides: the stretch actually removed. A silence too
+    short to hold two margins removes nothing (it is dropped, never turned inside out).
+
+    The margin is applied to the silences alone, before they are merged with filler spans (#414):
+    a filler word's span is the word itself plus --filler-pad, and taking a 0.2 s margin off each
+    side of it turned every word narrower than 2 x --margin inside out -- kept, and still counted
+    as removed."""
+    out: List[Tuple[float, float]] = []
+    for s, e in silences:
+        a = s + margin
+        b = duration if e == float("inf") else min(duration, e - margin)
+        if b > a:
+            out.append((a, b))
+    return out
+
+
 def keep_ranges(silences: List[Tuple[float, float]], duration: float, margin: float, min_keep: float) -> List[Tuple[float, float]]:
     keeps: List[Tuple[float, float]] = []
     cursor = 0.0
     for s, e in sorted(silences):
+        if e != float("inf") and e - margin <= s + margin:
+            continue  # narrower than two margins: nothing of it is removed (#414)
         s_adj = max(cursor, s + margin)
         if s_adj - cursor >= min_keep:
             keeps.append((cursor, s_adj))
@@ -503,6 +522,9 @@ def main() -> int:
     media_out = None if (args.list or args.filler_list) else (args.output or default_output(args.input, "tight"))
     guard_sidecar(args.edl, args.input, args.words, args.filler_words, siblings=(media_out,))
 
+    if not math.isfinite(args.margin) or args.margin < 0:
+        # nan made inside_margin() drop every silence and re-encode the whole file unchanged
+        die(f"--margin must be a finite number of seconds, 0 or more (got {args.margin:g})", kind="input")
     if args.filler_pad < 0:
         die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "
             "(end before start) and the span is then silently dropped, so nothing is removed",
@@ -525,8 +547,10 @@ def main() -> int:
     filler_info, filler_ranges = resolve_filler(args, meta) if args.filler else (None, [])
     # One sorted, merged removal list through the graph the tool already has: filler removal IS
     # time-range removal, so it reuses keep_ranges() and the same select chain.
-    removals = merge_spans(list(silences) + list(filler_ranges))
-    keeps = keep_ranges(removals, duration, args.margin, args.min_keep)
+    # --margin is kept around the silences only (inside_margin), not around filler spans, whose
+    # own trim is --filler-pad (#414); the merged list then goes through with no further margin.
+    removals = merge_spans(inside_margin(silences, duration, args.margin) + list(filler_ranges))
+    keeps = keep_ranges(removals, duration, 0.0, args.min_keep)
     # what the render holds (on a picture, each bound on its nearest frame): the report, the EDL
     # and the time map all describe these, so a re-cut or a sum of `keep` is the rendered edit
     video_out = bool(meta.get("video")) and not (media_out and is_audio_output(media_out))
@@ -540,7 +564,7 @@ def main() -> int:
     # the silences alone; everything removed is `removed_seconds_total`.
     silence_only = removed
     if args.filler:
-        silence_keeps = keep_ranges(merge_spans(list(silences)), duration, args.margin, args.min_keep)
+        silence_keeps = keep_ranges(merge_spans(inside_margin(silences, duration, args.margin)), duration, 0.0, args.min_keep)
         silence_only = max(0.0, duration - sum(e - s for s, e in rendered_ranges(silence_keeps, meta, duration, video_out)))
     kinds = silence_kinds(args.input, silences, duration, args.threshold)
     summary = {
@@ -649,8 +673,9 @@ def main() -> int:
         return 0
     if not keeps or not held:
         die("nothing would be kept; raise --threshold (e.g. -45) or check the audio")
-    if not silences or removed < 0.05:
-        info("no removable silence found; output would equal the input")
+    if removed < 0.05:
+        # what the render removes, filler spans included: --filler alone has no silences at all
+        info(f"no removable {'filler' if filler_only else 'silence or filler' if args.filler else 'silence'} found; output would equal the input")
 
     output = args.output or default_output(args.input, "tight")
     # the join of more than 32 ranges concats a list of chunks, so its last command never names the
