@@ -788,8 +788,8 @@ Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 `caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
 and produced no cue (for `--filler`: a Whisper transcript with no text at all; text without word
 timings is a build without them, refused as such), the refusal is `"<engine> found no speech in
-<input>"` with `kind: input`, `reason: "no_speech"` and `engine` in the failure document (since
-3.1.6 the three ASR reasons below are in `error.reason` too, with `error.details`) — distinct from the "no local
+<input>"` with `kind: input`, `reason: "no_speech"` and `engine` in the failure document (the
+three ASR reasons below are in `error.reason` too, with `error.details`) — distinct from the "no local
 speech-to-text engine found" refusal, which now only means no engine was found. When `--engine
 auto` found engines and none transcribed, the refusal is `kind: input` with `reason:
 "engine_failed"` (one ran and failed) or `"english_only"` (the only engines found were Parakeet

@@ -2463,6 +2463,25 @@ class EditingTests(MediaFixtures):
                    "--json", expect_fail=True)
         self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
 
+    def test_margin_must_be_a_finite_non_negative_number(self):
+        """#427 review: --margin nan made inside_margin() drop every silence, so the run
+        re-encoded the whole file unchanged instead of refusing the value."""
+        for bad in ("nan", "inf", "-0.1"):
+            with self.subTest(margin=bad):
+                r = script("silence.py", self._gappy(), "--margin", bad, "-o", OUT / "margin_bad.mp4",
+                           "--dry-run", "--json", expect_fail=True)
+                err = json.loads(r.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn("--margin", err["message"])
+
+    def test_filler_alone_does_not_say_the_output_equals_the_input(self):
+        """#427 review: --filler without --speech-aware has no silences, and the run said "no
+        removable silence found; output would equal the input" before rendering a shorter file."""
+        proc = script("silence.py", self._gappy(), "--filler", "--words", self._words_json(),
+                      "-o", OUT / "filler_equal_msg.mp4", "--dry-run", "--json")
+        self.assertGreater(json.loads(proc.stdout)["removed_seconds_total"], 0.1)
+        self.assertNotIn("output would equal the input", proc.stderr)
+
     def test_filler_refuses_without_a_transcript(self):
         out = OUT / "filler_refuse.mp4"
         if out.exists():

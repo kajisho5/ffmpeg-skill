@@ -2029,6 +2029,27 @@ class TimelineExportTests(unittest.TestCase):
         self.assertIn(" C        01:00:01;00 01:00:02;15 ", event)
         self.assertEqual(tl_mod._tc_label(17982, tl["clips"][0]["rate"], True), "00:10:00;00")
         self.assertEqual(tl_mod._tc_label(1800, tl["clips"][0]["rate"], True), "00:01:00;02")
+        # a retimed clip: the timeMap's source times count from the start timecode too
+        probes["/m/a.mp4"] = {"duration": 8, "video": {"fps": 30.0, "width": 1280, "height": 720},
+                              "audio": {"channels": 2}, "timecode": {"value": "01:00:00:00", "drop_frame": False}}
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 1, "out": 2.5, "speed": 1.25}]}, probes, lambda p: f"/m/{p}")
+        root = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8"))
+        self.assertEqual(root.find("./resources/asset").get("start"), "3600s")
+        points = root.findall("./library/event/project/sequence/spine/asset-clip/timeMap/timept")
+        self.assertEqual([(p.get("time"), p.get("value")) for p in points], [("0s", "3601s"), ("6/5s", "7205/2s")])
+
+    def test_a_start_timecode_that_does_not_exist_at_the_source_rate_is_not_read(self):
+        """#427 review: frame 29 at 25 fps, or a frame drop-frame counting skips, was added as an
+        offset and every exported source time shifted; it is read as no timecode, as probe()
+        skips a malformed tag."""
+        from fractions import Fraction
+        tl_mod = self._tl()
+        ntsc = Fraction(30000, 1001)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "01:00:00:29", "drop_frame": False}, Fraction(25)), 0)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "01:00:00:24", "drop_frame": False}, Fraction(25)), 90024)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "00:01:00;00", "drop_frame": True}, ntsc), 0)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "00:01:00;02", "drop_frame": True}, ntsc), 1800)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "00:10:00;00", "drop_frame": True}, ntsc), 17982)
 
     def test_edl_source_timecodes_are_at_each_clips_own_rate(self):
         """#414: a 25 fps clip in a 29.97 sequence was given frame :29, which 25 fps does not have."""
@@ -2039,6 +2060,10 @@ class TimelineExportTests(unittest.TestCase):
                            "transition": {"type": "none"}}, probes, lambda p: f"/m/{p}")
         events = [ln for ln in tl_mod.to_edl(tl).splitlines() if ln[:3].isdigit()]
         self.assertIn(" C        00:00:02:24 00:00:04:00 ", events[1])
+        # the M2 speed is in the clip's own frames per second, the rate its source labels count in
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 0, "out": 2}, {"src": "p25.mp4", "in": 0, "out": 4, "speed": 1.25}],
+                           "transition": {"type": "none"}}, probes, lambda p: f"/m/{p}")
+        self.assertIn("M2   AX       031.2", tl_mod.to_edl(tl))
 
     def test_a_clip_out_past_the_media_end_ends_at_the_media_end(self):
         """#414: the render clamps an out past the end (cut.py); the timeline kept 10 s of a 6 s

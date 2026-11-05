@@ -121,14 +121,20 @@ def _drop_frame(drop: Optional[bool], rate: Fraction) -> bool:
 
 def start_tc_frames(tc: Dict[str, Any], rate: Fraction) -> int:
     """A source's start timecode (probe()'s `timecode`: {value, drop_frame}) as a frame count at
-    its own `rate`, drop-frame counted where it is one; 0 when the source has none (#414)."""
+    its own `rate`, drop-frame counted where it is one; 0 when the source has none (#414). A
+    label that does not exist at that rate (frame 29 at 25 fps, or a frame drop-frame counting
+    skips) is read as none, as probe() skips a malformed tag, rather than as a shifted start."""
     m = _TC.match(str((tc or {}).get("value") or "").strip())
     if not m:
         return 0
     h, mi, se, fr = (int(g) for g in m.groups())
     nominal = int(round(float(rate)))
+    if mi > 59 or se > 59 or fr >= nominal:
+        return 0
     frames = ((h * 60 + mi) * 60 + se) * nominal + fr
     if _drop_frame(tc.get("drop_frame"), rate):
+        if se == 0 and mi % 10 and fr < nominal // 15:
+            return 0
         minutes = h * 60 + mi
         frames -= (nominal // 15) * (minutes - minutes // 10)
     return frames
@@ -378,7 +384,9 @@ def to_edl(tl: Dict[str, Any]) -> str:
             lines.append(f"* FROM CLIP NAME: {c['name']}")
         lines.append(f"* SOURCE FILE: {c['src']}")
         if abs(c["speed"] - 1.0) > 1e-6:
-            lines.append(f"M2   AX       {fps_int * c['speed']:05.1f}                {s_in}")
+            # the speed in source frames per second, at the rate the source labels are counted in
+            own_fps = int(round(float(c.get("rate") or rate)))
+            lines.append(f"M2   AX       {own_fps * c['speed']:05.1f}                {s_in}")
         lines.append("")
         prev_src_end = s_out
     if tl["music"]:

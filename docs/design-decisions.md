@@ -2727,9 +2727,13 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   at it, with a note, because the render's `cut.py` clamps it; an `in` at or past the end is
   refused as `cut.py` refuses it. A chapter `metadata.py` would refuse (at or past the end, or not
   after the one before) is refused, which is what "Neither path accepts a time the other refuses"
-  already said. A music bed's own timecode is not read (an audio file rarely carries one). Code:
-  `timeline.build()`, `timeline.start_tc_frames()`, `timeline._tc_label()`. Tests:
+  already said. A music bed's own timecode is not read (an audio file rarely carries one). A
+  start timecode the source's rate cannot have (frame 29 at 25 fps, a frame drop-frame counting
+  skips) is read as none, as `probe()` skips a malformed tag, and the EDL `M2` speed is in the
+  clip's own frames per second, the rate its source labels count in. Code: `timeline.build()`,
+  `timeline.start_tc_frames()`, `timeline._tc_label()`. Tests:
   `test_the_source_start_timecode_is_carried_into_every_format`,
+  `test_a_start_timecode_that_does_not_exist_at_the_source_rate_is_not_read`,
   `test_edl_source_timecodes_are_at_each_clips_own_rate`,
   `test_a_clip_out_past_the_media_end_ends_at_the_media_end`,
   `test_a_chapter_metadata_py_refuses_is_refused_not_dropped`.
@@ -2743,7 +2747,7 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   `test_caption_hands_ffmpeg_the_cues_it_read`.
 - **`--mode mux` keeps every existing subtitle track, converted where the container needs it.**
   The rule is export.py's (#380), now `_common.runner.subtitle_codec_for()`, plus WebVTT for
-  `.webm`. A track no conversion fits (a bitmap track in MPEG-4 or WebM) and a WebM mux of a
+  `.webm`; an EIA-608 track converts as text does (kept as it is in `.mov`, which holds c608). A track no conversion fits (a bitmap track in MPEG-4 or WebM) and a WebM mux of a
   picture or sound WebM cannot hold are refused up front as `kind: input`; a mux never drops a
   track the caller did not ask to drop. Test:
   `test_caption_mux_converts_an_existing_track_for_the_container`.

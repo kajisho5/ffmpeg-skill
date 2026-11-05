@@ -900,7 +900,11 @@ def srt_timings_shared_grammar(path: str) -> bool:
     to parse_srt(). ffmpeg refuses `00:01,000` (no hours) and reads `00:00:01,5` as 1.005 s, where
     parse_srt() reads 1.5 s (#414); such a file is handed to ffmpeg as a rewritten copy."""
     text = read_text_or_die(path, "--srt").lstrip("\ufeff").replace("\r\n", "\n")
-    return all(_SHARED_SRT_TIMING.match(line) for line in text.split("\n") if "-->" in line)
+    # a cue's timing line is its first line with "-->", as parse_srt() reads it (and ffmpeg too);
+    # a later line holding "-->" is dialogue, not a timing this check should judge
+    blocks = [[ln for ln in b.split("\n") if ln.strip()] for b in re.split(r"\n\s*\n", text)]
+    timings = [next((ln for ln in b if "-->" in ln), None) for b in blocks]
+    return all(_SHARED_SRT_TIMING.match(line) for line in timings if line is not None)
 
 
 def mux_subtitle_codec(output: str) -> str:
@@ -1458,7 +1462,9 @@ def main() -> int:
         # anything else is refused here, not left to fail unclassified in the muxer (#414)
         if out_ext == "webm":
             vcodec = (meta.get("video") or {}).get("codec")
-            acodec = (meta.get("audio") or {}).get("codec") if meta.get("audio") else None
+            # the stream -map 0:a:N copies (--audio-stream), not always the first one
+            audio_streams = meta.get("audio_streams") or []
+            acodec = audio_streams[args.audio_stream].get("codec") if args.audio_stream < len(audio_streams) else None
             bad = [c for c in (vcodec,) if c and c not in ("vp8", "vp9", "av1")] + \
                   [c for c in (acodec,) if c and c not in ("opus", "vorbis")]
             if bad:
@@ -1590,6 +1596,14 @@ def main() -> int:
                          "as given and may not survive")
         run(cmd)
         result = probe(output, role="output")
+        # the language and title each track carries in the written file: a converted track keeps
+        # only what the container can store (MPEG-4 drops a two-letter code and every title)
+        written = result.get("subtitle_stream_details") or []
+        if len(written) == len(tracks):
+            for track, detail in zip(tracks, written):
+                track["language"] = detail.get("language")
+                if track["kept_from_input"]:
+                    track["title"] = detail.get("title")
         info(f"wrote {output} ({fmt_secs(result.get('duration'))}, mux, {len(added)} "
              f"subtitle track(s) added, codec {codec})")
         emit(output, tracks=tracks, subtitle_tracks=total, **({"notes": notes} if notes else {}),

@@ -438,6 +438,8 @@ class EngineRefusalTests(_SrtDir, _BridgeHarness, unittest.TestCase):
     def test_parakeet_passed_over_for_another_language_is_named(self):
         msg, kind, extra = self._refusal(["parakeet-mlx"], lambda: asr.transcribe_result("talk.mp4", self.srt, "fr", "base"))
         self.assertEqual((kind, extra["reason"], extra["engine"]), ("input", asr.ENGLISH_ONLY_REASON, "parakeet-mlx"))
+        self.assertEqual(extra["error_extra"]["reason"], asr.ENGLISH_ONLY_REASON)
+        self.assertEqual(extra["error_extra"]["details"], {"engine": "parakeet-mlx", "engines": extra["engines"]})
         self.assertNotIn("no local speech-to-text engine found", msg)
         self.assertNotIn("uv tool install parakeet-mlx", msg, "it is installed")
         self.assertIn("parakeet-mlx is installed, but --engine auto runs Parakeet only for English speech, "
@@ -455,6 +457,8 @@ class EngineRefusalTests(_SrtDir, _BridgeHarness, unittest.TestCase):
         msg, kind, extra = self._refusal(["whisper-cli"], lambda: asr.transcribe_result("talk.mp4", self.srt, None, "base"),
                                          fail=["whisper-cli"])
         self.assertEqual((kind, extra["reason"], extra["engine"]), ("input", asr.ENGINE_FAILED_REASON, "whisper.cpp"))
+        self.assertEqual(extra["error_extra"], {"reason": asr.ENGINE_FAILED_REASON,
+                                                "details": {"engine": "whisper.cpp", "engines": extra["engines"]}})
         self.assertIn("whisper.cpp found but failed: whisper-cli: failed to load model", msg)
         self.assertNotIn("no local speech-to-text engine found", msg)
 
@@ -468,6 +472,8 @@ class EngineRefusalTests(_SrtDir, _BridgeHarness, unittest.TestCase):
         self.assertEqual(extra["detail"], "found but failed: Error loading model mlx-community/parakeet-tdt-0.6b-v2: "
                                           "cannot reach huggingface.co (offline)")
         self.assertIn(extra["detail"], msg)
+        self.assertEqual(extra["error_extra"], {"reason": asr.ENGINE_FAILED_REASON,
+                                                "details": {"engine": "parakeet-mlx", "detail": extra["detail"]}})
         _, kind, extra = self._refusal(["parakeet-mlx"], lambda: asr.transcribe_words_result("talk.mp4", engine="parakeet-mlx"),
                                        fail=["parakeet-mlx"])
         self.assertEqual((kind, extra["reason"]), ("input", asr.ENGINE_FAILED_REASON))
@@ -500,6 +506,7 @@ class EngineRefusalTests(_SrtDir, _BridgeHarness, unittest.TestCase):
             return mod
         msg, kind, extra = self._refusal([], lambda: asr.transcribe_words_result("talk.mp4", "en"), faster_whisper=faster([]))
         self.assertEqual((kind, extra["reason"], extra["engine"]), ("input", asr.NO_SPEECH_REASON, "faster-whisper"))
+        self.assertEqual(extra["error_extra"], {"reason": asr.NO_SPEECH_REASON, "details": {"engine": "faster-whisper"}})
         # text with no word timings is a build without them: the engine is returned, the caller refuses
         spoke = type("Seg", (), {"text": " hello", "words": []})()
         run = self._with([], lambda: asr.transcribe_words_result("talk.mp4", "en"), faster_whisper=faster([spoke]))
@@ -512,6 +519,12 @@ class EngineRefusalTests(_SrtDir, _BridgeHarness, unittest.TestCase):
             self.assertFalse(asr._whisper_heard_nothing(str(doc), "transcription"))
             doc.write_text("not json", encoding="utf-8")
             self.assertFalse(asr._whisper_heard_nothing(str(doc), "transcription"))
+            # explicit blank text is silence; a segment with no text field is unreadable output
+            doc.write_text(json.dumps({"transcription": [{"text": " ", "tokens": []}]}), encoding="utf-8")
+            self.assertTrue(asr._whisper_heard_nothing(str(doc), "transcription"))
+            for bad in ([{"tokens": []}], [{"text": ""}, "x"], [{"text": None}]):
+                doc.write_text(json.dumps({"transcription": bad}), encoding="utf-8")
+                self.assertFalse(asr._whisper_heard_nothing(str(doc), "transcription"), bad)
 
     def test_the_failure_line_reads_parakeet_mlx_errors_from_stdout(self):
         proc = subprocess.CompletedProcess([], 1, _FakeEngines.MLX_ERROR, "Fetching 5 files:   0%|\n")

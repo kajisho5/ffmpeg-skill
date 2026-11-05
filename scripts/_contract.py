@@ -726,7 +726,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     if name in ("overlay", "graphics", "caption", "grid"):
         extra["font_used"] = FONT_USED_SCHEMA
     if name in NON_AV_STREAM_TOOLS and "dropped_non_av_streams" not in extra:
-        extra["dropped_non_av_streams"] = {"type": "boolean", "description": "true when the source's subtitle or data streams could not be kept and were left out (a non_av_streams_dropped fallback says why); export.py's non_av_streams lists them"}
+        extra["dropped_non_av_streams"] = {"type": "boolean", "description": "true when the source's subtitle or data streams are not in the output: either the run leaves them out by design (a path whose output they would no longer match, such as speedramp.py's, join.py's or freeze.py's), or they could not be copied and the encode ran again without them (then a non_av_streams_dropped fallback says why); export.py's non_av_streams lists them"}
     if name == "cropdetect":
         extra.update({"windows": {"type": "integer", "description": "sampled windows (--samples)"},
                       "windows_failed": {"type": "integer", "description": "windows ffmpeg could not decode and that were skipped (a cropdetect_windows_failed warning when > 0); every window failing is a kind ffmpeg failure"}})

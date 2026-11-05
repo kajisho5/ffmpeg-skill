@@ -59,6 +59,7 @@
   emit (`no_speech`, `engine_failed`, `english_only`). They are published, those three refusals
   now also carry `error.reason`/`error.details` (the top-level `reason` stays), and the test that
   lists every refusal reason reads `die(..., reason=...)` calls too (#414).
+- Review follow-ups: `caption.py --mode mux` reports each track's language/title as the written file carries them, checks the `--audio-stream` it copies for `.webm`, converts an EIA-608 track (kept as is in `.mov`), and no longer copies an SRT whose cue text holds `-->`; `silence.py` refuses a non-finite or negative `--margin`; a Whisper segment with no `text` is not `no_speech`; a start timecode the source rate cannot have is read as none, and the EDL `M2` speed is at the clip's own rate (#414).
 
 ## 3.1.6
 

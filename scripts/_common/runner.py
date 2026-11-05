@@ -1486,7 +1486,8 @@ def _has_non_av_streams(cmd: Sequence[str]) -> bool:
     return not kinds or bool(kinds & {"subtitle", "data", "attachment"})
 
 
-TEXT_SUBTITLES = frozenset({"mov_text", "subrip", "srt", "ass", "ssa", "webvtt", "text"})
+# eia_608 (a QuickTime c608 caption track) decodes to text, so it converts like one (ffmpeg 6.1)
+TEXT_SUBTITLES = frozenset({"mov_text", "subrip", "srt", "ass", "ssa", "webvtt", "text", "eia_608"})
 MP4_FAMILY = frozenset({"mp4", "m4v", "mov"})
 
 
@@ -1496,6 +1497,8 @@ def subtitle_codec_for(codec: str, out_ext: str) -> str:
     mov_text in MPEG-4, srt in Matroska for a mov_text track, webvtt in WebM. A bitmap track is
     returned as copy; subtitle_container_holds() says whether that copy can work."""
     out_ext = out_ext.lstrip(".").lower()
+    if out_ext == "mov" and codec == "eia_608":
+        return "copy"  # QuickTime holds a c608 track as it is; .mp4 has no tag for it
     if out_ext in MP4_FAMILY and codec in TEXT_SUBTITLES and codec != "mov_text":
         return "mov_text"
     if out_ext == "mkv" and codec == "mov_text":

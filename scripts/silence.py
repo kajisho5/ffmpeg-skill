@@ -522,6 +522,9 @@ def main() -> int:
     media_out = None if (args.list or args.filler_list) else (args.output or default_output(args.input, "tight"))
     guard_sidecar(args.edl, args.input, args.words, args.filler_words, siblings=(media_out,))
 
+    if not math.isfinite(args.margin) or args.margin < 0:
+        # nan made inside_margin() drop every silence and re-encode the whole file unchanged
+        die(f"--margin must be a finite number of seconds, 0 or more (got {args.margin:g})", kind="input")
     if args.filler_pad < 0:
         die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "
             "(end before start) and the span is then silently dropped, so nothing is removed",
@@ -670,8 +673,9 @@ def main() -> int:
         return 0
     if not keeps or not held:
         die("nothing would be kept; raise --threshold (e.g. -45) or check the audio")
-    if not silences or removed < 0.05:
-        info("no removable silence found; output would equal the input")
+    if removed < 0.05:
+        # what the render removes, filler spans included: --filler alone has no silences at all
+        info(f"no removable {'filler' if filler_only else 'silence or filler' if args.filler else 'silence'} found; output would equal the input")
 
     output = args.output or default_output(args.input, "tight")
     # the join of more than 32 ranges concats a list of chunks, so its last command never names the

@@ -992,7 +992,10 @@ def _whisper_heard_nothing(path: str, key: str) -> bool:
         return False
     if not isinstance(doc, dict) or not isinstance(doc.get(key), list):
         return False
-    return not any(isinstance(seg, dict) and str(seg.get("text") or "").strip() for seg in doc[key])
+    # every segment a dict with a text field, all of them blank: a segment with no `text` at all is
+    # output this skill cannot read, not silence (as _heard_nothing() reads Parakeet's)
+    return all(isinstance(seg, dict) and isinstance(seg.get("text"), str) and not seg["text"].strip()
+               for seg in doc[key])
 
 
 def engine_wav(ffmpeg: str, video: str, audio_stream: int, wav: str) -> None:
