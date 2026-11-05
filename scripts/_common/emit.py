@@ -112,6 +112,26 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
     sys.exit(code)
 
 
+def _report_dropped_audio_tracks(meta: Dict[str, Any], ctx: "Context") -> None:
+    """The tools write one audio track: a source with several must say how many did not come
+    along (#397, every tool, not only cut.py). Only when the output kept sound at all: a tool told
+    to drop it (--no-audio, a picture-only output) left nothing out by surprise."""
+    first = getattr(STATE, "first_input", None)
+    if not first or first[1] < 2 or not meta:
+        return
+    kept = len(meta.get("audio_streams") or [])
+    if not kept or kept >= first[1]:
+        return
+    if any(w.get("code") == "audio_tracks_dropped" for w in ctx.warnings):
+        return  # the tool said it already (cut.py, with its own field)
+    warn(f"the source has {first[1]} audio tracks; this output kept {kept} and left {first[1] - kept} out "
+         "(the tools write one audio track; --audio-stream N picks which, where a tool takes it)",
+         "audio_tracks_dropped", ctx=ctx, source=first[1], kept=kept, dropped=first[1] - kept)
+    note_line = ctx.warnings[-1]["message"] if ctx.warnings else None
+    if note_line and note_line not in ctx.notes:
+        ctx.notes.append(note_line)
+
+
 def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code: int = 1,
            ctx: "Optional[Context]" = None, extra: "Optional[Dict[str, Any]]" = None, **details: Any) -> "None":
     """die() for a refusal a caller has to act on: `error.reason` is a stable snake_case code for
@@ -653,6 +673,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
     meta: Dict[str, Any] = {}
     if output and not ctx.dry_run:
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
+        _report_dropped_audio_tracks(meta, ctx)
     if ctx.json:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         if meta:
