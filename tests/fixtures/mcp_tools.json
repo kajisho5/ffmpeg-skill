@@ -404,6 +404,7 @@
   "name": "export",
   "properties": [
    "allow_long",
+   "alpha_mode",
    "argv",
    "crf",
    "dry_run",

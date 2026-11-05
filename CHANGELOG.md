@@ -6,6 +6,7 @@
 
 ### Added
 
+- **Alpha masters in `export.py`**: `--preset prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha` keep the source's alpha (a source without one is refused), take `--alpha-mode straight|premultiplied`, and read the alpha back from a written frame (`alpha` verification step) (#417). Image sequences (PNG/EXR) are not included.
 - **`loudness.py --versions streaming,ebu-r128,broadcast-jp`** (or `LUFS/TP` pairs) writes one normalised file per target from one master, each measured after; `verified` holds only when every version met its own target (#421).
 - **`export.py --preset dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444`**: DNxHR editing masters (.mov, PCM audio, source size and rate) beside `prores`. These presets and `prores` now read the written codec, profile and pixel format back as a `codec` verification step (#419). DNxHD at its fixed broadcast sizes and bitrates is not included.
 - **`loop.py --crossfade S`** fades the clip's last S seconds into its first S, picture and sound, so every repeat meets the next without a jump; `--times 1` writes one seamless loop file (#422). Every loop now reports its first seam measured (`seam`: picture step against the typical frame-to-frame step, sound level step) and checks its length against the request (`expected_duration`) and its streams.

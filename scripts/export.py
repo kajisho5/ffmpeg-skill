@@ -18,6 +18,9 @@ Presets:
   dnxhr-lb / dnxhr-sq / dnxhr-hq   DNxHR 8-bit 4:2:2 .mov, PCM 16-bit audio
   dnxhr-hqx DNxHR HQX 10-bit 4:2:2;  dnxhr-444  DNxHR 444 10-bit 4:4:4
             (editing masters at the source's size and rate, like prores)
+  prores4444 / prores4444xq / qtrle / vp9-alpha / hap-alpha
+            masters that keep the source's alpha (refused without one);
+            --alpha-mode straight|premultiplied; alpha read back after
   h265      HEVC CRF 24 (libx265) with hvc1 tag for Apple compatibility
   gif       480px wide palette-optimised GIF at 12 fps (short previews)
   copy      stream copy, no re-encode: same codecs, container and colour
@@ -46,6 +49,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import square_pixels, square_pixels_note
+from _common.runner import ffmpeg_encoders, run_analysis as _run_analysis
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
@@ -105,6 +109,26 @@ PRESETS: Dict[str, Dict] = {
        for name, pix, desc in (("lb", "yuv422p", "8-bit 4:2:2, low bandwidth"), ("sq", "yuv422p", "8-bit 4:2:2, standard"),
                                ("hq", "yuv422p", "8-bit 4:2:2, high quality"), ("hqx", "yuv422p10le", "10-bit 4:2:2"),
                                ("444", "yuv444p10le", "10-bit 4:4:4"))},
+    # Alpha masters (#417): editing masters that keep the source's alpha channel; the alpha is read
+    # back from a written frame and compared with the source's. A source without alpha is refused.
+    "prores4444": {"w": None, "h": None, "ext": "mov", "alpha": True, "intermediate": True,
+                   "video": ["-c:v", "prores_ks", "-profile:v", "4", "-vendor", "apl0", "-pix_fmt", "yuva444p10le", "-alpha_bits", "16"],
+                   "audio": ["-c:a", "pcm_s16le"], "max": None, "expect": {"codec": "prores", "profile": "4444"},
+                   "desc": "ProRes 4444 with alpha (16-bit alpha), PCM audio, source resolution"},
+    "prores4444xq": {"w": None, "h": None, "ext": "mov", "alpha": True, "intermediate": True,
+                     "video": ["-c:v", "prores_ks", "-profile:v", "5", "-vendor", "apl0", "-pix_fmt", "yuva444p10le", "-alpha_bits", "16"],
+                     "audio": ["-c:a", "pcm_s16le"], "max": None, "expect": {"codec": "prores", "profile": "XQ"},
+                     "desc": "ProRes 4444 XQ with alpha (16-bit alpha), PCM audio, source resolution"},
+    "qtrle": {"w": None, "h": None, "ext": "mov", "alpha": True, "intermediate": True,
+              "video": ["-c:v", "qtrle", "-pix_fmt", "argb"], "audio": ["-c:a", "pcm_s16le"], "max": None,
+              "expect": {"codec": "qtrle", "pix_fmt": "argb"}, "desc": "QuickTime Animation (lossless RGB + alpha), PCM audio"},
+    "vp9-alpha": {"w": None, "h": None, "ext": "webm", "alpha": True, "intermediate": True,
+                  "video": ["-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-crf", "20", "-b:v", "0", "-row-mt", "1"],
+                  "audio": ["-c:a", "libopus", "-b:a", "128k"], "max": None, "expect": {"codec": "vp9"},
+                  "desc": "WebM VP9 with alpha (CRF 20), Opus audio, source resolution"},
+    "hap-alpha": {"w": None, "h": None, "ext": "mov", "alpha": True, "intermediate": True,
+                  "video": ["-c:v", "hap", "-format", "hap_alpha"], "audio": ["-c:a", "pcm_s16le"], "max": None,
+                  "expect": {"codec": "hap"}, "desc": "HAP Alpha (needs an ffmpeg built with snappy; size a multiple of 4), PCM audio"},
     "h265": {"w": None, "h": None, "ext": "mp4", "video": ["-c:v", "libx265", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"], "audio": ["-c:a", "aac", "-b:a", "160k"], "max": None, "desc": "HEVC CRF 24, hvc1 tag, source resolution"},
     "gif": {"w": 480, "h": None, "ext": "gif", "video": [], "audio": [], "max": None, "desc": "480px palette GIF, 12fps"},
     "copy": {"w": None, "h": None, "ext": None, "video": ["-c:v", "copy"], "audio": ["-c:a", "copy"], "max": None, "desc": "stream copy, no re-encode (source codecs/container/colour tags unchanged)"},
@@ -137,6 +161,29 @@ PLATFORM_OF: Dict[str, str] = {PLATFORM_TABLE[n]["preset"]: PLATFORM_TABLE[n]["c
 PLATFORM_OF["youtube4k"] = PLATFORM_TABLE["youtube"]["check"]
 # Aliases people write for a destination ('youtube-shorts', 'ig', 'twitter') name the same preset.
 PRESET_CHOICES: List[str] = sorted(set(PRESETS) | {a for a in _ALIASES if resolve_platform(a) in PRESETS})
+
+
+# A pixel format that carries an alpha plane (yuva*, rgba, argb, gbrap, ya8/ya16, ...).
+_ALPHA_PIX = re.compile(r"^(yuva|gbrap|ya\d|rgba|bgra|argb|abgr|rgba64|bgra64)")
+
+
+def alpha_mean(path: str, codec: "str | None" = None, at: float = 0.0) -> "float | None":
+    """The mean alpha (0-255) of one decoded frame, on a 64x36 copy; 255.0 is fully opaque, and a
+    picture with no alpha plane reads 255 too (format=rgba fills it). A VP9 file is decoded with
+    libvpx-vp9: FFmpeg's native vp9 decoder drops the alpha layer. None when no frame decodes."""
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if codec == "vp9" and "libvpx-vp9" in ffmpeg_encoders():
+        cmd += ["-c:v", "libvpx-vp9"]
+    if at:
+        cmd += ["-ss", f"{at:.3f}"]
+    cmd += ["-i", path, "-frames:v", "1", "-vf", "format=rgba,alphaextract,scale=64:36:flags=area,format=gray",
+            "-f", "rawvideo", "-"]
+    proc = _run_analysis(cmd, check=False, text=False)
+    data = proc.stdout or b""
+    if proc.returncode != 0 or not data:
+        return None
+    return sum(data) / len(data)
 
 
 def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: str, spec: Dict, normalized: bool = False) -> None:
@@ -334,6 +381,9 @@ def main() -> int:
                     help="fit the file under MB megabytes (MiB): a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
     ap.add_argument("--normalize", action="store_true", help="youtube/youtube4k/reels/x: when the written file misses the platform's loudness spec, run loudness.py on it (audio re-encoded, video copied) so one export delivers")
+    ap.add_argument("--alpha-mode", choices=["straight", "premultiplied"],
+                    help="alpha presets (prores4444, prores4444xq, qtrle, vp9-alpha, hap-alpha): write the colour straight "
+                         "(default, as decoded) or premultiplied by the alpha; written to the result as alpha_mode")
     ap.add_argument("--list", action="store_true", help="list presets and exit")
     add_common(ap, codec=False)  # the preset decides the codec; --codec would only be refused
     args = ap.parse_args()
@@ -370,6 +420,26 @@ def main() -> int:
         notes.append("source is %s (%s). This preset outputs SDR BT.709 tags without converting it; run color.py --to-sdr first for correct colours." % (kind, meta["video"].get("hdr_format")))
         warn(notes[-1], "colour_not_converted", preset=args.preset, hdr_format=meta["video"].get("hdr_format"))
     has_audio = bool(meta.get("audio"))
+    source_alpha = None
+    if p.get("alpha"):
+        encoder = p["video"][p["video"].index("-c:v") + 1]
+        encoders = ffmpeg_encoders()
+        if encoders and encoder not in encoders:
+            die(f"--preset {args.preset} needs the {encoder} encoder and this ffmpeg build has none"
+                + (" (HAP needs an ffmpeg built with snappy)" if encoder == "hap" else ""),
+                kind="missing_tool", error_extra={"reason": "encoder_missing", "details": {"name": encoder}},
+                hint="python3 scripts/_contract.py doctor lists the encoders this build has")
+        if encoder == "hap" and (meta["video"]["width"] % 4 or meta["video"]["height"] % 4):
+            die(f"--preset hap-alpha needs a width and height that are multiples of 4 (HAP's texture blocks); "
+                f"this source is {meta['video']['width']}x{meta['video']['height']}",
+                hint="crop or pad it first (crop.py, pad.py)")
+        has_alpha_plane = bool(_ALPHA_PIX.match(meta["video"].get("pix_fmt") or ""))
+        source_alpha = alpha_mean(args.input, meta["video"].get("codec")) if not STATE.dry_run or has_alpha_plane else None
+        if not has_alpha_plane and (source_alpha is None or source_alpha >= 254.5):
+            die(f"--preset {args.preset} keeps an alpha channel and this source has none "
+                f"({meta['video'].get('pix_fmt')}, fully opaque): use prores or dnxhr-* for an opaque master")
+    elif args.alpha_mode:
+        die("--alpha-mode applies only to the alpha presets (prores4444, prores4444xq, qtrle, vp9-alpha, hap-alpha)")
     output = args.output or default_output(args.input, args.preset, p["ext"])
     out_ext = Path(output).suffix.lstrip(".").lower()
 
@@ -422,6 +492,8 @@ def main() -> int:
         emit(output, non_av_streams=non_av, dropped_non_av_streams=bool(non_av["dropped"]), **({"notes": notes} if notes else {}))
         return 0
 
+    if p.get("alpha") and args.alpha_mode == "premultiplied":
+        vf.append("premultiply=inplace=1")
     if vf:
         cmd += ["-vf", ",".join(vf)]
     video = list(p["video"])
@@ -497,10 +569,22 @@ def main() -> int:
     if p.get("expect") and not STATE.dry_run and encoder == p["video"][p["video"].index("-c:v") + 1]:
         # an editing master is asked for by codec, profile and pixel format: read all three back
         # (a VideoToolbox prores line under --hw writes its own pixel format, so it is not compared)
-        measured = {"codec": v.get("codec"), "profile": v.get("profile"), "pix_fmt": v.get("pix_fmt")}
+        measured = {k: v.get(k) for k in p["expect"]}
         extra.setdefault("verification", []).append(
             {"step": "codec", "property": "codec_profile_pix_fmt", "ok": measured == p["expect"],
              "expected": dict(p["expect"]), "measured": measured, "provenance": "specification"})
+    if p.get("alpha"):
+        extra["alpha_mode"] = args.alpha_mode or "straight"
+        if not STATE.dry_run:
+            # the alpha survived when a written frame's alpha matches the source's frame (a decoder
+            # or muxer that drops it reads fully opaque); premultiplying changes colour, not alpha
+            written_alpha = alpha_mean(output, v.get("codec"))
+            ok = written_alpha is not None and source_alpha is not None and abs(written_alpha - source_alpha) <= 2.0
+            extra.setdefault("verification", []).append(
+                {"step": "alpha", "property": "alpha_mean", "ok": ok,
+                 "expected": None if source_alpha is None else round(source_alpha, 2),
+                 "measured": None if written_alpha is None else round(written_alpha, 2), "tolerance": 2.0,
+                 "provenance": "input_premeasurement"})
     platform = PLATFORM_OF.get(args.preset)
     if platform and has_audio and not STATE.dry_run:
         # Every eval run that exported for a platform then had to come back with loudness.py: the

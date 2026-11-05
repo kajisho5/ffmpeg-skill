@@ -56,6 +56,31 @@ class DeliveryTests(MediaFixtures):
                 self.assertEqual(step["measured"]["pix_fmt"], pix)
                 self.assertEqual((doc["probe"]["video"]["width"], doc["probe"]["video"]["height"]), (1280, 720))
 
+    def test_export_alpha_masters_keep_and_read_back_the_alpha(self):
+        """#417: the alpha presets keep the source's alpha, measured on a written frame; an opaque
+        source is refused, and --alpha-mode is reported."""
+        src = OUT / "alpha_src.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "qtrle", src)
+        for preset, ext in (("prores4444", "mov"), ("qtrle", "mov"), ("vp9-alpha", "webm")):
+            with self.subTest(preset=preset):
+                doc = json.loads(script("export.py", src, "--preset", preset, "--json", "--overwrite",
+                                        "-o", OUT / f"alpha_{preset}.{ext}").stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                self.assertEqual(doc["alpha_mode"], "straight")
+                step = next(s for s in doc["verification"] if s["step"] == "alpha")
+                self.assertAlmostEqual(step["measured"], 159.5, delta=2.0)
+        doc = json.loads(script("export.py", src, "--preset", "qtrle", "--alpha-mode", "premultiplied", "--json",
+                                "--overwrite", "-o", OUT / "alpha_pm.mov").stdout)
+        self.assertEqual(doc["alpha_mode"], "premultiplied")
+        self.assertIn("premultiply", " ".join(doc["commands"]))
+        proc = script("export.py", self.src, "--preset", "qtrle", "--json", "-o", OUT / "alpha_opaque.mov", expect_fail=True)
+        self.assertIn("has none", json.loads(proc.stdout)["error"]["message"])
+        proc = script("export.py", self.src, "--preset", "prores", "--alpha-mode", "straight", "--json",
+                      "-o", OUT / "alpha_mode_wrong.mov", expect_fail=True)
+        self.assertIn("only to the alpha presets", json.loads(proc.stdout)["error"]["message"])
+
     def test_export_max_mb_refuses_gif_and_a_limit_that_constrains_nothing(self):
         """2.24.1: --preset gif returned before --max-mb was applied, so a 0.7 MB GIF passed a 1 KB
         limit as verified; --max-mb 1e9 reached libx264 as an impossible bitrate (kind ffmpeg)."""
