@@ -137,6 +137,28 @@ def _report_dropped_audio_tracks(meta: Dict[str, Any], ctx: "Context") -> None:
         ctx.notes.append(note_line)
 
 
+def _report_dropped_hdr10_metadata(meta: Dict[str, Any], ctx: "Context") -> None:
+    """A PQ source's mastering-display / content-light metadata that a PQ output came out without
+    (#401): measured on the written file, so whatever encoder or FFmpeg version dropped it is said.
+    An output that is no longer PQ (color.py --to-sdr, an HLG conversion) was converted on purpose."""
+    first = getattr(STATE, "first_input", None)
+    src = first[2] if first and len(first) > 2 else None
+    v = (meta or {}).get("video") or {}
+    if not src or v.get("color_transfer") != "smpte2084":
+        return
+    have = v.get("hdr10_static") or {}
+    lost = [k for k in ("mastering_display", "content_light") if src.get(k) and not have.get(k)]
+    if not lost:
+        return
+    names = {"mastering_display": "mastering display", "content_light": "content light level"}
+    warn("the source's HDR10 " + " and ".join(names[k] for k in lost) + " metadata did not come through to this output "
+         "(the encoder or this FFmpeg build did not write it); players may tone-map it differently",
+         "hdr10_metadata_dropped", ctx=ctx, dropped=lost, codec=v.get("codec"))
+    note_line = ctx.warnings[-1]["message"] if ctx.warnings else None
+    if note_line and note_line not in ctx.notes:
+        ctx.notes.append(note_line)
+
+
 def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code: int = 1,
            ctx: "Optional[Context]" = None, extra: "Optional[Dict[str, Any]]" = None, **details: Any) -> "None":
     """die() for a refusal a caller has to act on: `error.reason` is a stable snake_case code for
@@ -178,8 +200,9 @@ def record_skip(msg: str, code: str, *, ctx: "Optional[Context]" = None, **data:
 
 
 def note(msg: str, ctx: "Optional[Context]" = None) -> None:
-    """A plain `notes` line that also goes to stderr."""
+    """A plain `notes` line that also goes to stderr, made inert as messages are (#400)."""
     ctx = ctx or STATE
+    msg = neutralize(msg)
     if msg not in ctx.notes:
         ctx.notes.append(msg)
     sys.stderr.write(f"{msg}\n")
@@ -682,6 +705,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
     if output and not ctx.dry_run:
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
         _report_dropped_audio_tracks(meta, ctx)
+        _report_dropped_hdr10_metadata(meta, ctx)
     if ctx.json:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         if meta:

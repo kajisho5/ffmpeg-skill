@@ -464,7 +464,8 @@ DIAGNOSTIC_CODES = {
     "crf_clamped": ("warnings", "the CRF handed to the encoder was above its maximum and was capped (the HEVC HDR line adds 2); {encoder, requested, asked, used}"),
     # fonts and text
     "emoji_not_drawn": ("warnings", "caption.py --emoji auto: no glyph, colour path or PNG asset draws these emoji here (doctor fonts.emoji mode none), so they were left out of the drawn text; {count, reason}"),
-    "audio_tracks_dropped": ("warnings", "the source has more audio tracks than the output kept (the tools write one; cut.py also reports dropped_audio_streams); {source, kept, dropped}"),
+    "hdr10_metadata_dropped": ("warnings", "a PQ output measured without the source's HDR10 mastering-display and/or content-light metadata (an encoder with no option for it, e.g. prores_ks or libaom on FFmpeg before 7); {dropped, codec}"),
+    "audio_tracks_dropped": ("warnings", "the source has more audio tracks than the output kept (the tools write one; cut.py also reports dropped_audio_streams). Not compared when two or more inputs have sound (grid --audio-from, a mix): which source the output carries is the tool's choice; {source, kept, dropped}"),
     "grid_no_drawtext": ("fallbacks", "grid.py --label auto on a build without the drawtext filter: the cells were not labelled, as with --label none"),
     "scenes_sheet_no_drawtext": ("fallbacks", "scenes.py --sheet on a build without the drawtext filter: the sheet was drawn without timecode stamps, as with --no-timecode"),
     "look_no_drawtext": ("fallbacks", "look.py on a build without the drawtext filter: the sheet was drawn without timecode stamps, as with --no-timecode"),
