@@ -2775,6 +2775,20 @@ class Hdr10StaticMetadataTests(unittest.TestCase):
         self.assertAlmostEqual(st["mastering_display"]["max_luminance"], 1000.0)
         self.assertAlmostEqual(st["mastering_display"]["red_x"], 0.68)
 
+    def test_a_still_is_not_a_second_picture_source(self):
+        """#412 review: an overlay's PNG must not switch the HDR10 loss check off."""
+        from _common import STATE
+        logo = OUT / "hdr10_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=red:s=32x32",
+           "-frames:v", "1", "-update", "1", logo)
+        saved = set(STATE.video_inputs)
+        try:
+            STATE.video_inputs = set()
+            probe(str(self.src)); probe(str(logo))
+            self.assertEqual(len(STATE.video_inputs), 1, STATE.video_inputs)
+        finally:
+            STATE.video_inputs = saved
+
     def test_a_zero_minimum_luminance_is_a_value(self):
         """CodeRabbit on #412: a 0 cd/m2 minimum is a value, not a missing field."""
         src = OUT / "hdr10_md_zero.mp4"

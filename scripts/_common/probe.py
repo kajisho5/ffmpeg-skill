@@ -359,7 +359,9 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "language": (a.get("tags") or {}).get("language"),
             "title": (a.get("tags") or {}).get("title"),
         } for n, a in enumerate(s for s in streams if s.get("codec_type") == "audio")]
-    if role == "input" and out.get("video") and out["video"].get("codec"):
+    if role == "input" and out.get("video") and out["video"].get("codec") \
+            and os.path.splitext(path)[1].lower() not in _STILL_EXT:
+        # a still (an overlay's logo, an insert card) is not a second picture source (#412 review)
         STATE.video_inputs.add(os.path.realpath(path))
     if role == "input" and out.get("audio_streams"):
         STATE.audio_inputs.add(os.path.realpath(path))
@@ -372,13 +374,12 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
 def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[Dict[str, Any]]":
     """A PQ stream's mastering display and content light level, from the stream (an mdcv/clli box,
     a Matroska colour element) or else its first frame (the HEVC SEI / AV1 metadata OBU): one
-    frame is decoded. Chromaticities are CIE 1931 x/y, luminances cd/m2. None when it has neither."""
-    sides = list(stream.get("side_data_list") or [])
-    kinds = {_side_kind(sd) for sd in sides}
-    if not {"mastering", "light"} <= kinds:
-        # either part missing from the stream: the first frame may carry it (each part is taken
-        # from wherever it is found first, the stream before the frame). V:0, not v:0: an attached
-        # cover picture before the motion video has no HDR side data of its own
+    frame is decoded when either part is missing or incomplete in the stream. Each part is taken
+    from wherever it is complete first, the stream before the frame. Chromaticities are CIE 1931
+    x/y, luminances cd/m2. None when it has neither."""
+    out = _hdr10_parts(stream.get("side_data_list") or [])
+    if len(out) < 2:
+        # V:0, not v:0: an attached cover picture before the motion video has no HDR side data
         proc = run([ffprobe, "-v", "error", "-select_streams", "V:0", "-read_intervals", "%+#1", "-show_frames",
                     "-show_entries", "frame=side_data_list", "-of", "json", path], quiet=True, check=False)
         frames: List[Dict[str, Any]] = []
@@ -387,20 +388,30 @@ def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[
                 frames = json.loads(proc.stdout or "{}").get("frames") or []
             except ValueError:
                 pass
-        sides += list((frames[0].get("side_data_list") or []) if frames else [])
+        for k, v in _hdr10_parts((frames[0].get("side_data_list") or []) if frames else []).items():
+            out.setdefault(k, v)
+    return out or None
+
+
+def _hdr10_parts(sides: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """The complete parts in one side-data list: a mastering display with every field, a content
+    light level with both values; an incomplete record counts as absent."""
     out: Dict[str, Any] = {}
     for sd in sides:
         kind = _side_kind(sd)
         if kind == "mastering" and "mastering_display" not in out:
             vals = {k: _ratio(sd.get(k)) for k in ("red_x", "red_y", "green_x", "green_y", "blue_x", "blue_y",
-                                                            "white_point_x", "white_point_y", "min_luminance", "max_luminance")}
+                                                    "white_point_x", "white_point_y", "min_luminance", "max_luminance")}
             if all(v is not None for v in vals.values()):
                 out["mastering_display"] = {k: float(v) for k, v in vals.items()}
         elif kind == "light" and "content_light" not in out:
             mc, ma = _to_int(sd.get("max_content")), _to_int(sd.get("max_average"))
             if mc is not None and ma is not None:
                 out["content_light"] = {"max_content": mc, "max_average": ma}
-    return out or None
+    return out
+
+
+_STILL_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif", ".avif", ".heic")
 
 
 def _ratio(v: Any) -> "Optional[Fraction]":
