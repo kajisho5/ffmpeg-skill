@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.2
+
+_Automated release: version and notes generated from pull requests merged since 3.1.1._
+
 ### Fixed
 
 - A build without libass (Homebrew's plain `ffmpeg`) failed `caption.py` with an unclassified
@@ -32,6 +38,8 @@
   does-not-decide line, the report template and the request table stay; the long forms moved
   unchanged to new `references/flags.md`, `workflow.md`, `report.md`, `requests.md` and
   `timestamps.md` (shipped in the npm package). The description is three sentences.
+- Fix #393-#397: lean builds, tofu emoji, SRT as --text, dropped audio tracks (#399)
+- docs: SKILL.md restructured, no behavior change (#392)
 
 ## 3.1.1
 
