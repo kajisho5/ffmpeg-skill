@@ -62,6 +62,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — export.py --repair](#224--exportpy---repair)
 - [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
+- [3.1.6 — earlier fixes, where they had not reached (#415)](#316--earlier-fixes-where-they-had-not-reached-415)
 <!-- contents:end -->
 
 ## Time limits
@@ -379,7 +380,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - **An existing output is refused without `--overwrite`, dry runs included** (2.0; 1.x warned,
   with `FFMPEG_SKILL_NO_OVERWRITE=1` as the opt-in). The refusal is `kind: input` before any
   ffmpeg runs, so a dry run predicts it. A path this same run wrote (two-pass tools,
-  copy-then-re-encode fallbacks) is never someone else's file. Code:
+  copy-then-re-encode fallbacks), or a child tool of this run wrote (render.py's stages, 3.1.6), is
+  never someone else's file. Code:
   `_common._check_existing_output()`. Test:
   `test_existing_output_is_refused_without_overwrite_and_never_for_its_own_files`.
   Side files count as outputs (2.2.4): caption.py checks the video and every `.srt`/`.ass` it
@@ -2699,3 +2701,78 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
 - **`loop.py` has no repeat cap** (#416 review): the concat list costs one ~100-byte line per
   repeat against an output that costs a whole clip per repeat, so any count whose list strains
   memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.
+
+## Unreleased — earlier fixes, where they had not reached (#415)
+
+- **A file a child tool of this run wrote is this run's own.** render.py's export stage is a child
+  process, so the delivery it wrote was not in render's `STATE.written`, and the chapters stage's
+  `place_output()` over it was refused as `output_exists`, after a dry run that said completed (the
+  test helper adds `--overwrite` to every render.py call, which hid it). render.py now records each
+  stage's output (`remember_written()`), as run() records its own ffmpeg outputs. Code:
+  `render.sh()`, `_common.runner.remember_written()`. Test:
+  `Issue415Tests.test_render_export_then_chapters_delivers_on_a_fresh_path_without_overwrite`.
+- **metadata.py writes an MPEG-4 file faststart.** #279 left the stream copy without `+faststart`
+  on the reasoning that adding it would move the moov atom. That does not hold: a stream copy into
+  the MPEG-4 family writes the index after the media unless told otherwise, so the copy moved the
+  index of a faststart input (render's export, then its chapters stage) to the end. Now every MP4
+  write is faststart. Code: `metadata.main()`. Test: `Issue415Tests.test_metadata_writes_a_faststart_mp4`.
+- **A `.webm` source's default output name is `.mp4`.** The re-encoding tools write x264/x265/AV1
+  video and AAC sound, which WebM does not take, so `clip_loudnorm.webm` failed in the muxer after a
+  dry run that said completed. Of the two consistent answers (an `.mp4` default, or VP9/Opus encodes
+  for a WebM target), the default name is one line in `default_output()` and changes no encoder; a
+  caller who names `-o x.webm` still gets the muxer's refusal. metadata.py, a stream copy, keeps the
+  source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Test:
+  `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`.
+- **`waveform.py --title/--srt/--text --dry-run` says its text sizes are placeholders.** The title
+  and captions are drawn by graphics.py and caption.py on the visualisation render, which a dry run
+  does not write, so their planned font size and motion offset are 0 (the real run's are measured
+  from the WxH render). A note says so; a plan does not invent the numbers. Code: `waveform.main()`.
+  Test: `Issue415Tests.test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders`.
+- **batch.py: an item's intermediates live in a directory of its own and go with it.** The step
+  files were `<work>/<stem>_step<i>.<ext>` and never removed, so `clip.mp4` and `clip.mov` in one
+  serial batch refused each other's, and any later run that processed an item again was refused on
+  the file an earlier run left. Each item now gets a new directory under the work directory
+  (`<index>-<stem>-<random>`, serial and `--jobs` alike; 1.17's flat serial layout is gone),
+  removed with its contents when the item ends however it ends. Code: `batch.main()`
+  `item_work()`/`run_item()`. Test: `Issue415Tests.test_batch_items_own_their_intermediates`.
+- **batch.py: a step without `{out}` passes its input on, and the last file written is
+  delivered.** A recipe ending in `check.py` marked the item `ok` with an output nothing wrote; its
+  cache entry then missed (`output_missing`) on every run. A step that names no `{out}` writes
+  nothing, so the next step reads what it read, and when the last step writes nothing the last
+  written file is moved to the item's output (under the same `--overwrite` rule). A recipe in which
+  no step names `{out}` (a QC pass: `check.py` or `probe.py` over a folder) is a legitimate batch
+  that writes nothing: its rows carry `output: null`, a note says so, `ok` follows the steps' exit
+  codes, its cache entries claim no file (so a rerun is served, not missed as `output_missing`),
+  and the final-name collision check does not apply. Code: `batch.step_writes()`,
+  `batch.writes_nothing()`, `batch.deliver()`, `batch.cached_output_changed()`. Tests:
+  `Issue415Tests.test_batch_delivers_the_last_written_file_when_the_last_step_writes_none`,
+  `Issue415Tests.test_batch_a_recipe_that_writes_nothing_reports_no_output`.
+- **batch.py's final-name collision check ignores case.** `Clip_out.mp4` and `clip_out.mp4` are
+  one file on macOS's and Windows' default filesystems; the check refuses them on every platform,
+  so a recipe that works on Linux does not overwrite an item on a Mac. Test:
+  `Issue415Tests.test_batch_final_names_that_differ_only_in_case_collide`.
+- **No fallback retries after a classified ffmpeg failure.** #389 stopped
+  `run_keeping_subtitles()` from encoding again after a full disk, a missing encoder or filter or an
+  unreadable input; export's own subtitle/data ladder, `color.py --retag`'s copy-then-re-encode
+  (and its keep-then-drop re-encode), `cut.py`'s copy-then-re-encode and copy-concat-then-re-cut and
+  `sync.py`'s copy paths still did, blaming the subtitles or the copy. They now stop with the first
+  attempt's error (`fail_if_classified()`). Code: `_common.runner.fail_if_classified()`. Test:
+  `Issue415Tests.test_a_classified_failure_is_not_retried_by_a_copy_or_stream_fallback`.
+- **A stop after the deliverable is written says the file is kept, and keeps the child's exit
+  code.** export.py `--normalize` and render.py's chapters and check stages run on a delivery
+  already on disk; a timeout or Ctrl-C there said "nothing was written" while the file stayed (and
+  a retry was refused as `output_exists`). The message now names the file, says it is kept without
+  the step that was stopped, and the document carries it as `output`; the file is kept rather than
+  removed because with `--overwrite` it has already replaced the caller's. export.py's
+  `--normalize` failure exits with the loudness child's code (124, 130/143), as render.py and
+  waveform.py already did. Code: `_common.runner.mark_delivered()`, `kept_clause()`,
+  `export.main()`, `render.sh()`/`main()`. Tests:
+  `Issue415Tests.test_export_normalize_timeout_keeps_its_exit_code_and_says_the_export_is_kept`,
+  `Issue415Tests.test_a_stopped_run_names_the_deliverable_it_keeps`.
+- **An ffprobe call is limited to `min(120 s, --timeout)`.** `_limit_for()` gave every probe through
+  `run()` a fixed 120 s whatever `--timeout` said (the encoder-list read already took the lower
+  one), and the version reads 120 s too; with `--timeout 2` a hung ffprobe held the tool for two
+  minutes. `--timeout 0` leaves them unlimited, as before. A probe that reaches
+  its own 120 s ceiling no longer advises raising `--timeout`, which cannot raise it. Code:
+  `_common.runner._limit_for()`, `_probe_limit()`, `_timed_out()`. Test:
+  `Issue415Tests.test_ffprobe_through_run_is_bounded_by_a_lower_timeout`.

@@ -815,7 +815,10 @@ class AnalysisTests(MediaFixtures):
         # a per-step timeout is reported per step, never raised
         data = json.loads(script("verify.py", self.src, "--quick", "--timeout", "0.01", "--json", expect_fail=True).stdout)
         self.assertEqual((data["status"], data["error"]["kind"]), ("failed", "verification"))
-        timed_out = [s for f in data["files"] for s in f["steps"] if s["error"].startswith("timeout after")]
+        # verify's own step limit, or (since #415 bounds a child's ffprobe by --timeout too) the
+        # child's own timeout: either way a step row of kind timeout
+        timed_out = [s for f in data["files"] for s in f["steps"]
+                     if s["error"].startswith("timeout after") or s.get("kind") == "timeout"]
         self.assertTrue(timed_out, data)
         self.assertEqual(data["failed"], len(timed_out))
         # 0 means no limit here as on every other tool; it timed every step out at 0 s before 2.17.4

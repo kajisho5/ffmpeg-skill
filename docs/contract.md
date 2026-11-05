@@ -879,6 +879,14 @@ caller never parses the prose:
 A tool that runs another (`render.py` stages and plans) forwards the child's `reason` and
 `details` in its own `error`. Both are absent on a failure that is not a refusal, like `hint`.
 
+A `timeout` or `interrupted` failure exits 124, or 130/143, whether the tool or a child tool it ran
+was stopped (`export.py --normalize`'s loudness pass, `render.py`'s stages and check, `waveform.py`'s
+title and captions pass the child's code on). Its message ends "nothing was written" only when
+that is so: once a tool has written its deliverable and runs a further step on it
+(`export.py --normalize`, `render.py`'s chapters and check stages), the message names the file,
+says it is kept without the step that was stopped, and the document carries it as `output`
+(3.1.6, #415).
+
 **Diagnostics.** What a run decided on its own -- a warning, a fallback it took, a step it
 skipped -- is recorded as it happens (a stderr line too) and lands in the document as
 `diagnostics: {warnings, fallbacks, skipped}`, each entry `{code, message, ...facts}`; it is

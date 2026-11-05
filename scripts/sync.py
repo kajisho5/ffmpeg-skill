@@ -32,6 +32,7 @@ import os
 import sys
 from typing import Dict, List
 
+from _common.runner import fail_if_classified
 from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
 from _common.decision import stream_starts
@@ -377,6 +378,7 @@ def main() -> int:
             cmd += ["-af", ",".join(af_parts)]
             cmd += aac_args() + (["-t", f"{ref_dur:.3f}"] if ref_dur else ["-shortest"]) + [output]
             proc = run(cmd, check=False)
+            fail_if_classified(proc)  # a cause the re-encode would hit too is reported, not retried (#415)
             if proc.returncode != 0:
                 cmd = [c for c in cmd if c != "copy"]
                 idx = cmd.index("-c:v"); del cmd[idx]
@@ -389,6 +391,7 @@ def main() -> int:
                     cmd += ["-movflags", "+faststart"]
                 cmd += ["-avoid_negative_ts", "make_zero", output]
                 proc = run(cmd, check=False)
+                fail_if_classified(proc)
                 if proc.returncode != 0:
                     cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + (video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) if has_video else []) + audio_codec_for(output) + [output]
                     run(cmd)

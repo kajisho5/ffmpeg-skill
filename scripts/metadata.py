@@ -221,7 +221,8 @@ def main() -> int:
         die(f"chapters file not found: {args.chapters}")
 
     meta = probe(args.input)
-    output = args.output or default_output(args.input, "meta")
+    # streams are copied, so the source's own container always holds them (a .webm stays .webm)
+    output = args.output or default_output(args.input, "meta", Path(args.input).suffix.lstrip(".") or "mp4")
     if os.path.abspath(output) == os.path.abspath(args.input):
         die("output must differ from the input (metadata.py never rewrites a file in place)")
     out_ext = Path(output).suffix.lower()
@@ -249,7 +250,13 @@ def main() -> int:
         cmd += ["-map", "0", "-map_metadata", "0", "-map_chapters", "0"]
     for key, value in tags.items():
         cmd += ["-metadata", f"{key}={value}"]
-    cmd += ["-c", "copy", output]
+    cmd += ["-c", "copy"]
+    if out_ext in (".mp4", ".mov", ".m4v", ".m4a"):
+        # A stream copy into the MPEG-4 family writes the index (moov) after the media unless told
+        # otherwise, so without +faststart a faststart input -- render's export -- came out with
+        # its index at the end (#415; every other MP4 write here is faststart since #279)
+        cmd += ["-movflags", "+faststart"]
+    cmd.append(output)
     run(cmd)
     if tmpdir:
         tmpdir.cleanup()

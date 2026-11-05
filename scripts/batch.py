@@ -185,6 +185,42 @@ def final_path(src: Path, recipe: Dict[str, Any], outdir: Path) -> Path:
     return outdir / f"{src.stem}{suffix}.{final_ext}"
 
 
+def step_writes(step: Any) -> bool:
+    """Whether a recipe step writes a file: it names {out} (check.py and probe.py do not)."""
+    return isinstance(step, list) and any("{out}" in str(a) for a in step[1:])
+
+
+def writes_nothing(recipe: Dict[str, Any]) -> bool:
+    """A steps recipe in which no step names {out}: it measures each file and writes none."""
+    return not recipe.get("project") and not any(step_writes(st) for st in recipe.get("steps") or [])
+
+
+def row_output(src: Path, recipe: Dict[str, Any], outdir: Path) -> "Optional[str]":
+    """An item's output path for its row, or None for a recipe that writes nothing."""
+    return None if writes_nothing(recipe) else str(final_path(src, recipe, outdir))
+
+
+def deliver(src: str, final: Path) -> None:
+    """Move an item's last written intermediate to its final path, under the output guard every
+    tool applies: an existing file is replaced only with --overwrite. A dry run writes nothing."""
+    if STATE.dry_run:
+        log(f"  [dry-run] would deliver the last written file to {final}")
+        return
+    if final.exists() and not STATE.overwrite:
+        raise ItemError({"step": None, "tool": None, "kind": "input", "reason": "output_exists",
+                         "message": f"refusing to overwrite existing output {str(final)!r}: pass --overwrite to replace it"})
+    try:
+        os.replace(src, final)
+    except OSError:
+        import shutil
+        try:
+            shutil.copyfile(src, final)
+        except OSError as exc:
+            raise ItemError({"step": None, "tool": None, "kind": "output",
+                             "message": f"could not deliver {src} to {final}: {exc}"})
+    log(f"  delivered the last written file to {final}")
+
+
 def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             deadline: "Optional[float]" = None) -> Dict[str, Any]:
     final = final_path(src, recipe, outdir)
@@ -232,6 +268,9 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         for i, step in enumerate(steps):
             last = i == len(steps) - 1
             out = str(final) if last else str(work / f"{src.stem}_step{i}.{'mp4' if src.suffix.lower() not in ('.wav', '.mp3', '.m4a', '.flac') else src.suffix.lstrip('.')}")
+            # a step that names no {out} (check.py, probe.py) writes nothing: the next step reads
+            # what this one read, and when it is the last, the last file written is delivered (#415)
+            writes = step_writes(step)
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
             step_ok, doc = run_step(argv, budget())
             step_docs.append((Path(str(argv[0])).stem if argv else "step", doc))
@@ -246,8 +285,16 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
                 ok = False
                 failure = step_error(i, str(argv[0]) if argv else None, doc)
                 break
-            cur = out
-    result: Dict[str, Any] = {"file": str(src), "output": str(final), "ok": ok, "seconds": round(time.time() - t0, 1)}
+            if writes:
+                cur = out
+        if ok and cur != str(final) and not writes_nothing(recipe):
+            # the last step wrote nothing: the item's deliverable is the last file a step wrote,
+            # which is in this item's work directory and would be removed with it (#415)
+            try:
+                deliver(cur, final)
+            except ItemError as exc:
+                ok, failure = False, exc.error
+    result: Dict[str, Any] = {"file": str(src), "output": row_output(src, recipe, outdir), "ok": ok, "seconds": round(time.time() - t0, 1)}
     if failure:
         result["error"] = failure
     # `ok` is "every step completed" (design-decisions: a spec miss a tool cannot fix is completed +
@@ -291,6 +338,8 @@ def cached_output_changed(hit: Dict[str, Any]) -> "Optional[Dict[str, Any]]":
     output_missing, output_changed (size or mtime differ: something replaced or edited it) or
     entry_unverifiable (an entry written by 2.10.11 or earlier recorded no identity, so nothing can say
     the file is the one it describes)."""
+    if "output" in hit and hit["output"] is None:
+        return None  # a recipe that writes nothing (check.py over a folder): no file to have changed
     out = str(hit.get("output") or "")
     now = output_identity(out) if out else None
     if now is None:
@@ -344,6 +393,11 @@ def main() -> int:
             if not isinstance(name, str) or name not in ALLOWED_STEP_SCRIPTS:
                 die(f"recipe step names a script that isn't one of this skill's own tools: {name!r} "
                     f"(must be a bare filename like 'silence.py', found in scripts/)")
+        if writes_nothing(recipe):
+            # a QC batch (check.py / probe.py on every file): its rows carry output null, and its
+            # cache entries claim no file, so they are served rather than missed as output_missing (#415)
+            note("no recipe step names {out}: the steps only read each file, so no output is written "
+                 "(each row's output is null)")
     outdir = Path(recipe.get("output_dir") or (folder / "out"))
     if not outdir.is_absolute():
         outdir = folder / outdir
@@ -435,23 +489,36 @@ def main() -> int:
         # collapsing e.g. clip.mp4 and clip.mov to the same clip_out.mp4) -- catch that before
         # processing anything, rather than letting the later one silently overwrite the earlier
         # one's finished output with the cache still recording both as "ok".
-        by_final: Dict[Path, List[Path]] = {}
+        # Compared case-folded: Clip_out.mp4 and clip_out.mp4 are one file on macOS's and
+        # Windows' default filesystems, so a batch that only works on Linux is refused everywhere (#415).
+        by_final: Dict[str, List[Path]] = {}
         for src in files:
-            by_final.setdefault(final_path(src, recipe, outdir), []).append(src)
-        collisions = {dst: srcs for dst, srcs in by_final.items() if len(srcs) > 1}
+            by_final.setdefault(str(final_path(src, recipe, outdir)).casefold(), []).append(src)
+        collisions = {key: srcs for key, srcs in by_final.items() if len(srcs) > 1 and not writes_nothing(recipe)}
         if collisions:
-            detail = "; ".join(f"{dst.name} <- {', '.join(s.name for s in srcs)}" for dst, srcs in collisions.items())
-            die(f"{len(collisions)} output filename collision(s) in this batch -- rename the sources, "
+            detail = "; ".join(" / ".join(sorted({final_path(s, recipe, outdir).name for s in srcs}))
+                               + " <- " + ", ".join(s.name for s in srcs) for srcs in collisions.values())
+            die(f"{len(collisions)} output filename collision(s) in this batch (names that differ only in case are one "
+                f"file on macOS and Windows) -- rename the sources, "
                 f"or add a distinguishing \"suffix\"/\"ext\" per run, or split into separate globs: {detail}")
         def item_work(i: int, src: Path) -> Path:
-            """Where this item's intermediates go. Parallel items must not share one work dir:
-            the step file names are stem-derived, so two globs holding the same stem would write
-            over each other. Serial runs keep the flat layout 1.16 used, byte for byte."""
-            if jobs == 1:
-                return work
-            sub = work / f"{i}-{src.stem}"
-            sub.mkdir(parents=True, exist_ok=True)
-            return sub
+            """Where this item's intermediates go: a new directory of its own under the work
+            directory, removed with everything in it when the item ends (run_item()). The step
+            file names are stem-derived, so two items with one stem (clip.mp4, clip.mov) sharing a
+            directory refused each other's files, and a later run refused the files an earlier one
+            left there as someone else's (#415); parallel items had their own directories since
+            1.17, serial ones now do too."""
+            import tempfile
+            return Path(tempfile.mkdtemp(prefix=f"{i}-{src.stem}-", dir=str(work)))
+
+        def run_item(i: int, src: Path) -> Dict[str, Any]:
+            """process() in the item's own work directory, which goes when it ends, however it ends."""
+            import shutil
+            iw = item_work(i, src)
+            try:
+                return process(src, recipe, outdir, iw, deadline)
+            finally:
+                shutil.rmtree(iw, ignore_errors=True)
 
         def store(key: str, r: Dict[str, Any]) -> None:
             if not (r["ok"] and not STATE.dry_run):
@@ -462,10 +529,10 @@ def main() -> int:
             with cache_lock:
                 # this run just rewrote r["output"]: an entry under another key (another recipe,
                 # the other GPU setting) that names the same file now describes bytes that are gone
-                for stale in [k for k, v in cache.items() if k != key and isinstance(v, dict) and v.get("output") == r["output"]]:
+                for stale in [k for k, v in cache.items() if r["output"] and k != key and isinstance(v, dict) and v.get("output") == r["output"]]:
                     del cache[stale]
                 # the output as this run left it: a later hit is served only while it is unchanged
-                cache[key] = dict(r, output_identity=output_identity(r["output"]))
+                cache[key] = dict(r, output_identity=output_identity(r["output"]) if r["output"] else None)
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above
                 # then silently treats as "no cache" (a ValueError -> {}), discarding every prior
@@ -503,7 +570,7 @@ def main() -> int:
 
         def timed_out_row(src: Path) -> "Dict[str, Any]":
             timed_out["hit"] = True
-            return {"file": str(src), "output": str(final_path(src, recipe, outdir)),
+            return {"file": str(src), "output": row_output(src, recipe, outdir),
                     "ok": False, "seconds": 0.0, "skipped": "timeout"}
 
         def failed_row(src: Path, exc: BaseException) -> "Dict[str, Any]":
@@ -522,13 +589,13 @@ def main() -> int:
                 error = {"step": None, "tool": None, "exception": exc.__class__.__name__,
                          "message": (str(exc) or exc.__class__.__name__)[:300]}
             log(f"    failed: {error['message']}")
-            return {"file": str(src), "output": str(final_path(src, recipe, outdir)),
+            return {"file": str(src), "output": row_output(src, recipe, outdir),
                     "ok": False, "verified": False, "seconds": 0.0, "error": error}
 
         def interrupted_row(src: Path, started: bool, r: "Optional[Dict[str, Any]]" = None) -> "Dict[str, Any]":
             """An item the interrupt reached: `interrupted: true` when it was running (its steps
             were stopped), `skipped: "interrupted"` when it had not started."""
-            row = dict(r) if r else {"file": str(src), "output": str(final_path(src, recipe, outdir)), "seconds": 0.0}
+            row = dict(r) if r else {"file": str(src), "output": row_output(src, recipe, outdir), "seconds": 0.0}
             row.update(ok=False, verified=False)
             if started:
                 row["interrupted"] = True
@@ -550,7 +617,7 @@ def main() -> int:
                     continue
                 info(f"=== {src.name}")
                 try:
-                    r = process(src, recipe, outdir, item_work(i, src), deadline)
+                    r = run_item(i, src)
                 except KeyboardInterrupt:
                     interrupted["hit"] = True
                     # the running item, then every one not started: each keeps its row
@@ -572,7 +639,7 @@ def main() -> int:
         def work_one(i: int, src: Path, key: str) -> Dict[str, Any]:
             _LOG.buffer = [f"=== {src.name}"]
             try:
-                r = process(src, recipe, outdir, item_work(i, src), deadline)
+                r = run_item(i, src)
                 if not interrupted["hit"]:   # a step the interrupt stopped is no result to keep
                     store(key, r)
                 return with_miss(i, r)
@@ -670,7 +737,7 @@ def main() -> int:
     info(f"{done}/{len(results)} processed, {sum(1 for r in results if r.get('cached'))} from cache")
     if not args.json:
         for r in results:
-            print(f"{'OK  ' if r['ok'] else 'FAIL'} {r['file']} -> {r['output']}" + (" (cached)" if r.get("cached") else ""))
+            print(f"{'OK  ' if r['ok'] else 'FAIL'} {r['file']} -> {r['output'] or '(no output: the steps only read it)'}" + (" (cached)" if r.get("cached") else ""))
     if interrupted["hit"]:
         # Ctrl-C on a batch that already produced files: the user needs the partial table, not a
         # traceback and not "nothing was written". Exit 130 (143 for SIGTERM) with every item:
@@ -684,7 +751,7 @@ def main() -> int:
             timed_out=timed_out["hit"])
     if timed_out["hit"]:
         skipped = [r["file"] for r in results if r.get("skipped") == "timeout"]
-        die(f"the batch's {STATE.timeout:.0f} s budget ran out with {len(skipped)} item(s) not "
+        die(f"the batch's {STATE.timeout:g} s budget ran out with {len(skipped)} item(s) not "
             f"started: {', '.join(os.path.basename(f) for f in skipped[:5])}"
             + (" ..." if len(skipped) > 5 else "")
             + ". --timeout is the whole run's limit, not each item's; raise it or split the folder.",

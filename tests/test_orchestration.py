@@ -6,6 +6,7 @@
 """
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -992,10 +993,27 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual((data["status"], data["error"]["kind"]), ("failed", "verification"))
         self.assertIn("aspect", data["error"]["message"])
         self.assertTrue(Path(data["output"]).exists(), "the deliverable is still written even though it fails delivery spec")
-        # the outer --timeout reaches every stage: an impossible limit fails inside the first stage
+        # an impossible limit stops the run at its first probe (render's or a stage's: since #415 --timeout bounds
+        # probes too), and the message states the limit as given (it said "0 s")
         proc = script("render.py", proj, "--fast", "--timeout", "0.05", "--json", expect_fail=True)
+        tdoc = json.loads(proc.stdout)
+        self.assertEqual((tdoc["error"]["kind"], tdoc["exit_code"]), ("timeout", 124))
+        self.assertIn("0.05 s time limit", tdoc["error"]["message"])
+        if platform.system() == "Windows":
+            return  # the stand-in below is a #!/bin/sh script
+        # the outer --timeout reaches every stage: an ffmpeg that hangs only on the clips stage's
+        # output (probes and render's own work run for real) is killed inside cut.py under the
+        # forwarded limit ...
+        shim = OUT / "render_timeout_shim"
+        shim.mkdir(exist_ok=True)
+        (shim / "ffmpeg").write_text('#!/bin/sh\nfor a in "$@"; do last="$a"; done\n'
+                                     'case "$last" in */clip00*) exec sleep 120;; esac\n'
+                                     f'exec "{shutil.which("ffmpeg")}" "$@"\n', encoding="utf-8")
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+        proc = script("render.py", proj, "--fast", "--timeout", "8", "--json", expect_fail=True, env=env)
         self.assertIn("time limit", proc.stderr)
-        self.assertIn("--timeout 0.05", proc.stderr, "the flag must be forwarded to the child command line")
+        self.assertIn("--timeout 8", proc.stderr, "the flag must be forwarded to the child command line")
         # ...and the stage's own failure is what render reports: kind timeout, exit 124, the stage named
         tdoc = json.loads(proc.stdout)
         self.assertEqual((tdoc["status"], tdoc["error"]["kind"], tdoc["exit_code"], tdoc["stage"]), ("failed", "timeout", 124, "cut.py"))
@@ -1444,17 +1462,15 @@ class OrchestrationTests(MediaFixtures):
                         "every entry written under concurrency must be served back")
 
     def test_jobs_gives_each_item_its_own_work_dir(self):
+        """Each item works in a directory of its own, serial or parallel, and takes it with it
+        when it ends (3.1.6, #415: 1.17's flat serial layout let two items with one stem, or a
+        rerun, refuse each other's intermediates)."""
         folder, recipe = self._jobs_folder("batch_jobs_work", count=3)
-        work = OUT / "batch_jobs_work_dir"
-        script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", "3",
-               "--work", work)
-        subdirs = sorted(p.name for p in work.iterdir() if p.is_dir())
-        self.assertEqual(len(subdirs), 3)
-        # ... and a serial run keeps the flat layout it always had
-        work2 = OUT / "batch_jobs_work_serial"
-        script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", "1",
-               "--work", work2)
-        self.assertEqual([p.name for p in work2.iterdir() if p.is_dir()], [])
+        for jobs in ("3", "1"):
+            work = OUT / f"batch_jobs_work_dir{jobs}"
+            shutil.rmtree(work, ignore_errors=True)
+            script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", jobs, "--work", work)
+            self.assertEqual(list(work.iterdir()), [], "every item's directory is removed with it")
 
 
     # --------------------------------------------------- 1.17: render.py --cache DIR / --from

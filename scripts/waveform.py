@@ -284,6 +284,14 @@ def main() -> int:
             notes.append(f"the visualisation band and {args.platform}'s bottom safe zone overlap by "
                          f"{overlap}px: the captions or the app's own UI will sit over the waveform "
                          f"(lower --vis-height to {max(0.05, (args.height - safe_px) / args.height):.2f})")
+    if STATE.dry_run and (args.title or args.srt or args.text):
+        # graphics.py / caption.py plan on the render this dry run did not write, whose frame they
+        # cannot measure: their sizes and offsets come out 0 in the plan, and the real run takes
+        # them from the WxH render (#415). Said here, so a plan is not read as the real numbers.
+        later = " and ".join(n for n, on in (("title", args.title), ("captions", args.srt or args.text)) if on)
+        notes.append(f"the {later} stage was planned on the visualisation render this dry run did not write, so the "
+                     f"font sizes and offsets in its planned command are placeholders (0); the real run sizes them "
+                     f"from the {args.width}x{args.height} render")
     if silent_peak is not None:
         warn(f"{args.input} is silent (peak {silent_peak:g} dBFS); the visualisation is a flat line", "silent_input",
              path=args.input, peak_db=silent_peak)
