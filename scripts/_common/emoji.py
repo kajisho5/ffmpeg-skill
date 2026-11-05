@@ -233,7 +233,7 @@ def _libass_color_probe() -> "Optional[bool]":
     return False
 
 
-def _libass_render(exe: str, char: str) -> "Optional[bytes]":
+def _libass_render(exe: str, char: str, fonts_dir: "Optional[str]" = None) -> "Optional[bytes]":
     """One 96x96 rgb24 frame of `char` drawn through libass (subtitles=), or None when it failed."""
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -244,7 +244,8 @@ def _libass_render(exe: str, char: str) -> "Optional[bytes]":
             proc = subprocess.run(
                 [exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
                  "-i", "color=c=black:s=96x96:d=0.04",
-                 "-vf", "subtitles=" + escape_filter_path(srt, bind=False) + ":force_style='FontSize=64,Alignment=5'",
+                 "-vf", "subtitles=" + escape_filter_path(srt, bind=False) + ":force_style='FontSize=64,Alignment=5'"
+                 + (":fontsdir=" + escape_filter_path(fonts_dir, bind=False) if fonts_dir else ""),
                  "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
         except (subprocess.TimeoutExpired, OSError):
@@ -254,23 +255,24 @@ def _libass_render(exe: str, char: str) -> "Optional[bytes]":
     return proc.stdout
 
 
-def _libass_glyph_probe() -> "Optional[bool]":
+def _libass_glyph_probe(fonts_dir: "Optional[str]" = None) -> "Optional[bool]":
     """Does libass draw an emoji GLYPH at all, or only what it draws for a character no face has?
     "No colour pixels" (_libass_color_probe False) covers both a monochrome glyph and the empty
     .notdef box: Apple Color Emoji (an sbix bitmap face) gives libass no usable glyph, and the box
     is white (#395). So the emoji is compared with U+10FFFD, a code point no font carries: the same
-    frame, or nothing lit, is no glyph. None: the probe could not run."""
+    frame, or nothing lit, is no glyph. A caller's --fonts-dir is searched too, as the burn searches it.
+    None: the probe could not run."""
     exe = ffmpeg_exe("ffmpeg")[0]
     if not exe:
         return None
-    emoji, nothing = _libass_render(exe, "\U0001F389"), _libass_render(exe, "\U0010FFFD")
+    emoji, nothing = _libass_render(exe, "\U0001F389", fonts_dir), _libass_render(exe, "\U0010FFFD", fonts_dir)
     if emoji is None or nothing is None:
         return None
     lit = any(emoji[i] > 60 for i in range(0, len(emoji)))
     return bool(lit and emoji != nothing)
 
 
-def emoji_support(assets: "Optional[str]" = None, probe: bool = True) -> "Dict[str, Any]":
+def emoji_support(assets: "Optional[str]" = None, probe: bool = True, fonts_dir: "Optional[str]" = None) -> "Dict[str, Any]":
     """What this machine can actually do with emoji, cached per process.
 
     `mode` is `color` when a render probe proves libass draws colour, else `png` when an assets
@@ -279,13 +281,13 @@ def emoji_support(assets: "Optional[str]" = None, probe: bool = True) -> "Dict[s
     from a render (see references/gotchas.md#emoji). `probe=False` (`contract --json --static`, and every
     static/JSON-only path) skips the render entirely and leaves `libass_color` unknown.
     """
-    key = (assets or None, bool(probe))
+    key = (assets or None, bool(probe), fonts_dir or None)
     if key in _EMOJI_SUPPORT_CACHE:
         return dict(_EMOJI_SUPPORT_CACHE[key])
     family, file, fc_answered = _emoji_color_font()
     libass_color = _libass_color_probe() if probe else None
     # a colour render is a glyph; without one, ask whether libass draws one at all (#395)
-    libass_glyph = True if libass_color else (_libass_glyph_probe() if probe and libass_color is False else None)
+    libass_glyph = True if libass_color else (_libass_glyph_probe(fonts_dir) if probe and libass_color is False else None)
     assets_dir = assets if (assets and os.path.isdir(assets)) else None
     if libass_color:
         mode = "color"

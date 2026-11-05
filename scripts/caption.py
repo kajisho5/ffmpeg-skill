@@ -79,6 +79,7 @@ TIME_RE = re.compile(
 
 
 # an SRT timing line: the times alone, the cue text on the lines after it
+DROP_FRAME_RE = re.compile(r"^\s*\d+:\d{2}:\d{2};\d+")
 SRT_TIMING_RE = re.compile(r"^\s*\d+:\d{2}:\d{2}[,.]\d+\s*-->\s*\d+:\d{2}:\d{2}[,.]\d+\s*$")
 
 
@@ -93,6 +94,10 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[fl
             # as captions, auto-timed 3 s apart (#396)
             die(f"--text: {path} is an SRT file (line {n} is a timing line with no text: "
                 f"'{raw.strip()}'); pass it as --srt (render.py: --srt, not --cues)", kind="input")
+        if DROP_FRAME_RE.match(raw):
+            # TIME_RE has no ';', so the line would be burned as caption text, auto-timed
+            die(f"--text: line {n} has a drop-frame timecode (';'), which is not read: write it as "
+                "hh:mm:ss:ff@29.97 or in seconds", kind="input")
     for raw in lines:
         line = raw.rstrip("\n")
         if not line.strip():
@@ -212,7 +217,7 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
         return cues, None
     assets = resolve_emoji_assets(getattr(args, "emoji_assets", None), None, brand)
     want = getattr(args, "emoji", "auto")
-    support = emoji_support(assets, probe=True)
+    support = emoji_support(assets, probe=True, fonts_dir=getattr(args, "fonts_dir", None))
     mode = support["mode"] if want == "auto" else want
     if want == "color" and not support["libass_color"]:
         die("--emoji color: this ffmpeg renders emoji monochrome through libass "
@@ -220,10 +225,11 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
             kind="input")
     if want == "png" and not assets:
         die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
-    if want in ("auto", "mono") and not assets and support.get("libass_glyph") is False:
-        # the render would be empty boxes (tofu), which is a failed job; dropping the emoji instead
-        # would change the cue text, which caption.py never does unasked (#395)
-        die(f"--emoji {want}: this ffmpeg draws no emoji glyph through libass ({support['detail']}), so "
+    # --emoji mono asks for the font's glyph, and there is none: empty boxes (tofu) are a failed job
+    # (#395). An auto run takes mode "none" instead, as on a machine with no emoji face at all,
+    # and says why below; --emoji mono never uses assets, so they do not save it
+    if want == "mono" and support.get("libass_glyph") is False:
+        die(f"--emoji mono: this ffmpeg draws no emoji glyph through libass ({support['detail']}), so "
             f"{len(clusters_all)} emoji would come out as empty boxes -- pass --emoji-assets DIR for colour, "
             "or --emoji none to leave them out of the drawn text", kind="input")
     plan = {"mode": mode, "count": len(clusters_all),
@@ -235,7 +241,14 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
             for cl in {cl for _i, cl in emoji_clusters(text)}:
                 text = text.replace(cl, "")
             out.append((start, end, re.sub(r"[ \t]{2,}", " ", text).strip()))
-        info("emoji: stripped from the drawn text (--emoji none)")
+        if want == "auto":
+            why = ("libass draws no emoji glyph on this build (an empty box at best)"
+                   if support.get("libass_glyph") is False else "no face here draws them")
+            msg = (f"emoji: {len(clusters_all)} left out of the drawn text: {why} -- pass --emoji-assets DIR "
+                   "to draw them as PNGs")
+            warn(msg, "emoji_not_drawn", count=len(clusters_all), reason=support.get("detail"))
+        else:
+            info("emoji: stripped from the drawn text (--emoji none)")
         return out, plan
     if mode in ("color", "mono"):
         if mode == "mono":
@@ -1118,7 +1131,7 @@ def main() -> int:
         if args.mode != "mux":
             # before any transcription or sidecar: a build without libass fails these at parse time
             # with a message that names no filter (#393), so ask the build first, dry run included
-            require_filter("ass" if args.ass else "subtitles", "burning captions")
+            require_filter("ass" if (args.ass or args.animate != "none" or args.karaoke) else "subtitles", "burning captions")
     fps_for_tc = args.fps
     if fps_for_tc is None and meta is not None:
         fps_for_tc = meta.get("video", {}).get("fps")

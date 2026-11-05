@@ -237,14 +237,15 @@ def main(force_route: Optional[str] = None) -> int:
     emoji_mode = None
     emoji_overlays: List[dict] = []
     if has_emoji(all_text):
-        support = emoji_support(emoji_assets, probe=True)
+        _ff = args.font_file or brand.get("font_file")
+        support = emoji_support(emoji_assets, probe=True, fonts_dir=os.path.dirname(os.path.abspath(_ff)) if _ff else None)
         emoji_mode = support["mode"] if args.emoji == "auto" else args.emoji
         if args.emoji == "color" and not support["libass_color"]:
             die("--emoji color: this ffmpeg renders emoji monochrome through libass "
                 f"({support['detail']}) -- pass --emoji-assets DIR for colour, or --emoji mono", kind="input")
         if args.emoji == "png" and not emoji_assets:
             die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
-        if args.emoji == "mono" and not emoji_assets and support.get("libass_glyph") is False:
+        if args.emoji == "mono" and support.get("libass_glyph") is False:
             die("--emoji mono: this ffmpeg draws no emoji glyph through libass "
                 f"({support['detail']}), so they would come out as empty boxes -- pass --emoji-assets DIR "
                 "for colour, or --emoji none", kind="input")
@@ -646,6 +647,7 @@ def main(force_route: Optional[str] = None) -> int:
                             "assets": emoji_assets, "missing": missing,
                             "overlays": len(emoji_overlays)}
         ass_path = args.write_ass or os.path.splitext(output)[0] + "_gfx.ass"
+        require_filter("ass", "drawing this text through libass")  # before the sidecar is written
         if STATE.dry_run:
             info(f"[dry-run] would write {ass_path} ({len(elements)} text elements)")
         else:
@@ -686,7 +688,6 @@ def main(force_route: Optional[str] = None) -> int:
         chains = list(fc) if fc else [f"[0:v]{text or 'null'}[vout]"]
         last = "vout"
         if route == "ass":
-            require_filter("ass", "drawing this text through libass")
             vf = f"ass=filename={escape_filter_path(ass_path)}"
             fdir = ass_fonts_dir()
             if fdir:

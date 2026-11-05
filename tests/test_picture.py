@@ -4972,6 +4972,11 @@ class LeanBuildTests(unittest.TestCase):
         self.assertEqual(doc["status"], "failed")
         self.assertEqual(doc["error"]["kind"], "input")
         self.assertIn("--srt", doc["error"]["message"])
+        dropf = OUT / "drop_frame.txt"
+        dropf.write_text("00:01:00;00 --> 00:01:02;00 Hello\n", encoding="utf-8")
+        proc = script("caption.py", "--text", str(dropf), "--write-srt", str(OUT / "drop_frame_out.srt"), "--json",
+                      expect_fail=True)
+        self.assertIn("drop-frame", json.loads(proc.stdout)["error"]["message"])
         # a cue file with its text on the line of its times is unchanged
         cues = OUT / "same_line.txt"
         cues.write_text("00:00:00,500 --> 00:00:02,500 Hello\n0:03-0:05 World\n", encoding="utf-8")
@@ -5022,14 +5027,15 @@ class EmojiGlyphProbeTests(unittest.TestCase):
     def tearDown(self):
         self.c._EMOJI_SUPPORT_CACHE.clear()
 
-    def _support(self, emoji_frame, nothing_frame):
+    def _support(self, emoji_frame, nothing_frame, fonts_dir=None):
         from _common import emoji as emoji_mod
         frames = {"\U0001F389": emoji_frame, "\U0010FFFD": nothing_frame}
+        seen = self.seen = []
         with unittest.mock.patch.object(emoji_mod, "_libass_color_probe", return_value=False), \
-                unittest.mock.patch.object(emoji_mod, "_libass_render", side_effect=lambda exe, ch: frames[ch]), \
+                unittest.mock.patch.object(emoji_mod, "_libass_render", side_effect=lambda exe, ch, fd=None: (seen.append(fd), frames[ch])[1]), \
                 unittest.mock.patch.object(emoji_mod, "_emoji_color_font", return_value=("Apple Color Emoji", "/x.ttc", True)), \
                 unittest.mock.patch.object(emoji_mod, "ffmpeg_exe", return_value=("ffmpeg",)):
-            return emoji_mod.emoji_support(probe=True)
+            return emoji_mod.emoji_support(probe=True, fonts_dir=fonts_dir)
 
     def test_a_render_that_matches_the_missing_glyph_is_no_glyph(self):
         box = bytes([0]) * 100 + bytes([255]) * 50 + bytes([0]) * 100
@@ -5048,21 +5054,50 @@ class EmojiGlyphProbeTests(unittest.TestCase):
         self.assertIs(s["libass_glyph"], True)
         self.assertEqual(s["mode"], "mono")
 
-    def test_caption_refuses_to_burn_empty_boxes(self):
+    def test_the_probe_searches_the_callers_fonts_dir(self):
+        glyph = bytes([0]) * 120 + bytes([200]) * 30 + bytes([0]) * 100
+        self._support(glyph, bytes(250), fonts_dir="/my/fonts")
+        self.assertEqual(self.seen, ["/my/fonts", "/my/fonts"])
+
+    def _plan_refusal(self, want, assets):
         import caption
-        support = {"mode": "none", "libass_color": False, "libass_glyph": False, "detail": "Apple Color Emoji: no glyph",
-                   "assets": None, "color_font": "Apple Color Emoji", "color_font_file": None, "fix": ""}
+        support = {"mode": "png" if assets else "none", "libass_color": False, "libass_glyph": False,
+                   "detail": "Apple Color Emoji: no glyph", "assets": assets, "color_font": "Apple Color Emoji",
+                   "color_font_file": None, "fix": ""}
         calls = []
 
         def fake_die(msg, code=1, kind="input", **extra):
             calls.append((msg, kind))
             raise SystemExit(code)
 
-        args = argparse.Namespace(emoji="auto", emoji_assets=None)
+        args = argparse.Namespace(emoji=want, emoji_assets=assets, fonts_dir=None)
+        with unittest.mock.patch.object(caption, "emoji_support", return_value=support), \
+                unittest.mock.patch.object(caption, "resolve_emoji_assets", return_value=assets), \
+                unittest.mock.patch.object(caption, "die", fake_die):
+            try:
+                caption.plan_emoji([(0.0, 2.0, "Emoji \U0001F3AC")], args, 0, 0)
+            except SystemExit:
+                return calls[0]
+        return None
+
+    def test_mono_refuses_even_with_assets_and_auto_with_assets_does_not(self):
+        self.assertIsNotNone(self._plan_refusal("mono", "/assets"))
+        self.assertIsNone(self._plan_refusal("auto", "/assets"))
+
+    def test_caption_auto_leaves_undrawable_emoji_out_and_says_so(self):
+        """#395: an auto run burns no empty boxes; it drops the emoji, as with no emoji face at
+        all, and records why. --emoji mono asked for the glyph and is refused."""
+        import caption
+        support = {"mode": "none", "libass_color": False, "libass_glyph": False, "detail": "Apple Color Emoji: no glyph",
+                   "assets": None, "color_font": "Apple Color Emoji", "color_font_file": None, "fix": ""}
+        warned = []
+        args = argparse.Namespace(emoji="auto", emoji_assets=None, fonts_dir=None)
         with unittest.mock.patch.object(caption, "emoji_support", return_value=support), \
                 unittest.mock.patch.object(caption, "resolve_emoji_assets", return_value=None), \
-                unittest.mock.patch.object(caption, "die", fake_die), self.assertRaises(SystemExit):
-            caption.plan_emoji([(0.0, 2.0, "Emoji \U0001F3AC✅")], args, 640, 360)
-        self.assertEqual(calls[0][1], "input")
-        self.assertIn("--emoji-assets", calls[0][0])
-        self.assertIn("--emoji none", calls[0][0])
+                unittest.mock.patch.object(caption, "warn", lambda msg, code, **k: warned.append(code)), \
+                contextlib.redirect_stderr(io.StringIO()):
+            cues, plan = caption.plan_emoji([(0.0, 2.0, "Emoji \U0001F3AC\u2705")], args, 640, 360)
+        self.assertEqual(plan["mode"], "none")
+        self.assertEqual(cues[0][2], "Emoji")
+        self.assertEqual(warned, ["emoji_not_drawn"])
+        self.assertIsNotNone(self._plan_refusal("mono", None))

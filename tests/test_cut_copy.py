@@ -2060,6 +2060,7 @@ class DroppedAudioTrackTests(unittest.TestCase):
                 out = DIR / ("two_part%s.mov" % ("_acc" if extra else ""))
                 d = cut_json(str(self.two), "--start", "1", "--end", "4", *extra, "-o", str(out), "--overwrite")
                 self.assertEqual(d["status"], "completed")
+                self.assertEqual(d["reencoded"], bool(extra), d.get("mode"))
                 self.assertEqual(d["dropped_audio_streams"], 1)
                 self.assertIn("audio_tracks_dropped", [w["code"] for w in d["diagnostics"]["warnings"]])
                 self.assertTrue(any("2 audio tracks" in n for n in d["notes"]), d["notes"])

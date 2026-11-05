@@ -606,8 +606,10 @@ is `color` when the probe says colour, else `png` when an emoji assets directory
 `mono` when some installed face has a glyph, else `none`. Since 3.1.2 `libass_glyph` asks a second
 question when there is no colour: does libass draw an emoji glyph at all, or only what it draws for
 U+10FFFD, a code point no font has (the empty `.notdef` box Apple Color Emoji gives libass on macOS)?
-`false` makes `mode` `none`, and `caption.py --emoji auto|mono` refuses (`kind: input`) rather than
-burn empty boxes. Informational like the rest of `fonts`:
+`false` makes `mode` `none` (`png` when an emoji assets directory resolves: the PNG route draws
+them). `caption.py --emoji mono` (which never uses assets) then refuses (`kind: input`) rather than
+burn empty boxes; `--emoji auto` leaves the emoji out of the drawn text, as with no emoji face at all,
+and says so (warning `emoji_not_drawn`). A `--fonts-dir` is searched by the probe too. Informational like the rest of `fonts`:
 it never moves `ok` or any tool's `usable`.
 
 `caption.py`, `graphics.py` and `overlay.py` gained `--emoji auto|color|png|mono|none`,

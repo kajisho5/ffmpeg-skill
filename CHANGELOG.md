@@ -17,8 +17,9 @@
   a notes line (#394).
 - Emoji that libass drew as empty `.notdef` boxes (Apple Color Emoji on macOS) were reported as
   `emoji_monochrome` with `verified: true`. `doctor`'s `fonts.emoji` gains `libass_glyph`, from a
-  render compared with a code point no font has; when it is false the mode is `none` and
-  `caption.py --emoji auto|mono` refuses, naming `--emoji-assets` and `--emoji none` (#395).
+  render compared with a code point no font has (a `--fonts-dir` is searched too); when it is
+  false the mode is `none`: `caption.py --emoji auto` leaves the emoji out of the drawn text with an
+  `emoji_not_drawn` warning, as on a machine with no emoji face, and `--emoji mono` refuses (#395).
 - An SRT given to `caption.py --text` (or `render.py --cues`) was burned in line by line, cue
   numbers and timing lines included, as `verified: true`. A bare `A --> B` timing line marks the
   file as an SRT and is refused with a pointer to `--srt` (`kind: input`) (#396).
