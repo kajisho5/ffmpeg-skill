@@ -31,7 +31,9 @@ from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, matrix_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
-from _common.emit import warn
+from _common.emit import note, warn
+from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.wrap import wrap_text
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
 
@@ -71,6 +73,37 @@ def position_exprs(pos: str, margin: int, text_mode: bool, margins: Optional[dic
         x = x.replace("main_text_w", "main_w").replace("main_text_h", "main_h")
         y = y.replace("main_text_w", "main_w").replace("main_text_h", "main_h")
     return x, y
+
+
+def _wrap_to_frame(args, frame_w: int, margins: Optional[dict]) -> str:
+    """--text broken into lines that fit between the frame's side margins at --font-size, by the
+    same phrase rules graphics.py and caption.py wrap with; text that fits comes back unchanged.
+    drawtext never wraps, so through 3.1.3 a long line ran off the frame with no word (#411). The
+    width is the averaged advance table's estimate, so a wrapped run says so in its notes."""
+    text = args.text or ""
+    if not (frame_w and text and args.font_size > 0):
+        return text
+    m = {edge: int((margins or {}).get(edge, args.margin)) for edge in ("left", "right")}
+    left, right = m["left"], m["right"]
+    if args.position not in POS:
+        try:
+            xv = int(args.position.split(",")[0])
+            left, right = (xv, right) if xv >= 0 else (0, -xv)
+        except ValueError:
+            pass
+    inset = 2 * args.border + (24 if args.box else 0)  # the border on both sides, boxborderw=12
+    room = frame_w - left - right - inset
+    if room <= args.font_size:
+        return text
+    lines: List[str] = []
+    for para in text.split("\n"):
+        lines.extend(wrap_text(para, room / float(args.font_size), lang=getattr(args, "lang", None),
+                               slice_overlong=True) if para.strip() else [para])
+    wrapped = "\n".join(lines)
+    if wrapped != text:
+        note(f"--text is wider than the frame at --font-size {args.font_size} "
+             f"({frame_w} px, {left}/{right} px margins): wrapped to {len(lines)} lines")
+    return wrapped
 
 
 def enable_expr(start: Optional[float], end: Optional[float]) -> str:
@@ -303,12 +336,14 @@ def main() -> int:
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
-    vw = meta["video"]["width"] or 0
-    vh = meta["video"].get("height") or 0
     # ffmpeg applies display rotation before the filter graph, so the frame this overlay is
     # composited on is the displayed one. A 320x180 phone file tagged 90 degrees is 180 wide here.
-    if meta["video"].get("rotation") in (90, -90, 270, -270):
-        vw, vh = vh, vw
+    # A non-square-pixel source is made square at its display aspect first (#411), so a logo or
+    # a line of text is not drawn stretched by the player's SAR.
+    vw, vh = display_size(meta["video"])
+    square = square_pixels(meta["video"])
+    if square:
+        note(square_pixels_note(meta["video"]))
     # --platform: the edges this destination's own UI covers, in pixels of this frame. An
     # explicit --margin (or a brand safe_margin, applied above) is the more specific statement
     # and wins; without either, the historical 24 px default is unchanged.
@@ -414,7 +449,7 @@ def main() -> int:
                 die(f"--place {a:g}-{b:g}@{at:g}: the layer is only {layer_dur:.3f} s long")
             if main_dur and at >= main_dur:
                 die(f"--place {a:g}-{b:g}@{at:g}: starts after the main video ends ({main_dur:.3f} s)")
-        chain = []
+        chain = [square_pixels(pip_meta["video"])] if square_pixels(pip_meta["video"]) else []
         if args.scale_percent:
             chain.append(f"scale={int(vw * args.scale_percent / 100)}:-2")
         elif args.scale:
@@ -463,6 +498,7 @@ def main() -> int:
         else:
             cmd += ["-shortest"]
     else:
+        args.text = _wrap_to_frame(args, vw, safe_margins)
         x, y = position_exprs(args.position, args.margin, text_mode=True, margins=safe_margins)
         # 1.15: the text goes in a FILE with expansion off, so `'` and `%` survive verbatim
         # (they used to be dropped by escape_drawtext) and no character can reach the graph parser.
@@ -482,10 +518,13 @@ def main() -> int:
             drawing = "drawtext=" + ":".join(opts)
         # a font/border/box colour with chroma lands in the BT.709 the output is tagged with
         colours = [args.font_color] + ([args.border_color] if args.border else []) + ([args.box_color] if args.box else [])
-        cmd += ["-vf", drawn_chain(drawing, meta, colours), "-map", "0:v:0"]
+        cmd += ["-vf", (square + "," if square else "") + drawn_chain(drawing, meta, colours), "-map", "0:v:0"]
         if meta.get("audio"):
             cmd += ["-map", f"0:a:{args.audio_stream}"]
 
+    if square and "-filter_complex" in cmd:
+        i = cmd.index("-filter_complex") + 1
+        cmd[i] = f"[0:v]{square}[sq];" + cmd[i].replace("[0:v]", "[sq]")
     cmd += video_args(meta, args.crf, args.preset, convert_matrix=not args.video) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
     dropped_streams = run_keeping_subtitles(cmd, output)

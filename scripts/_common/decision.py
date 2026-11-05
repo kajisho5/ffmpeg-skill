@@ -198,12 +198,46 @@ def time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
     the caller has one, and every parse failure is a `kind: input` refusal naming the flag (so
     `--json` callers get a failure document, never a traceback)."""
     try:
-        return parse_time(value, fps)
+        seconds = parse_time(value, fps)
     except MissingFpsError as e:
         die(f"{flag} {value!r}: {e}")
     except ValueError as e:
         die(f"{flag} {value!r}: {e} (use seconds, mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff at the source's fps or with an explicit @fps suffix)")
-    return 0.0  # unreachable
+    _remember_smpte_hint(value, flag, fps, seconds)
+    return seconds
+
+
+def _remember_smpte_hint(value: str, flag: str, fps: Optional[float], seconds: float) -> None:
+    """An hh:mm:ss:ff time counts from the file's first frame (00:00:00:00), not from a camera's
+    start timecode (docs/design-decisions.md, time grammar). When one reads past the end of a
+    source that carries a start timecode it was almost certainly typed off the source's own
+    burned-in or NLE timecode: keep a hint naming the frame it would be from the source's start,
+    which die() adds to the refusal a tool then raises for the out-of-range time (#411). The
+    grammar itself, and what a valid time means, are unchanged."""
+    tc = getattr(STATE, "source_timecode", None)
+    text = value.strip().rpartition("@")[0] if "@" in value else value.strip()
+    if not tc or len(text.split(":")) != 4:
+        return
+    start_tc, duration = tc
+    rate = fps
+    if "@" in value:
+        try:
+            rate = float(value.rpartition("@")[2])
+        except ValueError:
+            return
+    try:
+        start = parse_time(re.sub(r"[;.](\d+)$", r":\1", start_tc), rate)
+    except ValueError:
+        return
+    if not duration or seconds <= duration or seconds < start:
+        return
+    within = seconds - start
+    where = (f"{flag} {text} is {fmt_smpte_time(within, rate)} from the file's start"
+             if within <= duration else f"{flag} {text} is past the end of this {duration:.3f} s file even so")
+    prefix = (f"hh:mm:ss:ff times count from the file's first frame (00:00:00:00), not from the source's "
+              f"start timecode {start_tc}: ")
+    before = STATE.smpte_hint[len(prefix):] + "; " if STATE.smpte_hint and STATE.smpte_hint.startswith(prefix) else ""
+    STATE.smpte_hint = prefix + before + where
 
 
 def signed_time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, concat_list_line, fmt_secs
 from _common.emit import warn
+from _common.probe import display_size
 
 
 def even(n: float) -> int:
@@ -105,7 +106,8 @@ def main() -> int:
     frame_meta = probe(str(frames[0]))
     if not frame_meta.get("video"):
         die(f"{frames[0]} is not a readable image")
-    sw, sh = frame_meta["video"]["width"], frame_meta["video"]["height"]
+    # the displayed frame: an EXIF rotation applied, non-square pixels squared (#411)
+    sw, sh = display_size(frame_meta["video"])
 
     if args.width and args.height:
         out_w, out_h = even(args.width), even(args.height)

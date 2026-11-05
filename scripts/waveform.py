@@ -35,7 +35,7 @@ import os
 import sys
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS
+from _common.probe import SILENT_PEAK_DBFS, square_pixels
 from _common import (add_common, apply_common, aac_args, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs)
@@ -183,7 +183,9 @@ def main() -> int:
             plate = pad_filters(args.width, args.height,
                                 "blur" if args.image_fit == "blur" else "color",
                                 args.background, 20)
-        graph = f"[1:v]{plate},format=rgba[plate];[0:a:{args.audio_stream}]{vf},format=rgba"
+        # a non-square-pixel still is squared at its display aspect before it is fitted (#411)
+        plate_sq = square_pixels((probe(args.image, role="input").get("video") if not STATE.dry_run else None))
+        graph = f"[1:v]{plate_sq + ',' if plate_sq else ''}{plate},format=rgba[plate];[0:a:{args.audio_stream}]{vf},format=rgba"
         if args.opacity < 1.0:
             graph += f",colorchannelmixer=aa={args.opacity:g}"
         # the composite is RGBA (the plate is): converted to the BT.709 the output is tagged with,

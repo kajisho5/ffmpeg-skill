@@ -22,6 +22,8 @@ import sys
 from typing import Any, Dict, List
 
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common.emit import note, record_fallback
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 
 def main() -> int:
@@ -55,10 +57,20 @@ def main() -> int:
     if not meta_a.get("video"):
         die("A-roll has no video stream")
     dur_a = meta_a.get("duration") or 0.0
-    w, h = meta_a["video"]["width"], meta_a["video"]["height"]
-    # the cutaway is scaled onto the frame ffmpeg has already rotated, not the stored one
-    if meta_a["video"].get("rotation") in (90, -90, 270, -270):
-        w, h = h, w
+    # the cutaway is scaled onto the frame ffmpeg has already rotated, not the stored one, and
+    # onto a non-square-pixel A-roll squared at its display aspect (#411)
+    w, h = display_size(meta_a["video"])
+    a_chain = square_pixels(meta_a["video"])
+    if a_chain:
+        note(square_pixels_note(meta_a["video"], "the A-roll"))
+    if (w % 2 or h % 2) and w and h:
+        # an odd-sized A-roll cannot be encoded 4:2:0 at its own size, and the run-time even-scale
+        # retry does not reach a filter_complex: through 3.1.3 this failed as kind "ffmpeg" (#411)
+        ew, eh = w - w % 2, h - h % 2
+        record_fallback(f"the A-roll is {w}x{h}, which 4:2:0 cannot hold: scaled to {ew}x{eh}",
+                        "odd_dimensions_scaled_even", output=args.output or default_output(args.input, "broll"), scale=f"scale={ew}:{eh}")
+        a_chain = (a_chain + "," if a_chain else "") + f"scale={ew}:{eh},setsar=1"
+        w, h = ew, eh
     fps = meta_a["video"].get("fps") or 30.0
     has_audio_a = bool(meta_a.get("audio"))
 
@@ -110,16 +122,17 @@ def main() -> int:
     convert = [matrix_chain(m, meta_a) for m in [meta_a] + [c["meta"] for c in cutaways]]
     if any(convert) or draws_chroma([args.pad_color], meta_a):
         convert = [cv or label_chain(m, meta_a) for cv, m in zip(convert, [meta_a] + [c["meta"] for c in cutaways])]
-    if convert[0]:
-        parts.append(f"[0:v]{convert[0]}null[a709]")
+    if convert[0] or a_chain:
+        parts.append(f"[0:v]{convert[0]}{a_chain or 'null'}[a709]")
         cur = "[a709]"
     pad = f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color="
     for i, c in enumerate(cutaways):
         geo = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
                + drawn_chain(pad + args.pad_color, c["meta"], [args.pad_color], pad + "black", line_meta=meta_a,
                              tag=f"pad{i}", labelled=True))
+        b_sq = (square_pixels(c["meta"]["video"]) + ",") if square_pixels(c["meta"]["video"]) else ""
         parts.append(f"[{i + 1}:v]trim=start={c['from']:.3f}:duration={c['length']:.3f},setpts=PTS-STARTPTS+{c['at']:.3f}/TB,"
-                     f"{convert[i + 1]}{geo},setsar=1,fps={fps:g},format={'yuv420p10le' if (meta_a.get('video') or {}).get('bt2020_or_hdr') else 'yuv420p'}[b{i}]")
+                     f"{convert[i + 1]}{b_sq}{geo},setsar=1,fps={fps:g},format={'yuv420p10le' if (meta_a.get('video') or {}).get('bt2020_or_hdr') else 'yuv420p'}[b{i}]")
         parts.append(f"{cur}[b{i}]overlay=0:0:eof_action=pass:enable='between(t,{c['at']:.3f},{c['at'] + c['length']:.3f})'[v{i}]")
         cur = f"[v{i}]"
     vout = cur

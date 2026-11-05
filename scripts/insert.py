@@ -28,6 +28,8 @@ import math
 import sys
 
 from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common.emit import note
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 
 def even(n: float) -> int:
@@ -68,7 +70,11 @@ def main() -> int:
     if (meta.get("duration") or 0) > 0.5 or meta.get("audio"):
         die(f"{args.input} is a video, not a still image; insert.py animates a still (Ken Burns). "
             f"For a clip use broll.py (cutaway) or cut.py/join.py")
-    sw, sh = meta["video"]["width"], meta["video"]["height"]
+    # the displayed picture: ffmpeg turns an EXIF-rotated still upright on decode (probe reads
+    # the Orientation off the decoded frame), and non-square pixels are squared (#411)
+    sw, sh = display_size(meta["video"])
+    if square_pixels(meta["video"]):
+        note(square_pixels_note(meta["video"]))
     ratio = sw / sh
 
     if args.width and args.height:

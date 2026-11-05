@@ -3566,14 +3566,17 @@ class ContractTests(unittest.TestCase):
     def test_look_sheet_timecode_counts_from_the_seek(self):
         """A contact sheet starts reading at half a slice (-ss before -i), which resets pts to 0 at
         the seek point: the burned-in labels were half a slice early (8 s, 3x2: a tile showing
-        0.667 s labelled 0.000). The timecode now adds the seek back; a sheet that starts at 0
-        (a clip with only a handful of frames) keeps the plain pts."""
+        0.667 s labelled 0.000). 1.x added the seek back, which an MPEG-TS's seek does not reset
+        the same way (#411): the sheet now keeps the file's own timestamps counted from its start
+        (-copyts -start_at_zero) and stamps the plain pts; a sheet that starts at 0 (a clip with
+        only a handful of frames) does the same."""
         doc = json.loads(tool("look", self.src, "--tiles", "3x2", "--dry-run", "--json",
                               "-o", self.out("tc_sheet.png")).stdout)
         cmd = doc["commands"][0]
         seek = re.search(r"-ss (\d+\.\d+) ", cmd).group(1)
         self.assertGreater(float(seek), 0)
-        self.assertIn(f"pts\\:hms\\:{seek}", cmd)
+        self.assertIn("-copyts -start_at_zero -ss", cmd)
+        self.assertIn("pts\\:hms}", cmd)
         one = self.out("tc_one_frame.mp4")
         ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-frames:v", "1", "-c:v", "libx264",
                "-preset", "veryfast", "-pix_fmt", "yuv420p", one)

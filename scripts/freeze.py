@@ -73,22 +73,23 @@ def main() -> int:
             cmd += ["-map", "0:a:0?", "-af", f"adelay={int(args.hold * 1000)}:all=1"]
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
-        # resuming the rest of the clip: split the timeline at `at`, freeze-frame the first
-        # part's last frame for --hold seconds via tpad, concat with the remainder.
+        # resuming the rest of the clip: split the timeline at `at` and hold the remainder's
+        # FIRST frame -- the frame shown at `at` -- for --hold seconds via tpad's start clone.
+        # Through 3.1.3 the head's last frame was held, the frame before `at`: at a cut, the last
+        # frame of the previous shot (#411).
         n = max(1, round(args.hold * fps))
         # The video hold length is rounded to a whole number of frames (n / fps), but the audio
         # side used to pad by the raw --hold value -- up to half a frame duration off from what
         # the video actually holds for, a permanent A/V drift from this point on. Pad audio by
         # the same, frame-rounded duration the video actually gets.
         actual_hold = n / fps
-        vf = (f"[0:v]split[a][b];[a]trim=end={at:.3f},setpts=PTS-STARTPTS[head];"
-              f"[b]trim=start={at:.3f},setpts=PTS-STARTPTS[tail];"
-              f"[head]tpad=stop_mode=clone:stop={n}[frozen];"
-              f"[frozen][tail]concat=n=2:v=1:a=0[outv]")
+        vf = (f"[0:v]split[a][b];[a]trim=end={at:.6f},setpts=PTS-STARTPTS[head];"
+              f"[b]trim=start={at:.6f},setpts=PTS-STARTPTS,tpad=start_mode=clone:start={n}[frozen];"
+              f"[head][frozen]concat=n=2:v=1:a=0[outv]")
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:
-            af = (f"[0:a]asplit[aa][ab];[aa]atrim=end={at:.3f},asetpts=PTS-STARTPTS[ahead];"
-                  f"[ab]atrim=start={at:.3f},asetpts=PTS-STARTPTS[atail];"
+            af = (f"[0:a]asplit[aa][ab];[aa]atrim=end={at:.6f},asetpts=PTS-STARTPTS[ahead];"
+                  f"[ab]atrim=start={at:.6f},asetpts=PTS-STARTPTS[atail];"
                   f"[ahead]apad=pad_dur={actual_hold:.6f}[afrozen];"
                   f"[afrozen][atail]concat=n=2:v=0:a=1[outa]")
             cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", f"{vf};{af}", "-map", "[outv]", "-map", "[outa]"]

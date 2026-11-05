@@ -39,7 +39,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 
 
@@ -125,9 +125,8 @@ def main() -> int:
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
     src_dur = meta["duration"] or 0.0
-    sw, sh = meta["video"]["width"], meta["video"]["height"]
-    if meta["video"].get("rotation") in (90, -90, 270, -270):
-        sw, sh = sh, sw
+    # the displayed frame: rotation applied and non-square pixels squared (#411)
+    sw, sh = display_size(meta["video"])
     if args.rotate in (90, 270):
         sw, sh = sh, sw
     has_audio = bool(meta.get("audio"))
@@ -204,6 +203,11 @@ def main() -> int:
         else:
             vf.append(pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur, meta=meta))
         vf.append("setsar=1")
+        # a non-square-pixel source is made square at its display aspect before anything else
+        # (the size above is computed in that frame), so the fitted picture is not squashed
+        if square_pixels(meta["video"]):
+            vf.insert(0, square_pixels(meta["video"]))
+            note(square_pixels_note(meta["video"]))
 
     if args.fps:
         vf.append(f"fps={args.fps:g}")

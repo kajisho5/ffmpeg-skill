@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, exif_rotated_jpeg, frame_rgb, sar_clip, script, sh, tiny_clip  # noqa: E402
 from _common import probe  # noqa: E402
 
 
@@ -2748,6 +2748,118 @@ class FillerSpansTests(unittest.TestCase):
         with unittest.mock.patch.object(subprocess, "run", boom), \
              unittest.mock.patch.object(subprocess, "Popen", boom):
             self.assertEqual(len(self.D.filler_spans(self._w(("um", 1.0, 1.2)), {"um"})), 1)
+
+
+class GeometryAuditTests(unittest.TestCase):
+    """Issue #411 (audit H): non-square pixels, odd-sized and EXIF-rotated inputs, freeze's frame
+    and the SMPTE hint. Every fixture is a one-to-three-second lavfi clip built here."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        # 180x180 stored at SAR 16:9: a 320x180 red picture on screen
+        cls.sar = sar_clip(OUT / "g411_sar.mp4", audio=True)
+        cls.blue = tiny_clip(OUT / "g411_blue.mp4", "color=c=blue:s=320x180:r=30", audio=True)
+        cls.odd = tiny_clip(OUT / "g411_odd.mp4", "color=c=gray:s=321x181:r=30,format=yuv444p", seconds=2, pix_fmt="yuv444p")
+        # red for the first second, blue from 1.0 s: a cut at exactly t = 1
+        cls.shot = tiny_clip(OUT / "g411_shot.mp4", "color=c=red:s=160x90:r=30,drawbox=c=blue:t=fill:enable='gte(t,1)'",
+                             seconds=2)
+        cls.tc = tiny_clip(OUT / "g411_tc.mp4", "testsrc2=s=160x90:r=30", "-timecode", "01:00:00:00", seconds=3)
+        cls.exif = exif_rotated_jpeg(OUT / "g411_exif6.jpg")
+
+    def _red(self, rgb):
+        self.assertGreater(rgb[0], 180, rgb)
+        self.assertLess(rgb[2], 80, rgb)
+
+    def test_probe_reports_the_pixel_aspect_and_the_square_display_size(self):
+        from _common import display_size, square_pixels
+        v = probe(str(self.sar))["video"]
+        self.assertEqual(v["sample_aspect_ratio"], "16:9")
+        self.assertEqual(display_size(v), (320, 180))
+        self.assertEqual(square_pixels(v), "scale=320:180,setsar=1")
+        self.assertEqual(probe(str(self.blue))["video"]["sample_aspect_ratio"], "1:1")
+
+    def test_fit_fills_the_frame_with_a_non_square_pixel_source(self):
+        """Through 3.1.3 the 180x180 storage was fitted as a square picture: a 16:9 frame got
+        pillarbox bars beside a squashed picture."""
+        out = OUT / "g411_fit.mp4"
+        doc = json.loads(script("fit.py", self.sar, "--width", "320", "--height", "180", "-o", out, "--json").stdout)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+        self._red(frame_rgb(out, 0.5, 6, 90))
+        self.assertTrue(any("non-square pixels" in n for n in doc.get("notes") or []), doc.get("notes"))
+
+    def test_crop_takes_its_rectangle_in_the_displayed_frame(self):
+        out = OUT / "g411_crop.mp4"
+        script("crop.py", self.sar, "--x", "160", "--y", "0", "--width", "160", "--height", "180", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (160, 180, "1:1"))
+
+    def test_join_sizes_to_the_displayed_frame(self):
+        out = OUT / "g411_join.mp4"
+        script("join.py", self.sar, self.sar, "--transition", "none", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+
+    def test_broll_squares_a_non_square_pixel_a_roll(self):
+        out = OUT / "g411_broll.mp4"
+        script("broll.py", self.sar, "--insert", self.blue, "--at", "0", "--duration", "0.4", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+        self._red(frame_rgb(out, 0.7, 6, 90))
+
+    def test_multicam_sizes_to_the_displayed_frame(self):
+        out = OUT / "g411_multicam.mp4"
+        script("multicam.py", self.sar, self.sar, "--auto", "0.5", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+
+    def test_broll_scales_an_odd_sized_a_roll_to_even_and_records_it(self):
+        """The even-dimension retry only reaches a -vf; broll's filter_complex failed as kind
+        "ffmpeg" on a 321x181 A-roll through 3.1.3."""
+        out = OUT / "g411_broll_odd.mp4"
+        doc = json.loads(script("broll.py", self.odd, "--insert", self.blue, "--at", "0.5", "--duration", "0.5",
+                                "-o", out, "--json").stdout)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (320, 180))
+        codes = [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks") or []]
+        self.assertEqual(codes, ["odd_dimensions_scaled_even"])
+
+    def test_freeze_at_holds_the_frame_shown_at_that_time(self):
+        """--at 1 on a cut at 1.0 s holds the first frame of the new shot (blue), not the last
+        frame of the previous one (red), which 3.1.3 held."""
+        out = OUT / "g411_freeze.mp4"
+        script("freeze.py", self.shot, "--at", "1", "--hold", "1", "-o", out)
+        rgb = frame_rgb(out, 1.5, 80, 45)
+        self.assertGreater(rgb[2], 180, rgb)
+        self.assertLess(rgb[0], 80, rgb)
+        self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.1)
+
+    def test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode(self):
+        """The grammar is unchanged (hh:mm:ss:ff counts from the file's first frame); the refusal
+        now says so and names the frame the caller probably meant."""
+        proc = script("cut.py", self.tc, "--start", "01:00:01:00", "--end", "01:00:02:00",
+                      "-o", OUT / "g411_tc_cut.mp4", "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("01:00:00:00", err.get("hint") or "")
+        self.assertIn("--start 01:00:01:00 is 00:00:01:00", err.get("hint") or "")
+        # a time inside the file is not touched
+        script("cut.py", self.tc, "--start", "00:00:01:00", "--end", "00:00:02:00", "-o", OUT / "g411_tc_cut.mp4")
+
+    def test_insert_turns_an_exif_rotated_still_upright(self):
+        """ffmpeg turns an Orientation 6 JPEG upright on decode; probe now reads the rotation off
+        the decoded frame, so insert sizes the portrait picture instead of cropping a landscape
+        window out of it."""
+        self.assertIn(probe(str(self.exif))["video"]["rotation"], (90, -90))
+        out = OUT / "g411_insert.mp4"
+        script("insert.py", self.exif, "--duration", "0.5", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (180, 320))
 
 
 if __name__ == "__main__":

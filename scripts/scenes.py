@@ -29,6 +29,7 @@ from _common import (guard_sidecar, detect_scenes, STATE, add_common, apply_comm
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
+from _common.probe import square_pixels  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -285,9 +286,13 @@ def main() -> int:
         cols = min(4, max(1, n))
         rows = max(1, math.ceil(n / cols))
         tile_w = 1280 // cols // 2 * 2
-        # exactly one frame per scene: the frame index at the scene start
-        fps = meta["video"].get("fps") or 30.0
-        expr = "+".join(f"eq(n\\,{int(round(sc['start'] * fps))})" for sc in scenes)
+        # exactly one frame per scene: the first frame at or after the scene start. The starts are
+        # presentation times, so the frame is chosen by its time, not by start x fps as a frame
+        # number -- on a variable-frame-rate source that number is another frame (#411)
+        def first_at(t: float) -> str:
+            a = f"{max(0.0, t - 0.0006):.4f}"
+            return f"gte(t\\,{a})*(isnan(prev_t)+lt(prev_t\\,{a}))"
+        expr = "+".join(first_at(sc["start"]) for sc in scenes)
         stamp = ""
         if not args.no_timecode and ffmpeg_filters() and "drawtext" not in ffmpeg_filters():
             # as look.py (#394): the sheet needs drawtext only for its stamps
@@ -300,9 +305,10 @@ def main() -> int:
             default_font = default_font_file("DejaVu Sans")
             font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
             stamp = f",drawtext=text='%{{pts\\:hms}}':{font_prefix}fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6"
-        vf = (f"select='{expr}',scale={tile_w}:-2{stamp},"
+        square = square_pixels(meta["video"])
+        vf = (f"select='{expr}',{square + ',' if square else ''}scale={tile_w}:-2{stamp},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        run(ffmpeg_base() + ["-i", args.input, "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", args.sheet])
+        run(ffmpeg_base() + ["-i", args.input, "-an", "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", args.sheet])
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet
 

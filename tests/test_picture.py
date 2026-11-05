@@ -21,7 +21,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, frame_rgb, sar_clip, tiny_clip, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
 from _common import default_font_file, detect_script, escape_filter_path, font_family_for_script, font_for_script, probe  # noqa: E402
 
 
@@ -3864,8 +3864,8 @@ class LookInkTests(unittest.TestCase):
 
 
 class GraphicsSliceOverlongTests(unittest.TestCase):
-    """graphics.py's own `wrapped()` helper (used by lower-third, title, sticker, hook and meme
-    labels) now turns on the same `slice_overlong` escape hatch caption.py's burn path turned on
+    """graphics.py's own `wrapped()` helper (used by lower-third, title, chapter, bug, sticker, hook
+    and meme labels; lower-third, title, chapter and bug since #411) now turns on the same `slice_overlong` escape hatch caption.py's burn path turned on
     in 1.18.4, so a single unbreakable overlong atom drawn through a template no longer renders
     past the frame's safe width."""
 
@@ -4897,6 +4897,121 @@ class WhisperDefaultModelTests(unittest.TestCase):
             script("caption.py", clip, "--transcribe", "-o", Path(d, "out.mp4"), env=env)
             args = seen.read_text(encoding="utf-8").split("\n")
             self.assertEqual(args[args.index("-m") + 1], str(model))
+
+
+class GeometryAuditPictureTests(unittest.TestCase):
+    """Issue #411 (audit H) for the text-drawing tools: graphics title / lower-third / chapter
+    wrap with the shared wrapped() helper, overlay --text wraps to the frame, the non-square-pixel
+    source is drawn on in square pixels, and grid labels pick a font by script and keep their
+    start. Every fixture is a short lavfi clip built here."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = tiny_clip(OUT / "g411p_src.mp4", "testsrc2=s=640x360:r=30", seconds=2, audio=True)
+        cls.black = tiny_clip(OUT / "g411p_black.mp4", "color=c=black:s=320x180:r=30", seconds=1)
+        cls.sar = sar_clip(OUT / "g411p_sar.mp4", seconds=1, audio=True)
+        cls.white = tiny_clip(OUT / "g411p_white.mp4", "color=c=white:s=320x180:r=30", seconds=1)
+
+    def _ass_lines(self, doc):
+        """The text of every Dialogue line of the template's ASS, one list of \\N-lines each."""
+        ass = Path(doc["ass"]).read_text(encoding="utf-8-sig")
+        out = []
+        for line in ass.splitlines():
+            if line.startswith("Dialogue:"):
+                out.append(re.sub(r"\{[^}]*\}", "", line.split(",", 9)[-1]).split("\\N"))
+        return out
+
+    def _graphics(self, name, *args):
+        out = OUT / f"g411p_{name}.mp4"
+        return json.loads(script("graphics.py", self.src, *args, "--text-render", "ass", "-o", out, "--json").stdout)
+
+    def test_graphics_title_wraps_a_long_title_and_subtitle(self):
+        from _common import text_width_em
+        title = "This episode title is far too long to fit across one line of the frame"
+        doc = self._graphics("title", "--template", "title", "--title", title,
+                             "--subtitle", "and its subtitle is long enough to run past both edges of the frame at this size, too")
+        lines = self._ass_lines(doc)
+        self.assertGreater(len(lines[0]), 1, lines)
+        self.assertGreater(len(lines[1]), 1, lines)
+        h1 = int(360 * 0.11)
+        for line in lines[0]:
+            self.assertLessEqual(text_width_em(line) * h1, 640 * 0.9 + 1e-6, lines[0])
+
+    def test_graphics_lower_third_wraps_inside_the_margins_and_widens_its_bar(self):
+        from _common import text_width_em
+        name = "Maximiliana Alexandrovna Konstantinopolskaya-Wittgenstein"
+        doc = self._graphics("lt", "--template", "lower-third", "--name", name, "--title", "Analyst")
+        name_lines = self._ass_lines(doc)[0]
+        self.assertGreater(len(name_lines), 1, name_lines)
+        h1, margin, pad = int(360 * 0.055), 48, int(360 * 0.035)
+        for line in name_lines:
+            self.assertLessEqual(text_width_em(line) * h1, 640 - 2 * margin - 2 * pad + 1e-6, name_lines)
+
+    def test_graphics_chapter_chip_wraps_between_the_margins(self):
+        doc = self._graphics("chapter", "--template", "chapter", "--scale", "2",
+                             "--title", "Part 2 — Setting up the whole studio from scratch")
+        self.assertGreater(len(self._ass_lines(doc)[0]), 1, self._ass_lines(doc))
+
+    def test_overlay_text_wraps_to_the_frame(self):
+        """drawtext never wraps: through 3.1.3 a long --text ran off the right edge silently."""
+        out = OUT / "g411p_ov_wrap.mp4"
+        doc = json.loads(script("overlay.py", self.black, "--text", "A long overlay line that runs past the edge",
+                                "--font-size", "24", "--position", "top-left", "--border", "0",
+                                "-o", out, "--json").stdout)
+        self.assertTrue(any("wrapped to" in n for n in doc.get("notes") or []), doc.get("notes"))
+        # nothing drawn in the right margin
+        for y in range(20, 90, 4):
+            self.assertLess(max(frame_rgb(out, 0.5, 316, y)), 60, y)
+
+    def test_text_tools_draw_on_square_pixels(self):
+        """caption, overlay --text and graphics drew on the 180x180 storage of a SAR 16:9 source,
+        so the player stretched every glyph 1.78x wide; they now draw on the 320x180 picture."""
+        srt = OUT / "g411p.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+        runs = {
+            "caption": ("caption.py", self.sar, "--srt", srt),
+            "overlay": ("overlay.py", self.sar, "--text", "Hello"),
+            "graphics": ("graphics.py", self.sar, "--template", "bug", "--title", "LIVE"),
+        }
+        for name, (tool, *args) in runs.items():
+            with self.subTest(tool=name):
+                out = OUT / f"g411p_sq_{name}.mp4"
+                script(tool, *args, "-o", out)
+                v = probe(str(out))["video"]
+                self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (320, 180, "1:1"))
+
+    def test_grid_squares_a_non_square_pixel_cell(self):
+        out = OUT / "g411p_grid_sar.mp4"
+        script("grid.py", self.sar, self.sar, "--cols", "2", "--rows", "1", "--cell-width", "320",
+               "--cell-height", "180", "--label", "none", "-o", out)
+        rgb = frame_rgb(out, 0.5, 6, 90)  # the left edge of the first cell: picture, not a pad bar
+        self.assertGreater(rgb[0], 180, rgb)
+
+    def test_grid_keeps_the_start_of_a_long_label(self):
+        """A right-aligned label wider than its cell lost its start off the left edge; it is now
+        shortened from the end, so the cell's bottom-left corner stays clear."""
+        long = OUT / "g411p_an_extremely_long_camera_filename_A001_C002_20261105_take_three.mp4"
+        shutil.copyfile(self.white, long)
+        out = OUT / "g411p_grid_long.mp4"
+        doc = json.loads(script("grid.py", long, self.white, "--cols", "2", "--rows", "1", "--cell-width", "320",
+                                "--cell-height", "180", "-o", out, "--json").stdout)
+        self.assertTrue(any("shortened" in n for n in doc.get("notes") or []), doc.get("notes"))
+        self.assertGreater(min(frame_rgb(out, 0.5, 2, 170)), 200)
+
+    def test_grid_label_font_covers_its_script(self):
+        from _common import script_font_status
+        if script_font_status("ja") != "available":
+            raise unittest.SkipTest("no font on this machine covers Japanese; tests never install fonts")
+        named = OUT / "東京.mp4"
+        shutil.copyfile(self.white, named)
+        out = OUT / "g411p_grid_ja.mp4"
+        doc = json.loads(script("grid.py", named, named, "--cols", "2", "--rows", "1", "-o", out, "--json").stdout)
+        self.assertEqual(doc["font_used"]["how"], "script", doc["font_used"])
 
 
 if __name__ == "__main__":

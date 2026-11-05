@@ -7,6 +7,7 @@
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _is_faststart, _no_fontconfig, png_size, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _is_faststart, _no_fontconfig, png_size, sar_clip, script, sh, tiny_clip  # noqa: E402
 from _common import default_font_file, font_for_script, probe  # noqa: E402
 import importlib  # noqa: E402
 content_probe = importlib.import_module("_common.probe")  # the module: `_common.probe` is also a function
@@ -1388,6 +1389,101 @@ class BeatGridTests(unittest.TestCase):
             g = beat_grid(self._clicks(0.5), self.STEP)
             self.assertAlmostEqual(g["tempo_bpm"], 120.0, delta=1.0)
             self.assertEqual(len(snap_points([1.0], g["beats"], 0.1)), 1)
+
+
+class GeometryAuditAnalysisTests(unittest.TestCase):
+    """Issue #411 (audit H) for look.py and scenes.py: the contact sheet's stamp on a source that
+    does not start at 0, scenes --sheet on a variable-frame-rate source, --compare keeping each
+    picture's aspect, and a non-square-pixel source looked at in square pixels. Every fixture is
+    a short lavfi clip built here."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.red43 = tiny_clip(OUT / "g411a_red43.mp4", "color=c=red:s=240x180:r=30", seconds=2)
+        cls.blue169 = tiny_clip(OUT / "g411a_blue169.mp4", "color=c=blue:s=320x180:r=30", seconds=2)
+        cls.sar = sar_clip(OUT / "g411a_sar.mp4", seconds=2)
+        # an MPEG-TS starts its timeline at 1.4 s
+        cls.ts = OUT / "g411a.ts"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30",
+           "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000", "-t", "3", "-c:v", "libx264", "-preset", "ultrafast",
+           "-g", "15", "-pix_fmt", "yuv420p", "-c:a", "aac", "-f", "mpegts", cls.ts)
+        # VFR: red 2 s at 5 fps, blue 1 s at 30 fps, green 2 s at 5 fps (50 frames over 5 s, so
+        # start x average fps names frame 30 for the green scene's start at 3 s -- a blue frame)
+        parts = []
+        for i, (colour, rate, secs) in enumerate((("red", 5, 2), ("blue", 30, 1), ("green", 5, 2))):
+            part = OUT / f"g411a_vfr{i}.mp4"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", f"color=c={colour}:s=320x180:r={rate}", "-t", str(secs), "-c:v", "libx264",
+               "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-video_track_timescale", "90000", part)
+            parts.append(part)
+        listing = OUT / "g411a_vfr.txt"
+        listing.write_text("".join(f"file '{p.resolve().as_posix()}'\n" for p in parts), encoding="utf-8")
+        cls.vfr = OUT / "g411a_vfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listing,
+           "-c", "copy", cls.vfr)
+
+    def _rgb(self, png, x, y):
+        proc = subprocess.run(["ffmpeg", "-v", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                              stdout=subprocess.PIPE)
+        w = png_size(png)[0]
+        off = (y * w + x) * 3
+        return tuple(proc.stdout[off:off + 3])
+
+    def test_contact_sheet_stamps_count_from_the_file_start_on_mpeg_ts(self):
+        """An input -ss resets an MPEG-TS's timestamps differently from an MP4's, so the stamp
+        (pts + seek) came out one seek late on TS. The sheet now keeps the file's own timestamps
+        counted from its start (-copyts -start_at_zero) and stamps each frame's pts as it is.
+        The stamp is drawn text, so the test reads the pts the stamp is drawn from: the same
+        graph with showinfo in place of drawtext and tile."""
+        self.assertGreater(probe(str(self.ts))["start_time"], 1.0)
+        doc = json.loads(script("look.py", self.ts, "--tiles", "3x1", "-o", OUT / "g411a_ts_sheet.png",
+                                "--json").stdout)
+        argv = shlex.split(doc["commands"][-1])
+        vf = argv[argv.index("-vf") + 1]
+        stamp = re.search(r"drawtext=text='%\{pts\\:hms(?:\\:([0-9.]+))?\}'", vf)
+        self.assertIsNotNone(stamp, vf)
+        offset = float(stamp.group(1) or 0)
+        argv[argv.index("-vf") + 1] = vf.split(",scale=")[0] + ",showinfo"
+        argv[-1:] = ["-an", "-f", "null", "-"]  # the PNG the tool writes has no audio either
+        i = argv.index("-frames:v")
+        argv[i:i + 2] = []
+        argv = [a for a in argv if a not in ("-loglevel", "error")]
+        proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stamps = [float(t) + offset for t in re.findall(r"pts_time:([0-9.]+)", proc.stderr)]
+        # the tiles sample the middle of each third: about 0.5, 1.5 and 2.5 s from the file's start
+        self.assertEqual(len(stamps), 3, proc.stderr[-2000:])
+        for got, want in zip(stamps, (0.5, 1.5, 2.5)):
+            self.assertAlmostEqual(got, want, delta=0.1)
+
+    def test_compare_keeps_each_pictures_aspect(self):
+        """scale2ref stretched the first picture to the second's size: a 4:3 beside a 16:9 came
+        out 16:9. Both now sit in boxes as tall as the taller one, letterboxed."""
+        out = OUT / "g411a_compare.png"
+        script("look.py", self.red43, "--compare", self.blue169, "--at", "1", "--no-timecode", "-o", out)
+        self.assertEqual(png_size(out), (1280, 480))
+        top_of_blue = self._rgb(out, 960, 10)
+        self.assertLess(top_of_blue[2], 100, top_of_blue)  # the letterbox, not blue picture
+
+    def test_look_shows_a_non_square_pixel_source_at_its_display_aspect(self):
+        out = OUT / "g411a_sar_at.png"
+        script("look.py", self.sar, "--at", "1", "--no-timecode", "-o", out)
+        self.assertEqual(png_size(out), (1280, 720))
+
+    def test_scenes_sheet_picks_each_scene_start_by_time_on_vfr(self):
+        doc = json.loads(script("scenes.py", self.vfr, "--sheet", OUT / "g411a_vfr_sheet.png", "--no-timecode",
+                                "--json", "--overwrite").stdout)
+        starts = [s["start"] for s in doc["scenes"]]
+        self.assertEqual(len(starts), 3, starts)
+        self.assertAlmostEqual(starts[2], 3.0, delta=0.05)
+        tile_w = 1280 // 3 // 2 * 2
+        green = self._rgb(OUT / "g411a_vfr_sheet.png", 2 + 2 * (tile_w + 2) + tile_w // 2, 60)
+        self.assertGreater(green[1], 100, green)
+        self.assertLess(green[2], 80, green)
 
 
 if __name__ == "__main__":
