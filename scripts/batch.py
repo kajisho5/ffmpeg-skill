@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
 from _common.runner import HW_FORCED_ENV, add_hw_orchestrator_args, env_hw, stop_children
-from _common.emit import absorb_stage_hw, audit, note, steps_encoder_report, warn
+from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -722,7 +722,7 @@ def main() -> int:
         why = (" (reencode_reason: " + ", ".join(f"{k} x{v}" for k, v in reasons.items()) + ")") if reasons else ""
         info(f"cut.py: {copied}/{len(all_cuts)} call(s) stayed fully lossless stream-copy "
              f"({cut_summary['stream_copy_rate']:.0%}), {len(all_cuts) - copied} re-encoded a range or its --segments join{why}")
-    unverified = [os.path.basename(r["file"]) for r in results if r.get("ok") and not r.get("verified")]
+    unverified = [shown(os.path.basename(r["file"])) for r in results if r.get("ok") and not r.get("verified")]
     if unverified and not STATE.dry_run:
         note(f"{len(unverified)} item(s) completed but did not verify everything they wrote (see each row's unverified): "
              + ", ".join(unverified[:5]) + (" ..." if len(unverified) > 5 else ""))

@@ -4,7 +4,18 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- A PQ (HDR10) re-encode on FFmpeg before 7.0 wrote the picture without the source's mastering
+  display and content light level metadata: that FFmpeg does not hand them from the decoded frames
+  to libx265 or SVT-AV1, so players tone-mapped the result as if it had none (#401). `probe` now reads
+  them (`video.hdr10_static`, from the stream or its first frame) and the HEVC and AV1 HDR lines
+  pass them as `master-display`/`max-cll` and `mastering-display`/`content-light`. An encoder that has
+  no such option (prores_ks, libaom) is measured on the written file instead: a PQ output that still
+  lacks what the source had records an `hdr10_metadata_dropped` warning and a notes line.
+- A plain `notes` line was written to stderr as given, so a file name with a line break in it
+  (`batch.py`'s list of items that did not verify) could still open a new line there; notes are now
+  escaped as error messages and warnings are (#400).
 
 ## 3.1.3
 

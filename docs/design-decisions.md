@@ -1236,6 +1236,14 @@ not a new file format this tool would have to maintain.
   `EncoderListTests`, `test_hw_dry_run_runs_no_ffmpeg`.
 - **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
   on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.
+- **HDR10 static metadata is passed to libx265 and SVT-AV1 explicitly, and measured on every
+  output** (#401). FFmpeg before 7.0 does not hand the decoded frames' mastering-display and
+  content-light side data to either encoder, so a 6.1 re-encode wrote PQ video without them.
+  `probe()` reads them (stream, else the first frame) into `video.hdr10_static`, the HEVC/AV1 HDR
+  lines restate them as `master-display`/`max-cll` and `mastering-display`/`content-light`, and
+  `emit()` warns `hdr10_metadata_dropped` when a PQ output still lacks what a PQ source had
+  (prores_ks and libaom have no such option). Code: `_common.decision.hdr10_x265_params`,
+  `_common.emit._report_dropped_hdr10_metadata`. Tests: `Hdr10StaticMetadataTests`.
 - **An `export.py` preset on the GPU writes the preset's format, and its CPU fallback is the
   preset's own line.** A fixed h264/h265 preset is 8-bit with BT.709 tags whatever the source (on
   an HDR source it says so in a note, as without `--hw`), so its VideoToolbox line is built as for

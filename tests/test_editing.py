@@ -2750,5 +2750,97 @@ class FillerSpansTests(unittest.TestCase):
             self.assertEqual(len(self.D.filler_spans(self._w(("um", 1.0, 1.2)), {"um"})), 1)
 
 
+class Hdr10StaticMetadataTests(unittest.TestCase):
+    """#401: a PQ source's mastering-display / content-light metadata reaches libx265 and SVT-AV1
+    re-encodes (FFmpeg before 7 does not pass it on by itself), and an output that still lacks it
+    is reported (hdr10_metadata_dropped), measured on the written file."""
+    MD = "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)"
+
+    @classmethod
+    def setUpClass(cls):
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "hdr10_md.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=25:d=1",
+           "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-tag:v", "hvc1", "-x265-params",
+           f"log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display={cls.MD}:max-cll=1000,400",
+           "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", cls.src)
+
+    def side_data(self, path):
+        return sh("ffprobe", "-v", "error", "-select_streams", "v", "-read_intervals", "%+#1", "-show_frames",
+                  "-show_entries", "frame_side_data=side_data_type", path).stdout
+
+    def test_probe_reads_the_static_metadata(self):
+        st = probe(str(self.src))["video"]["hdr10_static"]
+        self.assertEqual(st["content_light"], {"max_content": 1000, "max_average": 400})
+        self.assertAlmostEqual(st["mastering_display"]["max_luminance"], 1000.0)
+        self.assertAlmostEqual(st["mastering_display"]["red_x"], 0.68)
+
+    def test_a_still_is_not_a_second_picture_source(self):
+        """#412 review: an overlay's PNG must not switch the HDR10 loss check off."""
+        from _common import STATE
+        logo = OUT / "hdr10_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=red:s=32x32",
+           "-frames:v", "1", "-update", "1", logo)
+        saved = set(STATE.video_inputs)
+        try:
+            STATE.video_inputs = set()
+            probe(str(self.src)); probe(str(logo))
+            self.assertEqual(len(STATE.video_inputs), 1, STATE.video_inputs)
+        finally:
+            STATE.video_inputs = saved
+
+    def test_a_zero_minimum_luminance_is_a_value(self):
+        """CodeRabbit on #412: a 0 cd/m2 minimum is a value, not a missing field."""
+        src = OUT / "hdr10_md_zero.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=0.4",
+           "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast", "-tag:v", "hvc1", "-x265-params",
+           "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:"
+           "master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,0):max-cll=1000,400",
+           "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", src)
+        md = probe(str(src))["video"]["hdr10_static"]["mastering_display"]
+        self.assertEqual(md["min_luminance"], 0.0)
+        from _common import decision
+        self.assertIn("L(10000000,0)", decision.hdr10_x265_params(probe(str(src))["video"]))
+
+    def test_x265_params_restate_it(self):
+        from _common import decision
+        v = probe(str(self.src))["video"]
+        self.assertEqual(decision.hdr10_x265_params(v), f":master-display={self.MD}:max-cll=1000,400")
+        self.assertIn("content-light=1000,400", decision.hdr10_svtav1_params(v))
+        self.assertEqual(decision.hdr10_x265_params(dict(v, color_transfer="arib-std-b67")), "")
+
+    def test_hevc_and_av1_reencodes_keep_it(self):
+        codecs = ["hevc"] + (["av1"] if "libsvtav1" in sh("ffmpeg", "-hide_banner", "-encoders").stdout else [])
+        for codec in codecs:
+            with self.subTest(codec=codec):
+                out = OUT / f"hdr10_md_{codec}.mp4"
+                doc = json.loads(script("fit.py", self.src, "--width", "320", "--codec", codec, "--fast", "--json",
+                                        "--overwrite", "-o", out).stdout)
+                side = self.side_data(out)
+                self.assertIn("Mastering display metadata", side)
+                self.assertIn("Content light level metadata", side)
+                # the values, not only the records: CLL exactly, the display within each format's step
+                got = probe(str(out))["video"]["hdr10_static"]
+                self.assertEqual(got["content_light"], {"max_content": 1000, "max_average": 400})
+                md = got["mastering_display"]
+                self.assertAlmostEqual(md["max_luminance"], 1000.0, delta=1.0)
+                self.assertAlmostEqual(md["red_x"], 0.68, delta=2 ** -15)
+                self.assertAlmostEqual(md["white_point_y"], 0.329, delta=2 ** -15)
+                codes = [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings", [])]
+                self.assertNotIn("hdr10_metadata_dropped", codes)
+
+    def test_an_output_without_it_is_reported(self):
+        out = OUT / "hdr10_md_prores.mov"
+        doc = json.loads(script("fit.py", self.src, "--width", "320", "--codec", "prores", "--json", "--overwrite", "-o", out).stdout)
+        have = probe(str(out))["video"].get("hdr10_static") or {}
+        lost = [k for k in ("mastering_display", "content_light") if not have.get(k)]
+        if not lost:
+            self.skipTest("this FFmpeg carries the side data into ProRes")
+        warns = [w for w in (doc.get("diagnostics") or {}).get("warnings", []) if w["code"] == "hdr10_metadata_dropped"]
+        self.assertEqual(len(warns), 1, doc)
+        self.assertEqual(warns[0]["dropped"], lost)
+        self.assertIn(warns[0]["message"], doc["notes"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
