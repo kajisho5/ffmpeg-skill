@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, sar_clip, script, sh  # noqa: E402
 from _common import probe  # noqa: E402
 
 
@@ -614,6 +614,30 @@ class DeliveryTests(MediaFixtures):
                 canonical = tuple("shorts" if a == "youtube-shorts" else a for a in argv)
                 self.assertEqual(commands(tool, *argv), commands(tool, *canonical),
                                  f"{tool} must treat youtube-shorts and shorts as one destination")
+
+
+class GeometryAuditDeliveryTests(unittest.TestCase):
+    """Issue #411 (audit H): a delivery preset sizes a non-square-pixel master in square pixels."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.sar = sar_clip(OUT / "g411d_sar.mp4", audio=True)
+
+    def test_export_fills_the_preset_frame_with_a_non_square_pixel_master(self):
+        """The 180x180 storage of a SAR 16:9 master was fitted into 1280x720 as a square picture
+        with pillarbox bars; squared first, the 320x180 picture fills the frame."""
+        out = OUT / "g411d_export.mp4"
+        script("export.py", self.sar, "--preset", "x", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (1280, 720, "1:1"))
+        rgb = frame_rgb(out, 0.5, 8, 360)
+        self.assertGreater(rgb[0], 180, rgb)
 
 
 if __name__ == "__main__":

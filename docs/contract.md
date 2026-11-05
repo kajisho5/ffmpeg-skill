@@ -886,7 +886,8 @@ present on success and failure documents alike, only when one list is not empty,
 `render.py` stage reported carries `stage`. `contract --json` → `json_output.diagnostic_codes`
 lists every code with its bucket and meaning (a test reads every `warn()`/`record_fallback()`/
 `record_skip()` call against it). Among them: the runner's `odd_dimensions_scaled_even` (an encode
-re-run with an even scale; the frame loses a row or column), `non_av_streams_dropped` (with the
+re-run with an even scale, or broll.py's odd-sized A-roll scaled even up front; the frame loses a
+row or column), `non_av_streams_dropped` (with the
 first attempt's error beside `dropped_non_av_streams`), `measurement_input_pending` (skipped: a
 dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ffmpeg -encoders` or
 `-bsfs` could not be read; what needed it names the read failure, not a missing encoder) and

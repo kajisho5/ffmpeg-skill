@@ -165,6 +165,54 @@ def script(name, *args, **kw):
         args = args + ("--overwrite",)
     return sh(sys.executable, SCRIPTS / name, *args, **kw)
 
+def tiny_clip(path, source, *extra, seconds=1, audio=False, pix_fmt="yuv420p"):
+    """A tiny lavfi clip for a geometry test (#411): `source` is a lavfi video graph such as
+    "color=c=red:s=180x180:r=30"; `extra` goes before the output (a -vf, -timecode ...)."""
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", source]
+    if audio:
+        cmd += ["-f", "lavfi", "-i", "sine=f=440:sample_rate=48000"]
+    cmd += ["-t", str(seconds), *extra, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", pix_fmt]
+    cmd += (["-c:a", "aac", "-shortest"] if audio else [])
+    sh(*cmd, path)
+    return path
+
+
+def sar_clip(path, colour="red", size="180x180", sar="16/9", seconds=1, audio=False):
+    """A clip that stores non-square pixels: 180x180 at SAR 16:9 is a 320x180 picture on screen."""
+    return tiny_clip(path, f"color=c={colour}:s={size}:r=30", "-vf", f"setsar={sar}", seconds=seconds, audio=audio)
+
+
+def exif_rotated_jpeg(path, orientation=6, size="320x180"):
+    """A JPEG of a testsrc frame carrying an EXIF Orientation tag (6: shown turned 90 degrees
+    clockwise, a phone's portrait shot), written by inserting the APP1 segment by hand."""
+    plain = Path(str(path) + ".plain.jpg")
+    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=s={size}",
+       "-frames:v", "1", plain)
+    data = plain.read_bytes()
+    ifd = (b"\x00\x01" + b"\x01\x12" + b"\x00\x03" + b"\x00\x00\x00\x01"
+           + orientation.to_bytes(2, "big") + b"\x00\x00" + b"\x00\x00\x00\x00")
+    tiff = b"MM\x00*\x00\x00\x00\x08" + ifd
+    body = b"Exif\x00\x00" + tiff
+    app1 = b"\xff\xe1" + (len(body) + 2).to_bytes(2, "big") + body
+    Path(path).write_bytes(data[:2] + app1 + data[2:])
+    plain.unlink()
+    return path
+
+
+def frame_rgb(video, t, x, y, *, vf=None):
+    """The RGB triple at (x, y) of the frame at `t` seconds, read as a player shows it
+    (square pixels at the display aspect when `vf` squares them)."""
+    cmd = ["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(video), "-frames:v", "1"]
+    cmd += (["-vf", vf] if vf else [])
+    proc = subprocess.run(cmd + ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    size = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                           "stream=width,height", "-of", "csv=p=0", str(video)],
+                          stdout=subprocess.PIPE, text=True).stdout.strip().split(",")
+    w = int(size[0])
+    off = (y * w + x) * 3
+    return tuple(proc.stdout[off:off + 3])
+
+
 # ---------------------------------------------------------------------------- fonts by script (1.12)
 
 

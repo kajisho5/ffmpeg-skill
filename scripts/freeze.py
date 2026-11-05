@@ -81,8 +81,10 @@ def main() -> int:
             cmd += ["-map", "0:a:0?", "-af", f"adelay={int(args.hold * 1000)}:all=1"]
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
-        # resuming the rest of the clip: split the timeline at `at`, freeze-frame the first
-        # part's last frame for --hold seconds via tpad, concat with the remainder.
+        # resuming the rest of the clip: split the timeline at `at` and hold the remainder's
+        # FIRST frame -- the frame shown at `at` -- for --hold seconds via tpad's start clone.
+        # Through 3.1.3 the head's last frame was held, the frame before `at`: at a cut, the last
+        # frame of the previous shot (#411).
         n = max(1, round(args.hold * fps))
         # The video hold length is rounded to a whole number of frames (n / fps), but the audio
         # side used to pad by the raw --hold value -- up to half a frame duration off from what
@@ -92,9 +94,8 @@ def main() -> int:
         head_v, head_a = av_trim(v0, cut_at, rate)
         tail_v, tail_a = av_trim(cut_at, None, rate)
         vf = (f"[0:v]split[a][b];[a]{head_v}[head];"
-              f"[b]{tail_v}[tail];"
-              f"[head]tpad=stop_mode=clone:stop={n}[frozen];"
-              f"[frozen][tail]concat=n=2:v=1:a=0[outv]")
+              f"[b]{tail_v},tpad=start_mode=clone:start={n}[frozen];"
+              f"[head][frozen]concat=n=2:v=1:a=0[outv]")
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:
             af = (f"[0:a]asplit[aa][ab];[aa]{head_a}[ahead];"

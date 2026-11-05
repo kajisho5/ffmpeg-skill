@@ -31,8 +31,25 @@ from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
+from _common.fonts import script_font_for_text  # noqa: E402
+from _common.probe import square_pixels  # noqa: E402
+from _common.wrap import text_width_em  # noqa: E402
 
 LABEL_MARGIN = 10
+
+
+def _fit_label(stem: str, cell_width: int, font_size: int) -> str:
+    """The label as drawn: `stem` when it fits the cell (less the margin and the box's border on
+    each side), else its head with an ellipsis. It is right-aligned, so a label wider than the
+    cell used to lose its start off the left edge and show only its tail (#411). The width is the
+    averaged advance table's estimate."""
+    room = (cell_width - 2 * LABEL_MARGIN - 8) / float(max(1, font_size))
+    if room <= 1 or text_width_em(stem) <= room:
+        return stem
+    head = stem
+    while head and text_width_em(head + "\u2026") > room:
+        head = head[:-1]
+    return (head.rstrip() + "\u2026") if head else stem[:1]
 
 
 def main() -> int:
@@ -98,10 +115,26 @@ def main() -> int:
     durations = [m.get("duration") or 0.0 for m in metas]
     target_duration = max(durations) if args.pad else min(durations)
 
-    font_used = font_choice(args.font)  # the label font, reported as `font_used` when labels are drawn
-    font_file = font_used["file"]
+    # each label is drawn with a font that covers its own script, as every other text-drawing tool
+    # picks one (through 3.1.3 a Japanese or Thai filename came out as tofu, #411); `font_used` is
+    # the first label's choice, and a grid whose labels needed different fonts says so in a note
+    stems = [os.path.splitext(os.path.basename(p))[0] for p in args.inputs]
+    font_explicit = args.font != ap.get_default("font")
+    label_fonts = []
+    for stem in (stems if args.label == "auto" else []):
+        _sc, script_file, script_family = script_font_for_text(stem, font=args.font, font_explicit=font_explicit)
+        label_fonts.append(font_choice(args.font, script_file=script_file, script_family=script_family))
+    font_used = label_fonts[0] if label_fonts else font_choice(args.font)
     if args.label == "auto":
         record_font_choice(font_used)
+        if len({f.get("file") for f in label_fonts}) > 1:
+            note("cell labels drawn with more than one font, by script: "
+                 + "; ".join(sorted({str(f.get("family") or f.get("file")) for f in label_fonts})))
+    labels = [_fit_label(stem, args.cell_width, args.font_size) for stem in stems]
+    cut = [stem for stem, lab in zip(stems, labels) if lab != stem]
+    if args.label == "auto" and cut:
+        note(f"{len(cut)} cell label(s) wider than the {args.cell_width} px cell at --font-size "
+             f"{args.font_size} were shortened from the end with an ellipsis")
     output = args.output or default_output(args.inputs[0], "grid")
 
     cmd = ffmpeg_base()
@@ -134,16 +167,18 @@ def main() -> int:
         elif not args.pad:
             drawn.append((f"trim=duration={target_duration:.3f}",) * 2)
         if args.label == "auto":
-            stem = os.path.splitext(os.path.basename(p))[0]
+            font_file = label_fonts[i]["file"]
             font_opt = drawtext_fontfile(font_file) if font_file else f"font='{escape_drawtext(args.font)}'"
-            drawn.append((f"drawtext=text='{escape_drawtext(stem)}':{font_opt}:fontsize={args.font_size}:"
+            drawn.append((f"drawtext=text='{escape_drawtext(labels[i])}':{font_opt}:fontsize={args.font_size}:"
                           f"fontcolor={args.font_color}:x=w-tw-{LABEL_MARGIN}:y=h-th-{LABEL_MARGIN}:"
                           f"box=1:boxcolor=black@0.5:boxborderw=4", "null"))
         gap_r = args.gap if i % args.cols < args.cols - 1 else 0
         gap_b = args.gap if i // args.cols < args.rows - 1 else 0
         if chroma and (gap_r or gap_b):
             drawn.append((f"pad=iw+{gap_r}:ih+{gap_b}:0:0:color={args.background}", f"pad=iw+{gap_r}:ih+{gap_b}:0:0:color=black"))
-        chain = f"fps={args.fps:g},scale={args.cell_width}:{args.cell_height}:force_original_aspect_ratio=decrease,"
+        # a non-square-pixel clip is squared at its display aspect before it is fitted (#411)
+        sq = (square_pixels(metas[i]["video"]) + ",") if square_pixels(metas[i]["video"]) else ""
+        chain = f"fps={args.fps:g},{sq}scale={args.cell_width}:{args.cell_height}:force_original_aspect_ratio=decrease,"
         chain += drawn_chain(",".join(c for c, _n in drawn), as_limited(metas[i]), colours, ",".join(n for _c, n in drawn),
                              line_meta=None, tag=f"c{i}", labelled=True)
         parts.append(f"[{i}:v]{convert[i]}{chain}[v{i}]")

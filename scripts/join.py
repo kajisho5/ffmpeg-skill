@@ -43,8 +43,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
 from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
-from _common.emit import warn
+from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -651,9 +652,8 @@ def main() -> int:
     if args.copy:
         return join_copy(args, metas)
     first = metas[0]["video"]
-    fw, fh = first["width"], first["height"]
-    if first.get("rotation") in (90, -90, 270, -270):
-        fw, fh = fh, fw
+    # the first clip's displayed frame: rotation applied, non-square pixels squared (#411)
+    fw, fh = display_size(first)
     if args.width and args.height:
         w, h = args.width, args.height
     elif args.width:
@@ -721,11 +721,17 @@ def main() -> int:
     # one is taken to limited range first, or it was shown with the other's range (#410)
     convert = [c + range_chain(m, line) for c, m in zip(convert, metas)]
 
+    for p, m in zip(args.inputs, metas):
+        if square_pixels(m.get("video")):
+            note(square_pixels_note(m["video"], p))
+
     def geo(i: int) -> str:
+        # every clip is squared at its display aspect before it is fitted (#411)
+        sq = (square_pixels(metas[i].get("video")) + ",") if square_pixels(metas[i].get("video")) else ""
         if args.fit == "crop":
-            return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+            return f"{sq}scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
         pad = f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color="
-        return (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        return (f"{sq}scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 + drawn_chain(pad + args.pad_color, as_limited(metas[i]), [args.pad_color], pad + "black", line_meta=line,
                               tag=f"pad{i}", labelled=True))
     # the audio-only join keeps the widest layout; the video join used to force stereo and

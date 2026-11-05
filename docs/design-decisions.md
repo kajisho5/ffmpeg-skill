@@ -60,7 +60,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — output identity and check.py --compare](#224--output-identity-and-checkpy---compare)
 - [2.24 — export.py --max-mb](#224--exportpy---max-mb)
 - [2.24 — export.py --repair](#224--exportpy---repair)
-- [3.1.4 — both streams on one clock (#409)](#314--both-streams-on-one-clock-409)
+- [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
+- [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
 <!-- contents:end -->
 
 ## Time limits
@@ -2542,7 +2543,7 @@ What was decided there:
   every ffmpeg version still opens it): 99 decode-error lines before, 100 after, no timestamp
   warnings either side. Same test.
 
-## 3.1.4 — both streams on one clock (#409)
+## 3.1.5 — both streams on one clock (#409)
 
 ffmpeg shifts every stream of an input by one constant, so a filter graph sees a sound that starts
 0.3 s after its picture at 0.3. Every item below had rebased a stream to its own first sample
@@ -2602,3 +2603,74 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   on the list's clock is measured (`concat_first_frame`, one ffprobe) and both streams shift by it;
   `min_hard_comp=0.001` fills a late sound's gap at every repeat, however short. Code:
   `loop.main()`. Test: `test_loop_keeps_a_late_sound_in_sync_on_every_repeat`.
+
+## 3.1.5 — square pixels, and the geometry audit (#411)
+
+- **A tool that sizes, crops, places or draws on the picture works on square pixels at the
+  display aspect; a tool that only re-encodes keeps the stored size and its SAR.** DV, HDV and
+  XDCAM 1440x1080, and DVD store non-square pixels (`sample_aspect_ratio`, which `probe.py` now
+  reports). Every scaling tool used to fit the stored size as if its pixels were square and then
+  `setsar=1`, so the picture came out squashed, and caption / overlay / graphics drew glyphs the
+  player then stretched 1.78x. Of the two consistent answers (normalise, or carry the SAR through
+  every graph), normalising is the one a filter graph can keep: `overlay`, `xstack`, `hstack`,
+  `concat`, `drawtext` and libass all place in stored pixels, so carrying the SAR would mean
+  correcting every coordinate and every font size in every tool. So the picture is scaled to
+  square pixels first, keeping its height (1440x1080 at 4:3 is 1920x1080; 720x480 at 8:9 is
+  640x480; the width rounds to even), and every size, rectangle and margin is in that frame --
+  the frame `look.py` shows and `cropdetect.py` measures, so `crop.py --x/--y/--width/--height`
+  and `redact.py` rectangles mean what a reader of the sheet sees. A tool that does not touch
+  geometry (`cut`, `color`, `denoise`, `pad`, `freeze`, `export --no-scale`, a stream copy) keeps
+  the stored size: the encoder writes the SAR through and the player shows it right. The scale is
+  said once in `notes` ("stores non-square pixels (SAR 16:9): its 360x360 picture was scaled to
+  640x360 square pixels"). Code: `_common.probe.display_size()`, `square_pixels()`,
+  `square_pixels_note()`, used by fit, export, crop, join, broll, multicam, insert, sequence,
+  grid, look, scenes --sheet, caption, overlay, graphics, redact, proxy, cropdetect, straighten,
+  waveform --image and render's timeline frame. Tests: `GeometryAuditTests` (test_editing.py),
+  `GeometryAuditPictureTests.test_text_tools_draw_on_square_pixels`,
+  `test_grid_squares_a_non_square_pixel_cell`, `GeometryAuditAnalysisTests.test_look_shows_a_non_square_pixel_source_at_its_display_aspect`,
+  `GeometryAuditDeliveryTests`.
+- **An EXIF-rotated still is sized as ffmpeg shows it, upright.** FFmpeg 6.1 already reads the
+  JPEG Orientation tag into the decoded frame's display matrix and autorotates on decode, but
+  `-show_streams` has no rotation for it, so `insert.py` cropped a landscape window out of a
+  portrait photo. `probe()` reads the first decoded frame's rotation for a still (an image2 or
+  `*_pipe` demuxer: one extra ffprobe of one frame) and reports it as `rotation`, so every tool's
+  existing rotation handling applies; the picture itself is left to ffmpeg's autorotate, exactly
+  as for a phone video (2.10.7). Code: `_common.probe._still_rotation()`. Test:
+  `test_insert_turns_an_exif_rotated_still_upright`.
+- **`overlay.py --text` wraps a line wider than the frame, and says so.** drawtext never wraps;
+  graphics.py and caption.py break text with the shared phrase wrapper, and overlay now does too,
+  between the side margins (an explicit `x,y` position counts from x) at `--font-size`, with
+  `slice_overlong`. Text that fits is unchanged; a wrapped run says "wrapped to N lines" in
+  `notes`, since the width is the averaged advance table's estimate. graphics.py's `title`,
+  `lower-third`, `chapter` and `bug` now go through its `wrapped()` as `sticker`, `hook` and `meme`
+  already did, and the lower-third bar widens (up to the margins) to the widest wrapped line.
+  Tests: `test_overlay_text_wraps_to_the_frame`, `test_graphics_title_wraps_a_long_title_and_subtitle`,
+  `test_graphics_lower_third_wraps_inside_the_margins_and_widens_its_bar`,
+  `test_graphics_chapter_chip_wraps_between_the_margins`.
+- **A grid label is drawn with a font that covers its own script, and a label wider than its
+  cell is shortened from the end with an ellipsis.** The label is right-aligned, so a long one
+  used to lose its start off the cell's left edge; the start is the part that tells takes apart.
+  `font_used` is the first label's choice; labels that needed different fonts are named in a
+  note. Thai is drawn by drawtext here (a filename label on a comparison artefact, not a
+  delivery), so its marks are not shaped. Tests: `test_grid_keeps_the_start_of_a_long_label`,
+  `test_grid_label_font_covers_its_script`.
+- **`freeze.py --at T` holds the frame shown at T** (the first frame whose time is at or after
+  T), not the frame before it, so a freeze on a cut holds the new shot. Test:
+  `test_freeze_at_holds_the_frame_shown_at_that_time`.
+- **hh:mm:ss:ff still counts from the file's first frame, not from a start timecode** (the time
+  grammar above is unchanged). When a four-part time reads past the end of a source that carries
+  a start timecode, the refusal's `hint` says so and names the frame from the file's start that
+  the source timecode is. Code: `_common.decision._remember_smpte_hint()`, `emit.die()`. Test:
+  `test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode`.
+- **look.py's contact sheet reads its stamps off the file's own timestamps** (`-copyts
+  -start_at_zero`), not pts plus the seek: an input `-ss` resets an MPEG-TS's timestamps
+  differently from an MP4's, and the sheet of a TS was stamped one seek late. `scenes.py --sheet`
+  picks each scene's first frame by its time, not by start x average fps as a frame number,
+  which named another frame on a variable-frame-rate source. `look.py --compare` letterboxes both
+  pictures into boxes as tall as the taller one instead of stretching the first to the second's
+  size. Tests: `test_contact_sheet_stamps_count_from_the_file_start_on_mpeg_ts`,
+  `test_scenes_sheet_picks_each_scene_start_by_time_on_vfr`, `test_compare_keeps_each_pictures_aspect`.
+- **broll.py scales an odd-sized A-roll to even up front** (`odd_dimensions_scaled_even`, the
+  runner's code): the runner's even-scale retry reaches a `-vf` only, and broll's
+  `filter_complex` failed unclassified. Test:
+  `test_broll_scales_an_odd_sized_a_roll_to_even_and_records_it`.

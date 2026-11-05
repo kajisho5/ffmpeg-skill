@@ -50,6 +50,62 @@
   left out at 6500 K (#410).
 - `grid.py --cols 1 --rows 1` reached ffmpeg and failed there with exit 222 (`xstack` takes two inputs
   or more). It is now refused up front as an input error (#410).
+- `silence.py` drifted picture and sound apart at every cut, even on a clean source: each kept range
+  was rounded twice, the picture to whole frames and the sound to whole AAC frames, and the errors
+  added up (about 150 ms over 21 ranges of a 61 s talk; 5, 40 and 75 ms over three ranges), and
+  `--timemap` was off by as much. A sound that starts after its picture was also moved early by its
+  whole offset (+280 ms). The kept ranges are now re-cut the way `cut.py --segments --accurate`
+  cuts them: both streams on the same frame-grid bounds, shifted by one constant, a late sound padded
+  with silence. Each kept bound is moved to the nearest frame time first, and `--timemap` is built from
+  those bounds, so its output times are the output's. The old render kept both boundary frames of
+  every range, one frame more per range than was kept (#409).
+- `sync.py` and `multicam.py` measured a sound track that starts after its file's start from its
+  first sample: a track 0.3 s late measured +2.279 s for +2.000 s, `--replace-audio` placed it about
+  270 ms late, and `multicam.py` cut the camera's picture that far off and rebased its sound too. The
+  audio decode now pads a late sound so its samples are on the file's clock (this also corrects
+  `scenes.py`'s audio envelopes and `cut.py`'s beat grid on such files), and both tools place the
+  sound on its own file's clock before delaying it (#409).
+- `freeze.py`, `speedramp.py`, `join.py` (since #338), `broll.py --audio b|mix` and `reverse.py` moved
+  one stream against the other on a source whose sound or picture starts late, or whose sound runs
+  past its picture: `freeze` +279 ms (late sound) and -100 ms (late picture), `speedramp` +570 ms at
+  0.5x, `join` and `broll` +279 ms, `reverse` +396 ms for a sound 0.6 s past the picture (a
+  stream-copied cut went from -17 to +61 ms). Each now cuts both streams on the same frame times and
+  shifts them by one constant, as `cut.py`'s re-cut does; `reverse.py` turns both about one end (#409).
+- `loop.py` lost a frame and slid the sound on every repeat of a clip whose sound starts late (795 of
+  810 frames, 43-51 ms): `-stream_loop` took each repeat's length from the streams' spans without the
+  last frame. The repeats now come from the concat demuxer, one entry per repeat, each the file's
+  whole length, with the late sound's gap filled with silence (#409).
+- Footage that stores non-square pixels (DV, HDV/XDCAM 1440x1080, DVD) came out squashed from
+  every tool that scales (fit, export, grid, join, broll, multicam, look, ...), `crop.py` read its
+  rectangle in the stored frame, and caption, `overlay.py --text` and graphics drew text the
+  player stretched 1.78x. `probe.py` now reports `sample_aspect_ratio`, and every tool that sizes,
+  crops, places or draws on the picture first scales it to square pixels at its display aspect
+  (its height kept) and says so in `notes`; rectangles, margins and sizes are in that displayed
+  frame. A tool that only re-encodes keeps the stored size and its SAR (#411).
+- `graphics.py`'s `title`, `lower-third`, `chapter` and `bug` never wrapped, so a long title ran
+  off the frame (also through `render.py --template`). They now wrap with the same `wrapped()`
+  helper `sticker`, `hook` and `meme` use, and the lower-third bar widens to the widest line.
+  `overlay.py --text` wraps a line wider than the frame between the margins and says so in `notes`
+  (#411).
+- `look.py`'s contact sheet stamped an MPEG-TS's tiles one seek late (about +0.5 s); it now reads
+  the stamps off the file's own timestamps. `scenes.py --sheet` picked the wrong frames on a
+  variable-frame-rate source (a frame number from start x average fps); it now picks each scene's
+  first frame by time. `look.py --compare` stretched the first picture to the second's aspect; both
+  are now letterboxed into boxes as tall as the taller one (#411).
+- `grid.py` drew a Japanese, Chinese or Thai filename label as empty boxes while reporting
+  `substituted: false`, and a label wider than its cell kept only its tail. Each label now gets a
+  font that covers its script, and a long one is shortened from the end with an ellipsis (#411).
+- `freeze.py --at T` held the frame before T (at a cut, the last frame of the previous shot); it
+  now holds the frame shown at T (#411).
+- An hh:mm:ss:ff time typed off a source's start timecode (01:00:01:00 on a camera file starting at
+  01:00:00:00) was refused as past the end with no word on why. The refusal's `hint` now says the
+  time counts from the file's first frame and names the frame meant; the time grammar is unchanged
+  (#411).
+- `broll.py` with an odd-sized A-roll failed unclassified (`kind: ffmpeg`); the A-roll is scaled to
+  even up front and recorded as `odd_dimensions_scaled_even` (#411).
+- A JPEG with an EXIF Orientation tag (a phone's portrait photo) was sized as landscape by
+  `insert.py` and `sequence.py`, which cropped a sideways window out of the upright picture
+  ffmpeg decodes. `probe()` now reads a still's rotation off its decoded frame (#411).
 
 ## 3.1.4
 

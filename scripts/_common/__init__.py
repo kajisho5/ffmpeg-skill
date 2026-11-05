@@ -70,7 +70,8 @@ from _common.emit import (
 from _common.probe import (
     analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
     _fraction, keyframes_near, classify_frame_timing, measure_frame_timing, SCORE_RE, SIL_RE, decode_gray_frames,
-    measured_level_dbfs, AUDIO_MEDIA_EXT, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output
+    measured_level_dbfs, AUDIO_MEDIA_EXT, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output,
+    display_size, pixel_aspect, square_pixels, square_pixels_note
 )
 from _common.decision import (
     aac_args, add_pad_fill_args, aspect_ratio, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
@@ -229,5 +230,6 @@ __all__ = [
     "PENALTY_IDEOGRAPHS", "PENALTY_NEUTRAL", "PENALTY_OKURIGANA", "PENALTY_PARTICLE", "PENALTY_SENTENCE_END",
     "_rebalance", "_rebalance_phrase", "SAFE_WIDTH_FRACTION", "_split_hyphens", "_slice_atom", "_particle_ends",
     "_particle_starts", "wrap_text", "wrap_variants", "WRAP_MODES",
-    "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION", "ass_units_local"
+    "fit_size", "line_em_for_size", "MIN_CAPTION_FRACTION", "ass_units_local",
+    "display_size", "pixel_aspect", "square_pixels", "square_pixels_note"
 ]
