@@ -146,6 +146,8 @@ def _report_dropped_hdr10_metadata(meta: Dict[str, Any], ctx: "Context") -> None
     v = (meta or {}).get("video") or {}
     if not src or v.get("color_transfer") != "smpte2084":
         return
+    if len(getattr(STATE, "video_inputs", None) or ()) > 1:
+        return  # several pictures: the first input's metadata need not be the output's source
     have = v.get("hdr10_static") or {}
     lost = [k for k in ("mastering_display", "content_light") if src.get(k) and not have.get(k)]
     if not lost:

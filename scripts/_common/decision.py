@@ -530,7 +530,7 @@ def hdr10_svtav1_params(v: Dict[str, Any]) -> str:
     md, cl = _hdr10_parts(v)
     parts = []
     if md:
-        f = lambda k: f"{md[k]:.5g}"
+        f = lambda k: f"{md[k]:.5f}".rstrip("0").rstrip(".")
         parts.append(f"mastering-display=G({f('green_x')},{f('green_y')})B({f('blue_x')},{f('blue_y')})R({f('red_x')},{f('red_y')})"
                      f"WP({f('white_point_x')},{f('white_point_y')})L({f('max_luminance')},{f('min_luminance')})")
     if cl:

@@ -359,6 +359,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "language": (a.get("tags") or {}).get("language"),
             "title": (a.get("tags") or {}).get("title"),
         } for n, a in enumerate(s for s in streams if s.get("codec_type") == "audio")]
+    if role == "input" and out.get("video") and out["video"].get("codec"):
+        STATE.video_inputs.add(os.path.realpath(path))
     if role == "input" and out.get("audio_streams"):
         STATE.audio_inputs.add(os.path.realpath(path))
     if role == "input" and getattr(STATE, "first_input", None) is None:
@@ -372,8 +374,12 @@ def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[
     a Matroska colour element) or else its first frame (the HEVC SEI / AV1 metadata OBU): one
     frame is decoded. Chromaticities are CIE 1931 x/y, luminances cd/m2. None when it has neither."""
     sides = list(stream.get("side_data_list") or [])
-    if not any(_side_kind(sd) for sd in sides):
-        proc = run([ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1", "-show_frames",
+    kinds = {_side_kind(sd) for sd in sides}
+    if not {"mastering", "light"} <= kinds:
+        # either part missing from the stream: the first frame may carry it (each part is taken
+        # from wherever it is found first, the stream before the frame). V:0, not v:0: an attached
+        # cover picture before the motion video has no HDR side data of its own
+        proc = run([ffprobe, "-v", "error", "-select_streams", "V:0", "-read_intervals", "%+#1", "-show_frames",
                     "-show_entries", "frame=side_data_list", "-of", "json", path], quiet=True, check=False)
         frames: List[Dict[str, Any]] = []
         if proc.returncode == 0:
@@ -381,12 +387,12 @@ def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[
                 frames = json.loads(proc.stdout or "{}").get("frames") or []
             except ValueError:
                 pass
-        sides = list((frames[0].get("side_data_list") or []) if frames else [])
+        sides += list((frames[0].get("side_data_list") or []) if frames else [])
     out: Dict[str, Any] = {}
     for sd in sides:
         kind = _side_kind(sd)
         if kind == "mastering" and "mastering_display" not in out:
-            vals = {k: _fraction(str(sd.get(k))) for k in ("red_x", "red_y", "green_x", "green_y", "blue_x", "blue_y",
+            vals = {k: _ratio(sd.get(k)) for k in ("red_x", "red_y", "green_x", "green_y", "blue_x", "blue_y",
                                                             "white_point_x", "white_point_y", "min_luminance", "max_luminance")}
             if all(v is not None for v in vals.values()):
                 out["mastering_display"] = {k: float(v) for k, v in vals.items()}
@@ -395,6 +401,16 @@ def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[
             if mc is not None and ma is not None:
                 out["content_light"] = {"max_content": mc, "max_average": ma}
     return out or None
+
+
+def _ratio(v: Any) -> "Optional[Fraction]":
+    """A side-data value such as "34000/50000" or "0/10000". Unlike _fraction() a zero is a value
+    (a mastering display's minimum luminance may be 0 cd/m2); only a missing or malformed one is None."""
+    try:
+        f = Fraction(str(v))
+    except (ValueError, ZeroDivisionError, TypeError):
+        return None
+    return f if f >= 0 else None
 
 
 def _side_kind(sd: Dict[str, Any]) -> "Optional[str]":
