@@ -31,7 +31,7 @@ import math
 import sys
 from typing import Dict, List, Tuple
 
-from _common import guard_sidecar, label_chain, matrix_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
+from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import record_fallback, warn
 from sync import measure_offset
 
@@ -283,6 +283,8 @@ def main() -> int:
     convert = [matrix_chain(m, metas[0]) for m in metas]
     if any(convert):
         convert = [c or label_chain(m, metas[0]) for c, m in zip(convert, metas)]
+    # concat mixes samples: a full-range camera beside a limited one is taken to limited range (#410)
+    convert = [c + range_chain(m, metas[0]) for c, m in zip(convert, metas)]
     # what is actually rendered: a range whose camera has not started yet plays camera 0, and the
     # result says so (`cuts` names the camera on screen, diagnostics.fallbacks the one asked for)
     rendered: List[Tuple[float, float, int]] = []

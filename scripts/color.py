@@ -43,7 +43,7 @@ CORRECTION = {
     "exposure":    (0.0,   -3.0,    3.0,   "stops"),   # exposure filter's own full range (linear-domain stops)
     "contrast":    (1.0,    0.0,    2.0,   "x"),       # eq filter; 0=flat grey, 1=unchanged, 2=double contrast
     "saturation":  (1.0,    0.0,    2.0,   "x"),       # eq filter; 0=grayscale, 1=unchanged, 2=double saturation
-    "temperature": (6500.0, 2000.0, 12000.0, "K"),     # colortemperature filter; 6500=unchanged (its own default)
+    "temperature": (6500.0, 2000.0, 12000.0, "K"),     # colortemperature filter; 6500=unchanged (no term: the filter itself tints at 6500)
     "tint":        (0.0,   -1.0,    1.0,   "x"),       # mapped to colorbalance midtones, see correction_chain()
     "gamma":       (1.0,    0.1,   10.0,   "x"),       # eq filter's own gamma option; 1=unchanged (its own default)
     "lift":        (0.0,   -1.0,    1.0,   "x"),       # colorbalance shadows (rs=gs=bs); 0=unchanged
@@ -116,11 +116,13 @@ def correction_chain(args: argparse.Namespace) -> str:
         die(f"--levels-out-black {out_black} must be less than --levels-out-white {out_white}")
 
     gm, rm, bm = -tint, tint / 2.0, tint / 2.0
-    rgb = [
-        f"exposure=exposure={exposure:g}",
-        f"colortemperature=temperature={temperature:g}",
-        f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}",
-    ]
+    rgb = [f"exposure=exposure={exposure:g}"]
+    if temperature != CORRECTION["temperature"][0]:
+        # colortemperature at 6500 K is not the identity it is documented as here: it multiplies by
+        # its own approximation of that white point, which tinted grey 808080 to 7E7E7B (#410), so
+        # "unchanged" adds no term at all
+        rgb.append(f"colortemperature=temperature={temperature:g}")
+    rgb.append(f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}")
     terms = [_rgb_stage(rgb), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
     rgb2 = []
     if (in_black, in_white, out_black, out_white) != (0, 255, 0, 255):
@@ -154,6 +156,22 @@ def _rgb_stage(filters: list) -> str:
     never a tag: the output carries the encoder's BT.709 tags as before."""
     return ("scale=in_color_matrix=bt601,format=gbrpf32le," + ",".join(filters)
             + ",scale=out_color_matrix=bt601,format=yuv420p")
+
+
+def lut_legs() -> "tuple":
+    """(to RGB, back to YUV) around --lut's lut3d: explicit BT.709 conversions through float RGB,
+    the matrix the picture holds when it reaches them (an untagged or BT.709 source as it is, a
+    BT.601 or RGB one after x264_args(source=...)'s conversion), limited range on the way out.
+
+    lut3d takes RGB, and left to libavfilter the way in honoured the frame's BT.709 tag while the
+    way back used swscale's BT.601 default, so even an identity LUT shifted every colour (2FAE4E to
+    249A4B, #410); --correct had its legs pinned for the same reason in #159. A LUT maps the RGB the
+    picture really shows, so unlike --correct's working-space pair (bt601 both ways, see
+    _rgb_stage) these legs use the BT.709 the picture is: an identity LUT then returns every sample
+    as --lut-strength 0, which applies none, does (6.1, BT.709/BT.601/untagged, limited and full
+    range, 8- and 10-bit). The input range is read from the frames, as every scale here reads it."""
+    return ("scale=in_color_matrix=bt709,format=gbrpf32le",
+            "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p")
 
 
 def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:
@@ -442,6 +460,7 @@ def main() -> int:
         if not (0.0 <= args.lut_strength <= 1.0):
             die(f"--lut-strength {args.lut_strength:g} is outside 0..1")
         lut = f"lut3d=file={escape_filter_path(args.lut)}:interp=tetrahedral"
+        to_rgb, to_yuv = lut_legs()
         if args.lut_strength == 0.0:
             # 0 means "no LUT at all" -- without this branch, 0 (falling outside the open interval
             # below) landed in the same "apply the LUT at full strength" fallback as an out-of-range
@@ -450,9 +469,10 @@ def main() -> int:
             vf = "format=yuv420p"
         elif args.lut_strength < 1.0:
             # blend graded and original
-            vf = f"split[o][g];[g]{lut}[g2];[o][g2]blend=all_mode=normal:all_opacity={args.lut_strength:g},format=yuv420p"
+            # blended in RGB, both pictures through the same two legs
+            vf = f"{to_rgb},split[o][g];[g]{lut}[g2];[o][g2]blend=all_mode=normal:all_opacity={args.lut_strength:g},{to_yuv}"
         else:
-            vf = f"{lut},format=yuv420p"
+            vf = f"{to_rgb},{lut},{to_yuv}"
         output = args.output or default_output(args.input, "lut")
         tag = "lut"
 

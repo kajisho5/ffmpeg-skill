@@ -34,7 +34,7 @@ from typing import List, Optional, Tuple
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
-                     ffmpeg_base, info, label_chain, load_brand, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
+                     ffmpeg_base, info, layer_base_chain, load_brand, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
                      LANGUAGE_NAMES, needs_shaping, detect_script, BIDI_SCRIPTS, font_family_of_file, font_family_for_script, has_emoji,
                      emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
@@ -673,7 +673,7 @@ def main(force_route: Optional[str] = None) -> int:
         drawboxes.append(f"drawbox={geo}:color={ff_color(colour, alpha)}:t=fill:{enable}")
     filters = [("" if as_layers else drawboxes[int(f[len(BOX):])]) if f.startswith(BOX) else f for f in filters]
     filters = [f for f in filters if f]
-    base_label = label_chain(meta, meta) if (layers or converted) else ""
+    base_label = layer_base_chain(meta) if (layers or converted) else ""
     text = (drawn_chain(",".join(filters), meta, re.findall(r"color=([0-9A-Za-z#@.]+)", ",".join(filters)),
                         labelled=bool(base_label)) if filters else "")
     if layers:
@@ -702,7 +702,7 @@ def main(force_route: Optional[str] = None) -> int:
             last = "vtxt"
         eo, emoji_inputs = emoji_filter_chain({"overlays": emoji_overlays}, last, "vfinal", first_input=1,
                                               to_yuv=rgb_chain_to_bt709(meta),
-                                              base_chain=label_chain(meta, meta) if rgb_chain_to_bt709(meta) else "")
+                                              base_chain=layer_base_chain(meta))
         for spec in emoji_inputs:
             cmd += spec
             asset = spec[-1]

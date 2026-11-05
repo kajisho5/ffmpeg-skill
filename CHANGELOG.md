@@ -27,6 +27,29 @@
   - a relative filter path starting or ending with a space lost it; the space is escaped;
   - a one-letter `x:name.mp4` off Windows passed as a drive letter and then failed in ffmpeg as
     "Protocol not found"; it is refused as a URL with the `./name` hint.
+- `color.py --lut` shifted every colour even with an identity LUT (2FAE4E came out 249A4B): libavfilter's
+  own conversion into `lut3d`'s RGB read the frame's BT.709 tag and the one back used BT.601. Both legs
+  are now explicit BT.709 conversions through float RGB, and a `--lut-strength` blend is made in that
+  RGB too; an identity LUT returns what `--lut-strength 0` does (#410).
+- `join.py`, `multicam.py`, `grid.py`, `broll.py` and `overlay.py --video` mixed a full-range clip in a
+  plain pixel format (VP9 and AV1 full range, any 10-bit full range, which decode as `yuv420p` tagged
+  `pc`) with limited-range ones without converting the range, so one of them was shown in the other's
+  range (C03028 came out C9251B). Every SDR picture these tools mix is now taken to limited range
+  first. The limited-range layers `graphics.py` (boxes and bars with a colour), emoji PNGs and
+  `overlay.py --image` composite were put on a full-range main the same way (30B050 came out 37A757);
+  that main is now taken to limited range under them (#410).
+- On FFmpeg before 7.1, a colour drawn on such a full-range picture landed in limited range: a pad's
+  black read 101010 and white EBEBEB (`pad.py`, `fit.py`, `overlay.py --text` ...), and a colour with
+  chroma on a 10-bit full-range picture came out oversaturated. The picture is now taken to limited
+  range before the drawing on those versions; FFmpeg 7.1+ commands are unchanged (#410).
+- `look.py` (frames, `--compare`, contact sheet), `scenes.py --sheet` and `export.py --preset gif`
+  decoded an untagged source as BT.601 (C03028 came out B31F28), while every encode takes it as
+  BT.709. Its frames are now labelled BT.709 (tags only) before the conversion to RGB (#410).
+- `color.py --correct` with every option at its default tinted grey (808080 came out 7E7E7B):
+  `colortemperature=temperature=6500` was always in the chain and is not an identity. The term is
+  left out at 6500 K (#410).
+- `grid.py --cols 1 --rows 1` reached ffmpeg and failed there with exit 222 (`xstack` takes two inputs
+  or more). It is now refused up front as an input error (#410).
 
 ## 3.1.4
 

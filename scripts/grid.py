@@ -26,7 +26,7 @@ import os
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, X264_PRESETS, fmt_secs, \
-    draws_chroma, drawn_chain, escape_drawtext, ffmpeg_base, info, label_chain, matrix_chain, probe, run, validate_color, video_args
+    as_limited, draws_chroma, drawn_chain, escape_drawtext, ffmpeg_base, info, label_chain, matrix_chain, range_chain, probe, run, validate_color, video_args
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
@@ -69,6 +69,9 @@ def main() -> int:
     n = args.cols * args.rows
     if args.cols <= 0 or args.rows <= 0:
         die(f"--cols/--rows must be > 0, got cols={args.cols} rows={args.rows}")
+    if n == 1:
+        # xstack takes two inputs or more: a 1x1 grid used to reach ffmpeg and fail there (exit 222)
+        die("--cols 1 --rows 1 is a single cell; a grid needs at least two (fit.py letterboxes one clip)")
     if len(args.inputs) != n:
         die(f"--cols {args.cols} --rows {args.rows} needs exactly {n} inputs, got {len(args.inputs)}")
     if args.cell_width <= 0 or args.cell_height <= 0:
@@ -117,6 +120,8 @@ def main() -> int:
     convert = [matrix_chain(m, None) for m in metas]
     if any(convert) or chroma:
         convert = [c or label_chain(m, None) for c, m in zip(convert, metas)]
+    # xstack mixes samples: a full-range cell beside a limited one is taken to limited range (#410)
+    convert = [c + range_chain(m, None) for c, m in zip(convert, metas)]
     parts = []
     for i, p in enumerate(args.inputs):
         drawn = [  # (with this colour, with black)
@@ -139,7 +144,7 @@ def main() -> int:
         if chroma and (gap_r or gap_b):
             drawn.append((f"pad=iw+{gap_r}:ih+{gap_b}:0:0:color={args.background}", f"pad=iw+{gap_r}:ih+{gap_b}:0:0:color=black"))
         chain = f"fps={args.fps:g},scale={args.cell_width}:{args.cell_height}:force_original_aspect_ratio=decrease,"
-        chain += drawn_chain(",".join(c for c, _n in drawn), metas[i], colours, ",".join(n for _c, n in drawn),
+        chain += drawn_chain(",".join(c for c, _n in drawn), as_limited(metas[i]), colours, ",".join(n for _c, n in drawn),
                              line_meta=None, tag=f"c{i}", labelled=True)
         parts.append(f"[{i}:v]{convert[i]}{chain}[v{i}]")
 

@@ -285,14 +285,49 @@ exists. When a decision changes, edit the entry in the same PR.
   the drawbox's pixels); `background.py`'s `color`/`gradients` and `waveform.py`'s plate and RGBA waves are
   converted where they are made. Only a colour whose 8-bit YUV differs between the two matrices
   (`is_neutral_color()`: not a grey, not graphics.py's near-black 101418) changes a command, so the
-  default black pads, white text and black/grey boxes plan what they did. Not converted: a GIF export
-  (untagged, and palettegen reads the pad back with the BT.601 it was drawn in), a prores or HDR line,
+  default black pads, white text and black/grey boxes plan what they did -- except, before 7.1, on a
+  full-range picture in a plain format (next entry), where greys were drawn in the wrong range too.
+  Not converted: a GIF export (its pad, if a GIF preset ever had one, would be drawn and read back
+  with the same BT.601), a prores or HDR line,
   a caller's own `--ass` file (its colours and YCbCr header are the file's, as libass/FFmpeg read
-  them), and the PNG contact sheets of `look.py`/`scenes.py` (RGB outputs, not tagged video). Code:
+  them), and the drawn marks on the PNG contact sheets of `look.py`/`scenes.py` (RGB outputs, not
+  tagged video; since #410 their picture is read as BT.709, so `look.py --safe`'s red shading, drawn
+  by drawbox in BT.601, is a few codes off on an untagged source). Code:
   `_common/color.py` (`is_neutral_color`, `rgb_island`), `_common/decision.py` (`drawn_chain`,
   `pad_filters`), and each drawing tool. Tests: `test_a_pad_fill_or_background_lands_in_the_bt709_its_output_is_tagged_with`,
   `test_drawn_text_and_boxes_land_in_the_bt709_their_output_is_tagged_with`,
   `test_a_picture_that_only_passes_through_keeps_its_pixels`, `test_drawn_colours_are_drawn_in_bt709`.
+- **Where pictures are mixed, or drawn on before FFmpeg 7.1, a full-range picture is taken to limited
+  range first (#410).** Full range comes as a `yuvj` format (H.264/HEVC/JPEG), which every `scale`
+  and `format=yuv420p` here converts by name, or as a plain format tagged `pc` (VP9 and AV1 full
+  range, any 10-bit full range), which passes through untouched. concat, xfade, xstack and overlay
+  mix samples, not colours, so such a clip beside a limited one in `join`, `multicam`, `grid`, `broll`
+  or `overlay --video` was shown in the other's range (C03028 came out C9251B on 6.1), and so were the
+  limited-range RGB layers #333 converts (graphics.py's boxes and bars, emoji, `overlay --image`)
+  over a full-range main (30B050 came out 37A757). Each such picture's chain now ends with
+  `scale=out_range=tv` (`range_chain()`, `layer_base_chain()`; a `yuvj` one also gets its plain format
+  name), so every picture the filter mixes is limited and the output is limited, tagged so. The input
+  range is left to `scale`, which reads it from each frame: 6.1's scale already turns a full-range
+  plain-format frame limited at any resize, so a stated `in_range=pc` would convert some frames twice.
+  Before 7.1 `ff_draw` also takes the range from the pixel format alone, so black was drawn 101010 and
+  white EBEBEB on such a picture, and `rgb_island()` read a picture 6.1 had already made limited (or a
+  10-bit one, drawn on as 8-bit) as full range, oversaturating a colour; `drawn_chain()` takes it to
+  limited range there and draws in limited range, greys included. 7.1+ draws in the link's range and
+  its drawing commands are unchanged. A one-input re-encode with no drawing keeps the range it had
+  ("The range is left as it is" above still holds for the matrix conversion). Not done for an HDR or
+  prores line, as `matrix_chain()`. Code: `_common/color.py` (`is_full_range`,
+  `limited_range_filter`, `as_limited`), `_common/decision.py` (`range_chain`, `layer_base_chain`,
+  `drawn_chain`). Tests: `test_mixing_tools_take_a_full_range_clip_to_limited_range`,
+  `test_a_colour_drawn_on_a_full_range_picture_lands_in_its_range`,
+  `test_converted_layers_on_a_full_range_main_land_in_its_range`, `test_audit_g_colour_plans`,
+  `test_drawn_colours_are_drawn_in_bt709`.
+- **An untagged SDR source is labelled BT.709 where a tool turns it into RGB for a picture file
+  (#410).** `look.py`'s frames, compare images and contact sheet, `scenes.py --sheet` and
+  `export.py --preset gif` let FFmpeg convert to RGB, and that conversion reads "unknown" as BT.601
+  (C03028 came out B31F28) while every encoder line here takes untagged SDR as BT.709. The frames are
+  labelled first (`bt709_label_filter()`, tags only), as #333's mixing filters do; a tagged source is
+  read by its own tag, an HDR one is tone-mapped as before. Test:
+  `test_rgb_views_of_an_untagged_source_read_it_as_bt709`.
 - **`color.py --retag` rewrites the colour description the stream itself carries, and checks it.**
   H.264, HEVC, MPEG-2, AV1 and VP9 keep it in the bitstream (VUI, sequence header, frame header).
   Decoders, ffprobe included, read that before the container's `colr`/Colour. Through 2.10.10 the
@@ -326,6 +361,15 @@ exists. When a decision changes, edit the entry in the same PR.
 - **`--correct` converts through bt601 on both legs** (not bt709), because on every tested
   FFmpeg the 709 round trip through 8-bit 4:2:0 loses ~5 dB more than 601. Code:
   `color.py _rgb_stage()`. Test: `test_color_correct_identity_holds_on_a_bt709_tagged_source`.
+  `--temperature` at its default 6500 adds no term: `colortemperature=temperature=6500` is not an
+  identity (it tinted grey 808080 to 7E7E7B, #410). Test: `test_color_correct_defaults_leave_grey_grey`.
+- **`--lut` converts through BT.709 on both legs, in float RGB** (#410). A LUT maps the RGB the picture
+  really shows, so its legs are the picture's own matrix (BT.709, or BT.601/RGB already converted to
+  it on the encoder line), not --correct's working space. Left to libavfilter they disagreed (in by
+  the frame's tag, out by swscale's BT.601 default) and an identity LUT shifted every colour (2FAE4E
+  to 249A4B); with `gbrpf32le` an identity LUT returns what `--lut-strength 0` does on 6.1, 8- and
+  10-bit, limited and full range. A blend (`--lut-strength` below 1) is made in that RGB too. Code:
+  `color.py lut_legs()`. Test: `test_color_lut_identity_returns_the_picture`.
 
 ## Outputs and files
 

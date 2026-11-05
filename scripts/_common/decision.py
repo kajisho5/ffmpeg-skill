@@ -14,8 +14,8 @@ import argparse
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.color import (bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
-                           is_neutral_color, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
+from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
+                           is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.emit import die, record_fallback, refuse, warn
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -661,6 +661,28 @@ def label_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, An
     return f + "," if f else ""
 
 
+def range_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]]) -> str:
+    """For a picture that a mixing filter (concat, xfade, xstack, overlay) puts beside or under
+    another, encoded through video_args(line_meta): the conversion to limited range its chain
+    takes after its matrix_chain()/label_chain() ("<filter>," -- limited_range_filter), or "" (a
+    limited, RGB or HDR picture, or a line that does not tag BT.709). Every SDR picture such a
+    tool mixes is then limited range, whatever each one was: the filters mix samples, not colours."""
+    if STATE.codec == "prores" or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
+        return ""
+    f = limited_range_filter(meta)
+    return f + "," if f else ""
+
+
+def layer_base_chain(meta: Optional[Dict[str, Any]]) -> str:
+    """The chain in front of the picture `meta` probes where converted RGB layers (rgb_chain_to_bt709:
+    a still, an emoji PNG, a box of chroma) are overlaid on it: an untagged picture's BT.709 label
+    (label_chain) and, for a full-range one, its conversion to the limited range the layers are
+    made in (range_chain). "" when the line converts no layer (HDR, prores)."""
+    if not rgb_chain_to_bt709(meta):
+        return ""
+    return label_chain(meta, meta) + range_chain(meta, meta)
+
+
 def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva420p") -> str:
     """For a picture the tool's own graph has made RGB(A) -- a still's `format=rgba` chain
     (overlay.py --image, an emoji PNG) or an RGBA composite (waveform.py's --image plate) -- that
@@ -695,14 +717,25 @@ def drawn_chain(colour_chain: str, meta: Optional[Dict[str, Any]], colours: Sequ
 
     Unchanged: a chain whose colours are all greys (the same YUV under every matrix: the default
     black pads and white text), a line that does not tag BT.709 (HDR, prores). `labelled`: the
-    caller's graph already labels this picture (label_chain()) earlier in the same chain."""
+    caller's graph already labels this picture (label_chain()) earlier in the same chain.
+
+    Before 7.1 `ff_draw` also takes the range from the pixel format alone: full for `yuvj`, limited
+    for every other, so on a full-range picture in a plain format (VP9/AV1 full range, 10-bit full
+    range) even black and white were drawn limited (pad black read 101010, #410), and 6.1's scale
+    has often made such a picture limited before the drawing anyway. There the picture is first
+    taken to limited range (range_chain(), which reads the range from the frames), and the
+    drawing, the colours and rgb_island() all work in limited range. 7.1+ draws in the link's
+    range and is left as it is."""
     line = meta if line_meta == "same" else line_meta
+    pre = ""
+    if ffmpeg_version() < (7, 1) and not str(((meta or {}).get("video") or {}).get("pix_fmt") or "").startswith("yuvj"):
+        pre = range_chain(meta, line)
     if not draws_chroma(colours, line):
-        return colour_chain
+        return pre + colour_chain
     if ffmpeg_version() >= (7, 1):
         return ("" if labelled else label_chain(meta, line)) + colour_chain
-    pix_fmt, full = drawn_stream_format(meta)
-    return rgb_island(colour_chain, neutral_chain, pix_fmt, full, tag)
+    pix_fmt, full = drawn_stream_format(as_limited(meta) if pre else meta)
+    return pre + rgb_island(colour_chain, neutral_chain, pix_fmt, full, tag)
 
 
 def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium",

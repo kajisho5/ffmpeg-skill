@@ -153,6 +153,45 @@ def is_neutral_color(value: Any) -> bool:
     return False
 
 
+def is_full_range(meta: Optional[Dict[str, Any]]) -> bool:
+    """True when the probed YUV picture is full range: a `yuvj` format, or any other YUV format
+    tagged `pc` (VP9 and AV1 full range decode as plain `yuv420p` tagged pc, 10-bit full range as
+    `yuv420p10le` tagged pc). An RGB picture is not: bt709_matrix_filter() makes it limited YUV."""
+    v = (meta or {}).get("video") or {}
+    if is_rgb(meta) or not v.get("pix_fmt"):
+        return False
+    return str(v["pix_fmt"]).startswith("yuvj") or v.get("color_range") == "pc"
+
+
+def limited_range_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The filter that takes a full-range SDR YUV picture (is_full_range) to limited range, or None
+    for any other picture (limited, RGB, HDR/BT.2020, no probe).
+
+    A tool that puts several pictures in one frame or one stream (concat, xfade, xstack, overlay)
+    passes their samples through as they are, so a full-range clip beside a limited one was shown
+    with the other's range: C03028 came out C9251B (#410). The input range is left to `scale`,
+    which reads it from each frame (FFmpeg 6.1 already converts a full-range non-`yuvj` frame to
+    limited at any resize, so a stated `in_range=pc` would convert some frames twice); only the
+    output range is stated. A `yuvj` format is full range by name, so it is also given its limited
+    name (`format=`), or swscale would write full range under the limited tag."""
+    v = (meta or {}).get("video") or {}
+    if v.get("bt2020_or_hdr") or not is_full_range(meta):
+        return None
+    pf = str(v["pix_fmt"])
+    return "scale=out_range=tv" + (f",format=yuv{pf[4:]}" if pf.startswith("yuvj") else "")
+
+
+def as_limited(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """`meta` as it reads after limited_range_filter(): the same probe with a limited-range format and
+    tag, for the code that plans what is drawn on the converted picture (drawn_stream_format)."""
+    if not limited_range_filter(meta):
+        return meta
+    v = dict((meta or {}).get("video") or {})
+    pf = str(v["pix_fmt"])
+    v.update(pix_fmt="yuv" + pf[4:] if pf.startswith("yuvj") else pf, color_range="tv")
+    return {**(meta or {}), "video": v}
+
+
 def drawn_stream_format(meta: Optional[Dict[str, Any]]) -> "Tuple[str, bool]":
     """(pix_fmt, full range) of the picture a tool draws on, for rgb_island(): the probed source's own
     8-bit planar YUV format (an RGB source has become yuv444p, BT.709 limited, through
@@ -161,7 +200,7 @@ def drawn_stream_format(meta: Optional[Dict[str, Any]]) -> "Tuple[str, bool]":
     if is_rgb(meta):
         return "yuv444p", False
     pf = str(v.get("pix_fmt") or "yuv420p")
-    full = pf.startswith("yuvj") or v.get("color_range") == "pc"
+    full = is_full_range(meta)
     if pf not in ("yuv420p", "yuv422p", "yuv444p", "yuvj420p", "yuvj422p", "yuvj444p"):
         pf = "yuv420p"
     return pf, full
