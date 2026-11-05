@@ -4,29 +4,7 @@
 
 ## Unreleased
 
-### Fixed
-
-- Files a tool writes or removes itself had escaped the output guards (#408, the class of #111,
-  #173, #292 and #382):
-  - `waveform.py --title/--srt/--text` removed `<out>_vis` / `<out>_titled` after the run whoever
-    had written them, so an input or a file of the caller's with that name was deleted. The
-    intermediates are now hidden, pid-named siblings of the output.
-  - `--plan FILE` (every tool) replaced any file, the input included, without `--overwrite`.
-  - `graphics.py`'s ASS file, `caption.py --write-srt/--write-ass`, `verify.py --report` and
-    `render.py`'s `<stem>_pack.md` could replace the input or an existing file; a missing directory
-    was a traceback that the dry run did not predict.
-  All of them are now refused as outputs are (`output_is_input`, `output_exists`, a missing directory)
-  before the first file is written.
-- Paths that ffmpeg read differently from the skill's guards (#408):
-  - a `%` in a single image's name was expanded by image2 as a sequence (`look -o 'shot%d.png'`
-    overwrote `shot1.png`, `overlay --image 'logo%d.png'` drew `logo1.png`); single-image outputs
-    pass `-update 1` and still inputs `-pattern_type none`;
-  - on Linux and macOS a backslash in a name was turned into `/` in filter paths and concat lists,
-    so the file could not be opened (or a font silently fell back); it is escaped instead, and the
-    conversion stays Windows-only;
-  - a relative filter path starting or ending with a space lost it; the space is escaped;
-  - a one-letter `x:name.mp4` off Windows passed as a drive letter and then failed in ffmpeg as
-    "Protocol not found"; it is refused as a URL with the `./name` hint.
+(nothing yet)
 
 ## 3.1.5
 
