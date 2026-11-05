@@ -30,7 +30,7 @@ import sys
 from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
-from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, matrix_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
@@ -376,7 +376,7 @@ def main() -> int:
         # the RGBA still is converted to the BT.709 the output is tagged with (overlay's own
         # RGB-to-YUV step used BT.601), and an untagged main is labelled BT.709 (tags only) so
         # 7.1+'s negotiation does not convert one picture to the other's "unknown" matrix
-        base = label_chain(meta, meta) if rgb_chain_to_bt709(meta) else ""
+        base = layer_base_chain(meta)
         fc = (f"[1:v]{','.join(chain)},setpts=PTS-STARTPTS{rgb_chain_to_bt709(meta)}[ov];"
               + (f"[0:v]{base}null[base];[base]" if base else "[0:v]") + f"[ov]{ov}[out]")
         cmd += ["-filter_complex", fc, "-map", "[out]", "-map", f"0:a:{args.audio_stream}?"]
@@ -435,6 +435,8 @@ def main() -> int:
         base, pip = matrix_chain(meta, meta), matrix_chain(pip_meta, meta)
         if base or pip:
             base, pip = base or label_chain(meta, meta), pip or label_chain(pip_meta, meta)
+        # overlay mixes samples: a full-range picture is taken to limited range (#410)
+        base, pip = base + range_chain(meta, meta), pip + range_chain(pip_meta, meta)
         if placements:
             # each placed piece: its range of the layer, re-timed to start at AT; eof_action=pass shows
             # the main picture untouched once a piece ends (the default would freeze its last frame)

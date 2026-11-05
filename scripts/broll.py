@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 
 
 def main() -> int:
@@ -110,13 +110,15 @@ def main() -> int:
     convert = [matrix_chain(m, meta_a) for m in [meta_a] + [c["meta"] for c in cutaways]]
     if any(convert) or draws_chroma([args.pad_color], meta_a):
         convert = [cv or label_chain(m, meta_a) for cv, m in zip(convert, [meta_a] + [c["meta"] for c in cutaways])]
+    # overlay mixes samples: a full-range clip over or under a limited one is taken to limited range (#410)
+    convert = [cv + range_chain(m, meta_a) for cv, m in zip(convert, [meta_a] + [c["meta"] for c in cutaways])]
     if convert[0]:
         parts.append(f"[0:v]{convert[0]}null[a709]")
         cur = "[a709]"
     pad = f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color="
     for i, c in enumerate(cutaways):
         geo = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-               + drawn_chain(pad + args.pad_color, c["meta"], [args.pad_color], pad + "black", line_meta=meta_a,
+               + drawn_chain(pad + args.pad_color, as_limited(c["meta"]), [args.pad_color], pad + "black", line_meta=meta_a,
                              tag=f"pad{i}", labelled=True))
         parts.append(f"[{i + 1}:v]trim=start={c['from']:.3f}:duration={c['length']:.3f},setpts=PTS-STARTPTS+{c['at']:.3f}/TB,"
                      f"{convert[i + 1]}{geo},setsar=1,fps={fps:g},format={'yuv420p10le' if (meta_a.get('video') or {}).get('bt2020_or_hdr') else 'yuv420p'}[b{i}]")

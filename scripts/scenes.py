@@ -29,6 +29,7 @@ from _common import (guard_sidecar, detect_scenes, STATE, add_common, apply_comm
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
+from _common.color import bt709_label_filter  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -300,7 +301,9 @@ def main() -> int:
             default_font = default_font_file("DejaVu Sans")
             font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
             stamp = f",drawtext=text='%{{pts\\:hms}}':{font_prefix}fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6"
-        vf = (f"select='{expr}',scale={tile_w}:-2{stamp},"
+        # an untagged source is labelled BT.709 (tags only), or the sheet's RGB read it as BT.601 (#410)
+        lab = bt709_label_filter(meta)
+        vf = (f"select='{expr}'," + (lab + "," if lab else "") + f"scale={tile_w}:-2{stamp},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
         run(ffmpeg_base() + ["-i", args.input, "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", args.sheet])
         info(f"wrote {args.sheet}")

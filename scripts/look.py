@@ -21,6 +21,7 @@ from _common import STATE, require_tool, add_common, apply_common, default_font_
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
+from _common.color import bt709_label_filter  # noqa: E402
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -220,11 +221,17 @@ def main() -> int:
         tc = "," + tm.rstrip(",") + tc
         info("HDR source: frames are tone-mapped to SDR for display")
     outputs: List[str] = []
+    # An untagged SDR source is BT.709 (what players and every encoder line here take it as), but the
+    # conversion to the PNG's RGB reads "unknown" as BT.601: C03028 came out B31F28 (#410). Its
+    # frames are labelled first (tags only), so that conversion reads them as BT.709.
+    lab = bt709_label_filter(meta)
+    lab = lab + "," if lab else ""
 
     if args.compare:
         if not args.at:
             die("--compare needs --at TIME")
-        probe(args.compare)
+        lab2 = bt709_label_filter(probe(args.compare))
+        lab2 = lab2 + "," if lab2 else ""
         for idx, t in enumerate(args.at):
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
             if args.output and len(args.at) == 1:
@@ -237,7 +244,7 @@ def main() -> int:
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
             tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp
-            fc = (f"[0:v]scale={half}:-2{tcs}[a];[1:v]scale={half}:-2{tcs}[b];"
+            fc = (f"[0:v]{lab}scale={half}:-2{tcs}[a];[1:v]{lab2}scale={half}:-2{tcs}[b];"
                   f"[a][b]scale2ref=w=iw:h=ih[a2][b2];[a2][b2]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-ss", f"{sec:.3f}", "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", out]
@@ -254,7 +261,7 @@ def main() -> int:
                 # several frames, or -o given as a stem/prefix without an image extension
                 out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", out]
+            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", "-i", args.input, "-vf", f"{lab}scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", out]
             run(cmd)
             outputs.append(out)
     else:
@@ -279,7 +286,7 @@ def main() -> int:
         seek = 0.0 if frames_avail < 4 else step / 2
         # the seek resets pts to 0, so the burned-in timecode gets the seek added back
         tc_sheet = tc.replace(timecode_filter(font_prefix), timecode_filter(font_prefix, seek)) if seek else tc
-        vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',scale={tile_w}:-2{tc_sheet},"
+        vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',{lab}scale={tile_w}:-2{tc_sheet},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
         cmd = ffmpeg_base() + ["-ss", f"{seek:.6f}", "-i", args.input, "-vf", vf, "-frames:v", "1", out]
         run(cmd)

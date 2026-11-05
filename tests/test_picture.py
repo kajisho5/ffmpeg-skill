@@ -3142,6 +3142,193 @@ class DrawnColourTests(unittest.TestCase):
                 self.assertEqual(outs[0][1], outs[1][1], f"{tool}: the chroma beside the drawing changed")
 
 
+class ColourAuditGTests(unittest.TestCase):
+    """#410 (audit G): the colour paths #159/#325/#332-#334 left. Each output is decoded with the matrix
+    and range its own tags name (RgbAndStillConversionTests._patches), or read as RGB (a PNG, a GIF),
+    and the patches are compared with the colours the source holds.
+
+    Full range comes in two shapes: `yuvj` (H.264/HEVC/JPEG), which every scale here converts by
+    name, and a plain format tagged `pc`, which is how VP9 and AV1 full range and any 10-bit full
+    range decode. The fixtures use FFV1 in Matroska for the second: always built, lossless, and it
+    decodes as plain yuv420p/yuv420p10le tagged pc, as VP9 does."""
+
+    COLOURS = RgbAndStillConversionTests.COLOURS
+    GREY = (128, 128, 128)
+
+    @classmethod
+    def setUpClass(cls):
+        encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE, text=True).stdout
+        if "libx264" not in encoders:
+            raise unittest.SkipTest("this ffmpeg build has no libx264")
+        cls.dir = OUT / "audit_g"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        d, bar = cls.dir, RgbAndStillConversionTests.BAR
+        row = b"".join(bytes(cls.COLOURS[x // bar]) for x in range(3 * bar))
+        (d / "bars.ppm").write_bytes(b"P6\n%d %d\n255\n" % (3 * bar, bar) + row * bar)
+        q = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error")
+        sh(*q, "-i", d / "bars.ppm", "-pix_fmt", "rgb24", d / "bars.png")
+        # 2 s of the bars at 384x128, the same noise under each for multicam's alignment
+        loop = (*q, "-loop", "1", "-framerate", "25", "-i", d / "bars.png", "-f", "lavfi", "-i",
+                "anoisesrc=d=2:seed=7:amplitude=0.3", "-t", "2")
+        bars = "scale=384:128:flags=neighbor:out_color_matrix=bt709:out_range={},format={}"
+        x264 = ("-c:v", "libx264", "-preset", "ultrafast", "-crf", "1", "-pix_fmt", "yuv420p")
+        bt709 = ("-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709")
+        sh(*loop, "-vf", bars.format("tv", "yuv420p"), *x264, "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
+           "-c:a", "aac", "-shortest", d / "tv.mp4")
+        # untagged: BT.709 pixels relabelled unknown (from 7.1 the scale's own label would reach x264)
+        sh(*loop, "-vf", bars.format("tv", "yuv420p") + ",setparams=colorspace=unknown", *x264, "-c:a", "aac", "-shortest",
+           d / "un.mp4")
+        for name, fmt in (("pc", "yuv420p"), ("pc10", "yuv420p10le")):
+            sh(*loop, "-vf", bars.format("pc", fmt), "-c:v", "ffv1", "-color_range", "pc", *bt709, "-c:a", "pcm_s16le",
+               "-shortest", d / f"{name}.mkv")
+            v = probe(str(d / f"{name}.mkv"))["video"]
+            assert (v["pix_fmt"], v.get("color_range")) == (fmt, "pc"), v
+        # a 1280x720 full-range grey main for graphics.py's templates
+        sh(*q, "-f", "lavfi", "-i", "color=c=0x808080:s=1280x720:r=25:d=3", "-f", "lavfi", "-i", "sine=d=3", "-vf",
+           "scale=out_color_matrix=bt709:out_range=pc,format=yuv420p", "-c:v", "ffv1", "-color_range", "pc", *bt709,
+           "-c:a", "pcm_s16le", "-shortest", d / "bigpc.mkv")
+
+    def _assert(self, label, got, want, mean=3.0, worst=8.0):
+        diffs = [abs(a - b) for g, w in zip(got, want) for a, b in zip(g, w)]
+        shown = [tuple(round(c) for c in g) for g in got]
+        self.assertLess(sum(diffs) / len(diffs), mean, f"{label}: {shown} != {want}")
+        self.assertLess(max(diffs), worst, f"{label}: {shown} != {want}")
+
+    def _video(self, label, out, rects, want, t=0.5, **tol):
+        self._assert(label, RgbAndStillConversionTests._patches(out, rects, t), want, **tol)
+
+    @staticmethod
+    def _rgb(path, rects):
+        """Mean RGB of each rect of an RGB picture (a PNG, a GIF's first frame)."""
+        w = int(probe(str(path))["video"]["width"])
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        out = []
+        for x0, y0, x1, y1 in rects:
+            px = [raw[(y * w + x) * 3:(y * w + x) * 3 + 3] for y in range(y0, y1) for x in range(x0, x1)]
+            out.append(tuple(sum(p[i] for p in px) / len(px) for i in range(3)))
+        return out
+
+    def test_color_lut_identity_returns_the_picture(self):
+        """Item 1: lut3d takes RGB, and libavfilter's own conversions around it disagreed (in by the
+        frame's BT.709 tag, out by swscale's BT.601 default), so an identity LUT shifted every colour
+        (2FAE4E -> 249A4B). Both legs are now explicit BT.709, as the picture is."""
+        cube = self.dir / "identity.cube"
+        cube.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        for src in ("tv.mp4", "un.mp4", "pc.mkv"):
+            for strength in ("1", "0.5"):
+                out = self.dir / f"lut_{Path(src).stem}_{strength}.mp4"
+                doc = json.loads(script("color.py", self.dir / src, "--lut", cube, "--lut-strength", strength, "--fast", "--json",
+                                        "-o", out).stdout)
+                self.assertIn("scale=in_color_matrix=bt709,format=gbrpf32le", doc["commands"][-1])
+                with self.subTest(source=src, strength=strength):
+                    self._video("color --lut", out, RgbAndStillConversionTests._bars(0, 0, 2), self.COLOURS)
+
+    def test_color_correct_defaults_leave_grey_grey(self):
+        """Item 7: colortemperature at 6500 K, documented as unchanged, was always in the chain and
+        tinted grey 808080 to 7E7E7B. At 6500 the term is left out."""
+        out = self.dir / "correct_defaults.mp4"
+        doc = json.loads(script("color.py", self.dir / "tv.mp4", "--correct", "--fast", "--json", "-o", out).stdout)
+        self.assertNotIn("colortemperature", doc["commands"][-1])
+        grey = self.dir / "grey.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x808080:s=128x64:r=25:d=1",
+           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "1", "-pix_fmt", "yuv420p", grey)
+        out = self.dir / "correct_grey.mp4"
+        script("color.py", grey, "--correct", "--fast", "-o", out)
+        self._video("color --correct", out, [(16, 16, 112, 48)], [self.GREY], mean=1.5, worst=2.5)
+        out = self.dir / "correct_warm.mp4"
+        script("color.py", grey, "--correct", "--temperature", "5000", "--fast", "-o", out)
+        r, _g, b = RgbAndStillConversionTests._patches(out, [(16, 16, 112, 48)])[0]
+        self.assertGreater(r - b, 10, "--temperature still reaches colortemperature when it is not 6500")
+
+    def test_mixing_tools_take_a_full_range_clip_to_limited_range(self):
+        """Item 2: concat, xfade, xstack and overlay mix samples, so a full-range clip in a plain
+        format beside a limited one was shown in the other's range (C03028 -> C9251B). Every SDR picture
+        they mix is now taken to limited range first. Every order, every clip."""
+        d, rects = self.dir, RgbAndStillConversionTests._bars(0, 0, 2)
+        for a, b in (("pc.mkv", "tv.mp4"), ("tv.mp4", "pc.mkv"), ("tv.mp4", "pc10.mkv")):
+            tag = f"{Path(a).stem}_{Path(b).stem}"
+            out = d / f"join_{tag}.mp4"
+            script("join.py", d / a, d / b, "--transition", "none", "--fast", "-o", out)
+            for t, name in ((0.5, a), (2.5, b)):
+                with self.subTest(tool="join.py", order=(a, b), clip=name):
+                    self._video("join", out, rects, self.COLOURS, t)
+            out = d / f"grid_{tag}.mp4"
+            script("grid.py", d / a, d / b, "--cols", "2", "--rows", "1", "--cell-width", "384", "--cell-height", "128",
+                   "--label", "none", "--fast", "-o", out)
+            for c, name in enumerate((a, b)):
+                with self.subTest(tool="grid.py", order=(a, b), cell=name):
+                    self._video("grid", out, RgbAndStillConversionTests._bars(384 * c, 0, 2), self.COLOURS)
+            out = d / f"broll_{tag}.mp4"
+            script("broll.py", d / a, "--insert", d / b, "--at", "0.5", "--duration", "1", "--fast", "-o", out)
+            for t, name in ((0.2, a), (1.0, b)):
+                with self.subTest(tool="broll.py", order=(a, b), clip=name):
+                    self._video("broll", out, rects, self.COLOURS, t)
+            out = d / f"multicam_{tag}.mp4"
+            script("multicam.py", d / a, d / b, "--switch", "0-1:0,1-2:1", "--fast", "-o", out)
+            for t, name in ((0.5, a), (1.5, b)):
+                with self.subTest(tool="multicam.py", order=(a, b), clip=name):
+                    self._video("multicam", out, rects, self.COLOURS, t)
+
+    def test_a_colour_drawn_on_a_full_range_picture_lands_in_its_range(self):
+        """Items 3 and 4: before FFmpeg 7.1 the drawing filters take the range from the pixel format
+        alone, so on a plain-format full-range picture black was drawn as 101010 and white as EBEBEB,
+        and rgb_island() converted a 10-bit full-range picture (or one 6.1's scale had already made
+        limited) with the wrong range, oversaturating a colour. 7.1+ draws in the link's range."""
+        for src in ("pc.mkv", "pc10.mkv"):
+            for colour, want in (("black", (0, 0, 0)), ("white", (255, 255, 255)), ("0x2878C8", (40, 120, 200))):
+                out = self.dir / f"pad_{Path(src).stem}_{colour}.mp4"
+                script("pad.py", self.dir / src, "--end", "0.5", "--color", colour, "--fast", "-o", out)
+                with self.subTest(source=src, colour=colour):
+                    self._video("pad.py --end", out, [(20, 20, 364, 108)], [want], 2.2)
+                out = self.dir / f"fit_{Path(src).stem}_{colour}.mp4"
+                script("fit.py", self.dir / src, "--width", "384", "--height", "384", "--fit", "pad", "--pad-color", colour,
+                       "--fast", "-o", out)
+                with self.subTest(tool="fit.py", source=src, colour=colour):
+                    self._video("fit.py", out, [(20, 20, 364, 100)] + RgbAndStillConversionTests._bars(0, 128, 2),
+                                [want] + self.COLOURS)
+
+    def test_converted_layers_on_a_full_range_main_land_in_its_range(self):
+        """Item 5: graphics.py's boxes and bars with chroma, emoji PNGs and overlay --image are RGB
+        layers converted to limited-range BT.709; on a full-range main they were composited in its
+        range (30B050 -> 37A757). The main is taken to limited range under them."""
+        d = self.dir
+        colour = (40, 120, 200)
+        brand = d / "brand_2878C8.json"
+        brand.write_text(json.dumps({"colors": {"primary": "2878C8", "background": "2878C8", "text": "FFFFFF"}}), encoding="utf-8")
+        out = d / "gfx_lower_third_pc.mp4"
+        doc = json.loads(script("graphics.py", d / "bigpc.mkv", "--template", "lower-third", "--brand", brand, "--name", "N",
+                                "--start", "0", "--end", "3", "--fast", "--json", "-o", out).stdout)
+        m = re.search(r"s=(\d+)x(\d+).*?s=(\d+)x\2.*?,(\d+)\)\)\S*?:y=(\d+)", " ".join(doc["commands"]))
+        _bw, bh, aw, x, y = (int(g) for g in m.groups())
+        self._video("graphics.py lower-third", out,
+                    [(x + 2, y + 4, x + aw - 2, y + bh - 4), (x + aw + 2, y + 4, x + aw + 14, y + bh - 4), (20, 20, 300, 200)],
+                    [colour, DrawnColourTests._blend(colour, 0.85), self.GREY], 1.5)
+
+    def test_rgb_views_of_an_untagged_source_read_it_as_bt709(self):
+        """Item 6: look.py's frames and contact sheet, scenes.py --sheet and export.py --preset gif
+        convert to RGB, and that conversion read an untagged source as BT.601 (C03028 -> B31F28) while
+        every encode here takes it as BT.709. Its frames are now labelled BT.709 first."""
+        d, src = self.dir, self.dir / "un.mp4"
+
+        def bars(scale, x=0, y=0):
+            return [(int(x + (k * 128 + 16) * scale), int(y + 16 * scale), int(x + ((k + 1) * 128 - 16) * scale),
+                     int(y + 112 * scale)) for k in range(3)]
+        frame = d / "look_un.png"
+        script("look.py", src, "--at", "0.5", "--width", "384", "--no-timecode", "-o", frame)
+        self._assert("look.py --at", self._rgb(frame, bars(1)), self.COLOURS)
+        sheet = d / "look_un_sheet.png"
+        script("look.py", src, "--tiles", "1x1", "--width", "384", "--no-timecode", "-o", sheet)
+        self._assert("look.py sheet", self._rgb(sheet, bars(1, 2, 2)), self.COLOURS)
+        scenes = d / "scenes_un.png"
+        script("scenes.py", src, "--sheet", scenes, "--no-timecode", "--overwrite")
+        self._assert("scenes.py --sheet", self._rgb(scenes, bars(1280 / 384, 2, 2)), self.COLOURS)
+        gif = d / "export_un.gif"
+        script("export.py", src, "--preset", "gif", "-o", gif)
+        # bayer-dithered to a 256-colour palette: a looser bound (the BT.601 read was 13-24 off)
+        self._assert("export.py --preset gif", self._rgb(gif, bars(480 / 384)), self.COLOURS, mean=4.0, worst=10.0)
+
+
 class ScriptFontTests(unittest.TestCase):
     """1.12: which script text is written in, and a font file that actually covers it."""
 

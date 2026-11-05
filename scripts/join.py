@@ -42,7 +42,7 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
-from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, place_output, refuse, sibling_temp, draws_chroma, drawn_chain, label_chain, matrix_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import warn
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
@@ -721,13 +721,16 @@ def main() -> int:
     chroma_pad = args.fit != "crop" and draws_chroma([args.pad_color], line)
     if any(convert) or chroma_pad:
         convert = [c or label_chain(m, line) for c, m in zip(convert, metas)]
+    # concat/xfade mix samples: a full-range clip (VP9/AV1 full range, 10-bit pc) beside a limited
+    # one is taken to limited range first, or it was shown with the other's range (#410)
+    convert = [c + range_chain(m, line) for c, m in zip(convert, metas)]
 
     def geo(i: int) -> str:
         if args.fit == "crop":
             return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
         pad = f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color="
         return (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                + drawn_chain(pad + args.pad_color, metas[i], [args.pad_color], pad + "black", line_meta=line,
+                + drawn_chain(pad + args.pad_color, as_limited(metas[i]), [args.pad_color], pad + "black", line_meta=line,
                               tag=f"pad{i}", labelled=True))
     # the audio-only join keeps the widest layout; the video join used to force stereo and
     # silently dropped the centre/LFE of 5.1 material. A pending input's stub has no measured
