@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.4
+
+_Automated release: version and notes generated from pull requests merged since 3.1.3._
+
 ### Fixed
 
 - A PQ (HDR10) re-encode on FFmpeg before 7.0 wrote the picture without the source's mastering
@@ -16,6 +22,8 @@
 - A plain `notes` line was written to stderr as given, so a file name with a line break in it
   (`batch.py`'s list of items that did not verify) could still open a new line there; notes are now
   escaped as error messages and warnings are (#400).
+- HDR10 static metadata reaches libx265 and SVT-AV1, and its loss is measured (#412)
+- docs: README and the Pages docs layout carry the v3 brand (#407)
 
 ## 3.1.3
 
