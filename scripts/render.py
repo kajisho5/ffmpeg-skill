@@ -351,6 +351,7 @@ def render_pack(names: List[str], args) -> int:
     rows: List[Dict[str, Any]] = []
     outputs: List[str] = []
     failed: List[str] = []
+    stopped: List[Dict[str, Any]] = []  # destinations a timeout stopped: {kind, exit_code}
     for name in names:
         # the destination decides the container: an audio-only destination in a pack must not be
         # handed a .mp4 name the single-template form would never have written (review 12)
@@ -394,6 +395,9 @@ def render_pack(names: List[str], args) -> int:
         outputs.append(out)
         if not ok:
             failed.append(name)
+            err = doc.get("error") or {}
+            if err.get("kind") in ("timeout", "interrupted"):
+                stopped.append({"kind": err["kind"], "exit_code": int(doc.get("exit_code") or proc.returncode or 1)})
     pack = str(outdir / f"{stem}_pack.md")
     lines = [f"# Social pack — {stem}", "",
              "| platform | file | size | duration | check |", "|---|---|---|---|---|"]
@@ -410,8 +414,11 @@ def render_pack(names: List[str], args) -> int:
         Path(pack).write_text("\n".join(lines) + "\n", encoding="utf-8")
     info(("[dry-run] would write " if STATE.dry_run else "wrote ") + pack)
     if failed:
+        # a destination that was stopped makes the pack a stopped run: its kind and exit code (124,
+        # 130/143), as a stage's are render.py's (docs/contract.md); otherwise a verification failure
         die(f"pack: {len(failed)} of {len(rows)} destinations failed: {', '.join(failed)}",
-            kind="verification", output=pack, dry_run=STATE.dry_run, pack=rows, outputs=outputs)
+            code=stopped[0]["exit_code"] if stopped else 1, kind=stopped[0]["kind"] if stopped else "verification",
+            output=pack, dry_run=STATE.dry_run, pack=rows, outputs=outputs)
     emit(pack, pack=rows, outputs=outputs, stages=["pack"],
          verification=[{"step": "check", "ok": r["ok"], "platform": r["platform"]} for r in rows])
     return 0
@@ -611,6 +618,10 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
             # is about its own file, while the delivery is on disk (#415)
             why = why.replace("; nothing was written", "") + f" ({kept_clause()})"
             extra_fields.setdefault("output", kept_deliverables()[-1])
+        elif err.get("kind") in ("timeout", "interrupted") and doc.get("output") and os.path.isfile(str(doc["output"])):
+            # the stage was stopped after writing its own deliverable and kept it (export.py's
+            # --normalize pass): its message says so, and the file is this run's output too
+            extra_fields.setdefault("output", str(doc["output"]))
         die(f"{script} failed: {why}",
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, error_extra=error_extra, **extra_fields)
     _LAST_DOC.clear()
@@ -964,8 +975,10 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     if proc.returncode != 0 or doc.get("status") != "completed":
         err = doc.get("error") or {}
         error_extra = absorb_stage(tool, doc)  # the tool's reason/details and records ride along
+        # the tool's exit code is the plan's (124 timeout, 130/143 interrupted), as sh() passes a stage's on
         die(f"{tool} failed while executing the plan: {err.get('message') or proc.stderr.strip()[-300:]}",
-            kind=err.get("kind", "ffmpeg"), plan=path, tool=tool, error_extra=error_extra, **_stage_failure_hw(doc))
+            code=int(doc.get("exit_code") or proc.returncode or 1), kind=err.get("kind", "ffmpeg"), plan=path, tool=tool,
+            error_extra=error_extra, **_stage_failure_hw(doc))
     absorb_stage(tool, doc)  # the tool's GPU facts (fell back and why, ran on VideoToolbox) and diagnostics reach this result
     output = doc.get("output") or plan.get("output")
     check_result = None

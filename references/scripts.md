@@ -1241,12 +1241,13 @@ above the cap is clamped with a note, not refused, and both `jobs` and
   A `.ffskill_cache.json` that does not parse is started empty with a
   `batch_cache_reset` warning and a line in `output_dir/.ffskill-audit.jsonl`.
 - Each item's intermediates go in a new directory of its own under the work
-  directory (`<workdir>/<index>-<stem>-<random>/`), removed with them when the item
+  directory (`<workdir>/<index>-<random>/`), removed with them when the item
   ends, whatever the outcome (3.1.6, #415): step file names are stem-derived, so
   `clip.mp4` and `clip.mov` sharing a directory, or a rerun meeting an earlier
   run's files, were refused as someone else's. A step that names no `{out}`
   (`check.py`) passes its input on; when the last step writes nothing, the last
-  file written is delivered as the item's output. A recipe in which no step names
+  file written is delivered as the item's output, under its own extension (`.mp4`
+  for a video source) unless the recipe sets `ext`. A recipe in which no step names
   `{out}` (a QC pass: `check.py`/`probe.py` on every file) writes nothing: each
   row has `output: null`, a note says so, and `ok` follows the steps' exit codes.
   Final names that differ only in case are a

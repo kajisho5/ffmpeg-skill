@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import HW_FORCED_ENV, add_hw_orchestrator_args, env_hw, stop_children
+from _common.runner import HW_FORCED_ENV, _OutputLock, add_hw_orchestrator_args, env_hw, stop_children
 from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
 
 HERE = Path(__file__).resolve().parent
@@ -182,7 +182,18 @@ def final_path(src: Path, recipe: Dict[str, Any], outdir: Path) -> Path:
     # detection of its own; see one_pass()'s pre-flight check, which uses this same computation
     # to catch that before any file is actually processed (and the earlier one silently clobbered).
     final_ext = recipe.get("ext") or src.suffix.lstrip(".") or "mp4"
+    steps = recipe.get("steps") or []
+    if not recipe.get("ext") and not recipe.get("project") and steps and not step_writes(steps[-1]) and not writes_nothing(recipe):
+        # the last step writes nothing, so what is delivered is an intermediate: its name says its
+        # container (a .webm source's fit.py step writes MP4, which must not be named .webm)
+        final_ext = intermediate_ext(src)
     return outdir / f"{src.stem}{suffix}.{final_ext}"
+
+
+def intermediate_ext(src: Path) -> str:
+    """The extension of an item's intermediate step files: the source's own for an audio file,
+    else mp4 (the tools' encoders write x264/AAC, which .webm and friends do not take)."""
+    return src.suffix.lstrip(".") if src.suffix.lower() in (".wav", ".mp3", ".m4a", ".flac") else "mp4"
 
 
 def step_writes(step: Any) -> bool:
@@ -206,18 +217,33 @@ def deliver(src: str, final: Path) -> None:
     if STATE.dry_run:
         log(f"  [dry-run] would deliver the last written file to {final}")
         return
-    if final.exists() and not STATE.overwrite:
-        raise ItemError({"step": None, "tool": None, "kind": "input", "reason": "output_exists",
-                         "message": f"refusing to overwrite existing output {str(final)!r}: pass --overwrite to replace it"})
-    try:
-        os.replace(src, final)
-    except OSError:
-        import shutil
+
+    def locked(msg: str, hint: str, details: Dict[str, Any]) -> None:
+        raise ItemError({"step": None, "tool": None, "kind": "input", "reason": "output_locked",
+                         "message": msg, "hint": hint, "details": details})
+    # under the output lock every tool's write holds, so the existence check and the move are one
+    # step for another run delivering or writing the same path
+    with _OutputLock(str(final), on_locked=locked):
+        if final.exists() and not STATE.overwrite:
+            raise ItemError({"step": None, "tool": None, "kind": "input", "reason": "output_exists",
+                             "message": f"refusing to overwrite existing output {str(final)!r}: pass --overwrite to replace it"})
         try:
-            shutil.copyfile(src, final)
-        except OSError as exc:
-            raise ItemError({"step": None, "tool": None, "kind": "output",
-                             "message": f"could not deliver {src} to {final}: {exc}"})
+            os.replace(src, final)
+        except OSError:
+            # another filesystem: copy beside the final path and rename, so a copy that fails part
+            # way never leaves a truncated file where the caller's was
+            import shutil
+            tmp = final.with_name(f".{final.stem}.ffskill-{os.getpid()}-{threading.get_ident()}{final.suffix}")
+            try:
+                shutil.copyfile(src, tmp)
+                os.replace(tmp, final)
+            except OSError as exc:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise ItemError({"step": None, "tool": None, "kind": "output",
+                                 "message": f"could not deliver {src} to {final}: {exc}"})
     log(f"  delivered the last written file to {final}")
 
 
@@ -247,7 +273,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             proj["clips"].append({})
         proj["clips"][idx]["src"] = str(src.resolve())
         proj["output"] = str(final.resolve())
-        pj = work / f"{src.stem}_project.json"
+        pj = work / "project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
         ok, _doc = run_step(["render.py", str(pj)], budget())
         step_docs = [("render", _doc)]
@@ -267,7 +293,8 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         cut_reasons = []
         for i, step in enumerate(steps):
             last = i == len(steps) - 1
-            out = str(final) if last else str(work / f"{src.stem}_step{i}.{'mp4' if src.suffix.lower() not in ('.wav', '.mp3', '.m4a', '.flac') else src.suffix.lstrip('.')}")
+            # the item's directory is its own, so the name needs no stem (a long one overflowed it)
+            out = str(final) if last else str(work / f"step{i}.{intermediate_ext(src)}")
             # a step that names no {out} (check.py, probe.py) writes nothing: the next step reads
             # what this one read, and when it is the last, the last file written is delivered (#415)
             writes = step_writes(step)
@@ -509,7 +536,8 @@ def main() -> int:
             left there as someone else's (#415); parallel items had their own directories since
             1.17, serial ones now do too."""
             import tempfile
-            return Path(tempfile.mkdtemp(prefix=f"{i}-{src.stem}-", dir=str(work)))
+            # no stem in the name: a stem near the 255-byte limit made the directory name too long
+            return Path(tempfile.mkdtemp(prefix=f"{i}-", dir=str(work)))
 
         def run_item(i: int, src: Path) -> Dict[str, Any]:
             """process() in the item's own work directory, which goes when it ends, however it ends."""

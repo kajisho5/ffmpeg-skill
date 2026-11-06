@@ -351,7 +351,9 @@ def main() -> int:
         notes.append("source is %s (%s). This preset outputs SDR BT.709 tags without converting it; run color.py --to-sdr first for correct colours." % (kind, meta["video"].get("hdr_format")))
         warn(notes[-1], "colour_not_converted", preset=args.preset, hdr_format=meta["video"].get("hdr_format"))
     has_audio = bool(meta.get("audio"))
-    output = args.output or default_output(args.input, args.preset, p["ext"])
+    # copy keeps the source's container, so its default name keeps the source's extension (as
+    # metadata.py's does): default_output()'s .webm -> .mp4 is for the re-encoding presets
+    output = args.output or default_output(args.input, args.preset, p["ext"] or Path(args.input).suffix.lstrip(".") or None)
     out_ext = Path(output).suffix.lstrip(".").lower()
 
     vf: List[str] = []
@@ -470,6 +472,10 @@ def main() -> int:
         dropped = _run_keeping_non_av(cmd, output, sub_codecs, len(data)) if (subs or data) else []
         if not (subs or data):
             run(cmd + [output])
+    if not STATE.dry_run:
+        # the export is on disk: a stop in the reads and the --normalize pass that follow keeps it,
+        # and says so (#415)
+        mark_delivered(output)
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
@@ -502,7 +508,6 @@ def main() -> int:
                 # a private name: <stem>_loudnorm.<ext> is loudness.py's own default output, so a
                 # real file of that name next to the export was overwritten and renamed away (review 7)
                 tmp = str(Path(output).with_name(f".{Path(output).stem}.normalize-{os.getpid()}{Path(output).suffix}"))
-                mark_delivered(output)  # a stop from here on keeps the export and says so (#415)
                 proc = run_tool([str(HERE / "loudness.py"), output, "-I", f"{spec['lufs']:g}", "--tp", f"{spec['tp']:g}", "-o", tmp, "--json"] + child_args())
                 try:
                     child = json.loads(proc.stdout)

@@ -68,8 +68,10 @@ exists. When a decision changes, edit the entry in the same PR.
 
 ## Time limits
 
-- **`FFMPEG_SKILL_TIMEOUT=0` (or `--timeout 0`) means no limit anywhere**, including the outer
-  ceiling on sibling-script runs and the MCP dispatch. 0 is the documented "off" value, chosen so
+- **`FFMPEG_SKILL_TIMEOUT=0` (or `--timeout 0`) means no limit on any encode or tool run**, including
+  the outer ceiling on sibling-script runs and the MCP dispatch, and ffprobe calls through `run()`;
+  the short read-only queries outside `run()` (the version, stream-list and encoder/filter-list
+  reads) keep their 120 s ceiling, since a hang there is a stall, not a long job. 0 is the documented "off" value, chosen so
   a genuinely multi-hour job can opt out; the default (1800 s) is what protects an unattended
   agent. Code: `_common.child_limit()`, `_common._limit_for()`, `mcp/server.py` `timeout_from_call()`
   (a raw `argv` list's `--timeout` sets the same ceiling as the structured `timeout` key). Test:
@@ -2776,8 +2778,8 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   video and AAC sound, which WebM does not take, so `clip_loudnorm.webm` failed in the muxer after a
   dry run that said completed. Of the two consistent answers (an `.mp4` default, or VP9/Opus encodes
   for a WebM target), the default name is one line in `default_output()` and changes no encoder; a
-  caller who names `-o x.webm` still gets the muxer's refusal. metadata.py, a stream copy, keeps the
-  source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Test:
+  caller who names `-o x.webm` still gets the muxer's refusal. metadata.py and `export.py --preset
+  copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Test:
   `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`.
 - **`waveform.py --title/--srt/--text --dry-run` says its text sizes are placeholders.** The title
   and captions are drawn by graphics.py and caption.py on the visualisation render, which a dry run
@@ -2788,9 +2790,11 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   files were `<work>/<stem>_step<i>.<ext>` and never removed, so `clip.mp4` and `clip.mov` in one
   serial batch refused each other's, and any later run that processed an item again was refused on
   the file an earlier run left. Each item now gets a new directory under the work directory
-  (`<index>-<stem>-<random>`, serial and `--jobs` alike; 1.17's flat serial layout is gone),
+  (`<index>-<random>`, holding `step<i>.<ext>`; serial and `--jobs` alike; 1.17's flat serial layout is gone),
   removed with its contents when the item ends however it ends. Code: `batch.main()`
-  `item_work()`/`run_item()`. Test: `Issue415Tests.test_batch_items_own_their_intermediates`.
+  `item_work()`/`run_item()`. Tests: `Issue415Tests.test_batch_items_own_their_intermediates`,
+  `Issue415Tests.test_batch_a_stem_near_the_name_limit_still_runs` (no stem in either name, so a
+  stem whose input and output names fit in 255 bytes fits here too).
 - **batch.py: a step without `{out}` passes its input on, and the last file written is
   delivered.** A recipe ending in `check.py` marked the item `ok` with an output nothing wrote; its
   cache entry then missed (`output_missing`) on every run. A step that names no `{out}` writes
@@ -2799,10 +2803,17 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   no step names `{out}` (a QC pass: `check.py` or `probe.py` over a folder) is a legitimate batch
   that writes nothing: its rows carry `output: null`, a note says so, `ok` follows the steps' exit
   codes, its cache entries claim no file (so a rerun is served, not missed as `output_missing`),
-  and the final-name collision check does not apply. Code: `batch.step_writes()`,
+  and the final-name collision check does not apply. The delivered intermediate keeps its own
+  extension (`.mp4` for a video source) unless the recipe sets `ext`: a `.webm` source's `fit.py`
+  step writes MP4, which named `clip_out.webm` would be mislabelled. The move into place holds the
+  output lock every tool's write holds, and a move across filesystems copies beside the final path
+  and renames, so a failed copy never truncates the file it replaces. Code: `batch.step_writes()`,
   `batch.writes_nothing()`, `batch.deliver()`, `batch.cached_output_changed()`. Tests:
   `Issue415Tests.test_batch_delivers_the_last_written_file_when_the_last_step_writes_none`,
-  `Issue415Tests.test_batch_a_recipe_that_writes_nothing_reports_no_output`.
+  `Issue415Tests.test_batch_a_recipe_that_writes_nothing_reports_no_output`,
+  `Issue415Tests.test_batch_a_delivered_intermediate_keeps_its_container_extension`,
+  `Issue415Tests.test_batch_delivery_holds_the_output_lock`,
+  `Issue415Tests.test_batch_delivery_across_filesystems_never_truncates_the_output`.
 - **batch.py's final-name collision check ignores case.** `Clip_out.mp4` and `clip_out.mp4` are
   one file on macOS's and Windows' default filesystems; the check refuses them on every platform,
   so a recipe that works on Linux does not overwrite an item on a Mac. Test:
@@ -2821,14 +2832,21 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   the step that was stopped, and the document carries it as `output`; the file is kept rather than
   removed because with `--overwrite` it has already replaced the caller's. export.py's
   `--normalize` failure exits with the loudness child's code (124, 130/143), as render.py and
-  waveform.py already did. Code: `_common.runner.mark_delivered()`, `kept_clause()`,
-  `export.main()`, `render.sh()`/`main()`. Tests:
+  waveform.py already did. export.py counts its file delivered as soon as it is written, so a stop
+  in the reads after the write (the output probe, the loudness measurement) says the same. render.py
+  passes a stopped child's code on from an executed plan and from a pack destination too (the pack
+  is then `kind: timeout`, not `verification`), and an export stage stopped in `--normalize` hands
+  the delivery it kept to render's `output`. Code: `_common.runner.mark_delivered()`, `kept_clause()`,
+  `export.main()`, `render.sh()`/`main()`/`execute_plan()`/`render_pack()`. Tests:
   `Issue415Tests.test_export_normalize_timeout_keeps_its_exit_code_and_says_the_export_is_kept`,
+  `Issue415Tests.test_export_a_stopped_read_after_the_write_says_the_export_is_kept`,
+  `Issue415Tests.test_render_passes_a_stopped_childs_exit_code_and_kept_output_on`,
   `Issue415Tests.test_a_stopped_run_names_the_deliverable_it_keeps`.
 - **An ffprobe call is limited to `min(120 s, --timeout)`.** `_limit_for()` gave every probe through
   `run()` a fixed 120 s whatever `--timeout` said (the encoder-list read already took the lower
   one), and the version reads 120 s too; with `--timeout 2` a hung ffprobe held the tool for two
-  minutes. `--timeout 0` leaves them unlimited, as before. A probe that reaches
+  minutes. `--timeout 0` leaves the probes through `run()` unlimited, as before; the version,
+  stream-list and encoder/filter-list reads outside it keep 120 s (`_probe_limit()`). A probe that reaches
   its own 120 s ceiling no longer advises raising `--timeout`, which cannot raise it. Code:
   `_common.runner._limit_for()`, `_probe_limit()`, `_timed_out()`. Test:
   `Issue415Tests.test_ffprobe_through_run_is_bounded_by_a_lower_timeout`.

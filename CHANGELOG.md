@@ -37,6 +37,12 @@
   loudness pass timed out or was interrupted; it now exits 124 / 130 / 143 like render.py (#415).
 - ffprobe calls ignored a `--timeout` below 120 s, and a probe that hit its own 120 s ceiling advised
   raising `--timeout`, which could not help. Probes now take `min(120 s, --timeout)` (#415).
+- Follow-ups from the #428 review: `export.py --preset copy` keeps a `.webm` source's extension;
+  `render.py` exits 124/130/143 when an executed plan's tool or a pack destination is stopped, and
+  carries the delivery an export stage kept as `output`; `export.py` says the export is kept when a
+  read after the write is stopped; `batch.py` names a delivered intermediate by its own container
+  (`.mp4`), delivers under the output lock through a sibling temp across filesystems, and handles
+  stems near the 255-byte name limit (#415).
 
 ## 3.1.7
 

@@ -14,7 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 
 INSTALL_HINTS = {
@@ -931,10 +931,13 @@ class _OutputLock:
     the hour ran from the lock's creation, so a legitimate run longer than an hour lost its lock
     to a second writer. A takeover is recorded (`diagnostics.fallbacks`, stderr, and the audit
     log); so is running without a lock where none can be created (`diagnostics.warnings`)."""
-    def __init__(self, output: str) -> None:
+    def __init__(self, output: str, on_locked: "Optional[Callable[[str, str, Dict[str, Any]], None]]" = None) -> None:
+        # on_locked(message, hint, details): a caller that must not exit (batch.py's item worker)
+        # raises its own error for a held lock instead of the refusal below
         self.path: Optional[str] = None
         self.fd: Optional[int] = None
         self.output = output
+        self.on_locked = on_locked
         if output == "-" or output.startswith("pipe:") or output.startswith("-"):
             return
         d, base = os.path.split(os.path.abspath(output))
@@ -967,12 +970,14 @@ class _OutputLock:
                         taken = holder
                         continue
                 name = os.path.basename(self.path)[1:-len(".ffskill-lock")]
-                refuse("input", "output_locked",
-                       f"another run is writing {name!r} right now (lock {self.path}"
-                       + (f", pid {holder['pid']}" if holder.get("pid") else "") + "); wait for it or choose a different --output/-o path",
-                       hint=("wait for that run, or choose another -o path; if pid "
-                             f"{holder.get('pid')} is not an ffmpeg-skill run, delete {self.path}"),
-                       lock=self.path, output=os.path.abspath(self.output), **{k: v for k, v in holder.items() if k != "stale"})
+                msg = (f"another run is writing {name!r} right now (lock {self.path}"
+                       + (f", pid {holder['pid']}" if holder.get("pid") else "") + "); wait for it or choose a different --output/-o path")
+                hint = ("wait for that run, or choose another -o path; if pid "
+                        f"{holder.get('pid')} is not an ffmpeg-skill run, delete {self.path}")
+                details = dict(lock=self.path, output=os.path.abspath(self.output), **{k: v for k, v in holder.items() if k != "stale"})
+                if self.on_locked:
+                    self.on_locked(msg, hint, details)
+                refuse("input", "output_locked", msg, hint=hint, **details)
             except OSError as exc:
                 # an unlockable location (a read-only directory surfaces elsewhere): the run goes
                 # on without a lock, and says so -- two runs could now both write this output

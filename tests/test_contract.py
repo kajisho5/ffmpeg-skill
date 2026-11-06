@@ -2526,7 +2526,7 @@ class ContractTests(unittest.TestCase):
             shim = self.out("hang_shim")
             shim.mkdir(exist_ok=True)
             (shim / "ffmpeg").write_text('#!/bin/sh\nfor a in "$@"; do last="$a"; done\n'
-                                         'case "$last" in *timeout_hang.mp4) exec sleep 60;; esac\n'
+                                         'case "$last" in *timeout_hang.mp4) printf partial > "$last" || exit 1; exec sleep 60;; esac\n'
                                          f'exec "{shutil.which("ffmpeg")}" "$@"\n', encoding="utf-8")
             (shim / "ffmpeg").chmod(0o755)
             hung = self.out("timeout_hang.mp4")
@@ -6843,7 +6843,7 @@ class Issue415Tests(unittest.TestCase):
         except AssertionError:
             self.skipTest("this ffmpeg cannot write VP9/Opus WebM")
         for name, argv, default in (("loudness", [], "w_loudnorm.mp4"), ("fit", ["--width", "120", "--height", "120"], "w_fit.mp4"),
-                                    ("metadata", ["--title", "x"], "w_meta.webm")):
+                                    ("metadata", ["--title", "x"], "w_meta.webm"), ("export", ["--preset", "copy"], "w_copy.webm")):
             with self.subTest(tool=name):
                 plan = json.loads(tool(name, src, *argv, "--dry-run", "--json").stdout)
                 self.assertEqual(Path(plan["output"]).name, default)
@@ -6917,6 +6917,80 @@ class Issue415Tests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("collision", json.loads(proc.stdout)["error"]["message"])
 
+    def test_batch_a_delivered_intermediate_keeps_its_container_extension(self):
+        """A recipe ending in check.py delivered the MP4 its fit.py step wrote under the source's
+        extension (clip_out.mov here, clip_out.webm for a WebM source) (#428 review)."""
+        folder, recipe = self.batch("b_ext", ["clip.mov"], [["fit.py", "{in}", "--width", "120", "--height", "120", "-o", "{out}"],
+                                                             ["check.py", "{in}"]])
+        row = json.loads(tool("batch", folder, "--recipe", recipe, "--fast", "--json").stdout)["results"][0]
+        self.assertTrue(row["ok"], row.get("error"))
+        self.assertEqual(Path(row["output"]).name, "clip_out.mp4")
+        self.assertTrue(Path(row["output"]).exists())
+
+    def test_batch_a_stem_near_the_name_limit_still_runs(self):
+        """The item directory was <index>-<stem>-<random> and the step files <stem>_step<i>: a stem
+        whose input and output names fit in 255 bytes overflowed both (#428 review)."""
+        stem = "s" * 246
+        folder, recipe = self.batch("b_long", [stem + ".mp4"], [["cut.py", "{in}", "--start", "0.5", "--end", "3", "-o", "{out}"],
+                                                               ["fit.py", "{in}", "--width", "120", "--height", "120", "-o", "{out}"]])
+        try:
+            (folder / ("x" * 255)).touch()
+            (folder / ("x" * 255)).unlink()
+        except OSError:
+            self.skipTest("this filesystem does not take 255-byte names")
+        row = json.loads(tool("batch", folder, "--recipe", recipe, "--fast", "--json", check=False).stdout)["results"][0]
+        self.assertTrue(row["ok"], row.get("error"))
+        self.assertTrue(Path(row["output"]).exists())
+
+    def test_batch_delivery_holds_the_output_lock(self):
+        """deliver() checked and moved without the output lock every tool's write holds, so a run
+        writing the same path at that moment was not refused (#428 review)."""
+        folder, recipe = self.batch("b_lock", ["a.mp4"], [["fit.py", "{in}", "--width", "120", "--height", "120", "-o", "{out}"],
+                                                          ["check.py", "{in}"]])
+        (folder / "out").mkdir()
+        lock = folder / "out" / ".a_out.mp4.ffskill-lock"
+        lock.write_text(str(os.getpid()), encoding="utf-8")  # a live holder inside its deadline
+        try:
+            row = json.loads(tool("batch", folder, "--recipe", recipe, "--fast", "--json", check=False).stdout)["results"][0]
+        finally:
+            lock.unlink()
+        self.assertFalse(row["ok"])
+        self.assertEqual(row["error"].get("reason"), "output_locked", row["error"])
+        self.assertFalse((folder / "out" / "a_out.mp4").exists())
+
+    def test_batch_delivery_across_filesystems_never_truncates_the_output(self):
+        """A move that fails (another filesystem) fell back to copying straight over the final
+        path: a copy that failed part way left the caller's file truncated (#428 review)."""
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("batch_under_test", str(Path(_common.__file__).parent.parent / "batch.py"))
+        batch = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(batch)
+        d = self.dir("b_xdev")
+        src, final = d / "step0.mp4", d / "a_out.mp4"
+        src.write_bytes(b"new" * 1000)
+        final.write_bytes(b"the caller's file")
+        real_replace = os.replace
+
+        def replace(a, b):
+            if str(a) == str(src):
+                raise OSError(18, "Invalid cross-device link")
+            return real_replace(a, b)
+
+        def copyfile(a, b):
+            Path(b).write_bytes(b"ne")
+            raise OSError(28, "No space left on device")
+        saved = (batch.STATE.dry_run, batch.STATE.overwrite)
+        try:
+            batch.STATE.dry_run, batch.STATE.overwrite = False, True
+            with mock.patch("os.replace", replace), mock.patch("shutil.copyfile", copyfile):
+                with self.assertRaises(batch.ItemError):
+                    batch.deliver(str(src), final)
+        finally:
+            batch.STATE.dry_run, batch.STATE.overwrite = saved
+        self.assertEqual(final.read_bytes(), b"the caller's file")
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["a_out.mp4", "step0.mp4"], "no temp copy or lock is left")
+
     # -------------------------------------------------------------- process handling
     def test_a_classified_failure_is_not_retried_by_a_copy_or_stream_fallback(self):
         """#389's rule (a full disk fails the second encode the same way) reached
@@ -6956,6 +7030,51 @@ class Issue415Tests(unittest.TestCase):
         self.assertNotIn("nothing was written", doc["error"]["message"])
         self.assertIn("kept", doc["error"]["message"])
         self.assertEqual(doc["output"], str(out))
+
+    def test_export_a_stopped_read_after_the_write_says_the_export_is_kept(self):
+        """The probe of the written export (and the loudness read) ran before the export was
+        marked delivered: a timeout there said "nothing was written" with the file on disk (#428 review)."""
+        out = self.tmp / "probe_kept.mp4"
+        env = self.shim("ffprobe", 'for a in "$@"; do last="$a"; done\n'
+                                   'case "$last" in *probe_kept.mp4) exec sleep 60;; esac\n'
+                                   f'exec "{shutil.which("ffprobe")}" "$@"\n')
+        proc = tool("export", self.src, "--preset", "reels", "--fast", "--timeout", "8", "-o", out, "--json", env=env, check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((proc.returncode, doc["error"]["kind"]), (124, "timeout"), doc["error"])
+        self.assertTrue(out.exists())
+        self.assertNotIn("nothing was written", doc["error"]["message"])
+        self.assertEqual(doc["output"], str(out))
+
+    def test_render_passes_a_stopped_childs_exit_code_and_kept_output_on(self):
+        """An executed plan whose tool timed out exited 1; a pack destination that timed out made
+        the pack an exit-1 verification failure; an export stage stopped in --normalize left the
+        delivery it kept out of render's document (#428 review)."""
+        d = self.dir("render_stop")
+        shutil.copy(self.src, d / "src.mp4")
+        env = self.shim("ffmpeg", 'for a in "$@"; do last="$a"; done\n'
+                                  'case "$last" in *plan_hang.mp4|*src_x.mp4|*.normalize-*) exec sleep 60;; esac\n'
+                                  f'exec "{shutil.which("ffmpeg")}" "$@"\n')
+        with self.subTest(path="plan"):
+            plan = d / "plan.json"
+            tool("fit", d / "src.mp4", "--width", "120", "--height", "120", "-o", d / "plan_hang.mp4", "--plan", plan)
+            proc = tool("render", plan, "--timeout", "8", "--json", env=env, check=False)
+            doc = json.loads(proc.stdout)
+            self.assertEqual((proc.returncode, doc["exit_code"], doc["error"]["kind"]), (124, 124, "timeout"), doc["error"])
+        with self.subTest(path="pack"):
+            proc = tool("render", d / "src.mp4", "--template", "x,linkedin", "--fast", "--timeout", "8", "--json", env=env, check=False)
+            doc = json.loads(proc.stdout)
+            self.assertEqual((proc.returncode, doc["error"]["kind"]), (124, "timeout"), doc["error"])
+            self.assertEqual([r["platform"] for r in doc["pack"]], ["x", "linkedin"])
+        with self.subTest(path="normalize"):
+            proj = d / "proj.json"
+            proj.write_text(json.dumps({"output": "norm.mp4", "clips": [{"src": "src.mp4"}],
+                                        "export": {"preset": "reels", "normalize": True}}), encoding="utf-8")
+            proc = tool("render", proj, "--fast", "--timeout", "8", "--json", env=env, check=False)
+            doc = json.loads(proc.stdout)
+            self.assertEqual((proc.returncode, doc["error"]["kind"]), (124, "timeout"), doc["error"])
+            self.assertTrue((d / "norm.mp4").exists())
+            self.assertEqual(doc.get("output"), str(d / "norm.mp4"))
+            self.assertIn("kept", doc["error"]["message"])
 
     def test_a_stopped_run_names_the_deliverable_it_keeps(self):
         """The shared interrupt and timeout messages said "nothing was written" after a step that
