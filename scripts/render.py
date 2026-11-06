@@ -75,7 +75,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, found_exe
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, remember_written
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
 import subprocess
 from _contract import CONTRACT_VERSION
@@ -351,6 +351,7 @@ def render_pack(names: List[str], args) -> int:
     rows: List[Dict[str, Any]] = []
     outputs: List[str] = []
     failed: List[str] = []
+    stopped: List[Dict[str, Any]] = []  # destinations a timeout stopped: {kind, exit_code}
     for name in names:
         # the destination decides the container: an audio-only destination in a pack must not be
         # handed a .mp4 name the single-template form would never have written (review 12)
@@ -394,6 +395,9 @@ def render_pack(names: List[str], args) -> int:
         outputs.append(out)
         if not ok:
             failed.append(name)
+            err = doc.get("error") or {}
+            if err.get("kind") in ("timeout", "interrupted"):
+                stopped.append({"kind": err["kind"], "exit_code": child_exit_code(doc, proc.returncode)})
     pack = str(outdir / f"{stem}_pack.md")
     lines = [f"# Social pack — {stem}", "",
              "| platform | file | size | duration | check |", "|---|---|---|---|---|"]
@@ -410,8 +414,11 @@ def render_pack(names: List[str], args) -> int:
         Path(pack).write_text("\n".join(lines) + "\n", encoding="utf-8")
     info(("[dry-run] would write " if STATE.dry_run else "wrote ") + pack)
     if failed:
+        # a destination that was stopped makes the pack a stopped run: its kind and exit code (124,
+        # 130/143), as a stage's are render.py's (docs/contract.md); otherwise a verification failure
         die(f"pack: {len(failed)} of {len(rows)} destinations failed: {', '.join(failed)}",
-            kind="verification", output=pack, dry_run=STATE.dry_run, pack=rows, outputs=outputs)
+            code=stopped[0]["exit_code"] if stopped else 1, kind=stopped[0]["kind"] if stopped else "verification",
+            output=pack, dry_run=STATE.dry_run, pack=rows, outputs=outputs)
     emit(pack, pack=rows, outputs=outputs, stages=["pack"],
          verification=[{"step": "check", "ok": r["ok"], "platform": r["platform"]} for r in rows])
     return 0
@@ -577,6 +584,8 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
             # child's document standing, which a caller reading _LAST_DOC would misattribute.
             _LAST_DOC.clear()
             _LAST_DOC["cached"] = True
+            if not STATE.dry_run:
+                remember_written(dest)  # placed by this run, as a stage's own write would be (#415)
             return dest
         CACHE["misses"].append(stage)
         _refuse_uncached_earlier_stage(stage)
@@ -603,12 +612,27 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         extra_fields = {"hint": err["hint"]} if err.get("hint") else {}
         error_extra = absorb_stage(Path(script).stem, doc)  # the stage's reason/details and records ride along
         extra_fields.update(_stage_failure_hw(doc))
-        die(f"{script} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
+        why = err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]
+        if kept_deliverables() and err.get("kind") in ("timeout", "interrupted"):
+            # a stage after the delivery (chapters, check): the stage's own "nothing was written"
+            # is about its own file, while the delivery is on disk (#415)
+            why = why.replace("; nothing was written", "") + f" ({kept_clause()})"
+            extra_fields.setdefault("output", kept_deliverables()[-1])
+        elif err.get("kind") in ("timeout", "interrupted") and doc.get("output") and os.path.isfile(str(doc["output"])):
+            # the stage was stopped after writing its own deliverable and kept it (export.py's
+            # --normalize pass): its message says so, and the file is this run's output too
+            extra_fields.setdefault("output", str(doc["output"]))
+        die(f"{script} failed: {why}",
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, error_extra=error_extra, **extra_fields)
     _LAST_DOC.clear()
     _LAST_DOC.update(doc if isinstance(doc, dict) else {})
     absorb_stage(Path(script).stem, doc)  # a stage's GPU facts (ran on VideoToolbox, fell back and why) and its diagnostics reach this result
     out_path = str(doc.get("output") or "")
+    if not STATE.dry_run:
+        # A file a stage of this run wrote is this run's, not someone else's: the chapters stage
+        # places its tagged copy over the export's delivery, which the output guard would
+        # otherwise refuse as an existing file without --overwrite (#415).
+        remember_written(out_path, dest)
     if key:
         cache_store(stage, key, out_path or (dest or ""), time.time() - started, doc)
     return out_path
@@ -951,8 +975,10 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     if proc.returncode != 0 or doc.get("status") != "completed":
         err = doc.get("error") or {}
         error_extra = absorb_stage(tool, doc)  # the tool's reason/details and records ride along
+        # the tool's exit code is the plan's (124 timeout, 130/143 interrupted), as sh() passes a stage's on
         die(f"{tool} failed while executing the plan: {err.get('message') or proc.stderr.strip()[-300:]}",
-            kind=err.get("kind", "ffmpeg"), plan=path, tool=tool, error_extra=error_extra, **_stage_failure_hw(doc))
+            code=child_exit_code(doc, proc.returncode), kind=err.get("kind", "ffmpeg"), plan=path, tool=tool,
+            error_extra=error_extra, **_stage_failure_hw(doc))
     absorb_stage(tool, doc)  # the tool's GPU facts (fell back and why, ran on VideoToolbox) and diagnostics reach this result
     output = doc.get("output") or plan.get("output")
     check_result = None
@@ -1611,6 +1637,8 @@ def main() -> int:
             place_output(current, output)
         info(("[dry-run] would copy" if STATE.dry_run else "copied") + f" final stage to {output}")
     current = output
+    if not STATE.dry_run:
+        mark_delivered(output)  # the chapters and check stages run on it: a stop from here keeps it, and says so (#415)
 
     # ---- chapters (metadata.py on the delivered file: streams copied, markers written)
     ch = proj.get("chapters")
@@ -1648,6 +1676,13 @@ def main() -> int:
             exit_code = 1
         elif check_result.get("error") or check_result.get("status") == "failed":
             err = check_result.get("error")
+            if isinstance(err, dict) and err.get("kind") in ("timeout", "interrupted"):
+                # stopped, not failed: the run exits with check.py's own code (124, 130/143), as a
+                # stage that stopped does, and says the delivery it had written is kept (#415)
+                why = str(err.get("message") or "").replace("; nothing was written", "")
+                die(f"check.py failed: {why} ({kept_clause()})",
+                    code=int(check_result.get("exit_code") or err.get("exit_code") or 1), kind=err["kind"],
+                    stage="check.py", output=output, stages=stages_done)
             info(f"check: could not run check.py — {err.get('message') if isinstance(err, dict) else err}")
             exit_code = 1
         else:

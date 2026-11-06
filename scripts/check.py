@@ -32,6 +32,7 @@ the row set is unchanged.
 """
 import argparse
 import json
+import os
 import re
 import sys
 from fractions import Fraction
@@ -164,6 +165,12 @@ def main() -> int:
 
     # read before anything is measured and again after: a file replaced mid-check is not the one graded
     identity_before = None if dry_run_input_pending(args.input) else file_identity(args.input)
+    if identity_before is None and STATE.dry_run and not os.path.exists(args.input):
+        # a render/batch plan's earlier stage would write this file: there is nothing to grade yet,
+        # and grading the probe's empty answer divided by a 0 height
+        emit(None, platform=args.platform, checks=[], failed=0, warnings=0, ok=False,
+             notes=[f"[dry-run] {args.input} does not exist yet, so nothing was checked"])
+        return 0
     meta = probe(args.input)
     v, a = meta.get("video") or {}, meta.get("audio") or {}
     rows: List[Dict[str, Any]] = []

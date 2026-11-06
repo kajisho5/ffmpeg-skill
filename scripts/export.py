@@ -38,6 +38,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List
 
+from _common.runner import child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
@@ -183,6 +184,9 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
         attempt = run(cmd + extra + [output], check=False)
         if attempt.returncode == 0:
             return dropped
+        # a full disk or a missing encoder fails every rung the same way: that error, not a
+        # fallback that blames the subtitles and encodes again (#415, #389's rule)
+        fail_if_classified(attempt)
         error = " | ".join([ln.strip() for ln in (attempt.stderr or "").splitlines() if ln.strip()][-3:])[-500:]
         going = rungs[n + 1][1]
         record_fallback(f"{os.path.basename(output)} could not hold the source's {' and '.join(t for t in ('subtitle', 'data') if t in going)} "
@@ -347,7 +351,9 @@ def main() -> int:
         notes.append("source is %s (%s). This preset outputs SDR BT.709 tags without converting it; run color.py --to-sdr first for correct colours." % (kind, meta["video"].get("hdr_format")))
         warn(notes[-1], "colour_not_converted", preset=args.preset, hdr_format=meta["video"].get("hdr_format"))
     has_audio = bool(meta.get("audio"))
-    output = args.output or default_output(args.input, args.preset, p["ext"])
+    # copy keeps the source's container, so its default name keeps the source's extension (as
+    # metadata.py's does): default_output()'s .webm -> .mp4 is for the re-encoding presets
+    output = args.output or default_output(args.input, args.preset, p["ext"] or Path(args.input).suffix.lstrip(".") or None)
     out_ext = Path(output).suffix.lstrip(".").lower()
 
     vf: List[str] = []
@@ -466,6 +472,10 @@ def main() -> int:
         dropped = _run_keeping_non_av(cmd, output, sub_codecs, len(data)) if (subs or data) else []
         if not (subs or data):
             run(cmd + [output])
+    if not STATE.dry_run:
+        # the export is on disk: a stop in the reads and the --normalize pass that follow keeps it,
+        # and says so (#415)
+        mark_delivered(output)
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
@@ -508,7 +518,12 @@ def main() -> int:
                     err = child.get("error") or {}
                     if os.path.exists(tmp):
                         os.remove(tmp)
-                    die(f"--normalize: loudness.py failed: {err.get('message') or proc.stderr.strip()[-300:]}",
+                    # the child's "nothing was written" is about its own temp file; this run's export is
+                    # on disk, and the child's exit code (124 timeout, 130/143 interrupted) is the
+                    # run's, as render.py and waveform.py pass a stage's on (#415)
+                    why = (err.get("message") or proc.stderr.strip()[-300:]).replace("; nothing was written", "")
+                    die(f"--normalize: loudness.py failed: {why} ({kept_clause()})",
+                        code=child_exit_code(child, proc.returncode) if proc.returncode else 1,
                         kind=err.get("kind") or "ffmpeg", output=output, hint=err.get("hint"))
                 os.replace(tmp, output)
                 m = measure_loudness(output)

@@ -204,6 +204,11 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `execution` (writes a new artifact) | cut, fit, caption, overlay, graphics, multicam, audio, join, color, export, render, batch |
 | `verification` (checks or shows an artifact) | check, look, verify, report |
 
+`batch` writes one artifact per input only when a recipe step names `{out}` (or the recipe is a
+render project): a recipe in which no step does (a QC pass of `check.py`/`probe.py`) writes none,
+and each `results` row carries `written: false` beside its usual `output` path, which stays a
+string (#415).
+
 ### Verification policy
 
 The workflow in `SKILL.md` is "probe first, verify last". The contract states it per tool:
@@ -881,6 +886,14 @@ caller never parses the prose:
 
 A tool that runs another (`render.py` stages and plans) forwards the child's `reason` and
 `details` in its own `error`. Both are absent on a failure that is not a refusal, like `hint`.
+
+A `timeout` or `interrupted` failure exits 124, or 130/143, whether the tool or a child tool it ran
+was stopped (`export.py --normalize`'s loudness pass, `render.py`'s stages, check, executed plan and
+pack destinations, `waveform.py`'s title and captions pass the child's code on). Its message ends "nothing was written" only when
+that is so: once a tool has written its deliverable and runs a further step on it
+(`export.py --normalize`, `render.py`'s chapters and check stages), the message names the file,
+says it is kept without the step that was stopped, and the document carries it as `output`
+(3.1.6, #415).
 
 **Diagnostics.** What a run decided on its own -- a warning, a fallback it took, a step it
 skipped -- is recorded as it happens (a stderr line too) and lands in the document as
