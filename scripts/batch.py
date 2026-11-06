@@ -59,6 +59,30 @@ def file_key(path: Path) -> str:
     return h.hexdigest()
 
 
+def side_inputs_key(recipe: Dict[str, Any]) -> str:
+    """The files a recipe's steps name besides {in}/{out} (check.py --compare REF, a LUT, a logo),
+    keyed by their own content: editing or removing one is a change the cache must see, or a QC
+    pass is served its old verdict against a reference that changed or is gone (#428 review).
+    Read on every pass, so a --watch loop sees the edit too."""
+    h = hashlib.sha1(usedforsecurity=False)
+    for step in recipe.get("steps") or []:
+        for arg in step[1:] if isinstance(step, list) else []:
+            if not isinstance(arg, str) or "{" in arg:
+                continue
+            value = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
+            if value.startswith("-") or not value:
+                continue
+            path = Path(value)
+            try:
+                if path.is_file():
+                    h.update(f"{value}\0{file_key(path)}\0".encode())
+                    continue
+            except OSError:
+                pass
+            h.update(f"{value}\0-\0".encode())  # absent now: different from when it existed
+    return h.hexdigest()[:8]
+
+
 def recipe_key(recipe: Dict[str, Any]) -> str:
     # A "project" recipe is just {"project": "<path>", "clip_key": N} -- the actual settings
     # (export preset, captions, everything) live in the file at that path, not in this dict.
@@ -430,10 +454,10 @@ def main() -> int:
                 die(f"recipe step names a script that isn't one of this skill's own tools: {name!r} "
                     f"(must be a bare filename like 'silence.py', found in scripts/)")
         if writes_nothing(recipe):
-            # a QC batch (check.py / probe.py on every file): its rows carry output null, and its
+            # a QC batch (check.py / probe.py on every file): its rows carry written: false, and its
             # cache entries claim no file, so they are served rather than missed as output_missing (#415)
             note("no recipe step names {out}: the steps only read each file, so no output is written "
-                 "(each row's output is null)")
+                 "(each row says written: false; its output path is not created)")
     outdir = Path(recipe.get("output_dir") or (folder / "out"))
     if not outdir.is_absolute():
         outdir = folder / outdir
@@ -605,8 +629,9 @@ def main() -> int:
         slots: "List[Optional[Dict[str, Any]]]" = [None] * len(files)
         pending: List[tuple] = []
         cache_miss: Dict[int, Dict[str, Any]] = {}
+        pass_key = rkey + side_inputs_key(recipe)
         for i, src in enumerate(files):
-            key = f"{file_key(src)}:{rkey}"
+            key = f"{file_key(src)}:{pass_key}"
             hit = cache.get(key)
             if isinstance(hit, dict) and not args.force:
                 why = cached_output_changed(hit)

@@ -43,7 +43,9 @@
   read after the write is stopped; `batch.py` names a delivered intermediate by its own container
   (`.mp4`), delivers under the output lock through a sibling temp across filesystems, refuses an
   existing output in `--dry-run` too, handles stems near the 255-byte name limit, and refuses an
-  `output_dir` that is the input folder (which let `suffix: ""` with `--overwrite` replace the sources); `check.py
+  `output_dir` that is the input folder (which let `suffix: ""` with `--overwrite` replace the sources);
+  its cache key covers the files a step names (`check.py --compare REF`, a LUT), so editing or
+  removing one reruns the items; `check.py
   --dry-run` on a not-yet-written file no longer crashes; a child killed by a signal exits 128 + the
   signal (#415).
 

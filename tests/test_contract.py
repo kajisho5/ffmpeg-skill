@@ -6912,6 +6912,22 @@ class Issue415Tests(unittest.TestCase):
         self.assertTrue(all(r.get("cached") for r in again["results"]), again["results"])
         self.assertNotIn("cache_miss", json.dumps(again["results"]))
 
+    def test_batch_cache_sees_a_change_to_a_file_a_step_names(self):
+        """A QC pass of check.py --compare REF was served from the cache after REF changed or
+        went away: only the source and the recipe text were in the key (#428 review)."""
+        folder, recipe = self.batch("b_ref", ["a.mp4"], [])
+        ref = folder / "ref.mp4"
+        shutil.copy(self.src, ref)
+        recipe.write_text(json.dumps({"glob": "a.mp4", "output_dir": "out",
+                                      "steps": [["check.py", "{in}", "--compare", str(ref)]]}), encoding="utf-8")
+        tool("batch", folder, "--recipe", recipe, "--json", check=False)
+        again = json.loads(tool("batch", folder, "--recipe", recipe, "--json", check=False).stdout)
+        self.assertTrue(again["results"][0].get("cached"), again["results"][0])
+        ref.unlink()
+        gone = json.loads(tool("batch", folder, "--recipe", recipe, "--json", check=False).stdout)
+        self.assertFalse(gone["results"][0].get("cached"), gone["results"][0])
+        self.assertFalse(gone["results"][0]["ok"], gone["results"][0])
+
     def test_batch_final_names_that_differ_only_in_case_collide(self):
         """Clip_out.mp4 and clip_out.mp4 are one file on macOS and Windows."""
         folder, recipe = self.batch("b_case", ["Clip.mp4", "clip.mov"],
