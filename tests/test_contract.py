@@ -6917,6 +6917,20 @@ class Issue415Tests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("collision", json.loads(proc.stdout)["error"]["message"])
 
+    def test_batch_refuses_a_final_path_that_is_one_of_its_inputs(self):
+        """output_dir "sub/.." is the input folder under another name: with suffix "" each final
+        path was the source itself, and --overwrite replaced the inputs (#428 review)."""
+        folder, recipe = self.batch("b_self", ["clip.mp4"], [["fit.py", "{in}", "--width", "120", "--height", "120", "-o", "{out}"]],
+                                    output_dir="sub/..", suffix="")
+        (folder / "sub").mkdir(exist_ok=True)
+        before = (folder / "clip.mp4").read_bytes()
+        for extra in (["--dry-run"], ["--overwrite"]):
+            with self.subTest(run=extra):
+                proc = tool("batch", folder, "--recipe", recipe, "--json", *extra, check=False)
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertIn("is the input folder", json.loads(proc.stdout)["error"]["message"])
+        self.assertEqual((folder / "clip.mp4").read_bytes(), before)
+
     def test_batch_a_delivered_intermediate_keeps_its_container_extension(self):
         """A recipe ending in check.py delivered the MP4 its fit.py step wrote under the source's
         extension (clip_out.mov here, clip_out.webm for a WebM source) (#428 review)."""

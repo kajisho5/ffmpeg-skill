@@ -42,7 +42,8 @@
   carries the delivery an export stage kept as `output`; `export.py` says the export is kept when a
   read after the write is stopped; `batch.py` names a delivered intermediate by its own container
   (`.mp4`), delivers under the output lock through a sibling temp across filesystems, refuses an
-  existing output in `--dry-run` too, and handles stems near the 255-byte name limit; `check.py
+  existing output in `--dry-run` too, handles stems near the 255-byte name limit, and refuses an
+  `output_dir` that is the input folder (which let `suffix: ""` with `--overwrite` replace the sources); `check.py
   --dry-run` on a not-yet-written file no longer crashes; a child killed by a signal exits 128 + the
   signal (#415).
 

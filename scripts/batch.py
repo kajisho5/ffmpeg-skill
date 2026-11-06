@@ -432,6 +432,14 @@ def main() -> int:
     outdir = Path(recipe.get("output_dir") or (folder / "out"))
     if not outdir.is_absolute():
         outdir = folder / outdir
+    # resolved, so an alias of the input folder ("sub/..", a symlink) is recognised as one: the
+    # input scan below excludes outdir's files by parentage, and the input check by resolved path
+    outdir = outdir.resolve()
+    if outdir == folder:
+        # the scan skips files under outdir, so it found nothing here, and with suffix "" a
+        # final path was the source itself, which --overwrite replaced (#428 review)
+        die(f"output_dir {recipe.get('output_dir')!r} is the input folder {folder}: its outputs would mix with "
+            "or replace the batch inputs -- set an \"output_dir\" outside it (the default is out/)", kind="input")
     work = Path(args.work) if args.work else outdir / ".work"
     # the children refuse an output whose directory does not exist, under --dry-run too, so the
     # directories are created for the plan as well -- and removed again afterwards when a dry
@@ -532,6 +540,16 @@ def main() -> int:
             die(f"{len(collisions)} output filename collision(s) in this batch (names that differ only in case are one "
                 f"file on macOS and Windows) -- rename the sources, "
                 f"or add a distinguishing \"suffix\"/\"ext\" per run, or split into separate globs: {detail}")
+        # A final path that is one of the inputs would replace a source -- an output_dir that is
+        # the input folder under another name ("sub/..") with suffix "" -- and --overwrite does
+        # not license that (#428 review). A recipe that writes nothing delivers no file.
+        if not writes_nothing(recipe):
+            inputs = {str(p.resolve()).casefold() for p in files}
+            hits = [s for s in files if str(final_path(s, recipe, outdir).resolve()).casefold() in inputs]
+            if hits:
+                die(f"{len(hits)} final output path(s) would replace a batch input ({', '.join(s.name for s in hits)}); "
+                    "the output_dir is the input folder -- set a different \"output_dir\" or a non-empty \"suffix\"",
+                    kind="input")
         def item_work(i: int, src: Path) -> Path:
             """Where this item's intermediates go: a new directory of its own under the work
             directory, removed with everything in it when the item ends (run_item()). The step
