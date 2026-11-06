@@ -517,7 +517,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("ffmpeg", caps["required"])
         self.assertIn("ffprobe", caps["required"])
         for cap in caps["required"] + caps["optional"]:
-            self.assertTrue(re.fullmatch(r"ffmpeg|ffprobe|encoder:\w+|filter:\w+|bsf:\w+|external:\w+", cap), cap)
+            self.assertTrue(re.fullmatch(r"ffmpeg|ffprobe|encoder:[\w-]+|filter:\w+|bsf:\w+|external:\w+", cap), cap)
         # every encoder / filter / bsf named in the contract is referenced by some script
         source = "\n".join(p.read_text(encoding="utf-8") for p in script_sources())
         for cap in caps["required"] + caps["optional"]:
