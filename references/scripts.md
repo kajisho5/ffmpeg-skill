@@ -1249,7 +1249,7 @@ above the cap is clamped with a note, not refused, and both `jobs` and
   file written is delivered as the item's output, under its own extension (`.mp4`
   for a video source) unless the recipe sets `ext`. A recipe in which no step names
   `{out}` (a QC pass: `check.py`/`probe.py` on every file) writes nothing: each
-  row has `output: null`, a note says so, and `ok` follows the steps' exit codes.
+  row has `written: false` (`output` keeps its path string), a note says so, and `ok` follows the steps' exit codes.
   Final names that differ only in case are a
   collision (they are one file on macOS and Windows).
 - `--watch` composes: each pass is parallel, passes are sequential.

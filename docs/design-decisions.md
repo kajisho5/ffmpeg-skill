@@ -2801,7 +2801,8 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   nothing, so the next step reads what it read, and when the last step writes nothing the last
   written file is moved to the item's output (under the same `--overwrite` rule). A recipe in which
   no step names `{out}` (a QC pass: `check.py` or `probe.py` over a folder) is a legitimate batch
-  that writes nothing: its rows carry `output: null`, a note says so, `ok` follows the steps' exit
+  that writes nothing: its rows carry `written: false` (`output` stays the final-path string: a
+  `--json` key never changes type within a major), a note says so, `ok` follows the steps' exit
   codes, its cache entries claim no file (so a rerun is served, not missed as `output_missing`),
   and the final-name collision check does not apply. The delivered intermediate keeps its own
   extension (`.mp4` for a video source) unless the recipe sets `ext`: a `.webm` source's `fit.py`

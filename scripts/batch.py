@@ -206,9 +206,14 @@ def writes_nothing(recipe: Dict[str, Any]) -> bool:
     return not recipe.get("project") and not any(step_writes(st) for st in recipe.get("steps") or [])
 
 
-def row_output(src: Path, recipe: Dict[str, Any], outdir: Path) -> "Optional[str]":
-    """An item's output path for its row, or None for a recipe that writes nothing."""
-    return None if writes_nothing(recipe) else str(final_path(src, recipe, outdir))
+def row_output(src: Path, recipe: Dict[str, Any], outdir: Path) -> Dict[str, Any]:
+    """An item's output fields for its row: `output` is always the final path, a string as it has
+    been since 1.x (a --json key never changes type within a major), and a recipe that writes
+    nothing adds `written: false` (#415, #428 review)."""
+    fields: Dict[str, Any] = {"output": str(final_path(src, recipe, outdir))}
+    if writes_nothing(recipe):
+        fields["written"] = False
+    return fields
 
 
 def deliver(src: str, final: Path) -> None:
@@ -325,7 +330,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
                 deliver(cur, final)
             except ItemError as exc:
                 ok, failure = False, exc.error
-    result: Dict[str, Any] = {"file": str(src), "output": row_output(src, recipe, outdir), "ok": ok, "seconds": round(time.time() - t0, 1)}
+    result: Dict[str, Any] = {"file": str(src), **row_output(src, recipe, outdir), "ok": ok, "seconds": round(time.time() - t0, 1)}
     if failure:
         result["error"] = failure
     # `ok` is "every step completed" (design-decisions: a spec miss a tool cannot fix is completed +
@@ -369,7 +374,7 @@ def cached_output_changed(hit: Dict[str, Any]) -> "Optional[Dict[str, Any]]":
     output_missing, output_changed (size or mtime differ: something replaced or edited it) or
     entry_unverifiable (an entry written by 2.10.11 or earlier recorded no identity, so nothing can say
     the file is the one it describes)."""
-    if "output" in hit and hit["output"] is None:
+    if hit.get("written") is False or ("output" in hit and hit["output"] is None):
         return None  # a recipe that writes nothing (check.py over a folder): no file to have changed
     out = str(hit.get("output") or "")
     now = output_identity(out) if out else None
@@ -579,10 +584,10 @@ def main() -> int:
             with cache_lock:
                 # this run just rewrote r["output"]: an entry under another key (another recipe,
                 # the other GPU setting) that names the same file now describes bytes that are gone
-                for stale in [k for k, v in cache.items() if r["output"] and k != key and isinstance(v, dict) and v.get("output") == r["output"]]:
+                for stale in [k for k, v in cache.items() if r["output"] and r.get("written", True) and k != key and isinstance(v, dict) and v.get("output") == r["output"]]:
                     del cache[stale]
                 # the output as this run left it: a later hit is served only while it is unchanged
-                cache[key] = dict(r, output_identity=output_identity(r["output"]) if r["output"] else None)
+                cache[key] = dict(r, output_identity=output_identity(r["output"]) if r["output"] and r.get("written", True) else None)
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above
                 # then silently treats as "no cache" (a ValueError -> {}), discarding every prior
@@ -620,7 +625,7 @@ def main() -> int:
 
         def timed_out_row(src: Path) -> "Dict[str, Any]":
             timed_out["hit"] = True
-            return {"file": str(src), "output": row_output(src, recipe, outdir),
+            return {"file": str(src), **row_output(src, recipe, outdir),
                     "ok": False, "seconds": 0.0, "skipped": "timeout"}
 
         def failed_row(src: Path, exc: BaseException) -> "Dict[str, Any]":
@@ -639,13 +644,13 @@ def main() -> int:
                 error = {"step": None, "tool": None, "exception": exc.__class__.__name__,
                          "message": (str(exc) or exc.__class__.__name__)[:300]}
             log(f"    failed: {error['message']}")
-            return {"file": str(src), "output": row_output(src, recipe, outdir),
+            return {"file": str(src), **row_output(src, recipe, outdir),
                     "ok": False, "verified": False, "seconds": 0.0, "error": error}
 
         def interrupted_row(src: Path, started: bool, r: "Optional[Dict[str, Any]]" = None) -> "Dict[str, Any]":
             """An item the interrupt reached: `interrupted: true` when it was running (its steps
             were stopped), `skipped: "interrupted"` when it had not started."""
-            row = dict(r) if r else {"file": str(src), "output": row_output(src, recipe, outdir), "seconds": 0.0}
+            row = dict(r) if r else {"file": str(src), **row_output(src, recipe, outdir), "seconds": 0.0}
             row.update(ok=False, verified=False)
             if started:
                 row["interrupted"] = True

@@ -23,7 +23,7 @@
 - `batch.py` marked an item `ok` with an output that was never written when the last step names no
   `{out}` (a recipe ending in `check.py`), and its cache entry then missed on every run. Such a step
   passes its input on and the last written file is delivered. A recipe in which no step writes (a QC
-  pass with `check.py` or `probe.py`) reports each row with `output: null` and a note, and its
+  pass with `check.py` or `probe.py`) reports each row with `written: false` and a note, and its
   cache entries no longer miss as `output_missing` on every run (#415).
 - `batch.py`'s final-name collision check missed names that differ only in case, which are one file
   on macOS and Windows (#415).

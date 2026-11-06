@@ -6895,14 +6895,17 @@ class Issue415Tests(unittest.TestCase):
         self.assertTrue(again["results"][0].get("cached"), again["results"][0])
 
     def test_batch_a_recipe_that_writes_nothing_reports_no_output(self):
-        """A QC batch (every file through probe.py / check.py) writes no file: its rows say output
-        null and a note says why, ok follows the steps, and a rerun is served from the cache rather
+        """A QC batch (every file through probe.py / check.py) writes no file: its rows say written
+        false and a note says why, ok follows the steps, and a rerun is served from the cache rather
         than missed as output_missing on every run."""
         folder, recipe = self.batch("b_qc", ["a.mp4", "b.mp4"], [["probe.py", "{in}"]])
         plan = json.loads(tool("batch", folder, "--recipe", recipe, "--json", "--dry-run").stdout)
         self.assertEqual(plan["status"], "completed")
         doc = json.loads(tool("batch", folder, "--recipe", recipe, "--json").stdout)
-        self.assertEqual([(r["ok"], r["output"]) for r in doc["results"]], [(True, None), (True, None)])
+        # written: false says no file was written; output stays a string, its type in every 3.x
+        # release (a --json key never changes type within a major, #428 review)
+        self.assertEqual([(r["ok"], r.get("written")) for r in doc["results"]], [(True, False), (True, False)])
+        self.assertTrue(all(isinstance(r["output"], str) for r in doc["results"]), doc["results"])
         self.assertTrue(any("{out}" in n for n in doc.get("notes") or []), doc.get("notes"))
         self.assertEqual(sorted(p.name for p in (folder / "out").iterdir() if not p.name.startswith(".")), [])
         again = json.loads(tool("batch", folder, "--recipe", recipe, "--json").stdout)
