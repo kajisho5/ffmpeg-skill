@@ -123,13 +123,21 @@ class Ctx:
     def note(self, text):
         self.notes.append(text)
 
+    def expect(self, path, what):
+        """A file the last command must have written; the docs recorder (_DryCtx) runs nothing, so
+        there it is a no-op and the commands after it are still recorded."""
+        if not Path(path).exists():
+            raise BuildError("%s did not write %s" % (what, path))
+
 
 def _short(arg) -> str:
     """Render an argument for the docs: absolute paths under demos/out become relative."""
     text = str(arg)
     for base, prefix in ((OUT, "demos/out"), (ROOT, "")):
         try:
-            rel = Path(text).resolve().relative_to(base)
+            # both sides resolved: a temp DEMO_OUT is a short (8.3) name on Windows and under a
+            # /var symlink on macOS, while the argument resolves to the long, real path
+            rel = Path(text).resolve().relative_to(Path(base).resolve())
         except (ValueError, OSError):
             continue
         text = (prefix + "/" + str(rel).replace("\\", "/")).lstrip("/")
@@ -793,8 +801,7 @@ def demo_template_tiktok(ctx):
     after = ctx.path("after.mp4")
     ctx.script("render.py", before, "--template", "tiktok", "--cues", FIX / "cues_en.txt",
                "--fast", "-o", after)
-    if not after.exists():
-        raise BuildError("render.py --template tiktok did not write %s" % after)
+    ctx.expect(after, "render.py --template tiktok")
     ctx.note("1080x1920, captions clear of TikTok's description bar, check.py --platform tiktok passes")
     return before, after
 
@@ -803,14 +810,12 @@ def demo_render_project(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
     ctx.script("render.py", FIX / "project.json", "--fast")
-    if not after.exists():
-        raise BuildError("render.py did not write %s" % after)
+    ctx.expect(after, "render.py")
     # 2.1: the same project as an editor timeline (nothing rendered), so every demo build runs
     # --export-timeline end to end and the gallery shows the command next to the render
     timeline = ctx.path("timeline.otio")
     ctx.script("render.py", FIX / "project.json", "--export-timeline", timeline)
-    if not timeline.exists():
-        raise BuildError("render.py --export-timeline did not write %s" % timeline)
+    ctx.expect(timeline, "render.py --export-timeline")
     ctx.note("the same project also opens in an editor: --export-timeline writes .otio / .fcpxml / .edl")
     return before, after
 
@@ -820,8 +825,7 @@ def demo_render_pip(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
     ctx.script("render.py", FIX / "project_pip.json", "--fast")
-    if not after.exists():
-        raise BuildError("render.py did not write %s" % after)
+    ctx.expect(after, "render.py")
     ctx.note('overlays[]: {"video": "green.mp4", "chromakey": "0x00b140", "position": "bottom", "scale": 540}')
     return before, after
 
@@ -941,6 +945,20 @@ def demo_loop_times(ctx):
                "--preset", "veryfast", "-o", before)
     ctx.script("loop.py", before, "--times", "4", "--preset", "veryfast", "-o", after)
     ctx.note("%.1f s in, %.1f s out" % (duration(before), duration(after)))
+    return before, after
+
+
+def demo_loop_crossfade(ctx):
+    """The same 1.5 s clip looped four times, plain against --crossfade: the plain loop jumps at
+    every seam, the crossfaded one fades the clip's last 0.4 s into its first."""
+    clip = ctx.path("clip.mp4")
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    ctx.script("cut.py", FIX / "life.mp4", "--start", "0", "--duration", "1.5", "--accurate",
+               "--preset", "veryfast", "-o", clip)
+    ctx.script("loop.py", clip, "--times", "4", "--preset", "veryfast", "-o", before)
+    ctx.script("loop.py", clip, "--times", "4", "--crossfade", "0.4", "--preset", "veryfast", "-o", after)
+    ctx.note("%.1f s plain, %.1f s with the fade (each repeat is 0.4 s shorter)" % (duration(before), duration(after)))
     return before, after
 
 
@@ -1630,8 +1648,11 @@ _ROWS = [
      "The clip stops dead at 2 s for a beat and a half while the title card sits over it, then carries on -- everything after the freeze is pushed later, nothing is lost.",
      demo_freeze_hold, "video", "latin"),
     ("loop_times", PICTURE, "Loop a short clip",
-     "A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut, which is a judgement about the material, not a flag.",
+     "A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut (--crossfade, below, fades it).",
      demo_loop_times, "video", None),
+    ("loop_crossfade", PICTURE, "A seamless loop",
+     "The same clip looped four times, plain (left) and with loop.py --crossfade 0.4 (right): the plain loop jumps back at every seam, the crossfaded one fades the clip's last 0.4 s into its first, so each repeat runs on into the next.",
+     demo_loop_crossfade, "video", None),
     ("insert_still", PICTURE, "A still card dropped into the timeline",
      "insert.py turns one PNG into a 2 s clip with a slow zoom and pan, and join.py cross-fades it in between the two shots.",
      demo_insert_still, "video", None),
@@ -1821,11 +1842,17 @@ class _DryCtx(Ctx):
         self.commands.append(" ".join(["python3", "scripts/" + tool] + [_short(a) for a in args]))
         return ""
 
+    def expect(self, path, what):
+        pass  # nothing ran, so nothing was written: keep recording the commands that follow
+
 
 def _commands_for(name):
     """Replay a demo's builder against a recorder, so the docs print the exact command the
     build runs rather than a hand-copied approximation of it."""
     ctx = _DryCtx(name, verbose=False)
+    # a builder that writes a side file (an SRT, a cue list) before its command needs the folder:
+    # without it the replay stopped there and the page printed "..." for the commands
+    OUT.mkdir(parents=True, exist_ok=True)
     global ffmpeg, duration
     real_ffmpeg, real_duration = ffmpeg, duration
     ffmpeg, duration = (lambda *a: None), (lambda p: 0.0)

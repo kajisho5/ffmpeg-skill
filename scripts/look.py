@@ -8,6 +8,7 @@ Examples:
   python3 look.py final.mp4 --at 2.5 --at 7          # single frames -> final_2.500s.png, final_7.000s.png
   python3 look.py before.mp4 --compare after.mp4 --at 4   # side-by-side frame
   python3 look.py reel.mp4 --safe tiktok --at 3          # shade what TikTok's own UI covers
+  python3 look.py show.mp4 --guides title,action,4:3 --at 10   # broadcast safe-area outlines
 Then view the PNG (Read tool / image viewer) and verify before reporting.
 """
 import argparse
@@ -24,6 +25,36 @@ from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter  # noqa: E402
 from _common.probe import display_size, square_pixels, square_pixels_note  # noqa: E402
+
+# --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
+# Action and title safe are SMPTE ST 2046-1's 93 % and 90 % of a 16:9 picture; the 4:3 centre cut
+# is the 4:3 window of a 16:9 frame with SD's own 90 % action / 80 % title safe inside it.
+GUIDES = {"action": 0.93, "title": 0.90}
+GUIDE_43 = {"action": 0.90, "title": 0.80}
+GUIDE_COLOURS = {"action": "yellow", "title": "cyan", "4:3": "white"}
+
+
+def guide_boxes(names) -> "tuple":
+    """drawbox outlines for --guides and the fractions they stand for (the result's `guides`)."""
+    t = "max(1\\,ih/270)"
+    boxes, described = [], []
+    for name in names:
+        if name in GUIDES:
+            f = GUIDES[name]
+            m = (1 - f) / 2
+            boxes.append(f"drawbox=x=iw*{m:g}:y=ih*{m:g}:w=iw*{f:g}:h=ih*{f:g}:color={GUIDE_COLOURS[name]}@0.9:t={t}")
+            described.append({"guide": name, "fraction": f, "of": "frame"})
+        else:  # "4:3": the centre-cut window, then its own action and title safe
+            w = "ih*4/3"
+            boxes.append(f"drawbox=x=(iw-{w})/2:y=0:w={w}:h=ih:color=white@0.9:t={t}")
+            for sub, f in GUIDE_43.items():
+                m = (1 - f) / 2
+                boxes.append(f"drawbox=x=(iw-{w})/2+{w}*{m:g}:y=ih*{m:g}:w={w}*{f:g}:h=ih*{f:g}:"
+                             f"color={GUIDE_COLOURS[sub]}@0.6:t={t}")
+            described.append({"guide": "4:3", "window": "centre 4:3 of the frame", "action": GUIDE_43["action"],
+                              "title": GUIDE_43["title"]})
+    return boxes, described
+
 
 FONT = "fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8"
 
@@ -157,6 +188,10 @@ def main() -> int:
     ap.add_argument("--no-timecode", action="store_true")
     ap.add_argument("--safe", choices=PLATFORM_CHOICES, help="shade the zones this platform's UI covers (its description bar, "
                                                        "like column, status bar) so you can see whether anything readable is under them")
+    ap.add_argument("--guides", metavar="LIST",
+                    help="draw broadcast safe-area outlines on the PNG (a preview only; nothing is written into a video): "
+                         "a comma list of action (93%%), title (90%%) and 4:3 (the 4:3 centre cut of a 16:9 frame, "
+                         "with its 90%% action and 80%% title safe)")
     ap.add_argument("--ink", action="store_true", help="measure non-background pixels in each written PNG (bbox, "
                                                  "ink_fraction, row_bands per tile for a contact sheet) instead of "
                                                  "just eyeballing it -- a pixel-only signal, not a legibility judgement")
@@ -217,6 +252,17 @@ def main() -> int:
         safe_filter = "," + ",".join(boxes) if boxes else ""
         info(f"--safe {args.safe}: shaded top {z['top'] * 100:.0f}% / bottom {z['bottom'] * 100:.0f}% / "
              f"left {z['left'] * 100:.0f}% / right {z['right'] * 100:.0f}% of the frame -- keep text out of those")
+    guides = None
+    if args.guides:
+        names = [g.strip() for g in args.guides.split(",") if g.strip()]
+        bad = [g for g in names if g not in ("action", "title", "4:3")]
+        if bad or not names:
+            die(f"--guides takes action, title and 4:3, got {args.guides!r}")
+        dw, dh = display_size(meta["video"])
+        if "4:3" in names and dw and dh and dw / dh < 4 / 3 + 0.01:
+            die(f"--guides 4:3 draws the 4:3 centre cut of a wider frame; this source is {dw}x{dh}")
+        boxes, guides = guide_boxes(list(dict.fromkeys(names)))
+        safe_filter += "," + ",".join(boxes)
     tc = safe_filter + tc
     # HDR sources: tone-map for the PNG so the agent judges representative colours, not raw HLG/PQ
     if meta["video"].get("bt2020_or_hdr"):
@@ -242,6 +288,11 @@ def main() -> int:
         if not args.at:
             die("--compare needs --at TIME")
         cmeta = probe(args.compare)
+        if guides and any(g.get("guide") == "4:3" for g in guides):
+            # the guides are drawn on both pictures: the second must be wider than 4:3 as well
+            cw, ch = display_size(cmeta.get("video") or {})
+            if cw and ch and cw / ch < 4 / 3 + 0.01:
+                die(f"--guides 4:3 draws the 4:3 centre cut of a wider frame; the --compare clip is {cw}x{ch}")
         lab2 = bt709_label_filter(cmeta)
         lab2 = lab2 + "," if lab2 else ""
         csq = (square_pixels(cmeta.get("video")) + ",") if square_pixels(cmeta.get("video")) else ""
@@ -256,15 +307,18 @@ def main() -> int:
                 out = os.path.join(outdir, f"{stem_part}_vs_{Path(args.compare).stem}_{idx}_{sec:.3f}s.png")
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp
+            # the tone map and the --safe / --guides boxes go on each picture as scaled, before the
+            # pad: drawn after it, a picture letterboxed in the box got guides from the padded
+            # height (a 2:1 clip beside a 16:9 one); the timecode stamp is drawn on the box
+            pre = tc.replace("," + timecode_filter(font_prefix), "")
             # each picture keeps its own aspect inside a half-width box as tall as the taller of the
             # two (letterboxed, not stretched): through 3.1.3 scale2ref forced the first to the
             # second's size, so a 4:3 beside a 16:9 came out squashed (#411)
             box_h = max(_half_height(half, display_size(meta["video"])),
                         _half_height(half, display_size(cmeta.get("video"))))
-            fit = (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease,"
-                   f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1")
-            fc = (f"[0:v]{lab}{sq}{fit}{tcs}[a];[1:v]{lab2}{csq}{fit}{tcs}[b];"
+            fit = (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease{pre},"
+                   f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp}")
+            fc = (f"[0:v]{lab}{sq}{fit}[a];[1:v]{lab2}{csq}{fit}[b];"
                   f"[a][b]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-ss", f"{sec:.3f}", *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]
@@ -341,7 +395,8 @@ def main() -> int:
         else:
             ink = {"frames": [measure_ink(o) for o in outputs]}
 
-    emit(outputs[0] if len(outputs) == 1 else None, outputs=outputs, **({"ink": ink} if ink is not None else {}))
+    emit(outputs[0] if len(outputs) == 1 else None, outputs=outputs, **({"ink": ink} if ink is not None else {}),
+         **({"guides": guides} if guides else {}))
     if len(outputs) > 1 and not args.json:
         for o in outputs:
             print(o)

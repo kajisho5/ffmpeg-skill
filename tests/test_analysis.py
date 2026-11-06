@@ -1008,6 +1008,45 @@ class AnalysisTests(MediaFixtures):
         self.assertIn("y=ih*(1-0.22)", cmd[0])
         self.assertIn("x=iw*(1-0.14)", cmd[0])
 
+    def test_look_guides_outline_broadcast_safe_areas_on_the_preview_only(self):
+        """#423: --guides draws action (93 %), title (90 %) and the 4:3 centre cut on the PNG; the
+        frame's middle and its size are untouched, and a frame no wider than 4:3 refuses 4:3."""
+        plain, marked = OUT / "guides_plain.png", OUT / "guides_marked.png"
+        script("look.py", self.src, "--at", "2", "--no-timecode", "-o", plain, "--overwrite")
+        doc = json.loads(script("look.py", self.src, "--at", "2", "--no-timecode", "--guides", "title,action,4:3",
+                                "-o", marked, "--json", "--overwrite").stdout)
+        self.assertEqual(png_size(plain), png_size(marked))
+        self.assertNotEqual(plain.read_bytes(), marked.read_bytes())
+        self.assertEqual([g["guide"] for g in doc["guides"]], ["title", "action", "4:3"])
+        cmd = next(c for c in doc["commands"] if "drawbox" in c)
+        self.assertIn("x=iw*0.035:y=ih*0.035:w=iw*0.93:h=ih*0.93", cmd)
+        self.assertIn("x=iw*0.05:y=ih*0.05:w=iw*0.9:h=ih*0.9", cmd)
+        self.assertIn("w=ih*4/3:h=ih", cmd)
+        square = OUT / "guides_square.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x320:r=10:d=1",
+           "-c:v", "libx264", square)
+        proc = script("look.py", square, "--at", "0.5", "--guides", "4:3", "--json", expect_fail=True)
+        self.assertIn("4:3 centre cut", json.loads(proc.stdout)["error"]["message"])
+        # #430 review: under --compare the guides are drawn on each picture as scaled, before the pad
+        # that letterboxes it (a 2:1 clip beside 16:9 got guides from the padded height); the
+        # timecode is drawn after it
+        wide = OUT / "guides_wide.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x320:r=10:d=1",
+           "-c:v", "libx264", wide)
+        doc = json.loads(script("look.py", self.src, "--compare", wide, "--at", "0.5", "--guides", "title,4:3", "--json",
+                                "-o", OUT / "guides_compare_wide.png").stdout)
+        graph = next(c for c in doc["commands"] if "hstack" in c)
+        for branch in graph.split(";")[:2]:
+            self.assertLess(branch.rindex("drawbox"), branch.index("pad="), branch)
+            if "drawtext" in branch:  # a build without drawtext (Homebrew's) draws no stamp
+                self.assertLess(branch.index("pad="), branch.index("drawtext"), branch)
+        # #430 review: the guides are drawn on both pictures of --compare, so the second is checked too
+        proc = script("look.py", self.src, "--compare", square, "--at", "0.5", "--guides", "4:3", "--json",
+                      "-o", OUT / "guides_compare.png", expect_fail=True)
+        self.assertIn("--compare clip", json.loads(proc.stdout)["error"]["message"])
+        proc = script("look.py", square, "--at", "0.5", "--guides", "nope", "--json", expect_fail=True)
+        self.assertIn("--guides takes", json.loads(proc.stdout)["error"]["message"])
+
     def test_look_safe_compares_the_displayed_aspect_of_a_rotated_source(self):
         """A 1280x720 file tagged 90 degrees is already 9:16. --safe tiktok used to warn that
         the stored 16:9 frame was the wrong shape for a destination the picture already matches."""

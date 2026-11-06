@@ -517,7 +517,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("ffmpeg", caps["required"])
         self.assertIn("ffprobe", caps["required"])
         for cap in caps["required"] + caps["optional"]:
-            self.assertTrue(re.fullmatch(r"ffmpeg|ffprobe|encoder:\w+|filter:\w+|bsf:\w+|external:\w+", cap), cap)
+            self.assertTrue(re.fullmatch(r"ffmpeg|ffprobe|encoder:[\w-]+|filter:\w+|bsf:\w+|external:\w+", cap), cap)
         # every encoder / filter / bsf named in the contract is referenced by some script
         source = "\n".join(p.read_text(encoding="utf-8") for p in script_sources())
         for cap in caps["required"] + caps["optional"]:
@@ -1499,6 +1499,21 @@ class ContractTests(unittest.TestCase):
                 earliest = datetime.date.fromisoformat(day) + datetime.timedelta(days=90)
                 self.assertGreaterEqual(datetime.date.today(), earliest,
                                         f"{pkg['version']} removes {since}'s deprecations before {earliest}")
+
+    def test_demos_md_is_what_build_py_docs_writes_with_no_demo_built(self):
+        """docs/demos.md is generated (`demos/build.py --docs`). The recorder replays each builder
+        without running it, and a builder that checked its own output stopped there, so a page
+        generated without demos/out dropped the commands after the check (#430 review: render.py
+        --export-timeline vanished). Generated into an empty DEMO_OUT, the page must match."""
+        with tempfile.TemporaryDirectory() as tmp:
+            page = Path(tmp) / "demos.md"
+            code = ("import sys; sys.path.insert(0, sys.argv[1]); import build; "
+                    "from pathlib import Path; build.write_docs(Path(sys.argv[2]))")
+            subprocess.run([sys.executable, "-c", code, str(ROOT / "demos"), str(page)], check=True,
+                           env=dict(os.environ, DEMO_OUT=str(Path(tmp) / "out")), cwd=ROOT, capture_output=True)
+            self.assertEqual(page.read_text(encoding="utf-8"), (ROOT / "docs" / "demos.md").read_text(encoding="utf-8"),
+                             "docs/demos.md is stale: python3 demos/build.py --docs")
+            self.assertIn("--export-timeline", page.read_text(encoding="utf-8"))
 
     def test_design_decisions_contents_list_is_current_and_release_renames_unreleased(self):
         """docs/design-decisions.md opens with a contents list built from its `## ` headings

@@ -550,15 +550,24 @@ output; the result says so with `dropped_non_av_streams: true`.
 
 ### loop.py — repeat a clip
 ```
-loop.py INPUT --times N | --duration T [--boomerang] [-o OUT]
+loop.py INPUT --times N | --duration T [--crossfade S | --boomerang] [-o OUT]
 ```
 `--times` repeats the whole clip that many times back to back (2 =
 original + 1 repeat). `--duration` instead loops (and trims the last
 repeat) to hit an exact target length. For a background loop, an ambient
-bed, or filling a fixed slot length with a short clip. Does not smooth the
-loop point (no crossfade at the seam) -- a clip that doesn't already loop
-cleanly will show a visible cut/pop at each repeat, which is a property of
-the source material this tool cannot fix.
+bed, or filling a fixed slot length with a short clip. Without `--crossfade`
+the loop point is not smoothed: a clip that doesn't already loop cleanly
+shows a visible cut/pop at each repeat.
+`--crossfade S` makes the clip loop first: its last S seconds (whole frames)
+fade into its first S, picture and sound, so each seam continues the motion.
+One repeat is then the clip minus S (a 4 s clip with `--crossfade 1` repeats
+every 3 s), S may be at most half the clip, and `--times 1` writes one
+seamless loop file. The repeat is written losslessly to a temporary file
+first, so the output still has a single lossy encode.
+Every run except `--boomerang` measures the first seam of the written file
+(`seam`: the picture step across it against the typical step between
+neighbouring frames, and the sound level step in dB) and checks the length
+against the request (`expected_duration`, within 1.5 frames).
 `--boomerang` plays the clip forward, then backward (frames 0..N-1, then
 N-2..1, repeated), so any clip loops without a jump and neither turnaround
 frame is shown twice. `--times` then counts round trips (1 is allowed), and
@@ -1441,7 +1450,13 @@ look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact shee
 look.py INPUT --at 2.5 [--at 7] [-o basename]                     # single frames -> basename_2.500s.png
 look.py BEFORE --compare AFTER --at 4 [-o cmp.png]                # side-by-side frame
 look.py INPUT --safe tiktok [--at 3]                              # shade what the app's UI covers
+look.py INPUT --guides title,action,4:3 [--at 3]                  # broadcast safe-area outlines
 ```
+`--guides` draws safe-area outlines on the PNG only (look.py writes no video, so a guide never
+reaches a delivery): `action` 93 % and `title` 90 % of the frame (SMPTE ST 2046-1), and `4:3` the
+centre 4:3 window of a wider frame with SD's 90 % action and 80 % title safe inside it (refused on
+a frame that is not wider than 4:3). It combines with `--safe PLATFORM` (the app's own UI zones)
+and works on a contact sheet's tiles as on a single frame; the result's `guides` lists them.
 Outputs PNG. View it with the Read tool (or any image viewer) and judge the
 frame like an editor would. Use `--compare` to show before/after to the user. `--safe NAME` (1.14) shades the zones that
 destination's own UI covers -- TikTok's description block and like column, the Reels/Shorts
@@ -1882,7 +1897,16 @@ Run `loudness.py` after this for final levels.
 ### loudness.py — EBU R128 normalisation
 ```
 loudness.py INPUT [-I -14] [--tp -1] [--lra 11] [--measure-only] [-o OUT]
+loudness.py INPUT --versions=streaming,ebu-r128,broadcast-jp[,-16/-1.5] [--lra 11]
 ```
+`--versions` writes one file per target from the one master, each a full
+two-pass normalisation measured after: `streaming` (-14 LUFS / -1 dBTP),
+`ebu-r128` (-23 / -1), `broadcast-jp` (-24 LKFS / -1, ARIB TR-B32), or any
+`LUFS/TP` pair (write `--versions=...` when the list starts with a `-`). Files are `<name>_loudnorm_<target>.<ext>` (`-o` is refused);
+the result's `versions` lists each target, file and measurement, its
+verification steps carry a `version` key, and `verified` holds only when every
+version met its own target. An empty list (`--versions=`) is refused, and so is a `--plan` path
+that is one of the version files.
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the
@@ -1903,11 +1927,31 @@ integrated loudness ended more than 1 LU from the target because of it.
 
 ### export.py — delivery presets
 ```
-export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|h265|gif|copy
+export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444|prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha|key-fill|h265|gif|copy
                 [--fit pad|crop] [--no-scale] [--allow-long] [--crf N | --max-mb MB] [--normalize] [-o OUT]
 export.py INPUT --preset copy --repair [-o OUT]
 export.py --list
 ```
+Editing masters (`prores`, `dnxhr-lb/sq/hq/hqx/444`, and the alpha presets) keep the source's size,
+rate and colour tags and read the written codec and profile back (`codec` verification step).
+The alpha presets `prores4444`, `prores4444xq` (16-bit alpha), `qtrle`, `vp9-alpha` (WebM, Opus)
+and `hap-alpha` (an ffmpeg built with snappy; width and height multiples of 4) refuse a source
+without alpha, take `--alpha-mode straight|premultiplied` (default straight, reported as
+`alpha_mode`), and compare the mean alpha of each written frame with the source's, frame by frame
+on 64x36 copies, each within 2 of 255 (a region smaller than the copy's pixels can lose its alpha
+unseen; `alpha` step; a different frame count falls back to the mean and the most transparent frame,
+`comparison.paired: false`). A VP9 source is decoded with libvpx-vp9 (the
+native decoder drops the alpha); a dry run decides from the pixel format and a VP9 stream's
+`alpha_mode` tag without decoding. Under `--hw` these presets stay on the CPU (VideoToolbox's ProRes
+is 422 HQ, with no alpha), and a note says so. PNG/EXR image sequences are not written by `export.py`.
+`--preset key-fill` writes a switcher's key/fill pair from an alpha source in one run: the fill
+(`-o`, the colour; `--alpha-mode premultiplied` premultiplies it) and the key (`<out stem>_key.mov`,
+the alpha as a luma matte: alpha 255 is video white, 0 black), both ProRes 422 HQ with the source's
+start timecode. It checks both have the same size, frame count, rate and video length (`key_fill_pair`)
+and the key's level against the source's alpha over every frame (`key_level`), and reports both
+SHA-256 hashes (`fill_sha256`, `key.sha256`). Both paths are guarded like `-o` (not the input, not
+an existing file without `--overwrite`, written through a temp file); the source's subtitle/data
+streams are not written (`non_av_streams.dropped`, `reason: key_fill`); `--max-mb` is refused.
 `--repair` (2.24, `--preset copy` only) remuxes a damaged file: timestamps are regenerated
 (`-fflags +genpts`), packets flagged corrupt are dropped (`+discardcorrupt`), demuxing goes on past
 errors (`-err_detect ignore_err`) and negative timestamps are shifted to zero. The input is read,
