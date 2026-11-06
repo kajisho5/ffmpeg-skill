@@ -38,7 +38,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List
 
-from _common.runner import fail_if_classified, kept_clause, mark_delivered
+from _common.runner import child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
@@ -523,7 +523,7 @@ def main() -> int:
                     # run's, as render.py and waveform.py pass a stage's on (#415)
                     why = (err.get("message") or proc.stderr.strip()[-300:]).replace("; nothing was written", "")
                     die(f"--normalize: loudness.py failed: {why} ({kept_clause()})",
-                        code=int(child.get("exit_code") or proc.returncode or 1) if proc.returncode else 1,
+                        code=child_exit_code(child, proc.returncode) if proc.returncode else 1,
                         kind=err.get("kind") or "ffmpeg", output=output, hint=err.get("hint"))
                 os.replace(tmp, output)
                 m = measure_loudness(output)

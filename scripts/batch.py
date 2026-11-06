@@ -215,6 +215,10 @@ def deliver(src: str, final: Path) -> None:
     """Move an item's last written intermediate to its final path, under the output guard every
     tool applies: an existing file is replaced only with --overwrite. A dry run writes nothing."""
     if STATE.dry_run:
+        # the refusal the real run would meet, as a step writing {out} plans it (#428 review)
+        if final.exists() and not STATE.overwrite:
+            raise ItemError({"step": None, "tool": None, "kind": "input", "reason": "output_exists",
+                             "message": f"refusing to overwrite existing output {str(final)!r}: pass --overwrite to replace it"})
         log(f"  [dry-run] would deliver the last written file to {final}")
         return
 

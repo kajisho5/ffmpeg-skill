@@ -2807,13 +2807,16 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   extension (`.mp4` for a video source) unless the recipe sets `ext`: a `.webm` source's `fit.py`
   step writes MP4, which named `clip_out.webm` would be mislabelled. The move into place holds the
   output lock every tool's write holds, and a move across filesystems copies beside the final path
-  and renames, so a failed copy never truncates the file it replaces. Code: `batch.step_writes()`,
+  and renames, so a failed copy never truncates the file it replaces. A `--dry-run` refuses an
+  existing final path there as the real run would, and `check.py --dry-run` on a file an earlier
+  dry-run step would write grades nothing (`checks: []`, a note) instead of dividing by its 0 height. Code: `batch.step_writes()`,
   `batch.writes_nothing()`, `batch.deliver()`, `batch.cached_output_changed()`. Tests:
   `Issue415Tests.test_batch_delivers_the_last_written_file_when_the_last_step_writes_none`,
   `Issue415Tests.test_batch_a_recipe_that_writes_nothing_reports_no_output`,
   `Issue415Tests.test_batch_a_delivered_intermediate_keeps_its_container_extension`,
   `Issue415Tests.test_batch_delivery_holds_the_output_lock`,
-  `Issue415Tests.test_batch_delivery_across_filesystems_never_truncates_the_output`.
+  `Issue415Tests.test_batch_delivery_across_filesystems_never_truncates_the_output`,
+  `Issue415Tests.test_batch_dry_run_refuses_an_existing_output_a_read_only_last_step_would_deliver_to`.
 - **batch.py's final-name collision check ignores case.** `Clip_out.mp4` and `clip_out.mp4` are
   one file on macOS's and Windows' default filesystems; the check refuses them on every platform,
   so a recipe that works on Linux does not overwrite an item on a Mac. Test:
@@ -2836,11 +2839,13 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   in the reads after the write (the output probe, the loudness measurement) says the same. render.py
   passes a stopped child's code on from an executed plan and from a pack destination too (the pack
   is then `kind: timeout`, not `verification`), and an export stage stopped in `--normalize` hands
-  the delivery it kept to render's `output`. Code: `_common.runner.mark_delivered()`, `kept_clause()`,
+  the delivery it kept to render's `output`. A child killed by a signal (returncode -9) is passed
+  on as 128 + the signal (137), not as a wrapped 247 (`child_exit_code()`). Code: `_common.runner.mark_delivered()`, `kept_clause()`,
   `export.main()`, `render.sh()`/`main()`/`execute_plan()`/`render_pack()`. Tests:
   `Issue415Tests.test_export_normalize_timeout_keeps_its_exit_code_and_says_the_export_is_kept`,
   `Issue415Tests.test_export_a_stopped_read_after_the_write_says_the_export_is_kept`,
   `Issue415Tests.test_render_passes_a_stopped_childs_exit_code_and_kept_output_on`,
+  `Issue415Tests.test_a_child_killed_by_a_signal_passes_on_128_plus_the_signal`,
   `Issue415Tests.test_a_stopped_run_names_the_deliverable_it_keeps`.
 - **An ffprobe call is limited to `min(120 s, --timeout)`.** `_limit_for()` gave every probe through
   `run()` a fixed 120 s whatever `--timeout` said (the encoder-list read already took the lower

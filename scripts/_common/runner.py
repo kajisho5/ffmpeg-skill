@@ -549,6 +549,18 @@ def mark_delivered(path: str) -> None:
         STATE.delivered.append(path)
 
 
+def child_exit_code(doc: Any, returncode: Optional[int]) -> int:
+    """The exit code a tool passes on from a child tool that failed: the code its document states,
+    else its process's own, else 1. A child killed by a signal has a negative returncode (-9), which
+    as an exit code wraps (247); it is passed on as the shell reports it, 128 + the signal (137)."""
+    code = (doc.get("exit_code") if isinstance(doc, dict) else None) or returncode or 1
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        return 1
+    return 128 - code if code < 0 else code
+
+
 def kept_deliverables() -> List[str]:
     """The deliverables mark_delivered() named that are on disk."""
     return [p for p in STATE.delivered if os.path.isfile(p)]

@@ -6942,6 +6942,29 @@ class Issue415Tests(unittest.TestCase):
         self.assertTrue(row["ok"], row.get("error"))
         self.assertTrue(Path(row["output"]).exists())
 
+    def test_batch_dry_run_refuses_an_existing_output_a_read_only_last_step_would_deliver_to(self):
+        """A recipe ending in check.py planned no output_exists check in --dry-run (and check.py
+        crashed grading the intermediate the dry run had not written), so the plan passed where
+        the real run is refused (#428 review)."""
+        folder, recipe = self.batch("b_dry", ["a.mp4"], [["fit.py", "{in}", "--width", "120", "--height", "120", "-o", "{out}"],
+                                                         ["check.py", "{in}"]])
+        doc = json.loads(tool("check", folder / "missing.mp4", "--dry-run", "--json").stdout)
+        self.assertEqual((doc["status"], doc["checks"]), ("completed", []))
+        plan = json.loads(tool("batch", folder, "--recipe", recipe, "--dry-run", "--json").stdout)
+        self.assertTrue(plan["results"][0]["ok"], plan["results"][0].get("error"))
+        (folder / "out").mkdir(exist_ok=True)
+        (folder / "out" / "a_out.mp4").write_bytes(b"someone's")
+        plan = json.loads(tool("batch", folder, "--recipe", recipe, "--dry-run", "--json", check=False).stdout)
+        self.assertEqual(plan["results"][0]["error"].get("reason"), "output_exists", plan["results"][0])
+
+    def test_a_child_killed_by_a_signal_passes_on_128_plus_the_signal(self):
+        """A child killed by SIGKILL has returncode -9, passed on as exit 247 / exit_code -9 (#428 review)."""
+        runner = sys.modules["_common.runner"]
+        self.assertEqual(runner.child_exit_code({}, -9), 137)
+        self.assertEqual(runner.child_exit_code({"exit_code": 124}, 1), 124)
+        self.assertEqual(runner.child_exit_code(None, 2), 2)
+        self.assertEqual(runner.child_exit_code({}, 0), 1)
+
     def test_batch_delivery_holds_the_output_lock(self):
         """deliver() checked and moved without the output lock every tool's write holds, so a run
         writing the same path at that moment was not refused (#428 review)."""
@@ -7029,7 +7052,7 @@ class Issue415Tests(unittest.TestCase):
         self.assertTrue(out.exists())
         self.assertNotIn("nothing was written", doc["error"]["message"])
         self.assertIn("kept", doc["error"]["message"])
-        self.assertEqual(doc["output"], str(out))
+        self.assertEqual(Path(doc["output"]).resolve(), out.resolve())  # macOS: /var is /private/var
 
     def test_export_a_stopped_read_after_the_write_says_the_export_is_kept(self):
         """The probe of the written export (and the loudness read) ran before the export was
@@ -7043,7 +7066,7 @@ class Issue415Tests(unittest.TestCase):
         self.assertEqual((proc.returncode, doc["error"]["kind"]), (124, "timeout"), doc["error"])
         self.assertTrue(out.exists())
         self.assertNotIn("nothing was written", doc["error"]["message"])
-        self.assertEqual(doc["output"], str(out))
+        self.assertEqual(Path(doc["output"]).resolve(), out.resolve())
 
     def test_render_passes_a_stopped_childs_exit_code_and_kept_output_on(self):
         """An executed plan whose tool timed out exited 1; a pack destination that timed out made
@@ -7073,7 +7096,7 @@ class Issue415Tests(unittest.TestCase):
             doc = json.loads(proc.stdout)
             self.assertEqual((proc.returncode, doc["error"]["kind"]), (124, "timeout"), doc["error"])
             self.assertTrue((d / "norm.mp4").exists())
-            self.assertEqual(doc.get("output"), str(d / "norm.mp4"))
+            self.assertEqual(Path(doc.get("output") or "").resolve(), (d / "norm.mp4").resolve())
             self.assertIn("kept", doc["error"]["message"])
 
     def test_a_stopped_run_names_the_deliverable_it_keeps(self):

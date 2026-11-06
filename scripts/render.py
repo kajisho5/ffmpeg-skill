@@ -75,7 +75,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, found_exe, kept_clause, kept_deliverables, mark_delivered, remember_written
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, remember_written
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
 import subprocess
 from _contract import CONTRACT_VERSION
@@ -397,7 +397,7 @@ def render_pack(names: List[str], args) -> int:
             failed.append(name)
             err = doc.get("error") or {}
             if err.get("kind") in ("timeout", "interrupted"):
-                stopped.append({"kind": err["kind"], "exit_code": int(doc.get("exit_code") or proc.returncode or 1)})
+                stopped.append({"kind": err["kind"], "exit_code": child_exit_code(doc, proc.returncode)})
     pack = str(outdir / f"{stem}_pack.md")
     lines = [f"# Social pack — {stem}", "",
              "| platform | file | size | duration | check |", "|---|---|---|---|---|"]
@@ -977,7 +977,7 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         error_extra = absorb_stage(tool, doc)  # the tool's reason/details and records ride along
         # the tool's exit code is the plan's (124 timeout, 130/143 interrupted), as sh() passes a stage's on
         die(f"{tool} failed while executing the plan: {err.get('message') or proc.stderr.strip()[-300:]}",
-            code=int(doc.get("exit_code") or proc.returncode or 1), kind=err.get("kind", "ffmpeg"), plan=path, tool=tool,
+            code=child_exit_code(doc, proc.returncode), kind=err.get("kind", "ffmpeg"), plan=path, tool=tool,
             error_extra=error_extra, **_stage_failure_hw(doc))
     absorb_stage(tool, doc)  # the tool's GPU facts (fell back and why, ran on VideoToolbox) and diagnostics reach this result
     output = doc.get("output") or plan.get("output")

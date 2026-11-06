@@ -41,8 +41,10 @@
   `render.py` exits 124/130/143 when an executed plan's tool or a pack destination is stopped, and
   carries the delivery an export stage kept as `output`; `export.py` says the export is kept when a
   read after the write is stopped; `batch.py` names a delivered intermediate by its own container
-  (`.mp4`), delivers under the output lock through a sibling temp across filesystems, and handles
-  stems near the 255-byte name limit (#415).
+  (`.mp4`), delivers under the output lock through a sibling temp across filesystems, refuses an
+  existing output in `--dry-run` too, and handles stems near the 255-byte name limit; `check.py
+  --dry-run` on a not-yet-written file no longer crashes; a child killed by a signal exits 128 + the
+  signal (#415).
 
 ## 3.1.7
 

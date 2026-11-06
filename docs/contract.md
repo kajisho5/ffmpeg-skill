@@ -204,6 +204,10 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `execution` (writes a new artifact) | cut, fit, caption, overlay, graphics, multicam, audio, join, color, export, render, batch |
 | `verification` (checks or shows an artifact) | check, look, verify, report |
 
+`batch` writes one artifact per input only when a recipe step names `{out}` (or the recipe is a
+render project): a recipe in which no step does (a QC pass of `check.py`/`probe.py`) writes none,
+and each `results` row carries `output: null` (#415).
+
 ### Verification policy
 
 The workflow in `SKILL.md` is "probe first, verify last". The contract states it per tool:
