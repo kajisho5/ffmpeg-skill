@@ -6,6 +6,7 @@
 """
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -992,10 +993,27 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual((data["status"], data["error"]["kind"]), ("failed", "verification"))
         self.assertIn("aspect", data["error"]["message"])
         self.assertTrue(Path(data["output"]).exists(), "the deliverable is still written even though it fails delivery spec")
-        # the outer --timeout reaches every stage: an impossible limit fails inside the first stage
+        # an impossible limit stops the run at its first probe (render's or a stage's: since #415 --timeout bounds
+        # probes too), and the message states the limit as given (it said "0 s")
         proc = script("render.py", proj, "--fast", "--timeout", "0.05", "--json", expect_fail=True)
+        tdoc = json.loads(proc.stdout)
+        self.assertEqual((tdoc["error"]["kind"], tdoc["exit_code"]), ("timeout", 124))
+        self.assertIn("0.05 s time limit", tdoc["error"]["message"])
+        if platform.system() == "Windows":
+            return  # the stand-in below is a #!/bin/sh script
+        # the outer --timeout reaches every stage: an ffmpeg that hangs only on the clips stage's
+        # output (probes and render's own work run for real) is killed inside cut.py under the
+        # forwarded limit ...
+        shim = OUT / "render_timeout_shim"
+        shim.mkdir(exist_ok=True)
+        (shim / "ffmpeg").write_text('#!/bin/sh\nfor a in "$@"; do last="$a"; done\n'
+                                     'case "$last" in */clip00*) exec sleep 120;; esac\n'
+                                     f'exec "{shutil.which("ffmpeg")}" "$@"\n', encoding="utf-8")
+        (shim / "ffmpeg").chmod(0o755)
+        env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+        proc = script("render.py", proj, "--fast", "--timeout", "8", "--json", expect_fail=True, env=env)
         self.assertIn("time limit", proc.stderr)
-        self.assertIn("--timeout 0.05", proc.stderr, "the flag must be forwarded to the child command line")
+        self.assertIn("--timeout 8", proc.stderr, "the flag must be forwarded to the child command line")
         # ...and the stage's own failure is what render reports: kind timeout, exit 124, the stage named
         tdoc = json.loads(proc.stdout)
         self.assertEqual((tdoc["status"], tdoc["error"]["kind"], tdoc["exit_code"], tdoc["stage"]), ("failed", "timeout", 124, "cut.py"))
@@ -1444,17 +1462,15 @@ class OrchestrationTests(MediaFixtures):
                         "every entry written under concurrency must be served back")
 
     def test_jobs_gives_each_item_its_own_work_dir(self):
+        """Each item works in a directory of its own, serial or parallel, and takes it with it
+        when it ends (3.1.6, #415: 1.17's flat serial layout let two items with one stem, or a
+        rerun, refuse each other's intermediates)."""
         folder, recipe = self._jobs_folder("batch_jobs_work", count=3)
-        work = OUT / "batch_jobs_work_dir"
-        script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", "3",
-               "--work", work)
-        subdirs = sorted(p.name for p in work.iterdir() if p.is_dir())
-        self.assertEqual(len(subdirs), 3)
-        # ... and a serial run keeps the flat layout it always had
-        work2 = OUT / "batch_jobs_work_serial"
-        script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", "1",
-               "--work", work2)
-        self.assertEqual([p.name for p in work2.iterdir() if p.is_dir()], [])
+        for jobs in ("3", "1"):
+            work = OUT / f"batch_jobs_work_dir{jobs}"
+            shutil.rmtree(work, ignore_errors=True)
+            script("batch.py", folder, "--recipe", recipe, "--fast", "--force", "--jobs", jobs, "--work", work)
+            self.assertEqual(list(work.iterdir()), [], "every item's directory is removed with it")
 
 
     # --------------------------------------------------- 1.17: render.py --cache DIR / --from
@@ -2002,6 +2018,94 @@ class TimelineExportTests(unittest.TestCase):
                 with self.assertRaises(tl_mod.TimelineError) as ctx:
                     tl_mod.build(proj, probes, rel)
                 self.assertIn(word, str(ctx.exception))
+
+    def test_the_source_start_timecode_is_carried_into_every_format(self):
+        """#414: a camera file tagged 01:00:00:00 was exported from 00:00:00:00, outside the media
+        for a conform. EDL source timecodes count from it (drop-frame where the source's is), the
+        FCPXML asset starts at it and OTIO's available_range does too."""
+        import xml.etree.ElementTree as ET
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        probes["/m/a.mp4"]["timecode"] = {"value": "01:00:00:00", "drop_frame": False}
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 1, "out": 2.5}]}, probes, lambda p: f"/m/{p}")
+        event = [ln for ln in tl_mod.to_edl(tl).splitlines() if ln[:3].isdigit()][0]
+        self.assertIn(" C        01:00:01:00 01:00:02:15 01:00:00:00 01:00:01:15", event)
+        root = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8"))
+        self.assertEqual(root.find("./resources/asset").get("start"), "3600s")
+        self.assertEqual(root.find("./library/event/project/sequence/spine/asset-clip").get("start"), "3601s")
+        clip = json.loads(tl_mod.to_otio(tl))["tracks"]["children"][0]["children"][0]
+        self.assertEqual(clip["source_range"]["start_time"]["value"], 108030)
+        self.assertEqual(clip["media_references"]["DEFAULT_MEDIA"]["available_range"]["start_time"]["value"], 108000)
+        # 29.97 drop-frame: 01:00:00;00 is frame 107892, and the EDL labels the source as it shows it
+        probes["/m/a.mp4"] = {"duration": 8, "video": {"fps": 29.97, "width": 1280, "height": 720},
+                              "audio": {"channels": 2}, "timecode": {"value": "01:00:00;00", "drop_frame": True}}
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 1, "out": 2.5}]}, probes, lambda p: f"/m/{p}")
+        self.assertEqual(tl["clips"][0]["tc_start"], 107892)
+        event = [ln for ln in tl_mod.to_edl(tl).splitlines() if ln[:3].isdigit()][0]
+        self.assertIn(" C        01:00:01;00 01:00:02;15 ", event)
+        self.assertEqual(tl_mod._tc_label(17982, tl["clips"][0]["rate"], True), "00:10:00;00")
+        self.assertEqual(tl_mod._tc_label(1800, tl["clips"][0]["rate"], True), "00:01:00;02")
+        # a retimed clip: the timeMap's source times count from the start timecode too
+        probes["/m/a.mp4"] = {"duration": 8, "video": {"fps": 30.0, "width": 1280, "height": 720},
+                              "audio": {"channels": 2}, "timecode": {"value": "01:00:00:00", "drop_frame": False}}
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 1, "out": 2.5, "speed": 1.25}]}, probes, lambda p: f"/m/{p}")
+        root = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8"))
+        self.assertEqual(root.find("./resources/asset").get("start"), "3600s")
+        points = root.findall("./library/event/project/sequence/spine/asset-clip/timeMap/timept")
+        self.assertEqual([(p.get("time"), p.get("value")) for p in points], [("0s", "3601s"), ("6/5s", "7205/2s")])
+
+    def test_a_start_timecode_that_does_not_exist_at_the_source_rate_is_not_read(self):
+        """#427 review: frame 29 at 25 fps, or a frame drop-frame counting skips, was added as an
+        offset and every exported source time shifted; it is read as no timecode, as probe()
+        skips a malformed tag."""
+        from fractions import Fraction
+        tl_mod = self._tl()
+        ntsc = Fraction(30000, 1001)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "01:00:00:29", "drop_frame": False}, Fraction(25)), 0)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "01:00:00:24", "drop_frame": False}, Fraction(25)), 90024)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "00:01:00;00", "drop_frame": True}, ntsc), 0)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "00:01:00;02", "drop_frame": True}, ntsc), 1800)
+        self.assertEqual(tl_mod.start_tc_frames({"value": "00:10:00;00", "drop_frame": True}, ntsc), 17982)
+
+    def test_edl_source_timecodes_are_at_each_clips_own_rate(self):
+        """#414: a 25 fps clip in a 29.97 sequence was given frame :29, which 25 fps does not have."""
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 6})
+        probes["/m/p25.mp4"] = {"duration": 6, "video": {"fps": 25.0, "width": 1280, "height": 720}, "audio": {"channels": 2}}
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 0, "out": 2}, {"src": "p25.mp4", "in": 2.96, "out": 4}],
+                           "transition": {"type": "none"}}, probes, lambda p: f"/m/{p}")
+        events = [ln for ln in tl_mod.to_edl(tl).splitlines() if ln[:3].isdigit()]
+        self.assertIn(" C        00:00:02:24 00:00:04:00 ", events[1])
+        # the M2 speed is in the clip's own frames per second, the rate its source labels count in
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 0, "out": 2}, {"src": "p25.mp4", "in": 0, "out": 4, "speed": 1.25}],
+                           "transition": {"type": "none"}}, probes, lambda p: f"/m/{p}")
+        self.assertIn("M2   AX       031.2", tl_mod.to_edl(tl))
+
+    def test_a_clip_out_past_the_media_end_ends_at_the_media_end(self):
+        """#414: the render clamps an out past the end (cut.py); the timeline kept 10 s of a 6 s
+        clip. An in at or past the end is refused, as cut.py refuses it."""
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 6})
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 1, "out": 10}]}, probes, lambda p: f"/m/{p}")
+        self.assertEqual((tl["clips"][0]["src_out"], tl["total"]), (180, 150))
+        self.assertTrue(any("past the end of a.mp4" in n for n in tl["notes"]), tl["notes"])
+        with self.assertRaisesRegex(tl_mod.TimelineError, "past the end"):
+            tl_mod.build({"clips": [{"src": "a.mp4", "in": 6, "out": 10}]}, probes, lambda p: f"/m/{p}")
+
+    def test_a_chapter_metadata_py_refuses_is_refused_not_dropped(self):
+        """#414: a chapter past the end was dropped silently while the render's metadata.py refuses
+        it ("Neither path accepts a time the other refuses")."""
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        for chapters, word in (([{"at": 0, "title": "A"}, {"at": 9, "title": "B"}], "end of the timeline"),
+                               ([{"at": 8, "title": "A"}], "end of the timeline"),
+                               ([{"at": 3, "title": "A"}, {"at": 2, "title": "B"}], "does not come after")):
+            with self.subTest(chapters=chapters):
+                with self.assertRaisesRegex(tl_mod.TimelineError, word):
+                    tl_mod.build({"clips": [{"src": "a.mp4"}], "chapters": chapters}, probes, lambda p: f"/m/{p}")
+        tl = tl_mod.build({"clips": [{"src": "a.mp4"}], "chapters": [{"at": 0, "title": "A"}, {"at": 7.99, "title": "B"}]},
+                          probes, lambda p: f"/m/{p}")
+        self.assertEqual([m["at"] for m in tl["markers"]], [0, 239])
 
     def test_ntsc_rates_are_exact(self):
         tl_mod = self._tl()

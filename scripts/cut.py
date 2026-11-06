@@ -58,6 +58,7 @@ import tempfile
 import zlib
 from typing import List, Tuple
 
+from _common.runner import fail_if_classified
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
 from _common.probe import TS_EXTS, signatures_match, stream_signature
@@ -893,6 +894,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     proc = run(cmd, check=False)
     if proc.returncode != 0:
         if not reencode:
+            fail_if_classified(proc)  # a full disk fails the re-encode too: its error, not a retry (#415)
             info("stream copy failed, falling back to re-encode")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["copy_failed"], edit_list_ok)
         die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
@@ -1604,6 +1606,7 @@ def main() -> int:
                         cmd += ["-movflags", "+faststart"]
                     cmd += [joined]
                     proc = run(cmd, check=False)
+                    fail_if_classified(proc)  # #415: a full disk is not a reason to re-cut every segment
                     if proc.returncode != 0:
                         info("concat with stream copy failed; re-cutting every segment from the source into one re-encode")
                         compatible = False

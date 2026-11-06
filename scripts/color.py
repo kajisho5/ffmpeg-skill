@@ -23,6 +23,7 @@ import os
 import sys
 from typing import List, Optional
 
+from _common.runner import fail_if_classified
 from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
 
@@ -320,6 +321,7 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool) -> int:
         cmd += ["-movflags", "+faststart"]
     cmd.append(output)
     proc = run(cmd, check=False)
+    fail_if_classified(proc)  # a full disk fails the re-encode too: its error, not two more encodes (#415)
     notes: List[str] = []
     reencoded = proc.returncode != 0
     if not reencoded and not STATE.dry_run:
@@ -345,6 +347,7 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool) -> int:
         cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?",
                                 "-map", "0:s?", "-map", "0:d?"] + label + enc + ["-c:s", "copy", "-c:d", "copy", output]
         proc2 = run(cmd, check=False)
+        fail_if_classified(proc2)
         if proc2.returncode != 0:
             info("re-encode with subtitles/data streams kept also failed; dropping them")
             dropped_streams = True

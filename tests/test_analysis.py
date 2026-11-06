@@ -63,6 +63,15 @@ class AnalysisTests(MediaFixtures):
                          {"value": "01:00:00.00", "drop_frame": True, "source": "format"}, "a malformed tag is skipped")
         self.assertEqual(pick([], {"tags": {"timecode": "02:00:00:00"}}, {"index": 0, "tags": {"timecode": "01:99:99:00"}})["source"],
                          "format", "minutes and seconds above 59 are not a timecode")
+        # #427 review: a frames field the picture's rate cannot reach is skipped, and a tmcd
+        # track's valid tag is used instead of reading the file as having no timecode
+        v25 = {"index": 0, "r_frame_rate": "25/1", "tags": {"timecode": "01:00:00:29"}}
+        tmcd1 = {"index": 2, "codec_type": "data", "codec_tag_string": "tmcd", "tags": {"timecode": "01:00:00:00"}}
+        self.assertEqual(pick([tmcd1], {}, v25)["value"], "01:00:00:00")
+        self.assertIsNone(pick([], {}, v25)["value"])
+        self.assertEqual(pick([], {}, dict(v25, r_frame_rate="30000/1001"))["value"], "01:00:00:29")
+        # the rate probe()'s fps uses: avg_frame_rate first (25 here, though r_frame_rate says 50)
+        self.assertEqual(pick([tmcd1], {}, dict(v25, avg_frame_rate="25/1", r_frame_rate="50/1"))["value"], "01:00:00:00")
 
     def test_probe_accepts_common_flags(self):
         out = script("probe.py", self.src, "--json", "--field", "duration").stdout.strip()
@@ -815,7 +824,10 @@ class AnalysisTests(MediaFixtures):
         # a per-step timeout is reported per step, never raised
         data = json.loads(script("verify.py", self.src, "--quick", "--timeout", "0.01", "--json", expect_fail=True).stdout)
         self.assertEqual((data["status"], data["error"]["kind"]), ("failed", "verification"))
-        timed_out = [s for f in data["files"] for s in f["steps"] if s["error"].startswith("timeout after")]
+        # verify's own step limit, or (since #415 bounds a child's ffprobe by --timeout too) the
+        # child's own timeout: either way a step row of kind timeout
+        timed_out = [s for f in data["files"] for s in f["steps"]
+                     if s["error"].startswith("timeout after") or s.get("kind") == "timeout"]
         self.assertTrue(timed_out, data)
         self.assertEqual(data["failed"], len(timed_out))
         # 0 means no limit here as on every other tool; it timed every step out at 0 s before 2.17.4

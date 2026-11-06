@@ -668,7 +668,8 @@ so the user can edit the list by hand. Quiet rooms need `--threshold -40`
 to `-45`; noisy ones `-30`. Always tell the user how many seconds were removed.
 
 **Breaths and weak word endings.** `--margin` is the padding kept on each side of every cut
-(default 0.2 s since 2.22, 0.15 s before; 0.3 s for a speaker who trails off). `--speech-aware` keeps the short
+(default 0.2 s since 2.22, 0.15 s before; 0.3 s for a speaker who trails off). It is kept around
+silences only: a filler word's cut is the word plus `--filler-pad` (since 3.1.6). `--speech-aware` keeps the short
 breaths inside a sentence and cuts only at sentence-boundary pauses. A `--threshold` set too high
 (-25, say) counts a weak word ending as silence: the result then warns.
 
@@ -861,7 +862,11 @@ OTIO's adapters). Clips keep their in/out and speed (an M2 line, a `timeMap`, a
 `LinearTimeWarp`); `transition` becomes a cross dissolve centred on each cut, trimmed so the
 timeline is exactly as long as `join.py`'s crossfade would render it; `audio.music` is its own
 track; inline `chapters` are markers. Times take the render's own grammar (`"0:05"`,
-`hh:mm:ss:ff` at the source's fps), and the sequence is the project's `frame` sized by
+`hh:mm:ss:ff` at the source's fps; an `out` past a source's end ends at it, as the render
+cuts it, with a note; a chapter metadata.py would refuse is refused). Source positions count
+from each source's start timecode at its own frame rate (EDL source timecodes, drop-frame
+where the source's is; the FCPXML asset's `start`; OTIO's `available_range`), so a conform
+finds the frames (3.1.6). The sequence is the project's `frame` sized by
 fit.py's rule (`{aspect 16:9, width 1920}` is 1920x1080; an aspect alone takes the export
 preset's size when the preset has that aspect; an aspect fit.py refuses, such as `16/9`, is
 refused unless the project's own `fit.aspect` replaces it in the render). A clip of another
@@ -1244,10 +1249,18 @@ above the cap is clamped with a note, not refused, and both `jobs` and
   earlier has no such record and is processed again once, `entry_unverifiable`).
   A `.ffskill_cache.json` that does not parse is started empty with a
   `batch_cache_reset` warning and a line in `output_dir/.ffskill-audit.jsonl`.
-- With `--jobs > 1` each item gets its own work subdirectory
-  `<workdir>/<index>-<stem>/`, because step file names are stem-derived and two
-  sources sharing a stem would otherwise write over each other. `--jobs 1` (the
-  default) keeps the flat layout and is 1.16's path exactly.
+- Each item's intermediates go in a new directory of its own under the work
+  directory (`<workdir>/<index>-<random>/`), removed with them when the item
+  ends, whatever the outcome (3.1.6, #415): step file names are stem-derived, so
+  `clip.mp4` and `clip.mov` sharing a directory, or a rerun meeting an earlier
+  run's files, were refused as someone else's. A step that names no `{out}`
+  (`check.py`) passes its input on; when the last step writes nothing, the last
+  file written is delivered as the item's output, under its own extension (`.mp4`
+  for a video source) unless the recipe sets `ext`. A recipe in which no step names
+  `{out}` (a QC pass: `check.py`/`probe.py` on every file) writes nothing: each
+  row has `written: false` (`output` keeps its path string), a note says so, and `ok` follows the steps' exit codes.
+  Final names that differ only in case are a
+  collision (they are one file on macOS and Windows).
 - `--watch` composes: each pass is parallel, passes are sequential.
 
 ### caption.py --transcribe — optional local speech-to-text

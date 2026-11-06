@@ -54,6 +54,7 @@ from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.emit import warn
 from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.runner import subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, record_font_choice
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
@@ -145,7 +146,9 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
         return [total_cs]
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", video,
-           "-map", f"0:a:{audio_stream}", "-t", f"{end - start:.3f}", "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+           "-map", f"0:a:{audio_stream}", "-t", f"{end - start:.3f}", "-vn",
+           # a sound that starts late is padded to its place on the file's clock (#414)
+           "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)  # under --timeout like every other measurement
     n = len(proc.stdout) // 2
     if proc.returncode != 0 or n < 800:
@@ -887,6 +890,23 @@ def track_title_for(code: Optional[str], given: Optional[str]) -> Optional[str]:
     return LANG_TITLES.get(code.split("-")[0].lower(), code)
 
 
+# a timing line in the grammar ffmpeg's SRT demuxer and parse_srt() read alike: hours, minutes,
+# seconds and three-digit milliseconds on both sides (ffmpeg allows position fields after it)
+_SHARED_SRT_TIMING = re.compile(r"^\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}(\s.*)?$")
+
+
+def srt_timings_shared_grammar(path: str) -> bool:
+    """True when every timing line of the SRT at `path` reads the same to ffmpeg's SRT demuxer as
+    to parse_srt(). ffmpeg refuses `00:01,000` (no hours) and reads `00:00:01,5` as 1.005 s, where
+    parse_srt() reads 1.5 s (#414); such a file is handed to ffmpeg as a rewritten copy."""
+    text = read_text_or_die(path, "--srt").lstrip("\ufeff").replace("\r\n", "\n")
+    # a cue's timing line is its first line with "-->", as parse_srt() reads it (and ffmpeg too);
+    # a later line holding "-->" is dialogue, not a timing this check should judge
+    blocks = [[ln for ln in b.split("\n") if ln.strip()] for b in re.split(r"\n\s*\n", text)]
+    timings = [next((ln for ln in b if "-->" in ln), None) for b in blocks]
+    return all(_SHARED_SRT_TIMING.match(line) for line in timings if line is not None)
+
+
 def mux_subtitle_codec(output: str) -> str:
     ext = Path(output).suffix.lower()
     if ext in (".mp4", ".m4v", ".mov"):
@@ -1130,6 +1150,11 @@ def main() -> int:
             die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
         if args.audio_stream and not audio_streams:
             die("--audio-stream needs an input with audio streams")
+        if args.transcribe and not audio_streams:
+            # refused before any engine runs, as silence.py refuses it, not an unclassified
+            # "Stream map '0:a:0' matches no streams" from the WAV extraction (#414)
+            die(f"--transcribe needs speech to transcribe, and {args.input} has no audio stream",
+                kind="input", hint="pick the file that carries the sound, or write the cues with --text")
         if args.mode != "mux":
             # before any transcription or sidecar: a build without libass fails these at parse time
             # with a message that names no filter (#393), so ask the build first, dry run included
@@ -1380,9 +1405,15 @@ def main() -> int:
     side_notes: List[str] = list(getattr(args, "_asr_notes", None) or [])
     ass_counts: dict = {}  # --ass: ass_shifted / ass_unshifted (with --offset) and ass_malformed, into `caption`
     ass_sample_path = args.ass
+    normalised_only = False  # srt_path is a copy of the caller's SRT that only rewrites its timings
     if args.srt and not (args.text or args.transcribe) and os.path.exists(srt_path or ""):
         adjusted, changed = lay_out(parse_srt(srt_path))
-        if changed:
+        # ffmpeg's own SRT reader takes a narrower grammar than parse_srt(): a time without hours
+        # is refused and ",5" is read as 5 ms where this tool reads 500. A file outside the grammar
+        # both share goes to ffmpeg as the copy this tool writes, so it gets the cues counted
+        # here (#414)
+        normalised_only = not changed and not srt_timings_shared_grammar(srt_path)
+        if changed or normalised_only:
             new_srt = os.path.splitext(output)[0] + "_adjusted.srt"
             claim([(new_srt, "adjusted SRT")])
             if STATE.dry_run:
@@ -1392,8 +1423,10 @@ def main() -> int:
                 info(f"wrote {new_srt} ({len(adjusted)} cues, adjusted from {os.path.basename(srt_path)})")
             srt_path = new_srt
             planned_cues = adjusted
-            side_notes.append(f"the burned subtitles are {new_srt}, the adjusted copy of "
-                              f"{os.path.basename(args.srt)} this run writes (--offset/--max-lines/--min-duration)"
+            why = ("--offset/--max-lines/--min-duration" if changed else
+                   "its timings rewritten as hh:mm:ss,mmm, which ffmpeg reads as this tool does")
+            side_notes.append(f"the {'muxed' if args.mode == 'mux' else 'burned'} subtitles are {new_srt}, the adjusted copy of "
+                              f"{os.path.basename(args.srt)} this run writes ({why})"
                               + ("; re-run this command without --dry-run to produce it" if STATE.dry_run else ""))
     if args.ass and args.offset and os.path.exists(args.ass):
         shifted = os.path.splitext(output)[0] + "_offset.ass"
@@ -1424,10 +1457,34 @@ def main() -> int:
                             and not (STATE.dry_run and (args.text or args.transcribe))):
             die(f"SRT file not found: {srt_path}")
         codec = mux_subtitle_codec(output)
+        out_ext = Path(output).suffix.lower().lstrip(".")
+        # The picture and the sound are copied: a WebM holds only VP8/VP9/AV1 and Opus/Vorbis, so
+        # anything else is refused here, not left to fail unclassified in the muxer (#414)
+        if out_ext == "webm":
+            vcodec = (meta.get("video") or {}).get("codec")
+            # the stream -map 0:a:N copies (--audio-stream), not always the first one
+            audio_streams = meta.get("audio_streams") or []
+            acodec = audio_streams[args.audio_stream].get("codec") if args.audio_stream < len(audio_streams) else None
+            bad = [c for c in (vcodec,) if c and c not in ("vp8", "vp9", "av1")] + \
+                  [c for c in (acodec,) if c and c not in ("opus", "vorbis")]
+            if bad:
+                die(f"--mode mux copies the picture and the sound, and a .webm holds only VP8/VP9/AV1 video and "
+                    f"Opus/Vorbis audio; {args.input} carries {' and '.join(bad)}", kind="input",
+                    hint="write .mkv (any codec) or .mp4 instead, or re-encode first with export.py")
         # Keep any subtitle track(s) the input already has (e.g. chaining --mode mux once per
-        # language to build a multi-language set) -- copied byte-identical, distinct from the
-        # newly-added SRTs' own codec below.
+        # language to build a multi-language set): copied where the output container holds them as
+        # they are, else converted to its own text format as export.py converts them (#380, #414);
+        # a track the container cannot hold at all (a bitmap one in MPEG-4 or WebM) is refused.
         existing_subs = meta.get("subtitle_streams") or 0
+        existing_details = list(meta.get("subtitle_stream_details") or [])
+        existing_codecs = [(existing_details[i] if i < len(existing_details) else {}).get("codec") or ""
+                           for i in range(existing_subs)]
+        unheld = sorted({c or "unknown" for c in existing_codecs if not subtitle_container_holds(c, out_ext)})
+        if unheld:
+            die(f"{args.input} already carries a subtitle track ({', '.join(unheld)}) that a .{out_ext} file cannot "
+                "hold, and --mode mux keeps every existing track", kind="input",
+                hint="write .mkv, which holds any subtitle codec")
+        existing_out = [subtitle_codec_for(c, out_ext) for c in existing_codecs]
         # the first entry's path is srt_path, which --offset/--max-lines may have repointed at an
         # adjusted copy; the rest are taken as written
         added = [(srt_path, srt_tracks[0][1] if srt_tracks else args.language)] + \
@@ -1435,6 +1492,18 @@ def main() -> int:
         for path, _lang in added[1:]:
             if not os.path.exists(path) and not STATE.dry_run:
                 die(f"SRT file not found: {path}")
+        for n in range(1, len(added)):
+            path, lang = added[n]
+            if os.path.exists(path) and not srt_timings_shared_grammar(path):
+                # the same rule as the first track (#414): ffmpeg is given what parse_srt() reads
+                copy = f"{os.path.splitext(output)[0]}_track{n}.srt"
+                claim([(copy, f"normalised SRT {n}")])
+                if not STATE.dry_run:
+                    write_srt(parse_srt(path), copy)
+                    info(f"wrote {copy} (timings of {os.path.basename(path)} rewritten as hh:mm:ss,mmm)")
+                side_notes.append(f"subtitle track {n} is {copy}, a copy of {os.path.basename(path)} with its timings "
+                                  "rewritten as hh:mm:ss,mmm, which ffmpeg reads as this tool does")
+                added[n] = (copy, lang)
         titles = list(args.track_title or [])
         mp4_family = Path(output).suffix.lower() in (".mp4", ".m4v", ".mov")
         dropped_titles: List[str] = []
@@ -1453,13 +1522,16 @@ def main() -> int:
         if mp4_family:
             cmd += ["-movflags", "+faststart"]
         for i in range(existing_subs):
-            cmd += [f"-c:s:{i}", "copy"]
+            cmd += [f"-c:s:{i}", existing_out[i]]
         tracks: List[Dict[str, Any]] = []
+        converted: List[str] = []
         for i in range(existing_subs):
-            kept = (meta.get("subtitle_stream_details") or [])
-            detail = kept[i] if i < len(kept) else {}
+            detail = existing_details[i] if i < len(existing_details) else {}
+            written = detail.get("codec") if existing_out[i] == "copy" else existing_out[i]
+            if existing_out[i] != "copy":
+                converted.append(f"{detail.get('codec')} -> {existing_out[i]}")
             tracks.append({"index": i, "file": None, "language": detail.get("language"),
-                           "title": detail.get("title"), "codec": detail.get("codec"),
+                           "title": detail.get("title"), "codec": written,
                            "default": False, "cues": None, "kept_from_input": True})
         for n, (path, lang) in enumerate(added):
             idx = existing_subs + n
@@ -1510,6 +1582,9 @@ def main() -> int:
             notes.append(f"{total} subtitle tracks in an MPEG-4 container: the tracks are all there, "
                          "but many players only ever show the first -- write to .mkv for a "
                          "deliverable a viewer can actually switch")
+        if converted:
+            notes.append(f"the input's own subtitle track(s) were converted to the .{out_ext} container's text format "
+                         f"({', '.join(converted)}): their text and timing are kept, styling a format cannot carry is not")
         if dropped_titles:
             notes.append("an MPEG-4 container has no per-track title this tool can write back "
                          f"({', '.join(dropped_titles)} would be dropped), so the tracks are "
@@ -1521,6 +1596,14 @@ def main() -> int:
                          "as given and may not survive")
         run(cmd)
         result = probe(output, role="output")
+        # the language and title each track carries in the written file: a converted track keeps
+        # only what the container can store (MPEG-4 drops a two-letter code and every title)
+        written = result.get("subtitle_stream_details") or []
+        if len(written) == len(tracks):
+            for track, detail in zip(tracks, written):
+                track["language"] = detail.get("language")
+                if track["kept_from_input"]:
+                    track["title"] = detail.get("title")
         info(f"wrote {output} ({fmt_secs(result.get('duration'))}, mux, {len(added)} "
              f"subtitle track(s) added, codec {codec})")
         emit(output, tracks=tracks, subtitle_tracks=total, **({"notes": notes} if notes else {}),
@@ -1587,7 +1670,8 @@ def main() -> int:
             cues if (args.text or args.transcribe) else (
                 planned_cues if planned_cues is not None else parse_srt(srt_path)))
         if args.karaoke and not getattr(args, "_word_timings", None):
-            args._word_timings = whisper_word_timings(srt_path)
+            # a copy that only rewrote the timings keeps the caller's word-timing JSON beside it
+            args._word_timings = whisper_word_timings(args.srt if normalised_only else srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
         claim([(ass_path, "ASS")])
         w, h = display_size(meta["video"])

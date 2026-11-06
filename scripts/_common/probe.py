@@ -146,23 +146,40 @@ def _tag(entry: Dict[str, Any], key: str) -> Optional[str]:
     return next((v for k, v in (entry.get("tags") or {}).items() if k.lower() == key), None)
 
 
+def _nominal_fps(video: Optional[Dict[str, Any]]) -> Optional[int]:
+    """The integer timecode rate of the picture (30 for 29.97), from avg_frame_rate, else
+    r_frame_rate: the order probe()'s `fps` uses, which the timeline export validates against."""
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        try:
+            num, _, den = str((video or {}).get(key) or "").partition("/")
+            rate = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if 0 < rate <= 240:
+            return int(round(rate))
+    return None
+
+
 def start_timecode(streams: List[Dict[str, Any]], fmt: Dict[str, Any],
                    video: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """The first well-formed `timecode` tag, from the video stream, then a `tmcd` data stream,
     then the container: {value, drop_frame, source}. `drop_frame` is the `;` (or `.`) separator
     before the frames field; `source` is `stream:<ffprobe index>` or `format`. None when no
-    source carries one (all three null). A tag that is not HH:MM:SS[:;.]FF is skipped, not
-    repaired."""
+    source carries one (all three null). A tag that is not HH:MM:SS[:;.]FF, or whose frames field
+    the picture's rate cannot reach, is skipped, not repaired."""
     candidates = []
     if video is not None:
         candidates.append((video, f"stream:{video.get('index')}"))
     candidates += [(s, f"stream:{s.get('index')}") for s in streams
                    if s.get("codec_type") == "data" and str(s.get("codec_tag_string", "")).lower() == "tmcd"]
     candidates.append((fmt, "format"))
+    nominal = _nominal_fps(video)
     for entry, source in candidates:
         value = _tag(entry, "timecode")
         m = _TIMECODE.match(value.strip()) if isinstance(value, str) else None
-        if m:
+        # a frames field the picture's rate cannot reach (frame 29 at 25 fps) is no timecode
+        # either: the next candidate (a tmcd track's own tag) may still hold a real one (#427)
+        if m and not (nominal and int(m.group(5)) >= nominal):
             return {"value": value.strip(), "drop_frame": m.group(4) in ";.", "source": source}
     return {"value": None, "drop_frame": None, "source": None}
 

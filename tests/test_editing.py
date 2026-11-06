@@ -2209,10 +2209,8 @@ class EditingTests(MediaFixtures):
 
     def test_filler_removes_only_the_timed_filler_words(self):
         out = OUT / "filler_out.mp4"
-        # --margin 0: the filler words in _words_json() are ~0.2-0.3s wide with a 0.02s pad, and
-        # the default 0.15s margin trims each side of *every* removal span (silence or filler
-        # alike) -- with no generic silence to also cut, a margin comparable to the span itself
-        # would swallow it. 0 isolates what this test is checking: filler-only removal.
+        # --margin 0 is no longer needed (#414: the margin is kept around silences only, not
+        # around filler spans), but kept so this test's numbers stay those it was written with.
         data = json.loads(script("silence.py", self._gappy(), "--filler",
                                  "--words", self._words_json(), "--margin", "0",
                                  "-o", out, "--json").stdout)
@@ -2305,6 +2303,31 @@ class EditingTests(MediaFixtures):
                                  "--words", self._words_json(), "-o", out, "--json").stdout)
         self.assertEqual(data["filler"]["removed_count"], 3)
         self.assertFalse(out.exists())
+
+    def test_filler_margin_does_not_swallow_a_short_filler(self):
+        """#414: --margin is silence's, not a filler span's. An "um" 0.34 s wide (0.38 s with the
+        pad) under the default 0.2 s margin was turned inside out: keep [[0,0.88],[0.82,...]],
+        kept longer than the input, nothing removed, yet reported as removed."""
+        words = self._words_json("short_um.json", words=[
+            ("So", 0.2, 0.5), ("um", 0.68, 1.02), ("this", 1.1, 1.5)])
+        data = json.loads(script("silence.py", self._gappy(), "--filler", "--filler-list",
+                                 "--words", words, "--json").stdout)
+        self.assertEqual(data["filler"]["removed_count"], 1)
+        keep = data["keep"]
+        for (_a, b), (c, _d) in zip(keep, keep[1:]):
+            self.assertLessEqual(b, c, keep)
+        self.assertLess(data["kept_duration"], data["input_duration"] - 0.3)
+        self.assertGreater(data["removed_seconds_total"], 0.3)
+        # the "um" starts at 0.68, less the 0.02 s pad: 0.66, which the render holds on its nearest
+        # frame (30 fps: 0.6667), and `keep` describes the rendered range since #416
+        self.assertEqual(keep[0], [0.0, 0.667])
+
+    def test_a_silence_narrower_than_two_margins_removes_nothing(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        silence = importlib.import_module("silence")
+        self.assertEqual(silence.keep_ranges([(1.0, 1.3)], 10, 0.2, 0.2), [(0.0, 10)])
+        self.assertEqual(silence.inside_margin([(1.0, 1.3), (2.0, 3.0)], 10, 0.2), [(2.2, 2.8)])
 
     def test_filler_keep_and_extra_change_the_list(self):
         kept = json.loads(script("silence.py", self._gappy(), "--filler", "--filler-list",
@@ -2482,6 +2505,25 @@ class EditingTests(MediaFixtures):
                    "--words", self._words_json(), "-o", OUT / "filler_pad.mp4",
                    "--json", expect_fail=True)
         self.assertEqual(json.loads(r.stdout)["error"]["kind"], "input")
+
+    def test_margin_must_be_a_finite_non_negative_number(self):
+        """#427 review: --margin nan made inside_margin() drop every silence, so the run
+        re-encoded the whole file unchanged instead of refusing the value."""
+        for bad in ("nan", "inf", "-0.1"):
+            with self.subTest(margin=bad):
+                r = script("silence.py", self._gappy(), "--margin", bad, "-o", OUT / "margin_bad.mp4",
+                           "--dry-run", "--json", expect_fail=True)
+                err = json.loads(r.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn("--margin", err["message"])
+
+    def test_filler_alone_does_not_say_the_output_equals_the_input(self):
+        """#427 review: --filler without --speech-aware has no silences, and the run said "no
+        removable silence found; output would equal the input" before rendering a shorter file."""
+        proc = script("silence.py", self._gappy(), "--filler", "--words", self._words_json(),
+                      "-o", OUT / "filler_equal_msg.mp4", "--dry-run", "--json")
+        self.assertGreater(json.loads(proc.stdout)["removed_seconds_total"], 0.1)
+        self.assertNotIn("output would equal the input", proc.stderr)
 
     def test_filler_refuses_without_a_transcript(self):
         out = OUT / "filler_refuse.mp4"

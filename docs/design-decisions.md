@@ -62,12 +62,16 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — export.py --repair](#224--exportpy---repair)
 - [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
+- [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
+- [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 <!-- contents:end -->
 
 ## Time limits
 
-- **`FFMPEG_SKILL_TIMEOUT=0` (or `--timeout 0`) means no limit anywhere**, including the outer
-  ceiling on sibling-script runs and the MCP dispatch. 0 is the documented "off" value, chosen so
+- **`FFMPEG_SKILL_TIMEOUT=0` (or `--timeout 0`) means no limit on any encode or tool run**, including
+  the outer ceiling on sibling-script runs and the MCP dispatch, and ffprobe calls through `run()`;
+  the short read-only queries outside `run()` (the version, stream-list and encoder/filter-list
+  reads) keep their 120 s ceiling, since a hang there is a stall, not a long job. 0 is the documented "off" value, chosen so
   a genuinely multi-hour job can opt out; the default (1800 s) is what protects an unattended
   agent. Code: `_common.child_limit()`, `_common._limit_for()`, `mcp/server.py` `timeout_from_call()`
   (a raw `argv` list's `--timeout` sets the same ceiling as the structured `timeout` key). Test:
@@ -379,7 +383,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - **An existing output is refused without `--overwrite`, dry runs included** (2.0; 1.x warned,
   with `FFMPEG_SKILL_NO_OVERWRITE=1` as the opt-in). The refusal is `kind: input` before any
   ffmpeg runs, so a dry run predicts it. A path this same run wrote (two-pass tools,
-  copy-then-re-encode fallbacks) is never someone else's file. Code:
+  copy-then-re-encode fallbacks), or a child tool of this run wrote (render.py's stages, 3.1.6), is
+  never someone else's file. Code:
   `_common._check_existing_output()`. Test:
   `test_existing_output_is_refused_without_overwrite_and_never_for_its_own_files`.
   Side files count as outputs (2.2.4): caption.py checks the video and every `.srt`/`.ass` it
@@ -2699,3 +2704,155 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
 - **`loop.py` has no repeat cap** (#416 review): the concat list costs one ~100-byte line per
   repeat against an output that costs a whole clip per repeat, so any count whose list strains
   memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.
+
+## 3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)
+
+- **`silence.py --margin` is kept around silences only, not around filler spans.** A filler cut is
+  the word plus `--filler-pad`; taking 0.2 s off each side as well turned every word narrower than
+  2 x `--margin` inside out (overlapping keep ranges, kept longer than the input, the word still
+  there and reported as removed). The margin is applied to each silence before the merge
+  (`inside_margin`), and a silence too narrow to hold two margins removes nothing. Code:
+  `silence.inside_margin()`, `silence.keep_ranges()`. Tests:
+  `test_filler_margin_does_not_swallow_a_short_filler`,
+  `test_a_silence_narrower_than_two_margins_removes_nothing`.
+- **A transcript is on the file's clock.** The speech engine's 16 kHz WAV (and `--karaoke`'s
+  word-energy decode) pads a sound that starts late (`aresample=async=1:first_pts=0`), as
+  `decode_pcm_mono` does since #409, so cue and word times count from the file's start. A Whisper
+  transcript with no text is `no_speech` for `--filler` as for `caption.py`; one with text and no
+  word timings is still a build without them. Code: `asr.engine_wav()`,
+  `asr._whisper_heard_nothing()`. Tests: `FakeWhisperCppTests`,
+  `test_word_timings_from_silence_are_no_speech_not_a_build_without_them`.
+- **An exported timeline counts source positions from each source's start timecode, at its own
+  rate.** Project times still count from the file's first frame (the time grammar is unchanged);
+  the export adds the source's start timecode, so a conform finds the frames: EDL source
+  timecodes are the clip's own frames from its timecode (drop-frame labels, `;`, where the source's
+  timecode is drop-frame; the record side stays `FCM: NON-DROP FRAME`), the FCPXML asset `start`
+  is that timecode and OTIO's `available_range` starts there. An `out` past a source's end ends
+  at it, with a note, because the render's `cut.py` clamps it; an `in` at or past the end is
+  refused as `cut.py` refuses it. A chapter `metadata.py` would refuse (at or past the end, or not
+  after the one before) is refused, which is what "Neither path accepts a time the other refuses"
+  already said. A music bed's own timecode is not read (an audio file rarely carries one). A
+  start timecode the source's rate cannot have (frame 29 at 25 fps, a frame drop-frame counting
+  skips) is read as none, as `probe()` skips a malformed tag, and the EDL `M2` speed is in the
+  clip's own frames per second, the rate its source labels count in. Code: `timeline.build()`,
+  `timeline.start_tc_frames()`, `timeline._tc_label()`. Tests:
+  `test_the_source_start_timecode_is_carried_into_every_format`,
+  `test_a_start_timecode_that_does_not_exist_at_the_source_rate_is_not_read`,
+  `test_edl_source_timecodes_are_at_each_clips_own_rate`,
+  `test_a_clip_out_past_the_media_end_ends_at_the_media_end`,
+  `test_a_chapter_metadata_py_refuses_is_refused_not_dropped`.
+- **caption.py rewrites a caller's SRT only when ffmpeg would read it differently.** ffmpeg's SRT
+  demuxer requires hours and reads the milliseconds field as an integer (`,5` is 5 ms), where
+  `parse_srt()` accepts `mm:ss,ms` and reads `,5` as 500 ms. A file whose every timing line is
+  `hh:mm:ss[,.]mmm` reads the same to both and is still given to ffmpeg as it is (no side file for
+  a BOM, CRLF or a period separator); any other goes as the `_adjusted.srt` copy the tool writes
+  (an extra `--mode mux` track as `_trackN.srt`). Always writing the copy would add a side file to
+  every run for files both readers agree on. Code: `caption.srt_timings_shared_grammar()`. Test:
+  `test_caption_hands_ffmpeg_the_cues_it_read`.
+- **`--mode mux` keeps every existing subtitle track, converted where the container needs it.**
+  The rule is export.py's (#380), now `_common.runner.subtitle_codec_for()`, plus WebVTT for
+  `.webm`; an EIA-608 track converts as text does (kept as it is in `.mov`, which holds c608). A track no conversion fits (a bitmap track in MPEG-4 or WebM) and a WebM mux of a
+  picture or sound WebM cannot hold are refused up front as `kind: input`; a mux never drops a
+  track the caller did not ask to drop. Test:
+  `test_caption_mux_converts_an_existing_track_for_the_container`.
+- **An explicit `--font` on Windows is looked up in the family table first**
+  (`WINDOWS_FONTS` and `WINDOWS_LATIN_FONTS`), then by file-name prefix: Windows installs most
+  families under file names that do not start with the family's name. Code:
+  `fonts.windows_family_files()`. Test: `WindowsFamilyResolutionTests`.
+
+## 3.1.8 — earlier fixes, where they had not reached (#415)
+
+- **A file a child tool of this run wrote is this run's own.** render.py's export stage is a child
+  process, so the delivery it wrote was not in render's `STATE.written`, and the chapters stage's
+  `place_output()` over it was refused as `output_exists`, after a dry run that said completed (the
+  test helper adds `--overwrite` to every render.py call, which hid it). render.py now records each
+  stage's output (`remember_written()`), as run() records its own ffmpeg outputs. Code:
+  `render.sh()`, `_common.runner.remember_written()`. Test:
+  `Issue415Tests.test_render_export_then_chapters_delivers_on_a_fresh_path_without_overwrite`.
+- **metadata.py writes an MPEG-4 file faststart.** #279 left the stream copy without `+faststart`
+  on the reasoning that adding it would move the moov atom. That does not hold: a stream copy into
+  the MPEG-4 family writes the index after the media unless told otherwise, so the copy moved the
+  index of a faststart input (render's export, then its chapters stage) to the end. Now every MP4
+  write is faststart. Code: `metadata.main()`. Test: `Issue415Tests.test_metadata_writes_a_faststart_mp4`.
+- **A `.webm` source's default output name is `.mp4`.** The re-encoding tools write x264/x265/AV1
+  video and AAC sound, which WebM does not take, so `clip_loudnorm.webm` failed in the muxer after a
+  dry run that said completed. Of the two consistent answers (an `.mp4` default, or VP9/Opus encodes
+  for a WebM target), the default name is one line in `default_output()` and changes no encoder; a
+  caller who names `-o x.webm` still gets the muxer's refusal. metadata.py and `export.py --preset
+  copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Test:
+  `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`.
+- **`waveform.py --title/--srt/--text --dry-run` says its text sizes are placeholders.** The title
+  and captions are drawn by graphics.py and caption.py on the visualisation render, which a dry run
+  does not write, so their planned font size and motion offset are 0 (the real run's are measured
+  from the WxH render). A note says so; a plan does not invent the numbers. Code: `waveform.main()`.
+  Test: `Issue415Tests.test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders`.
+- **batch.py: an item's intermediates live in a directory of its own and go with it.** The step
+  files were `<work>/<stem>_step<i>.<ext>` and never removed, so `clip.mp4` and `clip.mov` in one
+  serial batch refused each other's, and any later run that processed an item again was refused on
+  the file an earlier run left. Each item now gets a new directory under the work directory
+  (`<index>-<random>`, holding `step<i>.<ext>`; serial and `--jobs` alike; 1.17's flat serial layout is gone),
+  removed with its contents when the item ends however it ends. Code: `batch.main()`
+  `item_work()`/`run_item()`. Tests: `Issue415Tests.test_batch_items_own_their_intermediates`,
+  `Issue415Tests.test_batch_a_stem_near_the_name_limit_still_runs` (no stem in either name, so a
+  stem whose input and output names fit in 255 bytes fits here too).
+- **batch.py: a step without `{out}` passes its input on, and the last file written is
+  delivered.** A recipe ending in `check.py` marked the item `ok` with an output nothing wrote; its
+  cache entry then missed (`output_missing`) on every run. A step that names no `{out}` writes
+  nothing, so the next step reads what it read, and when the last step writes nothing the last
+  written file is moved to the item's output (under the same `--overwrite` rule). A recipe in which
+  no step names `{out}` (a QC pass: `check.py` or `probe.py` over a folder) is a legitimate batch
+  that writes nothing: its rows carry `written: false` (`output` stays the final-path string: a
+  `--json` key never changes type within a major), a note says so, `ok` follows the steps' exit
+  codes, its cache entries claim no file (so a rerun is served, not missed as `output_missing`),
+  and the final-name collision check does not apply. The delivered intermediate keeps its own
+  extension (`.mp4` for a video source) unless the recipe sets `ext`: a `.webm` source's `fit.py`
+  step writes MP4, which named `clip_out.webm` would be mislabelled. The move into place holds the
+  output lock every tool's write holds, and a move across filesystems copies beside the final path
+  and renames, so a failed copy never truncates the file it replaces. A `--dry-run` refuses an
+  existing final path there as the real run would, and `check.py --dry-run` on a file an earlier
+  dry-run step would write grades nothing (`checks: []`, a note) instead of dividing by its 0 height. Code: `batch.step_writes()`,
+  `batch.writes_nothing()`, `batch.deliver()`, `batch.cached_output_changed()`. Tests:
+  `Issue415Tests.test_batch_delivers_the_last_written_file_when_the_last_step_writes_none`,
+  `Issue415Tests.test_batch_a_recipe_that_writes_nothing_reports_no_output`,
+  `Issue415Tests.test_batch_a_delivered_intermediate_keeps_its_container_extension`,
+  `Issue415Tests.test_batch_delivery_holds_the_output_lock`,
+  `Issue415Tests.test_batch_delivery_across_filesystems_never_truncates_the_output`,
+  `Issue415Tests.test_batch_dry_run_refuses_an_existing_output_a_read_only_last_step_would_deliver_to`.
+- **batch.py's final-name collision check ignores case.** `Clip_out.mp4` and `clip_out.mp4` are
+  one file on macOS's and Windows' default filesystems; the check refuses them on every platform,
+  so a recipe that works on Linux does not overwrite an item on a Mac. Test:
+  `Issue415Tests.test_batch_final_names_that_differ_only_in_case_collide`.
+- **No fallback retries after a classified ffmpeg failure.** #389 stopped
+  `run_keeping_subtitles()` from encoding again after a full disk, a missing encoder or filter or an
+  unreadable input; export's own subtitle/data ladder, `color.py --retag`'s copy-then-re-encode
+  (and its keep-then-drop re-encode), `cut.py`'s copy-then-re-encode and copy-concat-then-re-cut and
+  `sync.py`'s copy paths still did, blaming the subtitles or the copy. They now stop with the first
+  attempt's error (`fail_if_classified()`). Code: `_common.runner.fail_if_classified()`. Test:
+  `Issue415Tests.test_a_classified_failure_is_not_retried_by_a_copy_or_stream_fallback`.
+- **A stop after the deliverable is written says the file is kept, and keeps the child's exit
+  code.** export.py `--normalize` and render.py's chapters and check stages run on a delivery
+  already on disk; a timeout or Ctrl-C there said "nothing was written" while the file stayed (and
+  a retry was refused as `output_exists`). The message now names the file, says it is kept without
+  the step that was stopped, and the document carries it as `output`; the file is kept rather than
+  removed because with `--overwrite` it has already replaced the caller's. export.py's
+  `--normalize` failure exits with the loudness child's code (124, 130/143), as render.py and
+  waveform.py already did. export.py counts its file delivered as soon as it is written, so a stop
+  in the reads after the write (the output probe, the loudness measurement) says the same. render.py
+  passes a stopped child's code on from an executed plan and from a pack destination too (the pack
+  is then `kind: timeout`, not `verification`), and an export stage stopped in `--normalize` hands
+  the delivery it kept to render's `output`. A child killed by a signal (returncode -9) is passed
+  on as 128 + the signal (137), not as a wrapped 247 (`child_exit_code()`). Code: `_common.runner.mark_delivered()`, `kept_clause()`,
+  `export.main()`, `render.sh()`/`main()`/`execute_plan()`/`render_pack()`. Tests:
+  `Issue415Tests.test_export_normalize_timeout_keeps_its_exit_code_and_says_the_export_is_kept`,
+  `Issue415Tests.test_export_a_stopped_read_after_the_write_says_the_export_is_kept`,
+  `Issue415Tests.test_render_passes_a_stopped_childs_exit_code_and_kept_output_on`,
+  `Issue415Tests.test_a_child_killed_by_a_signal_passes_on_128_plus_the_signal`,
+  `Issue415Tests.test_a_stopped_run_names_the_deliverable_it_keeps`.
+- **An ffprobe call is limited to `min(120 s, --timeout)`.** `_limit_for()` gave every probe through
+  `run()` a fixed 120 s whatever `--timeout` said (the encoder-list read already took the lower
+  one), and the version reads 120 s too; with `--timeout 2` a hung ffprobe held the tool for two
+  minutes. `--timeout 0` leaves the probes through `run()` unlimited, as before; the version,
+  stream-list and encoder/filter-list reads outside it keep 120 s (`_probe_limit()`). A probe that reaches
+  its own 120 s ceiling no longer advises raising `--timeout`, which cannot raise it. Code:
+  `_common.runner._limit_for()`, `_probe_limit()`, `_timed_out()`. Test:
+  `Issue415Tests.test_ffprobe_through_run_is_bounded_by_a_lower_timeout`.

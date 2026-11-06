@@ -13,6 +13,118 @@
 - **`export.py --preset dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444`**: DNxHR editing masters (.mov, PCM audio, source size and rate) beside `prores`. These presets and `prores` now read the written codec, profile and pixel format back as a `codec` verification step (#419). DNxHD at its fixed broadcast sizes and bitrates is not included.
 - **`loop.py --crossfade S`** fades the clip's last S seconds into its first S, picture and sound, so every repeat meets the next without a jump; `--times 1` writes one seamless loop file (#422). Every loop now reports its first seam measured (`seam`: picture step against the typical frame-to-frame step, sound level step) and checks its length against the request (`expected_duration`) and its streams.
 
+## 3.1.8
+
+_Automated release: version and notes generated from pull requests merged since 3.1.7._
+
+### Fixed
+
+- `render.py` with both an `export` and a `chapters` stage failed with `output_exists` on a fresh
+  output path (its dry run said completed), leaving the delivery without chapters: the chapters
+  stage replaced a file export.py had written as a child process, which the guard took for someone
+  else's. A file a stage of this run wrote now counts as the run's own (#415).
+- `metadata.py` (and so render's chapters stage) wrote an MP4 with its index at the end, undoing
+  the export's faststart; MP4/MOV/M4A/M4V output is now `+faststart` (#415).
+- The re-encoding tools named a `.webm` source's default output `.webm`, which their x264/AAC
+  encodes cannot be written into: the dry run said completed and the run failed in the muxer. The
+  default is now `<stem>_<suffix>.mp4`; `metadata.py`, a stream copy, keeps `.webm` (#415).
+- `waveform.py --title/--srt/--text --dry-run` planned the text at font size 0 without saying the
+  numbers were placeholders; a note now says so (#415).
+- `batch.py` never removed its `.work` intermediates, so two sources with one stem (`clip.mp4`,
+  `clip.mov`) refused each other's, and a later run was refused on the previous run's. Each item now
+  works in a directory of its own, removed when it ends (#415).
+- `batch.py` marked an item `ok` with an output that was never written when the last step names no
+  `{out}` (a recipe ending in `check.py`), and its cache entry then missed on every run. Such a step
+  passes its input on and the last written file is delivered. A recipe in which no step writes (a QC
+  pass with `check.py` or `probe.py`) reports each row with `written: false` and a note, and its
+  cache entries no longer miss as `output_missing` on every run (#415).
+- `batch.py`'s final-name collision check missed names that differ only in case, which are one file
+  on macOS and Windows (#415).
+- After a full disk, a missing encoder or an unreadable input, `export.py`'s subtitle/data fallback,
+  `color.py --retag`, `cut.py`'s copy paths and `sync.py`'s copy paths encoded again (up to three
+  times) and blamed the subtitles or the copy; they now report the first failure, as
+  `run_keeping_subtitles()` does since #389 (#415).
+- A timeout or interrupt after the deliverable was written (`export.py --normalize`, `render.py`'s
+  chapters and check stages) said "nothing was written" while the file stayed; the message now names
+  the kept file and the document carries it as `output`. `export.py --normalize` exited 1 when its
+  loudness pass timed out or was interrupted; it now exits 124 / 130 / 143 like render.py (#415).
+- ffprobe calls ignored a `--timeout` below 120 s, and a probe that hit its own 120 s ceiling advised
+  raising `--timeout`, which could not help. Probes now take `min(120 s, --timeout)` (#415).
+- Follow-ups from the #428 review: `export.py --preset copy` keeps a `.webm` source's extension;
+  `render.py` exits 124/130/143 when an executed plan's tool or a pack destination is stopped, and
+  carries the delivery an export stage kept as `output`; `export.py` says the export is kept when a
+  read after the write is stopped; `batch.py` names a delivered intermediate by its own container
+  (`.mp4`), delivers under the output lock through a sibling temp across filesystems, refuses an
+  existing output in `--dry-run` too, handles stems near the 255-byte name limit, and refuses an
+  `output_dir` that is the input folder (which let `suffix: ""` with `--overwrite` replace the sources);
+  its cache key covers the files a step names (`check.py --compare REF`, a LUT), so editing or
+  removing one reruns the items; `check.py
+  --dry-run` on a not-yet-written file no longer crashes; a child killed by a signal exits 128 + the
+  signal (#415).
+- Dry-run honesty, process handling, faststart and batch/render orchestration (#415) (#428)
+
+## 3.1.7
+
+_Automated release: version and notes generated from pull requests merged since 3.1.6._
+
+### Fixed
+
+- `silence.py --filler` never cut a filler word narrower than about 0.36 s but reported it as
+  removed: `--margin` was taken off each side of the filler span too, which turned it inside out
+  (`kept_duration` longer than the input). The margin is now kept around silences only; a filler
+  cut is the word plus `--filler-pad`. A silence narrower than two margins removes nothing instead
+  of overlapping its neighbours (#414).
+- Transcripts were early by the sound's start offset in `caption.py --transcribe` and
+  `silence.py --filler --transcribe`: the engine's 16 kHz WAV began at the sound's first sample, so
+  with a sound 0.276 s after the picture every cue landed 0.276 s early and `--filler` cut the wrong
+  276 ms. The WAV (and `--karaoke`'s word-energy decode) is now padded to the file's clock
+  (`aresample=async=1:first_pts=0`, as #409 did for `decode_pcm_mono`) (#414).
+- `silence.py --filler --transcribe` on silent audio blamed the Whisper build ("produced no
+  word-level timings") instead of refusing with `reason: "no_speech"` as contract.md promises;
+  a Whisper engine whose transcript holds no text is now `no_speech` (#414).
+- `caption.py --transcribe` on a video with no audio stream failed unclassified (`kind: ffmpeg`,
+  "Stream map '0:a:0' matches no streams"); it is refused as `kind: input` before any engine
+  runs, dry run included, as `silence.py` refuses it (#414).
+- `render.py --export-timeline` (#414):
+  - ignored the source's start timecode: a camera file tagged `01:00:00;00` was exported with
+    source in/out `00:00:01:00`, outside the media for a conform. EDL source timecodes now count
+    from it (drop-frame labels where the source's timecode is drop-frame), the FCPXML asset
+    `start` and OTIO `available_range` start at it;
+  - counted EDL source timecodes at the sequence rate, so a 25 fps clip in a 29.97 sequence got
+    frame `:29`; each clip's source timecode is now at its own rate;
+  - kept a clip `out` past the end of its media (10 s of a 6 s clip, where the render clamps);
+    the clip now ends at the media's end, with a note, and an `in` at or past the end is refused
+    as `cut.py` refuses it;
+  - dropped a chapter at or past the end silently, while the render's `metadata.py` refuses it;
+    such a chapter, or one that does not come after the one before it, is now refused
+    (`kind: input`).
+- `caption.py --mode mux` copied an input's own subtitle tracks whatever the output container, so
+  subrip from `.mkv` into `.mp4` ("Could not find tag for codec subrip") and mov_text into `.mkv`
+  failed unclassified. Existing tracks are now converted per container as `export.py` converts
+  them (#380's rule, now shared in `_common/runner.py`, with WebVTT for `.webm`), a track no
+  container conversion fits (a bitmap one in `.mp4`/`.webm`) is refused as `kind: input`, and so
+  is a `.webm` mux of a picture or sound WebM cannot hold (H.264/AAC) (#414).
+- `caption.py` handed a caller's SRT that needed no layout change straight to ffmpeg's SRT reader,
+  which reads another grammar than the tool: `00:01,000` (no hours) was refused as
+  `input_unreadable`, and `00:00:01,5` was burned at 1.005 s where the tool counted 1.5 s. A file
+  whose timing lines are not in the grammar both share is burned and muxed as the copy the tool
+  writes (`<out>_adjusted.srt`; an extra `--mode mux` track as `<out>_trackN.srt`) (#414).
+- On Windows an explicit `--font` was resolved by file-name prefix, so installed families were
+  missed and reported as `font_substituted` "not installed here": `Malgun Gothic` resolved to
+  `YuGothM.ttc` (no Hangul), `Microsoft YaHei`, `Nirmala UI`, `Leelawadee UI` and `Times New
+  Roman` to `arial.ttf`. The family's own file is now looked up first in the table of what Windows
+  installs under which name (`WINDOWS_FONTS`, plus the common Latin families) (#414).
+- `contract --json` left out output keys the tools emit and contract.md documents
+  (`dropped_non_av_streams` on 19 tools; cut's `mode`, `requested_*`, `output_duration`,
+  `duration_delta_seconds`, `nearest_keyframes`, `snap`; silence's `cut_points`, `cut_warnings`,
+  `removed_seconds_total`, `timemap`, `silence_kinds`, `silence_breakdown`, `hint`; probe's
+  `timecode`, `chapters`, `subtitle_stream_details`) and three error reasons the ASR refusals
+  emit (`no_speech`, `engine_failed`, `english_only`). They are published, those three refusals
+  now also carry `error.reason`/`error.details` (the top-level `reason` stays), and the test that
+  lists every refusal reason reads `die(..., reason=...)` calls too (#414).
+- Review follow-ups: `caption.py --mode mux` reports each track's language/title as the written file carries them, checks the `--audio-stream` it copies for `.webm`, converts an EIA-608 track (kept as is in `.mov`), and no longer copies an SRT whose cue text holds `-->`; `silence.py` refuses a non-finite or negative `--margin`; a Whisper segment with no `text` is not `no_speech`; a start timecode the source rate cannot have is read as none, and the EDL `M2` speed is at the clip's own rate (#414).
+- Subtitles, transcription, timeline export, Windows fonts and contract drift (#414) (#427)
+
 ## 3.1.6
 
 _Automated release: version and notes generated from pull requests merged since 3.1.5._
@@ -130,6 +242,7 @@ _Automated release: version and notes generated from pull requests merged since 
   A-roll to width 0 (kept as 1) and failed; and the SMPTE hint named the first timecoded input's
   start timecode for a time in another input (a B-roll's `--from`) (#411).
 - Colour, A/V sync and geometry: the round-1 audit fixes (#410, #409, #411) (#416)
+
 
 ## 3.1.5
 
