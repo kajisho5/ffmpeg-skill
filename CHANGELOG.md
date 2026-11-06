@@ -49,6 +49,56 @@
   --dry-run` on a not-yet-written file no longer crashes; a child killed by a signal exits 128 + the
   signal (#415).
 
+## 3.1.8
+
+_Automated release: version and notes generated from pull requests merged since 3.1.7._
+
+### Fixed
+
+- `render.py` with both an `export` and a `chapters` stage failed with `output_exists` on a fresh
+  output path (its dry run said completed), leaving the delivery without chapters: the chapters
+  stage replaced a file export.py had written as a child process, which the guard took for someone
+  else's. A file a stage of this run wrote now counts as the run's own (#415).
+- `metadata.py` (and so render's chapters stage) wrote an MP4 with its index at the end, undoing
+  the export's faststart; MP4/MOV/M4A/M4V output is now `+faststart` (#415).
+- The re-encoding tools named a `.webm` source's default output `.webm`, which their x264/AAC
+  encodes cannot be written into: the dry run said completed and the run failed in the muxer. The
+  default is now `<stem>_<suffix>.mp4`; `metadata.py`, a stream copy, keeps `.webm` (#415).
+- `waveform.py --title/--srt/--text --dry-run` planned the text at font size 0 without saying the
+  numbers were placeholders; a note now says so (#415).
+- `batch.py` never removed its `.work` intermediates, so two sources with one stem (`clip.mp4`,
+  `clip.mov`) refused each other's, and a later run was refused on the previous run's. Each item now
+  works in a directory of its own, removed when it ends (#415).
+- `batch.py` marked an item `ok` with an output that was never written when the last step names no
+  `{out}` (a recipe ending in `check.py`), and its cache entry then missed on every run. Such a step
+  passes its input on and the last written file is delivered. A recipe in which no step writes (a QC
+  pass with `check.py` or `probe.py`) reports each row with `written: false` and a note, and its
+  cache entries no longer miss as `output_missing` on every run (#415).
+- `batch.py`'s final-name collision check missed names that differ only in case, which are one file
+  on macOS and Windows (#415).
+- After a full disk, a missing encoder or an unreadable input, `export.py`'s subtitle/data fallback,
+  `color.py --retag`, `cut.py`'s copy paths and `sync.py`'s copy paths encoded again (up to three
+  times) and blamed the subtitles or the copy; they now report the first failure, as
+  `run_keeping_subtitles()` does since #389 (#415).
+- A timeout or interrupt after the deliverable was written (`export.py --normalize`, `render.py`'s
+  chapters and check stages) said "nothing was written" while the file stayed; the message now names
+  the kept file and the document carries it as `output`. `export.py --normalize` exited 1 when its
+  loudness pass timed out or was interrupted; it now exits 124 / 130 / 143 like render.py (#415).
+- ffprobe calls ignored a `--timeout` below 120 s, and a probe that hit its own 120 s ceiling advised
+  raising `--timeout`, which could not help. Probes now take `min(120 s, --timeout)` (#415).
+- Follow-ups from the #428 review: `export.py --preset copy` keeps a `.webm` source's extension;
+  `render.py` exits 124/130/143 when an executed plan's tool or a pack destination is stopped, and
+  carries the delivery an export stage kept as `output`; `export.py` says the export is kept when a
+  read after the write is stopped; `batch.py` names a delivered intermediate by its own container
+  (`.mp4`), delivers under the output lock through a sibling temp across filesystems, refuses an
+  existing output in `--dry-run` too, handles stems near the 255-byte name limit, and refuses an
+  `output_dir` that is the input folder (which let `suffix: ""` with `--overwrite` replace the sources);
+  its cache key covers the files a step names (`check.py --compare REF`, a LUT), so editing or
+  removing one reruns the items; `check.py
+  --dry-run` on a not-yet-written file no longer crashes; a child killed by a signal exits 128 + the
+  signal (#415).
+- Dry-run honesty, process handling, faststart and batch/render orchestration (#415) (#428)
+
 ## 3.1.7
 
 _Automated release: version and notes generated from pull requests merged since 3.1.6._
