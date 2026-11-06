@@ -6,6 +6,7 @@
 """
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 import unittest
@@ -266,6 +267,24 @@ class AudioTests(MediaFixtures):
         self.assertTrue(data["audio"]["effects"])
         script("audio.py", self.src, "--effects", self.mic, "--effects-volume", "-20", "-o", out)
         self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
+
+    def test_loudness_versions_writes_one_measured_file_per_target(self):
+        """#421: one master, several deliveries; each is normalised from the master and measured
+        after, and `verified` covers every version."""
+        src = OUT / "versions_src.mp4"
+        shutil.copy(self.src, src)
+        doc = json.loads(script("loudness.py", src, "--versions=streaming,broadcast-jp,-16/-1.5", "--json", "--overwrite").stdout)
+        self.assertTrue(doc["verified"])
+        self.assertIsNone(doc["output"])
+        self.assertEqual([v["target"] for v in doc["versions"]], ["streaming", "broadcast-jp", "m16lufsm1_5tp"])
+        for v, lufs in zip(doc["versions"], (-14.0, -24.0, -16.0)):
+            self.assertTrue(Path(v["output"]).exists())
+            self.assertAlmostEqual(float(v["result"]["input_i"]), lufs, delta=1.0)
+        self.assertEqual({s["version"] for s in doc["verification"] if s["step"] == "loudness"},
+                         {"streaming", "broadcast-jp", "m16lufsm1_5tp"})
+        for bad in ("bogus", "-16", "-3/-1", "streaming,streaming"):
+            proc = script("loudness.py", src, f"--versions={bad}", "--json", expect_fail=True)
+            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", bad)
 
     def test_loudness_json_reports_the_measurement_and_the_targets(self):
         """1.13: --json carries the input's own loudnorm measurement (including its loudness

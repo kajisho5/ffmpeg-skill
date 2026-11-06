@@ -773,6 +773,49 @@ class EditingTests(MediaFixtures):
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
         self.assertEqual(victim.read_bytes(), before)
 
+    def test_loop_crossfade_repeats_are_the_clip_minus_the_fade_and_the_seam_is_smooth(self):
+        """--crossfade lays the clip's tail over its head: a 4 s clip with a 1 s fade repeats every
+        3 s, and the seam's picture step is that of neighbouring frames, where a plain loop of a
+        moving clip jumps (#422). The sound is kept; a unit whose audio came out empty once left a
+        silent loop that still said verified: true."""
+        src = OUT / "loop_xf_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=4",
+           "-f", "lavfi", "-i", "sine=f=440:d=4", "-shortest", "-c:v", "libx264", "-c:a", "aac", src)
+        plain = json.loads(script("loop.py", src, "--times", "2", "--json", "-o", OUT / "loop_xf_plain.mp4").stdout)
+        doc = json.loads(script("loop.py", src, "--times", "3", "--crossfade", "1", "--json", "-o", OUT / "loop_xf.mp4").stdout)
+        self.assertTrue(doc["verified"])
+        self.assertEqual(doc["crossfade"], 1.0)
+        self.assertEqual(doc["expected_duration"], 9.0)
+        self.assertClose(doc["probe"]["duration"], 9.0, 0.05)
+        self.assertIsNotNone(doc["probe"].get("audio"))
+        self.assertEqual(doc["seam"]["at"], "between_repeats")
+        self.assertAlmostEqual(doc["seam"]["time"], 3.0, places=2)
+        # a plain loop of a moving clip jumps at the seam; the crossfaded one steps like any frame
+        self.assertGreater(plain["seam"]["video_step"], 2 * plain["seam"]["video_typical_step"])
+        self.assertLess(doc["seam"]["video_step"], 1.5 * doc["seam"]["video_typical_step"])
+        self.assertLess(abs(doc["seam"]["audio_level_step_db"]), 3.0)
+        steps = {s["step"]: s for s in doc["verification"]}
+        self.assertTrue(steps["duration"]["ok"])
+        self.assertEqual(steps["streams"]["measured_count"], {"video": 1, "audio": 1})
+
+    def test_loop_crossfade_times_one_writes_one_seamless_loop(self):
+        doc = json.loads(script("loop.py", self.src, "--times", "1", "--crossfade", "2", "--json",
+                                "-o", OUT / "loop_xf_one.mp4").stdout)
+        self.assertTrue(doc["verified"])
+        self.assertEqual(doc["seam"]["at"], "end_to_start")
+        self.assertClose(doc["probe"]["duration"], doc["expected_duration"], 0.05)
+
+    def test_loop_crossfade_refusals(self):
+        for extra, reason in ((["--crossfade", "100"], "at most half"), (["--crossfade", "0.001"], "shorter than one frame"),
+                              (["--crossfade", "1", "--boomerang"], "cannot be combined")):
+            proc = script("loop.py", self.src, "--times", "2", *extra, "--json", expect_fail=True)
+            self.assertIn(reason, json.loads(proc.stdout)["error"]["message"])
+
+    def test_loop_plain_reports_its_seam_and_checks_its_length(self):
+        doc = json.loads(script("loop.py", self.src, "--times", "2", "--dry-run", "--json").stdout)
+        self.assertIn("expected_duration", doc)
+        self.assertNotIn("seam", doc)  # a dry run measured nothing
+
     def test_loop_times_too_small_refused(self):
         script("loop.py", self.src, "--times", "1", expect_fail=True)
 

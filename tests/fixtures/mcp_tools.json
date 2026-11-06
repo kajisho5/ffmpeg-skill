@@ -404,6 +404,7 @@
   "name": "export",
   "properties": [
    "allow_long",
+   "alpha_mode",
    "argv",
    "crf",
    "dry_run",
@@ -642,6 +643,7 @@
    "compare",
    "dry_run",
    "fast",
+   "guides",
    "ink",
    "input",
    "json_brief",
@@ -662,6 +664,7 @@
    "argv",
    "boomerang",
    "codec",
+   "crossfade",
    "dry_run",
    "duration",
    "fast",
@@ -696,7 +699,8 @@
    "plan",
    "sample_rate",
    "timeout",
-   "tp"
+   "tp",
+   "versions"
   ],
   "required": []
  },
