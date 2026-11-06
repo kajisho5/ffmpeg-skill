@@ -148,8 +148,20 @@ def main() -> int:
         guard_sidecar(args.edl, args.input, siblings=(args.sheet,))
 
     meta = probe(args.input)
-    if not meta.get("video"):
-        die("input has no video stream")
+    # An audio-only file (WAV/FLAC/MP3 ...) is measured too (after 3.2.0): the beat grid, the loudness
+    # peaks and the speech ratio are measurements of the sound, and a music bed is usually
+    # delivered without a picture. It has no picture to cut, so it is one scene from 0 to its
+    # duration -- the same answer a video with no cut in it gets -- and the result says
+    # audio_only: true. What needs a picture (--sheet, --shots) is refused, not skipped.
+    audio_only = not meta.get("video")
+    if audio_only:
+        if not meta.get("audio"):
+            die("input has no video or audio stream")
+        picture_flags = [f for f, on in (("--sheet", args.sheet), ("--shots", args.shots)) if on]
+        if picture_flags:
+            die(f"{' and '.join(picture_flags)} need{'s' if len(picture_flags) == 1 else ''} a video stream; "
+                "this file is audio-only (input has no video stream). --beats, --audio-peaks, --speech "
+                "and --highlights measure the sound alone.", kind="input")
     # Only parsed when it is going to be used: --beat-range is a --beats flag, and a run that
     # never asked for beats should not be able to die on one.
     beat_range = parse_beat_range(args.beat_range) if args.beats else (60.0, 200.0)
@@ -159,7 +171,7 @@ def main() -> int:
         if args.beat_step <= 0:
             die("--beat-step must be greater than 0", kind="input")
     dur = meta.get("duration") or 0.0
-    cuts = detect_scenes(args.input, args.threshold, args.min_scene, dur, args.ratio)
+    cuts = [0.0] if audio_only else detect_scenes(args.input, args.threshold, args.min_scene, dur, args.ratio)
     bounds = cuts + [dur]
     step_s = 0.5
     # With --beats the file is decoded once, at the finer rate, and both envelopes come from that
@@ -192,6 +204,8 @@ def main() -> int:
         peaks.sort(key=lambda p: p["time"])
 
     result: Dict = {"file": args.input, "duration": round(dur, 3), "scene_count": len(scenes), "scenes": scenes, "audio_peaks": peaks}
+    if audio_only:
+        result["audio_only"] = True
     info(f"{len(scenes)} scenes, {len(peaks)} audio peaks over {dur:.1f}s")
 
     if args.shots:
@@ -224,9 +238,15 @@ def main() -> int:
         # A beat grid is a measurement of the music's periodicity, not a statement about where a
         # cut belongs. scenes.py reports what it measured, including a low confidence: reporting a
         # weak measurement is honest, and only a tool that CHANGES a file refuses to act on one.
-        fine = rms_envelope(fine_samples or [], max(1, int(round(beat_rate * args.beat_step))))
-        grid = beat_grid(fine, args.beat_step, bpm_range=beat_range,
-                         min_confidence=args.min_confidence, duration=dur)
+        # The envelope's real step is a whole number of samples: 220 / 22050 = 9.977 ms for the
+        # default 10 ms. Timing the onsets as if it were 10 ms stretched every measured time by
+        # 0.23 % -- 68 ms by the end of a 30 s track, the "40-60 ms off" a click track showed --
+        # so the grid is timed (and step_s reported) at the step the envelope actually has.
+        beat_block = max(1, int(round(beat_rate * args.beat_step)))
+        fine = rms_envelope(fine_samples or [], beat_block)
+        grid = beat_grid(fine, beat_block / beat_rate, bpm_range=beat_range,
+                         min_confidence=args.min_confidence, duration=dur,
+                         pcm=fine_samples, pcm_rate=beat_rate)
         result["beats"] = grid["beats"]
         result["beat_grid"] = {
             # The regular grid AND the subset a measured onset supports. A tool that MOVES
@@ -238,6 +258,9 @@ def main() -> int:
             "onsets": len(grid["onsets"]), "supported": grid["supported"],
             "unsupported": grid["unsupported"], "method": grid["method"],
             "step_s": grid["step_s"], "range_bpm": grid["range_bpm"], "usable": grid["usable"],
+            # after 3.2.0, additive: how each onset was timed below the envelope step
+            # ("pcm-window-ratio": placed on the decoded samples; null: at the step)
+            "onset_refinement": grid["onset_refinement"],
         }
         if grid["tempo_bpm"] is None:
             info(f"--beats: no steady pulse in this audio (confidence {grid['confidence']:.2f}) -- "

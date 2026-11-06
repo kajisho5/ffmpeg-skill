@@ -1220,25 +1220,127 @@ def _grid_score(onset_times: "Sequence[float]", strength_at: "Dict[int, float]",
     return total
 
 
+BEAT_REFINE_TOL_NATS = 1.0  # onset refinement: the latest time within this of the best log ratio
+
+
+def refine_onset_times(onset_times: "Sequence[float]", step_s: float, pcm: "Sequence[float]",
+                       rate: int) -> "List[float]":
+    """Each envelope-step onset time placed at the sample where the sound starts. Pure.
+
+    An onset picked on the step_s envelope is only known to the step: it is the start of the block
+    the level rose in, so a click is reported up to one step early (5 ms on average at 10 ms).
+    Around each one, over [t - step, t + 2 step], every candidate time c is scored by
+    log(energy of [c, c + step]) - log(energy of [c - step, c]) -- the rise from the step before c
+    to the step after it, which is largest where the sound starts. Ahead of a hit out of digital
+    silence that score is flat (the window before is silent wherever it ends), so the LATEST
+    candidate within BEAT_REFINE_TOL_NATS of the best is taken: past the start, the window before
+    fills with the hit's own attack and the score falls off at once. Candidates are 0.25 ms apart.
+    A time the PCM does not cover is returned unchanged.
+    """
+    rate = int(rate)
+    w = max(1, int(round(step_s * rate)))
+    hop = max(1, int(round(rate * 0.00025)))
+    n = len(pcm)
+    out: "List[float]" = []
+    for t in onset_times:
+        centre = int(round(t * rate))
+        lo, hi = centre - w, centre + 2 * w
+        if lo - w < 0 or hi + w > n:
+            out.append(t)
+            continue
+        base = lo - w
+        prefix = [0.0]
+        acc = 0.0
+        for x in pcm[base:hi + w + 1]:
+            acc += x * x
+            prefix.append(acc)
+        scored = []
+        for c in range(lo, hi + 1, hop):
+            k = c - base
+            before = (prefix[k] - prefix[k - w]) / w
+            after = (prefix[k + w] - prefix[k]) / w
+            scored.append((math.log(after + 1e-12) - math.log(before + 1e-12), c))
+        best = max(sc for sc, _ in scored)
+        c_best = max(c for sc, c in scored if sc >= best - BEAT_REFINE_TOL_NATS)
+        out.append(c_best / rate)
+    return out
+
+
+def _refine_grid(onset_times: "Sequence[float]", strengths: "Sequence[float]", interval: float,
+                 phase: float, lo_bpm: float, hi_bpm: float) -> "tuple":
+    """(interval, phase) refitted by weighted least squares to the onsets that land on the grid.
+
+    Each grid point k is paired with the STRONGEST onset within interval/BEAT_ALIGN_DIVISOR of it
+    (one per point: the weak onsets noise and a hit's own decay leave around a beat must not pull
+    it), and onset_time = phase + k * interval is solved for both unknowns with each pair weighted
+    by its onset strength squared; the pairing is then redone against the refitted grid, until it
+    stops moving (three passes at most). This only sharpens the grid the autocorrelation chose --
+    the tempo cannot leave `bpm_range`, an octave cannot flip (a refit that moves the interval by
+    more than interval/BEAT_ALIGN_DIVISOR is discarded), and fewer than four paired grid points
+    keep the original: the fit needs evidence, and an onset-free stretch gives it none.
+    Returns phase in [0, interval).
+    """
+    iv, ph = float(interval), float(phase)
+    for _ in range(3):
+        tol = iv / BEAT_ALIGN_DIVISOR
+        best: "Dict[int, tuple]" = {}
+        for t, st in zip(onset_times, strengths):
+            k = round((t - ph) / iv)
+            if abs(t - (ph + k * iv)) <= tol and (k not in best or st > best[k][1]):
+                best[k] = (t, st)
+        pairs = [(k, t, max(st, 1e-9) ** 2) for k, (t, st) in best.items()]
+        if len(pairs) < 4:
+            break
+        sw = sum(w for _, _, w in pairs)
+        mk = sum(w * k for k, _, w in pairs) / sw
+        mt = sum(w * t for _, t, w in pairs) / sw
+        sxx = sum(w * (k - mk) ** 2 for k, _, w in pairs)
+        if sxx <= 0:
+            break
+        new_iv = sum(w * (k - mk) * (t - mt) for k, t, w in pairs) / sxx
+        if not (60.0 / hi_bpm <= new_iv <= 60.0 / lo_bpm) or abs(new_iv - interval) > interval / BEAT_ALIGN_DIVISOR:
+            break
+        new_ph = mt - new_iv * mk
+        moved = abs(new_iv - iv) < 1e-9 and abs(new_ph - ph) < 1e-7
+        iv, ph = new_iv, new_ph
+        if moved:
+            break
+    return iv, ph % iv
+
+
 def beat_grid(envelope: "Sequence[float]", step_s: float, *,
               bpm_range: "Sequence[float]" = (60, 200),
               min_confidence: float = BEAT_MIN_CONFIDENCE,
-              duration: "Optional[float]" = None) -> "Dict[str, Any]":
+              duration: "Optional[float]" = None,
+              pcm: "Optional[Sequence[float]]" = None,
+              pcm_rate: "Optional[int]" = None) -> "Dict[str, Any]":
     """A beat grid from an RMS envelope. Pure: numbers in, a dict out -- no ffmpeg, no I/O.
 
     Returns {"beats": [t, ...], "tempo_bpm": float|None, "interval": float|None,
              "confidence": 0..1, "onsets": [t, ...], "phase": float,
              "supported": int, "unsupported": int, "usable": bool,
-             "method": "rms-flux-autocorrelation", "step_s": step_s, "range_bpm": [lo, hi]}
+             "method": "rms-flux-autocorrelation", "step_s": step_s, "range_bpm": [lo, hi],
+             "onset_refinement": "pcm-window-ratio" | None}
+
+    `step_s` must be the envelope's real step (block samples / rate), not the one asked for:
+    every time below is index * step_s. `pcm` and `pcm_rate`, when given, are the samples the
+    envelope was built from; each onset is then placed on them (refine_onset_times) instead of at
+    the start of its envelope block.
 
     The method, in full, so a report can quote it:
       1. onset strength = half-wave-rectified first difference of log(env + 1e-9);
-      2. onsets = local maxima above median + 1.5 * MAD over a +/-1 s window, 60 ms refractory;
+      2. onsets = local maxima above median + 1.5 * MAD over a +/-1 s window, 60 ms refractory,
+         each placed to 0.25 ms on `pcm` when it is given;
       3. tempo = the best autocorrelation lag of the onset signal inside `bpm_range`, with its
          half and double checked and the one whose onsets align better preferred (octave
          disambiguation: 60, 120 and 240 BPM all autocorrelate on a 120 BPM track);
       4. phase = the offset in [0, interval) at which the grid catches the most onset strength;
-      5. beats = phase + n * interval across the duration. A grid must be regular, so a grid
+         then interval and phase are refitted by least squares to the onsets within interval/8 of
+         the grid (_refine_grid), so the tempo is not rounded to a whole number of envelope steps
+         (until 3.2.0, at 10 ms, 90 BPM was measured as 0.67 s and the grid drifted 40-90 ms off the
+         music over 30 s);
+      5. beats = phase + n * interval across the duration (a point within interval/8 before 0 s
+         is reported at 0.0). A grid must be regular, so a grid
          point with no measured onset within interval/4 is still reported -- and counted in
          `unsupported`, so a caller can see how much of the grid the audio actually supports.
          `supported_beats` is the subset that a measured onset does support: it is what a tool
@@ -1262,6 +1364,7 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
         "confidence": 0.0, "onsets": [],
         "phase": 0.0, "supported": 0, "unsupported": 0, "usable": False,
         "method": "rms-flux-autocorrelation", "step_s": step_s, "range_bpm": [lo_bpm, hi_bpm],
+        "onset_refinement": None,
     }
     if len(env) < 4 or step_s <= 0:
         return out
@@ -1272,6 +1375,10 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
         return out
     idx = _pick_onsets(strength, step_s)
     onset_times = [i * step_s for i in idx]
+    if pcm and pcm_rate:
+        # the PCM the envelope came from places each onset to the sample (refine_onset_times)
+        onset_times = refine_onset_times(onset_times, step_s, pcm, int(pcm_rate))
+        out["onset_refinement"] = "pcm-window-ratio"
     out["onsets"] = [round(t, 4) for t in onset_times]
     if len(idx) < 2:
         return out
@@ -1312,11 +1419,26 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
         if alt_score > base_score * BEAT_OCTAVE_MARGIN:
             interval, phase, base_score = alt, alt_phase, alt_score
 
+    # The autocorrelation lag is a whole number of envelope steps, so the interval it gives is the
+    # true one rounded to step_s: 90 BPM (0.6667 s) comes out as 0.67 s at 10 ms, 3.3 ms per beat
+    # that a phase+n*interval grid accumulates to tens of ms within a bar or two of either end
+    # (40-90 ms over 30 s). Refit interval and phase to the onsets themselves (_refine_grid).
+    interval, phase = _refine_grid(onset_times, [strength[j] for j in idx], interval, phase,
+                                   lo_bpm, hi_bpm)
+
     beats = []
-    t = phase
-    while t <= total_s + 1e-9:
-        beats.append(round(t, 4))
-        t += interval
+    # The first grid point at or after 0, where "at" allows the alignment tolerance: a fitted
+    # phase a few ms either side of a beat at 0 s (a track that starts on the beat) is that beat,
+    # reported at 0.0 rather than dropped as negative. Indexing by n instead of adding the interval
+    # up keeps the float error of a long file out of the last beats.
+    first = -int(math.floor((phase + interval / BEAT_ALIGN_DIVISOR) / interval)) if phase > 0 else 0
+    n = first
+    while True:
+        t = phase + n * interval
+        if t > total_s + 1e-9:
+            break
+        beats.append(round(max(0.0, t), 4))
+        n += 1
     support_tol = interval / BEAT_SUPPORT_DIVISOR
     supported_beats = [b for b in beats
                        if any(abs(b - o) <= support_tol for o in onset_times)]

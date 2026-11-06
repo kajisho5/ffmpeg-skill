@@ -4,7 +4,20 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`scenes.py --beats` on a music bed with no picture, and to the ms.** An audio-only input
+  (WAV/FLAC/MP3 ...) was refused with "input has no video stream"; it is now measured as one
+  scene (`audio_only: true`), and `--sheet` / `--shots`, which need a picture, refuse it. Wrapped
+  in a video, a synthetic click track's grid was 40-90 ms off (sound-design-skill's 20 ms check of
+  `generate-bgm --bpm` could not pass): the 10 ms envelope is 220 samples at 22050 Hz, 9.977 ms,
+  and was timed as 10 ms (0.23 % stretch, 68 ms over 30 s), and the tempo was a whole number of
+  envelope steps (90 BPM as 0.67 s, 3.3 ms a beat). `beat_grid.step_s` is now the real step, the
+  tempo and phase are refitted to the onsets, and each onset is placed on the decoded samples
+  (new `beat_grid.onset_refinement`). On 90/120 BPM click tracks every beat is within 1 ms
+  (WAV/FLAC), 9 ms (MP3). `cut.py --snap beats` measures its own grid at the real step too.
+  Contract: `scenes` is `audio_only: true`, `video_required: false`; `audio_only`, `beats` and
+  `beat_grid` are described in its output schema.
 
 ## 3.2.0
 

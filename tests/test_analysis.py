@@ -1147,6 +1147,88 @@ class AnalysisTests(MediaFixtures):
                                  "--json").stdout)
         self.assertNotIn("beat_grid", data)
 
+    # ------------------------------------------- After 3.2.0: --beats on an audio-only file, to 20 ms
+    @staticmethod
+    def _click_track(name, bpm, first, seconds=20, ext="wav"):
+        """An audio-only click track (no video stream): a 1 kHz click decaying over 3 ms, every
+        60/bpm s from `first`. Returns (path, the click times). The interval is written as a
+        fraction so 90 BPM is exactly 2/3 s, not 0.667 s."""
+        path = OUT / f"{name}.{ext}"
+        iv = f"(60/{bpm})"
+        ph = f"(t-{first})"
+        click = (f"0.8*sin(2*PI*1000*t)*exp(-mod({ph}\\,{iv})/0.003)"
+                 f"*lt(mod({ph}\\,{iv})\\,0.01)*gte(t\\,{first})")
+        if not path.exists():
+            codec = {"wav": ["-c:a", "pcm_s16le"], "flac": ["-c:a", "flac"], "mp3": ["-c:a", "libmp3lame", "-b:a", "192k"]}[ext]
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+               "-i", f"aevalsrc='{click}':s=44100", "-t", str(seconds), *codec, path)
+        interval = 60.0 / bpm
+        times, k = [], 0
+        while first + k * interval < seconds - 0.05:
+            times.append(first + k * interval)
+            k += 1
+        return path, times
+
+    def _assert_every_click_within(self, data, times, tol):
+        beats = data["beats"]
+        worst = max(min(abs(b - t) for b in beats) for t in times)
+        self.assertLess(worst, tol, f"a click is {worst * 1000:.1f} ms from the nearest beat "
+                                    f"(tempo {data['beat_grid']['tempo_bpm']}, phase {data['beat_grid']['phase']})")
+        # and the grid has no extra beat inside the music: one grid point per click
+        inside = [b for b in beats if times[0] - tol <= b <= times[-1] + tol]
+        self.assertEqual(len(inside), len(times))
+
+    def test_scenes_beats_on_an_audio_only_wav_lands_every_beat_within_20ms(self):
+        """sound-design-skill's generate-bgm --bpm writes a WAV and a beat grid with the first beat
+        at 0 s, and checks it against scenes.py --beats to 20 ms. Before this fix an audio-only file
+        was refused ("input has no video stream"), and wrapped in a video the grid was 40-90 ms
+        off a click track: the envelope step was timed at 10 ms when it is 220/22050 s, and the
+        tempo was a whole number of steps (90 BPM measured as 0.67 s)."""
+        for bpm, first in ((120, 0.0), (90, 0.0), (120, 0.25), (90, 0.137)):
+            with self.subTest(bpm=bpm, first=first):
+                path, times = self._click_track(f"clicks_{bpm}_{first}", bpm, first)
+                self.assertIsNone(probe(str(path)).get("video"))
+                data = json.loads(script("scenes.py", path, "--beats", "--json").stdout)
+                grid = data["beat_grid"]
+                self.assertTrue(data["audio_only"])
+                self.assertEqual(data["scene_count"], 1)
+                self.assertAlmostEqual(grid["tempo_bpm"], float(bpm), delta=0.1)
+                self.assertTrue(grid["usable"])
+                self.assertEqual(grid["onset_refinement"], "pcm-window-ratio")
+                self._assert_every_click_within(data, times, 0.020)
+
+    def test_scenes_beats_on_flac_and_mp3_within_20ms(self):
+        for ext in ("flac", "mp3"):
+            with self.subTest(ext=ext):
+                path, times = self._click_track("clicks_90_0.137", 90, 0.137, ext=ext)
+                data = json.loads(script("scenes.py", path, "--beats", "--json").stdout)
+                self.assertAlmostEqual(data["beat_grid"]["tempo_bpm"], 90.0, delta=0.1)
+                self._assert_every_click_within(data, times, 0.020)
+
+    def test_scenes_audio_only_refuses_what_needs_a_picture(self):
+        path, _ = self._click_track("clicks_120_0.0", 120, 0.0)
+        for flag in (["--sheet", str(OUT / "audio_only_sheet.png")], ["--shots"]):
+            with self.subTest(flag=flag[0]):
+                r = script("scenes.py", path, *flag, "--json", expect_fail=True)
+                err = json.loads(r.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn(flag[0], err["message"])
+                self.assertIn("no video stream", err["message"])
+        self.assertFalse((OUT / "audio_only_sheet.png").exists())
+
+    def test_scenes_audio_only_without_beats_is_one_scene(self):
+        path, _ = self._click_track("clicks_120_0.0", 120, 0.0)
+        data = json.loads(script("scenes.py", path, "--audio-peaks", "--speech", "--highlights", "1", "--json").stdout)
+        self.assertTrue(data["audio_only"])
+        self.assertEqual([(sc["start"], sc["end"]) for sc in data["scenes"]], [(0.0, 20.0)])
+        for key in ("audio_peaks", "audio_peaks_db", "speech", "highlights"):
+            self.assertTrue(data[key], key)
+        self.assertNotIn("beat_grid", data)
+
+    def test_scenes_video_input_has_no_audio_only_key(self):
+        data = json.loads(script("scenes.py", self._beats(), "--json").stdout)
+        self.assertNotIn("audio_only", data)
+
     # --------------------------------------------------------------- 1.18.0: --shots / --audio-peaks / --speech
     def test_scenes_shots_labels_every_scene(self):
         data = json.loads(script("scenes.py", self.src, "--shots", "--json").stdout)
@@ -1441,6 +1523,50 @@ class BeatGridTests(unittest.TestCase):
         out = snap_points([1.0, 2.0], [], 1.0)
         self.assertEqual([r["to"] for r in out], [1.0, 2.0])
         self.assertFalse(any(r["snapped"] for r in out))
+
+    def test_a_tempo_between_envelope_steps_is_not_rounded_to_one(self):
+        """After 3.2.0: the autocorrelation lag is a whole number of steps, so 90 BPM (0.6667 s) came
+        out as 0.67 s and the grid drifted 3.3 ms a beat, 0.1 s off the clicks within 30 s. The
+        grid is refitted to the onsets: every click within 20 ms, the tempo to 0.1 BPM."""
+        from _common import beat_grid
+        for bpm in (90.0, 137.0, 72.0):
+            with self.subTest(bpm=bpm):
+                iv = 60.0 / bpm
+                g = beat_grid(self._clicks(iv, seconds=30.0), self.STEP, duration=30.0)
+                self.assertAlmostEqual(g["tempo_bpm"], bpm, delta=0.1)
+                clicks = [k * iv for k in range(int(30.0 / iv) + 1) if k * iv < 30.0]
+                worst = max(min(abs(b - t) for b in g["beats"]) for t in clicks)
+                self.assertLess(worst, 0.020)
+
+    def test_a_track_that_starts_on_the_beat_has_a_beat_at_zero(self):
+        """An onset at the very first envelope step cannot be measured (there is no step before
+        it), so the grid's phase is fitted from the later beats; one that lands a few ms either
+        side of 0 s is the beat at 0.0, not a dropped one."""
+        from _common import beat_grid
+        for bpm in (90.0, 120.0, 137.0):
+            with self.subTest(bpm=bpm):
+                g = beat_grid(self._clicks(60.0 / bpm, seconds=20.0), self.STEP, duration=20.0)
+                self.assertGreaterEqual(g["beats"][0], 0.0)
+                self.assertLess(g["beats"][0], 0.005)
+
+    def test_refine_onset_times_places_a_click_to_the_sample(self):
+        """An onset picked on a 10 ms envelope is only known to the step; the PCM places it."""
+        from _common.decision import refine_onset_times
+        import math as _m
+        rate = 22050
+        pcm = [0.0] * rate
+        starts = (0.2037, 0.5012, 0.7999)
+        for t0 in starts:
+            s0 = int(round(t0 * rate))
+            for k in range(int(rate * 0.01)):
+                pcm[s0 + k] = 0.8 * _m.sin(2 * _m.pi * 1000 * k / rate) * _m.exp(-k / (rate * 0.003))
+        step = 220 / rate
+        coarse = [int(t0 / step) * step for t0 in starts]   # what the envelope pick gives
+        fine = refine_onset_times(coarse, step, pcm, rate)
+        for t0, t in zip(starts, fine):
+            self.assertLess(abs(t - t0), 0.001)
+        # a time too close to the edge of the PCM is returned as it was
+        self.assertEqual(refine_onset_times([0.001], step, pcm, rate), [0.001])
 
     def test_beat_grid_is_pure(self):
         import unittest.mock
