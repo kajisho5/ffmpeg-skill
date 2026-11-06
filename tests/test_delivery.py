@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, sar_clip, script, sh  # noqa: E402
 from _common import probe  # noqa: E402
 
 
@@ -40,6 +40,281 @@ class DeliveryTests(MediaFixtures):
                 self.assertClose(m["duration"], 12.0, 0.2)
                 if preset in ("youtube", "reels", "x", "h265"):
                     self.assertEqual(m["video"]["color_space"], "bt709")
+
+    def test_export_dnxhr_masters_read_back_codec_profile_and_pixel_format(self):
+        """#419: DNxHR presets beside prores, each checked after the write by codec, profile and
+        pixel format (an editing master is asked for by all three), at the source's size and rate."""
+        for preset, profile, pix in (("dnxhr-sq", "DNXHR SQ", "yuv422p"), ("dnxhr-hqx", "DNXHR HQX", "yuv422p10le"),
+                                     ("dnxhr-444", "DNXHR 444", "yuv444p10le"), ("prores", "HQ", "yuv422p10le")):
+            with self.subTest(preset=preset):
+                doc = json.loads(script("export.py", self.src, "--preset", preset, "--json",
+                                        "-o", OUT / f"export_master_{preset}.mov").stdout)
+                self.assertTrue(doc["verified"])
+                step = next(s for s in doc["verification"] if s["step"] == "codec")
+                self.assertTrue(step["ok"])
+                self.assertEqual(step["measured"]["profile"], profile)
+                self.assertEqual(step["measured"]["pix_fmt"], pix)
+                self.assertEqual((doc["probe"]["video"]["width"], doc["probe"]["video"]["height"]), (1280, 720))
+
+    def test_export_alpha_masters_keep_and_read_back_the_alpha(self):
+        """#417: the alpha presets keep the source's alpha, measured on a written frame; an opaque
+        source is refused, and --alpha-mode is reported."""
+        src = OUT / "alpha_src.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "qtrle", src)
+        for preset, ext in (("prores4444", "mov"), ("qtrle", "mov"), ("vp9-alpha", "webm")):
+            with self.subTest(preset=preset):
+                doc = json.loads(script("export.py", src, "--preset", preset, "--json", "--overwrite",
+                                        "-o", OUT / f"alpha_{preset}.{ext}").stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                self.assertEqual(doc["alpha_mode"], "straight")
+                step = next(s for s in doc["verification"] if s["step"] == "alpha")
+                self.assertAlmostEqual(step["measured"], 159.5, delta=2.0)
+        # #418: a key/fill pair holds the same frames; the key is the alpha as a luma matte
+        doc = json.loads(script("export.py", src, "--preset", "key-fill", "--json", "--overwrite",
+                                "-o", OUT / "alpha_fill.mov").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(doc["key"]["output"], str(OUT / "alpha_fill_key.mov"))
+        steps = {s["step"]: s for s in doc["verification"]}
+        self.assertTrue(steps["key_fill_pair"]["ok"])
+        self.assertAlmostEqual(steps["key_level"]["measured"], 159.5, delta=2.0)
+        self.assertEqual(len(doc["key"]["sha256"]), 64)
+        self.assertNotEqual(doc["key"]["sha256"], doc["fill_sha256"])
+        doc = json.loads(script("export.py", src, "--preset", "qtrle", "--alpha-mode", "premultiplied", "--json",
+                                "--overwrite", "-o", OUT / "alpha_pm.mov").stdout)
+        self.assertEqual(doc["alpha_mode"], "premultiplied")
+        self.assertIn("premultiply", " ".join(doc["commands"]))
+        proc = script("export.py", self.src, "--preset", "qtrle", "--json", "-o", OUT / "alpha_opaque.mov", expect_fail=True)
+        self.assertIn("has none", json.loads(proc.stdout)["error"]["message"])
+        proc = script("export.py", self.src, "--preset", "prores", "--alpha-mode", "straight", "--json",
+                      "-o", OUT / "alpha_mode_wrong.mov", expect_fail=True)
+        self.assertIn("only to the alpha presets", json.loads(proc.stdout)["error"]["message"])
+
+    def _rgba_at(self, path, x, y):
+        """One pixel's (r, g, b, a) of a file's first frame (libvpx-vp9 for a .webm)."""
+        dec = ["-c:v", "libvpx-vp9"] if str(path).endswith(".webm") else []
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", *dec, "-i", str(path), "-frames:v", "1",
+                              "-vf", f"crop=1:1:{x}:{y},format=rgba", "-f", "rawvideo", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        return tuple(out[:4])
+
+    def test_export_alpha_review_430(self):
+        """#430 review. A VP9 alpha source (probed yuv420p: the alpha is a side layer the native
+        decoder drops) is decoded with libvpx-vp9, so its master keeps the alpha, and a dry run
+        plans it instead of refusing it as opaque; the alpha is compared over every frame, so a
+        source whose first frame is opaque is not measured as opaque; premultiplied colour is
+        RGB x alpha."""
+        webm = OUT / "alpha_rv_src.webm"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", webm)
+        doc = json.loads(script("export.py", webm, "--preset", "prores4444", "--json", "--overwrite",
+                                "-o", OUT / "alpha_rv_from_vp9.mov").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertIn("-c:v libvpx-vp9 -i", doc["commands"][0])
+        self.assertAlmostEqual(next(s for s in doc["verification"] if s["step"] == "alpha")["measured"], 159.5, delta=2.0)
+        doc = json.loads(script("export.py", webm, "--preset", "prores4444", "--json", "--dry-run",
+                                "-o", OUT / "alpha_rv_dry.mov").stdout)
+        self.assertEqual(doc["status"], "completed")
+        # opaque for its first second, then half transparent: the first frame alone read 255 = 255
+        late = OUT / "alpha_rv_late.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=2,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(T,1),255,if(lt(X,80),255,64))'",
+           "-c:v", "qtrle", late)
+        doc = json.loads(script("export.py", late, "--preset", "prores4444", "--json", "--overwrite",
+                                "-o", OUT / "alpha_rv_late_out.mov").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "alpha")
+        self.assertTrue(step["ok"], step)
+        self.assertAlmostEqual(step["frames"]["expected"]["min"], 159.5, delta=2.0)
+        self.assertAlmostEqual(step["frames"]["measured"]["min"], 159.5, delta=2.0)
+        self.assertLess(step["expected"], 254.0, "the mean over every frame, not the opaque first frame")
+        # premultiplied: the colour at alpha 64 is the straight colour x 64/255
+        straight, pm = OUT / "alpha_rv_straight.mov", OUT / "alpha_rv_pm.mov"
+        src = OUT / "alpha_rv_flat.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=0xC08040:s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "qtrle", src)
+        for out, mode in ((straight, "straight"), (pm, "premultiplied")):
+            script("export.py", src, "--preset", "qtrle", "--alpha-mode", mode, "--overwrite", "-o", out)
+        s_px, p_px = self._rgba_at(straight, 120, 48), self._rgba_at(pm, 120, 48)
+        self.assertEqual((s_px[3], p_px[3]), (64, 64))
+        for sc, pc in zip(s_px[:3], p_px[:3]):
+            self.assertAlmostEqual(pc, sc * 64 / 255, delta=2)
+
+    def test_export_key_fill_review_430(self):
+        """#430 review: key-fill maps only the fill and the sound (a source with a subtitle track
+        added the unfiltered picture and the sound twice), reports the subtitle it does not write,
+        compares the video streams' lengths (the fill's sound may run longer than its picture),
+        guards the fill like the key (an existing fill, the input under another spelling), and
+        refuses --max-mb, which it never applied."""
+        late = OUT / "keyfill_rv_alpha.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=2,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "qtrle", OUT / "keyfill_rv_v.mov")
+        srt = OUT / "keyfill_rv.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", OUT / "keyfill_rv_v.mov", "-f", "lavfi",
+           "-i", "sine=d=2.5", "-i", srt, "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "copy",
+           "-c:a", "pcm_s16le", "-c:s", "mov_text", late)
+        fill = OUT / "keyfill_rv_fill.mov"
+        for f in (fill, OUT / "keyfill_rv_fill_key.mov"):
+            if f.exists():
+                f.unlink()
+        doc = json.loads(script("export.py", late, "--preset", "key-fill", "--json", "-o", fill).stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual([(d["type"], d["reason"]) for d in doc["non_av_streams"]["dropped"]], [("subtitle", "key_fill")])
+        self.assertTrue(doc["dropped_non_av_streams"])
+        types = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", fill).stdout.split()
+        self.assertEqual(types, ["video", "audio"])
+        # the key exists only after a run: an existing fill alone is someone's file
+        (OUT / "keyfill_rv_fill_key.mov").unlink()
+        proc = sh(sys.executable, SCRIPTS / "export.py", late, "--preset", "key-fill", "--json", "-o", fill, expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_exists")
+        proc = script("export.py", late, "--preset", "key-fill", "--json", "--overwrite",
+                      "-o", os.path.join(str(late.parent), ".", late.name), expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
+        proc = script("export.py", late, "--preset", "key-fill", "--max-mb", "5", "--json",
+                      "-o", OUT / "keyfill_rv_mb.mov", expect_fail=True)
+        self.assertIn("key-fill", json.loads(proc.stdout)["error"]["message"])
+
+    def test_export_key_fill_failure_removes_only_a_fill_it_created(self):
+        """#430 review: run() cleans up ffmpeg's last output (the key) after a failed encode, not the
+        fill before it, so a partial fill was left and the retry refused it as output_exists. A
+        fill this run created is removed; one that was there before is never touched (it is
+        written through a temp file, which is removed too). In-process, with an encode that writes
+        part of the fill and then fails."""
+        import contextlib
+        import importlib
+        import io
+        from unittest import mock
+        from _common import STATE
+        export = importlib.import_module("export")
+        src = OUT / "keyfill_fail_src.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba", "-c:v", "qtrle", src)
+        real_run = export.run
+
+        def failing_run(cmd, **kw):
+            if "-filter_complex" not in cmd:
+                return real_run(cmd, **kw)
+            fill_out = cmd[cmd.index("[key]") - 2]  # the fill's path, just before -map [key]
+            Path(fill_out).write_bytes(b"partial")
+            raise SystemExit(1)
+
+        def attempt(fill, *extra):
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(export, "run", failing_run), \
+                    mock.patch.object(sys, "argv", ["export.py", str(src), "--preset", "key-fill", "-o", str(fill), *extra]), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                STATE.reset()
+                with self.assertRaises(SystemExit):
+                    export.main()
+            STATE.reset()
+
+        fill = OUT / "keyfill_fail_new.mov"
+        if fill.exists():
+            fill.unlink()
+        attempt(fill)
+        self.assertFalse(fill.exists(), "a partial fill this run created is removed")
+        self.assertEqual([f.name for f in OUT.glob(".keyfill_fail_new.ffskill-*")], [])
+        kept = OUT / "keyfill_fail_kept.mov"
+        kept.write_bytes(b"the caller's file")
+        attempt(kept, "--overwrite")
+        self.assertEqual(kept.read_bytes(), b"the caller's file")
+        self.assertEqual([f.name for f in OUT.glob(".keyfill_fail_kept.ffskill-*")], [])
+
+    def test_export_alpha_is_compared_frame_by_frame(self):
+        """#430 review: 200 frames, two of them transparent, written with one of those turned
+        opaque. The aggregate kept the same min and moved the mean by 1.275 (inside 2), so it
+        passed; frame i against frame i fails at that frame. A different frame count (a conformed
+        variable-rate source) falls back to the aggregate and says it did (`paired: false`)."""
+        import importlib
+        export = importlib.import_module("export")
+
+        def stats(per):
+            return {"mean": sum(per) / len(per), "min": min(per), "frames": len(per), "per_frame": per}
+        src = [255.0] * 198 + [0.0, 0.0]
+        lost = [255.0] * 198 + [255.0, 0.0]
+        cmp = export._alpha_compare(stats(lost), stats(src))
+        self.assertEqual((cmp["ok"], cmp["paired"], cmp["worst_frame"]), (False, True, 198))
+        self.assertTrue(export._alpha_compare(stats([v + 1.5 for v in src[:-2]] + [1.0, 1.0]), stats(src))["ok"])
+        cmp = export._alpha_compare(stats(src + [0.0]), stats(src))
+        self.assertEqual((cmp["ok"], cmp["paired"]), (True, False))
+        self.assertFalse(export._alpha_compare(None, stats(src))["ok"])
+
+    def test_export_max_mb_refuses_gif_and_a_limit_that_constrains_nothing(self):
+        """2.24.1: --preset gif returned before --max-mb was applied, so a 0.7 MB GIF passed a 1 KB
+        limit as verified; --max-mb 1e9 reached libx264 as an impossible bitrate (kind ffmpeg)."""
+        for preset, size, ext in (("gif", "0.001", "gif"), ("youtube", "1e9", "mp4")):
+            proc = script("export.py", self.src, "--preset", preset, "--max-mb", size, "-o", OUT / f"maxmb_{preset}.{ext}",
+                          "--json", expect_fail=True)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual(err["kind"], "input", err)
+            self.assertIn("--max-mb", err["message"])
+
+    def test_export_repair_classifies_damage_lines(self):
+        """2.24.1: "Packet corrupt (stream = 0, dts = N)" names a dts but is damage, and "Last message
+        repeated N times" hid N lines and was itself counted as a decode error; repeat+warning
+        prints each occurrence."""
+        sys.path.insert(0, str(SCRIPTS))
+        import export
+        from unittest import mock
+        stderr = ("[mpegts @ 0x1] Packet corrupt (stream = 0, dts = 393000).\n"
+                  "[vist#0:0/h264 @ 0x2] timestamp discontinuity (stream id=256): -2999999, new offset= 2999999\n"
+                  "[null @ 0x3] Application provided invalid, non monotonically increasing dts to muxer in stream 1\n"
+                  "[null @ 0x3] Application provided invalid, non monotonically increasing dts to muxer in stream 1\n")
+        with mock.patch.object(export, "run_analysis", return_value=subprocess.CompletedProcess([], 0, "", stderr)) as ran:
+            self.assertEqual(export.media_damage("x.ts"), {"timestamp_warnings": 3, "decode_errors": 1})
+        self.assertIn("repeat+warning", ran.call_args[0][0])
+
+    def test_export_max_mb_fits_the_size(self):
+        """2.24: --max-mb 1 on a 10 s clip that is several MB at the preset's CRF: two passes, the
+        written file under 1 MiB and measured; a budget too small for the picture, --crf with it,
+        and a non-x264 preset are refused before anything runs."""
+        src = OUT / "max_mb_src.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:d=10",
+               "-f", "lavfi", "-i", "sine=d=10", "-c:v", "libx264", "-crf", "5", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+        out = OUT / "max_mb_out.mp4"
+        doc = json.loads(script("export.py", src, "--preset", "youtube", "--max-mb", "1", "--no-scale", "-o", out,
+                                "--overwrite", "--json").stdout)
+        self.assertLessEqual(out.stat().st_size, 1024 * 1024)
+        size = next(v for v in doc["verification"] if v.get("step") == "file_size")
+        self.assertTrue(size["ok"] and size["measured"] == out.stat().st_size, size)
+        self.assertEqual(sum("-pass" in c for c in doc["commands"]), 2)
+        for extra, said in ((["--max-mb", "0.05"], "not watchable"), (["--max-mb", "1", "--crf", "20"], "give one of them"),
+                            (["--max-mb", "nan"], "positive number"), (["--max-mb", "inf"], "positive number")):
+            proc = script("export.py", src, "--preset", "youtube", *extra, "-o", OUT / "max_mb_bad.mp4", "--json", expect_fail=True)
+            self.assertIn(said, json.loads(proc.stdout)["error"]["message"])
+        proc = script("export.py", src, "--preset", "h265", "--max-mb", "1", "-o", OUT / "max_mb_bad.mp4", "--json", expect_fail=True)
+        self.assertIn("x264", json.loads(proc.stdout)["error"]["message"])
+
+    def test_export_repair_counts_damage_before_and_after(self):
+        """2.24: --preset copy --repair on a recording appended to itself: the input is untouched, the
+        counts are reported before and after, timestamp warnings do not grow, remaining decode errors
+        are named; --repair with a re-encoding preset is refused."""
+        lavfi = ["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:d=3", "-f", "lavfi", "-i", "sine=d=3"]
+        part = OUT / "repair_part.ts"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *lavfi,
+           "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-f", "mpegts", part)
+        # the same recording appended to itself byte for byte, as a recorder that reconnected
+        # writes it: timestamps jump back and the continuity counters break
+        src = OUT / "repair_src.ts"
+        src.write_bytes(part.read_bytes() * 2)
+        before = src.read_bytes()
+        out = OUT / "repair_out.mp4"
+        doc = json.loads(script("export.py", src, "--preset", "copy", "--repair", "-o", out, "--overwrite", "--json").stdout)
+        self.assertEqual(src.read_bytes(), before)
+        rep = doc["repair"]
+        self.assertGreater(sum(rep["before"].values()), 0, rep)
+        self.assertLessEqual(rep["after"]["timestamp_warnings"], rep["before"]["timestamp_warnings"], rep)
+        step = next(v for v in doc["verification"] if v["step"] == "repair")
+        self.assertTrue(step["ok"] and step["measured"] == rep["after"]["timestamp_warnings"], step)
+        if rep["after"]["decode_errors"]:
+            self.assertIn("repair_incomplete", {w["code"] for w in doc["diagnostics"]["warnings"]}, doc.get("diagnostics"))
+        proc = script("export.py", src, "--preset", "youtube", "--repair", "-o", OUT / "repair_bad.mp4", "--json", expect_fail=True)
+        self.assertIn("--preset copy", json.loads(proc.stdout)["error"]["message"])
 
     def test_export_list(self):
         self.assertIn("youtube", script("export.py", "--list").stdout)
@@ -76,6 +351,137 @@ class DeliveryTests(MediaFixtures):
         m = probe(str(out))
         self.assertTrue(m["video"]["hdr"], "the source's real HDR tags must survive a stream copy")
         self.assertNotEqual(m["video"]["color_space"], "bt709", "copy must never relabel HDR content as bt709")
+
+    # ------------------------------------------- subtitle and data streams (2.23)
+    _CUES = "1\n00:00:00,200 --> 00:00:01,000\nfirst cue\n\n2\n00:00:01,200 --> 00:00:01,800\nsecond cue\n"
+
+    def _with_subtitles(self, name, source, seconds="2", extra=()):
+        """`source`'s first `seconds` with a mov_text track (language eng) muxed in, the way
+        subtitle-skill's render --mode mux delivers one; `extra` adds output options (a timecode)."""
+        srt = OUT / f"{name}.srt"
+        srt.write_text(self._CUES, encoding="utf-8")
+        out = OUT / f"{name}.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", source, "-i", srt, "-t", seconds,
+           "-map", "0:v", "-map", "0:a?", "-map", "1", "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text",
+           "-metadata:s:s:0", "language=eng", *extra, out)
+        return out
+
+    def _subtitle_text(self, path):
+        return sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:s:0", "-f", "srt", "-").stdout
+
+    def test_a_written_data_track_is_matched_to_a_source_stream_by_codec(self):
+        """Data tracks are credited by codec, never by position: two copied streams of one codec
+        are both kept, and a muxer's own timecode track is not credited to an unrelated stream."""
+        sys.path.insert(0, str(SCRIPTS))
+        import export
+        src = [{"codec": "bin_data"}, {"codec": "bin_data"}, {"codec": "tmcd"}]
+        kept = lambda written: [export._written_data_codec(n, src, [{"codec": c} for c in written]) for n in range(3)]
+        self.assertEqual(kept(["bin_data", "bin_data"]), [True, True, False])
+        self.assertEqual(kept(["tmcd"]), [False, False, True])
+        self.assertEqual(kept(["bin_data"]), [True, False, False])
+
+    def test_export_keeps_a_mov_text_track_for_youtube_and_copy(self):
+        """Measured on 2.22.1: a .mp4 with a mov_text track exported with --preset youtube or copy
+        came out h264 + aac only, and nothing in the result said so (found by an agent that muxes
+        soft subtitles before a platform export). The track is now mapped and kept, and
+        non_av_streams says which source stream went where."""
+        subbed = self._with_subtitles("export_subs_src", self.src)
+        for preset in ("youtube", "copy"):
+            with self.subTest(preset=preset):
+                out = OUT / f"export_subs_{preset}.mp4"
+                doc = json.loads(script("export.py", subbed, "--preset", preset, "--fast", "-o", out, "--json").stdout)
+                codecs = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "csv=p=0", out).stdout.split()
+                self.assertEqual(codecs, ["h264", "aac", "mov_text"])
+                self.assertFalse(doc["dropped_non_av_streams"])
+                self.assertEqual(doc["non_av_streams"], {"kept": [{"type": "subtitle", "index": 0, "codec": "mov_text",
+                                                                   "language": "eng", "output_codec": "mov_text"}],
+                                                         "dropped": []})
+                self.assertNotIn("non_av_streams_dropped", [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks") or []])
+                text = self._subtitle_text(out)
+                self.assertIn("first cue", text)
+                self.assertIn("00:00:00,200 --> 00:00:01,000", text, "a re-encoded picture leaves the cue times alone")
+                self.assertEqual(sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream_tags=language",
+                                    "-of", "csv=p=0", out).stdout.split(), ["eng"])
+
+    def test_export_keeps_the_subtitle_track_for_every_preset_whose_container_holds_one(self):
+        """Every preset but gif writes .mp4 or .mov, which hold mov_text; a GIF holds no stream but
+        the picture, and the result says the track was not written rather than nothing."""
+        subbed = self._with_subtitles("export_subs_all_src", self.src)
+        hdr_subbed = self._with_subtitles("export_subs_hdr_src", self.hdr)
+        for preset in ("youtube", "youtube4k", "reels", "tiktok", "shorts", "linkedin", "facebook", "x",
+                       "prores", "h265", "youtube-hdr", "youtube-av1", "copy"):
+            with self.subTest(preset=preset):
+                ext = "mov" if preset == "prores" else "mp4"
+                out = OUT / f"export_subs_every_{preset}.{ext}"
+                source = hdr_subbed if preset == "youtube-hdr" else subbed
+                # not script(): an ffmpeg without an AV1 encoder refuses youtube-av1, and that is not this test's failure
+                proc = subprocess.run([sys.executable, str(SCRIPTS / "export.py"), str(source), "--preset", preset, "--no-scale",
+                                       "--fast", "-o", str(out), "--json", "--overwrite"],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+                doc = json.loads(proc.stdout)
+                if preset == "youtube-av1" and doc.get("error", {}).get("kind") == "missing_tool":
+                    continue  # this ffmpeg has no AV1 encoder; the preset refuses honestly
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertEqual([k["output_codec"] for k in doc["non_av_streams"]["kept"]], ["mov_text"], doc["non_av_streams"])
+                self.assertFalse(doc["dropped_non_av_streams"])
+                self.assertIn("first cue", self._subtitle_text(out))
+        out = OUT / "export_subs_every_gif.gif"
+        doc = json.loads(script("export.py", subbed, "--preset", "gif", "-o", out, "--json").stdout)
+        self.assertEqual(doc["non_av_streams"]["kept"], [])
+        self.assertEqual([(d["type"], d["reason"]) for d in doc["non_av_streams"]["dropped"]], [("subtitle", "gif")])
+        self.assertTrue(doc["dropped_non_av_streams"])
+        self.assertTrue(any("GIF" in n for n in doc["notes"]), doc.get("notes"))
+
+    def test_export_converts_the_track_to_the_containers_own_text_format(self):
+        """mov_text cannot be copied into Matroska nor SubRip into MP4 (ffmpeg refuses the header):
+        a copy export that changes container converts the text track instead of dropping it."""
+        subbed = self._with_subtitles("export_subs_conv_src", self.src)
+        out_mkv = OUT / "export_subs_copy.mkv"
+        doc = json.loads(script("export.py", subbed, "--preset", "copy", "-o", out_mkv, "--json").stdout)
+        self.assertEqual(doc["non_av_streams"]["kept"][0]["output_codec"], "subrip")
+        self.assertIn("first cue", self._subtitle_text(out_mkv))
+        out_mp4 = OUT / "export_subs_from_mkv.mp4"
+        doc = json.loads(script("export.py", out_mkv, "--preset", "youtube", "--fast", "-o", out_mp4, "--json").stdout)
+        self.assertEqual([(k["codec"], k["output_codec"]) for k in doc["non_av_streams"]["kept"]], [("subrip", "mov_text")])
+        self.assertIn("first cue", self._subtitle_text(out_mp4))
+
+    def test_export_a_refused_data_stream_does_not_cost_the_subtitles(self):
+        """A camera clip's timecode (tmcd) data track cannot be stream-copied into an .mp4; one
+        retry without every non-A/V stream (loudness.py's run_keeping_subtitles) would have dropped
+        the subtitle track with it. The data stream alone is retried away, and recorded."""
+        subbed = self._with_subtitles("export_subs_tc_src", self.src, extra=("-timecode", "01:00:00:00"))
+        out = OUT / "export_subs_tc.mp4"
+        doc = json.loads(script("export.py", subbed, "--preset", "youtube", "--fast", "-o", out, "--json").stdout)
+        fb = [f for f in (doc.get("diagnostics") or {}).get("fallbacks") or [] if f["code"] == "non_av_streams_dropped"]
+        self.assertEqual([f["dropped"] for f in fb], [["data"]], fb)
+        self.assertEqual([k["type"] for k in doc["non_av_streams"]["kept"] if k["type"] == "subtitle"], ["subtitle"])
+        self.assertIn("first cue", self._subtitle_text(out))
+        # the MP4 muxer writes its own timecode track from the copied tag, so the read-back is what
+        # non_av_streams reports, not what the refused copy suggested
+        written = sh("ffprobe", "-v", "error", "-select_streams", "d", "-show_entries", "stream=codec_tag_string",
+                     "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual(any(k["type"] == "data" for k in doc["non_av_streams"]["kept"]), bool(written))
+        self.assertEqual(doc["dropped_non_av_streams"], not written)
+
+    def test_export_trim_to_the_platform_maximum_also_cuts_the_subtitles(self):
+        """-t is an output option: the kept track ends where the picture does, and a cue after the
+        platform's maximum is not delivered."""
+        long_src = OUT / "export_subs_long_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=32x32:r=2",
+           "-t", "92", "-c:v", "libx264", "-preset", "ultrafast", long_src)
+        srt = OUT / "export_subs_long.srt"
+        srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nkept cue\n\n2\n00:01:31,000 --> 00:01:31,500\nafter the maximum\n",
+                       encoding="utf-8")
+        subbed = OUT / "export_subs_long.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", long_src, "-i", srt, "-map", "0", "-map", "1",
+           "-c:v", "copy", "-c:s", "mov_text", subbed)
+        out = OUT / "export_subs_long_reels.mp4"
+        doc = json.loads(script("export.py", subbed, "--preset", "reels", "--no-scale", "--fast", "-o", out, "--json").stdout)
+        self.assertEqual(doc["trimmed"], {"from": 92.0, "to": 90.0})
+        self.assertFalse(doc["dropped_non_av_streams"])
+        text = self._subtitle_text(out)
+        self.assertIn("kept cue", text)
+        self.assertNotIn("after the maximum", text)
 
     def test_export_warning_names_bt2020_sdr_as_not_hdr(self):
         """Eval 24 h1: after 2.0 narrowed `hdr` to a real PQ/HLG/DV signal, export.py still warned
@@ -410,6 +816,30 @@ class DeliveryTests(MediaFixtures):
                 canonical = tuple("shorts" if a == "youtube-shorts" else a for a in argv)
                 self.assertEqual(commands(tool, *argv), commands(tool, *canonical),
                                  f"{tool} must treat youtube-shorts and shorts as one destination")
+
+
+class GeometryAuditDeliveryTests(unittest.TestCase):
+    """Issue #411 (audit H): a delivery preset sizes a non-square-pixel master in square pixels."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.sar = sar_clip(OUT / "g411d_sar.mp4", audio=True)
+
+    def test_export_fills_the_preset_frame_with_a_non_square_pixel_master(self):
+        """The 180x180 storage of a SAR 16:9 master was fitted into 1280x720 as a square picture
+        with pillarbox bars; squared first, the 320x180 picture fills the frame."""
+        out = OUT / "g411d_export.mp4"
+        script("export.py", self.sar, "--preset", "x", "-o", out)
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (1280, 720, "1:1"))
+        rgb = frame_rgb(out, 0.5, 8, 360)
+        self.assertGreater(rgb[0], 180, rgb)
 
 
 if __name__ == "__main__":

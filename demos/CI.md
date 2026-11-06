@@ -11,7 +11,7 @@ on a runner of that size.
 
 ## 1. `.github/workflows/ci.yml` — a `demos` job
 
-Add this as a sibling of `test` / `test-ffmpeg-5` (same indentation, under `jobs:`). It
+Add this as a sibling of `test` / `test-ffmpeg-7` (same indentation, under `jobs:`). It
 installs ffmpeg and fonts exactly the way the existing Linux matrix leg does — `fonts-dejavu-core`
 for the BEFORE/AFTER labels, plus the CJK and Arabic families the caption demos need, or those
 demos skip themselves and the job silently proves less than it looks like it does.
@@ -32,7 +32,7 @@ demos skip themselves and the job silently proves less than it looks like it doe
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.9"
+          python-version: "3.10"
       # Same apt line as the matrix job, plus the CJK/Arabic faces: without them the
       # captions_ja / _zh / _ko / _ar demos skip, and a skipped demo proves nothing. The
       # stabilize and sphere demos need an ffmpeg built with vidstab and v360; Ubuntu's

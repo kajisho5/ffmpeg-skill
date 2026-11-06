@@ -28,6 +28,8 @@ import argparse
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
+from _common.emit import note
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 
 def main() -> int:
@@ -67,9 +69,12 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    sw, sh = meta["video"]["width"], meta["video"]["height"]
-    if meta["video"].get("rotation") in (90, -90, 270, -270):
-        sw, sh = sh, sw
+    # the rectangle is in the displayed frame: rotation applied, and a non-square-pixel source
+    # squared at its display aspect first (#411), the frame look.py and cropdetect.py show
+    sw, sh = display_size(meta["video"])
+    square = square_pixels(meta["video"])
+    if square:
+        note(square_pixels_note(meta["video"]))
     if args.x + args.width > sw or args.y + args.height > sh:
         die(f"redaction rectangle ({args.x},{args.y},{args.width}x{args.height}) exceeds the source frame ({sw}x{sh})")
     if args.mode == "delogo":
@@ -93,7 +98,7 @@ def main() -> int:
     output = args.output or default_output(args.input, "redact")
     if args.mode == "delogo":
         cmd = ffmpeg_base() + ["-i", args.input, "-vf",
-                               f"delogo=x={args.x}:y={args.y}:w={args.width}:h={args.height}",
+                               (square + "," if square else "") + f"delogo=x={args.x}:y={args.y}:w={args.width}:h={args.height}",
                                "-map", "0:v:0"]
     else:
         crop = f"crop={args.width}:{args.height}:{args.x}:{args.y}"
@@ -105,7 +110,7 @@ def main() -> int:
             region = f"{crop},boxblur={radius}:{radius}:{chroma}:{radius}"
         else:
             region = f"{crop},scale={max(1, args.width // args.block_size)}:{max(1, args.height // args.block_size)}:flags=neighbor,scale={args.width}:{args.height}:flags=neighbor"
-        fc = f"[0:v]split=2[base][region];[region]{region}[patched];[base][patched]overlay={args.x}:{args.y}[out]"
+        fc = f"[0:v]{square + ',' if square else ''}split=2[base][region];[region]{region}[patched];[base][patched]overlay={args.x}:{args.y}[out]"
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", fc, "-map", "[out]"]
     if has_audio:
         cmd += ["-map", f"0:a:{args.audio_stream}?"]

@@ -5,6 +5,24 @@ bullets. SKILL.md keeps one line per item and points here with the anchors below
 nothing here is optional reading when the job touches that area — it is the
 detail, not an aside.
 
+## One-line index
+
+The one-line form each section below starts from (SKILL.md keeps a shorter line per item).
+
+- HDR (iPhone, HDR10) re-encoded through an SDR path goes flat; the scripts keep HDR; `hdr: true` is a real PQ/HLG/DV signal, `bt2020_or_hdr: true` also BT.2020 SDR. -> [#hdr-and-colour](#hdr-and-colour)
+- Log footage (S-Log/V-Log/C-Log) is tagged SDR and looks grey: `probe.py --analyze`, then `color.py --lut` first. -> [#log-footage](#log-footage)
+- A `-c copy` cut can start on a wrong/frozen frame; `cut.py` re-encodes past a 0.5 s snap, respect it; an .mp4/.mov copy's edit list hides the pre-roll (`--no-edit-list` off). -> [#keyframe-cuts](#keyframe-cuts)
+- VFR phone/screen clips: re-encodes go CFR; `cut.py` re-encodes measured VFR (`--vfr-guard average`: 2.x rule); odd rate: `fit.py --fps`. -> [#variable-frame-rate](#variable-frame-rate)
+- Sync/multicam `confidence` under 0.3 (or a huge offset) is suspect — check every camera; these align audio, never lip sync. -> [#sync-multicam-and-drift](#sync-multicam-and-drift)
+- "Normalised" audio can still clip (check true peak); ambience at -40 LUFS or below must never be raised to a speech target. -> [#loudness-and-ambience](#loudness-and-ambience)
+- Captions burned before a crop/resize land off-frame; burned small then upscaled by `export.py` come out soft. -> [#captions-fonts-and-text-order](#captions-fonts-and-text-order)
+- Emoji need `--emoji-assets DIR` (a PNG per glyph) to render in colour; without it they come out monochrome, reported. -> [#emoji](#emoji)
+- Non-Latin text picks a font by script (`graphics.py` shapes Devanagari, Bengali, Tamil, Thai via libass; drawtext cannot); no font = failed job. -> [#fonts-by-script](#fonts-by-script)
+- `--fit crop` 16:9→9:16 throws away 70% of the width; "60 seconds" by speed or by trim are different answers — say which and why. -> [#reframing-fps-and-duration](#reframing-fps-and-duration)
+- TikTok/Reels cover the bottom fifth and right column with their own UI — templates keep text out of those zones; `look.py --safe tiktok` shows them. -> [#platform-safe-zones](#platform-safe-zones)
+- `scenes.py --highlights` ranks by loudness (or duration), never by meaning: check the sheet before trusting picks. -> [#highlights](#highlights)
+- CPU re-encodes: x264 `medium`. -> [#chaining-and-speed](#chaining-and-speed)
+
 ## Colour, HDR and Log
 
 ### HDR and colour
@@ -28,8 +46,11 @@ wide-gamut SDR file (1.x's `hdr`), and `hdr_format` names that in-between case
 still carries wide-gamut primaries, so an SDR-only client or platform expecting BT.709 needs
 `color.py --to-sdr` first -- `export.py` only retags BT.709, it does not convert (eval 24 h1).
 `export.py` platform presets are SDR and warn on HDR input.
-iPhone `.mov` files also carry timecode/metadata tracks; scripts map only the
-first audio track, so extra tracks are dropped on re-encode. Keep ProRes masters
+iPhone `.mov` files also carry timecode/metadata tracks; the editing tools keep one
+audio track (most map the first; `cut.py` takes ffmpeg's default pick, the one with the
+most channels; `color.py --strip-dovi` copies every track), so extra tracks are dropped,
+on a stream copy as on a re-encode
+(`cut.py` reports it: `dropped_audio_streams`, an `audio_tracks_dropped` warning). Keep ProRes masters
 at source colour: `export.py --preset prores` does not retag.
 
 Re-encoding an HDR (iPhone, HDR10) source through an SDR path flattens the
@@ -46,10 +67,11 @@ S-Log, V-Log and C-Log look grey and low-contrast but are tagged SDR. Run
 ### Keyframe cuts
 A lossless `cut.py` result may start up to one GOP (often 1–10 s) earlier than
 requested (`start_snapped: true`); the script re-encodes automatically when the
-deviation exceeds 0.5 s. With `--edit-list`, a single-segment `.mp4`/`.m4v`/`.mov` copy
-keeps the MP4 edit list instead: the pre-roll back to the keyframe is stored but
-hidden, so the picture starts at the requested time (`edit_list`,
-`stored_preroll_seconds`). A player or tool that ignores edit lists shows that
+deviation exceeds 0.5 s. A single-segment `.mp4`/`.m4v`/`.mov` copy keeps the MP4
+edit list by default (since 3.0.0; `--no-edit-list` starts the file at the keyframe
+instead): the pre-roll back to the keyframe is stored but hidden, so the picture
+starts at the requested time (`edit_list`, `stored_preroll_seconds`, and
+`start_snapped: false`). A player or tool that ignores edit lists shows that
 pre-roll. The **end** still lands on a packet boundary, a few frames long, and
 those extra frames can skip. `.mkv` output has no edit list, and a `--segments`
 join shows each part from its keyframe. On B-frame video an `.mp4`/`.mov`
@@ -65,7 +87,7 @@ a start a few frames before a keyframe can begin at that keyframe or one GOP
 earlier (`start_snapped: true` either way).
 `av_start_skew_seconds` warns when a copy's sound and picture start apart
 (Core Media HEVC once gave 3.7 s of sound with no picture); it is reported, not
-repaired: `--accurate` is the fix, or `--edit-list` for a lossless `.mp4`/`.m4v`/`.mov`. A `-c copy` cut on VFR or a
+repaired: `--accurate` is the fix, or the default edit list (not `--no-edit-list`) for a lossless `.mp4`/`.m4v`/`.mov`. A `-c copy` cut on VFR or a
 non-keyframe boundary produces a file that "works" but starts on a frozen or
 wrong frame — respect the automatic re-encode rather than forcing the copy.
 
@@ -74,10 +96,11 @@ wrong frame — respect the automatic re-encode rather than forcing the copy.
 `avg_frame_rate` disagree (phone and screen recordings). Every re-encoding
 script then adds `-fps_mode cfr` at the source's average rate. That flag is a
 whole-file average, and a phone clip at 29.98 against a nominal 30 trips it, so
-`cut.py` re-encodes on it by default and reports packet timestamps sampled in up
-to five windows (`vfr_check`), with a note when they are constant;
-`--vfr-guard sampled` switches to `--accurate` only when they are irregular or too
-few to judge, and `--vfr-guard off` keeps the copy anyway. Pick the rate
+`cut.py` decides on packet timestamps sampled in up to five windows (`vfr_check`)
+instead: by default (`--vfr-guard sampled`, since 3.0.0) it switches to
+`--accurate` only when they are irregular or too few to judge;
+`--vfr-guard average` restores 2.x's re-encode on the flag alone, and
+`--vfr-guard off` keeps the copy anyway. Pick the rate
 explicitly with `fit.py --fps 30|60` when the average is odd (e.g. 23.4 fps from
 dropped frames).
 
@@ -93,6 +116,10 @@ them, not just that the command succeeded, before trusting the cut.
 movement vs. audio) — there is no face or mouth detection anywhere in this skill.
 High confidence means the audio matched well, not that the picture looks right;
 whether lip sync is correct needs a look at the video, not the reported offset.
+
+`multicam.py --switch energy` cuts to the loudest camera, a stand-in for who is
+talking, not speaker identification: it works when each speaker has their own
+camera's mic, and a shared room mic or a loud audience picks the wrong camera.
 
 Don't mix files with different frame rates or sample rates in one
 `cut.py --segments` join without re-encoding (`--accurate`). After `sync.py`,
@@ -206,6 +233,12 @@ directory of PNGs — and on most builds only the second one exists.
   `doctor --json` → `.fonts.emoji` (`mode`: `color` / `png` / `mono` / `none`,
   plus `libass_color` from that render). `contract --json --static` is the way
   to get the contract without running it; `doctor` itself always probes.
+- **No colour pixels is not a monochrome glyph.** Apple Color Emoji (an sbix
+  face) gives libass no glyph on macOS, and it draws the empty `.notdef` box.
+  `libass_glyph` compares the emoji render with U+10FFFD, a code point no font
+  has: the same frame is no glyph, `mode: none`. `caption.py` then leaves the
+  emoji out (warning `emoji_not_drawn`) and `--emoji mono` refuses, rather than
+  burn boxes; `--emoji-assets DIR` draws them as PNGs.
 - **drawtext cannot load an emoji font at all.** Not a degraded render: a
   CBDT/sbix face fails filter initialisation outright (`Could not set font size
   to 48 pixels: invalid library handle`, and at the font's own strike
@@ -286,7 +319,11 @@ the stored width and height plus that rotation. A tool that places or measures
 a rectangle (`fit.py`, `crop.py`, `cropdetect.py`, `broll.py`, `overlay.py
 --scale-percent` / `--platform`, `look.py --safe`) uses the displayed size,
 the two swapped for 90° and 270°, because ffmpeg applies the tag before the
-filter graph.
+filter graph. A JPEG's EXIF Orientation counts as that rotation too. Footage that
+stores non-square pixels (DV, HDV/XDCAM 1440x1080, DVD) is reported with its
+`sample_aspect_ratio`; every tool that sizes, places or draws on the picture
+first scales it to square pixels at its display aspect (its height kept, a
+`notes` line says so), so rectangles and margins are in that displayed frame.
 
 ## Planning
 

@@ -25,17 +25,23 @@ duration that is black: WARN > 10%, FAIL >= 95%), frozen (longest frozen span: W
 max(3 s, 30% of the duration), FAIL when the whole video is frozen) and silence (share
 below -50 dBFS: WARN > 50%, FAIL >= 95%); and, from one more audio-only pass (2.17),
 dropouts (gaps of digital silence, <= -80 dBFS for 20 ms to 1 s with sound on both sides:
-WARN when there is any). Without it the row set is unchanged.
+WARN when there is any); and, from one more video pass and a one-frame decode (2.23), flashes
+(single frames that differ from both neighbours while they match each other: WARN when there is
+any) and first frame (one flat colour, the frame a feed's autoplay shows first: WARN). Without it
+the row set is unchanged.
 """
 import argparse
 import json
+import os
 import re
 import sys
 from fractions import Fraction
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS, detect_content, measured_level_dbfs
+from _common.probe import (COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
+                           detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
+from _common.emit import file_identity
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -68,6 +74,34 @@ FROZEN_FAIL = 0.95                         # a frozen span covering this share =
 SILENCE_WARN, SILENCE_FAIL = 0.50, 0.95    # share of the duration below SILENT_PEAK_DBFS
 
 
+STATE_NOTES: List[str] = []
+
+
+def flash_times(flashes: List[int], v: Dict[str, Any], meta: Dict[str, Any], pts: "Optional[List[float]]" = None) -> str:
+    """The flashes row's first five times on look.py's timeline (seconds from the container
+    start). A flash frame's own presentation time when `pts` has it (presentation_times(): exact,
+    gaps in the timestamps included); otherwise index / average rate plus the video's lead over
+    the container, marked "~" (approximate), and `frame N` when there is no frame rate either."""
+    return ", ".join(frame_time(n, v, meta, pts) for n in flashes[:5]) + (" ..." if len(flashes) > 5 else "")
+
+
+def frame_time(n: int, v: Dict[str, Any], meta: Dict[str, Any], pts: "Optional[List[float]]" = None) -> str:
+    """Frame `n` (decode order) on look.py's timeline, as flash_times() describes: exact from
+    `pts`, else "~" index / average rate plus the video's lead, else `frame N`."""
+    origin = float(meta.get("start_time") or 0.0)
+    if pts and n < len(pts):
+        return f"{max(0.0, pts[n] - origin):.2f}s"
+    fps = float(v.get("fps") or 0.0)
+    lead = max(0.0, float(v.get("start_time") or 0.0) - origin)
+    return f"~{lead + n / fps:.2f}s" if fps else f"frame {n}"
+
+
+def display_size(v: Dict[str, Any]) -> "Tuple[int, int]":
+    """The frame size as decoded and auto-rotated, which is what --compare's ffmpeg pass sees."""
+    w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+    return (h, w) if int(v.get("rotation") or 0) % 180 == 90 else (w, h)
+
+
 def _span_total(spans: Any) -> float:
     return sum(max(0.0, e - s) for s, e in spans)
 
@@ -81,6 +115,7 @@ def aspect_name(w: int, h: int) -> str:
 
 
 def main() -> int:
+    STATE_NOTES.clear()  # module state: a second main() in one process starts without the first's notes
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
@@ -91,7 +126,13 @@ def main() -> int:
     ap.add_argument("--max-mb", type=float, help="override max file size in MB")
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
-                    help="also check the content (one decode pass, plus an audio-only one): black, frozen, silence and dropouts rows")
+                    help="also check the content (one decode pass, plus an audio-only and a video-only one): black, frozen, silence, dropouts, flashes and first frame rows")
+    ap.add_argument("--compare", metavar="REFERENCE",
+                    help="also measure the picture against REFERENCE, frame by frame (SSIM and PSNR, one pass): a "
+                         "similarity row, WARN when the mean SSIM is under 0.98, with the worst frame's time")
+    ap.add_argument("--expect-identity", metavar="SIZE:MTIME_NS",
+                    help="the output_identity a writing tool reported ({size}:{mtime_ns}): an identity row FAILs when "
+                         "the file at INPUT is not that file (a later run replaced it, or a failed run left an older one)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -113,11 +154,29 @@ def main() -> int:
     if args.max_mb is not None:
         spec["max_bytes"] = int(args.max_mb * 1024 * 1024)
 
+    expected_identity = None
+    if args.expect_identity is not None:
+        # parsed before any measurement; "" (an unset shell variable) is malformed, not absent
+        try:
+            size, mtime_ns = (int(x) for x in args.expect_identity.split(":"))
+        except ValueError:
+            die(f"--expect-identity takes SIZE:MTIME_NS from a tool's output_identity, got {args.expect_identity!r}")
+        expected_identity = {"size": size, "mtime_ns": mtime_ns}
+
+    # read before anything is measured and again after: a file replaced mid-check is not the one graded
+    identity_before = None if dry_run_input_pending(args.input) else file_identity(args.input)
+    if identity_before is None and STATE.dry_run and not os.path.exists(args.input):
+        # a render/batch plan's earlier stage would write this file: there is nothing to grade yet,
+        # and grading the probe's empty answer divided by a 0 height
+        emit(None, platform=args.platform, checks=[], failed=0, warnings=0, ok=False,
+             notes=[f"[dry-run] {args.input} does not exist yet, so nothing was checked"])
+        return 0
     meta = probe(args.input)
     v, a = meta.get("video") or {}, meta.get("audio") or {}
     rows: List[Dict[str, Any]] = []
 
-    JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution"}
+    # first frame / flashes: a fade from black or a strobe can be the edit, so neither is a mechanical fix
+    JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution", "first frame", "flashes"}
 
     def row(name: str, status: str, value: Any, expect: Any, fix: str = "", reason: str = "") -> None:
         # "format" rows are safe to fix mechanically; "judgement" rows change the content
@@ -284,6 +343,32 @@ def main() -> int:
                 f"longest {longest:.1f}s", f"<= {limit:.1f}s frozen",
                 "look.py the frozen span: a still title card is fine, a stuck decode is not",
                 reason="a picture that never changes is usually a stuck frame, not the edit")
+        if v and not dry_run_input_pending(args.input):  # a plan's not-yet-written input: no rows, as above
+            first = first_frame_stats(args.input)
+            if first is None:
+                row("first frame", "WARN", "could not measure", f"spread >= {CONTENT_FLAT_STD:g} (not one flat colour)",
+                    "look.py the first frame", reason="the first frame did not decode, so whether it is flat is unknown")
+            else:
+                mean, spread = first
+                flat = spread < CONTENT_FLAT_STD
+                row("first frame", "WARN" if flat else "PASS", f"luma {mean:.0f}, spread {spread:.1f}",
+                    f"spread >= {CONTENT_FLAT_STD:g} (not one flat colour)",
+                    "a fade from black is a choice; where autoplay or the preview shows the first frame, start on "
+                    "a picture (cut.py --start a few frames in, or move a title card to frame 0)" if flat else "",
+                    reason="a feed shows the first frame before anything plays, and a flat one reads as a broken upload" if flat else "")
+            flashes = detect_flashes(args.input)
+            pts = presentation_times(args.input, float(v.get("start_time") or 0.0)) if flashes else None
+            at = flash_times(flashes or [], v, meta, pts)
+            if flashes is None:
+                row("flashes", "WARN", "could not measure", "no single frame unlike both its neighbours",
+                    "look.py the video: no frame decoded, so nothing was compared",
+                    reason="the video did not decode, so whether it has flashes is unknown")
+            else:
+                row("flashes", "WARN" if flashes else "PASS", f"{len(flashes)}" + (f": {at}" if flashes else ""),
+                    "no single frame unlike both its neighbours",
+                    "look.py at those times: a stray frame at a cut or join is an edit error (re-cut with cut.py "
+                    "--accurate, or join.py again); a camera flash or a strobe in the footage is fine" if flashes else "",
+                    reason="one frame that matches neither neighbour is usually a frame left over at a cut, or a decode glitch" if flashes else "")
         if "silence" in cd and span:
             share = _span_total(cd["silence"]) / span
             row("silence", "FAIL" if share >= SILENCE_FAIL else ("WARN" if share > SILENCE_WARN else "PASS"),
@@ -299,11 +384,63 @@ def main() -> int:
                 "again); a noise gate makes these on purpose" if gaps else "",
                 reason="a short stretch of digital silence in the middle of the sound is usually lost audio at a join or a glitched decode" if gaps else "")
 
+    if args.compare and not dry_run_input_pending(args.input) and not dry_run_input_pending(args.compare):
+        ref = probe(args.compare)
+        rv = ref.get("video") or {}
+        if not v or not rv:
+            row("similarity", "WARN", "not compared", "two pictures", "--compare needs a video stream in both files",
+                reason="one of the files has no picture")
+        elif display_size(v) != display_size(rv):
+            row("similarity", "WARN", "not compared: %dx%d vs %dx%d (as displayed)" % (display_size(v) + display_size(rv)),
+                "the same frame size", "compare against a reference at the delivery size (fit.py or export.py it first)",
+                reason="SSIM and PSNR compare pixels, so the two frames must be the same size")
+        else:
+            cmp_ = compare_pictures(args.input, args.compare)
+            if cmp_ is None:
+                row("similarity", "WARN", "could not measure", f"mean SSIM >= {COMPARE_SSIM_WARN:g}",
+                    "look.py --compare at a few times", reason="the comparison pass failed")
+            else:
+                pts = presentation_times(args.input, float(v.get("start_time") or 0.0))
+                at = frame_time(cmp_["worst_frame"], v, meta, pts)
+                seek = "0" if at.startswith("frame") else at.lstrip("~").rstrip("s")
+                psnr = "identical" if cmp_["psnr"] == float("inf") else (f"{cmp_['psnr']:.1f} dB" if cmp_["psnr"] is not None else "?")
+                low = cmp_["ssim"] < COMPARE_SSIM_WARN
+                row("similarity", "WARN" if low else "PASS",
+                    f"SSIM {cmp_['ssim']:.4f} (worst {cmp_['worst_ssim']:.4f} at {at}), PSNR {psnr}, {cmp_['frames']} frames",
+                    f"mean SSIM >= {COMPARE_SSIM_WARN:g}",
+                    f"look.py --compare {args.compare} --at {seek}" if low else "",
+                    reason="the picture differs visibly from the reference somewhere" if low else "")
+                # frames counted from the packets when a container does not state nb_frames
+                nout = v.get("nb_frames") or len(pts) or None
+                nref = rv.get("nb_frames") or len(presentation_times(args.compare, float(rv.get("start_time") or 0.0))) or None
+                if nref and nout and int(nref) != int(nout):
+                    STATE_NOTES.append(f"--compare: {nout} frames against the reference's {nref}; frames were paired in "
+                                       f"order, so an added or dropped frame shifts every later pair, and only the "
+                                       f"first {min(int(nref), int(nout))} were compared")
+    # read after every measurement, --compare's included, so a replacement at any point shows
+    identity = None if dry_run_input_pending(args.input) else file_identity(args.input)
+    if identity is not None and identity != identity_before and expected_identity is None:
+        STATE_NOTES.append("the file changed while it was being checked: input_identity is the file as it was "
+                           "at the end, and the rows may describe an earlier one; check it again")
+    if expected_identity is not None:
+        size, mtime_ns = expected_identity["size"], expected_identity["mtime_ns"]
+        if identity is not None:
+            changed = identity != identity_before
+            same = identity == {"size": size, "mtime_ns": mtime_ns} and not changed
+            row("identity", "PASS" if same else "FAIL", f"{identity['size']}:{identity['mtime_ns']}", f"{size}:{mtime_ns}",
+                "" if same else "re-run the tool that writes this file and check what it reports, not what the path holds",
+                reason="" if same else ("the file changed while it was being checked" if changed
+                                        else "the file at this path is not the one the run being checked wrote"))
+        elif not dry_run_input_pending(args.input):
+            row("identity", "FAIL", "no regular file at this path", f"{size}:{mtime_ns}",
+                "re-run the tool that writes this file and check what it reports, not what the path holds",
+                reason="the file at this path is not the one the run being checked wrote")
     failed = [r for r in rows if r["status"] == "FAIL"]
     warned = [r for r in rows if r["status"] == "WARN"]
     notes: List[str] = []
     if not named:
         notes.append("no --platform given: youtube's spec was assumed, so judgement rows (duration, aspect, fps, resolution, loudness, true peak) are WARN, not FAIL; name a platform to enforce them")
+    notes += STATE_NOTES
     if not args.json:
         width = max(len(r["check"]) for r in rows)
         print(f"{args.input} — {args.platform}" + ("" if named else " (assumed)"))
@@ -320,6 +457,8 @@ def main() -> int:
         for n in notes:
             print(f"  note: {n}")
     extra: Dict[str, Any] = {"notes": notes} if notes else {}
+    if identity is not None:
+        extra["input_identity"] = identity
     if failed:
         die(f"{len(failed)} of {len(rows)} {args.platform} checks failed: {', '.join(r['check'] for r in failed)}",
             kind="verification", output=None, dry_run=STATE.dry_run,

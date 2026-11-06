@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Assemble the GitHub Pages site from the repository's own Markdown, so the site never says
-anything the repo doesn't. Nothing here is hand-written copy: each page is a published
-document with Jekyll front matter added and its relative links rewritten.
+"""Assemble the GitHub Pages site: the landing page in site/ plus the repository's own Markdown.
+The landing page (site/index.html) is the one hand-written page; every other page is a
+published document with Jekyll front matter added and its relative links rewritten.
 
     python3 .github/scripts/build_pages.py [OUT]     # default OUT: _pages
 
@@ -10,10 +10,14 @@ document with Jekyll front matter added and its relative links rewritten.
 - An image or other asset the pages reference is copied next to the page that uses it.
 - A relative link whose target does not exist is an error: the build fails rather than
   publish a dead link.
+- site/ is copied to the site root as it is (no front matter, so Jekyll does not touch it).
+  Its relative src/href must point at a published page, a file in site/, or a repo file
+  (a GIF under docs/demos, say), which is copied; anything else is a dead link too.
 
 pages.yml runs this and hands OUT to actions/jekyll-build-pages; tests/test_contract.py runs
 it too, so a broken link fails CI before it reaches the site.
 """
+import os
 import re
 import shutil
 import sys
@@ -26,7 +30,7 @@ REPO_URL = "https://github.com/kajisho5/ffmpeg-skill"
 # repo path -> (site path, page title). The site keeps the repo's layout, so a relative link
 # between two published documents stays relative.
 PAGES = {
-    "README.md": ("index.md", "ffmpeg-skill"),
+    "README.md": ("readme.md", "README"),
     "docs/demos.md": ("docs/demos.md", "Demo gallery"),
     "docs/contract.md": ("docs/contract.md", "Contract"),
     "docs/design-decisions.md": ("docs/design-decisions.md", "Design decisions"),
@@ -106,6 +110,43 @@ def render(page_repo: str, assets: set) -> str:
     return f"---\nlayout: default\ntitle: {title}\n---\n{{% raw %}}\n{text}\n{{% endraw %}}\n"
 
 
+SITE = ROOT / "site"
+SITE_REF = re.compile(r'\b(?:src|href)="([^"]+)"')
+
+
+def _copy_site(out: Path) -> "list[str]":
+    """Copy site/ to the site root and check every relative src/href in its HTML pages."""
+    copied = []
+    for f in sorted(SITE.rglob("*")):
+        if f.is_file():
+            dest = out / f.relative_to(SITE)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)
+    for page in sorted(SITE.rglob("*.html")):
+        page_dir = page.parent.relative_to(SITE)
+        for target in SITE_REF.findall(page.read_text(encoding="utf-8")):
+            if EXTERNAL.match(target):
+                continue
+            path = target.split("#")[0].split("?")[0]
+            if not path:
+                continue
+            rel = Path(os.path.normpath(page_dir / path))
+            if rel.parts and rel.parts[0] == "..":
+                raise DeadLink(f"site/{page.relative_to(SITE)}: {target} points outside the site")
+            if (out / rel).exists():
+                continue
+            if rel.suffix == ".html" and (out / rel.with_suffix(".md")).is_file():
+                continue  # a published document; Jekyll turns the .md into this .html
+            src = ROOT / rel
+            if src.is_file() and src.suffix.lower() in {".png", ".gif", ".svg", ".jpg", ".jpeg", ".webp"}:
+                (out / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, out / rel)
+                copied.append(rel.as_posix())
+                continue
+            raise DeadLink(f"site/{page.relative_to(SITE)}: {target} does not exist")
+    return copied
+
+
 def build(out: Path) -> "list[str]":
     if out.exists():
         shutil.rmtree(out)
@@ -118,6 +159,8 @@ def build(out: Path) -> "list[str]":
         dest = out / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / rel, dest)
+    assets = sorted(assets)
+    assets += _copy_site(out)
     (out / "_config.yml").write_text(
         "title: ffmpeg-skill\n"
         "description: Give your coding agent a video editor. Local FFmpeg, no cloud, no API keys.\n"
@@ -128,7 +171,7 @@ def build(out: Path) -> "list[str]":
     # does not need, and this one page of HTML is the only design the site has.
     (out / "_layouts").mkdir()
     shutil.copy2(Path(__file__).with_name("pages_layout.html"), out / "_layouts" / "default.html")
-    return sorted(assets)
+    return sorted(set(assets))
 
 
 def main(argv: "list[str]") -> int:

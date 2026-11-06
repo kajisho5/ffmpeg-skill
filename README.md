@@ -1,14 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/app-icon-dark.png">
-    <img src="brand/app-icon.png" width="128" alt="ffmpeg-skill app icon">
-  </picture>
-</p>
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/ffmpeg-skill-wordmark-white.svg">
-    <img src="brand/logo/ffmpeg-skill-wordmark-black.svg" height="48" alt="ffmpeg-skill">
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/ffmpeg-skill-horizontal-on-dark.svg">
+    <img src="brand/logo/ffmpeg-skill-horizontal.svg" height="72" alt="ffmpeg-skill">
   </picture>
 </p>
 
@@ -17,6 +10,7 @@ Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpe
 No cloud · No API keys · Python standard library</p>
 
 <p align="center">
+  <a href="https://kajisho5.github.io/ffmpeg-skill/"><b>Website</b></a> ·
   <a href="#quick-start"><b>Quick start</b></a> ·
   <a href="docs/demos.md">Demos</a> ·
   <a href="#tools">Tools</a> ·
@@ -27,9 +21,13 @@ No cloud · No API keys · Python standard library</p>
 <p align="center">
   <a href="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml"><img src="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
   <a href="https://www.npmjs.com/package/ffmpeg-skill"><img src="https://img.shields.io/npm/v/ffmpeg-skill" alt="npm"></a>
-  <a href="#ffmpeg-compatibility"><img src="https://img.shields.io/badge/ffmpeg-5.1%20%7C%206.1%20%7C%207.1%20%7C%208%20%7C%209%20tested-orange" alt="FFmpeg 5.1, 6.1, 7.1, 8 and 9 tested in CI"></a>
+  <a href="#ffmpeg-compatibility"><img src="https://img.shields.io/badge/ffmpeg-6.1%20%7C%207.1%20%7C%208%20%7C%209%20tested-orange" alt="FFmpeg 6.1, 7.1, 8 and 9 tested in CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
   <a href="https://github.com/sponsors/kajisho5"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors" alt="Sponsor"></a>
+</p>
+
+<p align="center">
+  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v3: give your coding agent a video editor. An agent runs probe, cut, fit, export and check, and the final file is measured: 59.98 s, 1080x1920, 30 fps."></a>
 </p>
 
 ```bash
@@ -142,8 +140,8 @@ table, so since 1.17.1 the filled project also states `"fit_size": "on"`: a size
 shrinks to fit the cue instead of splitting the sentence across two cues. A template that states
 its own `fit_size`, and a `--brand` that states a caption size, still win, and a project with
 `"fit_size": "off"` renders the captions 1.17.0 rendered. Templates ship for `tiktok`, `reels`,
-`shorts`, `youtube-shorts`, `youtube`, `x`, `linkedin`, `facebook` and `podcast`;
-`--template all` (or a comma-separated list) renders every destination from the same edit and
+`shorts`, `youtube-shorts`, `youtube`, `x`, `linkedin`, `facebook`, `podcast` and `audiogram`;
+`--template all` (or a comma-separated list) renders the seven video destinations (`tiktok`, `reels`, `shorts`, `youtube`, `x`, `linkedin`, `facebook`) from the same edit and
 writes a `<name>_pack.md` table of what each one produced. Files land next to the input unless
 `-o` says otherwise, and `--dry-run` shows every planned command rather than a result.
 `render.py --list-templates` prints them with their frames, limits and safe zones. Alias
@@ -196,7 +194,7 @@ Names, order and `inputSchema` in `tools/list` are translated from each tool's a
 These are the rules the skill file gives the agent and the code enforces.
 
 1. **Probe first.** No tool decides from the file name. `probe.py` measures duration, fps (with variable-frame-rate detection), resolution, rotation, bit depth, HDR format including Dolby Vision, colour tags and every audio stream before anything is cut.
-2. **Lossless when possible.** `cut.py` and `loudness.py` stream-copy what they do not need to touch (`join.py` always re-encodes, so it can crossfade and conform mismatched clips). Re-encoding happens only when it must: frame-accurate cuts, filters, format changes, or a keyframe farther than the tolerance.
+2. **Lossless when possible.** `cut.py` and `loudness.py` stream-copy what they do not need to touch (`join.py` re-encodes so it can crossfade and conform mismatched clips; `--copy --transition none` joins clips that already match by stream copy). Re-encoding happens only when it must: frame-accurate cuts, filters, format changes, or a keyframe farther than the tolerance.
 3. **Plan before render.** Every tool takes `--dry-run` (print the ffmpeg command lines, write nothing), `--plan FILE` (the dry run saved as a plan with fingerprinted inputs that `render.py FILE` executes later, refusing if an input changed), `--json` (structured result with a probe of the output), `--fast` (preview quality), `--progress` (percent and ETA), `--timeout` (a hung ffmpeg is killed and reported, never waited on forever; Ctrl-C or SIGTERM likewise stops the running ffmpeg, removes its partial output and reports `kind: interrupted`) and `--overwrite` (explicit consent before an existing output is replaced). A test runs every tool under `--dry-run` behind a fake ffmpeg and asserts that no ffmpeg call happened and no file appeared.
 4. **Machine-readable contract.** `contract --json` describes all 42 tools: input schema generated from the parser, output schema, role, required and conditional FFmpeg capabilities, dry-run support, the verification tools to run afterwards, whether a visual check is required, `mutates_input: false`. `provides` lists all 42 by a cross-repository Capability id (`ffmpeg-skill.cut`, `ffmpeg-skill.loudness`, ...) for [`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS)'s `CapabilityContract.provides` — see `docs/contract.md`.
 5. **Contract-derived MCP.** `mcp/server.py` builds its `tools/list` from the contract. Tool names, order and `inputSchema` cannot drift from the scripts; a test keeps the two byte-identical.
@@ -208,7 +206,7 @@ These are the rules the skill file gives the agent and the code enforces.
 
 ## Tools
 
-42 public tools, all Python 3.9 standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.11.0) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8) and, with `export.py`, `--hw`/`--no-hw` (Apple VideoToolbox on Apple Silicon, opt-in; see `doctor` below), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
+42 public tools, all Python 3.10+ standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.11.0) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool except `export.py`, `render.py` and `batch.py` (a preset or the project decides there) takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8) and, with `export.py`, `--hw`/`--no-hw` (Apple VideoToolbox on Apple Silicon, opt-in; see `doctor` below), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
 
 **Analysis and inspection**
 
@@ -216,14 +214,14 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for a real PQ/HLG/DV transfer only, `bt2020_or_hdr` also for BT.2020 SDR), colour space, rotation, every audio stream; `--analyze` flags Log footage |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments`; `--beats` measures the music's beat grid (tempo, beat times, confidence); `--shots` classifies each shot static/pan/motion by measured optical flow; `--audio-peaks` lists per-second dBFS; `--speech` reports a speech-vs-music ratio, not a classification |
-| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers |
+| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers; `--guides title,action,4:3` outlines the broadcast safe areas (on the PNG only) |
 
 **Editing**
 
 | Tool | What it does |
 |---|---|
-| `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio, `--keep-hevc` to re-encode an HEVC source as HEVC, `--edit-list` to keep an `.mp4` copy's start exact, `--vfr-guard` to choose the VFR check; reports `precision`; `--snap beats` moves the in/out points onto a measured beat, or refuses when there is no measurable pulse |
-| `join.py` | Concatenate clips with xfade transitions, normalising size, fps, sample rate and channel layout (the widest clip's, or `--channels`); audio-only inputs are joined as audio; `--list parts.txt` reads generated segments (TTS lines) and checks every one first — missing, empty or unreadable parts are all named in one refusal, or skipped and reported with `--on-missing skip` |
+| `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio, an SDR HEVC source re-encodes as HEVC (`--no-keep-hevc` for x264), a single `.mp4`/`.mov` copy keeps its edit list, so the picture starts at `--start` unless a keyframe lands later (`start_snapped` then says so; `--no-edit-list` for 2.x's shifted start), `--vfr-guard` to choose the VFR check (`sampled` by default); reports `precision`; `--snap beats` moves the in/out points onto a measured beat, or refuses when there is no measurable pulse ; `--remove A-B,...` drops ranges and keeps the rest |
+| `join.py` | Concatenate clips with xfade transitions, normalising size, fps, sample rate and channel layout (the widest clip's, or `--channels`); audio-only inputs are joined as audio; `--list parts.txt` reads generated segments (TTS lines) and checks every one first — missing, empty or unreadable parts are all named in one refusal, or skipped and reported with `--on-missing skip` ; `--copy --transition none` joins clips with matching streams by stream copy, measured afterwards, and refuses a mismatch by name |
 | `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech (`--margin`, 0.2 s each side); list or export the cut list, or a source-to-output time map (`--timemap`, JSON or CSV); reports the level at every cut and warns where one may land in a breath or a word's tail; `--filler` also removes filler words, but only where a speech engine timed them; `--speech-aware` keeps a breath inside a sentence and cuts only at sentence-boundary pauses, composing with `--filler` through the same `keep_ranges()` |
 | `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo) and/or aspect ratio (pad, crop or `--fit blur`'s blurred, darkened fill, with `--crop-x`/`--crop-y` to keep an off-centre subject) and/or exact `--width`/`--height`; rotate 90/180/270, flip h/v; force constant fps |
 | `crop.py` | Crop to an exact pixel rectangle (`--x --y --width --height`) — distinct from `fit.py --fit crop`, which crops to an aspect ratio it computes itself |
@@ -242,7 +240,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | `freeze.py` | Hold a frame for N seconds (`--at`, `--hold`, `--mode insert/extend`) — an end-card hold or a comedic beat |
 | `pad.py` | Add black/silent padding at the start and/or end of the timeline (`--start`, `--end`) — distinct from `fit.py --fit pad`'s per-frame letterbox bars |
 | `speedramp.py` | Step through different constant speeds across a clip via `--segment START-END:FACTOR` (repeatable) — distinct from `fit.py`'s single whole-clip speed factor |
-| `loop.py` | Repeat a clip `--times` N or to a target `--duration` — for background loops and filling a fixed slot length; `--boomerang` plays it forward then backward |
+| `loop.py` | Repeat a clip `--times` N or to a target `--duration` — for background loops and filling a fixed slot length; `--crossfade` smooths the seam, `--boomerang` plays it forward then backward |
 | `broll.py` | Cut away to a B-roll clip over the A-roll for a window (`--insert B --at T --duration D`, repeatable) and come back; A's length and audio untouched by default |
 | `metadata.py` | Write container chapter markers from a `TIME TITLE` text file and title/artist/comment tags, every stream copied bit for bit; `--auto-chapters` proposes the markers from measured pauses and scene cuts and names them `Chapter N` for you to rename |
 | `grid.py` | Composite `--cols`x`--rows` clips into one grid, each cell letterboxed and labelled with its filename by default (`--label none` to skip) |
@@ -253,7 +251,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `audio.py` | Voice clean-up chain at three strengths (`--voice light\|medium\|strong`), FFT denoise, typed compressor / limiter / gate, music bed with sidechain ducking (`--duck-amount/-threshold/-attack/-release`), a never-ducked effects bed (`--effects`), `--stereo-widen`, fades, 5.1 → stereo, track replacement, extraction (`-o out.wav`), `--audio-stream N` |
 | `sync.py` | Offset between two recordings by audio cross-correlation (1 ms, pure Python), clock-drift correction; aligned video or audio out (audio-to-audio only — no lip-sync/face detection); a third or later camera is an additional `more_sources` positional (`sync.py REF A B ...`), the `second` positional itself keeps its name |
-| `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP or any target (`--lra` for the range), video stream-copied; the written file is measured again and re-encoded until it meets `--tp` (lossy encoders overshoot); `--measure-only` |
+| `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP or any target (`--lra` for the range), video stream-copied; the written file is measured again and re-encoded until it meets `--tp` (lossy encoders overshoot); `--measure-only`; `--versions streaming,ebu-r128,broadcast-jp` (or `LUFS/TP` pairs) writes one file per target from one master, each measured after and listed in `versions` (`output` is null), `verified` only when every version met its own target |
 
 **Picture**
 
@@ -268,9 +266,9 @@ These are the rules the skill file gives the agent and the code enforces.
 
 | Tool | What it does |
 |---|---|
-| `export.py` | Presets `youtube`, `youtube4k`, `reels`, `tiktok`, `shorts`, `linkedin`, `facebook`, `x`, `youtube-hdr` (HEVC Main10, source HDR tags kept), `youtube-av1`, `prores`, `h265`, `gif`, `copy`, all tagged BT.709 unless they carry HDR (a BT.601-matrix or RGB source is converted to BT.709, not relabelled); `--normalize` meets the platform's loudness in the same call (`render.py` turns it on by default for platform presets) |
+| `export.py` | Presets `youtube`, `youtube4k`, `reels`, `tiktok`, `shorts`, `linkedin`, `facebook`, `x`, `youtube-hdr` (HEVC Main10, source HDR tags kept), `youtube-av1`, `prores`, `dnxhr-lb`/`sq`/`hq`/`hqx`/`444`, the alpha masters `prores4444`/`prores4444xq`/`qtrle`/`vp9-alpha`/`hap-alpha` (alpha read back), `key-fill` (a switcher's fill + key pair), `h265`, `gif`, `copy`, all tagged BT.709 unless they carry HDR or are an editing master (`prores`, `dnxhr-*`: the source's tags kept, codec, profile and pixel format read back) (a BT.601-matrix or RGB source is converted to BT.709, not relabelled); `--normalize` meets the platform's loudness in the same call (`render.py` turns it on by default for platform presets) ; `--max-mb MB` fits the file under a size limit by a two-pass encode and measures it ; `--preset copy --repair` remuxes a damaged file (timestamps regenerated, corrupt packets dropped) and counts the errors before and after |
 | `proxy.py` | Small, low-bitrate proxy for downstream AI analysis/preview/editing decisions — resize by `--width`/`--scale`, proxy-grade `--quality` (default 30), `--fps`, `--no-audio`; not a delivery preset |
-| `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, Facebook, broadcast and podcast specs, from the same delivery table the export presets and templates read (podcast also reports chapter markers and channel count), with the fix for each failure and a `format` / `judgement` kind per row; `--content` adds black-frame, frozen-frame, silence and short audio-dropout rows |
+| `check.py` | PASS / WARN / FAIL against YouTube, Shorts, Reels, TikTok, X, LinkedIn, Facebook, broadcast and podcast specs, from the same delivery table the export presets and templates read (podcast also reports chapter markers and channel count), with the fix for each failure and a `format` / `judgement` kind per row; `--content` adds black-frame, frozen-frame, silence, short audio-dropout, single-frame-flash and flat-first-frame rows ; `--compare REF` measures SSIM/PSNR against a reference; `--expect-identity` checks that the file is the one a run reported writing (`output_identity`) |
 | `report.py` | Single-file HTML delivery report: before/after sheets, media facts, loudness, compliance, the commands run; `--pack` renders a social pack table |
 
 **Orchestration**
@@ -279,7 +277,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays including the social sticker/hook/meme graphics and a picture-in-picture or chroma-keyed `video` layer sized for the final frame, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after`, `--cache DIR`/`--from STAGE` (reuse the stages that did not change); the captions block takes the fit-size policy (`fit_size`, `min_size`, `fit_size_scope`) and the run reports the caption stage's counts as `caption`; `--template NAME INPUT` renders a shipped delivery template (`--template all` writes the whole social pack plus its table); `--export-timeline edit.fcpxml\|.edl\|.otio` (2.1) writes the cut as an editor timeline for Final Cut, DaVinci Resolve or Premiere instead of rendering it — clips, speed, dissolves, the music bed and chapter markers carry over, and `not_exported` names what stays behind |
 | `batch.py` | Apply a step recipe or a project to a folder with a content-hash cache; `--watch`; `--jobs N` processes several files at once under one shared `--timeout` |
-| `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list; `--switch energy` auto-cuts to whichever camera is loudest/talking instead of a hand-built list, with `--min-shot` (minimum shot length) and `--edl` (write a plain START-END cut list, not a CMX EDL; for Premiere/Resolve use `--write-project` then `render.py --export-timeline`) |
+| `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list; `--switch energy` auto-cuts to whichever camera is loudest at that moment instead of a hand-built list (audio level as a stand-in for who is talking: there is no speaker identification, so it needs each speaker on their own camera's mic), with `--min-shot` (minimum shot length) and `--edl` (write a plain START-END cut list, not a CMX EDL; for Premiere/Resolve use `--write-project` then `render.py --export-timeline`) |
 | `verify.py` | Run the toolchain on real device files and report PASS / FAIL per step |
 
 Not tools, but part of the surface: `mcp/server.py` (the MCP transport) and `scripts/_contract.py` (`contract --json`, `doctor`). Per-flag reference for every tool: [references/scripts.md](references/scripts.md).
@@ -339,7 +337,7 @@ The contract is generated from the code that runs, not maintained beside it. For
 | Field | Meaning |
 |---|---|
 | `input_schema` | generated from the tool's argparse parser: properties, types, enums, defaults, required, positional order, mutually exclusive groups |
-| `output_schema` | what `--json` prints: `status`, `output`, `commands`, `probe`, plus tool-specific fields (`precision`, `checks`, `offset_seconds`, …) |
+| `output_schema` | what `--json` prints: `status`, `output`, `commands`, `probe`, `output_identity` (`{size, mtime_ns}` of the file written, on every tool but `probe`), plus tool-specific fields (`precision`, `checks`, `offset_seconds`, …) |
 | `role` | `analysis`, `analysis_and_execution`, `execution` or `verification` |
 | `capabilities` | the FFmpeg encoders, filters and bitstream filters the tool always needs, and the ones needed only for a flag or input |
 | `supports_dry_run`, `supports_json`, `supports_json_brief` | measured by the tests, not declared |
@@ -349,7 +347,7 @@ The contract is generated from the code that runs, not maintained beside it. For
 | `mutates_input` | always `false` |
 | `idempotency_hint` | `bit_exact`, `content_equivalent`, `cached` or `environment_dependent` |
 
-Next to the tool list the document carries a top-level `deprecated` list (since 1.10): what the next major removes, since when, the replacement and the surface it lives on. Today that is Python 3.9 and FFmpeg 5.x, both removed in 3.0.0. What 2.0 removed moved to `removed`, and `docs/contract.md` "What 2.0 changed" is written from that.
+Next to the tool list the document carries a top-level `deprecated` list (since 1.10): what the next major removes, since when, the replacement and the surface it lives on. It is empty in 3.0.0: Python 3.9 and FFmpeg 5.x, the two 2.x entries, moved to `removed` with what 2.0 removed, and `docs/contract.md` "What 2.0 changed" and "What 3.0 changed" are written from that.
 
 `contract_version` (1.0) is separate from the skill version, so a consumer can pin the shape and read the version for provenance. The document also states the invocation mapping (structured arguments → argv), the JSON shapes for success and failure (`{"status": "failed", "error": {"kind": "input | ffmpeg | output | missing_tool | timeout | verification | interrupted", "message": …}}`; a refusal adds `error.reason`, a stable code such as `output_exists` or `plan_inputs_changed`, and `error.details`, the facts behind it; warnings, fallbacks and skipped steps a run decided on its own are in `diagnostics`), and that no tool runs a shell or executes anything other than the named script, `ffmpeg` and `ffprobe`. Field-by-field reference: [docs/contract.md](docs/contract.md).
 
@@ -374,7 +372,7 @@ npx ffmpeg-skill doctor          # human-readable
 npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unknown / detection / errors / tools / gpu_encoders / ffmpeg_security
 ```
 
-`doctor` reads `ffmpeg -encoders`, `-filters` and `-bsfs` and resolves every capability the contract declares against this machine's build. Three states per capability: `available`, `missing`, `unknown`. Exit 0 when everything required is available, 1 when something required is missing, 2 when nothing is proven missing but a required capability is unknown. With detection on (the default), `contract --json` carries the same lists under `capabilities`. `doctor` also reports fonts: the default drawtext family, and `fonts.scripts` — one `available`/`missing`/`unknown` per writing system (ja, zh, ko, ar, he, hi, th, ru, el) with the file it would use — so "can this machine render Korean captions" is answered before the job, not after. `doctor --json`'s `tools` field folds that down to one answer per tool — `{"caption": {"usable": "no", "missing": ["filter:subtitles"], "fix": "..."}, ...}` — so "is `doctor` overall `ok`" and "can I run `caption.py` on this machine" are answered separately: a plain Homebrew `ffmpeg` is `ok` for tools that don't need `subtitles`/`drawtext`/`zscale`, while `caption`'s own `usable` is `"no"`.
+`doctor` reads `ffmpeg -encoders`, `-filters` and `-bsfs` and resolves every capability the contract declares against this machine's build. Three states per capability: `available`, `missing`, `unknown`. Exit 0 when everything required is available, 1 when something required is missing, 2 when nothing is proven missing but a required capability is unknown. With detection on (the default), `contract --json` carries the same lists under `capabilities`. `doctor` also reports fonts: the default drawtext family, and `fonts.scripts` — one `available`/`missing`/`unknown` per writing system (ja, zh, ko, ar, he, hi, bn, ta, th, lo, ru, el, latin) with the file it would use — so "can this machine render Korean captions" is answered before the job, not after. `doctor --json`'s `tools` field folds that down to one answer per tool — `{"caption": {"usable": "no", "missing": ["filter:subtitles"], "fix": "..."}, ...}` — so "is `doctor` overall `ok`" and "can I run `caption.py` on this machine" are answered separately: a plain Homebrew `ffmpeg` is `ok` for tools that don't need `subtitles`/`drawtext`/`zscale`, while `caption`'s own `usable` is `"no"`.
 
 `doctor --json`'s `gpu_encoders` reports which GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`, `vaapi`, `amf`) this ffmpeg *build* was compiled with — read from `-encoders` alone, so it proves the capability shipped, not that the GPU/driver on this machine will actually accept a job (that needs a real encode, which `doctor`'s introspection never runs). It never affects `ok` or any tool's `usable`. The one GPU path a tool uses is Apple VideoToolbox, opt-in: `--hw` on every re-encoding tool (h264/hevc/prores on the GPU, AV1 stays on SVT-AV1), `FFMPEG_SKILL_HW=1` to make it this machine's default for everything except `export.py`'s delivery presets (those take `--hw` explicitly, or `render.py --hw` for a whole project). It runs only on Apple Silicon and never by default, except on a build with no `libx264`/`libx265` (an LGPL ffmpeg that has only `h264_videotoolbox`/`hevc_videotoolbox`): there it is the only encoder, so every re-encoding tool and `export.py`'s presets use it without `--hw`, the result says `hw.source: "auto"`, and `doctor` lists the missing x264/x265 under `covered_by` instead of calling the tools unusable (`--no-hw` still asks for the CPU). It falls back to the CPU encoder — reported in the result's `hw.fallback`/`hw.notes` — only when VideoToolbox itself refuses a job (any other ffmpeg failure is reported as it happened, not retried); every result names the `encoder` that actually ran (`batch.py`, which encodes nothing itself: each `results` row), and a GPU encode adds a `notes` line that its quality is not CRF-equivalent. Measured on an M4 Max, 2–7× faster than x264/x265 `medium`; at matched SSIM (`tests/bench_vt.py`) 1.1–2.9× the bytes on SDR and 1.9–3.5× on HDR, which is why it is a flag and not the default (`docs/design-decisions.md`). `doctor --json`'s `hw` says whether this machine can run it (`platform_ok`) and whether it is the default here (`default_on`).
 
@@ -384,8 +382,8 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 The short list for humans. The agent-facing version, with the reasoning, is the "Things that look right but are wrong" and "Gotchas" sections of [SKILL.md](SKILL.md).
 
-- **Variable frame rate (phone and screen recordings).** `probe.py` flags it; every re-encoding tool conforms to a constant rate automatically. `cut.py` switches to frame-accurate mode on it, because copy-cuts on VFR land on the wrong frame, and samples the frame timing to say whether that was needed (`--vfr-guard sampled` decides on the sample instead; `--vfr-guard off` keeps the copy). Choose the rate yourself with `fit.py input.mp4 --fps 30` when the measured average is odd.
-- **Lossless cuts snap to keyframes.** A stream-copy cut can start up to one GOP earlier than asked. `cut.py` re-encodes when the snap exceeds 0.5 s (`--tolerance` changes the limit). For a strictly lossless file pass `--tolerance -1` (plus `--vfr-guard off` on a variable-frame-rate source), and expect the cut to land on the nearest earlier keyframe; the JSON result lists them under `nearest_keyframes`. A `--segments` join can still be re-cut: open-GOP video, a later segment of B-frame `.mp4`/`.mov` video that starts between keyframes (start it on a keyframe, or write `.mkv`), or a join that fails its check. For a single `.mp4`/`.mov` cut, `--edit-list` keeps the copy and starts the picture where asked: the keyframe's pre-roll is stored but hidden by an MP4 edit list, which a player that ignores edit lists shows.
+- **Variable frame rate (phone and screen recordings).** `probe.py` flags it; every re-encoding tool conforms to a constant rate automatically. `cut.py` samples the frame timing before a copy and switches to frame-accurate mode when it is variable or too short to judge, because copy-cuts on VFR land on the wrong frame (`--vfr-guard average` restores 2.x's rule, re-encoding whenever the nominal and average rates differ; `--vfr-guard off` keeps the copy). Choose the rate yourself with `fit.py input.mp4 --fps 30` when the measured average is odd.
+- **Lossless cuts snap to keyframes.** A stream-copy cut can start up to one GOP earlier than asked. `cut.py` re-encodes when the snap exceeds 0.5 s (`--tolerance` changes the limit). For a strictly lossless file pass `--tolerance -1` (plus `--vfr-guard off` on a variable-frame-rate source), and expect the cut to land on the nearest earlier keyframe; the JSON result lists them under `nearest_keyframes`. A `--segments` join can still be re-cut: open-GOP video, a later segment of B-frame `.mp4`/`.mov` video that starts between keyframes (start it on a keyframe, or write `.mkv`), or a join that fails its check. A single `.mp4`/`.mov` copy keeps its edit list by default (since 3.0.0), so the picture starts where asked: the keyframe's pre-roll is stored but hidden by an MP4 edit list, which a player that ignores edit lists shows (`--no-edit-list` starts the file at the keyframe instead).
 - **HDR stays HDR.** When the probe reports HDR (HDR10, HLG, Dolby Vision, BT.2020), the tools keep it rather than flatten it. Convert deliberately with `color.py --to-sdr` before H.264 deliverables or LUT work. `export.py` platform presets are SDR and warn on HDR input.
 - **Loudness targets.** −14 LUFS / −1 dBTP for YouTube and social platforms (the `loudness.py` default), `-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast. A clip measured at −40 LUFS or below is room tone, not content; raising it raises the noise. Check true peak as well as LUFS: `check.py file --platform podcast` measures both.
 - **Frame changes first, text second.** Captions and overlays burned before a crop or resize end up off-frame. Reframe, then caption.
@@ -447,15 +445,15 @@ It cannot tell you whether the result looks or sounds right, and the result says
 
 ### Are silence removal and captions stable?
 
-They are the most used tools here, and they are tested on every push on Linux, macOS and Windows, with FFmpeg 5.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.2 s by default; raise it to 0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.
+They are the most used tools here, and they are tested on every pull request and every push to `main` on Linux, macOS and Windows, with FFmpeg 6.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.2 s by default; raise it to 0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.
 
 `caption.py` burns SRT/ASS or muxes them as soft tracks, fits the size to the platform's safe area, and picks a font that covers the script (Japanese, Chinese, Korean, Arabic, Thai, Hindi and others). It needs FFmpeg's `subtitles` filter (libass); `doctor` reports whether this build has it. Placement and legibility are listed as `unverified`, so look at a contact sheet before delivering. Speech-to-text runs on a local engine you install; its first run may download a model.
 
 ### How well does HDR to SDR work, and what should I watch for?
 
-`color.py --to-sdr` converts PQ (HDR10), HLG and iPhone Dolby Vision 8.4 to SDR BT.709 with real tone mapping (`zscale` and `tonemap`, `hable` by default; `mobius`, `reinhard`, `bt2390` and others with `--tonemap`). BT.2020 footage on an SDR transfer gets a gamut conversion only. Watch for four things:
+`color.py --to-sdr` converts PQ (HDR10), HLG and iPhone Dolby Vision 8.4 to SDR BT.709 with real tone mapping (`zscale` and `tonemap`, `hable` by default; `mobius`, `reinhard`, `clip`, `linear` and `gamma` with `--tonemap`). BT.2020 footage on an SDR transfer gets a gamut conversion only. Watch for four things:
 
-- It needs `zscale` (libzimg). The plain Homebrew `ffmpeg` lacks it, so use `ffmpeg-full`; `doctor` reports whether it is there.
+- It needs `zscale` (libzimg). The plain Homebrew `ffmpeg` lacks it, so use `ffmpeg-full` (keg-only: see [Install](#install) for putting it on `PATH`); `doctor` reports whether it is there.
 - `--peak` (default 1000 nits) should match how bright the source was mastered. A wrong value makes highlights dull or clipped.
 - Tone mapping is a judgement, and the result says so (`grade_look` in `unverified`). Compare frames with `look.py`, and try another `--tonemap` if skin or skies look off.
 - An HDR source that only needs to play everywhere may not need converting at all. `--strip-dovi` removes the Dolby Vision layer from an iPhone clip, keeping its HLG picture, with a stream copy.
@@ -482,11 +480,10 @@ The encode path a tool will actually take is Apple VideoToolbox, for h264, hevc 
 
 ## FFmpeg compatibility
 
-The tools need FFmpeg 5.0 or later and Python 3.9 or later (standard library only). FFmpeg 6.1+ is recommended: FFmpeg 5.x still works but is deprecated since 2.14.0, `doctor` and the `npx` installer warn on it, and 3.0 requires 6.1. Python 3.10+ is recommended too: 3.9 still works but is deprecated since 2.10.9 (CPython 3.9 is end of life), `doctor` and the `npx` installer warn on it, and 3.0 drops it. What CI actually exercises on every pull request is FFmpeg 5.1.1 (static build), 6.1 (Ubuntu apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew) and 9.x (Windows gyan.dev), on Python 3.9 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
+The tools need FFmpeg 6.1 or later and Python 3.10 or later (standard library only). 3.0.0 removed FFmpeg 5.x and Python 3.9: every tool refuses an `ffmpeg`/`ffprobe` whose version reads as older than 6.1 (`kind: missing_tool`, `error.reason: ffmpeg_unsupported`; a git build whose version is not a release number is not refused), and `doctor` lists an unsupported FFmpeg or Python under `unsupported` with `ok: false`. What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu 24.04 apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew), 9.x (Windows gyan.dev) and 8.0.1 (Ubuntu 26.04 apt), on Python 3.10 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
 
 | FFmpeg | `-filters` row layout | Source |
 |---|---|---|
-| 5.1.1 | three flag characters, same as 6.x | johnvansickle.com static build on the Linux CI runner |
 | 6.1.1 | three flag characters: `..C acompressor A->A` | Ubuntu 24.04 apt, captured |
 | 7.1.x | same as 6.x | Debian trixie apt in a CI container (plus a constructed fixture in tests/) |
 | 8.1.2 | two flag characters: `TS aap AA->A`, three-character legend, `------` separator | Homebrew on the macOS CI runner, captured |
@@ -562,7 +559,7 @@ stream copy, and the last row is the whole hour.
 | `scenes.py` | 241 s | |
 | `check.py --platform youtube --content` | 308 s | the rows, `dropouts` included, cover the full hour |
 | `cut.py`, a 10-minute stream-copy segment | 2.4–4.4 s | no re-encode |
-| `join.py`, two 10-minute segments | 624 s | `join.py` always re-encodes, so it can crossfade and conform |
+| `join.py`, two 10-minute segments | 624 s | `join.py` re-encodes by default, so it can crossfade and conform (`--copy` does not, for clips that match) |
 | `export.py --preset youtube`, a 10-minute segment | 514 s | about 1.2× real time at the default `medium` preset |
 | `export.py --preset youtube --fast`, the same segment | 162 s | about 3.7× real time at `veryfast` |
 | `export.py --preset youtube`, the whole hour | killed at 1802 s | `kind: timeout` at the default `--timeout` of 1800 s (below) |
@@ -621,15 +618,15 @@ FFmpeg itself:
 
 ## Requirements
 
-- FFmpeg 5.0+ (FFmpeg 5.x is deprecated since 2.14.0 and 3.0 requires 6.1; 6.1+ recommended). Required by at least one tool (so `doctor`'s `ok` needs them all): `libx264`, `aac`, and the `drawtext`, `subtitles` (libass), `loudnorm`, `xfade`, `acrossfade`, `amix`, `overlay`, `scdet`, `silencedetect`, `cropdetect`, `tile`, `tpad`, `boxblur`, `hqdn3d`, `yadif`, `reverse`, `rotate`, `showwaves`, `v360`, `xstack` and `vidstabdetect`/`vidstabtransform` (libvidstab, `stabilize.py` only) filters; `doctor --json` lists them as `capabilities.required`. Needed only by the flags that use them: `libx265`, `prores_ks`, `libzimg` / `zscale`, `libmp3lame`, `libopus`, `libvorbis`, the `ass` filter. `doctor` tells you which are present. The apt and gyan.dev builds carry all of them; some Homebrew bottles lack `libass` / `libfreetype` / `libzimg`, which `doctor` reports as missing.
-- Python 3.10+ recommended, standard library only. 3.9 still works but is deprecated (end of life upstream; support ends in 3.0)
+- FFmpeg 6.1+ (3.0.0 removed 5.x; an older build is refused). Required by at least one tool (so `doctor`'s `ok` needs them all): `libx264`, `aac`, and the `drawtext`, `subtitles` (libass), `loudnorm`, `xfade`, `acrossfade`, `amix`, `overlay`, `scdet`, `silencedetect`, `cropdetect`, `tile`, `tpad`, `boxblur`, `hqdn3d`, `yadif`, `reverse`, `rotate`, `showwaves`, `v360`, `xstack` and `vidstabdetect`/`vidstabtransform` (libvidstab, `stabilize.py` only) filters; `doctor --json` lists them as `capabilities.required`. Needed only by the flags that use them: `libx265`, `prores_ks`, `libzimg` / `zscale`, `libmp3lame`, `libopus`, `libvorbis`, the `ass` filter. `doctor` tells you which are present. The apt and gyan.dev builds carry all of them; some Homebrew bottles lack `libass` / `libfreetype` / `libzimg`, which `doctor` reports as missing.
+- Python 3.10+, standard library only (3.0.0 removed 3.9)
 - Node 16+ only for the `npx` installer
 
 `doctor`'s own introspection calls (`ffmpeg -filters`/`-encoders`/`-bsfs`/`-version`) time out after 10s and report `failed` rather than hanging forever — those are meant to be fast. Every tool's actual media-processing `ffmpeg` invocation (cut, fit, caption, ...) runs under `--timeout` (default 1800 s, `FFMPEG_SKILL_TIMEOUT`, `0` = none): past the limit the process is killed, its partial output removed, and the failure reported as `kind: timeout` (exit 124) — a legitimately long `--accurate` re-encode should raise the limit rather than run unbounded. `-nostdin` is always passed, so a hung ffmpeg process waiting on stdin cannot happen.
 
 ## Stability
 
-2.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 3.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-2x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality`, an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`.
+3.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 4.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-3x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality` (except on `export.py`, whose preset chooses the encoder), an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`. 3.0.0 is the second break: it removed FFmpeg 5.x and Python 3.9 (announced in 2.14.0 and 2.10.9), made `cut.py` keep an `.mp4`/`.mov` copy's edit list, keep an SDR HEVC source HEVC and use `--vfr-guard sampled` by default (`--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore 2.x), and changed what `cut.py`'s `precision` (now the least exact segment's) and `keyframe_snapped` (now equal to `start_snapped`) mean (`contract_version` 2.0) -- see [docs/contract.md](docs/contract.md#what-30-changed).
 
 ## Development
 
@@ -643,7 +640,7 @@ python3 evals/run.py --list   # agent eval prompts (see evals/); regex-only grad
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, on Ubuntu (FFmpeg 6.1 with Python 3.9 on 24.04, FFmpeg 8.0.1 with Python 3.13 on 26.04), macOS (Homebrew FFmpeg 8.x) and Windows (gyan.dev FFmpeg 9.x), plus two Linux jobs on FFmpeg 5.1.1 (static build) and 7.1 (Debian trixie container), and uploads each runner's FFmpeg listings as an artifact.
+CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, on Ubuntu (FFmpeg 6.1 with Python 3.10 on 24.04, FFmpeg 8.0.1 with Python 3.13 on 26.04), macOS (Homebrew FFmpeg 8.x) and Windows (gyan.dev FFmpeg 9.x), plus a Linux job on FFmpeg 7.1 (Debian trixie container), and uploads each runner's FFmpeg listings as an artifact.
 
 `tests/test_contract.py` runs on all three OSes, but a handful of its tests build a fake `ffmpeg` as a `#!/bin/sh` script on a PATH shim to force specific FFmpeg 6/7/8/9 fixture layouts through `doctor`'s parser — that technique isn't portable to Windows, so `test_dry_run_never_runs_ffmpeg_and_writes_nothing` and the whole `DoctorDetectionTests` class (fixture-driven layout parsing) are individually `skipIf`'d there and show as `skipped`, not silently absent, in the Windows job's log. Everything else — contract schema, `reencodes_*`, `doctor.tools`, MCP derivation, and every tool exercised through the contract, including `cut.py`'s provenance fields — runs against the real Windows `ffmpeg` on every PR. See [references/ci-platform-pitfalls.md](references/ci-platform-pitfalls.md) for this and other per-OS behaviour differences already diagnosed, before spending a CI cycle re-diagnosing a platform-only failure.
 

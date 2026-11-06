@@ -23,10 +23,14 @@ import sys
 from typing import Dict, List, Optional, Tuple
 
 # `detect_scenes` moved into _common/probe.py in 1.16.0 (see silence.py); the body is unchanged.
-from _common import (detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
+from _common import (guard_sidecar, detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
                      ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
                      rms_envelope, BEAT_MIN_CONFIDENCE, decode_gray_frames, frame_flow, label_shot_flow)
 from _common import drawtext_fontfile  # noqa: E402
+from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
+from _common.emit import note, record_fallback  # noqa: E402
+from _common.color import bt709_label_filter  # noqa: E402
+from _common.probe import square_pixels  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -140,6 +144,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.highlights:  # the EDL is written only with --highlights
+        guard_sidecar(args.edl, args.input, siblings=(args.sheet,))
 
     meta = probe(args.input)
     if not meta.get("video"):
@@ -281,21 +287,37 @@ def main() -> int:
         cols = min(4, max(1, n))
         rows = max(1, math.ceil(n / cols))
         tile_w = 1280 // cols // 2 * 2
-        # exactly one frame per scene: the frame index at the scene start
-        fps = meta["video"].get("fps") or 30.0
-        expr = "+".join(f"eq(n\\,{int(round(sc['start'] * fps))})" for sc in scenes)
+        # exactly one frame per scene: the first frame at or after the scene start. The starts are
+        # presentation times, so the frame is chosen by its time, not by start x fps as a frame
+        # number -- on a variable-frame-rate source that number is another frame (#411)
+        def first_at(t: float) -> str:
+            a = f"{max(0.0, t - 0.0006):.4f}"
+            return f"gte(t\\,{a})*(isnan(prev_t)+lt(prev_t\\,{a}))"
+        expr = "+".join(first_at(sc["start"]) for sc in scenes)
         stamp = ""
+        if not args.no_timecode and ffmpeg_filters() and "drawtext" not in ffmpeg_filters():
+            # as look.py (#394): the sheet needs drawtext only for its stamps
+            args.no_timecode = True
+            record_fallback("this ffmpeg build has no drawtext filter, so the --sheet has no timecode stamps "
+                            "(the same as --no-timecode)", "scenes_sheet_no_drawtext")
+            note("--sheet without timecode stamps: this ffmpeg build has no drawtext filter ("
+                 + filter_missing_hint("drawtext") + ")")
         if not args.no_timecode:
             default_font = default_font_file("DejaVu Sans")
             font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
             stamp = f",drawtext=text='%{{pts\\:hms}}':{font_prefix}fontcolor=white:fontsize=h/14:box=1:boxcolor=black@0.55:boxborderw=4:x=6:y=6"
-        vf = (f"select='{expr}',scale={tile_w}:-2{stamp},"
+        # an untagged source is labelled BT.709 (tags only), or the sheet's RGB read it as BT.601 (#410);
+        # a non-square-pixel source is squared at its display aspect (#411)
+        lab = bt709_label_filter(meta)
+        square = square_pixels(meta["video"])
+        vf = (f"select='{expr}'," + (lab + "," if lab else "") + (square + "," if square else "")
+              + f"scale={tile_w}:-2{stamp},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        run(ffmpeg_base() + ["-i", args.input, "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", args.sheet])
+        run(ffmpeg_base() + ["-i", args.input, "-an", "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", "-update", "1", args.sheet])
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet
 
-    if args.json:
+    if STATE.json:  # --json-brief too: emit() is what adds the diagnostics (scenes_sheet_no_drawtext)
         emit(None, **result)
     else:
         print_json(result)

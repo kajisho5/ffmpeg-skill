@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build the before/after demo gallery: synthetic footage in, previews out.
 
-Everything here is generated from nothing -- ffmpeg's own synthetic sources (testsrc2,
-mandelbrot, life, aevalsrc) make the footage, and every "after" file is produced by running
+Everything here except one demo is generated from nothing -- ffmpeg's own synthetic sources
+(testsrc2, mandelbrot, life, aevalsrc) make the footage; reframe_talk reads demos/footage/ai_talk.mp4,
+and filler_en demos/footage/ai_talk_en.mp4: AI-generated clips (no real person), and every "after" file is produced by running
 this repo's own scripts, so a demo that renders is also a smoke test of the tool behind it.
 
     python3 demos/build.py                 # build every demo
@@ -122,13 +123,21 @@ class Ctx:
     def note(self, text):
         self.notes.append(text)
 
+    def expect(self, path, what):
+        """A file the last command must have written; the docs recorder (_DryCtx) runs nothing, so
+        there it is a no-op and the commands after it are still recorded."""
+        if not Path(path).exists():
+            raise BuildError("%s did not write %s" % (what, path))
+
 
 def _short(arg) -> str:
     """Render an argument for the docs: absolute paths under demos/out become relative."""
     text = str(arg)
     for base, prefix in ((OUT, "demos/out"), (ROOT, "")):
         try:
-            rel = Path(text).resolve().relative_to(base)
+            # both sides resolved: a temp DEMO_OUT is a short (8.3) name on Windows and under a
+            # /var symlink on macOS, while the argument resolves to the long, real path
+            rel = Path(text).resolve().relative_to(Path(base).resolve())
         except (ValueError, OSError):
             continue
         text = (prefix + "/" + str(rel).replace("\\", "/")).lstrip("/")
@@ -663,6 +672,32 @@ def demo_reframe_crop(ctx):
     return before, after
 
 
+FOOTAGE = ROOT / "demos" / "footage"   # the one non-synthetic source: AI-generated footage (see demos/footage/README.md)
+
+
+def demo_reframe_talk(ctx):
+    """A talking-head clip made vertical: --crop-x keeps the speaker, who sits left of centre."""
+    before = FOOTAGE / "ai_talk.mp4"
+    after = ctx.path("after.mp4")
+    ctx.script("fit.py", before, "--aspect", "9:16", "--fit", "crop", "--crop-x", "0.27", "--width", "540",
+               "--preset", "veryfast", "-o", after)
+    return before, after
+
+
+def demo_filler_en(ctx):
+    """English speech with two hesitations ("er" at 1.1 s, "um" at 4.4 s). The word timings are
+    the --words file faster-whisper wrote for this clip, primed with the filler list as
+    silence.py --filler --transcribe primes it (demos/footage/ai_talk_en.words.json), so the demo
+    builds without a speech engine."""
+    before = ctx.path("talk.mp4")
+    ffmpeg("-i", FOOTAGE / "ai_talk_en.mp4", "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(before))
+    after = ctx.path("after.mp4")
+    ctx.script("silence.py", before, "--filler", "--words", FOOTAGE / "ai_talk_en.words.json", "--margin", "0",
+               "--preset", "veryfast", "-o", after)
+    ctx.note("removed er (1.14-1.34 s) and um (4.44-4.78 s); %.2f s in, %.2f s out" % (duration(before), duration(after)))
+    return before, after
+
+
 def demo_reframe_pad(ctx):
     before = FIX / "mandel.mp4"
     after = ctx.path("after.mp4")
@@ -766,8 +801,7 @@ def demo_template_tiktok(ctx):
     after = ctx.path("after.mp4")
     ctx.script("render.py", before, "--template", "tiktok", "--cues", FIX / "cues_en.txt",
                "--fast", "-o", after)
-    if not after.exists():
-        raise BuildError("render.py --template tiktok did not write %s" % after)
+    ctx.expect(after, "render.py --template tiktok")
     ctx.note("1080x1920, captions clear of TikTok's description bar, check.py --platform tiktok passes")
     return before, after
 
@@ -776,14 +810,12 @@ def demo_render_project(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
     ctx.script("render.py", FIX / "project.json", "--fast")
-    if not after.exists():
-        raise BuildError("render.py did not write %s" % after)
+    ctx.expect(after, "render.py")
     # 2.1: the same project as an editor timeline (nothing rendered), so every demo build runs
     # --export-timeline end to end and the gallery shows the command next to the render
     timeline = ctx.path("timeline.otio")
     ctx.script("render.py", FIX / "project.json", "--export-timeline", timeline)
-    if not timeline.exists():
-        raise BuildError("render.py --export-timeline did not write %s" % timeline)
+    ctx.expect(timeline, "render.py --export-timeline")
     ctx.note("the same project also opens in an editor: --export-timeline writes .otio / .fcpxml / .edl")
     return before, after
 
@@ -793,8 +825,7 @@ def demo_render_pip(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
     ctx.script("render.py", FIX / "project_pip.json", "--fast")
-    if not after.exists():
-        raise BuildError("render.py did not write %s" % after)
+    ctx.expect(after, "render.py")
     ctx.note('overlays[]: {"video": "green.mp4", "chromakey": "0x00b140", "position": "bottom", "scale": 540}')
     return before, after
 
@@ -829,6 +860,17 @@ def demo_cut_accurate(ctx):
         ctx.note("copy: keyframe_snapped=%s, %.2f s of extra material; accurate: 2.05 s exactly"
                  % (found.get("keyframe_snapped"), found.get("duration_delta_seconds", 0.0)))
     return before, after
+
+
+def demo_cut_remove(ctx):
+    """--remove names what to drop and keeps the rest: 2-4 s of the clip are gone."""
+    src = FIX / "mandel.mp4"
+    after = ctx.path("after.mp4")
+    out = ctx.script("cut.py", src, "--remove", "2-4", "--accurate", "--preset", "veryfast", "--json", "-o", after,
+                     capture=True)
+    if out:
+        ctx.note("kept %.2f s; 2-4 s of the source removed" % (json.loads(out).get("output_duration") or 0.0))
+    return src, after
 
 
 def demo_cut_edit_list(ctx):
@@ -903,6 +945,20 @@ def demo_loop_times(ctx):
                "--preset", "veryfast", "-o", before)
     ctx.script("loop.py", before, "--times", "4", "--preset", "veryfast", "-o", after)
     ctx.note("%.1f s in, %.1f s out" % (duration(before), duration(after)))
+    return before, after
+
+
+def demo_loop_crossfade(ctx):
+    """The same 1.5 s clip looped four times, plain against --crossfade: the plain loop jumps at
+    every seam, the crossfaded one fades the clip's last 0.4 s into its first."""
+    clip = ctx.path("clip.mp4")
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    ctx.script("cut.py", FIX / "life.mp4", "--start", "0", "--duration", "1.5", "--accurate",
+               "--preset", "veryfast", "-o", clip)
+    ctx.script("loop.py", clip, "--times", "4", "--preset", "veryfast", "-o", before)
+    ctx.script("loop.py", clip, "--times", "4", "--crossfade", "0.4", "--preset", "veryfast", "-o", after)
+    ctx.note("%.1f s plain, %.1f s with the fade (each repeat is 0.4 s shorter)" % (duration(before), duration(after)))
     return before, after
 
 
@@ -1509,6 +1565,12 @@ _ROWS = [
     ("reframe_crop", PICTURE, "16:9 to 9:16 by cropping",
      "The vertical frame is cut out of the centre of the wide one -- full height, sides lost.",
      demo_reframe_crop, "video", None),
+    ("reframe_talk", PICTURE, "A talking head made vertical (AI-generated footage)",
+     "The 9:16 frame is placed on the speaker with --crop-x 0.27 instead of the centre, where it would cut her face in half. The source is AI-generated footage, not a real person.",
+     demo_reframe_talk, "video", None),
+    ("filler_en", AUDIO, "Filler words cut from real speech (AI-generated footage)",
+     "\"Hey, er, hello there. Well, um, good morning.\" Right is silence.py --filler: the er and the um are gone and the sentence plays straight through. The source is AI-generated footage, not a real person.",
+     demo_filler_en, "video", None, ("BEFORE", "--FILLER")),
     ("reframe_pad", PICTURE, "16:9 to 9:16 by padding",
      "Nothing is lost: the wide frame is kept whole and the gap above and below is filled with a blurred copy.",
      demo_reframe_pad, "video", None),
@@ -1564,6 +1626,9 @@ _ROWS = [
     ("cut_accurate", PICTURE, "Lossless cut vs. accurate cut",
      "Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.",
      demo_cut_accurate, "video", None, ("LOSSLESS", "--ACCURATE")),
+    ("cut_remove", PICTURE, "Cut out a range, keep the rest",
+     "cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.",
+     demo_cut_remove, "video", None, ("SOURCE", "--REMOVE 2-4")),
     ("cut_edit_list", PICTURE, "Lossless cut that starts where asked",
      "Both sides are stream copies of the same 2.05 s request. The default shifts the copy's timestamps to zero, so the keyframe's pre-roll plays first (start_snapped: true); --edit-list keeps the MP4 edit list that hides it, so the picture starts at 2.05 s (start_snapped: false, stored_preroll_seconds says how much is hidden). A player that ignores edit lists shows the pre-roll.",
      demo_cut_edit_list, "video", None, ("DEFAULT COPY", "--EDIT-LIST")),
@@ -1583,8 +1648,11 @@ _ROWS = [
      "The clip stops dead at 2 s for a beat and a half while the title card sits over it, then carries on -- everything after the freeze is pushed later, nothing is lost.",
      demo_freeze_hold, "video", "latin"),
     ("loop_times", PICTURE, "Loop a short clip",
-     "A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut, which is a judgement about the material, not a flag.",
+     "A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut (--crossfade, below, fades it).",
      demo_loop_times, "video", None),
+    ("loop_crossfade", PICTURE, "A seamless loop",
+     "The same clip looped four times, plain (left) and with loop.py --crossfade 0.4 (right): the plain loop jumps back at every seam, the crossfaded one fades the clip's last 0.4 s into its first, so each repeat runs on into the next.",
+     demo_loop_crossfade, "video", None),
     ("insert_still", PICTURE, "A still card dropped into the timeline",
      "insert.py turns one PNG into a 2 s clip with a slow zoom and pan, and join.py cross-fades it in between the two shots.",
      demo_insert_still, "video", None),
@@ -1699,8 +1767,9 @@ INSPECTION = [
     ("check.py --content", "python3 scripts/check.py final.mp4 --platform youtube --content",
      "adds content rows to the platform check: black frames, frozen frames, the share of "
      "silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, "
-     "the mark of lost audio at a join). The dropouts row lists the first five gaps' times "
-     "and lengths; a row that does not pass names a fix."),
+     "the mark of lost audio at a join), single-frame flashes (one frame unlike both of its "
+     "neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the "
+     "first five times; a row that does not pass names a fix."),
     ("report.py", "python3 scripts/report.py --before raw.mov --after final.mp4 -o report.html",
      "a single self-contained HTML page: before/after contact sheets, loudness, the platform "
      "check table and the exact commands. It is a file to open, not a picture to embed here."),
@@ -1710,9 +1779,10 @@ INSPECTION = [
 # --------------------------------------------------------------------------- docs
 DOC_HEADER = """# Demo gallery
 
-Every clip on this page was generated from nothing: ffmpeg's own synthetic sources make the
-footage, and each "after" is produced by running one of this repo's scripts on it. Rebuild the
-whole page's material with:
+Every clip on this page but two was generated from nothing: ffmpeg's own synthetic sources make
+the footage. The two exceptions, `reframe_talk` and `filler_en`, use AI-generated footage of
+people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
+repo's scripts on its source. Rebuild the whole page's material with:
 
 ```bash
 python3 demos/build.py            # or: npm run demo
@@ -1772,11 +1842,17 @@ class _DryCtx(Ctx):
         self.commands.append(" ".join(["python3", "scripts/" + tool] + [_short(a) for a in args]))
         return ""
 
+    def expect(self, path, what):
+        pass  # nothing ran, so nothing was written: keep recording the commands that follow
+
 
 def _commands_for(name):
     """Replay a demo's builder against a recorder, so the docs print the exact command the
     build runs rather than a hand-copied approximation of it."""
     ctx = _DryCtx(name, verbose=False)
+    # a builder that writes a side file (an SRT, a cue list) before its command needs the folder:
+    # without it the replay stopped there and the page printed "..." for the commands
+    OUT.mkdir(parents=True, exist_ok=True)
     global ffmpeg, duration
     real_ffmpeg, real_duration = ffmpeg, duration
     ffmpeg, duration = (lambda *a: None), (lambda p: 0.0)

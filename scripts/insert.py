@@ -27,7 +27,10 @@ import argparse
 import math
 import sys
 
+from _common import still_input_args  # noqa: E402
 from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, parse_time, probe, run, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common.emit import note
+from _common.probe import display_size, square_pixels, square_pixels_note
 
 
 def even(n: float) -> int:
@@ -68,7 +71,11 @@ def main() -> int:
     if (meta.get("duration") or 0) > 0.5 or meta.get("audio"):
         die(f"{args.input} is a video, not a still image; insert.py animates a still (Ken Burns). "
             f"For a clip use broll.py (cutaway) or cut.py/join.py")
-    sw, sh = meta["video"]["width"], meta["video"]["height"]
+    # the displayed picture: ffmpeg turns an EXIF-rotated still upright on decode (probe reads
+    # the Orientation off the decoded frame), and non-square pixels are squared (#411)
+    sw, sh = display_size(meta["video"])
+    if square_pixels(meta["video"]):
+        note(square_pixels_note(meta["video"]))
     ratio = sw / sh
 
     if args.width and args.height:
@@ -114,8 +121,10 @@ def main() -> int:
             f"fps={args.fps:g}",
         ]
 
+    if square_pixels(meta["video"]):
+        vf.insert(0, square_pixels(meta["video"]))  # the scale and crop above size the squared picture
     output = args.output or default_output(args.input, "insert", "mp4")
-    cmd = ffmpeg_base() + ["-loop", "1", "-i", args.input, "-t", f"{target:.3f}", "-vf", ",".join(vf)]
+    cmd = ffmpeg_base() + ["-loop", "1", *still_input_args(args.input), "-i", args.input, "-t", f"{target:.3f}", "-vf", ",".join(vf)]
     # the SDR line, whatever the image is; its RGB (PNG) or BT.601 (JPEG) pixels are converted to
     # the BT.709 that line is tagged with
     cmd += video_args(None, args.crf, args.preset, source=meta)

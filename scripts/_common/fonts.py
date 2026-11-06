@@ -7,12 +7,12 @@ from __future__ import annotations
 import os
 import platform
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, info, record_fallback, warn
 from _common.emoji import _is_emoji_char
+from _common.runner import safe_which as _safe_which
 
 
 def default_font_file(font_name: str) -> Optional[str]:
@@ -61,6 +61,13 @@ def resolve_font(font_name: str) -> "Dict[str, object]":
         # common CJK system fonts when the request looks CJK (so Japanese text does not render as
         # boxes in Arial), and Arial only as the last resort.
         wanted = _family_key(font_name)
+        # The family's own file first, from the table of what Windows installs under which file
+        # name (#414): "Malgun Gothic" is malgun.ttf and "Times New Roman" times.ttf, which no
+        # file-name prefix finds -- the prefix rule resolved them to YuGothM.ttc and arial.ttf and
+        # reported a font that is installed as substituted.
+        for name in windows_family_files(wanted):
+            if (fonts / name).is_file():
+                return {"file": str(fonts / name), "family": font_name, "substituted": False, "via": "windows_fonts"}
         try:
             files = sorted(fonts.iterdir()) if fonts.is_dir() else []
         except OSError:
@@ -79,7 +86,7 @@ def resolve_font(font_name: str) -> "Dict[str, object]":
             return {"file": str(candidate), "family": "Arial",
                     "substituted": bool(wanted) and wanted != "arial" and wanted not in _GENERIC_FAMILIES, "via": "windows_fonts"}
         return none
-    exe = shutil.which("fc-match")
+    exe = _safe_which("fc-match")
     if not exe:
         return none
     try:
@@ -199,6 +206,25 @@ WINDOWS_FONTS = {
 }
 
 
+# Latin families Windows installs that WINDOWS_FONTS (a per-script table) does not name, by the
+# file each one is installed as: a file name that does not start with the family's name
+WINDOWS_LATIN_FONTS = [("arial.ttf", "Arial"), ("times.ttf", "Times New Roman"), ("cour.ttf", "Courier New"),
+                       ("segoeui.ttf", "Segoe UI"), ("tahoma.ttf", "Tahoma"), ("verdana.ttf", "Verdana"),
+                       ("georgia.ttf", "Georgia"), ("calibri.ttf", "Calibri"), ("cambria.ttc", "Cambria"),
+                       ("consola.ttf", "Consolas"), ("trebuc.ttf", "Trebuchet MS"), ("comic.ttf", "Comic Sans MS"),
+                       ("impact.ttf", "Impact"), ("seguiemj.ttf", "Segoe UI Emoji")]
+
+
+def windows_family_files(wanted_key: str) -> "List[str]":
+    """The Windows Fonts file names of the family whose _family_key() is `wanted_key`, best first,
+    from WINDOWS_FONTS and WINDOWS_LATIN_FONTS ([] for a family neither names)."""
+    out: "List[str]" = []
+    for name, family in [e for entries in WINDOWS_FONTS.values() for e in entries] + WINDOWS_LATIN_FONTS:
+        if wanted_key and _family_key(family) == wanted_key and name not in out:
+            out.append(name)
+    return out
+
+
 _SCRIPT_RANGES = (
     ("ko", ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F), (0xAC00, 0xD7FF))),   # Hangul syllables + Jamo
     ("kana", ((0x3040, 0x309F), (0x30A0, 0x30FF), (0x31F0, 0x31FF), (0xFF66, 0xFF9F))),  # hiragana/katakana
@@ -220,7 +246,7 @@ def font_family_of_file(path: str) -> "Optional[str]":
     the file directly; without fontconfig the file stem is the honest best guess."""
     if not path or not os.path.isfile(path):
         return None
-    exe = shutil.which("fc-scan")
+    exe = _safe_which("fc-scan")
     if exe:
         try:
             proc = subprocess.run([exe, "--format", "%{family[0]}", path], stdout=subprocess.PIPE,
@@ -307,7 +333,7 @@ def _fc_list_fonts(fc_lang: str) -> "Optional[List[Tuple[str, List[str]]]]":
     asked at all (no `fc-list` on PATH, or it failed/timed out) -- the difference between
     "missing" and "unknown", which the caller must not collapse: unknown is not a refusal.
     """
-    exe = shutil.which("fc-list")
+    exe = _safe_which("fc-list")
     if not exe:
         return None
     try:
@@ -426,7 +452,7 @@ def font_covers_script(font_name: str, script: str) -> bool:
     """
     if script not in FC_LANG or not font_name:
         return True
-    exe = shutil.which("fc-list")
+    exe = _safe_which("fc-list")
     if not exe:
         return True
     try:
@@ -460,7 +486,7 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
     """
     if script not in FC_LANG or not fonts_dir or not os.path.isdir(fonts_dir):
         return None
-    exe = shutil.which("fc-scan")
+    exe = _safe_which("fc-scan")
     if not exe:
         return None
     try:

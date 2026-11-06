@@ -110,8 +110,11 @@ mechanism, and write the skip/relaxation reason as a full sentence
 explaining the underlying platform behaviour — not just "flaky on
 Windows" — so a future reader doesn't have to re-derive it from the CI log.
 
-## FFmpeg 5.x (the 5.1.1 static-build CI job)
+## FFmpeg 5.x (the 5.1.1 static-build CI job, removed in 3.0.0)
 
+Historical: 3.0.0 removed FFmpeg 5.x support (deprecated in 2.14.0) and this CI job with it, so
+the tools now refuse a build older than 6.1 and its version branch for `boxborderw` (below) is
+gone. Kept as a record of what 5.x did differently.
 Found the day the job was added (#146); 6.1+ behaves the same on all three OSes, so none of
 these had ever shown up before.
 
@@ -122,9 +125,9 @@ these had ever shown up before.
   sides of it disappear from its neighbourhood test. 6.1+ passes every frame regardless.
   Dropped the option; scores are also indexed by frame number now, missing frames counting as 0.
 - **`drawtext` `boxborderw=v|h` (and the four-value form) is 6.1+.** 5.x and 6.0 fail the whole
-  filter with "Error setting option boxborderw to value 9|16". `_common.drawtext_boxborderw()`
-  emits the larger single value on older builds (`_common.ffmpeg_version()` parses
-  `ffmpeg -version` once; it is the only place the tools branch on a version string). Both names
+  filter with "Error setting option boxborderw to value 9|16". Through 2.x
+  `_common.drawtext_boxborderw()` emitted the larger single value on older builds
+  (`_common.ffmpeg_version()` parses `ffmpeg -version` once); since 3.0.0 it always writes `v|h`. Both names
   are still spelled exactly that way: `_common` is a package since the refactor release after
   1.15.0, and its `__init__.py` re-exports every name the single module defined, so
   `_common.drawtext_boxborderw()`, `_common.ffmpeg_version()` and `_common.bt709_tag_args()`
@@ -175,8 +178,9 @@ these had ever shown up before.
   pads audio should do the same.
 - **FFmpeg 8.0 and 8.0.1's `aselect` passes every frame through** (its `activate` callback was lost
   in the filter conversion; fixed in 8.0.2/8.1). Nothing fails: the picture is cut and the sound is
-  not. silence.py tags the kept frames with `ametadata=mode=add:...:enable='<expr>'` and keeps them with
-  `ametadata=mode=select`; do not use `aselect` for removal.
+  not. Do not use `aselect` for removal: cut each range with `atrim` (silence.py re-cuts its ranges
+  through cut.py's `--segments --accurate` path; through 3.1.3 it tagged the kept frames with
+  `ametadata=mode=add` and kept them with `ametadata=mode=select`).
 - **FFmpeg 8.0, 8.0.1 and 8.1.0 draw the font's missing-glyph box at each line break of a multi-line
   `drawtext`** (each line is shaped with its newline; fixed in 8.0.2/8.1.1). `ffmpeg_version()` cannot
   tell 8.1.0 from 8.1.1; `drawtext_draws_newline_glyph()` reads the point release. graphics.py routes

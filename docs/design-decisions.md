@@ -22,6 +22,7 @@ exists. When a decision changes, edit the entry in the same PR.
 **By release, review or plan** (in the order they were added):
 
 - [Decided for 2.0 (issue #189 B), recorded in 1.x so the code moved toward them](#decided-for-20-issue-189-b-recorded-in-1x-so-the-code-moved-toward-them)
+- [3.0.0 — the floors rise, and the cut defaults decided for 3.0 apply](#300--the-floors-rise-and-the-cut-defaults-decided-for-30-apply)
 - [External review, 2026-09-14 (1.17.0)](#external-review-2026-09-14-1170)
 - [External review, 2026-09-13](#external-review-2026-09-13)
 - [1.15.0 — text people can see](#1150--text-people-can-see)
@@ -54,12 +55,24 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.20 — a length or a silence is checked against a yardstick the tool did not make](#220--a-length-or-a-silence-is-checked-against-a-yardstick-the-tool-did-not-make)
 - [2.21.1 — a stream that ends early or decodes nothing fails the check](#2211--a-stream-that-ends-early-or-decodes-nothing-fails-the-check)
 - [2.22 — silence.py says where it cut, and where to listen](#222--silencepy-says-where-it-cut-and-where-to-listen)
+- [2.23 — check.py --content's flashes and first-frame rows](#223--checkpy---contents-flashes-and-first-frame-rows)
+- [2.24 — join.py --copy and cut.py --remove](#224--joinpy---copy-and-cutpy---remove)
+- [2.24 — output identity and check.py --compare](#224--output-identity-and-checkpy---compare)
+- [2.24 — export.py --max-mb](#224--exportpy---max-mb)
+- [2.24 — export.py --repair](#224--exportpy---repair)
+- [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
+- [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
+- [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
+- [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
+- [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
 <!-- contents:end -->
 
 ## Time limits
 
-- **`FFMPEG_SKILL_TIMEOUT=0` (or `--timeout 0`) means no limit anywhere**, including the outer
-  ceiling on sibling-script runs and the MCP dispatch. 0 is the documented "off" value, chosen so
+- **`FFMPEG_SKILL_TIMEOUT=0` (or `--timeout 0`) means no limit on any encode or tool run**, including
+  the outer ceiling on sibling-script runs and the MCP dispatch, and ffprobe calls through `run()`;
+  the short read-only queries outside `run()` (the version, stream-list and encoder/filter-list
+  reads) keep their 120 s ceiling, since a hang there is a stall, not a long job. 0 is the documented "off" value, chosen so
   a genuinely multi-hour job can opt out; the default (1800 s) is what protects an unattended
   agent. Code: `_common.child_limit()`, `_common._limit_for()`, `mcp/server.py` `timeout_from_call()`
   (a raw `argv` list's `--timeout` sets the same ceiling as the structured `timeout` key). Test:
@@ -158,9 +171,10 @@ exists. When a decision changes, edit the entry in the same PR.
   still takes the HDR path chosen from the first video stream's probe. The cost: a source whose
   frame *size* or pixel format changes mid-stream is no longer refused by concat's own "parameters do
   not match" error; on 6.1 the first-format graph then crashes or stalls the encoder (the stall is
-  bounded by `--timeout`). No other tool builds this structure: `join.py`, `multicam.py` and
-  `broll.py` open different files without `-ss`; `speedramp.py`, `freeze.py` and `loop.py` split one
-  input. Code: `cut._join_chunk()`. Test:
+  bounded by `--timeout`). `silence.py` renders through the same `_join_chunk` (#409), so it has
+  the flag too. No other tool builds this structure: `join.py`, `multicam.py` and `broll.py` open
+  different files without `-ss`; `speedramp.py` and `freeze.py` split one input, and `loop.py`
+  reads one concat list. Code: `cut._join_chunk()`. Test:
   `test_every_segment_input_of_an_accurate_join_keeps_the_graph_format` (the planned command, any
   FFmpeg) and `test_an_accurate_join_across_a_colour_tag_change_completes` (the run; it only fails
   where the deadlock reproduces).
@@ -279,14 +293,49 @@ exists. When a decision changes, edit the entry in the same PR.
   the drawbox's pixels); `background.py`'s `color`/`gradients` and `waveform.py`'s plate and RGBA waves are
   converted where they are made. Only a colour whose 8-bit YUV differs between the two matrices
   (`is_neutral_color()`: not a grey, not graphics.py's near-black 101418) changes a command, so the
-  default black pads, white text and black/grey boxes plan what they did. Not converted: a GIF export
-  (untagged, and palettegen reads the pad back with the BT.601 it was drawn in), a prores or HDR line,
+  default black pads, white text and black/grey boxes plan what they did -- except, before 7.1, on a
+  full-range picture in a plain format (next entry), where greys were drawn in the wrong range too.
+  Not converted: a GIF export (its pad, if a GIF preset ever had one, would be drawn and read back
+  with the same BT.601), a prores or HDR line,
   a caller's own `--ass` file (its colours and YCbCr header are the file's, as libass/FFmpeg read
-  them), and the PNG contact sheets of `look.py`/`scenes.py` (RGB outputs, not tagged video). Code:
+  them), and the drawn marks on the PNG contact sheets of `look.py`/`scenes.py` (RGB outputs, not
+  tagged video; since #410 their picture is read as BT.709, so `look.py --safe`'s red shading, drawn
+  by drawbox in BT.601, is a few codes off on an untagged source). Code:
   `_common/color.py` (`is_neutral_color`, `rgb_island`), `_common/decision.py` (`drawn_chain`,
   `pad_filters`), and each drawing tool. Tests: `test_a_pad_fill_or_background_lands_in_the_bt709_its_output_is_tagged_with`,
   `test_drawn_text_and_boxes_land_in_the_bt709_their_output_is_tagged_with`,
   `test_a_picture_that_only_passes_through_keeps_its_pixels`, `test_drawn_colours_are_drawn_in_bt709`.
+- **Where pictures are mixed, or drawn on before FFmpeg 7.1, a full-range picture is taken to limited
+  range first (#410).** Full range comes as a `yuvj` format (H.264/HEVC/JPEG), which every `scale`
+  and `format=yuv420p` here converts by name, or as a plain format tagged `pc` (VP9 and AV1 full
+  range, any 10-bit full range), which passes through untouched. concat, xfade, xstack and overlay
+  mix samples, not colours, so such a clip beside a limited one in `join`, `multicam`, `grid`, `broll`
+  or `overlay --video` was shown in the other's range (C03028 came out C9251B on 6.1), and so were the
+  limited-range RGB layers #333 converts (graphics.py's boxes and bars, emoji, `overlay --image`)
+  over a full-range main (30B050 came out 37A757). Each such picture's chain now ends with
+  `scale=out_range=tv` (`range_chain()`, `layer_base_chain()`; a `yuvj` one also gets its plain format
+  name), so every picture the filter mixes is limited and the output is limited, tagged so. The input
+  range is left to `scale`, which reads it from each frame: 6.1's scale already turns a full-range
+  plain-format frame limited at any resize, so a stated `in_range=pc` would convert some frames twice.
+  Before 7.1 `ff_draw` also takes the range from the pixel format alone, so black was drawn 101010 and
+  white EBEBEB on such a picture, and `rgb_island()` read a picture 6.1 had already made limited (or a
+  10-bit one, drawn on as 8-bit) as full range, oversaturating a colour; `drawn_chain()` takes it to
+  limited range there and draws in limited range, greys included. 7.1+ draws in the link's range and
+  its drawing commands are unchanged. A one-input re-encode with no drawing keeps the range it had
+  ("The range is left as it is" above still holds for the matrix conversion). Not done for an HDR or
+  prores line, as `matrix_chain()`. Code: `_common/color.py` (`is_full_range`,
+  `limited_range_filter`, `as_limited`), `_common/decision.py` (`range_chain`, `layer_base_chain`,
+  `drawn_chain`). Tests: `test_mixing_tools_take_a_full_range_clip_to_limited_range`,
+  `test_a_colour_drawn_on_a_full_range_picture_lands_in_its_range`,
+  `test_converted_layers_on_a_full_range_main_land_in_its_range`, `test_audit_g_colour_plans`,
+  `test_drawn_colours_are_drawn_in_bt709`.
+- **An untagged SDR source is labelled BT.709 where a tool turns it into RGB for a picture file
+  (#410).** `look.py`'s frames, compare images and contact sheet, `scenes.py --sheet` and
+  `export.py --preset gif` let FFmpeg convert to RGB, and that conversion reads "unknown" as BT.601
+  (C03028 came out B31F28) while every encoder line here takes untagged SDR as BT.709. The frames are
+  labelled first (`bt709_label_filter()`, tags only), as #333's mixing filters do; a tagged source is
+  read by its own tag, an HDR one is tone-mapped as before. Test:
+  `test_rgb_views_of_an_untagged_source_read_it_as_bt709`.
 - **`color.py --retag` rewrites the colour description the stream itself carries, and checks it.**
   H.264, HEVC, MPEG-2, AV1 and VP9 keep it in the bitstream (VUI, sequence header, frame header).
   Decoders, ffprobe included, read that before the container's `colr`/Colour. Through 2.10.10 the
@@ -320,13 +369,23 @@ exists. When a decision changes, edit the entry in the same PR.
 - **`--correct` converts through bt601 on both legs** (not bt709), because on every tested
   FFmpeg the 709 round trip through 8-bit 4:2:0 loses ~5 dB more than 601. Code:
   `color.py _rgb_stage()`. Test: `test_color_correct_identity_holds_on_a_bt709_tagged_source`.
+  `--temperature` at its default 6500 adds no term: `colortemperature=temperature=6500` is not an
+  identity (it tinted grey 808080 to 7E7E7B, #410). Test: `test_color_correct_defaults_leave_grey_grey`.
+- **`--lut` converts through BT.709 on both legs, in float RGB** (#410). A LUT maps the RGB the picture
+  really shows, so its legs are the picture's own matrix (BT.709, or BT.601/RGB already converted to
+  it on the encoder line), not --correct's working space. Left to libavfilter they disagreed (in by
+  the frame's tag, out by swscale's BT.601 default) and an identity LUT shifted every colour (2FAE4E
+  to 249A4B); with `gbrpf32le` an identity LUT returns what `--lut-strength 0` does on 6.1, 8- and
+  10-bit, limited and full range. A blend (`--lut-strength` below 1) is made in that RGB too. Code:
+  `color.py lut_legs()`. Test: `test_color_lut_identity_returns_the_picture`.
 
 ## Outputs and files
 
 - **An existing output is refused without `--overwrite`, dry runs included** (2.0; 1.x warned,
   with `FFMPEG_SKILL_NO_OVERWRITE=1` as the opt-in). The refusal is `kind: input` before any
   ffmpeg runs, so a dry run predicts it. A path this same run wrote (two-pass tools,
-  copy-then-re-encode fallbacks) is never someone else's file. Code:
+  copy-then-re-encode fallbacks), or a child tool of this run wrote (render.py's stages, 3.1.6), is
+  never someone else's file. Code:
   `_common._check_existing_output()`. Test:
   `test_existing_output_is_refused_without_overwrite_and_never_for_its_own_files`.
   Side files count as outputs (2.2.4): caption.py checks the video and every `.srt`/`.ass` it
@@ -344,7 +403,12 @@ exists. When a decision changes, edit the entry in the same PR.
   it is retimed; both cases report `dropped_non_av_streams`.** Tools that re-encode the picture
   or audio in place (`fit`, `color`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
   `deinterlace`, `denoise`, `freeze --mode extend`) try `run_keeping_subtitles()` first and
-  report `false` unless the container refused the track. Tools that move the timeline
+  report `false` unless the container refused the track. `export` does the same with its own
+  ladder (`_run_keeping_non_av()`): a text track is converted to the container's own (mov_text in
+  .mp4/.mov, SubRip in .mkv) rather than refused, a data stream the container refuses (a camera's
+  timecode in .mp4) is retried away alone so the subtitles survive it, a platform trim cuts the
+  track with the picture, and `non_av_streams` lists every stream kept or dropped. Test:
+  `test_export_keeps_the_subtitle_track_for_every_preset_whose_container_holds_one`. Tools that move the timeline
   (`cut` re-encode, `pad --start`, `freeze --mode insert`, `fit --method speed`, `speedramp`,
   `broll`, `join`) do not copy a track whose cues would fire at the wrong time and report
   `true` when the source had one. Code: `_common.run_keeping_subtitles()` and each tool's `emit`.
@@ -450,6 +514,47 @@ exists. When a decision changes, edit the entry in the same PR.
   tools that only call those keep working with a one-line change. Rejected: thread-locals (hides
   the dependency the reviews keep asking about). Code: `_common.Context`.
 
+## 3.0.0 — the floors rise, and the cut defaults decided for 3.0 apply
+
+- **Python 3.10 and FFmpeg 6.1 are the floors (`requirements.python` `>=3.10 (standard library
+  only)`, `requirements.ffmpeg`/`ffprobe` `>=6.1`).** The two 2.x deprecations (Python 3.9 in
+  2.10.9, FFmpeg 5.x in 2.14.0, both below) moved from `contract --json`'s `deprecated` to
+  `removed`, so `deprecated` is empty again. CI's Python floor is 3.10 (plus 3.13), and the 5.1.1
+  static job is gone: CI runs 6.1 (Ubuntu 24.04 apt), 7.1 (Debian trixie), 8.x (macOS Homebrew),
+  9.x (Windows gyan.dev) and 8.0.1 (Ubuntu 26.04 apt). The 90-day half of the deprecation
+  window was waived in writing (`docs/contract.md`, "Deprecation policy"). Code:
+  `_contract.REMOVED`, `_contract.MIN_PYTHON`/`MIN_FFMPEG`, `bin/install.js`'s `PYTHON_PROBE`.
+  Test: `test_3_0_removed_python_3_9_and_ffmpeg_5_on_every_surface`.
+- **An FFmpeg older than 6.1 is refused, not warned about.** 2.x kept the 5.x and 6.0 code paths
+  (drawtext's single-value `boxborderw`, among others) and printed a warning; 3.0.0 deleted those
+  paths, so an old build would no longer fail cleanly here -- it would fail later in some other,
+  worse way (a filter option it rejects halfway through a render). Every tool's first
+  `ffmpeg`/`ffprobe` lookup therefore refuses a version it can read as older than 6.1, with
+  `kind: missing_tool` (exit 127), `error.reason: ffmpeg_unsupported` and `details: {version,
+  required}`; `doctor` lists the line in `unsupported` and reports `ok: false`, and the `npx`
+  installer prints the same line. A git or vendor build whose version is not a release number
+  (`N-12345-g…`) is **not** refused: its age cannot be read, the same rule as the security
+  advisory, and refusing it would lock out exactly the newest builds. Code:
+  `runner.require_tool()`, `_contract.ffmpeg_unsupported()`, `_contract.doctor()`. Tests:
+  `test_every_tool_refuses_an_ffmpeg_older_than_6_1`,
+  `test_doctor_reports_an_unsupported_python_or_ffmpeg_and_fails`.
+- **A Python older than 3.10 is not refused by the tools themselves, only reported.** The
+  installer skips such an interpreter (and warns when it finds none), and `doctor` lists it in
+  `unsupported` with `ok: false`; the scripts do not check their own interpreter version.
+  Code: `bin/install.js` `findPython()`/`warnMissingPython()`, `_contract.python_unsupported()`.
+- **The "Decided for 3.0" defaults now apply (2.8.0 section below).** `cut.py` keeps the edit list
+  on a single `.mp4`/`.mov` stream copy (`--no-edit-list` restores `-avoid_negative_ts make_zero`);
+  an SDR HEVC source's re-encode stays HEVC, x265 8-bit BT.709 (`--no-keep-hevc` restores x264);
+  `--vfr-guard` defaults to `sampled` (`--vfr-guard average` restores 2.x). `--edit-list` and
+  `--keep-hevc` are still accepted, so a 2.x command line runs unchanged. `precision` is the least
+  exact segment's (equal to `least_exact_precision`, which stays) and `keyframe_snapped` equals
+  `start_snapped`; `contract_version` is `2.0`. Code: `cut.main()` (the `--no-` flags and
+  `KEEP_HEVC`), `cut.report_precision()`. Tests: the cut-copy tests in `tests/test_cut_copy.py`
+  that pin a default `.mp4` copy keeping its edit list, an SDR HEVC re-encode staying HEVC
+  (`test_sdr_hevc_is_encoded_as_hevc_8bit_bt709`, `test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc`)
+  and the sampled VFR guard by default, and the precision tests in `tests/test_editing.py` that pin
+  `precision` as the least exact segment's and `keyframe_snapped` as `start_snapped`.
+
 ## External review, 2026-09-14 (1.17.0)
 
 An outside review of the repository at 1.17.0, alongside eval 18. What it raised, and what was
@@ -487,6 +592,8 @@ decided. Recorded here so none of it is re-proposed from scratch.
 - **P1-5 — reports copy the English boilerplate lines into non-English answers.** Accepted:
   SKILL.md's failure example now shows the Japanese rendering of `Check:`/`Look:`'s filler lines,
   so the rule ("these are sentences, not labels") has an example next to it.
+  Since the SKILL.md restructure after 3.1.1 the full Japanese five-line example lives in
+  `references/report.md`; SKILL.md keeps the rule with its Japanese `Check:`/`Look:` lines.
 - **P1-6 — eval prompt `ml2` tested a refusal, not the mux.** Accepted: `ml2` now ships a German
   SRT and a video and expects `caption|render`.
 - **P1-7 — the 42-tool MCP `tools/list` is paid for by every session.** Accepted, and **shipped**:
@@ -627,13 +734,15 @@ spawns; the alternative is a second subtitle renderer that drifts from the first
 Since 2.2.4 they are launched as `render.py` launches its stages: `run_tool()` with
 `child_args()` and `--json`, so `--overwrite`, `--timeout`, `--fast` and `--dry-run` reach
 them, and a failed stage is re-raised with the child's own kind, exit code and hint (a private
-launcher had forwarded only `--dry-run` and called every failure `kind: ffmpeg`). The `_vis` /
-`_titled` intermediates are removed on the failure path too, and a missing `--srt`/`--text`
+launcher had forwarded only `--dry-run` and called every failure `kind: ffmpeg`). The `vis` /
+`titled` intermediates are hidden, pid-named siblings of the output (`sibling_temp`, #408) and are
+removed on the failure path too: through 3.1.3 they were `<out>_vis` / `<out>_titled`, and the
+removal took whatever file had that name, the input or a file of the caller's included. A missing `--srt`/`--text`
 is refused before the visualisation is encoded. Under `--dry-run` only, `--title` passes
 graphics.py an explicit `--end` (the source's duration) because the `_vis` file it would probe
 was never written; a real run's commands are unchanged. Tests:
 `test_waveform_srt_and_title_rerun_with_overwrite`, `test_waveform_title_dry_run_completes`,
-`test_waveform_missing_srt_is_input_before_any_encode`.
+`test_waveform_missing_srt_is_input_before_any_encode`, `test_waveform_never_removes_a_file_it_did_not_write`.
 
 **`--auto-chapters` lives in `metadata.py`, and the detectors moved into `_common`.**
 `metadata.py` already owns the chapter format, the `-c copy` graph and the written-vs-asked-for
@@ -717,7 +826,10 @@ reachable with `--filler-extra`, which says what adding one costs. `なんか` i
 because it is the most common Japanese filler and leaving it out makes the flag useless for
 Japanese; it is orthographically identical to the pronoun use, so every run that removes one
 warns and `--filler-keep なんか` takes it back out. The asymmetry is deliberate: English has
-usable fillers without `like`, Japanese does not have usable fillers without `なんか`.
+usable fillers without `like`, Japanese does not have usable fillers without `なんか`. For the
+same reason Chinese `啊` is out of the `zh` list: it is a sentence-final particle far more often
+than a hesitation, so cutting it changes sentences; `--filler-extra 啊` adds it for a speaker who
+uses it as one.
 
 **There is no heuristic filler fallback without word timings.** "Remove the 0.3 s blips that look
 like an 'um'" would cut real speech — short words, breaths, the start of a sentence — and it
@@ -1179,6 +1291,14 @@ not a new file format this tool would have to maintain.
   `EncoderListTests`, `test_hw_dry_run_runs_no_ffmpeg`.
 - **HDR10 side data survives VideoToolbox** (mastering display, content light level), measured
   on FFmpeg 9.0 — no note is raised for it. Test: `test_hw_hdr10_side_data_survives`.
+- **HDR10 static metadata is passed to libx265 and SVT-AV1 explicitly, and measured on every
+  output** (#401). FFmpeg before 7.0 does not hand the decoded frames' mastering-display and
+  content-light side data to either encoder, so a 6.1 re-encode wrote PQ video without them.
+  `probe()` reads them (stream, else the first frame) into `video.hdr10_static`, the HEVC/AV1 HDR
+  lines restate them as `master-display`/`max-cll` and `mastering-display`/`content-light`, and
+  `emit()` warns `hdr10_metadata_dropped` when a PQ output still lacks what a PQ source had
+  (prores_ks and libaom have no such option). Code: `_common.decision.hdr10_x265_params`,
+  `_common.emit._report_dropped_hdr10_metadata`. Tests: `Hdr10StaticMetadataTests`.
 - **An `export.py` preset on the GPU writes the preset's format, and its CPU fallback is the
   preset's own line.** A fixed h264/h265 preset is 8-bit with BT.709 tags whatever the source (on
   an HDR source it says so in a note, as without `--hw`), so its VideoToolbox line is built as for
@@ -1334,7 +1454,7 @@ not a new file format this tool would have to maintain.
   not in a changed request. Tests (main's, restored verbatim):
   `test_cut_json_reports_requested_vs_actual_and_mode`,
   `test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta`, `test_eval6_followups`; new:
-  `test_cut_precision_keeps_its_formula_and_least_exact_precision_is_beside_it`,
+  `test_cut_precision_is_the_least_exact_segments_and_keyframe_snapped_is_start_snapped` (renamed in 3.0.0),
   `test_cut_start_snapped_is_measured_and_null_under_dry_run`,
   `test_a_sound_tail_under_a_frame_ends_the_segment_with_its_picture`.
 - **A join that re-encoded is not reported as a copy (defect fix, on by default).** When the
@@ -1531,7 +1651,7 @@ not a new file format this tool would have to maintain.
   the HEVC fixture) is a snap. Comparing the output's durations with and without the edit list
   was tried and does not work: a B-frame composition offset makes them differ even on a keyframe
   start. Code: `cut.seek_keyframe`, `cut.copy_presentation`. Tests:
-  `test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for` (the default),
+  `test_an_mp4_copy_keeps_its_edit_list_by_default_and_shifts_to_zero_under_no_edit_list` (renamed in 3.0.0, when the edit list became the default),
   `test_an_mp4_copy_starts_its_picture_at_the_requested_time`,
   `test_an_edit_listed_source_cut_again_starts_where_asked`,
   `test_judging_a_copy_by_its_video_is_noted_even_when_it_then_reencodes`; main's
@@ -1587,7 +1707,7 @@ not a new file format this tool would have to maintain.
   re-encode gets no note: it starts both streams where the source has them (the re-cut pads the
   audio to each segment's origin), and the note told `--accurate` runs to re-run with
   `--accurate`. Code: `cut.av_skew`, `cut.source_skew`. Tests:
-  `test_an_mp4_copy_shifts_to_zero_unless_the_edit_list_is_asked_for`,
+  `test_an_mp4_copy_keeps_its_edit_list_by_default_and_shifts_to_zero_under_no_edit_list`,
   `test_a_source_whose_audio_starts_late_is_not_reported_as_a_skewed_cut`,
   `test_a_snapped_copy_is_compared_with_the_source_where_it_landed`,
   `test_a_reencode_never_carries_the_copy_skew_note`,
@@ -1603,8 +1723,8 @@ not a new file format this tool would have to maintain.
   source gets the same Main10 line either way, and `--codec` always wins. The contract's `cut`
   capabilities keep 2.5.1's x264 and HDR x265 entries, the x265 one extended by "with
   `--keep-hevc` on an HEVC source". Tests:
-  `test_a_reencoded_cut_of_an_sdr_hevc_source_is_h264_unless_keep_hevc_is_asked_for` (the default
-  pin), `test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc`,
+  `test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc_unless_no_keep_hevc` (the default
+  pin, inverted in 3.0.0), `test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc`,
   `test_codec_h264_still_overrides_the_source_codec`, `SourceCodecArgsTests` (including
   `test_cut_passes_keep_hevc_to_the_encoder_and_composes_with_hw`).
 - **A chunked join restates `hvc1`, by default.** A `--segments` re-cut of more than 32 segments
@@ -1640,8 +1760,9 @@ not a new file format this tool would have to maintain.
   edit-listed MP4 skipped its negative-pts keyframe). Code: `cut.main()` (the guard),
   `_common/probe.py` `classify_frame_timing`, `measure_frame_timing`. Tests:
   `test_vfr_is_conformed_to_cfr_on_cut_and_fit` (2.5.1's, verbatim),
-  `test_a_short_constant_clip_copies_by_default`,
-  `test_a_suspected_but_constant_source_reencodes_by_default_and_says_sampled_would_copy`,
+  `test_a_short_constant_clip_copies_under_average` (`--vfr-guard average` since 3.0.0),
+  `test_a_suspected_but_constant_source_reencodes_under_average_and_says_sampled_would_copy`,
+  `test_the_default_guard_is_sampled`,
   `FrameTimingTests`, `VfrGuardTests` (`--vfr-guard sampled` / `off`).
 - **A segment past the video's end is held or trimmed, like a join.py clip; `--accurate` joins in one
   encode.** Both concat routes start the next segment after the longer stream of this one, so a
@@ -1661,7 +1782,7 @@ not a new file format this tool would have to maintain.
   source stays HEVC; `--vfr-guard sampled` becomes the default, so a stream copy is refused on
   measured frame timing rather than on the whole-file average; `keyframe_snapped` takes
   `start_snapped`'s meaning (the presented start moved) and `precision` takes
-  `least_exact_precision`'s (the least exact segment).
+  `least_exact_precision`'s (the least exact segment). 3.0.0 applied all five (see "3.0.0 — the floors rise" above).
 
 ## 2.10.7 — geometry uses the displayed frame
 
@@ -1746,13 +1867,14 @@ not a new file format this tool would have to maintain.
   both streams runs on 5.1.1, 6.1.1, 7.0.2, 8.0.1 and 8.1.3. A command
   compared with 2.10.8's differs by design. Code: `pad.main()`. Test:
   `test_pad_with_sound_is_one_filter_graph`.
-- **`silence.py` selects the sound with two `ametadata` filters, not `aselect`.** 8.0 and 8.0.1's
-  `aselect` passes every frame. The first `ametadata` tags a frame when the same `between()`
-  expression (as a timeline `enable`, so the same per-frame `t`) is true and the second keeps the
-  tagged frames, which is what `aselect` keeps. `asplit` + an `atrim` per range + `concat` was
-  tried and works, but costs about 81 command bytes per range against 56: at `--max-cuts 400` on
-  an hour-long file that is past Windows' 32767-character command line. `asegment`'s timestamp
-  mode compares pts with a sample count and is right only for a stream that starts at 0. Code:
+- **`silence.py` never selects the sound with `aselect`.** 8.0 and 8.0.1's `aselect` passes every
+  frame. Through 3.1.3 the tool tagged the kept frames with one `ametadata` and kept them with a
+  second, in one graph; `asplit` + an `atrim` per range + `concat` was rejected because at
+  `--max-cuts 400` its command passed Windows' 32767-character line. That one-graph render was
+  replaced for #409 (below): the kept ranges now go through `cut.py`'s `--segments --accurate`
+  re-cut, which trims each range from its own seeked input and runs at most 32 ranges per ffmpeg
+  call, so neither `aselect` nor the long command comes back. `asegment`'s timestamp mode compares
+  pts with a sample count and is right only for a stream that starts at 0. Code:
   `silence.main()`. Test: `test_silence_removal_cuts_the_sound_with_the_picture`.
 - **On 8.0, 8.0.1 and 8.1.0, a multi-line `graphics.py` label goes through libass under
   `--text-render auto`**, decided after the template has wrapped its labels (so `main()` runs
@@ -1809,8 +1931,9 @@ not a new file format this tool would have to maintain.
   Every deprecation warning has been a stderr line (`--crf` in 1.10), and the machine-readable
   form is `contract --json`'s `deprecated`. The FFmpeg advisory is about the machine, which is what
   `doctor --json` describes, so it has a key (`ffmpeg_security.warnings`). The 3.9 floor and CI's
-  3.9 job stay until 3.0. Tests: `test_python_3_9_is_deprecated_on_every_surface`,
-  `test_doctor_prints_the_python_3_9_warning_on_stderr_only`, `test_installer_warns_once_on_python_3_9`.
+  3.9 job stay until 3.0. 3.0.0 removed the support and these tests; the refusal is pinned by
+  `test_3_0_removed_python_3_9_and_ffmpeg_5_on_every_surface` and
+  `test_doctor_reports_an_unsupported_python_or_ffmpeg_and_fails`.
 
 ## 2.11.0–2.12.0 — nothing happens silently
 
@@ -2076,8 +2199,9 @@ What was decided there:
   workarounds stay. It follows the Python 3.9 route above: an entry in `contract --json`'s
   `deprecated`, and one stderr line from `doctor` and the `npx` installer when `ffmpeg -version`
   reads 5.x, never a key in `doctor --json` and never a failure. A git snapshot's version is not a
-  release number and gets no line, the same rule as the security advisory. Tests:
-  `test_ffmpeg_5_is_deprecated_on_every_surface`, `test_doctor_prints_the_ffmpeg_5_warning_on_stderr_only`.
+  release number and gets no line, the same rule as the security advisory. 3.0.0 removed
+  the support and these tests; the refusal is pinned by `test_3_0_removed_python_3_9_and_ffmpeg_5_on_every_surface`
+  and `test_every_tool_refuses_an_ffmpeg_older_than_6_1`.
 
 ## 2.15.0 — render.py's intermediate stages encode with veryfast
 
@@ -2299,5 +2423,467 @@ What was decided there:
   template that sets its own margin (`templates/podcast.json`, 0.15) keeps it. Test: the default
   check in `test_silence_reports_the_level_at_every_cut_and_warns_near_speech`.
 - **`--timemap` is an artifact, like `--edl`.** It is written beside the cut and not under
-  `--dry-run`. Its output times are the sums of the kept ranges, the same arithmetic the render
-  uses. Test: `test_silence_writes_a_map_from_source_to_output_times`.
+  `--dry-run`. Its output times are the sums of the ranges the render holds: with a picture, each
+  kept range with its bounds moved to the nearest frame time (the bounds the re-cut is given,
+  #409), with sound alone the kept range as asked. Tests:
+  `test_silence_writes_a_map_from_source_to_output_times`,
+  `test_silence_keeps_sync_and_its_time_map_over_many_ranges`.
+
+## 2.23 — check.py --content's flashes and first-frame rows
+
+- **A flash is one frame unlike both neighbours that match each other, and it only WARNs.** The
+  rule is a step of at least 12/255 mean luma into the frame and out of it (on 64x36 grey
+  frames, where moving footage stays at a few units and a cut moves tens), with the frames on
+  either side within a quarter of the smaller step of each other. The return test is what
+  separates a flash from fast motion: a whip pan steps as far on every frame, but its frames
+  never come back, and with the test switched off it reported 58 flashes in 6 s. A hard cut steps once,
+  and a cut away and back holds more than one frame; neither is a flash. A camera flash in the
+  footage or a deliberate strobe is real, which is why the row never FAILs and its fix says
+  so. Code: `_common.probe.detect_flashes()`. Test:
+  `test_check_content_flashes_and_first_frame_rows`.
+- **The flash pass reduces each frame to three numbers inside ffmpeg.** `tblend` gives
+  |f[n] - f[n-1]|; two `tmix` branches with weights -1 0 1 and 1 0 -1 give the two clipped
+  halves of f[n] - f[n-2], whose sum is its absolute value; each is averaged to one 16-bit
+  pixel. Piping the frames themselves through Python would cost memory in proportion to the
+  running time; this costs 6 bytes a frame. It is a separate video-only pass, because its
+  output is raw data on stdout while the main pass is parsed from stderr. Raw frames carry no
+  timestamps, so a flash is found by frame index; its time is that frame's own presentation
+  time, read from the stream's packet timestamps (sorted, the hidden pre-roll before the
+  stream's start dropped; no decode), measured from the container start as `look.py --at`
+  seeks, so a timestamp gap before the flash is counted. Without timestamps it is index /
+  average rate plus the video's lead, marked `~`, and `frame N` without a rate either. A video
+  that decodes no frame, or a flash pass that fails, is "could not measure", not 0 flashes.
+  Attached pictures (cover art) are skipped (`V`, not `v`), as probe skips them.
+- **`first frame` and `flashes` are `kind: judgement`.** Neither has a mechanical fix: a fade
+  from black or a strobe can be the edit. A first frame that does not decode is a WARN
+  ("could not measure"), not a missing row.
+- **A flat first frame WARNs; a dark one does not by itself.** Flat means a luma spread under
+  4/255 at 64x36: a black lead-in, a solid colour. Darkness alone is not the test, because a
+  dark shot is still a picture. A fade from black is often the edit, so the row is a WARN whose
+  fix starts with "a fade from black is a choice", for the destinations where autoplay or the
+  preview shows frame 0. Code: `_common.probe.first_frame_stats()`. Same test.
+## 2.24 — join.py --copy and cut.py --remove
+
+- **`--copy` is opt-in, and a mismatch is refused rather than re-encoded.** A join that
+  re-encoded by default and copied when it could would change what an existing call does, which
+  the stability promise allows only for a defect; and a caller who asked for a copy and got a
+  re-encode would learn it only from `mode`. So `--copy` either copies or refuses, naming each
+  clip that differs and how. The comparison is cut.py's `--segments` one
+  (`_common.probe.stream_signature()` / `signatures_match()`, moved there so both use it), on
+  the first video and the first audio stream, which are the streams the join maps. Test:
+  `test_join_copy_joins_matching_clips_and_refuses_a_mismatch`.
+- **What a matching signature does not catch is checked too.** An MP4 edit list that
+  hides pre-roll frames (packets flagged discard in the first 300): the concat demuxer ignores
+  edit lists, so a copy join would show them. Picture and sound that end more than 50 ms apart
+  at either end of a clip (each stream's start, and its start plus its length): the demuxer starts the next clip where this one's container ends, so the shorter
+  stream leaves a held frame or a hole in the sound there. And the result itself: its video
+  packet count against the clips' total, and its video length against their summed length
+  (within 50 ms per clip plus a frame), measured on a file beside the output that is renamed
+  into place only when both hold. Same test.
+- **Clips must lay out their streams alike.** The concat demuxer maps each clip's packets by
+  stream index into the first clip's layout, so a cover picture stored between the video and the
+  sound in one clip would put that clip's sound on another stream. A different stream count or
+  order is refused before the signatures are compared. Same test.
+- **`cut.py --remove` is `--segments` written the other way.** It builds the keep list and
+  hands it to the same code, so a removal is cut, joined, declicked and verified exactly as the
+  equivalent `--segments` would be. Overlaps merge and the ranges are clamped to the file; a
+  leftover shorter than one frame (10 ms without a frame rate) is not a piece anyone asked to
+  keep. A range may start before 0 (it is clamped like the end). `--snap beats` is refused with
+  it: a snapped edge of what is kept could move into a range the caller asked to drop, and the
+  flag's promise is that those ranges are gone. Test: `test_cut_remove_keeps_the_rest`.
+
+## 2.24 — output identity and check.py --compare
+
+- **An output is identified by size and modification time, not a hash.** The point is to tell
+  the file a run wrote from whatever sits at the path later (an older file a failed `--overwrite`
+  run left, a file another run replaced). Size plus `mtime_ns` changes on any rewrite and costs
+  one `stat`; a sha256 of an hour-long master costs seconds and proves nothing more for that
+  purpose. Code: `_common.emit.file_identity()`. Test:
+  `test_check_expect_identity_ties_the_check_to_one_write`.
+- **`--expect-identity` is a FAIL, not a WARN.** The row exists for the case where the file is
+  not the one the caller believes it is checking; passing the other rows on that file would be
+  the false success the flag is there to stop. Without the flag check.py grades the path as
+  before and only reports `input_identity`. Same test.
+- **`--compare` pairs frames in decode order and reports, it does not align.** SSIM and PSNR are
+  ffmpeg's own filters in one pass. Those filters pair by timestamp, so both pictures are re-timed
+  to their frame index first (`setpts=N`): a shifted or irregular timestamp cannot meet the wrong
+  reference frame. A dropped or added frame shifts every later pair, so a different frame count
+  (from `nb_frames`, or counted from the packets when a container does not state it) is named in
+  `notes` rather than hidden. Frames of another size are not compared at all (WARN, "not compared"): scaling one of
+  them first would measure the scaler. The WARN line is a mean SSIM of 0.98, where differences
+  start to be visible on ordinary footage; the worst frame and its time say where to look
+  (`look.py --compare`), the time read as the flashes row reads it (that frame's presentation
+  time, `~` index / rate without one). Cover art is not the picture compared (`V`, not `v`). Code: `_common.probe.compare_pictures()`. Test:
+  `test_check_compare_measures_against_a_reference`.
+
+## 2.24 — export.py --max-mb
+
+- **A size limit is a two-pass x264 encode at a computed bitrate, then measured.** The budget is
+  97% of MB MiB (the rest is the container's overhead), less the preset's own audio bitrate, over
+  the running time the export keeps (the preset's maximum when it trims). One pass at that bitrate
+  misses on content whose complexity changes; two passes are what x264 offers for a size. The
+  size is still measured, because x264's rate control is a target, not a bound: an overshoot is a
+  `file_size` verification failure and a `size_over_limit` warning, not a silent pass. Test:
+  `test_export_max_mb_fits_the_size`.
+- **What it cannot do honestly is refused.** Another encoder (the HEVC, AV1, ProRes, GIF and copy
+  presets; VideoToolbox under `--hw`, which has no two-pass mode), `--crf` (a quality, not a
+  size), a source with no duration, and a budget that leaves under 100 kb/s for the picture. A
+  size that small makes an unwatchable file the user did not ask for, so the refusal says the
+  bitrate it would have been. Same test.
+
+## 2.24 — export.py --repair
+
+- **Repair is a flag on the copy preset, not a tool.** It is a remux with three input flags
+  (`-fflags +genpts+discardcorrupt -err_detect ignore_err`) and `-avoid_negative_ts make_zero`:
+  the copy preset with different demuxing, so a new tool would add a name without adding a job.
+  A re-encoding preset already decodes past damage, so `--repair` with one is refused as
+  meaningless. Test: `test_export_repair_counts_damage_before_and_after`.
+- **It is measured by what a decoder says, before and after.** One full decode of each file at
+  `-v warning`, lines about timestamps counted apart from the rest. The verification step is
+  judged on timestamp warnings only, the part a remux rewrites, and fails when the output has more
+  than the input. Decode errors are reported before and after but not compared: they are log
+  lines, and the same damaged frame logs a different number of them demuxed from TS than from MP4
+  (one run of this test logged 51 before and 53 after on a remux that dropped nothing it should
+  have kept). Errors that remain are named (`repair_incomplete`) with the way out (a re-encoding
+  preset). On a TS file with 40 bytes of video payload overwritten (never a TS header or table, so
+  every ffmpeg version still opens it): 99 decode-error lines before, 100 after, no timestamp
+  warnings either side. Same test.
+
+## 3.1.5 — both streams on one clock (#409)
+
+ffmpeg shifts every stream of an input by one constant, so a filter graph sees a sound that starts
+0.3 s after its picture at 0.3. Every item below had rebased a stream to its own first sample
+(`PTS-STARTPTS`), or cut each stream on its own grid, and lost that offset while reporting
+`verified: true`. Each now does what `cut.py --segments --accurate` does ("Both streams of a segment
+shift by one constant", above): both streams cut on the same bounds, shifted by the same constant,
+and a late sound padded with silence (`aresample=async=1:first_pts=0`), through the helpers in
+`_common/decision.py` (`stream_starts`, `frame_rate`, `grid_at_or_after`, `av_trim`,
+`av_clip_length`). Each was measured with a one-frame flash and a 40 ms beep at the same instant.
+
+- **`silence.py` renders through `cut.py`'s re-cut, without its declick fade.** The one-pass
+  select/ametadata graph rounded every kept range twice, the picture to whole frames and the sound
+  to whole AAC frames, so the errors added up: 150 ms over 21 ranges of a 61 s source, and the
+  `--timemap` with them; its `asetpts=N/SR` moved a late sound 280 ms early. `cut.join_from_source`
+  is exact on both and handles the late sound, the 32-input limit and the chunking, so the tool
+  calls it rather than a second copy. Each kept bound first moves to the nearest frame time (a
+  measured bound sits microseconds off a frame, and the re-cut's "first frame at or after" would
+  then drop that frame), so a range holds whole frames between its bounds; the old `between()` kept
+  both boundary frames, one frame more per range (7.1 s where 7.0 s was kept). The joins sit in the `--margin` the tool keeps, so `DECLICK_S` is 0 for it, as 2.17.2
+  decided. `keep`, `kept_duration`, `removed_seconds` and `--edl` report those rendered ranges too,
+  an EDL frame time written down to the millisecond so `cut.py --segments` re-cuts the same frame
+  (#416 review). Code: `silence.main()`, `silence.rendered_ranges()`. Tests:
+  `test_silence_keeps_sync_and_its_time_map_over_many_ranges`,
+  `test_silence_keeps_a_late_sound_where_it_was`, `test_silence_reports_and_exports_the_ranges_it_renders`.
+- **`decode_pcm_mono` pads a sound that starts late, so its samples are on the file's clock.**
+  `sync.py` measured a track 0.3 s late at +2.279 s for +2.000 s, `--replace-audio` placed it 270 ms
+  late, and `multicam.py --audio` rebased the chosen camera's sound to its first sample. The decode
+  now ends in `aresample=async=1:first_pts=0` for every caller (scenes.py's envelopes and cut.py's
+  beat grid included, which were off the same way); `sync.py`'s writes and `multicam.py`'s audio
+  chain place the sound on its own file's clock before they delay it. Code:
+  `_common/probe.py` `decode_pcm_mono`, `sync.main()`, `multicam.main()`. Test:
+  `test_a_late_sound_is_measured_and_placed_on_its_files_clock`.
+- **`freeze.py` and `speedramp.py` cut on frame times and shift both streams together.** The head
+  starts at the first frame and every boundary is the first frame at or after the asked time; sound
+  before the first frame is dropped, as in a join. `freeze` was off by +279 ms (late sound) and
+  -100 ms (late picture); `speedramp` by +570 ms at 0.5x, the factor scaling the offset. Code:
+  `freeze.main()`, `speedramp.main()`. Tests: `test_freeze_keeps_a_late_sound_and_a_late_picture_in_sync`,
+  `test_speedramp_keeps_a_late_sound_in_sync`.
+- **`join.py` and `broll.py --audio b|mix` shift the sound by the picture's start.** #338 started
+  each clip's picture at 0, and the sound was rebased on its own, so a sound 0.3 s late joined
+  279 ms early; `broll` did the same with B's sound. A clip's length (`clip_length`, now
+  `av_clip_length`) counts where its sound ends from the first frame, so a late sound that runs past
+  the picture is not cut. Code: `join.clip_length()`, `join.main()`, `broll.main()`. Tests:
+  `test_join_keeps_a_late_sound_where_it_was`, `test_broll_b_audio_keeps_a_late_sound_in_sync`.
+- **`reverse.py` reverses both streams about one end, a frame time.** Each stream was reversed about
+  its own end: a sound 0.6 s longer than its picture came out 396 ms off. Both now start at the
+  first frame and end at the first frame time at or after the clip's length, the last frame held
+  and the sound padded. The end is a frame time because a stream copy's stated video length can
+  run past its last frame (7.517 s for frames that end at 7.5), which would leave the picture's end
+  a fraction of a frame from the sound's; such a clip gains one held frame. The reversed sound is
+  retimed by its samples (`asetpts=N/SR/TB`). Code: `reverse.main()`. Test:
+  `test_reverse_turns_both_streams_about_one_end`.
+- **`loop.py` repeats through the concat demuxer, not `-stream_loop`.** `-stream_loop` takes a
+  repeat's length from its streams' spans, leaving out the last video frame when there is sound, so
+  with a late sound each repeat lost a frame and the sound slid (795 of 810 frames, 43-51 ms). A
+  concat list naming the file once per repeat places each repeat at the file's duration. The concat
+  demuxer counts an MP4's hidden AAC priming into its start (-21 ms) where the MP4 demuxer does not,
+  and a frame-rate time base rounded the picture's 21 ms move to 33 ms, so the first frame's place
+  on the list's clock is measured (`concat_first_frame`, one ffprobe) and both streams shift by it;
+  `min_hard_comp=0.001` fills a late sound's gap at every repeat, however short. Code:
+  `loop.main()`. Test: `test_loop_keeps_a_late_sound_in_sync_on_every_repeat`.
+
+## 3.1.5 — square pixels, and the geometry audit (#411)
+
+- **A tool that sizes, crops, places or draws on the picture works on square pixels at the
+  display aspect; a tool that only re-encodes keeps the stored size and its SAR.** DV, HDV and
+  XDCAM 1440x1080, and DVD store non-square pixels (`sample_aspect_ratio`, which `probe.py` now
+  reports). Every scaling tool used to fit the stored size as if its pixels were square and then
+  `setsar=1`, so the picture came out squashed, and caption / overlay / graphics drew glyphs the
+  player then stretched 1.78x. Of the two consistent answers (normalise, or carry the SAR through
+  every graph), normalising is the one a filter graph can keep: `overlay`, `xstack`, `hstack`,
+  `concat`, `drawtext` and libass all place in stored pixels, so carrying the SAR would mean
+  correcting every coordinate and every font size in every tool. So the picture is scaled to
+  square pixels first, keeping its height (1440x1080 at 4:3 is 1920x1080; 720x480 at 8:9 is
+  640x480; the width rounds to even), and every size, rectangle and margin is in that frame --
+  the frame `look.py` shows and `cropdetect.py` measures, so `crop.py --x/--y/--width/--height`
+  and `redact.py` rectangles mean what a reader of the sheet sees. A tool that does not touch
+  geometry (`cut`, `color`, `denoise`, `pad`, `freeze`, `export --no-scale`, a stream copy) keeps
+  the stored size: the encoder writes the SAR through and the player shows it right. The scale is
+  said once in `notes` ("stores non-square pixels (SAR 16:9): its 360x360 picture was scaled to
+  640x360 square pixels"). Code: `_common.probe.display_size()`, `square_pixels()`,
+  `square_pixels_note()`, used by fit, export, crop, join, broll, multicam, insert, sequence,
+  grid, look, scenes --sheet, caption, overlay, graphics, redact, proxy, cropdetect, straighten,
+  waveform --image and render's timeline frame. Tests: `GeometryAuditTests` (test_editing.py),
+  `GeometryAuditPictureTests.test_text_tools_draw_on_square_pixels`,
+  `test_grid_squares_a_non_square_pixel_cell`, `GeometryAuditAnalysisTests.test_look_shows_a_non_square_pixel_source_at_its_display_aspect`,
+  `GeometryAuditDeliveryTests`.
+- **An EXIF-rotated still is sized as ffmpeg shows it, upright.** FFmpeg 6.1 already reads the
+  JPEG Orientation tag into the decoded frame's display matrix and autorotates on decode, but
+  `-show_streams` has no rotation for it, so `insert.py` cropped a landscape window out of a
+  portrait photo. `probe()` reads the first decoded frame's rotation for a still (an image2 or
+  `*_pipe` demuxer: one extra ffprobe of one frame) and reports it as `rotation`, so every tool's
+  existing rotation handling applies; the picture itself is left to ffmpeg's autorotate, exactly
+  as for a phone video (2.10.7). Code: `_common.probe._still_rotation()`. Test:
+  `test_insert_turns_an_exif_rotated_still_upright`.
+- **`overlay.py --text` wraps a line wider than the frame, and says so.** drawtext never wraps;
+  graphics.py and caption.py break text with the shared phrase wrapper, and overlay now does too,
+  between the side margins (an explicit `x,y` position counts from x) at `--font-size`, with
+  `slice_overlong`. Text that fits is unchanged; a wrapped run says "wrapped to N lines" in
+  `notes`, since the width is the averaged advance table's estimate. graphics.py's `title`,
+  `lower-third`, `chapter` and `bug` now go through its `wrapped()` as `sticker`, `hook` and `meme`
+  already did, and the lower-third bar widens (up to the margins) to the widest wrapped line.
+  Tests: `test_overlay_text_wraps_to_the_frame`, `test_graphics_title_wraps_a_long_title_and_subtitle`,
+  `test_graphics_lower_third_wraps_inside_the_margins_and_widens_its_bar`,
+  `test_graphics_chapter_chip_wraps_between_the_margins`.
+- **A grid label is drawn with a font that covers its own script, and a label wider than its
+  cell is shortened from the end with an ellipsis.** The label is right-aligned, so a long one
+  used to lose its start off the cell's left edge; the start is the part that tells takes apart.
+  `font_used` is the first label's choice; labels that needed different fonts are named in a
+  note. Thai is drawn by drawtext here (a filename label on a comparison artefact, not a
+  delivery), so its marks are not shaped. Tests: `test_grid_keeps_the_start_of_a_long_label`,
+  `test_grid_label_font_covers_its_script`.
+- **`freeze.py --at T` holds the frame shown at T** (the first frame whose time is at or after
+  T), not the frame before it, so a freeze on a cut holds the new shot. The held frame is a segment
+  of its own, cloned (`tpad`) before its `setpts`, as `reverse.py`'s held last frame is: from FFmpeg
+  7.0 `setpts` leaves the frame rate unknown and frame durations 0, so a clone after it lands on
+  one timestamp and is dropped. The held frame is taken as the first frame after the cut's
+  half-frame tolerance (`trim=end_frame=1`), not a one-frame window, so a variable-frame-rate gap
+  at the cut still yields one; with no frame at or after T (no `--at`: the clip's end) `--mode
+  insert` holds the last frame as `--mode extend` does. Tests:
+  `test_freeze_at_holds_the_frame_shown_at_that_time`, `test_freeze_without_at_holds_the_last_frame`,
+  `test_freeze_holds_a_frame_on_a_variable_frame_rate_gap`.
+- **hh:mm:ss:ff still counts from the file's first frame, not from a start timecode** (the time
+  grammar above is unchanged). When a four-part time reads past the end of a source that carries
+  a start timecode, the refusal's `hint` says so and names the frame from the file's start that
+  the source timecode is. A time in another input than the first (a B-roll's `--from`, an
+  overlay layer's `--place` range) is judged against that input's own timecode and length
+  (`time_arg(..., source=meta)`). Code: `_common.decision._remember_smpte_hint()`, `emit.die()`.
+  Tests: `test_a_smpte_time_past_the_end_of_a_timecoded_source_names_its_start_timecode`,
+  `test_the_smpte_hint_names_the_timecode_of_the_input_the_time_is_in`.
+- **look.py's contact sheet reads its stamps off the file's own timestamps** (`-copyts
+  -start_at_zero`), not pts plus the seek: an input `-ss` resets an MPEG-TS's timestamps
+  differently from an MP4's, and the sheet of a TS was stamped one seek late. `scenes.py --sheet`
+  picks each scene's first frame by its time, not by start x average fps as a frame number,
+  which named another frame on a variable-frame-rate source. `look.py --compare` letterboxes both
+  pictures into boxes as tall as the taller one instead of stretching the first to the second's
+  size. Tests: `test_contact_sheet_stamps_count_from_the_file_start_on_mpeg_ts`,
+  `test_scenes_sheet_picks_each_scene_start_by_time_on_vfr`, `test_compare_keeps_each_pictures_aspect`.
+- **broll.py scales an odd-sized A-roll to even up front** (`odd_dimensions_scaled_even`, the
+  runner's code): the runner's even-scale retry reaches a `-vf` only, and broll's
+  `filter_complex` failed unclassified. Test:
+  `test_broll_scales_an_odd_sized_a_roll_to_even_and_records_it`.
+- **Wrapping measures width; height is said, not fitted** (#416 review). `overlay.py --text` and
+  `graphics.py --template title` wrap to the width and do not shrink the font to the height: a
+  block that comes out taller than the frame, or text placed too near an edge to wrap at all, is
+  drawn as asked and named in `notes` (the size is the caller's choice; the estimate is the
+  averaged advance table's). Tests: `test_overlay_text_says_when_it_still_does_not_fit`,
+  `test_graphics_title_says_when_the_wrapped_block_is_taller_than_the_frame`.
+- **`straighten.py --fit crop` scales by |cos| + max(W/H, H/W) |sin|** of the displayed frame: the
+  window turned back by the angle must fit the scaled frame on both axes; |cos| + |sin| is a
+  square's factor and left two corners black on 16:9 (#416 review). Test:
+  `test_straighten_crop_fit_covers_all_four_corners_of_a_wide_frame`.
+- **`loop.py` has no repeat cap** (#416 review): the concat list costs one ~100-byte line per
+  repeat against an output that costs a whole clip per repeat, so any count whose list strains
+  memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.
+
+## 3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)
+
+- **`silence.py --margin` is kept around silences only, not around filler spans.** A filler cut is
+  the word plus `--filler-pad`; taking 0.2 s off each side as well turned every word narrower than
+  2 x `--margin` inside out (overlapping keep ranges, kept longer than the input, the word still
+  there and reported as removed). The margin is applied to each silence before the merge
+  (`inside_margin`), and a silence too narrow to hold two margins removes nothing. Code:
+  `silence.inside_margin()`, `silence.keep_ranges()`. Tests:
+  `test_filler_margin_does_not_swallow_a_short_filler`,
+  `test_a_silence_narrower_than_two_margins_removes_nothing`.
+- **A transcript is on the file's clock.** The speech engine's 16 kHz WAV (and `--karaoke`'s
+  word-energy decode) pads a sound that starts late (`aresample=async=1:first_pts=0`), as
+  `decode_pcm_mono` does since #409, so cue and word times count from the file's start. A Whisper
+  transcript with no text is `no_speech` for `--filler` as for `caption.py`; one with text and no
+  word timings is still a build without them. Code: `asr.engine_wav()`,
+  `asr._whisper_heard_nothing()`. Tests: `FakeWhisperCppTests`,
+  `test_word_timings_from_silence_are_no_speech_not_a_build_without_them`.
+- **An exported timeline counts source positions from each source's start timecode, at its own
+  rate.** Project times still count from the file's first frame (the time grammar is unchanged);
+  the export adds the source's start timecode, so a conform finds the frames: EDL source
+  timecodes are the clip's own frames from its timecode (drop-frame labels, `;`, where the source's
+  timecode is drop-frame; the record side stays `FCM: NON-DROP FRAME`), the FCPXML asset `start`
+  is that timecode and OTIO's `available_range` starts there. An `out` past a source's end ends
+  at it, with a note, because the render's `cut.py` clamps it; an `in` at or past the end is
+  refused as `cut.py` refuses it. A chapter `metadata.py` would refuse (at or past the end, or not
+  after the one before) is refused, which is what "Neither path accepts a time the other refuses"
+  already said. A music bed's own timecode is not read (an audio file rarely carries one). A
+  start timecode the source's rate cannot have (frame 29 at 25 fps, a frame drop-frame counting
+  skips) is read as none, as `probe()` skips a malformed tag, and the EDL `M2` speed is in the
+  clip's own frames per second, the rate its source labels count in. Code: `timeline.build()`,
+  `timeline.start_tc_frames()`, `timeline._tc_label()`. Tests:
+  `test_the_source_start_timecode_is_carried_into_every_format`,
+  `test_a_start_timecode_that_does_not_exist_at_the_source_rate_is_not_read`,
+  `test_edl_source_timecodes_are_at_each_clips_own_rate`,
+  `test_a_clip_out_past_the_media_end_ends_at_the_media_end`,
+  `test_a_chapter_metadata_py_refuses_is_refused_not_dropped`.
+- **caption.py rewrites a caller's SRT only when ffmpeg would read it differently.** ffmpeg's SRT
+  demuxer requires hours and reads the milliseconds field as an integer (`,5` is 5 ms), where
+  `parse_srt()` accepts `mm:ss,ms` and reads `,5` as 500 ms. A file whose every timing line is
+  `hh:mm:ss[,.]mmm` reads the same to both and is still given to ffmpeg as it is (no side file for
+  a BOM, CRLF or a period separator); any other goes as the `_adjusted.srt` copy the tool writes
+  (an extra `--mode mux` track as `_trackN.srt`). Always writing the copy would add a side file to
+  every run for files both readers agree on. Code: `caption.srt_timings_shared_grammar()`. Test:
+  `test_caption_hands_ffmpeg_the_cues_it_read`.
+- **`--mode mux` keeps every existing subtitle track, converted where the container needs it.**
+  The rule is export.py's (#380), now `_common.runner.subtitle_codec_for()`, plus WebVTT for
+  `.webm`; an EIA-608 track converts as text does (kept as it is in `.mov`, which holds c608). A track no conversion fits (a bitmap track in MPEG-4 or WebM) and a WebM mux of a
+  picture or sound WebM cannot hold are refused up front as `kind: input`; a mux never drops a
+  track the caller did not ask to drop. Test:
+  `test_caption_mux_converts_an_existing_track_for_the_container`.
+- **An explicit `--font` on Windows is looked up in the family table first**
+  (`WINDOWS_FONTS` and `WINDOWS_LATIN_FONTS`), then by file-name prefix: Windows installs most
+  families under file names that do not start with the family's name. Code:
+  `fonts.windows_family_files()`. Test: `WindowsFamilyResolutionTests`.
+
+## 3.1.8 — earlier fixes, where they had not reached (#415)
+
+- **A file a child tool of this run wrote is this run's own.** render.py's export stage is a child
+  process, so the delivery it wrote was not in render's `STATE.written`, and the chapters stage's
+  `place_output()` over it was refused as `output_exists`, after a dry run that said completed (the
+  test helper adds `--overwrite` to every render.py call, which hid it). render.py now records each
+  stage's output (`remember_written()`), as run() records its own ffmpeg outputs. Code:
+  `render.sh()`, `_common.runner.remember_written()`. Test:
+  `Issue415Tests.test_render_export_then_chapters_delivers_on_a_fresh_path_without_overwrite`.
+- **metadata.py writes an MPEG-4 file faststart.** #279 left the stream copy without `+faststart`
+  on the reasoning that adding it would move the moov atom. That does not hold: a stream copy into
+  the MPEG-4 family writes the index after the media unless told otherwise, so the copy moved the
+  index of a faststart input (render's export, then its chapters stage) to the end. Now every MP4
+  write is faststart. Code: `metadata.main()`. Test: `Issue415Tests.test_metadata_writes_a_faststart_mp4`.
+- **A `.webm` source's default output name is `.mp4`.** The re-encoding tools write x264/x265/AV1
+  video and AAC sound, which WebM does not take, so `clip_loudnorm.webm` failed in the muxer after a
+  dry run that said completed. Of the two consistent answers (an `.mp4` default, or VP9/Opus encodes
+  for a WebM target), the default name is one line in `default_output()` and changes no encoder; a
+  caller who names `-o x.webm` still gets the muxer's refusal. metadata.py and `export.py --preset
+  copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Test:
+  `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`.
+- **`waveform.py --title/--srt/--text --dry-run` says its text sizes are placeholders.** The title
+  and captions are drawn by graphics.py and caption.py on the visualisation render, which a dry run
+  does not write, so their planned font size and motion offset are 0 (the real run's are measured
+  from the WxH render). A note says so; a plan does not invent the numbers. Code: `waveform.main()`.
+  Test: `Issue415Tests.test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders`.
+- **batch.py: an item's intermediates live in a directory of its own and go with it.** The step
+  files were `<work>/<stem>_step<i>.<ext>` and never removed, so `clip.mp4` and `clip.mov` in one
+  serial batch refused each other's, and any later run that processed an item again was refused on
+  the file an earlier run left. Each item now gets a new directory under the work directory
+  (`<index>-<random>`, holding `step<i>.<ext>`; serial and `--jobs` alike; 1.17's flat serial layout is gone),
+  removed with its contents when the item ends however it ends. Code: `batch.main()`
+  `item_work()`/`run_item()`. Tests: `Issue415Tests.test_batch_items_own_their_intermediates`,
+  `Issue415Tests.test_batch_a_stem_near_the_name_limit_still_runs` (no stem in either name, so a
+  stem whose input and output names fit in 255 bytes fits here too).
+- **batch.py: a step without `{out}` passes its input on, and the last file written is
+  delivered.** A recipe ending in `check.py` marked the item `ok` with an output nothing wrote; its
+  cache entry then missed (`output_missing`) on every run. A step that names no `{out}` writes
+  nothing, so the next step reads what it read, and when the last step writes nothing the last
+  written file is moved to the item's output (under the same `--overwrite` rule). A recipe in which
+  no step names `{out}` (a QC pass: `check.py` or `probe.py` over a folder) is a legitimate batch
+  that writes nothing: its rows carry `written: false` (`output` stays the final-path string: a
+  `--json` key never changes type within a major), a note says so, `ok` follows the steps' exit
+  codes, its cache entries claim no file (so a rerun is served, not missed as `output_missing`),
+  and the final-name collision check does not apply. The delivered intermediate keeps its own
+  extension (`.mp4` for a video source) unless the recipe sets `ext`: a `.webm` source's `fit.py`
+  step writes MP4, which named `clip_out.webm` would be mislabelled. The move into place holds the
+  output lock every tool's write holds, and a move across filesystems copies beside the final path
+  and renames, so a failed copy never truncates the file it replaces. A `--dry-run` refuses an
+  existing final path there as the real run would, and `check.py --dry-run` on a file an earlier
+  dry-run step would write grades nothing (`checks: []`, a note) instead of dividing by its 0 height. Code: `batch.step_writes()`,
+  `batch.writes_nothing()`, `batch.deliver()`, `batch.cached_output_changed()`. Tests:
+  `Issue415Tests.test_batch_delivers_the_last_written_file_when_the_last_step_writes_none`,
+  `Issue415Tests.test_batch_a_recipe_that_writes_nothing_reports_no_output`,
+  `Issue415Tests.test_batch_a_delivered_intermediate_keeps_its_container_extension`,
+  `Issue415Tests.test_batch_delivery_holds_the_output_lock`,
+  `Issue415Tests.test_batch_delivery_across_filesystems_never_truncates_the_output`,
+  `Issue415Tests.test_batch_dry_run_refuses_an_existing_output_a_read_only_last_step_would_deliver_to`.
+- **batch.py's final-name collision check ignores case.** `Clip_out.mp4` and `clip_out.mp4` are
+  one file on macOS's and Windows' default filesystems; the check refuses them on every platform,
+  so a recipe that works on Linux does not overwrite an item on a Mac. Test:
+  `Issue415Tests.test_batch_final_names_that_differ_only_in_case_collide`.
+- **No fallback retries after a classified ffmpeg failure.** #389 stopped
+  `run_keeping_subtitles()` from encoding again after a full disk, a missing encoder or filter or an
+  unreadable input; export's own subtitle/data ladder, `color.py --retag`'s copy-then-re-encode
+  (and its keep-then-drop re-encode), `cut.py`'s copy-then-re-encode and copy-concat-then-re-cut and
+  `sync.py`'s copy paths still did, blaming the subtitles or the copy. They now stop with the first
+  attempt's error (`fail_if_classified()`). Code: `_common.runner.fail_if_classified()`. Test:
+  `Issue415Tests.test_a_classified_failure_is_not_retried_by_a_copy_or_stream_fallback`.
+- **A stop after the deliverable is written says the file is kept, and keeps the child's exit
+  code.** export.py `--normalize` and render.py's chapters and check stages run on a delivery
+  already on disk; a timeout or Ctrl-C there said "nothing was written" while the file stayed (and
+  a retry was refused as `output_exists`). The message now names the file, says it is kept without
+  the step that was stopped, and the document carries it as `output`; the file is kept rather than
+  removed because with `--overwrite` it has already replaced the caller's. export.py's
+  `--normalize` failure exits with the loudness child's code (124, 130/143), as render.py and
+  waveform.py already did. export.py counts its file delivered as soon as it is written, so a stop
+  in the reads after the write (the output probe, the loudness measurement) says the same. render.py
+  passes a stopped child's code on from an executed plan and from a pack destination too (the pack
+  is then `kind: timeout`, not `verification`), and an export stage stopped in `--normalize` hands
+  the delivery it kept to render's `output`. A child killed by a signal (returncode -9) is passed
+  on as 128 + the signal (137), not as a wrapped 247 (`child_exit_code()`). Code: `_common.runner.mark_delivered()`, `kept_clause()`,
+  `export.main()`, `render.sh()`/`main()`/`execute_plan()`/`render_pack()`. Tests:
+  `Issue415Tests.test_export_normalize_timeout_keeps_its_exit_code_and_says_the_export_is_kept`,
+  `Issue415Tests.test_export_a_stopped_read_after_the_write_says_the_export_is_kept`,
+  `Issue415Tests.test_render_passes_a_stopped_childs_exit_code_and_kept_output_on`,
+  `Issue415Tests.test_a_child_killed_by_a_signal_passes_on_128_plus_the_signal`,
+  `Issue415Tests.test_a_stopped_run_names_the_deliverable_it_keeps`.
+- **An ffprobe call is limited to `min(120 s, --timeout)`.** `_limit_for()` gave every probe through
+  `run()` a fixed 120 s whatever `--timeout` said (the encoder-list read already took the lower
+  one), and the version reads 120 s too; with `--timeout 2` a hung ffprobe held the tool for two
+  minutes. `--timeout 0` leaves the probes through `run()` unlimited, as before; the version,
+  stream-list and encoder/filter-list reads outside it keep 120 s (`_probe_limit()`). A probe that reaches
+  its own 120 s ceiling no longer advises raising `--timeout`, which cannot raise it. Code:
+  `_common.runner._limit_for()`, `_probe_limit()`, `_timed_out()`. Test:
+  `Issue415Tests.test_ffprobe_through_run_is_bounded_by_a_lower_timeout`.
+
+## After 3.1.8 — delivery masters (#417–#423, review of #430)
+
+- **The alpha presets stay on the CPU under `--hw`.** VideoToolbox's ProRes line is 422 HQ: moved
+  there, `prores4444`/`prores4444xq` wrote an opaque file and the `codec` step was skipped as "a
+  VideoToolbox line". They keep `prores_ks` and a note says `--hw` did not move them; `key-fill`
+  (one ffmpeg run writing both files) does the same. Code: `export.main()`, `export._key_fill()`.
+  Test: `HwEverywhereTests.test_export_alpha_presets_stay_on_prores_ks_under_hw_and_a_dry_run_decodes_nothing`.
+- **Alpha is compared over every frame, not the first.** A graphic that opens fully opaque read 255
+  in the source and in a file that lost its alpha, so the check passed either way. The source and
+  the written file are each decoded once to a 64x36 copy and compared frame by frame, each within
+  2 of 255 (an aggregate let a loss in a few frames through: one of 200 frames turned opaque moves
+  the mean by ~1). Where the frame counts differ (a variable-rate source conformed to a constant
+  rate), indices do not pair, so the mean and the most transparent frame are compared and
+  `comparison.paired` is false. A dry run decodes nothing: it decides from the pixel format and a VP9
+  stream's `alpha_mode` tag. A VP9 source is decoded with libvpx-vp9 (the native decoder drops the
+  alpha layer). Code: `export.alpha_stats()`, `vp9_decoder_args()`, `vp9_alpha_tagged()`. Tests:
+  `test_export_alpha_review_430`, the test above.
+- **`key-fill` writes the picture and the sound only, and reports the rest.** A fill and a key go to
+  a switcher's keyer as a pair; a subtitle or data track has no place there, so the source's are
+  listed in `non_av_streams.dropped` with `reason: key_fill` (as a GIF's are) rather than mapped.
+  Both files are guarded as outputs (the fill is not ffmpeg's last argument, which `run()` guards)
+  and the fill is written through a temp file, moved into place only after the encode succeeds
+  (a failed encode leaves no partial fill, new or replaced). Code: `export._key_fill()`. Tests:
+  `test_export_key_fill_review_430`, `test_export_key_fill_failure_removes_only_a_fill_it_created`.
+- **A `--plan` path may not be any file a planned command writes**, not only `output`: `loudness.py
+  --versions` has no single output, and a plan over a version file was refused as an existing output
+  when it was executed. Code: `_common.emit.write_plan()`, `_planned_outputs()`. Test:
+  `test_loudness_versions_writes_one_measured_file_per_target`.
+

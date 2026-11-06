@@ -23,10 +23,13 @@ import os
 import sys
 from typing import List, Optional
 
-from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, ffmpeg_exe, info, probe, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
+from _common.runner import fail_if_classified
+from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
 
-TONEMAPS = ["hable", "mobius", "reinhard", "bt2390", "clip", "linear", "gamma"]
+# the curves of FFmpeg's CPU `tonemap` filter (every version from 5.1 to 9). bt2390 was listed
+# until 2.24 but exists only in tonemap_opencl/libplacebo, so choosing it always failed.
+TONEMAPS = ["hable", "mobius", "reinhard", "clip", "linear", "gamma"]
 
 # Typed primary correction: each flag is one option of one real, always-available libavfilter filter
 # (never a caller-supplied filter string). Range is this script's own safe subset of what the filter
@@ -41,7 +44,7 @@ CORRECTION = {
     "exposure":    (0.0,   -3.0,    3.0,   "stops"),   # exposure filter's own full range (linear-domain stops)
     "contrast":    (1.0,    0.0,    2.0,   "x"),       # eq filter; 0=flat grey, 1=unchanged, 2=double contrast
     "saturation":  (1.0,    0.0,    2.0,   "x"),       # eq filter; 0=grayscale, 1=unchanged, 2=double saturation
-    "temperature": (6500.0, 2000.0, 12000.0, "K"),     # colortemperature filter; 6500=unchanged (its own default)
+    "temperature": (6500.0, 2000.0, 12000.0, "K"),     # colortemperature filter; 6500=unchanged (no term: the filter itself tints at 6500)
     "tint":        (0.0,   -1.0,    1.0,   "x"),       # mapped to colorbalance midtones, see correction_chain()
     "gamma":       (1.0,    0.1,   10.0,   "x"),       # eq filter's own gamma option; 1=unchanged (its own default)
     "lift":        (0.0,   -1.0,    1.0,   "x"),       # colorbalance shadows (rs=gs=bs); 0=unchanged
@@ -114,11 +117,13 @@ def correction_chain(args: argparse.Namespace) -> str:
         die(f"--levels-out-black {out_black} must be less than --levels-out-white {out_white}")
 
     gm, rm, bm = -tint, tint / 2.0, tint / 2.0
-    rgb = [
-        f"exposure=exposure={exposure:g}",
-        f"colortemperature=temperature={temperature:g}",
-        f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}",
-    ]
+    rgb = [f"exposure=exposure={exposure:g}"]
+    if temperature != CORRECTION["temperature"][0]:
+        # colortemperature at 6500 K is not the identity it is documented as here: it multiplies by
+        # its own approximation of that white point, which tinted grey 808080 to 7E7E7B (#410), so
+        # "unchanged" adds no term at all
+        rgb.append(f"colortemperature=temperature={temperature:g}")
+    rgb.append(f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}")
     terms = [_rgb_stage(rgb), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
     rgb2 = []
     if (in_black, in_white, out_black, out_white) != (0, 255, 0, 255):
@@ -154,6 +159,31 @@ def _rgb_stage(filters: list) -> str:
             + ",scale=out_color_matrix=bt601,format=yuv420p")
 
 
+# swscale's names for the non-BT.709 matrices a --codec prores re-encode keeps (it does not convert)
+_SWS_MATRIX = {"smpte170m": "bt601", "bt470bg": "bt601", "smpte240m": "smpte240m", "fcc": "fcc"}
+
+
+def lut_legs(meta=None) -> "tuple":
+    """(to RGB, back to YUV) around --lut's lut3d: explicit BT.709 conversions through float RGB,
+    the matrix the picture holds when it reaches them (an untagged or BT.709 source as it is, a
+    BT.601 or RGB one after x264_args(source=...)'s conversion), limited range on the way out.
+
+    lut3d takes RGB, and left to libavfilter the way in honoured the frame's BT.709 tag while the
+    way back used swscale's BT.601 default, so even an identity LUT shifted every colour (2FAE4E to
+    249A4B, #410); --correct had its legs pinned for the same reason in #159. A LUT maps the RGB the
+    picture really shows, so unlike --correct's working-space pair (bt601 both ways, see
+    _rgb_stage) these legs use the BT.709 the picture is: an identity LUT then returns every sample
+    as --lut-strength 0, which applies none, does (6.1, BT.709/BT.601/untagged, limited and full
+    range, 8- and 10-bit). The input range is read from the frames, as every scale here reads it."""
+    # --codec prores keeps a BT.601 (or other non-BT.709) source's matrix and tags instead of
+    # converting it (decision.video_args), so the legs use that matrix (#416 review)
+    matrix = "bt709"
+    if STATE.codec == "prores":
+        matrix = _SWS_MATRIX.get(((meta or {}).get("video") or {}).get("color_space"), "bt709")
+    return (f"scale=in_color_matrix={matrix},format=gbrpf32le",
+            f"scale=out_color_matrix={matrix}:out_range=tv,format=yuv420p")
+
+
 def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:
     v = meta["video"]
     trc = v.get("color_transfer") or "smpte2084"
@@ -164,7 +194,7 @@ def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str
         f"zscale=tin={trc}:pin={prim}:min={space}:rin={v.get('color_range') or 'tv'}:t=linear:npl={peak:g}",
         "format=gbrpf32le",
         "zscale=p=bt709",
-        f"tonemap=tonemap={tonemap}:desat={desat:g}" + (":peak=%g" % (peak / 100.0) if tonemap in ("bt2390",) else ""),
+        f"tonemap=tonemap={tonemap}:desat={desat:g}",
         "zscale=t=bt709:m=bt709:r=tv",
         "format=yuv420p",
     ]
@@ -256,7 +286,7 @@ def retag_mismatch(output: str, want: tuple) -> "Optional[str]":
     got = probe(output, role="output")["video"]
     stream = (got.get("color_space"), got.get("color_primaries"), got.get("color_transfer"))
     keys = ("color_space", "color_primaries", "color_transfer")
-    proc = run_analysis([ffmpeg_exe("ffprobe")[0] or "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames",
+    proc = run_analysis([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_frames",
                          "-read_intervals", "%+#1", "-show_entries", "frame=" + ",".join(keys), "-of", "json", output],
                         check=False)
     try:
@@ -291,6 +321,7 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool) -> int:
         cmd += ["-movflags", "+faststart"]
     cmd.append(output)
     proc = run(cmd, check=False)
+    fail_if_classified(proc)  # a full disk fails the re-encode too: its error, not two more encodes (#415)
     notes: List[str] = []
     reencoded = proc.returncode != 0
     if not reencoded and not STATE.dry_run:
@@ -316,6 +347,7 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool) -> int:
         cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?",
                                 "-map", "0:s?", "-map", "0:d?"] + label + enc + ["-c:s", "copy", "-c:d", "copy", output]
         proc2 = run(cmd, check=False)
+        fail_if_classified(proc2)
         if proc2.returncode != 0:
             info("re-encode with subtitles/data streams kept also failed; dropping them")
             dropped_streams = True
@@ -440,6 +472,7 @@ def main() -> int:
         if not (0.0 <= args.lut_strength <= 1.0):
             die(f"--lut-strength {args.lut_strength:g} is outside 0..1")
         lut = f"lut3d=file={escape_filter_path(args.lut)}:interp=tetrahedral"
+        to_rgb, to_yuv = lut_legs(meta)
         if args.lut_strength == 0.0:
             # 0 means "no LUT at all" -- without this branch, 0 (falling outside the open interval
             # below) landed in the same "apply the LUT at full strength" fallback as an out-of-range
@@ -448,9 +481,10 @@ def main() -> int:
             vf = "format=yuv420p"
         elif args.lut_strength < 1.0:
             # blend graded and original
-            vf = f"split[o][g];[g]{lut}[g2];[o][g2]blend=all_mode=normal:all_opacity={args.lut_strength:g},format=yuv420p"
+            # blended in RGB, both pictures through the same two legs
+            vf = f"{to_rgb},split[o][g];[g]{lut}[g2];[o][g2]blend=all_mode=normal:all_opacity={args.lut_strength:g},{to_yuv}"
         else:
-            vf = f"{lut},format=yuv420p"
+            vf = f"{to_rgb},{lut},{to_yuv}"
         output = args.output or default_output(args.input, "lut")
         tag = "lut"
 

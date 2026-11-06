@@ -32,16 +32,17 @@ import sys
 from typing import List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
-from _common import (aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
+from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
-                     ffmpeg_base, info, label_chain, load_brand, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
+                     ffmpeg_base, info, layer_base_chain, load_brand, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
                      LANGUAGE_NAMES, needs_shaping, detect_script, BIDI_SCRIPTS, font_family_of_file, font_family_for_script, has_emoji,
                      emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
                      EMOJI_ASSET_HINT, text_width_em, drawtext_shaping, wrap_text, WRAP_MODES,
                      SAFE_WIDTH_FRACTION, drawtext_draws_newline_glyph, is_multiline, _DRAWTEXT_PENDING)
-from _common.emit import warn
+from _common.emit import note, warn
 from _common.fonts import font_choice, record_font_choice
+from _common.probe import display_size, square_pixels, square_pixels_note
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
 from _common import drawtext_fontfile  # noqa: E402
 
@@ -170,9 +171,11 @@ def main(force_route: Optional[str] = None) -> int:
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
-    W, H = meta["video"]["width"], meta["video"]["height"]
-    if meta["video"].get("rotation") in (90, -90, 270, -270):
-        W, H = H, W
+    # the displayed frame: rotation applied, non-square pixels squared (square_pixels(), #411)
+    W, H = display_size(meta["video"])
+    square = square_pixels(meta["video"])
+    if square:
+        note(square_pixels_note(meta["video"]))
     dur = meta.get("duration") or 0.0
     # Per-edge margins. Without --margin/--platform every edge is the brand safe margin, exactly
     # as before; --margin sets all four; --platform takes each edge from the destination's safe
@@ -237,13 +240,18 @@ def main(force_route: Optional[str] = None) -> int:
     emoji_mode = None
     emoji_overlays: List[dict] = []
     if has_emoji(all_text):
-        support = emoji_support(emoji_assets, probe=True)
+        _ff = args.font_file or brand.get("font_file")
+        support = emoji_support(emoji_assets, probe=True, fonts_dir=os.path.dirname(os.path.abspath(_ff)) if _ff else None)
         emoji_mode = support["mode"] if args.emoji == "auto" else args.emoji
         if args.emoji == "color" and not support["libass_color"]:
             die("--emoji color: this ffmpeg renders emoji monochrome through libass "
                 f"({support['detail']}) -- pass --emoji-assets DIR for colour, or --emoji mono", kind="input")
         if args.emoji == "png" and not emoji_assets:
             die("--emoji png: no emoji assets directory resolved -- " + EMOJI_ASSET_HINT, kind="input")
+        if args.emoji == "mono" and support.get("libass_glyph") is False:
+            die("--emoji mono: this ffmpeg draws no emoji glyph through libass "
+                f"({support['detail']}), so they would come out as empty boxes -- pass --emoji-assets DIR "
+                "for colour, or --emoji none", kind="input")
     if args.text_render == "drawtext" and shaping:
         die(f"{LANGUAGE_NAMES.get(_script, _script)} text cannot be shaped by drawtext on any ffmpeg "
             "build (the marks are reordered by harfbuzz, which drawtext does not use): drop "
@@ -368,9 +376,21 @@ def main(force_route: Optional[str] = None) -> int:
         h1 = int(base * 0.055)
         h2 = int(base * 0.038)
         pad = int(base * 0.02)
-        name_h = block_h(args.name, h1)
-        bar_h = name_h + (block_h(args.title, h2) + pad if args.title else 0) + pad * 2
-        bar_w = int(base * 0.62)
+        tx_pad = int(base * 0.035)
+        # both lines wrap to the room between the side margins, less the text's own inset, and
+        # the bar widens (up to that room) to the widest line: through 3.1.3 the bar was a fixed
+        # 62 % of the short side and a long name ran past it and off the frame (#411)
+        room = W - m_left - m_right
+        lt_frac = max(0.1, min(1.0, (room - 2 * tx_pad) / float(W))) if W else SAFE_WIDTH_FRACTION
+        lt_name = wrapped(args.name, h1, lt_frac)
+        lt_title = wrapped(args.title, h2, lt_frac) if args.title else args.title
+        widest = max([text_width_em(ln) * h1 for ln in lt_name.split("\n")]
+                     + [text_width_em(ln) * h2 for ln in (lt_title or "").split("\n")])
+        name_h = block_h(lt_name, h1)
+        bar_h = name_h + (block_h(lt_title, h2) + pad if lt_title else 0) + pad * 2
+        # the 62 % floor never takes the bar past the right margin (#416 review: at a large --scale
+        # it did)
+        bar_w = max(1, min(room, max(int(base * 0.62), int(widest + 0.999) + 2 * tx_pad)))
         y0 = H - m_bottom - bar_h
         # slide in from the left over 0.4 s, slide out over 0.3 s (overlay evaluates x per frame)
         x_expr = f"if(lt(t,{s:.3f}+0.4),-{bar_w}+({bar_w}+{m_left})*((t-{s:.3f})/0.4),if(gt(t,{e:.3f}-0.3),{m_left}-({bar_w}+{m_left})*(1-({e:.3f}-t)/0.3),{m_left}))"
@@ -378,12 +398,11 @@ def main(force_route: Optional[str] = None) -> int:
         fc.append(f"{layer_src(primary, 1.0, int(base * 0.012), bar_h)}[acc]")
         fc.append(f"[0:v][bar]overlay=x='{x_expr}':y={y0}:{en}:eof_action=pass[v1]")
         fc.append(f"[v1][acc]overlay=x='{x_expr}':y={y0}:{en}:eof_action=pass[v2]")
-        tx_pad = int(base * 0.035)
         tx = f"({x_expr})+{tx_pad}"
         x_rest, x_off = m_left + tx_pad, -bar_w + tx_pad
         draws = []
-        for text, fs, colour, ty in ((args.name, h1, text_c, y0 + pad),
-                                     (args.title, h2, primary, y0 + pad + name_h + pad // 2)):
+        for text, fs, colour, ty in ((lt_name, h1, text_c, y0 + pad),
+                                     (lt_title, h2, primary, y0 + pad + name_h + pad // 2)):
             if not text:
                 continue
             draws.append(f"drawtext={drawtext_text_opts(text)}:{fo}:fontsize={fs}:"
@@ -411,24 +430,33 @@ def main(force_route: Optional[str] = None) -> int:
             die("title needs --title")
         h1 = int(base * 0.11)
         h2 = int(base * 0.045)
+        # the title and the subtitle wrap to the frame's safe width (#411: they never did)
+        title_t = wrapped(args.title, h1)
+        sub_t = wrapped(args.subtitle, h2) if args.subtitle else args.subtitle
         fill_box(bg, 0.55, "x=0:y=0:w=iw:h=ih", 0, 0, W, H, en)
         # the title is centred as a block, so the bar and the subtitle sit below its last line:
         # `title_h` is the block's height, as the one-line layout has always taken h1; a further
         # subtitle line hangs below the first, whose position the one-line layout fixes
-        title_h = block_h(args.title, h1)
+        title_h = block_h(title_t, h1)
         sub_y = title_h // 2 + int(base * 0.03)
-        sub_extra = block_h(args.subtitle, h2) - h2 if args.subtitle else 0
-        add_text(args.title,
-                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if args.subtitle else 0}:alpha='{fade_a}':{en}",
+        sub_extra = block_h(sub_t, h2) - h2 if sub_t else 0
+        tall = title_h + (sub_y - title_h // 2 + block_h(sub_t, h2) if sub_t else 0)
+        if tall > H:
+            # the wrap measures width only; a centred block taller than the frame loses its first
+            # and last lines off the edges (#416 review)
+            note(f"the wrapped title{' and subtitle' if sub_t else ''} are about {tall} px tall, taller than the "
+                 f"{H} px frame: the lines past its edges are not drawn -- shorten the text or lower --scale")
+        add_text(title_t,
+                 f"drawtext={drawtext_text_opts(title_t)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if sub_t else 0}:alpha='{fade_a}':{en}",
                  size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2,
-                 y=H / 2 - (h2 if args.subtitle else 0), outline=max(1.0, h1 / 20.0),
+                 y=H / 2 - (h2 if sub_t else 0), outline=max(1.0, h1 / 20.0),
                  outline_color="000000", start=s, end=e, fade=(300, 300))
         acc_w, acc_h = int(base * 0.12), max(2, int(base * 0.006))
         fill_box(primary, 1.0, f"x=(iw-{acc_w})/2:y=(ih)/2+{title_h // 2}:w={acc_w}:h={acc_h}",
                  (W - acc_w) // 2, H // 2 + title_h // 2, acc_w, acc_h, en)
-        if args.subtitle:
-            add_text(args.subtitle,
-                     f"drawtext={drawtext_text_opts(args.subtitle)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2+{sub_y + sub_extra // 2}:alpha='{fade_a}':{en}",
+        if sub_t:
+            add_text(sub_t,
+                     f"drawtext={drawtext_text_opts(sub_t)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2+{sub_y + sub_extra // 2}:alpha='{fade_a}':{en}",
                      size=h2, color=primary, font=ass_font_family(), align=5, x=W / 2,
                      y=H / 2 + sub_y + sub_extra // 2, outline=max(1.0, h2 / 20.0),
                      outline_color="000000", start=s, end=e, fade=(300, 300))
@@ -439,6 +467,8 @@ def main(force_route: Optional[str] = None) -> int:
         pos = args.position or ("bottom-left" if args.template == "chapter" else "top-right")
         fs = int(base * (0.04 if args.template == "chapter" else 0.032))
         padx, pady = int(fs * 0.6), int(fs * 0.35)
+        # the chip wraps to the room between the side margins, as the sticker's does (#411)
+        chip_t = wrapped(args.title, fs, chip_frac(m_left, m_right, padx))
         xe = f"{m_left}" if "left" in pos else f"w-text_w-{m_right}"
         ye = f"{m_top}" if "top" in pos else f"h-text_h-{m_bottom}"
         box_color = ff_color(primary if args.template == "chapter" else bg, 0.9 if args.template == "chapter" else 0.7)
@@ -446,8 +476,8 @@ def main(force_route: Optional[str] = None) -> int:
         box_hex = primary if args.template == "chapter" else bg
         txt_hex = bg if args.template == "chapter" else text_c
         align = (7 if "left" in pos else 9) if "top" in pos else (1 if "left" in pos else 3)
-        add_text(args.title,
-                 f"drawtext={drawtext_text_opts(args.title)}:{fo}:fontsize={fs}:fontcolor={txt_color}:x={xe}:y={ye}:box=1:boxcolor={box_color}:boxborderw={drawtext_boxborderw(pady, padx)}:alpha='{fade_a}':{en}",
+        add_text(chip_t,
+                 f"drawtext={drawtext_text_opts(chip_t)}:{fo}:fontsize={fs}:fontcolor={txt_color}:x={xe}:y={ye}:box=1:boxcolor={box_color}:boxborderw={drawtext_boxborderw(pady, padx)}:alpha='{fade_a}':{en}",
                  size=fs, color=txt_hex, font=ass_font_family(), align=align,
                  x=(m_left if "left" in pos else W - m_right),
                  y=(m_top if "top" in pos else H - m_bottom),
@@ -582,52 +612,62 @@ def main(force_route: Optional[str] = None) -> int:
         seen: List[str] = []
         for el in elements:
             el["box_px"] = int(round(el["size"] * scale_em))
-            line = el["text"]
-            clusters = emoji_clusters(line)
-            if not clusters or emoji_mode not in ("png",):
+            if not emoji_clusters(el["text"]) or emoji_mode not in ("png",):
                 continue
-            line_w = text_width_em(line, scale_em) * el["size"]
+            # a wrapped label is several lines: each is measured from its own start and sits one
+            # line pitch below the last (#416 review: they were measured as one line, on the first)
+            all_lines = el["text"].split("\n")
             align = int(el.get("align", 7))
-            left = el["x"] if align in (7, 4, 1) else (
-                el["x"] - line_w / 2.0 if align in (8, 5, 2) else el["x"] - line_w)
             line_h = el["size"] * 1.2
-            y_top = el["y"] if align in (7, 8, 9) else (
-                el["y"] - line_h / 2.0 if align in (4, 5, 6) else el["y"] - line_h)
-            # An RTL line is rendered right-to-left: measure the suffix, not the logical prefix.
-            rtl = detect_script(line) in BIDI_SCRIPTS
-            rebuilt, cursor = "", 0
-            for idx, cluster in clusters:
-                name = emoji_codepoint_name(cluster)
-                if name not in seen:
-                    seen.append(name)
-                asset = emoji_asset_for(cluster, emoji_assets)
-                if not asset:
-                    if name not in missing:
-                        missing.append(name)
-                    rebuilt += line[cursor:idx + len(cluster)]
-                    cursor = idx + len(cluster)
+            block = len(all_lines) * line_h
+            block_top = el["y"] if align in (7, 8, 9) else (
+                el["y"] - block / 2.0 if align in (4, 5, 6) else el["y"] - block)
+            rebuilt_lines = []
+            for k, line in enumerate(all_lines):
+                clusters = emoji_clusters(line)
+                if not clusters:
+                    rebuilt_lines.append(line)
                     continue
-                if rtl:
-                    prefix_px = line_w - text_width_em(line[:idx] + cluster, scale_em) * el["size"]
-                else:
-                    prefix_px = text_width_em(line[:idx], scale_em) * el["size"]
-                if el.get("x_expr"):
-                    # the lower-third slides: the emoji rides the same expression the bar does
-                    x = f"({el['x_expr']})+{prefix_px:.0f}"
-                else:
-                    x = int(round(max(0.0, min(left + prefix_px, W - el["box_px"]))))
-                emoji_overlays.append({"asset": asset, "cluster": name, "x": x,
-                                       "y": int(round(max(0.0, min(y_top + (line_h - el["box_px"]) / 2.0,
-                                                                   H - el["box_px"])))),
-                                       "start": round(el["start"], 3), "end": round(el["end"], 3),
-                                       "box": el["box_px"],
-                                       # every template fades its text in and out over 0.3 s
-                                       # (fade_a above); the PNG rides the same envelope.
-                                       "fade_in": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3),
-                                       "fade_out": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3)})
-                rebuilt += line[cursor:idx] + EMOJI_SENTINEL
-                cursor = idx + len(cluster)
-            el["text"] = rebuilt + line[cursor:]
+                line_w = text_width_em(line, scale_em) * el["size"]
+                left = el["x"] if align in (7, 4, 1) else (
+                    el["x"] - line_w / 2.0 if align in (8, 5, 2) else el["x"] - line_w)
+                y_top = block_top + k * line_h
+                # An RTL line is rendered right-to-left: measure the suffix, not the logical prefix.
+                rtl = detect_script(line) in BIDI_SCRIPTS
+                rebuilt, cursor = "", 0
+                for idx, cluster in clusters:
+                    name = emoji_codepoint_name(cluster)
+                    if name not in seen:
+                        seen.append(name)
+                    asset = emoji_asset_for(cluster, emoji_assets)
+                    if not asset:
+                        if name not in missing:
+                            missing.append(name)
+                        rebuilt += line[cursor:idx + len(cluster)]
+                        cursor = idx + len(cluster)
+                        continue
+                    if rtl:
+                        prefix_px = line_w - text_width_em(line[:idx] + cluster, scale_em) * el["size"]
+                    else:
+                        prefix_px = text_width_em(line[:idx], scale_em) * el["size"]
+                    if el.get("x_expr"):
+                        # the lower-third slides: the emoji rides the same expression the bar does
+                        x = f"({el['x_expr']})+{prefix_px:.0f}"
+                    else:
+                        x = int(round(max(0.0, min(left + prefix_px, W - el["box_px"]))))
+                    emoji_overlays.append({"asset": asset, "cluster": name, "x": x,
+                                           "y": int(round(max(0.0, min(y_top + (line_h - el["box_px"]) / 2.0,
+                                                                       H - el["box_px"])))),
+                                           "start": round(el["start"], 3), "end": round(el["end"], 3),
+                                           "box": el["box_px"],
+                                           # every template fades its text in and out over 0.3 s
+                                           # (fade_a above); the PNG rides the same envelope.
+                                           "fade_in": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3),
+                                           "fade_out": round(min(0.3, max(0.0, (el["end"] - el["start"]) / 2.0)), 3)})
+                    rebuilt += line[cursor:idx] + EMOJI_SENTINEL
+                    cursor = idx + len(cluster)
+                rebuilt_lines.append(rebuilt + line[cursor:])
+            el["text"] = "\n".join(rebuilt_lines)
         # `or 60` would swallow --emoji-max 0, the one value meaning "none at all".
         _max = 60 if args.emoji_max is None else int(args.emoji_max)
         if len(emoji_overlays) > _max:
@@ -642,6 +682,11 @@ def main(force_route: Optional[str] = None) -> int:
                             "assets": emoji_assets, "missing": missing,
                             "overlays": len(emoji_overlays)}
         ass_path = args.write_ass or os.path.splitext(output)[0] + "_gfx.ass"
+        require_filter("ass", "drawing this text through libass")  # before the sidecar is written
+        # a file this run writes itself: never the input or the video, a missing directory or an
+        # existing file without --overwrite is refused before anything is written (#408)
+        guard_sidecar(ass_path, *[q for q in (args.input, getattr(args, "brand", None), getattr(args, "font_file", None))
+                                  if isinstance(q, str)], siblings=(output,))
         if STATE.dry_run:
             info(f"[dry-run] would write {ass_path} ({len(elements)} text elements)")
         else:
@@ -663,7 +708,7 @@ def main(force_route: Optional[str] = None) -> int:
         drawboxes.append(f"drawbox={geo}:color={ff_color(colour, alpha)}:t=fill:{enable}")
     filters = [("" if as_layers else drawboxes[int(f[len(BOX):])]) if f.startswith(BOX) else f for f in filters]
     filters = [f for f in filters if f]
-    base_label = label_chain(meta, meta) if (layers or converted) else ""
+    base_label = layer_base_chain(meta) if (layers or converted) else ""
     text = (drawn_chain(",".join(filters), meta, re.findall(r"color=([0-9A-Za-z#@.]+)", ",".join(filters)),
                         labelled=bool(base_label)) if filters else "")
     if layers:
@@ -676,13 +721,15 @@ def main(force_route: Optional[str] = None) -> int:
     fc = [c.replace(TEXT, text or "null") for c in fc]
     if fc and base_label:
         fc = [f"[0:v]{base_label}null[gbase]"] + [c.replace("[0:v]", "[gbase]") for c in fc]
+    if fc and square:
+        fc = [f"[0:v]{square}[gsq]"] + [c.replace("[0:v]", "[gsq]") for c in fc]
 
     cmd = ffmpeg_base() + ["-i", args.input]
     if route == "ass" or emoji_overlays:
-        chains = list(fc) if fc else [f"[0:v]{text or 'null'}[vout]"]
+        chains = list(fc) if fc else [f"[0:v]{(square + ',') if square else ''}{text or 'null'}[vout]"]
         last = "vout"
         if route == "ass":
-            vf = f"ass={escape_filter_path(ass_path)}"
+            vf = f"ass=filename={escape_filter_path(ass_path)}"
             fdir = ass_fonts_dir()
             if fdir:
                 vf += f":fontsdir={escape_filter_path(fdir)}"
@@ -692,7 +739,7 @@ def main(force_route: Optional[str] = None) -> int:
             last = "vtxt"
         eo, emoji_inputs = emoji_filter_chain({"overlays": emoji_overlays}, last, "vfinal", first_input=1,
                                               to_yuv=rgb_chain_to_bt709(meta),
-                                              base_chain=label_chain(meta, meta) if rgb_chain_to_bt709(meta) else "")
+                                              base_chain=layer_base_chain(meta))
         for spec in emoji_inputs:
             cmd += spec
             asset = spec[-1]
@@ -706,7 +753,7 @@ def main(force_route: Optional[str] = None) -> int:
     elif fc:
         cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", f"0:a:{args.audio_stream}?"]
     else:
-        cmd += ["-vf", text, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
+        cmd += ["-vf", (square + "," if square else "") + text, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += aac_args() if meta.get("audio") else ["-an"]
     dropped_streams = run_keeping_subtitles(cmd, output)

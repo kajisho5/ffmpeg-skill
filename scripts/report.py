@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, add_common, apply_common, child_args, die, emit, info, probe, read_text_or_die, run_tool
+from _common import guard_sidecar, STATE, add_common, apply_common, child_args, die, emit, info, probe, read_text_or_die, run_tool
 from _common.emit import record_skip, warn
 
 HERE = Path(__file__).resolve().parent
@@ -141,6 +141,7 @@ def pack_report(args) -> int:
         die(f"{args.pack}: no pack table found (expected the Markdown table render.py --template all writes)")
     title = args.title or f"Social pack — {Path(args.pack).stem.replace('_pack', '')}"
     output = args.output or str(Path(args.pack).with_suffix(".html"))
+    guard_sidecar(output, args.pack)
     head = "".join(f"<th>{html.escape(h)}</th>" for h in header)
     body = ""
     for r in rows:
@@ -190,6 +191,8 @@ def main() -> int:
         return pack_report(args)
     if not args.after:
         die("--after is required (or --pack FILE for a social pack table)")
+    output = args.output or str(Path(args.after).with_name(Path(args.after).stem + "_report.html"))
+    guard_sidecar(output, args.after, args.before, args.commands, args.notes)  # before any measurement
     after = probe(args.after)
     before = probe(args.before) if args.before else None
     # every section the report would show is either in it or accounted for: a section that could
@@ -233,7 +236,6 @@ def main() -> int:
     commands = read_text_or_die(args.commands, "--commands").splitlines() if args.commands else []
     notes = read_text_or_die(args.notes, "--notes") if args.notes else ""
     title = args.title or f"Delivery report — {Path(args.after).name}"
-    output = args.output or str(Path(args.after).with_name(Path(args.after).stem + "_report.html"))
 
     def table(rows: List[List[str]]) -> str:
         return "<table>" + "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(str(v))}</td></tr>" for k, v in rows) + "</table>"

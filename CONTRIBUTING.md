@@ -44,13 +44,14 @@ git clone https://github.com/kajisho5/ffmpeg-skill
 cd ffmpeg-skill
 npm run test:fast           # tests/test_contract.py only: contract, docs, dry runs (~3-4 min)
 npm test                    # everything: real encodes (test_all.py's modules, run in parallel by tests/run_parallel.py; about 21 min on 4 cores, 35 serially) + contract
+python3 tests/run_parallel.py --part 1/3   # one of CI's three machines' share (test_contract included); about a third of the time
 npm run release-check       # packaging + installer + MCP + doctor + full suite
 python3 scripts/_contract.py doctor   # what this machine can actually run
 ```
 
-Python 3.9+ standard library only — no new runtime dependencies. 3.9 is deprecated since 2.10.9 and
-still runs in CI until 3.0 drops it, so code must keep working on it until then. Every script
-must keep working with nothing beyond `ffmpeg`/`ffprobe` on `PATH`.
+Python 3.10+ standard library only — no new runtime dependencies. 3.10 is the floor CI runs
+(3.0.0 removed 3.9), so code must keep working on it, and on FFmpeg 6.1, the oldest FFmpeg CI
+runs. Every script must keep working with nothing beyond `ffmpeg`/`ffprobe` on `PATH`.
 
 ## Tests
 

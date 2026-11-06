@@ -14,8 +14,8 @@ import argparse
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.color import (bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
-                           is_neutral_color, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
+from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
+                           is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.emit import die, record_fallback, refuse, warn
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -114,9 +114,21 @@ def frame_size(ratio: Optional[Fraction], width: Optional[int], height: Optional
 SVT_PRESET = {"ultrafast": 12, "superfast": 11, "veryfast": 10, "faster": 9, "fast": 8, "medium": 6, "slow": 4, "slower": 3, "veryslow": 2, "placebo": 1}
 
 
+# Source containers the tools' own encoders (x264/x265/SVT-AV1 and AAC) cannot be written into: WebM
+# takes only VP8/VP9/AV1 and Vorbis/Opus. A default output name keeps the source's extension
+# except for these, whose default is .mp4 (#415): the dry run planned `clip_loudnorm.webm` and the
+# real run then failed in the muxer.
+NO_DEFAULT_ENCODE_EXT = {".webm"}
+
+
 def default_output(input_path: str, suffix: str, ext: Optional[str] = None) -> str:
     p = Path(input_path)
-    new_ext = ext if ext else p.suffix.lstrip(".") or "mp4"
+    if ext:
+        new_ext = ext
+    elif p.suffix.lower() in NO_DEFAULT_ENCODE_EXT:
+        new_ext = "mp4"
+    else:
+        new_ext = p.suffix.lstrip(".") or "mp4"
     return str(p.with_name(f"{p.stem}_{suffix}.{new_ext}"))
 
 
@@ -127,12 +139,18 @@ class MissingFpsError(ValueError):
     silently swallowing a mistyped/missing --fps as an auto-timed line of digits."""
 
 
+def _on_windows() -> bool:
+    """Whether a backslash in a path is a separator (Windows) or a character of the name."""
+    return os.name == "nt"
+
+
 def concat_list_line(path: str) -> str:
     """One `file '...'` line for the concat demuxer. The demuxer reads backslash as an escape
     inside the quoted form, so a Windows path (C:\\Users\\...\\part000.mp4) must be written
     with forward slashes -- ffmpeg opens either spelling on Windows -- and a single quote in the
     name is closed, escaped and reopened. Shared by cut.py (multi-segment) and sequence.py."""
-    escaped = str(path).replace("\\", "/").replace("'", "'\\''")
+    # only on Windows: on POSIX the quoted form takes a backslash literally, and it is part of the name (#408)
+    escaped = (str(path).replace("\\", "/") if _on_windows() else str(path)).replace("'", "'\\''")
     return f"file '{escaped}'"
 
 
@@ -193,17 +211,60 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
     return total
 
 
-def time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
+def time_arg(value: str, flag: str, fps: Optional[float] = None,
+             source: Optional[Dict[str, Any]] = None) -> float:
     """parse_time() for a command-line flag: SMPTE hh:mm:ss:ff resolves with the input's fps when
     the caller has one, and every parse failure is a `kind: input` refusal naming the flag (so
-    `--json` callers get a failure document, never a traceback)."""
+    `--json` callers get a failure document, never a traceback). `source` is the probe of the
+    input the time is in when that is not the first one (a B-roll's --from, an overlay layer's
+    --place range): the SMPTE hint then names that input's start timecode and length."""
     try:
-        return parse_time(value, fps)
+        seconds = parse_time(value, fps)
     except MissingFpsError as e:
         die(f"{flag} {value!r}: {e}")
     except ValueError as e:
         die(f"{flag} {value!r}: {e} (use seconds, mm:ss, hh:mm:ss.ms, or hh:mm:ss:ff at the source's fps or with an explicit @fps suffix)")
-    return 0.0  # unreachable
+    _remember_smpte_hint(value, flag, fps, seconds, source)
+    return seconds
+
+
+def _remember_smpte_hint(value: str, flag: str, fps: Optional[float], seconds: float,
+                         source: Optional[Dict[str, Any]] = None) -> None:
+    """An hh:mm:ss:ff time counts from the file's first frame (00:00:00:00), not from a camera's
+    start timecode (docs/design-decisions.md, time grammar). When one reads past the end of a
+    source that carries a start timecode it was almost certainly typed off the source's own
+    burned-in or NLE timecode: keep a hint naming the frame it would be from the source's start,
+    which die() adds to the refusal a tool then raises for the out-of-range time (#411). The
+    grammar itself, and what a valid time means, are unchanged. A time in another input than the
+    first is judged against that input's own timecode and length (#416 review)."""
+    if source is not None:
+        own = (source.get("timecode") or {}).get("value")
+        tc = (own, source.get("duration")) if own else None
+    else:
+        tc = getattr(STATE, "source_timecode", None)
+    text = value.strip().rpartition("@")[0] if "@" in value else value.strip()
+    if not tc or len(text.split(":")) != 4:
+        return
+    start_tc, duration = tc
+    rate = fps
+    if "@" in value:
+        try:
+            rate = float(value.rpartition("@")[2])
+        except ValueError:
+            return
+    try:
+        start = parse_time(re.sub(r"[;.](\d+)$", r":\1", start_tc), rate)
+    except ValueError:
+        return
+    if not duration or seconds <= duration or seconds < start:
+        return
+    within = seconds - start
+    where = (f"{flag} {text} is {fmt_smpte_time(within, rate)} from the file's start"
+             if within <= duration else f"{flag} {text} is past the end of this {duration:.3f} s file even so")
+    prefix = (f"hh:mm:ss:ff times count from the file's first frame (00:00:00:00), not from the source's "
+              f"start timecode {start_tc}: ")
+    before = STATE.smpte_hint[len(prefix):] + "; " if STATE.smpte_hint and STATE.smpte_hint.startswith(prefix) else ""
+    STATE.smpte_hint = prefix + before + where
 
 
 def signed_time_arg(value: str, flag: str, fps: Optional[float] = None) -> float:
@@ -252,8 +313,8 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
     must survive both passes needs two levels of escaping, so a Windows drive letter `D:/x.srt` is
     written `D\\\\:/x.srt`; with a single backslash the second pass still splits at the colon and
     ffmpeg reads `/x.srt` as the next option (`Unable to parse "original_size" option value`).
-    Backslashes are turned into forward slashes first (ffmpeg accepts them on Windows), so a backslash
-    never has to be escaped itself; `,`, `;`, `[` and `]` are graph-level characters and survive with
+    On Windows backslashes are turned into forward slashes first (ffmpeg accepts them there); on
+    POSIX a backslash is part of the name and is escaped through both passes (#408); `,`, `;`, `[` and `]` are graph-level characters and survive with
     one backslash. `'` is special: the graph parser also treats a quote as the start of a quoted
     token, so a single `\\'` is consumed by the first pass and "Ryo's Mac/cues.srt" reaches the
     filter as "Ryos Mac/cues.srt" (Unable to open ...). Three backslashes survive both passes
@@ -265,12 +326,115 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
     if bind and os.path.isfile(path) and path not in STATE.plan_inputs:
         STATE.plan_inputs.append(path)  # a plan binds subtitle/LUT/font files too (review 6)
     p = str(Path(path))
-    p = p.replace("\\", "/")
+    if _on_windows():
+        p = p.replace("\\", "/")
+    else:
+        # on POSIX a backslash is a character of the name (#408): turning it into `/` opened a
+        # different path, so it is escaped through both passes instead
+        p = p.replace("\\", "\\\\\\\\")
     p = p.replace(":", "\\\\:")
     p = p.replace("'", "\\\\\\'")
     for ch in (",", ";", "[", "]"):
         p = p.replace(ch, "\\" + ch)
+    # the graph parser trims unescaped whitespace at either end of a value (#408: a relative
+    # " lead.srt" opened "lead.srt"); both passes keep an escaped one
+    lead = len(p) - len(p.lstrip())
+    trail = len(p) - len(p.rstrip())
+    if lead or trail:
+        body = p[lead:len(p) - trail] if trail else p[lead:]
+        p = "".join("\\\\" + c for c in p[:lead]) + body + "".join("\\\\" + c for c in p[len(p) - trail:] if trail)
     return p
+
+
+# ------------------------------------------------------- both streams on one clock (#409)
+#
+# ffmpeg shifts every stream of an input by one constant (the file's start_time), so a filter graph
+# sees a sound that starts 0.3 s after its picture at 0.3. A per-stream `PTS-STARTPTS` moved that
+# sound 0.3 s early. cut.py's re-cut is the reference: both streams are cut on the same bounds,
+# shifted by the same constant, and the audio is padded to the origin
+# (docs/design-decisions.md, "Both streams of a segment shift by one constant").
+
+def stream_starts(meta: Optional[Dict[str, Any]]) -> Tuple[float, float]:
+    """Where the video and the audio start on the clock a filter graph reads the input on (each
+    stream's start_time minus the file's); 0.0 for a stream whose start is unknown."""
+    from _common.emit import file_origin
+    meta = meta or {}
+    origin = file_origin(meta)
+    out = []
+    for kind in ("video", "audio"):
+        start = (meta.get(kind) or {}).get("start_time")
+        out.append(float(start) - origin if isinstance(start, (int, float)) else 0.0)
+    return out[0], out[1]
+
+
+def frame_rate(meta: Optional[Dict[str, Any]]) -> float:
+    """The video's frame rate as cut.py's grid takes it: r_frame_rate, else fps; 0.0 when unknown."""
+    v = (meta or {}).get("video") or {}
+    try:
+        num, _, den = str(v.get("r_frame_rate") or "").partition("/")
+        rate = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        rate = 0.0
+    if not 0 < rate <= 240:  # a time base (90000/1), not a rate
+        rate = float(v.get("fps") or 0.0)
+    return rate
+
+
+def frame_durations(meta: Optional[Dict[str, Any]], rate: float) -> str:
+    """An `fps` filter at the video's own rate (r_frame_rate as a fraction when it is one), the
+    last filter of a graph whose frames sit on that rate's grid: it moves none of them, and gives
+    each frame its duration back. From FFmpeg 7.0 setpts sets every frame's duration to 0 and
+    leaves the frame rate unknown, so the last frame of a graph that ends after a setpts (av_trim)
+    was written with no duration and the picture read a frame short (3.967 s for 120 frames)."""
+    v = (meta or {}).get("video") or {}
+    try:
+        q = Fraction(str(v.get("r_frame_rate") or ""))
+    except (ValueError, ZeroDivisionError):
+        q = None
+    if q is not None and abs(float(q) - rate) < 1e-6:
+        return f"fps={q.numerator}/{q.denominator}"
+    return f"fps={rate:.6f}"
+
+
+def grid_at_or_after(t: float, v0: float, rate: float) -> float:
+    """The time of the first frame at or after `t` on a constant-rate grid starting at `v0`."""
+    if not rate:
+        return t
+    return v0 + math.ceil((t - v0) * rate - 1e-6) / rate
+
+
+def av_trim(start: float, end: Optional[float], rate: float = 0.0, fill_gaps: bool = False) -> Tuple[str, str]:
+    """The video and the audio filters that cut one segment [start, end) of the graph clock out of
+    both streams and shift both by the same constant, so an offset between them survives; `end`
+    None runs to the stream's end. The picture's trim sits half a frame before each bound (the
+    bounds are frame times: grid_at_or_after), so no FFmpeg version rounds a boundary frame in or
+    out; the audio is padded to the segment's origin when it starts later. `fill_gaps` also fills
+    every later gap in the sound with silence, however short (aresample's default only fills one
+    longer than 0.1 s and stretches the sound by a sample a second for the rest)."""
+    half = 0.5 / rate if rate else 0.0
+    pad = "aresample=async=1:min_hard_comp=0.001:first_pts=0" if fill_gaps else "aresample=async=1:first_pts=0"
+    vend = f":end={end - half:.6f}" if end is not None else ""
+    aend = f":end={end:.6f}" if end is not None else ""
+    return (f"trim=start={start - half:.6f}{vend},setpts=PTS-{start:.6f}/TB",
+            f"atrim=start={start:.6f}{aend},asetpts=PTS-{start:.6f}/TB,{pad}")
+
+
+def av_clip_length(meta: Optional[Dict[str, Any]], fps: float) -> float:
+    """The one length a clip holds once both streams start at its first frame (av_trim from the
+    video's start): the video's, or where the sound ends when it runs more than a frame past the
+    picture (narration is never cut; an AAC tail adds no frame). The container duration is only the
+    fallback when the video's length is unknown (a pending input)."""
+    meta = meta or {}
+    v = (meta.get("video") or {}).get("duration")
+    a = (meta.get("audio") or {}).get("duration")
+    if not v:
+        return meta.get("duration") or 0.0
+    if a:
+        v0, a0 = stream_starts(meta)
+        a = a + a0 - v0  # where the sound ends, counted from the first frame
+    if a and fps and a > v + 1.0 / fps:
+        return a
+    return v
 
 
 def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> List[str]:
@@ -474,7 +638,7 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
         return _x264_raw(crf, preset, keep_bt709)
     if codec == "hevc":
         if hdr:
-            x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
+            x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1{hdr10_x265_params(v)}" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
             return ["-c:v", "libx265", "-preset", preset, "-crf", str(_clamped_crf("libx265", crf + 2, 51, crf)), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
                     "-x265-params", x265] + hdr_tags + ["-movflags", "+faststart"]
         params, extra = _sdr_bt709("libx265") if keep_bt709 else ("", [])
@@ -485,7 +649,8 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
         if "libsvtav1" in ffmpeg_encoders():
             args = ["-c:v", "libsvtav1", "-preset", str(SVT_PRESET.get(preset, 6)), "-crf", str(_clamped_crf("libsvtav1", crf, 63, crf)), "-pix_fmt", pix]
             if hdr:
-                args += hdr_tags
+                svt = hdr10_svtav1_params(v)
+                args += (["-svtav1-params", svt] if svt else []) + hdr_tags
             elif keep_bt709:
                 params, extra = _sdr_bt709("libsvtav1")
                 args += (["-svtav1-params", params] if params else []) + extra
@@ -506,6 +671,42 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
         return ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-pix_fmt", "yuv422p10le"] + (hdr_tags if hdr else [])
     die(f"unknown --codec {codec!r} (one of {', '.join(CODECS)})")
     return []
+
+
+def hdr10_x265_params(v: Dict[str, Any]) -> str:
+    """The source's HDR10 static metadata as x265 options (":master-display=...:max-cll=..."), or "".
+    FFmpeg before 7.0 does not pass the decoded frames' mastering-display / content-light side data
+    to libx265, so without these a 6.1 re-encode wrote PQ video with neither (#401). Given on 7+ too,
+    where they restate what FFmpeg would pass. x265 units: chromaticity 0.00002, luminance 0.0001 cd/m2."""
+    md, cl = _hdr10_parts(v)
+    out = ""
+    if md:
+        c = lambda k: round(md[k] * 50000)
+        out += (f":master-display=G({c('green_x')},{c('green_y')})B({c('blue_x')},{c('blue_y')})R({c('red_x')},{c('red_y')})"
+                f"WP({c('white_point_x')},{c('white_point_y')})L({round(md['max_luminance'] * 10000)},{round(md['min_luminance'] * 10000)})")
+    if cl:
+        out += f":max-cll={cl['max_content']},{cl['max_average']}"
+    return out
+
+
+def hdr10_svtav1_params(v: Dict[str, Any]) -> str:
+    """The same for SVT-AV1 (-svtav1-params), which takes chromaticities and cd/m2 as decimals."""
+    md, cl = _hdr10_parts(v)
+    parts = []
+    if md:
+        f = lambda k: f"{md[k]:.5f}".rstrip("0").rstrip(".")
+        parts.append(f"mastering-display=G({f('green_x')},{f('green_y')})B({f('blue_x')},{f('blue_y')})R({f('red_x')},{f('red_y')})"
+                     f"WP({f('white_point_x')},{f('white_point_y')})L({f('max_luminance')},{f('min_luminance')})")
+    if cl:
+        parts.append(f"content-light={cl['max_content']},{cl['max_average']}")
+    return ":".join(parts)
+
+
+def _hdr10_parts(v: Dict[str, Any]) -> "Tuple[Optional[Dict[str, float]], Optional[Dict[str, int]]]":
+    st = v.get("hdr10_static") or {}
+    if v.get("color_transfer") != "smpte2084":
+        return None, None
+    return st.get("mastering_display"), st.get("content_light")
 
 
 def _clamped_crf(encoder: str, value: int, top: int, requested: int) -> int:
@@ -606,6 +807,28 @@ def label_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, An
     return f + "," if f else ""
 
 
+def range_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]]) -> str:
+    """For a picture that a mixing filter (concat, xfade, xstack, overlay) puts beside or under
+    another, encoded through video_args(line_meta): the conversion to limited range its chain
+    takes after its matrix_chain()/label_chain() ("<filter>," -- limited_range_filter), or "" (a
+    limited, RGB or HDR picture, or a line that does not tag BT.709). Every SDR picture such a
+    tool mixes is then limited range, whatever each one was: the filters mix samples, not colours."""
+    if STATE.codec == "prores" or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
+        return ""
+    f = limited_range_filter(meta)
+    return f + "," if f else ""
+
+
+def layer_base_chain(meta: Optional[Dict[str, Any]]) -> str:
+    """The chain in front of the picture `meta` probes where converted RGB layers (rgb_chain_to_bt709:
+    a still, an emoji PNG, a box of chroma) are overlaid on it: an untagged picture's BT.709 label
+    (label_chain) and, for a full-range one, its conversion to the limited range the layers are
+    made in (range_chain). "" when the line converts no layer (HDR, prores)."""
+    if not rgb_chain_to_bt709(meta):
+        return ""
+    return label_chain(meta, meta) + range_chain(meta, meta)
+
+
 def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva420p") -> str:
     """For a picture the tool's own graph has made RGB(A) -- a still's `format=rgba` chain
     (overlay.py --image, an emoji PNG) or an RGBA composite (waveform.py's --image plate) -- that
@@ -640,14 +863,25 @@ def drawn_chain(colour_chain: str, meta: Optional[Dict[str, Any]], colours: Sequ
 
     Unchanged: a chain whose colours are all greys (the same YUV under every matrix: the default
     black pads and white text), a line that does not tag BT.709 (HDR, prores). `labelled`: the
-    caller's graph already labels this picture (label_chain()) earlier in the same chain."""
+    caller's graph already labels this picture (label_chain()) earlier in the same chain.
+
+    Before 7.1 `ff_draw` also takes the range from the pixel format alone: full for `yuvj`, limited
+    for every other, so on a full-range picture in a plain format (VP9/AV1 full range, 10-bit full
+    range) even black and white were drawn limited (pad black read 101010, #410), and 6.1's scale
+    has often made such a picture limited before the drawing anyway. There the picture is first
+    taken to limited range (range_chain(), which reads the range from the frames), and the
+    drawing, the colours and rgb_island() all work in limited range. 7.1+ draws in the link's
+    range and is left as it is."""
     line = meta if line_meta == "same" else line_meta
+    pre = ""
+    if ffmpeg_version() < (7, 1) and not str(((meta or {}).get("video") or {}).get("pix_fmt") or "").startswith("yuvj"):
+        pre = range_chain(meta, line)
     if not draws_chroma(colours, line):
-        return colour_chain
+        return pre + colour_chain
     if ffmpeg_version() >= (7, 1):
         return ("" if labelled else label_chain(meta, line)) + colour_chain
-    pix_fmt, full = drawn_stream_format(meta)
-    return rgb_island(colour_chain, neutral_chain, pix_fmt, full, tag)
+    pix_fmt, full = drawn_stream_format(as_limited(meta) if pre else meta)
+    return pre + rgb_island(colour_chain, neutral_chain, pix_fmt, full, tag)
 
 
 def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium",
@@ -667,7 +901,7 @@ def _x265_hdr_default(v: Dict[str, Any], crf: int, preset: str) -> List[str]:
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"
     trc = v.get("color_transfer") or "arib-std-b67"
-    x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
+    x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1{hdr10_x265_params(v)}" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
     return ["-c:v", "libx265", "-preset", preset, "-crf", str(min(51, crf + 2)), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
             "-x265-params", x265, "-colorspace", cs, "-color_primaries", prim, "-color_trc", trc, "-movflags", "+faststart"]
 

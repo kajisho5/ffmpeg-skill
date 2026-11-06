@@ -1,8 +1,9 @@
 # Demo gallery
 
-Every clip on this page was generated from nothing: ffmpeg's own synthetic sources make the
-footage, and each "after" is produced by running one of this repo's scripts on it. Rebuild the
-whole page's material with:
+Every clip on this page but two was generated from nothing: ffmpeg's own synthetic sources make
+the footage. The two exceptions, `reframe_talk` and `filler_en`, use AI-generated footage of
+people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
+repo's scripts on its source. Rebuild the whole page's material with:
 
 ```bash
 python3 demos/build.py            # or: npm run demo
@@ -190,6 +191,16 @@ python3 scripts/fit.py demos/out/fixtures/mandel.mp4 --aspect 9:16 --fit crop --
 
 **Look for:** The vertical frame is cut out of the centre of the wide one -- full height, sides lost.
 
+### A talking head made vertical (AI-generated footage)
+
+![A talking head made vertical (AI-generated footage)](demos/reframe_talk.gif)
+
+```bash
+python3 scripts/fit.py demos/footage/ai_talk.mp4 --aspect 9:16 --fit crop --crop-x 0.27 --width 540 --preset veryfast -o demos/out/reframe_talk_after.mp4
+```
+
+**Look for:** The 9:16 frame is placed on the speaker with --crop-x 0.27 instead of the centre, where it would cut her face in half. The source is AI-generated footage, not a real person.
+
 ### 16:9 to 9:16 by padding
 
 ![16:9 to 9:16 by padding](demos/reframe_pad.gif)
@@ -260,6 +271,16 @@ python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 -
 ```
 
 **Look for:** Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.
+
+### Cut out a range, keep the rest
+
+![Cut out a range, keep the rest](demos/cut_remove.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --remove 2-4 --accurate --preset veryfast --json -o demos/out/cut_remove_after.mp4
+```
+
+**Look for:** cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.
 
 ### Lossless cut that starts where asked
 
@@ -334,7 +355,19 @@ python3 scripts/cut.py demos/out/fixtures/life.mp4 --start 0 --duration 1.5 --ac
 python3 scripts/loop.py demos/out/loop_times_before.mp4 --times 4 --preset veryfast -o demos/out/loop_times_after.mp4
 ```
 
-**Look for:** A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut, which is a judgement about the material, not a flag.
+**Look for:** A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut (--crossfade, below, fades it).
+
+### A seamless loop
+
+![A seamless loop](demos/loop_crossfade.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/life.mp4 --start 0 --duration 1.5 --accurate --preset veryfast -o demos/out/loop_crossfade_clip.mp4
+python3 scripts/loop.py demos/out/loop_crossfade_clip.mp4 --times 4 --preset veryfast -o demos/out/loop_crossfade_before.mp4
+python3 scripts/loop.py demos/out/loop_crossfade_clip.mp4 --times 4 --crossfade 0.4 --preset veryfast -o demos/out/loop_crossfade_after.mp4
+```
+
+**Look for:** The same clip looped four times, plain (left) and with loop.py --crossfade 0.4 (right): the plain loop jumps back at every seam, the crossfaded one fades the clip's last 0.4 s into its first, so each repeat runs on into the next.
 
 ### A still card dropped into the timeline
 
@@ -533,6 +566,16 @@ python3 scripts/multicam.py demos/out/fixtures/motion.mp4 demos/out/fixtures/cam
 
 
 ## Audio
+
+### Filler words cut from real speech (AI-generated footage)
+
+![Filler words cut from real speech (AI-generated footage)](demos/filler_en.gif)
+
+```bash
+python3 scripts/silence.py demos/out/filler_en_talk.mp4 --filler --words demos/footage/ai_talk_en.words.json --margin 0 --preset veryfast -o demos/out/filler_en_after.mp4
+```
+
+**Look for:** "Hey, er, hello there. Well, um, good morning." Right is silence.py --filler: the er and the um are gone and the sentence plays straight through. The source is AI-generated footage, not a real person.
 
 ### Silence removal
 
@@ -775,7 +818,7 @@ python3 scripts/batch.py ~/Footage --recipe batch.json --dry-run
 python3 scripts/check.py final.mp4 --platform youtube --content
 ```
 
-**No picture:** adds content rows to the platform check: black frames, frozen frames, the share of silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, the mark of lost audio at a join). The dropouts row lists the first five gaps' times and lengths; a row that does not pass names a fix.
+**No picture:** adds content rows to the platform check: black frames, frozen frames, the share of silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, the mark of lost audio at a join), single-frame flashes (one frame unlike both of its neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the first five times; a row that does not pass names a fix.
 
 ### report.py
 

@@ -98,7 +98,7 @@ applicable rule against the tree:
   go in `INSPECTION` instead.
 - **A regression test, or the fix is not done.** `CONTRIBUTING.md` is explicit: a
   fix without a test that would have caught the original bug is not finished.
-- **Stdlib-only, Python 3.9+.** No new runtime dependency; every script must work
+- **Stdlib-only, Python 3.10+.** No new runtime dependency; every script must work
   with nothing but `ffmpeg`/`ffprobe` on `PATH`.
 - **Scope boundary.** No AI/LLM content judgement, no cloud or API keys, no raw
   `ffmpeg`/`ffprobe` shell invocation outside `scripts/*.py`, no mutation of input
@@ -115,7 +115,7 @@ npm run release-check                 # packaging + installer + MCP + doctor + f
 python3 scripts/_contract.py doctor   # what this machine can actually run
 ```
 
-CI is a three-OS matrix (Linux/macOS/Windows) across FFmpeg 5.1, 6.1, 7.1 and
+CI is a three-OS matrix (Linux/macOS/Windows) across FFmpeg 6.1, 7.1 and
 8.x/9.x. A change that passes locally on one FFmpeg major is not verified. Report
 a red check as its own statement — never a parenthetical under a "done" claim —
 and confirm green after the run finishes rather than predicting it. See

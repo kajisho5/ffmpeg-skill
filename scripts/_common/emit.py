@@ -13,6 +13,59 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE
 
 
+# Characters that never belong in a message a calling agent reads (#400): C0 controls (a line
+# break is one), DEL and C1, the Unicode line/paragraph separators and the bidi embedding,
+# override and isolate marks. A path or other argument carrying one would otherwise reach
+# error.message / a diagnostic verbatim, where a newline can start what reads as a new line of
+# instructions and a bidi override can reorder what is shown.
+_UNSAFE = frozenset([chr(c) for c in range(0x20) if c not in (0x09, 0x0A)] + [chr(0x7F)]
+                    + [chr(c) for c in range(0x80, 0xA0)]
+                    + ["\u2028", "\u2029", "\u200e", "\u200f"] + [chr(c) for c in range(0x202A, 0x202F)]
+                    + [chr(c) for c in range(0x2066, 0x206A)])
+_LINE_BREAKS = frozenset("\n")
+
+
+def shown(value: Any) -> str:
+    """`value` as text with every unsafe character (and any line break) written as an escape
+    (\\n, \\x1b, \\u202e). A clean value comes back unchanged, so an ordinary path, a Windows one
+    with backslashes included, reads exactly as before."""
+    text = str(value)
+    if not any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in text):
+        return text
+    return "".join((ch.encode("unicode_escape").decode("ascii") if (ch in _UNSAFE or ch in _LINE_BREAKS) else ch)
+                   for ch in text)
+
+
+def _argument_forms(arg: str) -> List[str]:
+    """The spellings a message may print an argument in: as given, resolved, and its file name;
+    for `--opt=value`, the same for the value, which is what a tool prints back."""
+    given = [arg] + ([arg.split("=", 1)[1]] if arg.startswith("-") and "=" in arg else [])
+    forms = set(given)
+    for a in given:
+        try:
+            forms.update({os.path.abspath(a), os.path.realpath(a), os.path.basename(a)})
+        except (OSError, ValueError):
+            pass
+    return sorted((f for f in forms if f), key=len, reverse=True)
+
+
+def neutralize(msg: Any) -> Any:
+    """A message with caller-supplied text made inert (#400): every command-line argument that
+    carries a line break or an unsafe character is replaced by its shown() form wherever it
+    appears (as given, resolved or as a file name), then any unsafe character left is escaped.
+    Line breaks the tool itself wrote (an ffmpeg stderr tail) stay; one inside an argument does not."""
+    if not isinstance(msg, str):
+        return msg
+    for arg in sys.argv[1:]:
+        if isinstance(arg, str) and any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in arg):
+            for form in _argument_forms(arg):
+                if form in msg and (form != os.path.basename(arg) or any(ch in _UNSAFE or ch in _LINE_BREAKS for ch in form)):
+                    msg = msg.replace(form, shown(form))
+    if any(ch in _UNSAFE for ch in msg):
+        msg = "".join(ch.encode("unicode_escape").decode("ascii") if ch in _UNSAFE else ch for ch in msg)
+    return msg
+
+
 def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]" = None,
         error_extra: "Optional[Dict[str, Any]]" = None, **extra: Any) -> "None":
     """Exit with a message. Under --json also print a machine-readable failure document
@@ -26,7 +79,10 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
 
     `error_extra` goes inside `error` (refuse() passes `reason` and `details` there); the
     collector's records (warn() and friends) are merged into the document as emit() merges them."""
-    hint = extra.pop("hint", None)
+    if extra.get("hint") is None and kind == "input" and getattr(ctx or STATE, "smpte_hint", None):
+        extra["hint"] = (ctx or STATE).smpte_hint  # an hh:mm:ss:ff flag read past a timecoded source's end (#411)
+    hint = neutralize(extra.pop("hint", None))
+    msg = neutralize(msg)
     ctx = ctx or STATE  # 1.10: the optional per-request Context (2.0 makes it required); STATE is the default instance
     _set_current_ctx(ctx)  # the atexit hook has no argument: it reads the ctx emit()/die() last used
     ctx.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
@@ -61,6 +117,52 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
     sys.exit(code)
 
 
+def _report_dropped_audio_tracks(meta: Dict[str, Any], ctx: "Context") -> None:
+    """The tools write one audio track: a source with several must say how many did not come
+    along (#397, every tool, not only cut.py). Only when the output kept sound at all: a tool told
+    to drop it (--no-audio, a picture-only output) left nothing out by surprise."""
+    first = getattr(STATE, "first_input", None)
+    if not first or first[1] < 2 or not meta:
+        return
+    if len(getattr(STATE, "audio_inputs", None) or ()) > 1:
+        return  # several sources with sound: which one's tracks the output carries is the tool's own choice
+    kept = len(meta.get("audio_streams") or [])
+    if not kept or kept >= first[1]:
+        return
+    if any(w.get("code") == "audio_tracks_dropped" for w in ctx.warnings):
+        return  # the tool said it already (cut.py, with its own field)
+    warn(f"the source has {first[1]} audio tracks; this output kept {kept} and left {first[1] - kept} out "
+         "(the tools write one audio track; --audio-stream N picks which, where a tool takes it)",
+         "audio_tracks_dropped", ctx=ctx, source=first[1], kept=kept, dropped=first[1] - kept)
+    note_line = ctx.warnings[-1]["message"] if ctx.warnings else None
+    if note_line and note_line not in ctx.notes:
+        ctx.notes.append(note_line)
+
+
+def _report_dropped_hdr10_metadata(meta: Dict[str, Any], ctx: "Context") -> None:
+    """A PQ source's mastering-display / content-light metadata that a PQ output came out without
+    (#401): measured on the written file, so whatever encoder or FFmpeg version dropped it is said.
+    An output that is no longer PQ (color.py --to-sdr, an HLG conversion) was converted on purpose."""
+    first = getattr(STATE, "first_input", None)
+    src = first[2] if first and len(first) > 2 else None
+    v = (meta or {}).get("video") or {}
+    if not src or v.get("color_transfer") != "smpte2084":
+        return
+    if len(getattr(STATE, "video_inputs", None) or ()) > 1:
+        return  # several pictures: the first input's metadata need not be the output's source
+    have = v.get("hdr10_static") or {}
+    lost = [k for k in ("mastering_display", "content_light") if src.get(k) and not have.get(k)]
+    if not lost:
+        return
+    names = {"mastering_display": "mastering display", "content_light": "content light level"}
+    warn("the source's HDR10 " + " and ".join(names[k] for k in lost) + " metadata did not come through to this output "
+         "(the encoder or this FFmpeg build did not write it); players may tone-map it differently",
+         "hdr10_metadata_dropped", ctx=ctx, dropped=lost, codec=v.get("codec"))
+    note_line = ctx.warnings[-1]["message"] if ctx.warnings else None
+    if note_line and note_line not in ctx.notes:
+        ctx.notes.append(note_line)
+
+
 def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code: int = 1,
            ctx: "Optional[Context]" = None, extra: "Optional[Dict[str, Any]]" = None, **details: Any) -> "None":
     """die() for a refusal a caller has to act on: `error.reason` is a stable snake_case code for
@@ -72,6 +174,7 @@ def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code
 
 def _record(bucket: str, msg: str, code: str, ctx: "Optional[Context]", data: Dict[str, Any], prefix: str) -> Dict[str, Any]:
     ctx = ctx or STATE
+    msg = neutralize(msg)
     entry: Dict[str, Any] = {"code": code, "message": msg}
     entry.update(data)
     # once per run: a decision taken for every encode of a job (an AV1 encoder fallback, a CRF
@@ -101,8 +204,9 @@ def record_skip(msg: str, code: str, *, ctx: "Optional[Context]" = None, **data:
 
 
 def note(msg: str, ctx: "Optional[Context]" = None) -> None:
-    """A plain `notes` line that also goes to stderr."""
+    """A plain `notes` line that also goes to stderr, made inert as messages are (#400)."""
     ctx = ctx or STATE
+    msg = neutralize(msg)
     if msg not in ctx.notes:
         ctx.notes.append(msg)
     sys.stderr.write(f"{msg}\n")
@@ -116,6 +220,9 @@ def _merge_collector(doc: Dict[str, Any], ctx: "Context") -> None:
     extra_notes = [n for n in ctx.notes if n not in (doc.get("notes") or [])]
     if extra_notes:
         doc["notes"] = list(doc.get("notes") or []) + extra_notes
+    if doc.get("notes"):
+        # a tool's own notes can quote an input path (join.py's duplicates): made inert as messages are (#400)
+        doc["notes"] = [neutralize(n) for n in doc["notes"]]
     diag = {k: list(getattr(ctx, k)) for k in ("warnings", "fallbacks", "skipped") if getattr(ctx, k)}
     if diag:
         merged = dict(doc.get("diagnostics") or {})
@@ -580,6 +687,17 @@ def _framecrc_frames(proc: Any, since: Optional[float] = None) -> int:
     return n
 
 
+def file_identity(path: str) -> "Optional[Dict[str, int]]":
+    """{size, mtime_ns} of a file this run wrote or measured (2.24): what ties a later check.py
+    --expect-identity to this file rather than to whatever sits at the path then. None when the
+    path is not a regular file."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns} if os.path.isfile(path) else None
+
+
 def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json.
 
@@ -590,10 +708,15 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
     meta: Dict[str, Any] = {}
     if output and not ctx.dry_run:
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
+        _report_dropped_audio_tracks(meta, ctx)
+        _report_dropped_hdr10_metadata(meta, ctx)
     if ctx.json:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         if meta:
             doc["probe"] = meta
+        identity = file_identity(output) if output and not ctx.dry_run else None
+        if identity:
+            doc["output_identity"] = identity
         # What this tool itself verified about its artifact (issue #189 C, "verify as part of the
         # contract"): the probe every writing tool runs, plus the measurements a tool adds
         # (`verification` extra: loudness after the write, a platform check). `verified` is true
@@ -729,6 +852,21 @@ def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = (), ctx: "Option
     return seen
 
 
+def _planned_outputs(commands: Sequence[str]) -> List[str]:
+    """The file each planned command writes: its last argument, unless that is stdout, a pipe or
+    an option (a measurement's `-f null -`)."""
+    import shlex
+    out: List[str] = []
+    for line in commands:
+        try:
+            toks = shlex.split(line.split("] ", 1)[1] if line.startswith("[dry-run] ") else line)
+        except ValueError:
+            continue
+        if len(toks) > 1 and toks[-1] != "-" and not toks[-1].startswith(("pipe:", "-")):
+            out.append(toks[-1])
+    return out
+
+
 def _plan_unbound_inputs(commands: Sequence[str], ctx: "Optional[Context]" = None) -> List[str]:
     """The inputs _plan_inputs() could not fingerprint because they did not exist when the plan
     was made: a planned command's `-i` file (or a side input registered through
@@ -794,13 +932,29 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         platform = {"youtube": "youtube", "youtube4k": "youtube", "reels": "reels", "x": "x"}.get(cleaned[cleaned.index("--preset") + 1])
     if platform and output and tool != "check":
         verify.append({"tool": "check", "platform": platform})
+    plan_inputs = _plan_inputs(ctx.commands, cleaned, ctx)
+    real = os.path.realpath(path)
+    # every file the plan names (#413 review): its inputs, side inputs included (an SRT, a still),
+    # and the output it promises, a default name too, which apply_common could not know
+    for named in plan_inputs + ([output] if output else []):
+        if os.path.realpath(named) == real:
+            refuse("input", "output_is_input" if named != output else "output_path_taken",
+                   f"--plan {path!r} is also {'the output' if named == output else 'an input'} of this run "
+                   f"({named!r}); give the plan its own path", output=path, other=named)
+    # and every file a planned command writes (its last argument): a tool with several outputs
+    # (loudness.py --versions, whose `output` is null; export.py's key file) names them only there,
+    # and a plan written over one of them is refused as an existing output when it is executed
+    for written in _planned_outputs(ctx.commands):
+        if os.path.realpath(written) == real:
+            refuse("input", "output_path_taken", f"--plan {path!r} is also a file this run writes ({written!r}); "
+                   "give the plan its own path", output=path, other=written)
     doc = {
         "plan_version": PLAN_VERSION,
         "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": tool,
         "argv": cleaned,
         "cwd": os.getcwd(),
-        "inputs": [fingerprint(p) for p in _plan_inputs(ctx.commands, cleaned, ctx)],
+        "inputs": [fingerprint(p) for p in plan_inputs],
         # inputs that did not exist yet, so carry no fingerprint (render.py reports them on execution)
         "unbound_inputs": _plan_unbound_inputs(ctx.commands, ctx),
         "commands": list(ctx.commands),

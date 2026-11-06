@@ -35,11 +35,12 @@ import os
 import sys
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS
+from _common.probe import SILENT_PEAK_DBFS, square_pixels, square_pixels_note
+from _common import still_input_args  # noqa: E402
 from _common import (add_common, apply_common, aac_args, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
-                     fmt_secs, child_args, run_tool, measured_level_dbfs)
-from _common.emit import absorb_stage_hw, warn
+                     fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
+from _common.emit import absorb_stage_hw, note, warn
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -183,7 +184,12 @@ def main() -> int:
             plate = pad_filters(args.width, args.height,
                                 "blur" if args.image_fit == "blur" else "color",
                                 args.background, 20)
-        graph = f"[1:v]{plate},format=rgba[plate];[0:a:{args.audio_stream}]{vf},format=rgba"
+        # a non-square-pixel still is squared at its display aspect before it is fitted (#411)
+        plate_v = probe(args.image, role="input").get("video") if not STATE.dry_run else None
+        plate_sq = square_pixels(plate_v)
+        if plate_sq:
+            note(square_pixels_note(plate_v, "--image"))
+        graph = f"[1:v]{plate_sq + ',' if plate_sq else ''}{plate},format=rgba[plate];[0:a:{args.audio_stream}]{vf},format=rgba"
         if args.opacity < 1.0:
             graph += f",colorchannelmixer=aa={args.opacity:g}"
         # the composite is RGBA (the plate is): converted to the BT.709 the output is tagged with,
@@ -207,14 +213,15 @@ def main() -> int:
     if args.title or args.srt or args.text:
         # the visualisation is rendered first and the label/captions are drawn on it by the tools
         # that own those code paths, so neither is re-implemented here
-        stem, ext = os.path.splitext(output)
-        render = stem + "_vis" + ext
+        # hidden, pid-named siblings (#408): a fixed `<out>_vis` name was removed afterwards
+        # whoever had written it, the input or another file of the caller's included
+        render = sibling_temp(output, "vis")
     cmd = ffmpeg_base() + ["-i", args.input]
     if args.image:
         # -framerate before -loop: a looped still defaults to 25 fps, and overlay takes its rate
         # from the FIRST input -- so without this the file came out 25 fps however loud --fps or
         # --platform said otherwise (the colour-plate path never had the bug: `color=` carries r=).
-        cmd += ["-framerate", f"{args.fps:g}", "-loop", "1", "-i", args.image]
+        cmd += ["-framerate", f"{args.fps:g}", "-loop", "1", *still_input_args(args.image), "-i", args.image]
     cmd += ["-filter_complex", vf]
     if args.image:
         cmd += ["-map", "[v]"]
@@ -227,15 +234,20 @@ def main() -> int:
     if meta.get("duration"):
         cmd += ["-t", f"{float(meta['duration']):.3f}"]
     cmd += ["-shortest", render]
-    stem, ext = os.path.splitext(output)
-    intermediates = [p for p in (render, stem + "_titled" + ext) if p != output]
+    titled_tmp = sibling_temp(output, "titled")
+    intermediates = [p for p in (render, titled_tmp) if p != output]
     try:
         run(cmd)
 
         stages = ["waveform"]
         current = render
         if args.title:
-            titled = stem + "_titled" + ext if (args.srt or args.text) else output
+            titled = titled_tmp if (args.srt or args.text) else output
+            if titled == titled_tmp:
+                # graphics.py's libass route writes <its output stem>_gfx.ass beside it (#413 review)
+                titled_ass = os.path.splitext(titled)[0] + "_gfx.ass"
+                if not os.path.exists(titled_ass):
+                    intermediates.append(titled_ass)
             # a dry run rendered no _vis file for graphics.py to probe, so its default --end (the
             # clip's end) came out 0 and the plan failed: give it the source's duration, which
             # is what -t caps the render at. A real run is unchanged.
@@ -272,6 +284,14 @@ def main() -> int:
             notes.append(f"the visualisation band and {args.platform}'s bottom safe zone overlap by "
                          f"{overlap}px: the captions or the app's own UI will sit over the waveform "
                          f"(lower --vis-height to {max(0.05, (args.height - safe_px) / args.height):.2f})")
+    if STATE.dry_run and (args.title or args.srt or args.text):
+        # graphics.py / caption.py plan on the render this dry run did not write, whose frame they
+        # cannot measure: their sizes and offsets come out 0 in the plan, and the real run takes
+        # them from the WxH render (#415). Said here, so a plan is not read as the real numbers.
+        later = " and ".join(n for n, on in (("title", args.title), ("captions", args.srt or args.text)) if on)
+        notes.append(f"the {later} stage was planned on the visualisation render this dry run did not write, so the "
+                     f"font sizes and offsets in its planned command are placeholders (0); the real run sizes them "
+                     f"from the {args.width}x{args.height} render")
     if silent_peak is not None:
         warn(f"{args.input} is silent (peak {silent_peak:g} dBFS); the visualisation is a flat line", "silent_input",
              path=args.input, peak_db=silent_peak)
