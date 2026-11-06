@@ -199,6 +199,8 @@ def _versions(args, meta: dict, plan: list) -> int:
     for label, lufs, tp in plan:
         out = default_output(args.input, f"loudnorm_{label}")
         stats = measure(args.input, lufs, tp, args.lra)
+        if stats.get("silent"):
+            die("input audio is silent; loudness normalisation is meaningless (use audio.py --replace to add a track)")
         doc = _normalize(args, meta, stats, lufs, tp, out)
         dropped = dropped or bool(doc.get("dropped_non_av_streams"))
         versions.append({"target": label, "output": out, "targets": {"lufs": lufs, "tp": tp, "lra": args.lra},
@@ -237,6 +239,10 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("audio"):
         die("input has no audio stream")
+    if plan is not None and not args.measure_only:
+        # each version measures the master against its own target (loudnorm's offset depends on
+        # it): a pass against -I/--tp first would be one more full decode whose result is unused
+        return _versions(args, meta, plan)
 
     stats = measure(args.input, args.lufs, args.tp, args.lra)
     if stats.get("silent"):
@@ -257,8 +263,6 @@ def main() -> int:
             print(json.dumps(measured, indent=2))
         return 0
 
-    if plan is not None:
-        return _versions(args, meta, plan)
     output = args.output or default_output(args.input, "loudnorm")
     doc = _normalize(args, meta, stats, args.lufs, args.tp, output)
     emit(doc.pop("output"), **doc)

@@ -817,9 +817,21 @@ class EditingTests(MediaFixtures):
         self.assertEqual(doc["expected_duration"], 19.0)
         self.assertTrue(doc["verified"], doc["verification"])
 
+    def test_loop_conformed_frames_never_falls_back_to_the_stored_count(self):
+        """#430 review: with no stream duration and no DURATION tag, _conformed_frames() fell back
+        to nb_frames, the count fps= does not keep (299 stored over 10 s at 30 fps is 300 after
+        it); it falls back to the container's length."""
+        import importlib
+        loop = importlib.import_module("loop")
+        self.assertEqual(loop._conformed_frames({"nb_frames": 299}, 30.0, 10.0), 300)
+        self.assertEqual(loop._conformed_frames({"nb_frames": 299, "duration": 10.0}, 30.0, 12.0), 300)
+        self.assertEqual(loop._conformed_frames({"tagged_duration": 9.0}, 30.0, 10.0), 270)
+
     def test_loop_crossfade_refusals(self):
         for extra, reason in ((["--crossfade", "100"], "at most half"), (["--crossfade", "0.001"], "shorter than one frame"),
-                              (["--crossfade", "1", "--boomerang"], "cannot be combined")):
+                              (["--crossfade", "1", "--boomerang"], "cannot be combined"),
+                              # #430 review: round() raised on these and --json printed a traceback
+                              (["--crossfade", "nan"], "finite"), (["--crossfade", "inf"], "finite")):
             proc = script("loop.py", self.src, "--times", "2", *extra, "--json", expect_fail=True)
             self.assertIn(reason, json.loads(proc.stdout)["error"]["message"])
 

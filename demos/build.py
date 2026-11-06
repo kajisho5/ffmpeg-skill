@@ -123,6 +123,12 @@ class Ctx:
     def note(self, text):
         self.notes.append(text)
 
+    def expect(self, path, what):
+        """A file the last command must have written; the docs recorder (_DryCtx) runs nothing, so
+        there it is a no-op and the commands after it are still recorded."""
+        if not Path(path).exists():
+            raise BuildError("%s did not write %s" % (what, path))
+
 
 def _short(arg) -> str:
     """Render an argument for the docs: absolute paths under demos/out become relative."""
@@ -793,8 +799,7 @@ def demo_template_tiktok(ctx):
     after = ctx.path("after.mp4")
     ctx.script("render.py", before, "--template", "tiktok", "--cues", FIX / "cues_en.txt",
                "--fast", "-o", after)
-    if not after.exists():
-        raise BuildError("render.py --template tiktok did not write %s" % after)
+    ctx.expect(after, "render.py --template tiktok")
     ctx.note("1080x1920, captions clear of TikTok's description bar, check.py --platform tiktok passes")
     return before, after
 
@@ -803,14 +808,12 @@ def demo_render_project(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
     ctx.script("render.py", FIX / "project.json", "--fast")
-    if not after.exists():
-        raise BuildError("render.py did not write %s" % after)
+    ctx.expect(after, "render.py")
     # 2.1: the same project as an editor timeline (nothing rendered), so every demo build runs
     # --export-timeline end to end and the gallery shows the command next to the render
     timeline = ctx.path("timeline.otio")
     ctx.script("render.py", FIX / "project.json", "--export-timeline", timeline)
-    if not timeline.exists():
-        raise BuildError("render.py --export-timeline did not write %s" % timeline)
+    ctx.expect(timeline, "render.py --export-timeline")
     ctx.note("the same project also opens in an editor: --export-timeline writes .otio / .fcpxml / .edl")
     return before, after
 
@@ -820,8 +823,7 @@ def demo_render_pip(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
     ctx.script("render.py", FIX / "project_pip.json", "--fast")
-    if not after.exists():
-        raise BuildError("render.py did not write %s" % after)
+    ctx.expect(after, "render.py")
     ctx.note('overlays[]: {"video": "green.mp4", "chromakey": "0x00b140", "position": "bottom", "scale": 540}')
     return before, after
 
@@ -1838,11 +1840,17 @@ class _DryCtx(Ctx):
         self.commands.append(" ".join(["python3", "scripts/" + tool] + [_short(a) for a in args]))
         return ""
 
+    def expect(self, path, what):
+        pass  # nothing ran, so nothing was written: keep recording the commands that follow
+
 
 def _commands_for(name):
     """Replay a demo's builder against a recorder, so the docs print the exact command the
     build runs rather than a hand-copied approximation of it."""
     ctx = _DryCtx(name, verbose=False)
+    # a builder that writes a side file (an SRT, a cue list) before its command needs the folder:
+    # without it the replay stopped there and the page printed "..." for the commands
+    OUT.mkdir(parents=True, exist_ok=True)
     global ffmpeg, duration
     real_ffmpeg, real_duration = ffmpeg, duration
     ffmpeg, duration = (lambda *a: None), (lambda p: 0.0)

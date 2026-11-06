@@ -201,9 +201,10 @@ def vp9_alpha_tagged(path: str) -> bool:
 _MEASURE_W, _MEASURE_H = 64, 36  # the measuring copy: small enough to read every frame, large enough for exact edges
 
 
-def _frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, float] | None":
+def _frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, object] | None":
     """Every decoded frame of `path` through `chain` to a 64x36 grey copy: {mean (over every frame),
-    min (the lowest frame's mean), frames}. None when no frame decodes."""
+    min (the lowest frame's mean), frames, per_frame (each frame's mean, in decode order)}. None
+    when no frame decodes."""
     w, h = _MEASURE_W, _MEASURE_H
     cmd = cmd_head + ["-i", path, "-map", "0:v:0", "-vf", f"{chain},scale={w}:{h}:flags=area,format=gray",
                       "-f", "rawvideo", "-"]
@@ -213,30 +214,43 @@ def _frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, float
     if proc.returncode != 0 or len(data) < size:
         return None
     frames = [sum(data[i:i + size]) / size for i in range(0, len(data) - size + 1, size)]
-    return {"mean": sum(frames) / len(frames), "min": min(frames), "frames": len(frames)}
+    return {"mean": sum(frames) / len(frames), "min": min(frames), "frames": len(frames), "per_frame": frames}
 
 
-def alpha_stats(path: str, codec: "str | None" = None) -> "Dict[str, float] | None":
-    """The alpha (0-255) of every decoded frame, on a 64x36 copy: {mean, min, frames}. 255.0 is
-    fully opaque, and a picture with no alpha plane reads 255 too (format=rgba fills it). Every
-    frame, not the first: a clip that opens fully opaque and turns transparent later would read
-    as opaque from its first frame, in the source and in a written file that lost its alpha. A
-    VP9 file is decoded with libvpx-vp9 (vp9_decoder_args). None when no frame decodes."""
+def alpha_stats(path: str, codec: "str | None" = None) -> "Dict[str, object] | None":
+    """The alpha (0-255) of every decoded frame, on a 64x36 copy: {mean, min, frames, per_frame}.
+    255.0 is fully opaque, and a picture with no alpha plane reads 255 too (format=rgba fills it).
+    Every frame, not the first: a clip that opens fully opaque and turns transparent later would
+    read as opaque from its first frame, in the source and in a written file that lost its alpha.
+    A VP9 file is decoded with libvpx-vp9 (vp9_decoder_args). None when no frame decodes."""
     head = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin"] + vp9_decoder_args(codec)
     return _frame_means(head, path, "format=rgba,alphaextract")
 
 
-ALPHA_TOLERANCE = 2.0  # of 255, on the mean over every frame and on the most transparent frame
+ALPHA_TOLERANCE = 2.0  # of 255, per frame (or on the mean and the most transparent frame, below)
 OPAQUE = 254.5         # a frame whose mean alpha is at least this is fully opaque
 
 
-def _alpha_matches(written: "Dict[str, float] | None", source: "Dict[str, float] | None") -> bool:
-    return (written is not None and source is not None
-            and abs(written["mean"] - source["mean"]) <= ALPHA_TOLERANCE
-            and abs(written["min"] - source["min"]) <= ALPHA_TOLERANCE)
+def _alpha_compare(written, source) -> Dict[str, object]:
+    """The written file's alpha against the source's. With the same number of frames, frame by
+    frame (frame i against frame i, each within ALPHA_TOLERANCE): an aggregate let a loss confined
+    to a few frames through (one of 200 frames turned opaque moves the mean by ~1). With a
+    different count (a variable-rate source conformed to a constant rate repeats or drops frames,
+    so indices no longer pair), the mean and the most transparent frame, and `paired: false`
+    says so. {ok, paired, worst_delta, worst_frame}."""
+    if written is None or source is None:
+        return {"ok": False, "paired": None, "worst_delta": None, "worst_frame": None}
+    w, s = written.get("per_frame") or [], source.get("per_frame") or []
+    if w and len(w) == len(s):
+        deltas = [abs(a - b) for a, b in zip(w, s)]
+        worst = max(range(len(deltas)), key=deltas.__getitem__)
+        return {"ok": deltas[worst] <= ALPHA_TOLERANCE, "paired": True, "worst_delta": round(deltas[worst], 2),
+                "worst_frame": worst}
+    delta = max(abs(written["mean"] - source["mean"]), abs(written["min"] - source["min"]))
+    return {"ok": delta <= ALPHA_TOLERANCE, "paired": False, "worst_delta": round(delta, 2), "worst_frame": None}
 
 
-def _rounded(st: "Dict[str, float] | None") -> "Dict[str, float] | None":
+def _rounded(st) -> "Dict[str, float] | None":
     return None if st is None else {"mean": round(st["mean"], 2), "min": round(st["min"], 2), "frames": st["frames"]}
 
 
@@ -267,21 +281,26 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     tc_args = ["-timecode", tc] if tc else []
     cmd = cmd + ["-filter_complex", f"[0:v:0]split[f][k];[f]{fill_chain}[fill];[k]{key_chain}[key]"]
     cmd += ["-map", "[fill]"] + (["-map", "0:a:0"] if has_audio else []) + p["video"] + tc_args + cfr_args(meta)
+    # the fill is always written to a hidden sibling and moved into place only after the encode
+    # succeeds: run() stages and cleans up only ffmpeg's last output (the key), so a failed encode
+    # left a partial new fill (the retry was refused as output_exists) or truncated an existing one
     fill_tmp = None
+    if not STATE.dry_run:
+        d, base = os.path.split(output)
+        stem, ext = os.path.splitext(base)
+        fill_tmp = os.path.join(d, f".{stem}.ffskill-fill-{os.getpid()}{ext}")
+    cmd += (p["audio"] if has_audio else ["-an"]) + [fill_tmp or output]
+    cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key]
     try:
-        if not STATE.dry_run and os.path.isfile(output) and os.path.realpath(output) not in STATE.written:
-            d, base = os.path.split(output)
-            stem, ext = os.path.splitext(base)
-            fill_tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
-        cmd += (p["audio"] if has_audio else ["-an"]) + [fill_tmp or output]
-        cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key]
         run(cmd)
         if fill_tmp:
             os.replace(fill_tmp, output)
-            fill_tmp = None
     finally:
-        if fill_tmp and os.path.exists(fill_tmp):
-            os.remove(fill_tmp)
+        if fill_tmp:
+            # the command is recorded with the path the caller asked for, not the temp name
+            STATE.commands[:] = [c.replace(fill_tmp, output) for c in STATE.commands]
+            if os.path.exists(fill_tmp):
+                os.remove(fill_tmp)
     remember_written(output, key)
     extra: Dict[str, object] = {"alpha_mode": args.alpha_mode or "straight", "key": {"output": key}}
     # a fill and a key for a switcher carry the picture and the sound; the source's subtitle and
@@ -305,7 +324,8 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     steps = [{"step": "key_fill_pair", "property": "frames_size_rate_length", "ok": same, "measured": pair,
               "provenance": "output_measurement"}]
     key_level = _luma_stats(key)
-    steps.append({"step": "key_level", "property": "key_mean_vs_source_alpha", "ok": _alpha_matches(key_level, source_alpha),
+    level = _alpha_compare(key_level, source_alpha)
+    steps.append({"step": "key_level", "property": "key_mean_vs_source_alpha", "ok": level["ok"], "comparison": level,
                   "expected": None if source_alpha is None else round(source_alpha["mean"], 2),
                   "measured": None if key_level is None else round(key_level["mean"], 2), "tolerance": ALPHA_TOLERANCE,
                   "frames": {"expected": _rounded(source_alpha), "measured": _rounded(key_level)},
@@ -739,12 +759,13 @@ def main() -> int:
     if p.get("alpha"):
         extra["alpha_mode"] = args.alpha_mode or "straight"
         if not STATE.dry_run:
-            # the alpha survived when the written file's alpha matches the source's over every frame
-            # -- the mean and the most transparent frame -- (an encoder, decoder or muxer that drops
-            # it reads fully opaque); premultiplying changes colour, not alpha
+            # the alpha survived when every written frame's alpha matches the source frame's (an
+            # encoder, decoder or muxer that drops it reads fully opaque); premultiplying changes
+            # colour, not alpha
             written_alpha = alpha_stats(output, v.get("codec"))
+            cmp = _alpha_compare(written_alpha, source_alpha)
             extra.setdefault("verification", []).append(
-                {"step": "alpha", "property": "alpha_mean", "ok": _alpha_matches(written_alpha, source_alpha),
+                {"step": "alpha", "property": "alpha_mean", "ok": cmp["ok"], "comparison": cmp,
                  "expected": None if source_alpha is None else round(source_alpha["mean"], 2),
                  "measured": None if written_alpha is None else round(written_alpha["mean"], 2), "tolerance": ALPHA_TOLERANCE,
                  "frames": {"expected": _rounded(source_alpha), "measured": _rounded(written_alpha)},

@@ -129,8 +129,10 @@ def _conformed_frames(v, rate: float, src_dur: float) -> int:
     variable-rate stream and drops crowded frames, so its count follows the stream's length, not
     the frames stored (299 stored frames over 10 s at 30 fps come out 300). The unit's trims and
     its length are counted in these, or a repeat is a frame or more off the length planned."""
-    d = v.get("duration") or v.get("tagged_duration")
-    return int(round(float(d) * rate)) if d else _frame_count(v, rate, src_dur)
+    # the video stream's length, else Matroska's tag, else the container's (main() refuses a source
+    # without one): never the stored frame count, which is what fps= does not keep
+    d = v.get("duration") or v.get("tagged_duration") or src_dur
+    return int(round(float(d) * rate))
 
 
 def _seamless_unit_cmd(meta, src: str, unit: str, rate: str, frames: int, fade_frames: int, has_audio: bool) -> list:
@@ -266,6 +268,8 @@ def main() -> int:
         frames = _conformed_frames(v, fps, src_dur)
         require_filter("xfade", "--crossfade")
         fade = time_arg(args.crossfade, "--crossfade", v.get("fps"))
+        if not math.isfinite(fade):
+            die(f"--crossfade must be a finite number of seconds, got {args.crossfade!r}")
         fade_frames = round(fade * fps)
         if fade_frames < 1:
             die(f"--crossfade {args.crossfade!r} is shorter than one frame ({1 / fps:.3f}s at {fps:g} fps)")

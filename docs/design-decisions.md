@@ -2867,8 +2867,11 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   Test: `HwEverywhereTests.test_export_alpha_presets_stay_on_prores_ks_under_hw_and_a_dry_run_decodes_nothing`.
 - **Alpha is compared over every frame, not the first.** A graphic that opens fully opaque read 255
   in the source and in a file that lost its alpha, so the check passed either way. The source and
-  the written file are each decoded once to a 64x36 copy; the mean and the most transparent frame
-  must agree within 2 of 255. A dry run decodes nothing: it decides from the pixel format and a VP9
+  the written file are each decoded once to a 64x36 copy and compared frame by frame, each within
+  2 of 255 (an aggregate let a loss in a few frames through: one of 200 frames turned opaque moves
+  the mean by ~1). Where the frame counts differ (a variable-rate source conformed to a constant
+  rate), indices do not pair, so the mean and the most transparent frame are compared and
+  `comparison.paired` is false. A dry run decodes nothing: it decides from the pixel format and a VP9
   stream's `alpha_mode` tag. A VP9 source is decoded with libvpx-vp9 (the native decoder drops the
   alpha layer). Code: `export.alpha_stats()`, `vp9_decoder_args()`, `vp9_alpha_tagged()`. Tests:
   `test_export_alpha_review_430`, the test above.
@@ -2876,8 +2879,9 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   a switcher's keyer as a pair; a subtitle or data track has no place there, so the source's are
   listed in `non_av_streams.dropped` with `reason: key_fill` (as a GIF's are) rather than mapped.
   Both files are guarded as outputs (the fill is not ffmpeg's last argument, which `run()` guards)
-  and an existing fill is written through a temp file. Code: `export._key_fill()`. Test:
-  `test_export_key_fill_review_430`.
+  and the fill is written through a temp file, moved into place only after the encode succeeds
+  (a failed encode leaves no partial fill, new or replaced). Code: `export._key_fill()`. Tests:
+  `test_export_key_fill_review_430`, `test_export_key_fill_failure_removes_only_a_fill_it_created`.
 - **A `--plan` path may not be any file a planned command writes**, not only `output`: `loudness.py
   --versions` has no single output, and a plan over a version file was refused as an existing output
   when it was executed. Code: `_common.emit.write_plan()`, `_planned_outputs()`. Test:

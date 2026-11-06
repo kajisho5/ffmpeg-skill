@@ -1027,6 +1027,18 @@ class AnalysisTests(MediaFixtures):
            "-c:v", "libx264", square)
         proc = script("look.py", square, "--at", "0.5", "--guides", "4:3", "--json", expect_fail=True)
         self.assertIn("4:3 centre cut", json.loads(proc.stdout)["error"]["message"])
+        # #430 review: under --compare the guides are drawn on each picture as scaled, before the pad
+        # that letterboxes it (a 2:1 clip beside 16:9 got guides from the padded height); the
+        # timecode is drawn after it
+        wide = OUT / "guides_wide.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x320:r=10:d=1",
+           "-c:v", "libx264", wide)
+        doc = json.loads(script("look.py", self.src, "--compare", wide, "--at", "0.5", "--guides", "title,4:3", "--json",
+                                "-o", OUT / "guides_compare_wide.png").stdout)
+        graph = next(c for c in doc["commands"] if "hstack" in c)
+        for branch in graph.split(";")[:2]:
+            self.assertLess(branch.rindex("drawbox"), branch.index("pad="), branch)
+            self.assertLess(branch.index("pad="), branch.index("drawtext"), branch)
         # #430 review: the guides are drawn on both pictures of --compare, so the second is checked too
         proc = script("look.py", self.src, "--compare", square, "--at", "0.5", "--guides", "4:3", "--json",
                       "-o", OUT / "guides_compare.png", expect_fail=True)

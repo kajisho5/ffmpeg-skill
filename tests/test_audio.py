@@ -286,6 +286,10 @@ class AudioTests(MediaFixtures):
         for bad in ("bogus", "-16", "-3/-1", "streaming,streaming", "", ","):
             proc = script("loudness.py", src, f"--versions={bad}", "--json", expect_fail=True)
             self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", bad)
+        # each version measures the master once against its own target, and nothing else does (#430
+        # review: a pass against the default -I/--tp ran first and was never used)
+        doc = json.loads(script("loudness.py", src, "--versions=streaming,ebu-r128", "--dry-run", "--overwrite", "--json").stdout)
+        self.assertEqual(sum("print_format=json" in c for c in doc["commands"]), 2, doc["commands"])
         # a --plan written over one of the version files would be refused as an existing output when executed
         taken = OUT / "versions_src_loudnorm_ebu-r128.mp4"
         if taken.exists():

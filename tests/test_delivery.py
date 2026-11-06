@@ -178,6 +178,71 @@ class DeliveryTests(MediaFixtures):
                       "-o", OUT / "keyfill_rv_mb.mov", expect_fail=True)
         self.assertIn("key-fill", json.loads(proc.stdout)["error"]["message"])
 
+    def test_export_key_fill_failure_removes_only_a_fill_it_created(self):
+        """#430 review: run() cleans up ffmpeg's last output (the key) after a failed encode, not the
+        fill before it, so a partial fill was left and the retry refused it as output_exists. A
+        fill this run created is removed; one that was there before is never touched (it is
+        written through a temp file, which is removed too). In-process, with an encode that writes
+        part of the fill and then fails."""
+        import contextlib
+        import importlib
+        import io
+        from unittest import mock
+        from _common import STATE
+        export = importlib.import_module("export")
+        src = OUT / "keyfill_fail_src.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba", "-c:v", "qtrle", src)
+        real_run = export.run
+
+        def failing_run(cmd, **kw):
+            if "-filter_complex" not in cmd:
+                return real_run(cmd, **kw)
+            fill_out = cmd[cmd.index("[key]") - 2]  # the fill's path, just before -map [key]
+            Path(fill_out).write_bytes(b"partial")
+            raise SystemExit(1)
+
+        def attempt(fill, *extra):
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(export, "run", failing_run), \
+                    mock.patch.object(sys, "argv", ["export.py", str(src), "--preset", "key-fill", "-o", str(fill), *extra]), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                STATE.reset()
+                with self.assertRaises(SystemExit):
+                    export.main()
+            STATE.reset()
+
+        fill = OUT / "keyfill_fail_new.mov"
+        if fill.exists():
+            fill.unlink()
+        attempt(fill)
+        self.assertFalse(fill.exists(), "a partial fill this run created is removed")
+        self.assertEqual([f.name for f in OUT.glob(".keyfill_fail_new.ffskill-*")], [])
+        kept = OUT / "keyfill_fail_kept.mov"
+        kept.write_bytes(b"the caller's file")
+        attempt(kept, "--overwrite")
+        self.assertEqual(kept.read_bytes(), b"the caller's file")
+        self.assertEqual([f.name for f in OUT.glob(".keyfill_fail_kept.ffskill-*")], [])
+
+    def test_export_alpha_is_compared_frame_by_frame(self):
+        """#430 review: 200 frames, two of them transparent, written with one of those turned
+        opaque. The aggregate kept the same min and moved the mean by 1.275 (inside 2), so it
+        passed; frame i against frame i fails at that frame. A different frame count (a conformed
+        variable-rate source) falls back to the aggregate and says it did (`paired: false`)."""
+        import importlib
+        export = importlib.import_module("export")
+
+        def stats(per):
+            return {"mean": sum(per) / len(per), "min": min(per), "frames": len(per), "per_frame": per}
+        src = [255.0] * 198 + [0.0, 0.0]
+        lost = [255.0] * 198 + [255.0, 0.0]
+        cmp = export._alpha_compare(stats(lost), stats(src))
+        self.assertEqual((cmp["ok"], cmp["paired"], cmp["worst_frame"]), (False, True, 198))
+        self.assertTrue(export._alpha_compare(stats([v + 1.5 for v in src[:-2]] + [1.0, 1.0]), stats(src))["ok"])
+        cmp = export._alpha_compare(stats(src + [0.0]), stats(src))
+        self.assertEqual((cmp["ok"], cmp["paired"]), (True, False))
+        self.assertFalse(export._alpha_compare(None, stats(src))["ok"])
+
     def test_export_max_mb_refuses_gif_and_a_limit_that_constrains_nothing(self):
         """2.24.1: --preset gif returned before --max-mb was applied, so a 0.7 MB GIF passed a 1 KB
         limit as verified; --max-mb 1e9 reached libx264 as an impossible bitrate (kind ffmpeg)."""

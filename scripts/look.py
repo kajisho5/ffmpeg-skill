@@ -307,15 +307,18 @@ def main() -> int:
                 out = os.path.join(outdir, f"{stem_part}_vs_{Path(args.compare).stem}_{idx}_{sec:.3f}s.png")
             half = args.width // 2
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            tcs = tc.replace("," + timecode_filter(font_prefix), "") + stamp
+            # the tone map and the --safe / --guides boxes go on each picture as scaled, before the
+            # pad: drawn after it, a picture letterboxed in the box got guides from the padded
+            # height (a 2:1 clip beside a 16:9 one); the timecode stamp is drawn on the box
+            pre = tc.replace("," + timecode_filter(font_prefix), "")
             # each picture keeps its own aspect inside a half-width box as tall as the taller of the
             # two (letterboxed, not stretched): through 3.1.3 scale2ref forced the first to the
             # second's size, so a 4:3 beside a 16:9 came out squashed (#411)
             box_h = max(_half_height(half, display_size(meta["video"])),
                         _half_height(half, display_size(cmeta.get("video"))))
-            fit = (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease,"
-                   f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1")
-            fc = (f"[0:v]{lab}{sq}{fit}{tcs}[a];[1:v]{lab2}{csq}{fit}{tcs}[b];"
+            fit = (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease{pre},"
+                   f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp}")
+            fc = (f"[0:v]{lab}{sq}{fit}[a];[1:v]{lab2}{csq}{fit}[b];"
                   f"[a][b]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-ss", f"{sec:.3f}", *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]

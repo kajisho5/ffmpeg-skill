@@ -1937,8 +1937,9 @@ rate and colour tags and read the written codec and profile back (`codec` verifi
 The alpha presets `prores4444`, `prores4444xq` (16-bit alpha), `qtrle`, `vp9-alpha` (WebM, Opus)
 and `hap-alpha` (an ffmpeg built with snappy; width and height multiples of 4) refuse a source
 without alpha, take `--alpha-mode straight|premultiplied` (default straight, reported as
-`alpha_mode`), and compare the written file's alpha over every frame with the source's -- the
-mean and the most transparent frame (`alpha` step). A VP9 source is decoded with libvpx-vp9 (the
+`alpha_mode`), and compare the written file's alpha with the source's frame by frame, each within 2 of 255
+(`alpha` step; a different frame count falls back to the mean and the most transparent frame,
+`comparison.paired: false`). A VP9 source is decoded with libvpx-vp9 (the
 native decoder drops the alpha); a dry run decides from the pixel format and a VP9 stream's
 `alpha_mode` tag without decoding. Under `--hw` these presets stay on the CPU (VideoToolbox's ProRes
 is 422 HQ, with no alpha), and a note says so. PNG/EXR image sequences are not written by `export.py`.
