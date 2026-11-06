@@ -1027,6 +1027,10 @@ class AnalysisTests(MediaFixtures):
            "-c:v", "libx264", square)
         proc = script("look.py", square, "--at", "0.5", "--guides", "4:3", "--json", expect_fail=True)
         self.assertIn("4:3 centre cut", json.loads(proc.stdout)["error"]["message"])
+        # #430 review: the guides are drawn on both pictures of --compare, so the second is checked too
+        proc = script("look.py", self.src, "--compare", square, "--at", "0.5", "--guides", "4:3", "--json",
+                      "-o", OUT / "guides_compare.png", expect_fail=True)
+        self.assertIn("--compare clip", json.loads(proc.stdout)["error"]["message"])
         proc = script("look.py", square, "--at", "0.5", "--guides", "nope", "--json", expect_fail=True)
         self.assertIn("--guides takes", json.loads(proc.stdout)["error"]["message"])
 

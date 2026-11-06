@@ -282,9 +282,17 @@ class AudioTests(MediaFixtures):
             self.assertAlmostEqual(float(v["result"]["input_i"]), lufs, delta=1.0)
         self.assertEqual({s["version"] for s in doc["verification"] if s["step"] == "loudness"},
                          {"streaming", "broadcast-jp", "m16lufsm1_5tp"})
-        for bad in ("bogus", "-16", "-3/-1", "streaming,streaming"):
+        # "" and "," (#430 review): an explicitly empty list was read as "not given" and wrote one default file
+        for bad in ("bogus", "-16", "-3/-1", "streaming,streaming", "", ","):
             proc = script("loudness.py", src, f"--versions={bad}", "--json", expect_fail=True)
             self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", bad)
+        # a --plan written over one of the version files would be refused as an existing output when executed
+        taken = OUT / "versions_src_loudnorm_ebu-r128.mp4"
+        if taken.exists():
+            taken.unlink()
+        proc = script("loudness.py", src, "--versions=streaming,ebu-r128", "--plan", taken, "--overwrite", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
+        self.assertFalse(taken.exists())
 
     def test_loudness_json_reports_the_measurement_and_the_targets(self):
         """1.13: --json carries the input's own loudnorm measurement (including its loudness

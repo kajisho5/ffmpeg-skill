@@ -805,6 +805,18 @@ class EditingTests(MediaFixtures):
         self.assertEqual(doc["seam"]["at"], "end_to_start")
         self.assertClose(doc["probe"]["duration"], doc["expected_duration"], 0.05)
 
+    def test_loop_crossfade_counts_the_frames_after_the_rate_conform(self):
+        """#430 review: 299 stored frames over 10 s at 30 fps (one frame missing) come out of the
+        crossfade's fps= as 300; the unit was planned from the 299 and the loop re-timed to the
+        source's 29.9 average, so the file missed its own expected length by two frames."""
+        gap = OUT / "loop_xf_gap.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=10",
+           "-vf", "select='not(eq(n\\,150))'", "-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "ultrafast", gap)
+        doc = json.loads(script("loop.py", gap, "--crossfade", "0.5", "--times", "2", "--json", "--preset", "veryfast",
+                                "-o", OUT / "loop_xf_gap_out.mp4").stdout)
+        self.assertEqual(doc["expected_duration"], 19.0)
+        self.assertTrue(doc["verified"], doc["verification"])
+
     def test_loop_crossfade_refusals(self):
         for extra, reason in ((["--crossfade", "100"], "at most half"), (["--crossfade", "0.001"], "shorter than one frame"),
                               (["--crossfade", "1", "--boomerang"], "cannot be combined")):

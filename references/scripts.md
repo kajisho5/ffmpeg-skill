@@ -1905,7 +1905,8 @@ two-pass normalisation measured after: `streaming` (-14 LUFS / -1 dBTP),
 `LUFS/TP` pair (write `--versions=...` when the list starts with a `-`). Files are `<name>_loudnorm_<target>.<ext>` (`-o` is refused);
 the result's `versions` lists each target, file and measurement, its
 verification steps carry a `version` key, and `verified` holds only when every
-version met its own target.
+version met its own target. An empty list (`--versions=`) is refused, and so is a `--plan` path
+that is one of the version files.
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the
@@ -1936,14 +1937,19 @@ rate and colour tags and read the written codec and profile back (`codec` verifi
 The alpha presets `prores4444`, `prores4444xq` (16-bit alpha), `qtrle`, `vp9-alpha` (WebM, Opus)
 and `hap-alpha` (an ffmpeg built with snappy; width and height multiples of 4) refuse a source
 without alpha, take `--alpha-mode straight|premultiplied` (default straight, reported as
-`alpha_mode`), and compare the mean alpha of the first written frame with the source's (`alpha`
-step). PNG/EXR image sequences are not written by `export.py`.
+`alpha_mode`), and compare the written file's alpha over every frame with the source's -- the
+mean and the most transparent frame (`alpha` step). A VP9 source is decoded with libvpx-vp9 (the
+native decoder drops the alpha); a dry run decides from the pixel format and a VP9 stream's
+`alpha_mode` tag without decoding. Under `--hw` these presets stay on the CPU (VideoToolbox's ProRes
+is 422 HQ, with no alpha), and a note says so. PNG/EXR image sequences are not written by `export.py`.
 `--preset key-fill` writes a switcher's key/fill pair from an alpha source in one run: the fill
 (`-o`, the colour; `--alpha-mode premultiplied` premultiplies it) and the key (`<out stem>_key.mov`,
 the alpha as a luma matte: alpha 255 is video white, 0 black), both ProRes 422 HQ with the source's
-start timecode. It checks both have the same size, frame count, rate and length (`key_fill_pair`)
-and the key's level against the source's alpha (`key_level`), and reports both SHA-256 hashes
-(`fill_sha256`, `key.sha256`).
+start timecode. It checks both have the same size, frame count, rate and video length (`key_fill_pair`)
+and the key's level against the source's alpha over every frame (`key_level`), and reports both
+SHA-256 hashes (`fill_sha256`, `key.sha256`). Both paths are guarded like `-o` (not the input, not
+an existing file without `--overwrite`, written through a temp file); the source's subtitle/data
+streams are not written (`non_av_streams.dropped`, `reason: key_fill`); `--max-mb` is refused.
 `--repair` (2.24, `--preset copy` only) remuxes a damaged file: timestamps are regenerated
 (`-fflags +genpts`), packets flagged corrupt are dropped (`+discardcorrupt`), demuxing goes on past
 errors (`-err_detect ignore_err`) and negative timestamps are shifted to zero. The input is read,

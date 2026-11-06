@@ -944,6 +944,20 @@ def demo_loop_times(ctx):
     return before, after
 
 
+def demo_loop_crossfade(ctx):
+    """The same 1.5 s clip looped four times, plain against --crossfade: the plain loop jumps at
+    every seam, the crossfaded one fades the clip's last 0.4 s into its first."""
+    clip = ctx.path("clip.mp4")
+    before = ctx.path("before.mp4")
+    after = ctx.path("after.mp4")
+    ctx.script("cut.py", FIX / "life.mp4", "--start", "0", "--duration", "1.5", "--accurate",
+               "--preset", "veryfast", "-o", clip)
+    ctx.script("loop.py", clip, "--times", "4", "--preset", "veryfast", "-o", before)
+    ctx.script("loop.py", clip, "--times", "4", "--crossfade", "0.4", "--preset", "veryfast", "-o", after)
+    ctx.note("%.1f s plain, %.1f s with the fade (each repeat is 0.4 s shorter)" % (duration(before), duration(after)))
+    return before, after
+
+
 def demo_insert_still(ctx):
     """A still becomes a timed clip with a Ken Burns move, then lands in the middle of the
     timeline: insert.py makes the card, join.py puts it between the two shots."""
@@ -1630,8 +1644,11 @@ _ROWS = [
      "The clip stops dead at 2 s for a beat and a half while the title card sits over it, then carries on -- everything after the freeze is pushed later, nothing is lost.",
      demo_freeze_hold, "video", "latin"),
     ("loop_times", PICTURE, "Loop a short clip",
-     "A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut, which is a judgement about the material, not a flag.",
+     "A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut (--crossfade, below, fades it).",
      demo_loop_times, "video", None),
+    ("loop_crossfade", PICTURE, "A seamless loop",
+     "The same clip looped four times, plain (left) and with loop.py --crossfade 0.4 (right): the plain loop jumps back at every seam, the crossfaded one fades the clip's last 0.4 s into its first, so each repeat runs on into the next.",
+     demo_loop_crossfade, "video", None),
     ("insert_still", PICTURE, "A still card dropped into the timeline",
      "insert.py turns one PNG into a 2 s clip with a slow zoom and pan, and join.py cross-fades it in between the two shots.",
      demo_insert_still, "video", None),

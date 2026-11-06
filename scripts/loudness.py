@@ -191,13 +191,10 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             "targets": {"lufs": lufs, "tp": tp_max, "lra": args.lra}, "verification": verification}
 
 
-def _versions(args, meta: dict) -> int:
+def _versions(args, meta: dict, plan: list) -> int:
     """--versions: one file per target from the one master, each a whole two-pass normalisation
     (pass 1 is per target: loudnorm's target_offset depends on it) measured after. `verified` is
     true only when every version met its own target."""
-    plan = parse_versions(args.versions)
-    if args.output:
-        die("--versions writes one file per target, named <name>_loudnorm_<target>.<ext>; it does not take -o")
     versions, steps, dropped = [], [], False
     for label, lufs, tp in plan:
         out = default_output(args.input, f"loudnorm_{label}")
@@ -231,6 +228,11 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    # parsed before anything is measured, and an explicitly empty --versions ('' or ',') is refused
+    # by parse_versions rather than read as "not given", which wrote one default file instead
+    plan = parse_versions(args.versions) if args.versions is not None else None
+    if plan is not None and args.output:
+        die("--versions writes one file per target, named <name>_loudnorm_<target>.<ext>; it does not take -o")
 
     meta = probe(args.input)
     if not meta.get("audio"):
@@ -255,8 +257,8 @@ def main() -> int:
             print(json.dumps(measured, indent=2))
         return 0
 
-    if args.versions:
-        return _versions(args, meta)
+    if plan is not None:
+        return _versions(args, meta, plan)
     output = args.output or default_output(args.input, "loudnorm")
     doc = _normalize(args, meta, stats, args.lufs, args.tp, output)
     emit(doc.pop("output"), **doc)

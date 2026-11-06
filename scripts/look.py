@@ -288,6 +288,11 @@ def main() -> int:
         if not args.at:
             die("--compare needs --at TIME")
         cmeta = probe(args.compare)
+        if guides and any(g.get("guide") == "4:3" for g in guides):
+            # the guides are drawn on both pictures: the second must be wider than 4:3 as well
+            cw, ch = display_size(cmeta.get("video") or {})
+            if cw and ch and cw / ch < 4 / 3 + 0.01:
+                die(f"--guides 4:3 draws the 4:3 centre cut of a wider frame; the --compare clip is {cw}x{ch}")
         lab2 = bt709_label_filter(cmeta)
         lab2 = lab2 + "," if lab2 else ""
         csq = (square_pixels(cmeta.get("video")) + ",") if square_pixels(cmeta.get("video")) else ""

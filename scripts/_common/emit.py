@@ -852,6 +852,21 @@ def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = (), ctx: "Option
     return seen
 
 
+def _planned_outputs(commands: Sequence[str]) -> List[str]:
+    """The file each planned command writes: its last argument, unless that is stdout, a pipe or
+    an option (a measurement's `-f null -`)."""
+    import shlex
+    out: List[str] = []
+    for line in commands:
+        try:
+            toks = shlex.split(line.split("] ", 1)[1] if line.startswith("[dry-run] ") else line)
+        except ValueError:
+            continue
+        if len(toks) > 1 and toks[-1] != "-" and not toks[-1].startswith(("pipe:", "-")):
+            out.append(toks[-1])
+    return out
+
+
 def _plan_unbound_inputs(commands: Sequence[str], ctx: "Optional[Context]" = None) -> List[str]:
     """The inputs _plan_inputs() could not fingerprint because they did not exist when the plan
     was made: a planned command's `-i` file (or a side input registered through
@@ -926,6 +941,13 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
             refuse("input", "output_is_input" if named != output else "output_path_taken",
                    f"--plan {path!r} is also {'the output' if named == output else 'an input'} of this run "
                    f"({named!r}); give the plan its own path", output=path, other=named)
+    # and every file a planned command writes (its last argument): a tool with several outputs
+    # (loudness.py --versions, whose `output` is null; export.py's key file) names them only there,
+    # and a plan written over one of them is refused as an existing output when it is executed
+    for written in _planned_outputs(ctx.commands):
+        if os.path.realpath(written) == real:
+            refuse("input", "output_path_taken", f"--plan {path!r} is also a file this run writes ({written!r}); "
+                   "give the plan its own path", output=path, other=written)
     doc = {
         "plan_version": PLAN_VERSION,
         "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

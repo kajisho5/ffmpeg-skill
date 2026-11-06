@@ -124,6 +124,15 @@ def _frame_count(v, rate: float, src_dur: float) -> int:
     return int(v.get("nb_frames") or round((v.get("duration") or src_dur) * rate))
 
 
+def _conformed_frames(v, rate: float, src_dur: float) -> int:
+    """The frames the crossfade's graph sees: the picture after fps=RATE, which fills a gap in a
+    variable-rate stream and drops crowded frames, so its count follows the stream's length, not
+    the frames stored (299 stored frames over 10 s at 30 fps come out 300). The unit's trims and
+    its length are counted in these, or a repeat is a frame or more off the length planned."""
+    d = v.get("duration") or v.get("tagged_duration")
+    return int(round(float(d) * rate)) if d else _frame_count(v, rate, src_dur)
+
+
 def _seamless_unit_cmd(meta, src: str, unit: str, rate: str, frames: int, fade_frames: int, has_audio: bool) -> list:
     """One repeat that loops on itself: the clip's last `fade_frames` fade into its first ones.
 
@@ -254,7 +263,7 @@ def main() -> int:
     if args.crossfade is not None:
         if args.boomerang:
             die("--crossfade and --boomerang cannot be combined: a boomerang's turnarounds already meet matching frames")
-        frames = _frame_count(v, fps, src_dur)
+        frames = _conformed_frames(v, fps, src_dur)
         require_filter("xfade", "--crossfade")
         fade = time_arg(args.crossfade, "--crossfade", v.get("fps"))
         fade_frames = round(fade * fps)
@@ -295,7 +304,7 @@ def main() -> int:
         repeat = os.path.abspath(args.input)
         if fade_frames:
             repeat = os.path.join(workdir.name, "unit.mkv")
-            run(_seamless_unit_cmd(meta, args.input, repeat, rate, _frame_count(v, fps, src_dur), fade_frames, has_audio))
+            run(_seamless_unit_cmd(meta, args.input, repeat, rate, _conformed_frames(v, fps, src_dur), fade_frames, has_audio))
         with open(listfile, "w", encoding="utf-8") as fh:
             fh.write((concat_list_line(repeat) + "\n") * (stream_loop + 1))
         vtrim, atrim = av_trim(concat_first_frame(listfile), None, fill_gaps=True)
@@ -308,7 +317,9 @@ def main() -> int:
     if target is not None:
         cmd += ["-t", f"{target:.3f}"]
     cmd += video_args(meta, args.crf, args.preset)
-    cmd += ["-fps_mode", "passthrough"] if args.boomerang else cfr_args(meta)
+    # a crossfade's repeat is already constant at `rate` (its graph's fps=): the loop keeps that rate,
+    # not a variable-rate source's average, which re-timed every repeat by a frame or two
+    cmd += ["-fps_mode", "passthrough"] if args.boomerang else cfr_args(meta, fps if fade_frames and v.get("variable_frame_rate_suspected") else None)
     if has_audio:
         cmd += aac_args()
     else:

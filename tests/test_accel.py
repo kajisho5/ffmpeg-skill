@@ -627,6 +627,23 @@ class HwEverywhereTests(_RealFfmpegCase):
                 self.assertIsNone(doc["hw"]["used"], "a dry run ran nothing")
                 self.assertTrue(any("not CRF-equivalent" in n for n in doc["notes"]), doc.get("notes"))
 
+    def test_export_alpha_presets_stay_on_prores_ks_under_hw_and_a_dry_run_decodes_nothing(self):
+        """#430 review: VideoToolbox's ProRes line is 422 HQ, so --hw on prores4444 wrote an opaque
+        file (and skipped the codec check); the alpha presets stay on prores_ks and say so. The
+        dry run decides on the pixel format alone: the alpha measurement (an ffmpeg decode) is not
+        run, which it was for every source with an alpha plane."""
+        src = self.work / "alpha.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba", "-c:v", "qtrle", src)
+        export = importlib.import_module("export")
+        with mock.patch.object(export, "_run_analysis", side_effect=AssertionError("decoded under --dry-run")):
+            for preset in ("prores4444", "key-fill"):
+                with self.subTest(preset=preset):
+                    doc = self._tool("export", src, "--preset", preset, "--hw", "--dry-run", "-o", self.work / f"{preset}.mov")
+                    self.assertNotIn("videotoolbox", " ".join(doc["commands"]))
+                    self.assertIn("prores_ks", doc["commands"][-1])
+                    self.assertTrue(any("--hw" in n and "stays on" in n for n in doc.get("notes") or []), doc.get("notes"))
+
     def test_the_env_default_reaches_the_other_re_encoding_tools(self):
         doc = self._tool("fit", self.src, "--height", "120", "--dry-run", "-o", self.work / "f.mp4", env={runner.HW_ENV: "1"})
         self.assertEqual(doc["encoder"], "h264_videotoolbox")

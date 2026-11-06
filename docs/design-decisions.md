@@ -64,6 +64,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
 - [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 - [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
+- [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
 <!-- contents:end -->
 
 ## Time limits
@@ -2856,3 +2857,29 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   its own 120 s ceiling no longer advises raising `--timeout`, which cannot raise it. Code:
   `_common.runner._limit_for()`, `_probe_limit()`, `_timed_out()`. Test:
   `Issue415Tests.test_ffprobe_through_run_is_bounded_by_a_lower_timeout`.
+
+## After 3.1.8 — delivery masters (#417–#423, review of #430)
+
+- **The alpha presets stay on the CPU under `--hw`.** VideoToolbox's ProRes line is 422 HQ: moved
+  there, `prores4444`/`prores4444xq` wrote an opaque file and the `codec` step was skipped as "a
+  VideoToolbox line". They keep `prores_ks` and a note says `--hw` did not move them; `key-fill`
+  (one ffmpeg run writing both files) does the same. Code: `export.main()`, `export._key_fill()`.
+  Test: `HwEverywhereTests.test_export_alpha_presets_stay_on_prores_ks_under_hw_and_a_dry_run_decodes_nothing`.
+- **Alpha is compared over every frame, not the first.** A graphic that opens fully opaque read 255
+  in the source and in a file that lost its alpha, so the check passed either way. The source and
+  the written file are each decoded once to a 64x36 copy; the mean and the most transparent frame
+  must agree within 2 of 255. A dry run decodes nothing: it decides from the pixel format and a VP9
+  stream's `alpha_mode` tag. A VP9 source is decoded with libvpx-vp9 (the native decoder drops the
+  alpha layer). Code: `export.alpha_stats()`, `vp9_decoder_args()`, `vp9_alpha_tagged()`. Tests:
+  `test_export_alpha_review_430`, the test above.
+- **`key-fill` writes the picture and the sound only, and reports the rest.** A fill and a key go to
+  a switcher's keyer as a pair; a subtitle or data track has no place there, so the source's are
+  listed in `non_av_streams.dropped` with `reason: key_fill` (as a GIF's are) rather than mapped.
+  Both files are guarded as outputs (the fill is not ffmpeg's last argument, which `run()` guards)
+  and an existing fill is written through a temp file. Code: `export._key_fill()`. Test:
+  `test_export_key_fill_review_430`.
+- **A `--plan` path may not be any file a planned command writes**, not only `output`: `loudness.py
+  --versions` has no single output, and a plan over a version file was refused as an existing output
+  when it was executed. Code: `_common.emit.write_plan()`, `_planned_outputs()`. Test:
+  `test_loudness_versions_writes_one_measured_file_per_target`.
+

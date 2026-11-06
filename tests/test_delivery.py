@@ -91,6 +91,93 @@ class DeliveryTests(MediaFixtures):
                       "-o", OUT / "alpha_mode_wrong.mov", expect_fail=True)
         self.assertIn("only to the alpha presets", json.loads(proc.stdout)["error"]["message"])
 
+    def _rgba_at(self, path, x, y):
+        """One pixel's (r, g, b, a) of a file's first frame (libvpx-vp9 for a .webm)."""
+        dec = ["-c:v", "libvpx-vp9"] if str(path).endswith(".webm") else []
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", *dec, "-i", str(path), "-frames:v", "1",
+                              "-vf", f"crop=1:1:{x}:{y},format=rgba", "-f", "rawvideo", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        return tuple(out[:4])
+
+    def test_export_alpha_review_430(self):
+        """#430 review. A VP9 alpha source (probed yuv420p: the alpha is a side layer the native
+        decoder drops) is decoded with libvpx-vp9, so its master keeps the alpha, and a dry run
+        plans it instead of refusing it as opaque; the alpha is compared over every frame, so a
+        source whose first frame is opaque is not measured as opaque; premultiplied colour is
+        RGB x alpha."""
+        webm = OUT / "alpha_rv_src.webm"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", webm)
+        doc = json.loads(script("export.py", webm, "--preset", "prores4444", "--json", "--overwrite",
+                                "-o", OUT / "alpha_rv_from_vp9.mov").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertIn("-c:v libvpx-vp9 -i", doc["commands"][0])
+        self.assertAlmostEqual(next(s for s in doc["verification"] if s["step"] == "alpha")["measured"], 159.5, delta=2.0)
+        doc = json.loads(script("export.py", webm, "--preset", "prores4444", "--json", "--dry-run",
+                                "-o", OUT / "alpha_rv_dry.mov").stdout)
+        self.assertEqual(doc["status"], "completed")
+        # opaque for its first second, then half transparent: the first frame alone read 255 = 255
+        late = OUT / "alpha_rv_late.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=2,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(T,1),255,if(lt(X,80),255,64))'",
+           "-c:v", "qtrle", late)
+        doc = json.loads(script("export.py", late, "--preset", "prores4444", "--json", "--overwrite",
+                                "-o", OUT / "alpha_rv_late_out.mov").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "alpha")
+        self.assertTrue(step["ok"], step)
+        self.assertAlmostEqual(step["frames"]["expected"]["min"], 159.5, delta=2.0)
+        self.assertAlmostEqual(step["frames"]["measured"]["min"], 159.5, delta=2.0)
+        self.assertLess(step["expected"], 254.0, "the mean over every frame, not the opaque first frame")
+        # premultiplied: the colour at alpha 64 is the straight colour x 64/255
+        straight, pm = OUT / "alpha_rv_straight.mov", OUT / "alpha_rv_pm.mov"
+        src = OUT / "alpha_rv_flat.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=0xC08040:s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "qtrle", src)
+        for out, mode in ((straight, "straight"), (pm, "premultiplied")):
+            script("export.py", src, "--preset", "qtrle", "--alpha-mode", mode, "--overwrite", "-o", out)
+        s_px, p_px = self._rgba_at(straight, 120, 48), self._rgba_at(pm, 120, 48)
+        self.assertEqual((s_px[3], p_px[3]), (64, 64))
+        for sc, pc in zip(s_px[:3], p_px[:3]):
+            self.assertAlmostEqual(pc, sc * 64 / 255, delta=2)
+
+    def test_export_key_fill_review_430(self):
+        """#430 review: key-fill maps only the fill and the sound (a source with a subtitle track
+        added the unfiltered picture and the sound twice), reports the subtitle it does not write,
+        compares the video streams' lengths (the fill's sound may run longer than its picture),
+        guards the fill like the key (an existing fill, the input under another spelling), and
+        refuses --max-mb, which it never applied."""
+        late = OUT / "keyfill_rv_alpha.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=2,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "qtrle", OUT / "keyfill_rv_v.mov")
+        srt = OUT / "keyfill_rv.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", OUT / "keyfill_rv_v.mov", "-f", "lavfi",
+           "-i", "sine=d=2.5", "-i", srt, "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "copy",
+           "-c:a", "pcm_s16le", "-c:s", "mov_text", late)
+        fill = OUT / "keyfill_rv_fill.mov"
+        for f in (fill, OUT / "keyfill_rv_fill_key.mov"):
+            if f.exists():
+                f.unlink()
+        doc = json.loads(script("export.py", late, "--preset", "key-fill", "--json", "-o", fill).stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual([(d["type"], d["reason"]) for d in doc["non_av_streams"]["dropped"]], [("subtitle", "key_fill")])
+        self.assertTrue(doc["dropped_non_av_streams"])
+        types = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", fill).stdout.split()
+        self.assertEqual(types, ["video", "audio"])
+        # the key exists only after a run: an existing fill alone is someone's file
+        (OUT / "keyfill_rv_fill_key.mov").unlink()
+        proc = sh(sys.executable, SCRIPTS / "export.py", late, "--preset", "key-fill", "--json", "-o", fill, expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_exists")
+        proc = script("export.py", late, "--preset", "key-fill", "--json", "--overwrite",
+                      "-o", os.path.join(str(late.parent), ".", late.name), expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
+        proc = script("export.py", late, "--preset", "key-fill", "--max-mb", "5", "--json",
+                      "-o", OUT / "keyfill_rv_mb.mov", expect_fail=True)
+        self.assertIn("key-fill", json.loads(proc.stdout)["error"]["message"])
+
     def test_export_max_mb_refuses_gif_and_a_limit_that_constrains_nothing(self):
         """2.24.1: --preset gif returned before --max-mb was applied, so a 0.7 MB GIF passed a 1 KB
         limit as verified; --max-mb 1e9 reached libx264 as an impossible bitrate (kind ffmpeg)."""

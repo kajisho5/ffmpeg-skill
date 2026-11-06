@@ -214,7 +214,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for a real PQ/HLG/DV transfer only, `bt2020_or_hdr` also for BT.2020 SDR), colour space, rotation, every audio stream; `--analyze` flags Log footage |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments`; `--beats` measures the music's beat grid (tempo, beat times, confidence); `--shots` classifies each shot static/pan/motion by measured optical flow; `--audio-peaks` lists per-second dBFS; `--speech` reports a speech-vs-music ratio, not a classification |
-| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers |
+| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers; `--guides title,action,4:3` outlines the broadcast safe areas (on the PNG only) |
 
 **Editing**
 
@@ -251,7 +251,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `audio.py` | Voice clean-up chain at three strengths (`--voice light\|medium\|strong`), FFT denoise, typed compressor / limiter / gate, music bed with sidechain ducking (`--duck-amount/-threshold/-attack/-release`), a never-ducked effects bed (`--effects`), `--stereo-widen`, fades, 5.1 → stereo, track replacement, extraction (`-o out.wav`), `--audio-stream N` |
 | `sync.py` | Offset between two recordings by audio cross-correlation (1 ms, pure Python), clock-drift correction; aligned video or audio out (audio-to-audio only — no lip-sync/face detection); a third or later camera is an additional `more_sources` positional (`sync.py REF A B ...`), the `second` positional itself keeps its name |
-| `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP or any target (`--lra` for the range), video stream-copied; the written file is measured again and re-encoded until it meets `--tp` (lossy encoders overshoot); `--measure-only` |
+| `loudness.py` | Two-pass EBU R128 `loudnorm` to −14 LUFS / −1 dBTP or any target (`--lra` for the range), video stream-copied; the written file is measured again and re-encoded until it meets `--tp` (lossy encoders overshoot); `--measure-only`; `--versions streaming,ebu-r128,broadcast-jp` (or `LUFS/TP` pairs) writes one file per target from one master, each measured after and listed in `versions` (`output` is null), `verified` only when every version met its own target |
 
 **Picture**
 

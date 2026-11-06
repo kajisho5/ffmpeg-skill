@@ -355,7 +355,19 @@ python3 scripts/cut.py demos/out/fixtures/life.mp4 --start 0 --duration 1.5 --ac
 python3 scripts/loop.py demos/out/loop_times_before.mp4 --times 4 --preset veryfast -o demos/out/loop_times_after.mp4
 ```
 
-**Look for:** A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut, which is a judgement about the material, not a flag.
+**Look for:** A 1.5 s clip repeated four times back to back. The seam is not smoothed: a clip that does not already loop cleanly shows its cut (--crossfade, below, fades it).
+
+### A seamless loop
+
+![A seamless loop](demos/loop_crossfade.gif)
+
+```bash
+python3 scripts/cut.py demos/out/fixtures/life.mp4 --start 0 --duration 1.5 --accurate --preset veryfast -o demos/out/loop_crossfade_clip.mp4
+python3 scripts/loop.py demos/out/loop_crossfade_clip.mp4 --times 4 --preset veryfast -o demos/out/loop_crossfade_before.mp4
+python3 scripts/loop.py demos/out/loop_crossfade_clip.mp4 --times 4 --crossfade 0.4 --preset veryfast -o demos/out/loop_crossfade_after.mp4
+```
+
+**Look for:** The same clip looped four times, plain (left) and with loop.py --crossfade 0.4 (right): the plain loop jumps back at every seam, the crossfaded one fades the clip's last 0.4 s into its first, so each repeat runs on into the next.
 
 ### A still card dropped into the timeline
 
@@ -703,7 +715,6 @@ python3 scripts/proxy.py demos/out/fixtures/mandel.mp4 --width 320 --quality 34 
 
 ```bash
 python3 scripts/render.py demos/out/fixtures/project.json --fast
-python3 scripts/render.py demos/out/fixtures/project.json --export-timeline demos/out/render_project_timeline.otio
 ```
 
 **Look for:** Clips, a transition, captions and a title card described as JSON and rendered in one pass.

@@ -51,7 +51,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import square_pixels, square_pixels_note
-from _common.runner import ffmpeg_encoders, guard_sidecar, run_analysis as _run_analysis, subtitle_codec_for
+from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, run_analysis as _run_analysis, subtitle_codec_for
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
@@ -176,23 +176,68 @@ PRESET_CHOICES: List[str] = sorted(set(PRESETS) | {a for a in _ALIASES if resolv
 _ALPHA_PIX = re.compile(r"^(yuva|gbrap|ya\d|rgba|bgra|argb|abgr|rgba64|bgra64)")
 
 
-def alpha_mean(path: str, codec: "str | None" = None, at: float = 0.0) -> "float | None":
-    """The mean alpha (0-255) of one decoded frame, on a 64x36 copy; 255.0 is fully opaque, and a
-    picture with no alpha plane reads 255 too (format=rgba fills it). A VP9 file is decoded with
-    libvpx-vp9: FFmpeg's native vp9 decoder drops the alpha layer. None when no frame decodes."""
-    ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
-    if codec == "vp9" and "libvpx-vp9" in ffmpeg_encoders():
-        cmd += ["-c:v", "libvpx-vp9"]
-    if at:
-        cmd += ["-ss", f"{at:.3f}"]
-    cmd += ["-i", path, "-frames:v", "1", "-vf", "format=rgba,alphaextract,scale=64:36:flags=area,format=gray",
-            "-f", "rawvideo", "-"]
+def vp9_decoder_args(codec: "str | None") -> List[str]:
+    """The input option that decodes a VP9 stream with libvpx-vp9: FFmpeg's native vp9 decoder
+    drops the alpha layer (a WebM's yuva420p comes out yuv420p, fully opaque). [] for any other
+    codec, or when this build has no libvpx (its encoder list stands in for the decoder's)."""
+    return ["-c:v", "libvpx-vp9"] if codec == "vp9" and "libvpx-vp9" in ffmpeg_encoders() else []
+
+
+def vp9_alpha_tagged(path: str) -> bool:
+    """True when the first video stream is VP9 stored with an alpha layer (Matroska/WebM's
+    ALPHA_MODE=1 stream tag): ffprobe reports such a stream as yuv420p, so the pixel format alone
+    does not show the alpha. A metadata read, so a dry run can decide without decoding."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                "stream=codec_name:stream_tags", "-of", "json", path], quiet=True)
+    try:
+        streams = json.loads(proc.stdout or "{}").get("streams") or []
+    except ValueError:
+        return False
+    s = streams[0] if streams else {}
+    return s.get("codec_name") == "vp9" and any(k.lower() == "alpha_mode" and str(v).strip() == "1"
+                                                for k, v in (s.get("tags") or {}).items())
+
+
+_MEASURE_W, _MEASURE_H = 64, 36  # the measuring copy: small enough to read every frame, large enough for exact edges
+
+
+def _frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, float] | None":
+    """Every decoded frame of `path` through `chain` to a 64x36 grey copy: {mean (over every frame),
+    min (the lowest frame's mean), frames}. None when no frame decodes."""
+    w, h = _MEASURE_W, _MEASURE_H
+    cmd = cmd_head + ["-i", path, "-map", "0:v:0", "-vf", f"{chain},scale={w}:{h}:flags=area,format=gray",
+                      "-f", "rawvideo", "-"]
     proc = _run_analysis(cmd, check=False, text=False)
     data = proc.stdout or b""
-    if proc.returncode != 0 or not data:
+    size = w * h
+    if proc.returncode != 0 or len(data) < size:
         return None
-    return sum(data) / len(data)
+    frames = [sum(data[i:i + size]) / size for i in range(0, len(data) - size + 1, size)]
+    return {"mean": sum(frames) / len(frames), "min": min(frames), "frames": len(frames)}
+
+
+def alpha_stats(path: str, codec: "str | None" = None) -> "Dict[str, float] | None":
+    """The alpha (0-255) of every decoded frame, on a 64x36 copy: {mean, min, frames}. 255.0 is
+    fully opaque, and a picture with no alpha plane reads 255 too (format=rgba fills it). Every
+    frame, not the first: a clip that opens fully opaque and turns transparent later would read
+    as opaque from its first frame, in the source and in a written file that lost its alpha. A
+    VP9 file is decoded with libvpx-vp9 (vp9_decoder_args). None when no frame decodes."""
+    head = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin"] + vp9_decoder_args(codec)
+    return _frame_means(head, path, "format=rgba,alphaextract")
+
+
+ALPHA_TOLERANCE = 2.0  # of 255, on the mean over every frame and on the most transparent frame
+OPAQUE = 254.5         # a frame whose mean alpha is at least this is fully opaque
+
+
+def _alpha_matches(written: "Dict[str, float] | None", source: "Dict[str, float] | None") -> bool:
+    return (written is not None and source is not None
+            and abs(written["mean"] - source["mean"]) <= ALPHA_TOLERANCE
+            and abs(written["min"] - source["min"]) <= ALPHA_TOLERANCE)
+
+
+def _rounded(st: "Dict[str, float] | None") -> "Dict[str, float] | None":
+    return None if st is None else {"mean": round(st["mean"], 2), "min": round(st["min"], 2), "frames": st["frames"]}
 
 
 def key_path(fill: str) -> str:
@@ -201,38 +246,69 @@ def key_path(fill: str) -> str:
 
 
 def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[str], has_audio: bool,
-              source_alpha, notes: List[str]) -> int:
+              source_alpha, notes: List[str], subs: List[Dict], data: List[Dict]) -> int:
     """--preset key-fill: one decode split into the fill (the colour, straight or premultiplied)
     and the key (alphaextract: alpha 255 is video white, 0 black), both ProRes 422 HQ in one ffmpeg
     run so they hold the same frames; the source's start timecode is written on both. Checked
     after: the same frame count, size, rate and length, the key's mean level against the source's
     alpha, and both files hashed (output_identity, key.identity)."""
     key = key_path(output)
+    # both files are this run's outputs, but ffmpeg's last argument (which run() guards and stages)
+    # is only the key: the fill is checked here the same way -- not the input under another
+    # spelling, not someone's file without --overwrite -- and written through a hidden temp file
+    guard_sidecar(output, args.input, siblings=[key])
     guard_sidecar(key, args.input, siblings=[output])
+    if STATE.hw and "-c:v" in p["video"]:
+        note(f"--hw: --preset {args.preset} stays on {p['video'][p['video'].index('-c:v') + 1]}: one ffmpeg run writes "
+             "the fill and the key as a pair, and VideoToolbox's ProRes encoder is not used for it")
     fill_chain = ",".join(vf + (["premultiply=inplace=1"] if args.alpha_mode == "premultiplied" else []) + ["format=yuv422p10le"])
     key_chain = ",".join(vf + ["alphaextract", "format=yuv422p10le"])
     tc = ((meta.get("timecode") or {}).get("value"))
     tc_args = ["-timecode", tc] if tc else []
     cmd = cmd + ["-filter_complex", f"[0:v:0]split[f][k];[f]{fill_chain}[fill];[k]{key_chain}[key]"]
     cmd += ["-map", "[fill]"] + (["-map", "0:a:0"] if has_audio else []) + p["video"] + tc_args + cfr_args(meta)
-    cmd += (p["audio"] if has_audio else ["-an"]) + [output]
-    cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key]
-    run(cmd)
+    fill_tmp = None
+    try:
+        if not STATE.dry_run and os.path.isfile(output) and os.path.realpath(output) not in STATE.written:
+            d, base = os.path.split(output)
+            stem, ext = os.path.splitext(base)
+            fill_tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
+        cmd += (p["audio"] if has_audio else ["-an"]) + [fill_tmp or output]
+        cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key]
+        run(cmd)
+        if fill_tmp:
+            os.replace(fill_tmp, output)
+            fill_tmp = None
+    finally:
+        if fill_tmp and os.path.exists(fill_tmp):
+            os.remove(fill_tmp)
+    remember_written(output, key)
     extra: Dict[str, object] = {"alpha_mode": args.alpha_mode or "straight", "key": {"output": key}}
+    # a fill and a key for a switcher carry the picture and the sound; the source's subtitle and
+    # data streams are not written, and the document says so (as for a GIF)
+    non_av = _non_av_report(subs, [], data, ["subtitle", "data"], output, "key_fill")
+    extra["non_av_streams"] = non_av
+    extra["dropped_non_av_streams"] = bool(non_av["dropped"])
+    if non_av["dropped"]:
+        notes.append(f"a key/fill pair holds the picture and the sound only: the source's {len(non_av['dropped'])} "
+                     "subtitle/data stream(s) were not written; non_av_streams lists them")
     if STATE.dry_run:
-        emit(output, **extra)
+        emit(output, **extra, **({"notes": notes} if notes else {}))
         return 0
     fill_m, key_m = probe(output, role="output"), probe(key, role="output")
     fv, kv = fill_m["video"], key_m["video"]
     pair = {k: [fv.get(k), kv.get(k)] for k in ("width", "height", "nb_frames", "r_frame_rate")}
-    pair["duration"] = [round(fill_m.get("duration") or 0, 3), round(key_m.get("duration") or 0, 3)]
+    # the video streams' lengths: the fill's container also counts its sound, which may run longer
+    # than the picture, and the key has none
+    pair["duration"] = [round(v.get("duration") or v.get("tagged_duration") or 0, 3) for v in (fv, kv)]
     same = all(a == b and a not in (None, 0) for a, b in pair.values())
     steps = [{"step": "key_fill_pair", "property": "frames_size_rate_length", "ok": same, "measured": pair,
               "provenance": "output_measurement"}]
-    key_level = _luma_mean(key)
-    steps.append({"step": "key_level", "property": "key_mean_vs_source_alpha", "ok": key_level is not None and source_alpha is not None
-                  and abs(key_level - source_alpha) <= 2.0, "expected": None if source_alpha is None else round(source_alpha, 2),
-                  "measured": None if key_level is None else round(key_level, 2), "tolerance": 2.0,
+    key_level = _luma_stats(key)
+    steps.append({"step": "key_level", "property": "key_mean_vs_source_alpha", "ok": _alpha_matches(key_level, source_alpha),
+                  "expected": None if source_alpha is None else round(source_alpha["mean"], 2),
+                  "measured": None if key_level is None else round(key_level["mean"], 2), "tolerance": ALPHA_TOLERANCE,
+                  "frames": {"expected": _rounded(source_alpha), "measured": _rounded(key_level)},
                   "provenance": "input_premeasurement"})
     extra["key"] = {"output": key, "identity": file_identity(key), "sha256": _sha256(key), "timecode": tc}
     extra["fill_sha256"] = _sha256(output)
@@ -253,13 +329,9 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def _luma_mean(path: str) -> "float | None":
-    """The mean level (0-255, full range) of a file's first frame, on a 64x36 grey copy."""
-    proc = _run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
-                          "-frames:v", "1", "-vf", "format=gray,scale=64:36:flags=area", "-f", "rawvideo", "-"],
-                         check=False, text=False)
-    data = proc.stdout or b""
-    return sum(data) / len(data) if proc.returncode == 0 and data else None
+def _luma_stats(path: str) -> "Dict[str, float] | None":
+    """The level (0-255) of every frame of a file, on a 64x36 grey copy: {mean, min, frames}."""
+    return _frame_means([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin"], path, "format=gray")
 
 
 def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: str, spec: Dict, normalized: bool = False) -> None:
@@ -503,9 +575,12 @@ def main() -> int:
             die(f"--preset hap-alpha needs a width and height that are multiples of 4 (HAP's texture blocks); "
                 f"this source is {meta['video']['width']}x{meta['video']['height']}",
                 hint="crop or pad it first (crop.py, pad.py)")
-        has_alpha_plane = bool(_ALPHA_PIX.match(meta["video"].get("pix_fmt") or ""))
-        source_alpha = alpha_mean(args.input, meta["video"].get("codec")) if not STATE.dry_run or has_alpha_plane else None
-        if not has_alpha_plane and (source_alpha is None or source_alpha >= 254.5):
+        # a pixel format with an alpha plane, or a VP9 stream stored with one (probed as yuv420p);
+        # a dry run decides on these metadata reads alone and decodes nothing
+        has_alpha_plane = bool(_ALPHA_PIX.match(meta["video"].get("pix_fmt") or "")) or vp9_alpha_tagged(args.input)
+        if not STATE.dry_run:
+            source_alpha = alpha_stats(args.input, meta["video"].get("codec"))
+        if not has_alpha_plane and (STATE.dry_run or source_alpha is None or source_alpha["min"] >= OPAQUE):
             die(f"--preset {args.preset} keeps an alpha channel and this source has none "
                 f"({meta['video'].get('pix_fmt')}, fully opaque): use prores or dnxhr-* for an opaque master")
     elif args.alpha_mode:
@@ -541,7 +616,12 @@ def main() -> int:
     if args.max_mb is not None and args.preset == "gif":
         # the GIF branch below returns before the size is ever applied or measured
         die("--max-mb runs a two-pass x264 encode; --preset gif does not encode with x264 (shorten or shrink the GIF instead)")
-    cmd = ffmpeg_base() + (REPAIR_INPUT_ARGS if args.repair else []) + ["-i", args.input]
+    if args.max_mb is not None and p.get("keyfill"):
+        # the key/fill branch below writes ProRes and returns before the size is applied or measured
+        die("--max-mb runs a two-pass x264 encode; --preset key-fill writes ProRes (a fill and a key), which has no size target")
+    # an alpha source in VP9 is decoded with libvpx-vp9, or its alpha never reaches the encoder
+    dec_args = vp9_decoder_args(meta["video"].get("codec")) if p.get("alpha") else []
+    cmd = ffmpeg_base() + (REPAIR_INPUT_ARGS if args.repair else []) + dec_args + ["-i", args.input]
     # Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are
     # kept where the container can hold them: ffmpeg's default stream selection takes one video
     # and one audio stream only, and through 2.22.1 every preset dropped the rest without a word.
@@ -549,7 +629,7 @@ def main() -> int:
     subs = meta.get("subtitle_stream_details") or []
     data = _data_streams(args.input) if meta.get("data_streams") else []
     sub_codecs = [_subtitle_codec(s.get("codec") or "", out_ext) for s in subs]
-    if args.preset != "gif" and (subs or data):
+    if args.preset != "gif" and not p.get("keyfill") and (subs or data):
         cmd += ["-map", "0:V:0"] + (["-map", "0:a:0"] if has_audio else [])
 
     if args.preset == "gif":
@@ -565,7 +645,7 @@ def main() -> int:
         return 0
 
     if p.get("keyfill"):
-        return _key_fill(args, p, meta, output, cmd, vf, has_audio, source_alpha, notes)
+        return _key_fill(args, p, meta, output, cmd, vf, has_audio, source_alpha, notes, subs, data)
     if p.get("alpha") and args.alpha_mode == "premultiplied":
         vf.append("premultiply=inplace=1")
     if vf:
@@ -590,7 +670,12 @@ def main() -> int:
         video[video.index("-preset") + 1] = "veryfast"
     # a fixed preset's line is tagged BT.709 (prores and dnxhr, editing masters, keep the source's tags)
     tag_bt709 = not p.get("intermediate") and not p.get("codec")
-    if not p.get("codec") and video:
+    if p.get("alpha") and STATE.hw and video and video[video.index("-c:v") + 1] == "prores_ks":
+        # VideoToolbox's ProRes line is 422 HQ: under --hw a 4444 alpha master would come out
+        # opaque, so these presets stay on prores_ks and say so
+        note(f"--hw: --preset {args.preset} stays on prores_ks: VideoToolbox's ProRes encoder writes 422 HQ, "
+             "without the alpha this preset keeps")
+    elif not p.get("codec") and video:
         # --hw (never $FFMPEG_SKILL_HW here) puts a fixed preset on VideoToolbox: the same codec,
         # its CRF mapped to -q:v, the preset's frame rate kept; tags come with the VT line itself.
         # A build without libx264/libx265 has no other encoder, so it goes there without --hw too
@@ -654,14 +739,15 @@ def main() -> int:
     if p.get("alpha"):
         extra["alpha_mode"] = args.alpha_mode or "straight"
         if not STATE.dry_run:
-            # the alpha survived when a written frame's alpha matches the source's frame (a decoder
-            # or muxer that drops it reads fully opaque); premultiplying changes colour, not alpha
-            written_alpha = alpha_mean(output, v.get("codec"))
-            ok = written_alpha is not None and source_alpha is not None and abs(written_alpha - source_alpha) <= 2.0
+            # the alpha survived when the written file's alpha matches the source's over every frame
+            # -- the mean and the most transparent frame -- (an encoder, decoder or muxer that drops
+            # it reads fully opaque); premultiplying changes colour, not alpha
+            written_alpha = alpha_stats(output, v.get("codec"))
             extra.setdefault("verification", []).append(
-                {"step": "alpha", "property": "alpha_mean", "ok": ok,
-                 "expected": None if source_alpha is None else round(source_alpha, 2),
-                 "measured": None if written_alpha is None else round(written_alpha, 2), "tolerance": 2.0,
+                {"step": "alpha", "property": "alpha_mean", "ok": _alpha_matches(written_alpha, source_alpha),
+                 "expected": None if source_alpha is None else round(source_alpha["mean"], 2),
+                 "measured": None if written_alpha is None else round(written_alpha["mean"], 2), "tolerance": ALPHA_TOLERANCE,
+                 "frames": {"expected": _rounded(source_alpha), "measured": _rounded(written_alpha)},
                  "provenance": "input_premeasurement"})
     platform = PLATFORM_OF.get(args.preset)
     if platform and has_audio and not STATE.dry_run:

@@ -107,7 +107,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "freeze the last frame" | `freeze.py clip.mp4 --hold 2` |
 | "smooth slow motion" | `fit.py in.mp4 --duration 2x --smooth interpolate` |
 | "reverse this clip" | `reverse.py in.mp4` |
-| "loop it to fill 30 seconds" | `loop.py clip.mp4 --duration 30` |
+| "loop it to fill 30 seconds", "seamless loop" | `loop.py clip.mp4 --duration 30` (`--crossfade 0.5` hides the seam) |
 | "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --fit pad` (or `crop`, `blur`) |
 | "resize to a height/width" | `fit.py in.mp4 --height 1080` |
 | "crop to this exact box" | `crop.py in.mp4 --x 100 --y 0 --width 1080 --height 1920` |
@@ -137,7 +137,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "use our brand fonts/colours/logo" | `--brand brand.json` on caption/overlay/graphics |
 | "sync the lav mic", "line up two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` |
 | "the audio drifts out of sync" | `sync.py camera.mp4 rec.wav --fix-drift --replace-audio` |
-| "normalise to -14 LUFS" | `loudness.py in.mp4` |
+| "normalise to -14 LUFS", "streaming and broadcast versions" | `loudness.py in.mp4` (`--versions streaming,ebu-r128`) |
 | "clean up the audio", "remove the hiss" | `audio.py in.mp4 --voice` (or `--denoise`) |
 | "music under the talking", "duck harder" | `audio.py in.mp4 --music bed.mp3 --duck --fade-out 3` |
 | "convert the 5.1 to stereo" | `audio.py in.mov --downmix` |
@@ -148,7 +148,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
 | "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` |
 | "post it everywhere" | `render.py --template all in.mp4 --cues cues.txt` |
-| "export for YouTube / Reels / X", "ProRes master" | `export.py in.mp4 --preset youtube` |
+| "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
 | "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` |
 | "make a GIF preview" | `export.py in.mp4 --preset gif` |
 | "the recording is corrupted" | `export.py in.mp4 --preset copy --repair` |
@@ -172,7 +172,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "every file in the folder", "use all the cores" | `batch.py FOLDER --recipe batch.json --jobs auto` |
 | "three cameras, cut between them" | `multicam.py a.mp4 b.mp4 c.mp4 --switch energy` |
 | "what's in this file", "is it Log?" | `probe.py in.mp4` (`--analyze`) |
-| "show me what it looks like" | `look.py out.mp4 --tiles 3x2`, then view the PNG |
+| "show me what it looks like", "title safe" | `look.py out.mp4 --tiles 3x2`, then view the PNG (`--at T --guides title,action`) |
 | "static vs moving shots", "speech or music" | `scenes.py in.mp4 --shots` (`--audio-peaks`, `--speech`) |
 | "where does the subject move" | `cropdetect.py in.mp4 --motion-centre` |
 | "test the tool on my real files" | `verify.py ~/Footage --report verify.md` |
