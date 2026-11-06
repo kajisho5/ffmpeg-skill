@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.2.0
+
+_Automated release: version and notes generated from pull requests merged since 3.1.8._
+
 ### Added
 
 - **`look.py --guides title,action,4:3`** draws broadcast safe-area outlines (93 % action, 90 % title, and the 4:3 centre cut with its own) on the preview PNG, never into a video, alongside `--safe PLATFORM` (#423).
@@ -12,6 +18,7 @@
 - **`loudness.py --versions streaming,ebu-r128,broadcast-jp`** (or `LUFS/TP` pairs) writes one normalised file per target from one master, each measured after; `verified` holds only when every version met its own target (#421).
 - **`export.py --preset dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444`**: DNxHR editing masters (.mov, PCM audio, source size and rate) beside `prores`. These presets and `prores` now read the written codec, profile and pixel format back as a `codec` verification step (#419). DNxHD at its fixed broadcast sizes and bitrates is not included.
 - **`loop.py --crossfade S`** fades the clip's last S seconds into its first S, picture and sound, so every repeat meets the next without a jump; `--times 1` writes one seamless loop file (#422). Every loop now reports its first seam measured (`seam`: picture step against the typical frame-to-frame step, sound level step) and checks its length against the request (`expected_duration`) and its streams.
+- Delivery features: alpha masters, key/fill, DNxHR, loudness versions, seamless loops, safe-area guides (#430)
 
 ## 3.1.8
 
