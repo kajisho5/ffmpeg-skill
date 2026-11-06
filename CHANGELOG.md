@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.1.8
+
+_Automated release: version and notes generated from pull requests merged since 3.1.7._
+
 ### Fixed
 
 - `render.py` with both an `export` and a `chapters` stage failed with `output_exists` on a fresh
@@ -48,6 +54,7 @@
   removing one reruns the items; `check.py
   --dry-run` on a not-yet-written file no longer crashes; a child killed by a signal exits 128 + the
   signal (#415).
+- Dry-run honesty, process handling, faststart and batch/render orchestration (#415) (#428)
 
 ## 3.1.7
 
