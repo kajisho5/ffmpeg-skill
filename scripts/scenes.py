@@ -31,6 +31,7 @@ from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter  # noqa: E402
 from _common.probe import square_pixels  # noqa: E402
+from _common import dry_run_input_pending  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -148,6 +149,11 @@ def main() -> int:
         guard_sidecar(args.edl, args.input, siblings=(args.sheet,))
 
     meta = probe(args.input)
+    # Under --dry-run in a render.py/batch.py plan the input may be an earlier stage's output that
+    # was never written: every measurement is skipped (diagnostics.skipped measurement_input_pending)
+    # and the document keeps its shape with nothing measured, as loudness.py/cut.py do -- not an
+    # ffmpeg failure that stops the plan from being written.
+    pending = dry_run_input_pending(args.input)
     # An audio-only file (WAV/FLAC/MP3 ...) is measured too (after 3.2.0): the beat grid, the loudness
     # peaks and the speech ratio are measurements of the sound, and a music bed is usually
     # delivered without a picture. It has no picture to cut, so it is one scene from 0 to its
@@ -171,18 +177,22 @@ def main() -> int:
         if args.beat_step <= 0:
             die("--beat-step must be greater than 0", kind="input")
     dur = meta.get("duration") or 0.0
-    cuts = [0.0] if audio_only else detect_scenes(args.input, args.threshold, args.min_scene, dur, args.ratio)
+    cuts = [0.0] if (audio_only or pending) else detect_scenes(args.input, args.threshold, args.min_scene, dur, args.ratio)
+    has_audio = bool(meta.get("audio")) and not pending
     bounds = cuts + [dur]
     step_s = 0.5
     # With --beats the file is decoded once, at the finer rate, and both envelopes come from that
     # one pass: the 0.5 s scene blocks are an exact multiple of the 10 ms onset blocks.
     beat_rate = 22050
     need_fine = args.beats or args.audio_peaks or args.speech
-    fine_samples = decode_pcm_mono(args.input, beat_rate, check=False) if (need_fine and meta.get("audio")) else None
+    # --beats decodes with check=True: a decode that fails is an ffmpeg failure, not an empty
+    # envelope reported as "no steady pulse in this audio" (the scene scoring alone tolerates it
+    # and runs on the picture)
+    fine_samples = decode_pcm_mono(args.input, beat_rate, check=bool(args.beats)) if (need_fine and has_audio) else None
     if fine_samples is not None:
         env = audio_envelope(args.input, step_s, rate=beat_rate, samples=fine_samples)
     else:
-        env = audio_envelope(args.input, step_s) if meta.get("audio") else []
+        env = audio_envelope(args.input, step_s) if has_audio else []
 
     scenes = []
     for i in range(len(bounds) - 1):
@@ -217,7 +227,7 @@ def main() -> int:
         info(f"--shots: {len(shots)} shots (" + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())) + ")")
 
     if args.audio_peaks:
-        if not meta.get("audio"):
+        if not has_audio:
             result["audio_peaks_db"] = []
             info("--audio-peaks: no audio stream, nothing to measure")
         else:
@@ -226,7 +236,7 @@ def main() -> int:
             info(f"--audio-peaks: {len(result['audio_peaks_db'])} peaks")
 
     if args.speech:
-        if not meta.get("audio"):
+        if not has_audio:
             result["speech"] = []
             info("--speech: no audio stream, nothing to measure")
         else:
@@ -242,7 +252,7 @@ def main() -> int:
         # default 10 ms. Timing the onsets as if it were 10 ms stretched every measured time by
         # 0.23 % -- 68 ms by the end of a 30 s track, the "40-60 ms off" a click track showed --
         # so the grid is timed (and step_s reported) at the step the envelope actually has.
-        beat_block = max(1, int(round(beat_rate * args.beat_step)))
+        beat_block = max(1, round(beat_rate * args.beat_step))
         fine = rms_envelope(fine_samples or [], beat_block)
         grid = beat_grid(fine, beat_block / beat_rate, bpm_range=beat_range,
                          min_confidence=args.min_confidence, duration=dur,
@@ -262,7 +272,9 @@ def main() -> int:
             # ("pcm-window-ratio": placed on the decoded samples; null: at the step)
             "onset_refinement": grid["onset_refinement"],
         }
-        if grid["tempo_bpm"] is None:
+        if pending:
+            info("--beats: [dry-run] the input does not exist yet, nothing measured")
+        elif grid["tempo_bpm"] is None:
             info(f"--beats: no steady pulse in this audio (confidence {grid['confidence']:.2f}) -- "
                  "speech, ambience or rubato has no tempo to measure")
         else:

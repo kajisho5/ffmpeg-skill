@@ -1220,6 +1220,7 @@ def _grid_score(onset_times: "Sequence[float]", strength_at: "Dict[int, float]",
     return total
 
 
+BEAT_ZERO_TOL_S = 0.01      # a fitted grid point this little before 0 s is the beat at 0.0
 BEAT_REFINE_TOL_NATS = 1.0  # onset refinement: the latest time within this of the best log ratio
 
 
@@ -1339,8 +1340,8 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
          the grid (_refine_grid), so the tempo is not rounded to a whole number of envelope steps
          (until 3.2.0, at 10 ms, 90 BPM was measured as 0.67 s and the grid drifted 40-90 ms off the
          music over 30 s);
-      5. beats = phase + n * interval across the duration (a point within interval/8 before 0 s
-         is reported at 0.0). A grid must be regular, so a grid
+      5. beats = phase + n * interval across the duration (a point within BEAT_ZERO_TOL_S, 10 ms,
+         before 0 s is reported at 0.0; one further before is not reported). A grid must be regular, so a grid
          point with no measured onset within interval/4 is still reported -- and counted in
          `unsupported`, so a caller can see how much of the grid the audio actually supports.
          `supported_beats` is the subset that a measured onset does support: it is what a tool
@@ -1427,12 +1428,15 @@ def beat_grid(envelope: "Sequence[float]", step_s: float, *,
                                    lo_bpm, hi_bpm)
 
     beats = []
-    # The first grid point at or after 0, where "at" allows the alignment tolerance: a fitted
-    # phase a few ms either side of a beat at 0 s (a track that starts on the beat) is that beat,
-    # reported at 0.0 rather than dropped as negative. Indexing by n instead of adding the interval
-    # up keeps the float error of a long file out of the last beats.
-    first = -int(math.floor((phase + interval / BEAT_ALIGN_DIVISOR) / interval)) if phase > 0 else 0
-    n = first
+    # The first grid point at or after 0, where "at" allows BEAT_ZERO_TOL_S (one 10 ms envelope
+    # step, the accuracy the grid had before the refit): a track that starts on the beat has no
+    # measurable onset at 0 (there is no step before it), so its phase is fitted from the later
+    # beats and lands a few ms either side of 0 -- that is the beat at 0.0, not a dropped one. A
+    # point further before 0 is not moved there: 0.0 would then be a time the grid does not mark
+    # (a 120 BPM grid with phase 0.46 has its point at -0.04 s), and an onset at 0.08 s would make
+    # it a "supported" snap target. Indexing by n instead of adding the interval up keeps the
+    # float error of a long file out of the last beats.
+    n = -1 if phase - interval >= -BEAT_ZERO_TOL_S else 0
     while True:
         t = phase + n * interval
         if t > total_s + 1e-9:

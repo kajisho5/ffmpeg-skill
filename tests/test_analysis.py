@@ -1170,6 +1170,8 @@ class AnalysisTests(MediaFixtures):
         return path, times
 
     def _assert_every_click_within(self, data, times, tol):
+        """Every click time has a grid point within `tol`, and the grid has exactly one point per
+        click over the span the clicks cover (no doubled or skipped beat)."""
         beats = data["beats"]
         worst = max(min(abs(b - t) for b in beats) for t in times)
         self.assertLess(worst, tol, f"a click is {worst * 1000:.1f} ms from the nearest beat "
@@ -1198,6 +1200,7 @@ class AnalysisTests(MediaFixtures):
                 self._assert_every_click_within(data, times, 0.020)
 
     def test_scenes_beats_on_flac_and_mp3_within_20ms(self):
+        """The same 20 ms on a lossless (FLAC) and a lossy (MP3) music bed."""
         for ext in ("flac", "mp3"):
             with self.subTest(ext=ext):
                 path, times = self._click_track("clicks_90_0.137", 90, 0.137, ext=ext)
@@ -1206,6 +1209,8 @@ class AnalysisTests(MediaFixtures):
                 self._assert_every_click_within(data, times, 0.020)
 
     def test_scenes_audio_only_refuses_what_needs_a_picture(self):
+        """--sheet and --shots have no picture to read on an audio-only file: refused, kind input,
+        and no sheet is written."""
         path, _ = self._click_track("clicks_120_0.0", 120, 0.0)
         for flag in (["--sheet", str(OUT / "audio_only_sheet.png")], ["--shots"]):
             with self.subTest(flag=flag[0]):
@@ -1217,6 +1222,7 @@ class AnalysisTests(MediaFixtures):
         self.assertFalse((OUT / "audio_only_sheet.png").exists())
 
     def test_scenes_audio_only_without_beats_is_one_scene(self):
+        """No picture, no cut: the file is one scene, and the sound measurements still run."""
         path, _ = self._click_track("clicks_120_0.0", 120, 0.0)
         data = json.loads(script("scenes.py", path, "--audio-peaks", "--speech", "--highlights", "1", "--json").stdout)
         self.assertTrue(data["audio_only"])
@@ -1226,8 +1232,57 @@ class AnalysisTests(MediaFixtures):
         self.assertNotIn("beat_grid", data)
 
     def test_scenes_video_input_has_no_audio_only_key(self):
+        """A video input's document is unchanged: audio_only is present only for audio-only input."""
         data = json.loads(script("scenes.py", self._beats(), "--json").stdout)
         self.assertNotIn("audio_only", data)
+
+    def test_scenes_dry_run_on_a_pending_input_skips_the_measurement(self):
+        """In a render.py/batch.py dry-run plan the input can be an earlier stage's output that was
+        never written. scenes.py ran scdet and the audio decode on it anyway and failed in ffmpeg,
+        so the plan could not be written; the measurement is now skipped and recorded, as
+        loudness.py and cut.py do."""
+        for name in ("pending_stage.wav", "pending_stage.mp4"):
+            with self.subTest(name=name):
+                missing = OUT / name
+                self.assertFalse(missing.exists())
+                doc = json.loads(script("scenes.py", missing, "--dry-run", "--beats", "--audio-peaks",
+                                        "--speech", "--highlights", "1", "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertEqual([s["code"] for s in doc["diagnostics"]["skipped"]], ["measurement_input_pending"])
+                self.assertEqual(doc["beats"], [])
+                self.assertFalse(doc["beat_grid"]["usable"])
+                self.assertEqual(doc["audio_peaks_db"], [])
+                self.assertEqual(doc["speech"], [])
+
+    def test_scenes_beats_decodes_with_check_so_a_failed_decode_is_not_no_pulse(self):
+        """A decode that failed came back as [] and was reported as "no steady pulse in this audio".
+        With --beats the decode is checked (it fails as ffmpeg); without it the scene scoring still
+        tolerates a failed decode and runs on the picture."""
+        import importlib.util
+        import unittest.mock
+        path, _ = self._click_track("clicks_120_0.0", 120, 0.0)
+        spec = importlib.util.spec_from_file_location("scenes_under_test", SCRIPTS / "scenes.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        calls = []
+
+        def fake_decode(p, rate, *a, check=True, **k):
+            calls.append(check)
+            if check:
+                raise SystemExit(1)   # what decode_pcm_mono(check=True) does on a failed decode
+            return []
+        for argv, expect_exit in ((["--beats"], True), (["--audio-peaks"], False)):
+            with self.subTest(argv=argv):
+                calls.clear()
+                with unittest.mock.patch.object(mod, "decode_pcm_mono", fake_decode), \
+                     unittest.mock.patch.object(sys, "argv", ["scenes.py", str(path), *argv, "--json"]), \
+                     unittest.mock.patch("sys.stdout", new_callable=__import__("io").StringIO):
+                    if expect_exit:
+                        with self.assertRaises(SystemExit):
+                            mod.main()
+                    else:
+                        mod.main()
+                self.assertEqual(calls[0], expect_exit)
 
     # --------------------------------------------------------------- 1.18.0: --shots / --audio-peaks / --speech
     def test_scenes_shots_labels_every_scene(self):
@@ -1548,6 +1603,26 @@ class BeatGridTests(unittest.TestCase):
                 g = beat_grid(self._clicks(60.0 / bpm, seconds=20.0), self.STEP, duration=20.0)
                 self.assertGreaterEqual(g["beats"][0], 0.0)
                 self.assertLess(g["beats"][0], 0.005)
+
+    def test_a_grid_point_well_before_zero_is_not_moved_to_zero(self):
+        """A 120 BPM grid with phase 0.46 has its point before the first at -0.04 s. Clamping it to
+        0.0 made 0.0 a beat -- and with an onset at 0.08 s a "supported" one, so a cut at 0.08
+        snapped to a time the grid does not mark. Only a point within BEAT_ZERO_TOL_S of 0 is the
+        beat at 0.0."""
+        from _common import beat_grid, snap_points
+        from _common.decision import BEAT_ZERO_TOL_S
+        env = [0.01] * 1000
+        env[8] = 0.3                       # a weak onset at 0.08 s
+        for k in range(20):                # clicks from 0.46 s, every 0.5 s
+            i = 46 + 50 * k
+            env[i], env[i + 1] = 1.0, 0.6
+        g = beat_grid(env, self.STEP, duration=10.0)
+        self.assertAlmostEqual(g["tempo_bpm"], 120.0, delta=0.5)
+        self.assertAlmostEqual(g["beats"][0], 0.46, delta=0.01)
+        self.assertNotIn(0.0, g["beats"])
+        self.assertNotIn(0.0, g["supported_beats"])
+        self.assertFalse(snap_points([0.08], g["supported_beats"], 0.12)[0]["snapped"])
+        self.assertEqual(BEAT_ZERO_TOL_S, 0.01)
 
     def test_refine_onset_times_places_a_click_to_the_sample(self):
         """An onset picked on a 10 ms envelope is only known to the step; the PCM places it."""

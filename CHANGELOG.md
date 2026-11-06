@@ -16,6 +16,9 @@
   tempo and phase are refitted to the onsets, and each onset is placed on the decoded samples
   (new `beat_grid.onset_refinement`). On 90/120 BPM click tracks every beat is within 1 ms
   (WAV/FLAC), 9 ms (MP3). `cut.py --snap beats` measures its own grid at the real step too.
+  With `--beats` the decode is checked (a failed decode is an ffmpeg failure, not "no steady
+  pulse"), and under `--dry-run` an input an earlier plan stage has not written is skipped
+  (`measurement_input_pending`) instead of failing the plan in ffmpeg.
   Contract: `scenes` is `audio_only: true`, `video_required: false`; `audio_only`, `beats` and
   `beat_grid` are described in its output schema.
 

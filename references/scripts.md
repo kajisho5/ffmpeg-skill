@@ -1118,7 +1118,7 @@ for `--beat-step 0.01`; timing it as 10 ms stretched every time by 0.23 %, 68 ms
 onset at each grid point, so a tempo between two envelope steps (90 BPM = 0.6667 s)
 is not rounded to one (0.67 s, 3.3 ms a beat); and each onset is placed on the
 decoded samples (`onset_refinement: "pcm-window-ratio"`) instead of at the start of
-its 10 ms block. A grid point a few ms before 0 s is the beat at `0.0`. Measured on
+its 10 ms block. A grid point within 10 ms before 0 s is the beat at `0.0`; one further before is not reported (it would make `0.0` a snap target the grid does not mark). Measured on
 synthetic click tracks at 90 and 120 BPM (first click at 0, 0.137 and 0.25 s): every
 beat within 1 ms on WAV/FLAC, 9 ms on MP3 (the encoder's pre-echo), 6 ms through AAC;
 the test holds every click to 20 ms.
