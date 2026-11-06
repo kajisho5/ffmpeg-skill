@@ -1038,7 +1038,8 @@ class AnalysisTests(MediaFixtures):
         graph = next(c for c in doc["commands"] if "hstack" in c)
         for branch in graph.split(";")[:2]:
             self.assertLess(branch.rindex("drawbox"), branch.index("pad="), branch)
-            self.assertLess(branch.index("pad="), branch.index("drawtext"), branch)
+            if "drawtext" in branch:  # a build without drawtext (Homebrew's) draws no stamp
+                self.assertLess(branch.index("pad="), branch.index("drawtext"), branch)
         # #430 review: the guides are drawn on both pictures of --compare, so the second is checked too
         proc = script("look.py", self.src, "--compare", square, "--at", "0.5", "--guides", "4:3", "--json",
                       "-o", OUT / "guides_compare.png", expect_fail=True)

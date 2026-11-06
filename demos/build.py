@@ -135,7 +135,9 @@ def _short(arg) -> str:
     text = str(arg)
     for base, prefix in ((OUT, "demos/out"), (ROOT, "")):
         try:
-            rel = Path(text).resolve().relative_to(base)
+            # both sides resolved: a temp DEMO_OUT is a short (8.3) name on Windows and under a
+            # /var symlink on macOS, while the argument resolves to the long, real path
+            rel = Path(text).resolve().relative_to(Path(base).resolve())
         except (ValueError, OSError):
             continue
         text = (prefix + "/" + str(rel).replace("\\", "/")).lstrip("/")
