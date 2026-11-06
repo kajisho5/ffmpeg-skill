@@ -138,9 +138,11 @@ def _seamless_unit_cmd(meta, src: str, unit: str, rate: str, frames: int, fade_f
     fade = fade_frames / fps
     cut = (frames - fade_frames) / fps
     length = frames / fps
+    # each branch re-states its rate after setpts: FFmpeg 7.x's setpts marks the frame rate
+    # unknown (1/0) and xfade refuses anything but a constant one (6.1 kept it)
     graph = (f"[0:v:0]setpts=PTS-STARTPTS,fps={rate},split[vt][vb];"
-             f"[vt]trim=start_frame={frames - fade_frames}:end_frame={frames},setpts=PTS-STARTPTS[t];"
-             f"[vb]trim=end_frame={frames - fade_frames},setpts=PTS-STARTPTS[b];"
+             f"[vt]trim=start_frame={frames - fade_frames}:end_frame={frames},setpts=PTS-STARTPTS,fps={rate}[t];"
+             f"[vb]trim=end_frame={frames - fade_frames},setpts=PTS-STARTPTS,fps={rate}[b];"
              f"[t][b]xfade=transition=fade:duration={fade:.6f}:offset=0[v]")
     maps = ["-map", "[v]"]
     if has_audio:
