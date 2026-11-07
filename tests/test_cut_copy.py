@@ -1506,6 +1506,15 @@ class SmartCutTests(unittest.TestCase):
         line = script("probe.py", self._ntsc_mp4(), "--keyframes-near", "0.8008", "--compact").stdout
         self.assertIn("keyframes near 0.8008s: 0.8008/0.8008", line)
 
+    def test_probe_keyframes_include_one_on_the_windows_edge(self):
+        """Review 434: ffprobe stops before the packet at its read interval's end, so a keyframe exactly
+        on the window's upper edge (4.0 for a query at 2 with a 2 s window) was left out."""
+        doc = json.loads(script("probe.py", self.bsrc, "--keyframes-near", "2,3.5", "--keyframe-window", "2").stdout)
+        edge, inside = doc["keyframes"]
+        self.assertEqual(edge["keyframes"], [0.0, 1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(inside["keyframes"], [2.0, 3.0, 4.0, 5.0])
+        self.assertEqual((inside["before"], inside["after"]), (3.0, 4.0))
+
     def test_probe_keyframes_refuses_what_it_cannot_measure(self):
         for extra in (["--keyframes-near", " , "], ["--keyframes-near", "1", "--keyframe-window", "nan"],
                       ["--keyframes-near", "1", "--keyframe-window", "inf"]):

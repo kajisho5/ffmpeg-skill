@@ -21,6 +21,9 @@ import sys
 from _common import add_common, analyze_levels, apply_common, die, keyframe_times, print_json, probe, time_arg
 
 
+KEYFRAME_READ_PAST = 1.0
+
+
 def keyframe_candidates(result: dict, times: list, window: float) -> list:
     """For each time (seconds from the file's start), the keyframes within `window` of it and the
     nearest of those at or before / at or after it (null when none is within the window), on the
@@ -29,7 +32,9 @@ def keyframe_candidates(result: dict, times: list, window: float) -> list:
     origin = float(result.get("start_time") or 0.0)
     out = []
     for t in times:
-        read = keyframe_times(result["file"], origin + t - window, origin + t + window, "V:0")
+        # read a second past the window: ffprobe stops before the packet at its interval's end, so a
+        # keyframe exactly on the window's edge was dropped; the filter below keeps the window exact
+        read = keyframe_times(result["file"], origin + t - window, origin + t + window + KEYFRAME_READ_PAST, "V:0")
         if read is None:
             die(f"ffprobe could not read the keyframes of {result['file']} around {t:g}s", kind="ffmpeg")
         # the read starts at the keyframe at or before the window, which may lie outside it
