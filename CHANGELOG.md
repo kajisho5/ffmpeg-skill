@@ -6,6 +6,38 @@
 
 (nothing yet)
 
+## 3.2.2
+
+_Automated release: version and notes generated from pull requests merged since 3.2.1._
+
+### Fixed
+
+- **`scenes.py --beats` on a music bed with no picture, and to the ms.** An audio-only input
+  (WAV/FLAC/MP3 ...) was refused with "input has no video stream"; it is now measured as one
+  scene (`audio_only: true`), and `--sheet` / `--shots`, which need a picture, refuse it. Wrapped
+  in a video, a synthetic click track's grid was 40-90 ms off (sound-design-skill's 20 ms check of
+  `generate-bgm --bpm` could not pass): the 10 ms envelope is 220 samples at 22050 Hz, 9.977 ms,
+  and was timed as 10 ms (0.23 % stretch, 68 ms over 30 s), and the tempo was a whole number of
+  envelope steps (90 BPM as 0.67 s, 3.3 ms a beat). `beat_grid.step_s` is now the real step, the
+  tempo and phase are refitted to the onsets, and each onset is placed on the decoded samples
+  (new `beat_grid.onset_refinement`). On 90/120 BPM click tracks every beat is within 1 ms
+  (WAV/FLAC), 9 ms (MP3). `cut.py --snap beats` measures its own grid at the real step too.
+  With `--beats` the decode is checked (a failed decode is an ffmpeg failure, not "no steady
+  pulse"), and under `--dry-run` an input an earlier plan stage has not written is skipped
+  (`measurement_input_pending`) instead of failing the plan in ffmpeg.
+  Contract: `scenes` is `audio_only: true`, `video_required: false`; `audio_only`, `beats` and
+  `beat_grid` are described in its output schema.
+- fix(scenes): --beats on audio-only input, beat grid within 1 ms of a click track (#431)
+
+## 3.2.1
+
+_Automated release: version and notes generated from pull requests merged since 3.2.0._
+
+### Fixed
+
+- **`audio.py --denoise-strength` accepts 20..60, down from 10..60.** The value becomes afftdn's noise floor `nf=-N`, which ffmpeg accepts only in -80..-20, so 10..19.99 passed the check and then failed inside ffmpeg (exit 222). Those values are now refused as `kind: input` before ffmpeg runs; the help text says the value is a starting noise floor that `tn=1` tracks, not an amount removed. The default 25 and every value from 20 to 60 produce the same filter as before.
+- Fix audio.py --denoise-strength range to match afftdn nf (20..60) (#379)
+
 ## 3.2.0
 
 _Automated release: version and notes generated from pull requests merged since 3.1.8._
