@@ -339,6 +339,7 @@
    "quality",
    "remove",
    "segments",
+   "smart",
    "snap",
    "snap_source",
    "snap_tolerance",
@@ -854,6 +855,8 @@
    "field",
    "inputs",
    "json_brief",
+   "keyframe_window",
+   "keyframes_near",
    "overwrite",
    "plan",
    "timeout"

@@ -65,6 +65,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 - [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 - [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
+- [After 3.2.1 — a smart cut that re-encodes only the partial GOPs](#after-321--a-smart-cut-that-re-encodes-only-the-partial-gops)
 <!-- contents:end -->
 
 ## Time limits
@@ -2886,4 +2887,43 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   --versions` has no single output, and a plan over a version file was refused as an existing output
   when it was executed. Code: `_common.emit.write_plan()`, `_planned_outputs()`. Test:
   `test_loudness_versions_writes_one_measured_file_per_target`.
+
+## After 3.2.1 — a smart cut that re-encodes only the partial GOPs
+
+- **Only H.264 that libx264 here can reproduce is cut smart; everything else falls back, saying why.**
+  A re-encoded part and the copied GOPs are decoded as one stream, so the part has to have the
+  source's parameters: profile (Baseline/Main/High), level, 8-bit 4:2:0, frame size, SAR, colour tags.
+  It also has to have the source's reorder depth (`has_b_frames`). Each part's decode times run
+  ahead of its presentation times by that depth, so parts of different depth would collide in
+  decode order at a join. The x264 line sets `bframes`/`b-pyramid` to give the same depth, and
+  every part is probed against the source. HEVC, 10-bit, 4:2:2/4:4:4, interlaced, variable-rate
+  and HDR sources are not matched. Neither is an open GOP at a copy boundary, whose leading frames
+  decode after the keyframe. These are re-encoded in full, as `--accurate` would, with `smart.reason`
+  and a `reason_code`; they are not refused, because the caller asked for a cut. Code:
+  `_smartcut.ineligible()`, `x264_line()`, `plan_segment()`.
+- **The parts travel as MPEG-TS, so the parameter sets switch in-band.** An MP4 or Matroska part
+  carries one SPS/PPS out of band, and a concat of the encoder's part and the source's packets would
+  decode one of them with the other's. In MPEG-TS every keyframe carries its own, and the output
+  keeps them in-band. The delimiter NAL units the TS muxer adds are removed again (`filter_units`). The
+  output's MP4 time scale is set to the source's time base (`-video_track_timescale`).
+- **Verified against the source, not trusted.** Each check below would catch a different way the
+  join can go wrong:
+  - a frame dropped or repeated at a join (the count and the frame grid);
+  - a copy that started or stopped on the wrong packet (packet MD5s against the source's, with
+    SPS/PPS/AUD removed on both sides);
+  - a decoder that used the wrong parameter set after a join (framemd5 of each re-encoded part as
+    written, and of each copied part's first GOP from the source, against the output).
+
+  A failed check is a fallback, never a warning on a written file: the smart result is written
+  beside the output and moved into place only once it passes.
+- **The sound is cut from the source and encoded once.** A packet copy of AAC lands on 21 ms
+  packet boundaries and carries encoder priming into every join. The sound is trimmed on the
+  picture's frame grid, as the `--accurate` re-cut does, and encoded in the same command that joins
+  the picture. The saving is in the video, which is where the time and the quality go.
+- **`--fps` stays a number in this change.** `join.py --fps 30000/1001` needs `--fps` to take a
+  rational, but the MCP schema publishes `--fps` as `number`, and a rational needs it to become a
+  string or a union, which the contract's type set does not allow. That is a contract decision for
+  its own change; a float `--fps` is unchanged.
+
+Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
 

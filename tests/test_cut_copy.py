@@ -1386,6 +1386,100 @@ class CutJoinTests(unittest.TestCase):
         self.assertFalse(cut.signatures_match([one, other], ".ts"), "a hash on one side only is a mismatch")
 
 
+class SmartCutTests(unittest.TestCase):
+    """cut.py --smart: only the partial GOPs at the cut points are re-encoded, the whole GOPs between
+    are the source's packets, and the result is frame-exact -- checked here with ffmpeg directly, not
+    through the tool's own checks. A source it cannot match falls back to a full re-encode, saying why."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = DIR / "smart"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        # B-frames (reorder depth 2), a keyframe every second at 30 fps, AAC sound
+        cls.bsrc = cls.dir / "gop30_b.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=6",
+           "-f", "lavfi", "-i", "sine=f=440:d=6", "-c:v", "libx264", "-g", "30", "-bf", "2", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-shortest", cls.bsrc)
+        # no B-frames, Main profile, BT.709 tags, 30000/1001 in Matroska, no sound
+        cls.nsrc = cls.dir / "ntsc_main.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30000/1001:d=6",
+           "-c:v", "libx264", "-g", "24", "-bf", "0", "-profile:v", "main", "-pix_fmt", "yuv420p", "-colorspace", "bt709",
+           "-color_primaries", "bt709", "-color_trc", "bt709", cls.nsrc)
+
+    def _cut(self, src, out, *args):
+        return json.loads(script("cut.py", src, *args, "--smart", "-o", out, "--json").stdout)
+
+    @staticmethod
+    def _md5(cmd):
+        lines = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+        return [ln.split(",")[-1].strip() for ln in lines.splitlines() if ln and not ln.startswith("#")]
+
+    def test_smart_cut_copies_the_whole_gops_and_reencodes_only_the_ends(self):
+        out = self.dir / "smart_b.mp4"
+        data = self._cut(self.bsrc, out, "--start", "1.3", "--end", "4.6")
+        sm = data["smart"]
+        self.assertEqual(data["mode"], "smart")
+        self.assertTrue(sm["applied"], sm)
+        self.assertEqual([(p["kind"], p["start"], p["end"], p["frames"]) for p in sm["parts"]],
+                         [("reencode", 1.3, 2.0, 21), ("copy", 2.0, 4.0, 60), ("reencode", 4.0, 4.6, 18)])
+        self.assertEqual((sm["reencoded_frames"], sm["copied_frames"]), (39, 60))
+        self.assertTrue(data["verified"])
+        self.assertIn("smart", data["reencode_reason"])
+        for step in ("smart_frames", "smart_packets", "smart_decode", "smart_params"):
+            self.assertIn(step, [v["step"] for v in data["verification"]])
+        # frame-exact and gap-free: 99 frames, one per 1/30 s
+        pts = cut.stream_packet_times(str(out), "v", "pts_time")
+        pts = sorted(p for p in pts if p is not None)
+        self.assertEqual(len(pts), 99)
+        self.assertLess(max(abs(t - pts[0] - i / 30) for i, t in enumerate(pts)), 1 / 60)
+        # the copied GOPs decode to the source's own frames 2.0-4.0, bit for bit
+        md5 = ["-flags:v", "+bitexact", "-f", "framemd5", "-"]
+        src_frames = self._md5(["ffmpeg", "-v", "error", "-ss", "1.98", "-i", self.bsrc, "-map", "0:v", "-frames:v", "60", *md5])
+        out_frames = self._md5(["ffmpeg", "-v", "error", "-i", out, "-map", "0:v", *md5])
+        self.assertEqual(len(src_frames), 60)
+        self.assertEqual(out_frames[21:81], src_frames)
+        # the re-encoded parts match the source stream's parameters, and the time base is kept
+        self.assertEqual(sm["time_base"], "1/15360")
+        params = probe_mod.run([probe_mod.require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                "stream=profile,has_b_frames,pix_fmt", "-of", "csv=p=0", str(out)], quiet=True).stdout.strip()
+        self.assertEqual(sorted(params.split(",")), ["2", "High", "yuv420p"])
+
+    def test_smart_cut_joins_segments_and_keeps_a_no_b_frame_ntsc_source_on_its_grid(self):
+        out = self.dir / "smart_ntsc.mkv"
+        data = self._cut(self.nsrc, out, "--segments", "0.5-1.9,2.3-5.1")
+        sm = data["smart"]
+        self.assertTrue(sm["applied"], sm)
+        self.assertEqual([p["segment"] for p in sm["parts"]][0], 1)
+        self.assertIn("copy", [p["kind"] for p in sm["parts"]])
+        self.assertEqual(sm["matched"]["has_b_frames"], 0)
+        self.assertEqual(sm["matched"]["color_primaries"], "bt709")
+        frames = sum(p["frames"] for p in sm["parts"])
+        self.assertEqual(sm["checks"]["frames"], frames)
+        # every frame the two segments hold on the 30000/1001 grid, none lost or repeated at the joins
+        expected = sum(len([n for n in range(200) if s - 1e-6 <= n * 1001 / 30000 < e - 1e-6])
+                       for s, e in ((0.5, 1.9), (2.3, 5.1)))
+        self.assertEqual(frames, expected)
+
+    def test_smart_cut_falls_back_to_a_full_reencode_with_the_reason(self):
+        src = self.dir / "yuv444.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=3",
+           "-c:v", "libx264", "-g", "30", "-pix_fmt", "yuv444p", src)
+        data = self._cut(src, self.dir / "smart_444.mp4", "--start", "0.4", "--end", "2.2")
+        self.assertEqual(data["mode"], "accurate")
+        self.assertEqual((data["smart"]["applied"], data["smart"]["reason_code"]), (False, "pix_fmt"))
+        self.assertIn("smart_fallback", data["reencode_reason"])
+        self.assertTrue(any("--smart fell back" in n for n in data["notes"]))
+        proc = script("cut.py", src, "--start", "1", "--smart", "--accurate", "-o", self.dir / "x.mp4", "--json",
+                      expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+    def test_probe_lists_keyframe_candidates_around_a_time(self):
+        doc = json.loads(script("probe.py", self.bsrc, "--keyframes-near", "1.3,4", "--keyframe-window", "1.5").stdout)
+        a, b = doc["keyframes"]
+        self.assertEqual((a["at"], a["before"], a["after"], a["keyframes"]), (1.3, 1.0, 2.0, [0.0, 1.0, 2.0]))
+        self.assertEqual((b["before"], b["after"]), (4.0, 4.0))
+
+
 class SourceCodecArgsTests(unittest.TestCase):
     """source_codec_video_args routes by the source (pure: no encode runs)."""
     SDR_HEVC = {"video": {"codec": "hevc", "bt2020_or_hdr": False}}

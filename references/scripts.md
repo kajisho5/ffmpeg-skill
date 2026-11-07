@@ -117,8 +117,11 @@ holds the written length to the maximum with no tolerance, as `check.py` does.
 
 ### probe.py — inspect
 ```
-probe.py INPUT... [--compact] [--field duration|video.fps|...]
+probe.py INPUT... [--compact] [--field duration|video.fps|...] [--keyframes-near T[,T...] [--keyframe-window 5]]
 ```
+`--keyframes-near` adds `keyframes`: for each time, the video keyframes within `--keyframe-window`
+seconds, and the nearest at or before it (`before`) and at or after it (`after`), in seconds from the
+file's start. These are where a stream copy can start, and where `cut.py --smart` stops re-encoding.
 JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected,hdr,hdr_signal,bt2020_or_hdr,hdr_format,start_time}`
 (`hdr`, and `hdr_signal` equal to it, is true only for a PQ / HLG transfer or Dolby Vision -- since 2.0;
 `bt2020_or_hdr` also counts BT.2020 primaries on an SDR transfer, which `hdr_format` names "BT.2020 SDR"),
@@ -127,7 +130,7 @@ own clock, `null` when unknown). `--compact` gives one line per file.
 
 ### cut.py — cut / join segments
 ```
-cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate] [--declick-ms 20 | --no-declick] [--edit-list | --no-edit-list] [--keep-hevc | --no-keep-hevc] [--vfr-guard sampled|average|off] [-o OUT]
+cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate | --smart] [--declick-ms 20 | --no-declick] [--edit-list | --no-edit-list] [--keep-hevc | --no-keep-hevc] [--vfr-guard sampled|average|off] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
@@ -168,8 +171,37 @@ in the length. Since 3.0.0 `keyframe_snapped` equals `start_snapped` (2.x: true
 for every stream copy, `precision` `packet`); `start_snapped` is measured: true when a copied picture starts more
 than a frame from `--start`, or when its start could not be measured (an unknown start is
 never claimed exact); `null` under `--dry-run`.
+`--smart` is the keyframe-aware cut for H.264. A cut point between keyframes is re-encoded only
+from that point to the next keyframe (and, at the end, from the last keyframe to the end point);
+the whole GOPs between are stream-copied. The re-encoded parts are encoded with libx264 matched to
+the source stream: profile, level, pixel format, reorder depth (B-frames), frame size, SAR and
+colour tags. Every part is written as MPEG-TS, so each keyframe carries its own SPS/PPS and the
+decoder switches parameter sets at every join. The parts are joined with the concat demuxer, each
+with its exact length stated, and the output keeps the source's time base. The sound is cut from
+the source on the same frame grid and encoded once (AAC).
+
+Before it is moved into place, the result is checked:
+- the frame count, and one frame per frame duration (no gap, no repeat);
+- every copied packet against the source's (MD5 with the parameter-set and delimiter NAL units
+  removed);
+- framemd5 of every re-encoded part against the same frames decoded from the output, and of each
+  copied part's first GOP against the source's;
+- the output's stream parameters and time base against the source's.
+
+These are reported in `smart.checks` and as `smart_*` verification steps, and `mode` is `smart`.
+When the source cannot be matched, the result is `mode: accurate`, `reencode_reason` holds
+`smart_fallback` and `smart: {applied: false, reason, reason_code}`. This happens for:
+- a source that is not H.264 8-bit 4:2:0 in Baseline/Main/High;
+- an interlaced, variable-rate or HDR source;
+- an open GOP at a copy boundary;
+- an output other than `.mp4`/`.mov`/`.m4v`/`.mkv`;
+- any check failing.
+
+`--smart` with `--accurate` is refused. `probe.py --keyframes-near T` lists the keyframes around a
+time.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
-`vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost`, `tolerance`, `concat_fallback`);
+`vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost`, `tolerance`, `concat_fallback`,
+`smart`, `smart_fallback`);
 `--segments` adds `segment_precision`; `precision` and `least_exact_precision` are the least exact one
 (since 3.0.0; 2.x's `precision` was the whole run's, `packet` only when nothing re-encoded).
 A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,

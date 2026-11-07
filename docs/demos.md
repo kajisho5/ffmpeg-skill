@@ -820,6 +820,14 @@ python3 scripts/check.py final.mp4 --platform youtube --content
 
 **No picture:** adds content rows to the platform check: black frames, frozen frames, the share of silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, the mark of lost audio at a join), single-frame flashes (one frame unlike both of its neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the first five times; a row that does not pass names a fix.
 
+### cut.py --smart
+
+```bash
+python3 scripts/cut.py talk.mp4 --start 1:20.4 --end 2:05.1 --smart
+```
+
+**No picture:** a frame-exact H.264 cut that re-encodes only the partial GOPs at the two cut points and copies the rest, then reports which parts were which (smart.parts) and what it checked against the source; probe.py --keyframes-near 80.4 shows the keyframes it works between. A frame-exact cut looks the same as an --accurate one, so this is a number here, not a GIF.
+
 ### report.py
 
 ```bash
