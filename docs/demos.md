@@ -481,6 +481,18 @@ python3 scripts/overlay.py demos/out/greenscreen_plate.mp4 --video demos/out/fix
 
 **Look for:** background.py draws the gradient plate from nothing (there is no input file), then overlay.py keys the chroma green out of the subject and composites it on top.
 
+### A graphic rendered as its own alpha layer
+
+![A graphic rendered as its own alpha layer](demos/alpha_layer.gif)
+
+```bash
+python3 scripts/background.py --transparent --alpha-codec qtrle --duration 6 --width 1280 --height 720 --fps 30 -o demos/out/alpha_layer_canvas.mov
+python3 scripts/graphics.py demos/out/alpha_layer_canvas.mov --template lower-third --name 'Ada Lovelace' --title 'Analytical Engine' --start 0.5 --end 5.5 --keep-alpha --alpha-codec qtrle -o demos/out/alpha_layer_layer.mov
+python3 scripts/overlay.py demos/out/fixtures/motion.mp4 --video demos/out/alpha_layer_layer.mov --position 0,0 --margin 0 --preset veryfast -o demos/out/alpha_layer_after.mp4
+```
+
+**Look for:** background.py --transparent makes an empty canvas, graphics.py --keep-alpha draws a lower third on it and writes it with its alpha (QuickTime Animation here; ProRes 4444 by default), checked frame by frame, and overlay.py lays that one layer over the footage. The layer can go to an editor as it is: nothing but the graphic was ever in its picture.
+
 ### Pieces of one layer at their own times
 
 ![Pieces of one layer at their own times](demos/overlay_place.gif)

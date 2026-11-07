@@ -65,6 +65,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 - [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 - [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
+- [Unreleased — the alpha path beyond export](#unreleased--the-alpha-path-beyond-export)
 <!-- contents:end -->
 
 ## Time limits
@@ -2887,3 +2888,49 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   when it was executed. Code: `_common.emit.write_plan()`, `_planned_outputs()`. Test:
   `test_loudness_versions_writes_one_measured_file_per_target`.
 
+
+## Unreleased — the alpha path beyond export
+
+Context: `export.py`'s alpha presets kept and checked an alpha channel, but every tool that grades
+or composites wrote opaque H.264 and still said `verified: true` on a ProRes 4444 source whose alpha
+it had dropped, and nothing could make a transparent canvas to draw one graphic on. Decisions:
+
+- **An alpha line is asked for, never inferred.** `--keep-alpha` (`color.py --correct/--lut`,
+  `graphics.py`, `overlay.py`) and `background.py --transparent` write ProRes 4444 by default
+  (`--alpha-codec qtrle|png|vp9`); without the flag the tools write the same H.264 line as before.
+  Switching an alpha source to ProRes on its own would change the codec, container and size of an
+  existing call's output, which is not an additive change. A container that cannot hold the line
+  (`.mp4` for ProRes, `.mov` for VP9) is refused before anything runs. Code: `_common/alpha.py`
+  `check_alpha_args()`. Test: `test_color_on_an_alpha_source_without_keep_alpha_is_not_verified`.
+- **A lost alpha fails verification instead of passing.** The one change to a call without the new
+  flags: on a source that stores an alpha plane and uses it (a frame below opaque), a re-encode that
+  writes no alpha adds an `alpha` step with `ok: false` (`reason: alpha_dropped`, `attribution:
+  artifact`) and an `alpha_dropped` warning, so `verified` is false. The run still completes and
+  writes its file; `--drop-alpha` records that an opaque output was wanted and adds no failing step.
+  An opaque source is not decoded for this and reports exactly as before (the check needs the pixel
+  format, or a VP9 stream's `alpha_mode` tag, to show an alpha plane first). Code: `alpha.report()`,
+  `alpha.lost_step()`. Test: as above.
+- **The alpha line keeps the source's colour tags, as `--codec prores` does.** An alpha master is an
+  editing master: it converts no matrix and draws no BT.709 label, so `decision.keeps_source_tags()`
+  is true for both. Code: `decision.keeps_source_tags()`. Test:
+  `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
+- **`color.py` never grades the alpha.** The alpha is split off the source, kept as decoded and merged
+  back (`alphamerge`) after the grade, which runs at 4:4:4 (8-bit: the grade filters' own depth), so
+  the written alpha is compared with the source's frame by frame (tolerance 2 of 255), exactly as
+  export's alpha presets are. Code: `color.main()`. Test: as above.
+- **Compositing is checked against a floor, not an equality.** A layer drawn on the picture adds
+  coverage, so the written alpha cannot equal the source's: `graphics.py`/`overlay.py` pass when the
+  stream stores an alpha plane, no frame's alpha is below the source's, and the output did not turn
+  opaque in every frame the source was transparent in (what a dropped alpha reads as). A layer that
+  covers the whole frame for the whole clip fails `opaque_everywhere`: there is no alpha left to
+  keep, and the step says so rather than guessing that was intended. Boxes are composited as layers
+  (`overlay` blends the alpha; `drawbox` leaves it as it was), libass gets `alpha=1`. Code:
+  `alpha.kept_step()`. Test: `test_graphics_and_overlay_render_on_a_transparent_canvas`.
+- **An `overlay.py --video` layer with alpha keeps it**, with or without `--keep-alpha`: a VP9 layer
+  is decoded with libvpx-vp9 (FFmpeg's own VP9 decoder drops the alpha layer), and an RGB layer
+  (qtrle, PNG in .mov) is converted to BT.709 YUV in `yuva444p`, not `yuv444p`. Both covered the
+  picture as an opaque rectangle. This changes the picture of an existing call, and only where the
+  old one was wrong. Code: `overlay.main()`, `alpha.decoder_args_for()`. Test:
+  `test_overlay_keeps_a_video_layers_alpha`.
+- **`--alpha-mode` describes the written colour, as in `export.py`.** Sources are taken as straight;
+  `premultiplied` multiplies the written colour by the alpha at the end of the graph.

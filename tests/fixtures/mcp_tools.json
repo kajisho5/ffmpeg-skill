@@ -61,6 +61,8 @@
  {
   "name": "background",
   "properties": [
+   "alpha_codec",
+   "alpha_mode",
    "angle",
    "argv",
    "codec",
@@ -80,6 +82,7 @@
    "preset",
    "quality",
    "timeout",
+   "transparent",
    "width"
   ],
   "required": []
@@ -226,6 +229,8 @@
  {
   "name": "color",
   "properties": [
+   "alpha_codec",
+   "alpha_mode",
    "argv",
    "audio_stream",
    "codec",
@@ -233,6 +238,7 @@
    "correct",
    "curves",
    "desat",
+   "drop_alpha",
    "dry_run",
    "exposure",
    "fast",
@@ -242,6 +248,7 @@
    "hw",
    "input",
    "json_brief",
+   "keep_alpha",
    "levels_in_black",
    "levels_in_white",
    "levels_out_black",
@@ -494,12 +501,15 @@
  {
   "name": "graphics",
   "properties": [
+   "alpha_codec",
+   "alpha_mode",
    "argv",
    "audio_stream",
    "bottom",
    "brand",
    "codec",
    "count_from",
+   "drop_alpha",
    "dry_run",
    "duration",
    "emoji",
@@ -513,6 +523,7 @@
    "hw",
    "input",
    "json_brief",
+   "keep_alpha",
    "lang",
    "margin",
    "name",
@@ -772,6 +783,8 @@
  {
   "name": "overlay",
   "properties": [
+   "alpha_codec",
+   "alpha_mode",
    "argv",
    "audio_stream",
    "border",
@@ -783,6 +796,7 @@
    "chromakey_blend",
    "chromakey_similarity",
    "codec",
+   "drop_alpha",
    "dry_run",
    "emoji",
    "emoji_assets",
@@ -799,6 +813,7 @@
    "image",
    "input",
    "json_brief",
+   "keep_alpha",
    "logo",
    "margin",
    "no_hw",

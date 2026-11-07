@@ -16,6 +16,7 @@ Examples:
   python3 color.py flat.mp4 --correct --exposure 0.3 --contrast 1.1 --saturation 1.05 --temperature 5600 --tint -0.05
   python3 color.py flat.mp4 --correct --gamma 1.2 --lift 0.04 --gain -0.03   # three-way shadows/gamma/highlights
   python3 color.py flat.mp4 --correct --levels-in-black 16 --levels-in-white 235 --curves medium_contrast
+  python3 color.py logo_4444.mov --correct --exposure 0.3 --keep-alpha -o logo_graded.mov   # alpha kept, ProRes 4444
 """
 import argparse
 import json
@@ -25,7 +26,10 @@ from typing import List, Optional
 
 from _common.runner import fail_if_classified
 from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
-from _common.emit import warn
+from _common.emit import note, warn
+from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
+                           report as alpha_report, source_alpha, video_line)
+from _common.decision import keeps_source_tags
 
 # the curves of FFmpeg's CPU `tonemap` filter (every version from 5.1 to 9). bt2390 was listed
 # until 2.24 but exists only in tonemap_opencl/libplacebo, so choosing it always failed.
@@ -84,7 +88,7 @@ def _checked_levels(args: argparse.Namespace, flag: str) -> int:
     return value
 
 
-def correction_chain(args: argparse.Namespace) -> str:
+def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p") -> str:
     """Always-present filter stages, in a fixed order chosen so each stage sees a picture already
     corrected by the previous one: exposure (linear light level) -> white balance (temperature/tint/
     lift/gain, so contrast/saturation act on colour-balanced footage) -> contrast/saturation/gamma
@@ -124,7 +128,7 @@ def correction_chain(args: argparse.Namespace) -> str:
         # "unchanged" adds no term at all
         rgb.append(f"colortemperature=temperature={temperature:g}")
     rgb.append(f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}")
-    terms = [_rgb_stage(rgb), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
+    terms = [_rgb_stage(rgb, out_fmt), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
     rgb2 = []
     if (in_black, in_white, out_black, out_white) != (0, 255, 0, 255):
         rimin, rimax = in_black / 255.0, in_white / 255.0
@@ -138,11 +142,11 @@ def correction_chain(args: argparse.Namespace) -> str:
     if args.curves:
         rgb2.append(f"curves=preset={args.curves}")
     if rgb2:
-        terms.append(_rgb_stage(rgb2))
+        terms.append(_rgb_stage(rgb2, out_fmt))
     return ",".join(terms)
 
 
-def _rgb_stage(filters: list) -> str:
+def _rgb_stage(filters: list, out_fmt: str = "yuv420p") -> str:
     """Wrap a run of RGB-only filters in explicit, matching YUV<->RGB conversions.
 
     exposure/colortemperature/colorbalance/colorlevels/curves take RGB, so libavfilter inserts a
@@ -154,16 +158,17 @@ def _rgb_stage(filters: list) -> str:
     identity on every source (39 dB, the same as an untagged one always got); bt601 on both
     sides measured better than bt709 on both (34 dB) because swscale's 601 path round-trips
     8-bit 4:2:0 more exactly. The matrix here is only the working space of the conversion pair,
-    never a tag: the output carries the encoder's BT.709 tags as before."""
+    never a tag: the output carries the encoder's BT.709 tags as before. `out_fmt` is yuv444p for
+    an alpha line (--keep-alpha), whose 4:4:4 master would otherwise get 4:2:0 chroma."""
     return ("scale=in_color_matrix=bt601,format=gbrpf32le," + ",".join(filters)
-            + ",scale=out_color_matrix=bt601,format=yuv420p")
+            + f",scale=out_color_matrix=bt601,format={out_fmt}")
 
 
 # swscale's names for the non-BT.709 matrices a --codec prores re-encode keeps (it does not convert)
 _SWS_MATRIX = {"smpte170m": "bt601", "bt470bg": "bt601", "smpte240m": "smpte240m", "fcc": "fcc"}
 
 
-def lut_legs(meta=None) -> "tuple":
+def lut_legs(meta=None, out_fmt: str = "yuv420p") -> "tuple":
     """(to RGB, back to YUV) around --lut's lut3d: explicit BT.709 conversions through float RGB,
     the matrix the picture holds when it reaches them (an untagged or BT.709 source as it is, a
     BT.601 or RGB one after x264_args(source=...)'s conversion), limited range on the way out.
@@ -175,13 +180,14 @@ def lut_legs(meta=None) -> "tuple":
     _rgb_stage) these legs use the BT.709 the picture is: an identity LUT then returns every sample
     as --lut-strength 0, which applies none, does (6.1, BT.709/BT.601/untagged, limited and full
     range, 8- and 10-bit). The input range is read from the frames, as every scale here reads it."""
-    # --codec prores keeps a BT.601 (or other non-BT.709) source's matrix and tags instead of
-    # converting it (decision.video_args), so the legs use that matrix (#416 review)
+    # --codec prores (and an alpha line, --keep-alpha) keeps a BT.601 (or other non-BT.709)
+    # source's matrix and tags instead of converting it (decision.video_args), so the legs use
+    # that matrix (#416 review)
     matrix = "bt709"
-    if STATE.codec == "prores":
+    if keeps_source_tags():
         matrix = _SWS_MATRIX.get(((meta or {}).get("video") or {}).get("color_space"), "bt709")
     return (f"scale=in_color_matrix={matrix},format=gbrpf32le",
-            f"scale=out_color_matrix={matrix}:out_range=tv,format=yuv420p")
+            f"scale=out_color_matrix={matrix}:out_range=tv,format={out_fmt}")
 
 
 def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:
@@ -401,6 +407,7 @@ def main() -> int:
                           "a successful --retag stream-copy all streams untouched, so the flag has nothing to select there.")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    add_alpha_args(ap)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -415,6 +422,19 @@ def main() -> int:
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
+    if args.keep_alpha and not (args.correct or args.lut):
+        # --retag and --strip-dovi are stream copies, which keep an alpha channel as they keep every
+        # pixel; --to-sdr's tone map ends in the SDR line's own 4:2:0 (an HDR alpha master is not a case here)
+        die("--keep-alpha applies to --correct and --lut (--retag and --strip-dovi copy the stream, alpha included)",
+            kind="input")
+    if args.drop_alpha and not (args.correct or args.lut or args.to_sdr):
+        die("--drop-alpha applies to the re-encodes (--correct, --lut, --to-sdr); --retag and --strip-dovi copy the stream, "
+            "alpha included", kind="input")
+    alpha_codec = check_alpha_args(args, args.output)
+    src_alpha = source_alpha(args, meta, args.input) if (args.correct or args.lut or args.to_sdr) else None
+    # an alpha line is graded at 4:4:4: its master would otherwise come back with 4:2:0 chroma
+    out_fmt = "yuv444p" if alpha_codec else "yuv420p"
+    ext = default_ext(alpha_codec) if alpha_codec else None
 
     if args.strip_dovi:
         output = args.output or default_output(args.input, "nodv")
@@ -457,8 +477,8 @@ def main() -> int:
         if v.get("bt2020_or_hdr") and not args.force:
             die(f"{args.input} is HDR ({v.get('hdr_format')}); --correct works on SDR pixels and would tag PQ/HLG data as BT.709 "
                 f"without a tone map (sweep F10). Run --to-sdr first, or --force to grade the raw values anyway")
-        vf = correction_chain(args)
-        output = args.output or default_output(args.input, "correct")
+        vf = correction_chain(args, out_fmt)
+        output = args.output or default_output(args.input, "correct", ext)
         tag = "correct"
         # OBSERVED technical measurements (signalstats: luma / saturation distribution), never a
         # "looks better" judgement -- the same primitive probe.py --analyze uses for Log detection.
@@ -472,26 +492,38 @@ def main() -> int:
         if not (0.0 <= args.lut_strength <= 1.0):
             die(f"--lut-strength {args.lut_strength:g} is outside 0..1")
         lut = f"lut3d=file={escape_filter_path(args.lut)}:interp=tetrahedral"
-        to_rgb, to_yuv = lut_legs(meta)
+        to_rgb, to_yuv = lut_legs(meta, out_fmt)
         if args.lut_strength == 0.0:
             # 0 means "no LUT at all" -- without this branch, 0 (falling outside the open interval
             # below) landed in the same "apply the LUT at full strength" fallback as an out-of-range
             # value did before the guard above existed: the one strength value documented to mean
             # "don't grade it" instead silently graded it at 100%, the opposite of what was asked.
-            vf = "format=yuv420p"
+            vf = f"format={out_fmt}"
         elif args.lut_strength < 1.0:
             # blend graded and original
             # blended in RGB, both pictures through the same two legs
             vf = f"{to_rgb},split[o][g];[g]{lut}[g2];[o][g2]blend=all_mode=normal:all_opacity={args.lut_strength:g},{to_yuv}"
         else:
             vf = f"{to_rgb},{lut},{to_yuv}"
-        output = args.output or default_output(args.input, "lut")
+        output = args.output or default_output(args.input, "lut", ext)
         tag = "lut"
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
-    # --lut/--correct grade the source's own pixels, so a BT.601 source is converted to the BT.709
-    # the line is tagged with; --to-sdr's zscale chain already writes BT.709 and converts nothing more
-    cmd += x264_args(args.crf, args.preset, source=None if args.to_sdr else meta) + cfr_args(meta) + (aac_args() if has_audio else [])
+    if alpha_codec:
+        # --keep-alpha: the grade works on the colour and never touches the alpha, which is split off
+        # the source, kept as it is and merged back (alphamerge) in front of the alpha line; the
+        # source's colour tags are kept, as --codec prores keeps them (no BT.709 conversion)
+        fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{vf}[ka_g];[ka_a]alphaextract[ka_m];"
+              f"[ka_g][ka_m]alphamerge,{finish_chain(alpha_codec, args.alpha_mode)}[ka_v]")
+        cmd = ffmpeg_base() + decoder_args_for(meta, args.input) + ["-i", args.input, "-filter_complex", fc,
+                                                                     "-map", "[ka_v]", "-map", f"0:a:{args.audio_stream}?"]
+        cmd += video_line(alpha_codec) + cfr_args(meta) + (audio_line(alpha_codec) if has_audio else [])
+        if STATE.hw:
+            note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")
+    else:
+        cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
+        # --lut/--correct grade the source's own pixels, so a BT.601 source is converted to the BT.709
+        # the line is tagged with; --to-sdr's zscale chain already writes BT.709 and converts nothing more
+        cmd += x264_args(args.crf, args.preset, source=None if args.to_sdr else meta) + cfr_args(meta) + (aac_args() if has_audio else [])
     dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {r['video']['width']}x{r['video']['height']}, "
@@ -500,6 +532,9 @@ def main() -> int:
     if measurements is not None:
         measurements["output"] = analyze_levels(output)
         extra["measurements"] = measurements
+    # the source's alpha against the output's: kept (--keep-alpha), or lost and failing the `alpha`
+    # step (an opaque line on a source whose alpha is used), or dropped on purpose (--drop-alpha)
+    alpha_report(args, alpha_codec, src_alpha, output, extra, composite=False)
     emit(output, **extra)
     return 0
 

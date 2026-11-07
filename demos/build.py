@@ -1075,6 +1075,24 @@ def demo_greenscreen(ctx):
     return before, after
 
 
+def demo_alpha_layer(ctx):
+    """The alpha path: background.py --transparent makes an empty canvas, graphics.py --keep-alpha
+    renders a lower third on it as a layer with its own alpha (QuickTime Animation: an RLE line that
+    stays small for a mostly transparent picture), and overlay.py puts that layer over the footage."""
+    before = FIX / "motion.mp4"
+    canvas = ctx.path("canvas.mov")
+    layer = ctx.path("layer.mov")
+    after = ctx.path("after.mp4")
+    ctx.script("background.py", "--transparent", "--alpha-codec", "qtrle", "--duration", "6", "--width", "1280",
+               "--height", "720", "--fps", "30", "-o", canvas)
+    ctx.script("graphics.py", canvas, "--template", "lower-third", "--name", "Ada Lovelace",
+               "--title", "Analytical Engine", "--start", "0.5", "--end", "5.5", "--keep-alpha",
+               "--alpha-codec", "qtrle", "-o", layer)
+    ctx.script("overlay.py", before, "--video", layer, "--position", "0,0", "--margin", "0",
+               "--preset", "veryfast", "-o", after)
+    return before, after
+
+
 def demo_overlay_place(ctx):
     """overlay.py --place: two ranges of one layer, each shown at its own time on the main
     timeline; the main picture is untouched between them."""
@@ -1686,6 +1704,9 @@ _ROWS = [
     ("greenscreen", PICTURE, "Green screen onto a generated background",
      "background.py draws the gradient plate from nothing (there is no input file), then overlay.py keys the chroma green out of the subject and composites it on top.",
      demo_greenscreen, "video", None),
+    ("alpha_layer", PICTURE, "A graphic rendered as its own alpha layer",
+     "background.py --transparent makes an empty canvas, graphics.py --keep-alpha draws a lower third on it and writes it with its alpha (QuickTime Animation here; ProRes 4444 by default), checked frame by frame, and overlay.py lays that one layer over the footage. The layer can go to an editor as it is: nothing but the graphic was ever in its picture.",
+     demo_alpha_layer, "video", None),
     ("overlay_place", PICTURE, "Pieces of one layer at their own times",
      "overlay.py --place lays two ranges of the fractal clip on the test pattern: its first 1.5 s at 0.5 s, its 4-5.5 s at 3.5 s. Between them the layer is hidden and the main picture is untouched -- one pass, no full-length mostly-transparent layer to render first.",
      demo_overlay_place, "video", None),

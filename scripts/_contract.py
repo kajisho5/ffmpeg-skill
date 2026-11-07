@@ -136,7 +136,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "insert": dict(role="execution", inputs=["still image"], outputs=["silent video artifact of the requested duration / frame size / fps"],
                    required=FF + [X264], optional=[{"capability": "filter:zoompan", "when": "--zoom / --pan"}],
                    video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "background": dict(role="execution", inputs=[], outputs=["generated solid-colour or gradient video artifact"],
+    "background": dict(role="execution", inputs=[], outputs=["generated solid-colour or gradient video artifact", "transparent canvas in an alpha line (--transparent)"],
                         required=FF + [X264], optional=[{"capability": "filter:gradients", "when": "--gradient"}],
                         video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="bit_exact", deterministic=True),
     "reverse": dict(role="execution", inputs=["video asset"], outputs=["reversed video artifact"],
@@ -533,7 +533,34 @@ DIAGNOSTIC_CODES = {
     "batch_cache_reset": ("warnings", "batch.py: .ffskill_cache.json did not parse and was started empty (also an audit line)"),
     "batch_cache_output_changed": ("warnings", "batch.py: a cached item's output was replaced or edited since the batch wrote it; the item runs again"),
     "batch_cache_entry_unverifiable": ("warnings", "batch.py: a cache entry from before output identities; the item runs again"),
+    "alpha_dropped": ("warnings", "color.py / graphics.py / overlay.py: the source's alpha channel is used and the output does not keep it (no --keep-alpha); the `alpha` verification step fails with reason alpha_dropped, and --drop-alpha says an opaque output is wanted"),
 }
+
+
+# The alpha path beyond export.py (_common.alpha): --keep-alpha on the tools that grade or
+# composite, --transparent on background.py. One description, so the four cannot drift.
+ALPHA_LINE_TOOLS = ("color", "graphics", "overlay", "background")
+ALPHA_LINE_OPTIONAL = [{"capability": "encoder:prores_ks", "when": "--keep-alpha / --transparent with --alpha-codec prores4444 (the default)"},
+                       {"capability": "encoder:qtrle", "when": "--alpha-codec qtrle"}, {"capability": "encoder:png", "when": "--alpha-codec png"},
+                       {"capability": "encoder:libvpx-vp9", "when": "--alpha-codec vp9, or an alpha source stored as VP9 (decoded with libvpx-vp9)"},
+                       {"capability": "filter:alphaextract", "when": "an alpha source or --keep-alpha / --transparent (the alpha is read back)"}]
+
+
+def alpha_result_schema(name: str) -> Dict[str, Any]:
+    flag = "--transparent" if name == "background" else "--keep-alpha"
+    out: Dict[str, Any] = {
+        "alpha_codec": {"enum": ["png", "prores4444", "qtrle", "vp9"], "description": f"{flag} only: the alpha line written (--alpha-codec, default prores4444); the source's colour tags are kept and no matrix is converted, as --codec prores does"},
+        "alpha_mode": {"enum": ["straight", "premultiplied"], "description": f"{flag} only: how the colour was written beside the alpha (--alpha-mode, default straight)"},
+    }
+    if name == "background":
+        out["alpha_codec"]["description"] += ". The `alpha` verification step reads every written frame back and expects alpha 0 (provenance specification)"
+        return out
+    out["alpha_dropped"] = {"type": "boolean", "description": "true when the source's alpha is used (a frame below opaque) and the output does not keep it: without --keep-alpha the `alpha` verification step fails (reason alpha_dropped, attribution artifact, with an alpha_dropped warning); with --drop-alpha there is no such step and a note says the alpha was dropped on purpose. Absent on a source without alpha"}
+    if name == "color":
+        out["alpha_codec"]["description"] += ". --correct / --lut only: the grade works on the colour (at 4:4:4) and the source's alpha is merged back unchanged; the `alpha` step compares the written alpha with the source's frame by frame, tolerance 2 of 255 (comparison {ok, paired, worst_delta, worst_frame}; frames {expected, measured}; written {codec, pix_fmt, alpha_plane})"
+    else:
+        out["alpha_codec"]["description"] += ". Drawn on the input's alpha at 4:4:4 (layers composited with their alpha, text drawn into it); the `alpha` step (property alpha_at_least_source) passes when the written stream stores an alpha plane, every frame's alpha is at or above the source's (tolerance 2 of 255) and the output did not turn opaque in every frame the source was transparent in (reason: opaque_everywhere, alpha_below_source or no_alpha_plane when it fails)"
+    return out
 
 
 # `font_used` on the tools that draw text: which font the text was drawn with, so a run that
@@ -734,6 +761,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
     if name in ("overlay", "graphics", "caption", "grid"):
         extra["font_used"] = FONT_USED_SCHEMA
+    if name in ALPHA_LINE_TOOLS:
+        extra.update(alpha_result_schema(name))
     if name in NON_AV_STREAM_TOOLS and "dropped_non_av_streams" not in extra:
         extra["dropped_non_av_streams"] = {"type": "boolean", "description": "true when the source's subtitle or data streams are not in the output: either the run leaves them out by design (a path whose output they would no longer match, such as speedramp.py's, join.py's or freeze.py's), or they could not be copied and the encode ran again without them (then a non_av_streams_dropped fallback says why); export.py's non_av_streams lists them"}
     if name == "cropdetect":
@@ -1623,7 +1652,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
         "examples": skill_examples().get(name, []),
         "role": meta["role"],
-        "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], CODEC_CAPS if "codec" in schema["properties"] else [])},
+        "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], (CODEC_CAPS if "codec" in schema["properties"] else [])
+                                                                                       + (ALPHA_LINE_OPTIONAL if name in ALPHA_LINE_TOOLS else []))},
         "inputs": list(meta["inputs"]),
         "outputs": list(meta["outputs"]),
         "input_schema": schema,

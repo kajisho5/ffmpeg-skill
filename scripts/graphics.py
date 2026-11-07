@@ -24,6 +24,8 @@ Examples:
   python3 graphics.py reel.mp4 --template sticker --text "NEW" --position top-right --platform tiktok
   python3 graphics.py reel.mp4 --template hook --title "How I cut this in one command" --duration 3
   python3 graphics.py clip.mp4 --template meme --top "when the render" --bottom "finally finishes"
+  python3 background.py --transparent --duration 4 --width 1920 --height 1080 -o canvas.mov
+  python3 graphics.py canvas.mov --template lower-third --name "Ada Lovelace" --keep-alpha -o lower_third.mov
 """
 import argparse
 import os
@@ -41,6 +43,8 @@ from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_
                      EMOJI_ASSET_HINT, text_width_em, drawtext_shaping, wrap_text, WRAP_MODES,
                      SAFE_WIDTH_FRACTION, drawtext_draws_newline_glyph, is_multiline, _DRAWTEXT_PENDING)
 from _common.emit import note, warn
+from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
+                           report as alpha_report, source_alpha, video_line)
 from _common.fonts import font_choice, record_font_choice
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
@@ -128,6 +132,7 @@ def main(force_route: Optional[str] = None) -> int:
     emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build (default 60)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    add_alpha_args(ap)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -166,6 +171,10 @@ def main(force_route: Optional[str] = None) -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    # --keep-alpha: drawn on the source's alpha (a transparent canvas from background.py
+    # --transparent, or any alpha clip), written in an alpha line with the source's tags kept
+    alpha_codec = check_alpha_args(args, args.output)
+    src_alpha = source_alpha(args, meta, args.input)
     audio_streams = meta.get("audio_streams") or []
     if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
@@ -488,7 +497,8 @@ def main(force_route: Optional[str] = None) -> int:
         h = max(3, int(base * 0.008))
         fps = meta['video'].get('fps') or 30
         fc.append(f"{layer_src(primary, 1.0, W, h)}[pb]")
-        if draws_chroma([bg], meta):
+        if draws_chroma([bg], meta) or alpha_codec:
+            # a layer (overlay composites the alpha too; drawbox leaves it as it was)
             fc.append(f"{layer_src(bg, 0.5, W, h, 0, (H - h) % 2)}[pbg]")
             fc.append(f"[0:v][pbg]overlay=x=0:y={(H - h) // 2 * 2}:{en}:eof_action=pass[v1]")
         else:
@@ -603,7 +613,7 @@ def main(force_route: Optional[str] = None) -> int:
              "(FFmpeg 8.0-8.0.1 and 8.1.0; fixed in 8.0.2/8.1.1): drop --text-render drawtext to render it "
              "through libass, or upgrade FFmpeg", "drawtext_newline_glyph", text_render="drawtext")
 
-    output = args.output or default_output(args.input, "gfx")
+    output = args.output or default_output(args.input, "gfx", default_ext(alpha_codec) if alpha_codec else None)
     ass_path = None
     emoji_result = None
     if route == "ass":
@@ -700,7 +710,10 @@ def main(force_route: Optional[str] = None) -> int:
     # The boxes with chroma (layers) go under the text, and the picture they and a converted colour
     # source are overlaid on gets its BT.709 label (an untagged one, tags only), so 7.1+'s overlay
     # converts neither picture to the other's matrix. The text is drawn in BT.709 (drawn_chain).
-    as_layers = any(draws_chroma([b[0]], meta) for b in boxes)
+    # On an alpha line every box is a layer: overlay composites the box's alpha over the picture's,
+    # while drawbox paints the colour and leaves the alpha as it was (a box on a transparent canvas
+    # stayed invisible)
+    as_layers = bool(alpha_codec) or any(draws_chroma([b[0]], meta) for b in boxes)
     drawboxes = []
     for colour, alpha, geo, x, y, w, h, enable, x_expr in boxes:
         if as_layers:
@@ -723,8 +736,16 @@ def main(force_route: Optional[str] = None) -> int:
         fc = [f"[0:v]{base_label}null[gbase]"] + [c.replace("[0:v]", "[gbase]") for c in fc]
     if fc and square:
         fc = [f"[0:v]{square}[gsq]"] + [c.replace("[0:v]", "[gsq]") for c in fc]
+    if alpha_codec:
+        # the picture is drawn on at 4:4:4 with its alpha plane, and every layer is overlaid at
+        # 4:4:4 (overlay's default is 4:2:0); drawtext and libass (alpha=1) draw into the alpha too
+        fc = [c.replace(":eof_action=pass", ":eof_action=pass:format=yuv444") for c in fc]
+        if fc:
+            fc = ["[0:v]format=yuva444p[ka0]"] + [c.replace("[0:v]", "[ka0]") for c in fc]
+        square = "format=yuva444p" + ("," + square if square else "")
+    finish = finish_chain(alpha_codec, args.alpha_mode) if alpha_codec else ""
 
-    cmd = ffmpeg_base() + ["-i", args.input]
+    cmd = ffmpeg_base() + (decoder_args_for(meta, args.input) if alpha_codec else []) + ["-i", args.input]
     if route == "ass" or emoji_overlays:
         chains = list(fc) if fc else [f"[0:v]{(square + ',') if square else ''}{text or 'null'}[vout]"]
         last = "vout"
@@ -733,6 +754,8 @@ def main(force_route: Optional[str] = None) -> int:
             fdir = ass_fonts_dir()
             if fdir:
                 vf += f":fontsdir={escape_filter_path(fdir)}"
+            if alpha_codec:
+                vf += ":alpha=1"
             vf = drawn_chain(vf, meta, [el.get(k) for el in elements for k in ("color", "outline_color", "box_color")],
                              labelled=bool(base_label))
             chains.append(f"[{last}]{vf}[vtxt]")
@@ -748,14 +771,26 @@ def main(force_route: Optional[str] = None) -> int:
         if eo:
             chains += eo
             last = "vfinal"
+        if finish:
+            chains.append(f"[{last}]{finish}[ka_v]")
+            last = "ka_v"
         cmd += ["-filter_complex", ";".join(chains), "-map", f"[{last}]",
                 "-map", f"0:a:{args.audio_stream}?"]
     elif fc:
-        cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", f"0:a:{args.audio_stream}?"]
+        if finish:
+            fc.append(f"[vout]{finish}[ka_v]")
+        cmd += ["-filter_complex", ";".join(fc), "-map", "[ka_v]" if finish else "[vout]", "-map", f"0:a:{args.audio_stream}?"]
     else:
-        cmd += ["-vf", (square + "," if square else "") + text, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
-    cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
-    cmd += aac_args() if meta.get("audio") else ["-an"]
+        cmd += ["-vf", ",".join(p for p in (square, text, finish) if p) if finish else (square + "," if square else "") + text,
+                "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
+    if alpha_codec:
+        cmd += video_line(alpha_codec) + cfr_args(meta)
+        cmd += audio_line(alpha_codec) if meta.get("audio") else ["-an"]
+        if STATE.hw:
+            note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")
+    else:
+        cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
+        cmd += aac_args() if meta.get("audio") else ["-an"]
     dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {args.template})")
@@ -770,6 +805,9 @@ def main(force_route: Optional[str] = None) -> int:
         extra["emoji"] = emoji_result
     if sliced_atoms:
         extra["broken_inside_word"] = len(sliced_atoms)
+    # drawn layers add coverage: with --keep-alpha the written alpha is at or above the source's
+    # in every frame; without it, an output that lost a used alpha fails the `alpha` step
+    alpha_report(args, alpha_codec, src_alpha, output, extra, composite=True)
     emit(output, **extra)
     return 0
 

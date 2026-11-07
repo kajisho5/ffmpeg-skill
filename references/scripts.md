@@ -422,10 +422,18 @@ zoomed — it needs `--zoom` (panning uses the extra image area a zoom exposes).
 ```
 background.py -o OUT --duration T --width W --height H
               [--color C | --gradient C1:C2 [--angle DEG]]
+background.py -o OUT.mov --duration T --width W --height H --transparent
+              [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied]
 ```
 No input file: ffmpeg's own `color`/`gradients` source filters generate the
 clip directly. For a title-card background, a placeholder layer, or a base
 for `overlay.py` to composite onto. `--width`/`--height` must be even.
+`--transparent` writes a canvas with alpha 0 in every pixel in an alpha line:
+ProRes 4444 with 16-bit alpha (default; `.mov`/`.mkv`), `qtrle` (`.mov`), `png`
+(`.mov`/`.mkv`) or `vp9` (`.webm`/`.mkv`). It is the base layer
+`graphics.py --keep-alpha` and `overlay.py --keep-alpha` draw one element on, for
+a per-element layer with transparency. Every written frame's alpha is read back
+(`alpha` step, expected 0); `--color`/`--gradient` do not apply.
 
 ### reverse.py — reverse playback
 ```
@@ -1315,7 +1323,17 @@ graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|st
             [--brand brand.json] [--primary RRGGBB] [--scale 1.0] [--lang XX]
             [--wrap phrase|measured] [--text-render auto|ass|drawtext] [--write-ass OUT.ass]
             [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
+            [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+`--keep-alpha` draws the template on the input's alpha (a canvas from `background.py --transparent`,
+or any alpha clip) and writes it in an alpha line (see `background.py`; ProRes 4444 by default) with
+the source's colour tags kept: boxes and bars are composited as layers with their alpha, drawtext and
+libass (`alpha=1`) draw into the alpha, all at 4:4:4. The `alpha` step checks that the written
+stream stores an alpha plane, that no frame's alpha fell below the source's, and that the output
+did not go opaque in every frame the source was transparent in. Without `--keep-alpha` on a source
+whose alpha is used, the output is opaque and the `alpha` step fails (`alpha_dropped`);
+`--drop-alpha` says an opaque output is wanted. `--codec` with `--keep-alpha` is refused.
+
 Since 1.16 a label too wide for the frame is broken into lines by the same phrase-aware wrap
 caption.py uses (`--wrap phrase|measured`; see caption.py above) instead of running off the edge —
 the hook card, the meme lines and the sticker chip. A label that already fits is untouched.
@@ -1708,7 +1726,16 @@ overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--f
                   | --video CLIP [--chromakey COLOR [--chromakey-similarity 0-1] [--chromakey-blend 0-1]]
                     [--place SRC_START-SRC_END@AT ...]
            [--position top-right|bottom-left|center|X,Y] [--margin N] [--platform NAME] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
+           [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+`--keep-alpha` composites onto the input's alpha (a `background.py --transparent` canvas or an alpha
+clip) and writes the result in an alpha line with the source's tags kept, checked as
+`graphics.py --keep-alpha` is. A `--video` layer with alpha keeps it: VP9 with alpha (`export.py
+--preset vp9-alpha`) is decoded with libvpx-vp9 (FFmpeg's own VP9 decoder drops the alpha), and an
+RGB layer (qtrle, PNG in .mov, e.g. a `graphics.py --keep-alpha` element) is converted to BT.709 with
+its alpha plane. Before, both covered the picture as an opaque rectangle. Without
+`--keep-alpha` on an input whose alpha is used, the `alpha` step fails (`alpha_dropped`) unless
+`--drop-alpha` is given.
 `--platform NAME` (1.14) takes each edge's margin from that destination's safe zone
 (`scripts/_platforms.py`), so a template's top-left logo clears TikTok's status bar instead of
 sitting 24 px into it; an explicit `--margin` (or a brand `safe_margin`) wins.
@@ -1804,7 +1831,16 @@ color.py INPUT --correct [--exposure -3..3] [--contrast 0..2] [--saturation 0..2
          [--temperature 2000..12000] [--tint -1..1] [--lift -1..1] [--gain -1..1]
          [--levels-in-black 0..255] [--levels-in-white 0..255] [--levels-out-black 0..255] [--levels-out-white 0..255]
          [--curves color_negative|cross_process|darker|increase_contrast|lighter|linear_contrast|medium_contrast|negative|strong_contrast|vintage] [-o OUT]
+color.py INPUT --correct ... | --lut grade.cube ... -o OUT.mov [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+`--keep-alpha` (with `--correct` or `--lut`) grades an alpha clip and keeps its alpha: the alpha is
+split off before the grade, never touched, and merged back in front of the alpha line (ProRes 4444
+by default, `--alpha-codec qtrle|png|vp9`); the grade runs at 4:4:4 and the source's colour tags are
+kept (no BT.709 conversion, as `--codec prores`). The `alpha` step compares the written alpha with
+the source's frame by frame on 64x36 copies, each within 2 of 255. A source without an alpha plane is
+refused. Without `--keep-alpha`, a grade of a source whose alpha is used writes opaque H.264 and the
+`alpha` step fails (`reason: alpha_dropped`, `verified: false`); `--drop-alpha` makes it a note
+instead. `--retag`/`--strip-dovi` are stream copies and keep the alpha as they keep every pixel.
 `--correct` is typed primary colour correction, no filter string ever accepted:
 `--exposure`/`--contrast`/`--saturation`/`--gamma` (`exposure`/`eq` filters),
 `--temperature`/`--tint`/`--lift`/`--gain` (`colortemperature`/`colorbalance`

@@ -158,6 +158,8 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 -o report.html` |
 | "title card", "Ken Burns on a photo" | `insert.py title.png --duration 3` (`--zoom in --pan right`) |
 | "a blank colour clip" | `background.py -o bg.mp4 --duration 3 --color 0x101010` |
+| "grade it but keep the alpha" | `color.py logo.mov --correct --exposure 0.3 --keep-alpha -o graded.mov` |
+| "lower third as a transparent layer" | `background.py --transparent -o canvas.mov --duration 5 --width 1920 --height 1080`, then `graphics.py canvas.mov --template lower-third --name "Ada" --keep-alpha -o lt.mov` |
 | "numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "waveform video for this track" | `waveform.py ep.wav -o waveform.mp4` |
 | "add black at the start" | `pad.py clip.mp4 --start 1.5` |
@@ -183,6 +185,7 @@ One line each; open the linked `references/gotchas.md` section when the job is i
 
 - HDR re-encoded through an SDR path goes flat. -> [#hdr-and-colour](references/gotchas.md#hdr-and-colour)
 - Log footage is tagged SDR and looks grey. -> [#log-footage](references/gotchas.md#log-footage)
+- Re-encodes drop alpha unless `--keep-alpha`. -> [#alpha-channels](references/gotchas.md#alpha-channels)
 - A `-c copy` cut can start on a wrong frame. -> [#keyframe-cuts](references/gotchas.md#keyframe-cuts)
 - VFR phone/screen clips go CFR on re-encode. -> [#variable-frame-rate](references/gotchas.md#variable-frame-rate)
 - Sync `confidence` under 0.3 is suspect. -> [#sync-multicam-and-drift](references/gotchas.md#sync-multicam-and-drift)

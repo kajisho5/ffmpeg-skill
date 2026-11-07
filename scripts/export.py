@@ -172,86 +172,11 @@ PLATFORM_OF["youtube4k"] = PLATFORM_TABLE["youtube"]["check"]
 PRESET_CHOICES: List[str] = sorted(set(PRESETS) | {a for a in _ALIASES if resolve_platform(a) in PRESETS})
 
 
-# A pixel format that carries an alpha plane (yuva*, rgba, argb, gbrap, ya8/ya16, ...).
-_ALPHA_PIX = re.compile(r"^(yuva|gbrap|ya\d|rgba|bgra|argb|abgr|rgba64|bgra64)")
-
-
-def vp9_decoder_args(codec: "str | None") -> List[str]:
-    """The input option that decodes a VP9 stream with libvpx-vp9: FFmpeg's native vp9 decoder
-    drops the alpha layer (a WebM's yuva420p comes out yuv420p, fully opaque). [] for any other
-    codec, or when this build has no libvpx (its encoder list stands in for the decoder's)."""
-    return ["-c:v", "libvpx-vp9"] if codec == "vp9" and "libvpx-vp9" in ffmpeg_encoders() else []
-
-
-def vp9_alpha_tagged(path: str) -> bool:
-    """True when the first video stream is VP9 stored with an alpha layer (Matroska/WebM's
-    ALPHA_MODE=1 stream tag): ffprobe reports such a stream as yuv420p, so the pixel format alone
-    does not show the alpha. A metadata read, so a dry run can decide without decoding."""
-    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
-                "stream=codec_name:stream_tags", "-of", "json", path], quiet=True)
-    try:
-        streams = json.loads(proc.stdout or "{}").get("streams") or []
-    except ValueError:
-        return False
-    s = streams[0] if streams else {}
-    return s.get("codec_name") == "vp9" and any(k.lower() == "alpha_mode" and str(v).strip() == "1"
-                                                for k, v in (s.get("tags") or {}).items())
-
-
-_MEASURE_W, _MEASURE_H = 64, 36  # the measuring copy: small enough to read every frame, large enough for exact edges
-
-
-def _frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, object] | None":
-    """Every decoded frame of `path` through `chain` to a 64x36 grey copy: {mean (over every frame),
-    min (the lowest frame's mean), frames, per_frame (each frame's mean, in decode order)}. None
-    when no frame decodes."""
-    w, h = _MEASURE_W, _MEASURE_H
-    cmd = cmd_head + ["-i", path, "-map", "0:v:0", "-vf", f"{chain},scale={w}:{h}:flags=area,format=gray",
-                      "-f", "rawvideo", "-"]
-    proc = _run_analysis(cmd, check=False, text=False)
-    data = proc.stdout or b""
-    size = w * h
-    if proc.returncode != 0 or len(data) < size:
-        return None
-    frames = [sum(data[i:i + size]) / size for i in range(0, len(data) - size + 1, size)]
-    return {"mean": sum(frames) / len(frames), "min": min(frames), "frames": len(frames), "per_frame": frames}
-
-
-def alpha_stats(path: str, codec: "str | None" = None) -> "Dict[str, object] | None":
-    """The alpha (0-255) of every decoded frame, on a 64x36 copy: {mean, min, frames, per_frame}.
-    255.0 is fully opaque, and a picture with no alpha plane reads 255 too (format=rgba fills it).
-    Every frame, not the first: a clip that opens fully opaque and turns transparent later would
-    read as opaque from its first frame, in the source and in a written file that lost its alpha.
-    A VP9 file is decoded with libvpx-vp9 (vp9_decoder_args). None when no frame decodes."""
-    head = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin"] + vp9_decoder_args(codec)
-    return _frame_means(head, path, "format=rgba,alphaextract")
-
-
-ALPHA_TOLERANCE = 2.0  # of 255, per frame (or on the mean and the most transparent frame, below)
-OPAQUE = 254.5         # a frame whose mean alpha is at least this is fully opaque
-
-
-def _alpha_compare(written, source) -> Dict[str, object]:
-    """The written file's alpha against the source's. With the same number of frames, frame by
-    frame (frame i against frame i, each within ALPHA_TOLERANCE): an aggregate let a loss confined
-    to a few frames through (one of 200 frames turned opaque moves the mean by ~1). With a
-    different count (a variable-rate source conformed to a constant rate repeats or drops frames,
-    so indices no longer pair), the mean and the most transparent frame, and `paired: false`
-    says so. {ok, paired, worst_delta, worst_frame}."""
-    if written is None or source is None:
-        return {"ok": False, "paired": None, "worst_delta": None, "worst_frame": None}
-    w, s = written.get("per_frame") or [], source.get("per_frame") or []
-    if w and len(w) == len(s):
-        deltas = [abs(a - b) for a, b in zip(w, s)]
-        worst = max(range(len(deltas)), key=deltas.__getitem__)
-        return {"ok": deltas[worst] <= ALPHA_TOLERANCE, "paired": True, "worst_delta": round(deltas[worst], 2),
-                "worst_frame": worst}
-    delta = max(abs(written["mean"] - source["mean"]), abs(written["min"] - source["min"]))
-    return {"ok": delta <= ALPHA_TOLERANCE, "paired": False, "worst_delta": round(delta, 2), "worst_frame": None}
-
-
-def _rounded(st) -> "Dict[str, float] | None":
-    return None if st is None else {"mean": round(st["mean"], 2), "min": round(st["min"], 2), "frames": st["frames"]}
+# The alpha helpers (#417) live in _common.alpha since color.py, graphics.py, overlay.py and
+# background.py write alpha lines too; the names this module has always had stay bound here.
+from _common.alpha import (ALPHA_PIX as _ALPHA_PIX, ALPHA_TOLERANCE, OPAQUE, alpha_stats,  # noqa: E402
+                           alpha_compare as _alpha_compare, frame_means as _frame_means, rounded as _rounded,
+                           vp9_alpha_tagged, vp9_decoder_args)
 
 
 def key_path(fill: str) -> str:
