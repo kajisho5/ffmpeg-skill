@@ -2942,7 +2942,9 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   on a build with no libvpx-vp9 decoder is refused (`decoder_missing`, read from `ffmpeg -decoders`,
   not the encoder list) rather than composited opaque. A decoder list that cannot be read is
   unknown, not missing, as for filters: libvpx-vp9 is still asked for and ffmpeg says whether it
-  exists. `doctor` reports `decoder:libvpx-vp9` from the same list
+  exists. `export.py`'s alpha presets take the same guard before they measure the source: with
+  only FFmpeg's own decoder a VP9 alpha source and its written line both read opaque, and the step
+  passed with the transparency gone. `doctor` reports `decoder:libvpx-vp9` from the same list
   (`test_doctor_resolves_the_declared_decoder_capability`). The measurement is read frame by frame from
   the pipe (an hour at 30 fps was ~250 MB held at once). A planned input a dry run cannot probe yet
   is not refused as opaque (its window is given: a clip of unknown length has no end to default

@@ -176,7 +176,7 @@ PRESET_CHOICES: List[str] = sorted(set(PRESETS) | {a for a in _ALIASES if resolv
 # background.py write alpha lines too; the names this module has always had stay bound here.
 from _common.alpha import (ALPHA_PIX as _ALPHA_PIX, ALPHA_TOLERANCE, OPAQUE, alpha_stats,  # noqa: E402
                            alpha_compare as _alpha_compare, frame_means as _frame_means, rounded as _rounded,
-                           vp9_alpha_tagged, vp9_decoder_args)
+                           decoder_args_for, vp9_alpha_tagged)
 
 
 def key_path(fill: str) -> str:
@@ -523,6 +523,11 @@ def main() -> int:
         # a pixel format with an alpha plane, or a VP9 stream stored with one (probed as yuv420p);
         # a dry run decides on these metadata reads alone and decodes nothing
         has_alpha_plane = bool(_ALPHA_PIX.match(meta["video"].get("pix_fmt") or "")) or vp9_alpha_tagged(args.input)
+        # a VP9 source stored with alpha on a build whose decoder list was read without libvpx-vp9
+        # is refused (decoder_missing) before it is measured: FFmpeg's own VP9 decoder reads it
+        # opaque, so the source and the written line both measured 255 and the alpha step passed
+        # with the transparency gone (#433 review). An unreadable list keeps the decoder named.
+        dec_args = decoder_args_for(meta, args.input)
         if not STATE.dry_run:
             source_alpha = alpha_stats(args.input, meta["video"].get("codec"))
         if not has_alpha_plane and (STATE.dry_run or source_alpha is None or source_alpha["min"] >= OPAQUE):
@@ -565,7 +570,8 @@ def main() -> int:
         # the key/fill branch below writes ProRes and returns before the size is applied or measured
         die("--max-mb runs a two-pass x264 encode; --preset key-fill writes ProRes (a fill and a key), which has no size target")
     # an alpha source in VP9 is decoded with libvpx-vp9, or its alpha never reaches the encoder
-    dec_args = vp9_decoder_args(meta["video"].get("codec")) if p.get("alpha") else []
+    # (decoder_args_for, above: [] for anything that is not VP9 stored with alpha)
+    dec_args = dec_args if p.get("alpha") else []
     cmd = ffmpeg_base() + (REPAIR_INPUT_ARGS if args.repair else []) + dec_args + ["-i", args.input]
     # Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are
     # kept where the container can hold them: ffmpeg's default stream selection takes one video
