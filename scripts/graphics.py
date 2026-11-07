@@ -44,7 +44,7 @@ from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_
                      SAFE_WIDTH_FRACTION, drawtext_draws_newline_glyph, is_multiline, _DRAWTEXT_PENDING)
 from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
-                           report as alpha_report, source_alpha, video_line)
+                           report as alpha_report, source_alpha, tag_args, video_line)
 from _common.fonts import font_choice, record_font_choice
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
@@ -53,8 +53,6 @@ from _common import drawtext_fontfile  # noqa: E402
 # where the template's text chain goes in a filter_complex it builds (graphics.main fills it in)
 TEXT = "@TEXT@"
 BOX = "@BOX@"  # a box's place in the filter chain, followed by its index (graphics.main fill_box)
-# a dry run on a planned input (not written yet) has no duration: the plan ends its element here
-PLANNED_END_SECONDS = 10.0
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug", "sticker", "hook", "meme"]
 
 
@@ -204,14 +202,6 @@ def main(force_route: Optional[str] = None) -> int:
     fps = meta["video"].get("fps")
     s = time_arg(args.start, "--start", fps) if args.start else 0.0
     e = time_arg(args.end, "--end", fps) if args.end else dur
-    if meta.get("dry_run") and not args.end and not dur:
-        # a planned input an earlier dry-run stage would write (a --transparent canvas in a
-        # recipe): its length is unknown until then, so the plan runs to a placeholder end and the
-        # real run takes the end from the written file. Refusing it as "--end must be after
-        # --start" refused every plan that draws on an earlier stage's output.
-        e = s + PLANNED_END_SECONDS
-        note(f"[dry-run] {args.input} does not exist yet: its duration is unknown, so the planned element ends at "
-             f"{e:g}s; the real run uses the written file's duration")
     if e <= s:
         die("--end must be after --start")
     en = f"enable='between(t,{s:.3f},{e:.3f})'"
@@ -753,7 +743,7 @@ def main(force_route: Optional[str] = None) -> int:
         if fc:
             fc = ["[0:v]format=yuva444p[ka0]"] + [c.replace("[0:v]", "[ka0]") for c in fc]
         square = "format=yuva444p" + ("," + square if square else "")
-    finish = finish_chain(alpha_codec, args.alpha_mode) if alpha_codec else ""
+    finish = finish_chain(alpha_codec, args.alpha_mode, meta) if alpha_codec else ""
 
     cmd = ffmpeg_base() + (decoder_args_for(meta, args.input) if alpha_codec else []) + ["-i", args.input]
     if route == "ass" or emoji_overlays:
@@ -797,7 +787,7 @@ def main(force_route: Optional[str] = None) -> int:
         cmd += ["-vf", ",".join(p for p in (square, text, finish) if p) if finish else (square + "," if square else "") + text,
                 "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     if alpha_codec:
-        cmd += video_line(alpha_codec) + cfr_args(meta)
+        cmd += video_line(alpha_codec) + tag_args(meta) + cfr_args(meta)
         cmd += audio_line(alpha_codec) if meta.get("audio") else ["-an"]
         if STATE.hw:
             note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")

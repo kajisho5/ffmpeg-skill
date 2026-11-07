@@ -28,7 +28,7 @@ from _common.runner import fail_if_classified
 from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
-                           report as alpha_report, source_alpha, source_tag_filter, video_line)
+                           report as alpha_report, source_alpha, tag_args, video_line)
 from _common.decision import keeps_source_tags
 
 # the curves of FFmpeg's CPU `tonemap` filter (every version from 5.1 to 9). bt2390 was listed
@@ -515,13 +515,12 @@ def main() -> int:
     if alpha_codec:
         # --keep-alpha: the grade works on the colour and never touches the alpha, which is split off
         # the source, kept as it is and merged back (alphamerge) in front of the alpha line; the
-        # source's colour tags are kept, as --codec prores keeps them (no BT.709 conversion): put back
-        # on the frames with setparams, as the grade's RGB round trip leaves them untagged
+        # source's colour tags are kept, as --codec prores keeps them (no BT.709 conversion)
         fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{vf}[ka_g];[ka_a]alphaextract[ka_m];"
-              f"[ka_g][ka_m]alphamerge,{finish_chain(alpha_codec, args.alpha_mode)}{source_tag_filter(meta, alpha_codec)}[ka_v]")
+              f"[ka_g][ka_m]alphamerge,{finish_chain(alpha_codec, args.alpha_mode, meta)}[ka_v]")
         cmd = ffmpeg_base() + decoder_args_for(meta, args.input) + ["-i", args.input, "-filter_complex", fc,
                                                                      "-map", "[ka_v]", "-map", f"0:a:{args.audio_stream}?"]
-        cmd += video_line(alpha_codec) + cfr_args(meta) + (audio_line(alpha_codec) if has_audio else [])
+        cmd += video_line(alpha_codec) + tag_args(meta) + cfr_args(meta) + (audio_line(alpha_codec) if has_audio else [])
         if STATE.hw:
             note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")
     else:

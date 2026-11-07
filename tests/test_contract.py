@@ -517,8 +517,8 @@ class ContractTests(unittest.TestCase):
         self.assertIn("ffmpeg", caps["required"])
         self.assertIn("ffprobe", caps["required"])
         for cap in caps["required"] + caps["optional"]:
-            self.assertTrue(re.fullmatch(r"ffmpeg|ffprobe|encoder:[\w-]+|filter:\w+|bsf:\w+|external:\w+", cap), cap)
-        # every encoder / filter / bsf named in the contract is referenced by some script
+            self.assertTrue(re.fullmatch(r"ffmpeg|ffprobe|(?:en|de)coder:[\w-]+|filter:\w+|bsf:\w+|external:\w+", cap), cap)
+        # every encoder / decoder / filter / bsf named in the contract is referenced by some script
         source = "\n".join(p.read_text(encoding="utf-8") for p in script_sources())
         for cap in caps["required"] + caps["optional"]:
             if ":" in cap and not cap.startswith("external:"):
@@ -5760,12 +5760,14 @@ class DoctorDetectionTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.work, ignore_errors=True)
 
-    def _doctor(self, filters, encoders="ffmpeg_encoders_6.1.txt", bsfs="ffmpeg_bsfs_6.1.txt", filters_exit=0):
+    def _doctor(self, filters, encoders="ffmpeg_encoders_6.1.txt", bsfs="ffmpeg_bsfs_6.1.txt", filters_exit=0,
+                decoders="ffmpeg_decoders_6.1.txt"):
         """`doctor --json` with a fake ffmpeg that prints the named fixtures (stdout cat, no shell interpolation of names)."""
         shim = self.work / "shim"
         shim.mkdir(exist_ok=True)
         script = "#!/bin/sh\ncase \"$2\" in\n"
-        for flag, name, code in (("-filters", filters, filters_exit), ("-encoders", encoders, 0), ("-bsfs", bsfs, 0)):
+        for flag, name, code in (("-filters", filters, filters_exit), ("-encoders", encoders, 0), ("-bsfs", bsfs, 0),
+                                 ("-decoders", decoders, 0)):
             script += f"  {flag}) cat '{self.FIX / name}'; exit {code};;\n"
         script += "esac\ncase \"$1\" in -version) echo 'ffmpeg version 8.0-fixture'; exit 0;; esac\nexit 1\n"
         (shim / "ffmpeg").write_text(script)
@@ -5834,7 +5836,8 @@ class DoctorDetectionTests(unittest.TestCase):
         shim = self.work / "shim"
         shim.mkdir(exist_ok=True)
         script = "#!/bin/sh\ncase \"$2\" in\n"
-        for flag, name, code in (("-filters", "ffmpeg_filters_6.1.txt", 0), ("-encoders", "ffmpeg_encoders_6.1.txt", 0), ("-bsfs", "ffmpeg_bsfs_6.1.txt", 0)):
+        for flag, name, code in (("-filters", "ffmpeg_filters_6.1.txt", 0), ("-encoders", "ffmpeg_encoders_6.1.txt", 0), ("-bsfs", "ffmpeg_bsfs_6.1.txt", 0),
+                                 ("-decoders", "ffmpeg_decoders_6.1.txt", 0)):
             script += f"  {flag}) cat '{self.FIX / name}'; exit {code};;\n"
         script += "esac\ncase \"$1\" in -version) echo 'ffmpeg version 8.0-fixture'; exit 0;; esac\n"
         # simulate the real Windows crash: killed by a signal, so subprocess.run reports a negative

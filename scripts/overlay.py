@@ -38,7 +38,7 @@ from _common import still_input_args  # noqa: E402
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
-                           has_alpha_plane, report as alpha_report, source_alpha, video_line)
+                           has_alpha_plane, report as alpha_report, source_alpha, tag_args, video_line)
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.wrap import wrap_text
 from _common import text_width_em
@@ -564,7 +564,7 @@ def main() -> int:
         # the main picture keeps its alpha plane at 4:4:4, every layer is overlaid at 4:4:4 (overlay
         # composites the alpha when the main picture has one) and drawtext draws into the alpha too;
         # the line's pixel format ends the graph so nothing after it can drop the plane
-        finish = finish_chain(alpha_codec, args.alpha_mode)
+        finish = finish_chain(alpha_codec, args.alpha_mode, meta)
         first = cmd.index("-i")
         cmd[first:first] = decoder_args_for(meta, args.input)
         if "-filter_complex" in cmd:
@@ -575,7 +575,7 @@ def main() -> int:
         else:
             i = cmd.index("-vf") + 1
             cmd[i] = f"format=yuva444p,{cmd[i]},{finish}"
-        cmd += video_line(alpha_codec) + cfr_args(meta)
+        cmd += video_line(alpha_codec) + tag_args(meta) + cfr_args(meta)
         cmd += audio_line(alpha_codec) if meta.get("audio") else ["-an"]
         if STATE.hw:
             note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")

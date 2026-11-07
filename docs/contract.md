@@ -423,11 +423,11 @@ A project may now carry `"template"` (the name it was filled from) and `"frame":
 
 ## Capabilities
 
-Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
+Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `decoder:<name>`, `filter:<name>`, `bsf:<name>`,
 `external:whisper`, `external:parakeet`. `capabilities.required` is the union of every tool's required list;
 `optional` the union of the conditional ones. With detection (the default)
 `available`, `missing` and `missing_optional` are added from `doctor`, which reads
-`ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper or Parakeet. Pass `--static`
+`ffmpeg -encoders / -decoders / -filters / -bsfs` and looks for a local whisper or Parakeet. Pass `--static`
 to omit detection. Nothing from the environment other than those lists, the
 ffmpeg/ffprobe/python versions and the paths of the ffmpeg/ffprobe binaries the tools run
 (`ffmpeg_path`, `ffprobe_path`; a font file's path under `fonts` is the other one) is printed; no

@@ -68,7 +68,11 @@ def ffmpeg_decoders() -> set:
 
 
 def libvpx_vp9_decoder() -> bool:
-    return "libvpx-vp9" in ffmpeg_decoders()
+    """True when the build lists libvpx-vp9 among its decoders, or when the list could not be read
+    (unknown is not "missing": the explicit decoder is kept and ffmpeg itself says if it is absent).
+    False only when the list was read and does not have it."""
+    decoders = ffmpeg_decoders()
+    return not decoders or "libvpx-vp9" in decoders
 
 
 def vp9_decoder_args(codec: Optional[str]) -> List[str]:
@@ -272,30 +276,40 @@ def video_line(codec: str) -> List[str]:
     return list(ALPHA_CODECS[codec]["video"])
 
 
-def source_tag_filter(meta: Optional[Dict[str, Any]], codec: str) -> str:
-    """The source's colour tags put back on the frames (",setparams=..."), for an alpha line whose
-    chain passes through RGB (color.py's grade): the conversion pair leaves the frames untagged
-    (6.1) or tagged with its working matrix (7.1+), so the line would not keep the source's tags.
-    A label only, as the pair is an identity on the matrix: never the -colorspace output options,
-    which 7.1+ turns into a real conversion (color.bt709_tag_args). "" for an untagged source, and
-    for an RGB line (qtrle, png), which has no YUV matrix to label."""
-    if not ALPHA_CODECS[codec]["pix_fmt"].startswith("yuv"):
-        return ""
-    v = (meta or {}).get("video") or {}
-    opts = [f"{key}={v[name]}" for key, name in (("colorspace", "color_space"), ("color_primaries", "color_primaries"),
-                                                 ("color_trc", "color_transfer"))
-            if v.get(name) and v[name] not in ("unknown", "reserved")]
-    return ",setparams=" + ":".join(opts) if opts else ""
-
-
 def audio_line(codec: str) -> List[str]:
     return list(ALPHA_CODECS[codec]["audio"])
 
 
-def finish_chain(codec: str, mode: Optional[str]) -> str:
+_TAG_KEYS = (("colorspace", "color_space", "-colorspace"), ("color_primaries", "color_primaries", "-color_primaries"),
+             ("color_trc", "color_transfer", "-color_trc"))
+
+
+def _source_tags(meta: Optional[Dict[str, Any]]) -> List[tuple]:
+    v = (meta or {}).get("video") or {}
+    return [(param, v.get(key), flag) for param, key, flag in _TAG_KEYS
+            if v.get(key) and v.get(key) not in ("unknown", "reserved", "unspecified")]
+
+
+def finish_chain(codec: str, mode: Optional[str], meta: Optional[Dict[str, Any]] = None) -> str:
     """The end of a filter chain that hands an alpha picture to the line: premultiplied colour
-    when asked, then the line's own pixel format (so no later conversion can drop the plane)."""
-    return ("premultiply=inplace=1," if mode == "premultiplied" else "") + f"format={ALPHA_CODECS[codec]['pix_fmt']}"
+    when asked, the source's colour tags put back on the frames (`setparams`: a grade's RGB legs
+    and an RGB layer's conversion relabel them, BT.601 or unknown), then the line's own pixel
+    format (so no later conversion can drop the plane)."""
+    tags = _source_tags(meta)
+    label = ("setparams=" + ":".join(f"{p}={val}" for p, val, _ in tags) + ",") if tags else ""
+    # premultiplied colour is colour x alpha in RGB: multiplied there (a YUV premultiply scales the
+    # limited-range offsets too), after the tags are back so both conversions use the same matrix
+    return (label + ("format=gbrap,premultiply=inplace=1," if mode == "premultiplied" else "")
+            + f"format={ALPHA_CODECS[codec]['pix_fmt']}")
+
+
+def tag_args(meta: Optional[Dict[str, Any]]) -> List[str]:
+    """The source's colour tags as output options, so the written stream says what the frames do
+    (an alpha line keeps the source's tags, as --codec prores does)."""
+    out: List[str] = []
+    for _p, val, flag in _source_tags(meta):
+        out += [flag, val]
+    return out
 
 
 def written_line(output_meta: Dict[str, Any], output: str) -> Dict[str, Any]:

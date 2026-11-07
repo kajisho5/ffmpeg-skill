@@ -325,14 +325,22 @@ class DeliveryTests(MediaFixtures):
                     alpha.decoder_args_for(probe(str(webm)), str(webm))
             alpha._DECODERS = {"vp9", "libvpx-vp9"}
             self.assertEqual(alpha.decoder_args_for(probe(str(webm)), str(webm)), ["-c:v", "libvpx-vp9"])
+            # a decoder list that could not be read is unknown, not "missing": the decoder is still named
+            alpha._DECODERS = set()
+            self.assertEqual(alpha.decoder_args_for(probe(str(webm)), str(webm)), ["-c:v", "libvpx-vp9"])
         finally:
             alpha._DECODERS = saved
         planned = OUT / "alpha_planned_canvas.mov"
         if planned.exists():
             planned.unlink()
-        doc = json.loads(script("graphics.py", planned, "--template", "bug", "--title", "LIVE", "--keep-alpha",
-                                "--dry-run", "--json", "-o", OUT / "alpha_planned_bug.mov").stdout)
+        # the window is given: a planned clip has no length to default --end to yet (as without
+        # --keep-alpha), and the alpha line is planned on it rather than refused as opaque
+        doc = json.loads(script("graphics.py", planned, "--template", "bug", "--title", "LIVE", "--start", "0",
+                                "--end", "2", "--keep-alpha", "--dry-run", "--json",
+                                "-o", OUT / "alpha_planned_bug.mov").stdout)
         self.assertEqual(doc["status"], "completed")
+        self.assertEqual(doc["alpha_codec"], "prores4444")
+        self.assertIn("prores_ks", doc["commands"][-1])
 
     def test_overlay_keeps_a_video_layers_alpha(self):
         """A --video layer with alpha shows the picture under its transparent half: a VP9 layer
