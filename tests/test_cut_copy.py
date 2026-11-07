@@ -1586,6 +1586,18 @@ class SmartCutTests(unittest.TestCase):
         execute.assert_not_called()
         self.assertEqual(out.read_bytes(), b"keep")
 
+    def test_smart_check_rejects_a_hash_run_that_failed(self):
+        """Review 434: a framemd5 run that exited non-zero after printing matching hashes was accepted."""
+        smart_mod = importlib.import_module("_smartcut")
+        failed = subprocess.CompletedProcess(["ffmpeg"], 1, stdout="0, 0, 0, 1, 10, abc\n", stderr="error: decode failed\n")
+        with mock.patch.object(smart_mod, "run", return_value=failed):
+            for call, code in ((lambda: smart_mod.packet_hashes("src.mp4"), "packets"),
+                               (lambda: smart_mod.frame_hashes("src.mp4", 1.0, 3), "decode")):
+                with self.assertRaises(smart_mod.SmartFallback) as caught:
+                    call()
+                self.assertEqual(caught.exception.code, code)
+                self.assertIn("decode failed", caught.exception.reason)
+
     def test_smart_decode_check_needs_every_frame_it_asked_for(self):
         """Review 434: two equally short framemd5 lists (a frame that did not decode) passed as a match."""
         smart_mod = importlib.import_module("_smartcut")

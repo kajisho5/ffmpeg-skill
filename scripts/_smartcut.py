@@ -187,9 +187,16 @@ def plan_segment(packets: List[Tuple[Any, Any, bool]], s: float, e: float, vend:
     return parts
 
 
-def _framehashes(cmd: List[str]) -> List[Tuple[int, str]]:
-    """(size, md5) per line of an ffmpeg -f framemd5 run (packets with -c copy, frames otherwise)."""
+def _framehashes(cmd: List[str], code: str) -> List[Tuple[int, str]]:
+    """(size, md5) per line of an ffmpeg -f framemd5 run (packets with -c copy, frames otherwise).
+    A run that failed is no evidence, even when the hashes it printed match: a classified failure
+    (a full disk) fails the run, any other is a fallback with `code`."""
     proc = run(cmd, quiet=True, check=False)
+    fail_if_classified(proc)
+    if proc.returncode != 0:
+        lines = [ln.strip() for ln in (proc.stderr or "").splitlines() if ln.strip()]
+        raise SmartFallback(f"the check could not hash {cmd[cmd.index('-i') + 1]}: "
+                            f"{lines[-1] if lines else f'exit code {proc.returncode}'}", code)
     out = []
     for line in (proc.stdout or "").splitlines():
         if not line or line.startswith("#"):
@@ -215,7 +222,7 @@ def packet_hashes(path: str, seek: Optional[float] = None, t: Optional[float] = 
     cmd += ["-i", path]
     if t is not None:
         cmd += ["-t", f"{t:.6f}"]
-    return _framehashes(cmd + ["-map", "0:v:0", "-c", "copy", "-bsf:v", _NORMALIZE, "-f", "framemd5", "-"])
+    return _framehashes(cmd + ["-map", "0:v:0", "-c", "copy", "-bsf:v", _NORMALIZE, "-f", "framemd5", "-"], "packets")
 
 
 def frame_hashes(path: str, at: Optional[float], count: int) -> List[Tuple[int, str]]:
@@ -225,7 +232,7 @@ def frame_hashes(path: str, at: Optional[float], count: int) -> List[Tuple[int, 
     if at is not None and at > 0:
         cmd += ["-ss", f"{at:.6f}"]
     return _framehashes(cmd + ["-i", path, "-map", "0:v:0", "-frames:v", str(count), "-flags:v", "+bitexact",
-                               "-fflags", "+bitexact", "-f", "framemd5", "-"])
+                               "-fflags", "+bitexact", "-f", "framemd5", "-"], "decode")
 
 
 def output_pts(path: str) -> List[float]:
