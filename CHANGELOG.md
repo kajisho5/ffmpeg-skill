@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.2.2
+
+_Automated release: version and notes generated from pull requests merged since 3.2.1._
+
 ### Fixed
 
 - **`scenes.py --beats` on a music bed with no picture, and to the ms.** An audio-only input
@@ -21,6 +27,7 @@
   (`measurement_input_pending`) instead of failing the plan in ffmpeg.
   Contract: `scenes` is `audio_only: true`, `video_required: false`; `audio_only`, `beats` and
   `beat_grid` are described in its output schema.
+- fix(scenes): --beats on audio-only input, beat grid within 1 ms of a click track (#431)
 
 ## 3.2.1
 
