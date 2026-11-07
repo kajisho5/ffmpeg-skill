@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.2.3
+
+_Automated release: version and notes generated from pull requests merged since 3.2.2._
+
 ### Added
 
 - **An alpha-preserving path for grading and compositing.** `color.py --correct/--lut --keep-alpha` grades an alpha clip and keeps its alpha (split off before the grade, merged back unchanged, compared with the source's frame by frame); `graphics.py --keep-alpha` and `overlay.py --keep-alpha` draw on the input's alpha and write the element with it; `background.py --transparent` writes a fully transparent canvas to draw one element on. The line is ProRes 4444 by default (`--alpha-codec qtrle|png|vp9`), `--alpha-mode straight|premultiplied` says how the colour is stored, and the source's colour tags are kept as `--codec prores` keeps them. Every such run reads the alpha back as an `alpha` verification step (`alpha_codec`, `alpha_mode` in the result). Without the new flags the tools write what they wrote before.
@@ -41,6 +47,7 @@
 ### Fixed
 
 - **`overlay.py --video` with a layer that has alpha covered the picture with an opaque rectangle.** A VP9 layer stored with alpha (`export.py --preset vp9-alpha`) lost it in FFmpeg's own VP9 decoder and is now decoded with libvpx-vp9; an RGB layer (QuickTime Animation, PNG in .mov) lost it in its conversion to BT.709 YUV, which now keeps the alpha plane. Their transparent parts show the picture under them.
+- Alpha-preserving path, broadcast legal levels, smart cut (#433, carries #432 and #434)
 
 ## 3.2.2
 
