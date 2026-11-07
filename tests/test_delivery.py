@@ -248,6 +248,32 @@ class DeliveryTests(MediaFixtures):
                 proc = script("color.py", *argv, "--json", expect_fail=True)
                 self.assertIn(needle, json.loads(proc.stdout)["error"]["message"])
 
+    def test_color_legalize_with_an_alpha_line_is_refused_and_runs_on_the_opaque_line(self):
+        """#432 x #433: --legalize clamps the 8-bit 4:2:0 picture the H.264 line encodes, and every
+        --alpha-codec converts the graded picture again after it (10-bit 4:4:4, RGB, yuva420p), so
+        --legalize --keep-alpha is refused before ffmpeg runs, as --legalize --codec prores is. With
+        --drop-alpha the same source takes the H.264 line: the clamp runs and both the legal_levels
+        step and the dropped-alpha record are in one document."""
+        src = self._alpha_clip("alpha_legalize_src.mov")
+        for codec in (None, "qtrle"):
+            with self.subTest(alpha_codec=codec):
+                proc = script("color.py", src, "--correct", "--legalize", "bt709", "--keep-alpha",
+                              *(("--alpha-codec", codec) if codec else ()), "-o", OUT / "alpha_legalize_x.mov",
+                              "--json", expect_fail=True)
+                err = json.loads(proc.stdout)
+                self.assertEqual(err["error"]["kind"], "input")
+                self.assertIn("--keep-alpha", err["error"]["message"])
+                self.assertEqual(err["commands"], [])
+        doc = json.loads(script("color.py", src, "--correct", "--legalize", "bt709", "--drop-alpha", "--quality", "0",
+                                "--preset", "veryfast", "--json", "-o", OUT / "alpha_legalize_opaque.mp4").stdout)
+        self.assertRegex(doc["commands"][0], r"format=yuv420p,lutyuv=y=")
+        steps = {s["step"]: s for s in doc["verification"]}
+        self.assertIn("legal_levels", steps)
+        self.assertTrue(steps["legal_levels"]["ok"], steps["legal_levels"])
+        self.assertNotIn("alpha", steps)
+        self.assertTrue(doc["alpha_dropped"])
+        self.assertTrue(doc["verified"], doc["verification"])
+
     def test_graphics_and_overlay_render_on_a_transparent_canvas(self):
         """background.py --transparent makes the canvas (alpha 0 in every frame, read back);
         graphics.py and overlay.py --keep-alpha draw on it and write the element with its alpha:

@@ -7,6 +7,18 @@
 ### Added
 
 - **An alpha-preserving path for grading and compositing.** `color.py --correct/--lut --keep-alpha` grades an alpha clip and keeps its alpha (split off before the grade, merged back unchanged, compared with the source's frame by frame); `graphics.py --keep-alpha` and `overlay.py --keep-alpha` draw on the input's alpha and write the element with it; `background.py --transparent` writes a fully transparent canvas to draw one element on. The line is ProRes 4444 by default (`--alpha-codec qtrle|png|vp9`), `--alpha-mode straight|premultiplied` says how the colour is stored, and the source's colour tags are kept as `--codec prores` keeps them. Every such run reads the alpha back as an `alpha` verification step (`alpha_codec`, `alpha_mode` in the result). Without the new flags the tools write what they wrote before.
+- **`check.py --levels bt709|ebu-r103`** measures the broadcast signal range: a `legal levels` row
+  with the share of luma and of chroma samples outside the standard's legal range, counted exactly
+  in every frame (lutyuv mask + signalstats), the worst frame and min/max Y/U/V; FAIL when one frame
+  has more than `--levels-tolerance` (1 %) out. The JSON `levels` document repeats it per clip and per
+  `--levels-window` seconds (10), with signalstats' BRNG beside it. Limits follow the bit depth
+  (bt709: 16-235 / 16-240 at 8 bits; ebu-r103: luma -1 %..103 %, 14-241). Without the flag the rows
+  and the document are unchanged.
+- **`color.py --legalize bt709|ebu-r103`** (with `--to-sdr`, `--lut` or `--correct`; `--correct`
+  alone clamps only) clamps luma and chroma into the same limits as the last filter, after the 8-bit
+  4:2:0 conversion, and measures the written file (`legalize`, verification step `legal_levels`,
+  `legalize_residual` warning when the encode left samples out of range). It writes the H.264 line, so
+  `--keep-alpha` and a `--codec` other than h264 are refused with it; `--drop-alpha` combines.
 
 ### Changed
 

@@ -523,6 +523,16 @@ python3 scripts/color.py demos/out/fixtures/motion.mp4 --correct --exposure 0.25
 
 **Look for:** Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.
 
+### Broadcast legal levels
+
+![Broadcast legal levels](demos/color_legalize.gif)
+
+```bash
+python3 scripts/color.py demos/out/color_legalize_hot.mp4 --correct --legalize bt709 --quality 8 --preset veryfast -o demos/out/color_legalize_legal.mp4 --json
+```
+
+**Look for:** A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion. The run then measures what the encode left (check.py --levels counts the same way), and the build fails unless that check passes; --quality 8 keeps the encoder's error at the clamped edges inside the 1 % allowance.
+
 ### 2x2 comparison grid
 
 ![2x2 comparison grid](demos/grid_2x2.gif)
@@ -831,6 +841,14 @@ python3 scripts/check.py final.mp4 --platform youtube --content
 ```
 
 **No picture:** adds content rows to the platform check: black frames, frozen frames, the share of silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, the mark of lost audio at a join), single-frame flashes (one frame unlike both of its neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the first five times; a row that does not pass names a fix.
+
+### check.py --levels
+
+```bash
+python3 scripts/check.py spot.mxf --platform broadcast --levels ebu-r103
+```
+
+**No picture:** counts the luma and chroma samples outside the legal range in every frame (bt709 16-235 / 16-240, or EBU R 103's -1..103 % luma) and adds a legal levels row with the worst frame's time and min/max Y/U/V; the JSON has the shares per window. color.py --legalize clamps after the 4:2:0 conversion and measures the file it wrote the same way -- a change no preview would show, which is why it is a number here and not a GIF.
 
 ### report.py
 

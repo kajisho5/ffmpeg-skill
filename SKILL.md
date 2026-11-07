@@ -155,6 +155,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "a small proxy file" | `proxy.py in.mp4 --width 640` |
 | "is this OK to upload?" | `check.py final.mp4 --platform reels` |
 | "how much quality was lost" | `check.py final.mp4 --compare master.mp4` |
+| "is it broadcast legal?" | `check.py final.mp4 --levels ebu-r103` (clamp: `color.py in.mp4 --correct --legalize ebu-r103`) |
 | "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 -o report.html` |
 | "title card", "Ken Burns on a photo" | `insert.py title.png --duration 3` (`--zoom in --pan right`) |
 | "a blank colour clip" | `background.py -o bg.mp4 --duration 3 --color 0x101010` |

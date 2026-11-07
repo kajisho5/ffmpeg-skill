@@ -1121,6 +1121,38 @@ def demo_color_correct(ctx):
     return before, after
 
 
+def _waveform_over_picture(src, dst):
+    """The picture (top) over its luma waveform with the digital-scale graticule (bottom): the
+    16/235 legal limits are where the graticule lines sit, so a level past them is visible."""
+    ffmpeg("-i", str(src), "-filter_complex",
+           "[0:v]split[p][w];[p]scale=1280:360,setsar=1[top];"
+           "[w]waveform=graticule=green:flags=numbers:scale=digital:filter=lowpass,scale=1280:360,setsar=1[bot];"
+           "[top][bot]vstack,format=yuv420p", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(dst))
+
+
+def demo_color_legalize(ctx):
+    # a grade that runs hot: luma stretched past 235 and below 16, chroma past 240
+    hot = ctx.path("hot.mp4")
+    ffmpeg("-i", str(FIX / "motion.mp4"), "-t", "4", "-an", "-vf",
+           "lutyuv=y='(val-16)*1.18+4':u='128+(val-128)*1.3':v='128+(val-128)*1.3'",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", str(hot))
+    legal = ctx.path("legal.mp4")
+    # --quality 8: at the default 18, x264's error around the clamped chroma of this saturated
+    # pattern left 1.4 % of one frame out of range, past the 1 % the legal_levels step allows. A
+    # run whose own check failed exits 0 (verified: false), so the demo reads the verdict and fails
+    # the build rather than publish a preview of a file that did not verify.
+    doc = ctx.script("color.py", hot, "--correct", "--legalize", "bt709", "--quality", "8", "--preset", "veryfast",
+                     "-o", legal, "--json", capture=True)
+    ctx.expect(legal, "color.py --legalize")
+    if not json.loads(doc).get("verified"):
+        raise BuildError("color.py --legalize did not verify: %s" % [s for s in json.loads(doc).get("verification") or []
+                                                                     if s.get("step") == "legal_levels"])
+    before, after = ctx.path("before.mp4"), ctx.path("after.mp4")
+    _waveform_over_picture(hot, before)
+    _waveform_over_picture(legal, after)
+    return before, after
+
+
 def demo_grid_2x2(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
@@ -1716,6 +1748,9 @@ _ROWS = [
     ("color_correct", PICTURE, "Primary colour correction",
      "Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.",
      demo_color_correct, "video", None),
+    ("color_legalize", PICTURE, "Broadcast legal levels",
+     "A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion. The run then measures what the encode left (check.py --levels counts the same way), and the build fails unless that check passes; --quality 8 keeps the encoder's error at the clamped edges inside the 1 % allowance.",
+     demo_color_legalize, "video", None),
     ("grid_2x2", PICTURE, "2x2 comparison grid",
      "Four clips of different content in one frame, each letterboxed into its cell rather than stretched, with the source name burnt into the corner and only input 0's audio carried through.",
      demo_grid_2x2, "video", "latin"),
@@ -1791,6 +1826,12 @@ INSPECTION = [
      "the mark of lost audio at a join), single-frame flashes (one frame unlike both of its "
      "neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the "
      "first five times; a row that does not pass names a fix."),
+    ("check.py --levels", "python3 scripts/check.py spot.mxf --platform broadcast --levels ebu-r103",
+     "counts the luma and chroma samples outside the legal range in every frame (bt709 16-235 / "
+     "16-240, or EBU R 103's -1..103 % luma) and adds a legal levels row with the worst frame's time "
+     "and min/max Y/U/V; the JSON has the shares per window. color.py --legalize clamps after the "
+     "4:2:0 conversion and measures the file it wrote the same way -- a change no preview would show, "
+     "which is why it is a number here and not a GIF."),
     ("report.py", "python3 scripts/report.py --before raw.mov --after final.mp4 -o report.html",
      "a single self-contained HTML page: before/after contact sheets, loudness, the platform "
      "check table and the exact commands. It is a file to open, not a picture to embed here."),

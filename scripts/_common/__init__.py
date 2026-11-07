@@ -68,7 +68,7 @@ from _common.emit import (
     write_plan
 )
 from _common.probe import (
-    analyze_levels, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
+    analyze_levels, LEGAL_RANGE_CHOICES, LEGAL_RANGES, legal_limits, measure_signal_range, _aspect_string, _bit_depth, decode_pcm_mono, detect_scenes, detect_silences, fingerprint,
     _fraction, keyframes_near, classify_frame_timing, measure_frame_timing, SCORE_RE, SIL_RE, decode_gray_frames,
     measured_level_dbfs, AUDIO_MEDIA_EXT, MEDIA_EXT, _output_failed, probe, rms_envelope, _to_float, _to_int, verify_output,
     display_size, pixel_aspect, square_pixels, square_pixels_note
@@ -180,7 +180,7 @@ sys.modules[__name__].__class__ = _Facade
 __all__ = [
     "Any", "Dict", "Fraction", "List", "Optional", "Path", "Sequence", "Tuple", "argparse", "json", "math", "os",
     "platform", "re", "shutil", "subprocess", "sys", "unicodedata",
-    "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "apply_common", "detect_scenes", "detect_silences", "SCORE_RE", "SIL_RE", "_aspect_string",
+    "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "LEGAL_RANGE_CHOICES", "LEGAL_RANGES", "legal_limits", "measure_signal_range", "apply_common", "detect_scenes", "detect_silences", "SCORE_RE", "SIL_RE", "_aspect_string",
     "audio_codec_for", "AUDIO_CODECS", "BIDI_SCRIPTS", "_bit_depth", "brand_caption_style", "BRAND_DEFAULTS",
     "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_matrix_args", "bt709_matrix_filter", "bt709_tag_args", "cfr_args", "_char_em",
     "char_script", "_check_existing_output", "refuse_existing_outputs", "guard_sidecar", "_check_no_overwrite_input", "_check_output_path", "child_args",

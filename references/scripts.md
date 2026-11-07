@@ -52,6 +52,8 @@ Every row names the constant or flag it comes from, and a test holds the table t
 | `--content` silence: a silent run shorter than this is not counted | 0.5 s | `_common.probe.CONTENT_SILENCE_MIN` | `check.py --content` |
 | `--content` dropout: a gap of sound at or below | -80 dBFS | `_common.probe.CONTENT_DROPOUT_DB` | `check.py --content` |
 | ... between (s) and 1 s long, with sound on both sides | 0.02 s | `_common.probe.CONTENT_DROPOUT_MIN` | `check.py --content` |
+| `--levels`: FAIL when one frame has more than this share of its luma (or of its chroma) samples out of the legal range | 1.0 % | `check.py --levels-tolerance` | `check.py --levels` |
+| `--legalize`: the written file may keep this share of one frame's luma (or chroma) samples out of range (step `legal_levels`) | 1.0 % | `color.LEGALIZE_TOLERANCE_PCT` | `color.py --legalize` |
 | a beat grid below this confidence is not snapped to | 0.5 | `_common.decision.BEAT_MIN_CONFIDENCE` | `cut.py --snap beats`, `scenes.py --beats` |
 <!-- thresholds:end -->
 
@@ -1174,7 +1176,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF] [--expect-identity SIZE:MTIME_NS] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1216,6 +1218,19 @@ never FAIL, because a camera flash or a strobe is real) and a one-frame decode a
 (WARN when it is one flat colour, luma spread < 4/255: the frame a feed's autoplay shows first).
 A render project enables it with `"check": {"platform":
 "reels", "content": true}`.
+`--levels bt709|ebu-r103` (opt-in, one more decode of every frame) adds a `legal levels` row: the
+share of luma samples and of chroma (Cb and Cr) samples outside the standard's legal range, counted
+exactly in every frame (each plane through `lutyuv` as an out-of-range mask, its mean read by
+`signalstats`; chroma at its own subsampled resolution), the worst frame and its time, and min/max
+Y/U/V (a decode that fails part-way is `could not measure`, never a share of the frames read). `bt709` is the nominal range, 16-235 luma and 16-240 chroma at 8 bits (64-940 / 64-960 at
+10); `ebu-r103` is EBU R 103's tolerance, luma -1 %..103 % (8-bit 14-241) and chroma as far as RGB
+-5 %..105 % reaches (8-bit 5-251). Limits scale with the depth of the planes (nv12 is 8-bit) and round inward. The row
+FAILs when one frame has more than `--levels-tolerance` (1 %) of its luma or chroma samples out; it
+WARNs, unmeasured, on an RGB or grey picture, and a full-range file is counted against the
+limited-range limits with a note. The JSON `levels` document holds the same per clip and per
+`--levels-window` seconds (10; 0 for the clip only), plus `brng_pct` (signalstats' BRNG: pixels
+with any component outside the fixed nominal range). It counts Y'CbCr codes; it does not convert
+to RGB, so an RGB gamut error inside legal Y'CbCr codes is not counted.
 
 ### batch.py — same recipe over a folder, cached
 ```
@@ -1844,6 +1859,7 @@ color.py INPUT --to-sdr [--tonemap hable|mobius|reinhard|clip|linear|gamma] [--p
 color.py INPUT --lut grade.cube [--lut-strength 0..1] [-o OUT]
 color.py INPUT --retag bt709|bt2020-pq|bt2020-hlg|bt601 [-o OUT]      # metadata only, stream copy (checked with ffprobe)
 color.py INPUT --strip-dovi [-o OUT]                                 # drop the Dolby Vision RPU, keep the HLG/HDR10 base layer (stream copy)
+color.py INPUT --to-sdr|--lut F|--correct ... --legalize bt709|ebu-r103                 # legal-range clamp after the 4:2:0 conversion, measured
 color.py INPUT --correct [--exposure -3..3] [--contrast 0..2] [--saturation 0..2] [--gamma 0.1..10]
          [--temperature 2000..12000] [--tint -1..1] [--lift -1..1] [--gain -1..1]
          [--levels-in-black 0..255] [--levels-in-white 0..255] [--levels-out-black 0..255] [--levels-out-white 0..255]
@@ -1874,6 +1890,18 @@ presets, only added when given). Every flag is range-checked against this
 script's own safe subset of what `ffmpeg -h filter=<name>` documents before
 ffmpeg runs. `--json`'s `measurements` reports `analyze_levels()` (signalstats
 luma/saturation) for input and output side by side.
+
+`--legalize bt709|ebu-r103` (with `--to-sdr`, `--lut` or `--correct`; `--correct` with no
+correction values clamps only) is the last filter before the encoder: the picture is made 8-bit
+4:2:0 (a full-range source is scaled to limited range first) and every luma and chroma sample is clamped (`lutyuv` `clip()`) into the limits `check.py
+--levels` counts against. Clamping after the subsampling matters: a clamp ahead of it lets the
+chroma filter's overshoot put samples back out. The written file is then measured the same way
+(`legalize.output`), and the `legal_levels` verification step fails when one frame keeps more than
+1 % of its luma or chroma samples out: the encoder's error around a hard-clamped area can move a
+few decoded samples a code or more past the limit (a `legalize_residual` warning gives the
+shares; a lower `--quality` value shrinks them). Refused with `--retag`/`--strip-dovi` (stream
+copies) and with `--codec` other than h264 or `--keep-alpha` (its alpha line), which would convert the
+clamped picture again; `--drop-alpha` combines with it.
 
 iPhone "HDR" video is Dolby Vision profile 8.4 on an HLG base layer:
 `probe.py` reports `hdr_format: Dolby Vision profile 8` and `--to-sdr`

@@ -17,6 +17,12 @@ Examples:
   python3 color.py flat.mp4 --correct --gamma 1.2 --lift 0.04 --gain -0.03   # three-way shadows/gamma/highlights
   python3 color.py flat.mp4 --correct --levels-in-black 16 --levels-in-white 235 --curves medium_contrast
   python3 color.py logo_4444.mov --correct --exposure 0.3 --keep-alpha -o logo_graded.mov   # alpha kept, ProRes 4444
+  python3 color.py graded.mp4 --correct --legalize ebu-r103            # clamp only: no correction values given
+  python3 color.py log.mov --lut to709.cube --legalize bt709           # the LUT, then the clamp, one encode
+
+--legalize bt709|ebu-r103 (with --to-sdr, --lut or --correct) clamps every luma and chroma sample into
+the standard's legal range after the picture has become 8-bit 4:2:0, the last filter before the
+encoder, then measures the written file the way check.py --levels does (`legalize` in the JSON).
 """
 import argparse
 import json
@@ -25,7 +31,7 @@ import sys
 from typing import List, Optional
 
 from _common.runner import fail_if_classified
-from _common import STATE, add_common, analyze_levels, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            report as alpha_report, source_alpha, tag_args, video_line)
@@ -375,6 +381,44 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool, src_alpha=lambd
     return 0
 
 
+def correction_is_identity(args: argparse.Namespace) -> bool:
+    """--correct with every value at its no-op default and no --curves: nothing to correct."""
+    return (all(getattr(args, k) == CORRECTION[k][0] for k in CORRECTION)
+            and all(getattr(args, k) == LEVELS[k][0] for k in LEVELS) and args.curves is None)
+
+
+def legal_clamp(standard: str) -> str:
+    """lutyuv clamping an 8-bit 4:2:0 picture into `standard`'s legal codes (legal_limits)."""
+    lim = legal_limits(standard, 8)
+    (ylo, yhi), (clo, chi) = lim["y"], lim["c"]
+    return f"lutyuv=y='clip(val\\,{ylo}\\,{yhi})':u='clip(val\\,{clo}\\,{chi})':v='clip(val\\,{clo}\\,{chi})'"
+
+
+# --legalize: the share of one frame's luma (or chroma) samples the encode may leave out of range
+# before the legal_levels step fails -- the same allowance check.py --levels gives by default. The
+# clamp holds every sample the encoder receives; a lossy encoder's error around a clipped edge can
+# still land a few decoded samples a code or two outside, which is what this measures.
+LEGALIZE_TOLERANCE_PCT = 1.0
+
+
+def legalize_report(standard: str, output: str) -> "tuple":
+    """Measure the written file against `standard` ({standard, limits, output}, verification list)."""
+    doc = measure_signal_range(output, standard, window=0, bit_depth=8)
+    if doc is None:
+        return ({"standard": standard, "output": None},
+                [{"step": "legal_levels", "ok": False, "reason": "the written file did not decode for the measurement"}])
+    worst = doc["worst_frame"]
+    ok = worst["y_pct"] <= LEGALIZE_TOLERANCE_PCT and worst["chroma_pct"] <= LEGALIZE_TOLERANCE_PCT
+    pct = doc["out_of_range_pct"]
+    if pct["y"] or pct["chroma"]:
+        warn(f"--legalize {standard}: the encoded file still has {pct['y']:.4f}% of luma and {pct['chroma']:.4f}% of chroma "
+             f"samples out of range (the encoder's error around clamped areas; worst frame {worst['y_pct']:.4f}% / "
+             f"{worst['chroma_pct']:.4f}%)", "legalize_residual")
+    return ({"standard": standard, "reference": doc["reference"], "legal": doc["legal"], "output": doc},
+            [{"step": "legal_levels", "ok": ok, "standard": standard, "out_of_range_pct": pct,
+              "worst_frame": worst, "tolerance_pct": LEGALIZE_TOLERANCE_PCT}])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -385,6 +429,10 @@ def main() -> int:
     mode.add_argument("--retag", choices=["bt709", "bt2020-pq", "bt2020-hlg", "bt601"], help="rewrite colour tags only (no re-encode)")
     mode.add_argument("--strip-dovi", action="store_true", help="remove the Dolby Vision RPU (profile 8.4 iPhone clips) so players use the plain HLG/HDR10 base layer; stream copy")
     mode.add_argument("--correct", action="store_true", help="typed primary colour correction: --exposure/--contrast/--saturation/--temperature/--tint/--gamma/--lift/--gain/--levels-*/--curves")
+    ap.add_argument("--legalize", choices=LEGAL_RANGE_CHOICES, default=None,
+                    help="with --to-sdr, --lut or --correct: clamp luma and chroma into the bt709 (16-235 / 16-240) or ebu-r103 "
+                         "(luma 14-241, chroma 5-251) legal range after the 8-bit 4:2:0 conversion, then measure the written "
+                         "file's out-of-range share (JSON legalize). --correct with no correction values clamps only")
     ap.add_argument("--tonemap", choices=TONEMAPS, default="hable", help="tone-mapping curve (default hable)")
     ap.add_argument("--peak", type=float, default=1000.0, help="source peak brightness in nits used for PQ (default 1000)")
     ap.add_argument("--desat", type=float, default=0.0, help="tonemap desaturation strength (default 0)")
@@ -426,6 +474,22 @@ def main() -> int:
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
+    if args.legalize and (args.strip_dovi or args.retag):
+        die(f"--legalize changes pixels, so it needs a mode that re-encodes (--to-sdr, --lut or --correct); "
+            f"{'--strip-dovi' if args.strip_dovi else '--retag'} is a stream copy")
+    if args.legalize and STATE.codec not in (None, "h264"):
+        die(f"--legalize clamps the 8-bit 4:2:0 picture the H.264 line encodes; --codec {STATE.codec} converts it again "
+            f"after the clamp (another depth or chroma format), which can move samples back out of range. Leave --codec "
+            f"unset, or run check.py --levels on that encode")
+    if args.legalize and args.keep_alpha:
+        # the clamp and its measurement are defined on the 8-bit 4:2:0 picture the H.264 line encodes;
+        # the alpha line grades at 4:4:4 and every --alpha-codec converts that picture again after the
+        # clamp (10-bit ProRes 4444, RGB qtrle/PNG, VP9's yuva420p) -- the same reason --codec is refused
+        die("--legalize clamps the 8-bit 4:2:0 picture the H.264 line encodes; --keep-alpha grades at 4:4:4 and its "
+            "--alpha-codec converts the picture again after the clamp (10-bit, RGB or yuva420p), which can move samples "
+            "back out of range",
+            kind="input", hint="legalize the opaque delivery (--drop-alpha, or no alpha flag), or run check.py --levels "
+                               "on the alpha master")
     if args.keep_alpha and not (args.correct or args.lut):
         # --retag and --strip-dovi are stream copies, which keep an alpha channel as they keep every
         # pixel; --to-sdr's tone map ends in the SDR line's own 4:2:0 (an HDR alpha master is not a case here)
@@ -481,7 +545,7 @@ def main() -> int:
         if v.get("bt2020_or_hdr") and not args.force:
             die(f"{args.input} is HDR ({v.get('hdr_format')}); --correct works on SDR pixels and would tag PQ/HLG data as BT.709 "
                 f"without a tone map (sweep F10). Run --to-sdr first, or --force to grade the raw values anyway")
-        vf = correction_chain(args, out_fmt)
+        vf = "" if args.legalize and correction_is_identity(args) else correction_chain(args, out_fmt)
         output = args.output or default_output(args.input, "correct", ext)
         tag = "correct"
         # OBSERVED technical measurements (signalstats: luma / saturation distribution), never a
@@ -512,6 +576,15 @@ def main() -> int:
         output = args.output or default_output(args.input, "lut", ext)
         tag = "lut"
 
+    if args.legalize:
+        # the last filter before the encoder, on the 4:2:0 picture it encodes: a clamp ahead of the
+        # chroma subsampling would let the subsampling filter's overshoot put samples back out
+        # a full-range picture (yuvj420p, or tagged pc) is converted to limited range first: its codes
+        # span 0-255 by design, and clamping them as they are would crush its blacks and whites into
+        # the limits instead of scaling them there. A limited-range source gets the chain it always had.
+        full = v.get("color_range") == "pc" or str(v.get("pix_fmt") or "").startswith("yuvj")
+        vf = ((vf + "," if vf else "") + ("scale=out_range=tv," if full else "")
+              + "format=yuv420p," + legal_clamp(args.legalize))
     if alpha_codec:
         # --keep-alpha: the grade works on the colour and never touches the alpha, which is split off
         # the source, kept as it is and merged back (alphamerge) in front of the alpha line; the
@@ -539,6 +612,9 @@ def main() -> int:
     # the source's alpha against the output's: kept (--keep-alpha), or lost and failing the `alpha`
     # step (an opaque line on a source whose alpha is used), or dropped on purpose (--drop-alpha)
     alpha_report(args, alpha_codec, src_alpha, output, extra, composite=False)
+    if args.legalize and not STATE.dry_run:
+        extra["legalize"], check = legalize_report(args.legalize, output)
+        extra["verification"] = extra.get("verification", []) + check
     emit(output, **extra)
     return 0
 
