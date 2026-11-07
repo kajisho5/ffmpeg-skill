@@ -496,8 +496,8 @@ python3 scripts/overlay.py demos/out/greenscreen_plate.mp4 --video demos/out/fix
 ![A graphic rendered as its own alpha layer](demos/alpha_layer.gif)
 
 ```bash
-python3 scripts/background.py --transparent --alpha-codec qtrle --duration 6 --width 1280 --height 720 --fps 30 -o demos/out/alpha_layer_canvas.mov
-python3 scripts/graphics.py demos/out/alpha_layer_canvas.mov --template lower-third --name 'Ada Lovelace' --title 'Analytical Engine' --start 0.5 --end 5.5 --keep-alpha --alpha-codec qtrle -o demos/out/alpha_layer_layer.mov
+python3 scripts/background.py --transparent --alpha-codec qtrle --duration 6 --width 1280 --height 720 --fps 30 -o demos/out/alpha_layer_canvas.mov --json
+python3 scripts/graphics.py demos/out/alpha_layer_canvas.mov --template lower-third --name 'Ada Lovelace' --title 'Analytical Engine' --start 0.5 --end 5.5 --keep-alpha --alpha-codec qtrle -o demos/out/alpha_layer_layer.mov --json
 python3 scripts/overlay.py demos/out/fixtures/motion.mp4 --video demos/out/alpha_layer_layer.mov --position 0,0 --margin 0 --preset veryfast -o demos/out/alpha_layer_after.mp4
 ```
 
@@ -541,7 +541,7 @@ python3 scripts/color.py demos/out/fixtures/motion.mp4 --correct --exposure 0.25
 python3 scripts/color.py demos/out/color_legalize_hot.mp4 --correct --legalize bt709 --quality 8 --preset veryfast -o demos/out/color_legalize_legal.mp4 --json
 ```
 
-**Look for:** A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion. The run then measures what the encode left (check.py --levels counts the same way), and the build fails unless that check passes; --quality 8 keeps the encoder's error at the clamped edges inside the 1 % allowance.
+**Look for:** A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp acts before encoding, on the 4:2:0 picture the encoder receives (16-235 luma, 16-240 chroma); the encoder's error at the clamped edges can put a few decoded samples back out. The run then measures the encoded file (check.py --levels counts the same way), which passes with up to 1 % of a frame's luma or chroma samples out of range, and the build fails unless that check passes; --quality 8 keeps this pattern inside the allowance.
 
 ### 2x2 comparison grid
 

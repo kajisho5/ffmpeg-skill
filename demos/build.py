@@ -1093,6 +1093,18 @@ def demo_greenscreen(ctx):
     return before, after
 
 
+def _require_verified(doc, what):
+    """Fail the build when a tool's --json result says verified: false (the run itself exited 0).
+    The docs recorder (_DryCtx) runs nothing and returns "", so there it checks nothing and the
+    builder goes on recording the commands that follow."""
+    if not doc:
+        return
+    result = json.loads(doc)
+    if not result.get("verified"):
+        raise BuildError("%s did not verify: %s" % (what, [s for s in result.get("verification") or []
+                                                           if not s.get("ok")]))
+
+
 def demo_alpha_layer(ctx):
     """The alpha path: background.py --transparent makes an empty canvas, graphics.py --keep-alpha
     renders a lower third on it as a layer with its own alpha (QuickTime Animation: an RLE line that
@@ -1101,11 +1113,17 @@ def demo_alpha_layer(ctx):
     canvas = ctx.path("canvas.mov")
     layer = ctx.path("layer.mov")
     after = ctx.path("after.mp4")
-    ctx.script("background.py", "--transparent", "--alpha-codec", "qtrle", "--duration", "6", "--width", "1280",
-               "--height", "720", "--fps", "30", "-o", canvas)
-    ctx.script("graphics.py", canvas, "--template", "lower-third", "--name", "Ada Lovelace",
-               "--title", "Analytical Engine", "--start", "0.5", "--end", "5.5", "--keep-alpha",
-               "--alpha-codec", "qtrle", "-o", layer)
+    # a run whose alpha step failed exits 0 (verified: false), so each verdict is read and a layer
+    # that did not verify fails the build, as demo_color_legalize does
+    doc = ctx.script("background.py", "--transparent", "--alpha-codec", "qtrle", "--duration", "6", "--width", "1280",
+                     "--height", "720", "--fps", "30", "-o", canvas, "--json", capture=True)
+    ctx.expect(canvas, "background.py --transparent")
+    _require_verified(doc, "background.py --transparent")
+    doc = ctx.script("graphics.py", canvas, "--template", "lower-third", "--name", "Ada Lovelace",
+                     "--title", "Analytical Engine", "--start", "0.5", "--end", "5.5", "--keep-alpha",
+                     "--alpha-codec", "qtrle", "-o", layer, "--json", capture=True)
+    ctx.expect(layer, "graphics.py --keep-alpha")
+    _require_verified(doc, "graphics.py --keep-alpha")
     ctx.script("overlay.py", before, "--video", layer, "--position", "0,0", "--margin", "0",
                "--preset", "veryfast", "-o", after)
     return before, after
@@ -1770,7 +1788,7 @@ _ROWS = [
      "Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.",
      demo_color_correct, "video", None),
     ("color_legalize", PICTURE, "Broadcast legal levels",
-     "A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion. The run then measures what the encode left (check.py --levels counts the same way), and the build fails unless that check passes; --quality 8 keeps the encoder's error at the clamped edges inside the 1 % allowance.",
+     "A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp acts before encoding, on the 4:2:0 picture the encoder receives (16-235 luma, 16-240 chroma); the encoder's error at the clamped edges can put a few decoded samples back out. The run then measures the encoded file (check.py --levels counts the same way), which passes with up to 1 % of a frame's luma or chroma samples out of range, and the build fails unless that check passes; --quality 8 keeps this pattern inside the allowance.",
      demo_color_legalize, "video", None),
     ("grid_2x2", PICTURE, "2x2 comparison grid",
      "Four clips of different content in one frame, each letterboxed into its cell rather than stretched, with the source name burnt into the corner and only input 0's audio carried through.",

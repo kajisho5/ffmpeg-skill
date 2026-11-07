@@ -670,8 +670,9 @@ def component_depth(pix_fmt: Optional[str]) -> int:
     return _COMPONENT_DEPTHS.get(name) or _bit_depth(name)
 
 
-def _metadata_frames(text: str) -> List[Tuple[float, Dict[str, float]]]:
-    """metadata=print's output: one (pts_time, {key: value}) per `frame:` block, signalstats keys only."""
+def _metadata_frames(text: str, keys: Optional[frozenset] = None) -> List[Tuple[float, Dict[str, float]]]:
+    """metadata=print's output: one (pts_time, {key: value}) per `frame:` block, signalstats keys only
+    (only those in `keys` when given: signalstats prints ~25 per frame and an hour is 100k frames)."""
     frames: List[Tuple[float, Dict[str, float]]] = []
     for line in text.splitlines():
         if line.startswith("frame:"):
@@ -680,11 +681,19 @@ def _metadata_frames(text: str) -> List[Tuple[float, Dict[str, float]]]:
             frames.append((t, {}))
         elif "lavfi.signalstats." in line and "=" in line and frames:
             key, val = line.split("lavfi.signalstats.", 1)[1].split("=", 1)
+            key = key.strip()
+            if keys is not None and key not in keys:
+                continue
             try:
-                frames[-1][1][key.strip()] = float(val)
+                frames[-1][1][key] = float(val)
             except ValueError:
                 pass
     return frames
+
+
+# the signalstats keys measure_signal_range reads: the frame's own extremes and BRNG, and the mask's means
+_OWN_KEYS = frozenset({"BRNG", "YMIN", "YMAX", "UMIN", "UMAX", "VMIN", "VMAX"})
+_MASK_KEYS = frozenset({"YAVG", "UAVG", "VAVG"})
 
 
 def measure_signal_range(path: str, standard: str, window: float = 10.0,
@@ -724,10 +733,10 @@ def measure_signal_range(path: str, standard: str, window: float = 10.0,
         proc = run_analysis(cmd, check=False, record=True)
         try:
             with open(stats_file, encoding="utf-8", errors="replace") as f:
-                own = _metadata_frames(f.read())
+                own = _metadata_frames(f.read(), _OWN_KEYS)
         except OSError:
             own = []
-    masks = _metadata_frames(proc.stdout or "")
+    masks = _metadata_frames(proc.stdout or "", _MASK_KEYS)
     if proc.returncode != 0 or not own or len(own) != len(masks):
         return None
     t0 = next((t for t, _ in own if t == t), 0.0)

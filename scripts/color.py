@@ -22,7 +22,9 @@ Examples:
 
 --legalize bt709|ebu-r103 (with --to-sdr, --lut or --correct) clamps every luma and chroma sample into
 the standard's legal range after the picture has become 8-bit 4:2:0, the last filter before the
-encoder, then measures the written file the way check.py --levels does (`legalize` in the JSON).
+encoder, then measures the written file the way check.py --levels does (`legalize` in the JSON): the
+encoder's error around clamped edges can leave a few decoded samples out, and the legal_levels step
+passes with up to 1 % of one frame's luma or chroma samples out of range.
 """
 import argparse
 import json
