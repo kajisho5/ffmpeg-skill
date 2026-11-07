@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.2.2`) | any release |
+| `skill.version` | the npm / package.json version (`3.2.3`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.2.2", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.2.3", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -232,8 +232,10 @@ the loudness pass or, when loudness is skipped, one volumedetect pass). `check -
 from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
 video-only pass and a one-frame decode; without it the row set is unchanged.
 `--compare REF` adds `similarity` (SSIM/PSNR against a reference) and `--expect-identity SIZE:MTIME_NS`
-adds `identity`, against the `output_identity` every writing tool reports (2.24). Thresholds:
-`docs/design-decisions.md` ("check.py --content").
+adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
+bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
+counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
+document. Thresholds: `docs/design-decisions.md` ("check.py --content", "broadcast legal levels").
 
 ### Dry run
 
@@ -423,11 +425,11 @@ A project may now carry `"template"` (the name it was filled from) and `"frame":
 
 ## Capabilities
 
-Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `filter:<name>`, `bsf:<name>`,
+Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `decoder:<name>`, `filter:<name>`, `bsf:<name>`,
 `external:whisper`, `external:parakeet`. `capabilities.required` is the union of every tool's required list;
 `optional` the union of the conditional ones. With detection (the default)
 `available`, `missing` and `missing_optional` are added from `doctor`, which reads
-`ffmpeg -encoders / -filters / -bsfs` and looks for a local whisper or Parakeet. Pass `--static`
+`ffmpeg -encoders / -decoders / -filters / -bsfs` and looks for a local whisper or Parakeet. Pass `--static`
 to omit detection. Nothing from the environment other than those lists, the
 ffmpeg/ffprobe/python versions and the paths of the ffmpeg/ffprobe binaries the tools run
 (`ffmpeg_path`, `ffprobe_path`; a font file's path under `fonts` is the other one) is printed; no
@@ -789,6 +791,17 @@ Keys added after 3.1.8, additive (delivery masters and versions, #417-#423):
 | `versions`, `outputs` | `loudness.py --versions` | one row per target `{target, output, targets, result}` (top-level `output` is null) and the files written; each version's `loudness` and `duration` steps carry `version`, and `verified` holds only when every version met its own target. An empty list is refused; a `--plan` path that is one of the version files is refused (`output_path_taken`) |
 | `crossfade`, `expected_duration`, `seam` | `loop.py` | `crossfade`: the fade in seconds, whole frames; `expected_duration`: the length asked for, checked by the `duration` step within 1.5 frames; `seam`: the first seam measured (`video_step` against `video_typical_step`, `audio_level_step_db`) |
 | `guides` | `look.py --guides` | each outline drawn on the PNG (`action` 0.93, `title` 0.90 of the frame, or the `4:3` centre cut with its own); a frame (either clip under `--compare`) no wider than 4:3 refuses `4:3` |
+| `levels`; row `legal levels` | `check.py --levels bt709\|ebu-r103` | `{standard, reference, bit_depth, legal {y, c}, window_seconds, frames, out_of_range_pct {y, u, v, chroma}, brng_pct, worst_frame {time, y_pct, chroma_pct}, min {y, u, v}, max {y, u, v}, windows [{start, end, ...the same}]}`: `legal` is the inclusive code range at the file's bit depth, the shares are percentages of samples (chroma: Cb and Cr together, at their own resolution), counted exactly per frame, and `brng_pct` is signalstats' BRNG (pixels with any component outside the fixed nominal range) |
+| `legalize`; step `legal_levels` | `color.py --legalize bt709\|ebu-r103` (with `--to-sdr`, `--lut` or `--correct`) | `{standard, reference, legal, output}`: `output` is the `levels` document of the written file; the step fails (`verified: false`, status `completed`) when one frame keeps more than 1 % of its luma or chroma samples out of range after the encode, with a `legalize_residual` warning whenever any sample is out |
+| `smart`; `mode` `smart`; `reencode_reason` `smart` / `smart_fallback`; steps `smart_frames`, `smart_packets`, `smart_decode`, `smart_params` | `cut.py --smart` | `{applied, parts [{segment, kind: reencode\|copy, start, end, frames}], reencoded_frames, copied_frames, matched, encoder, checks {frames, grid_worst_seconds, copied_packets_equal, frames_decoded_equal, time_base}, time_base}`: only the partial GOPs at the cut points are re-encoded (libx264 matched to the source's profile, level, pixel format, reorder depth, size, SAR and colour tags), the rest is the source's packets, and the output is checked against the source before it is moved into place. When it cannot be made or does not verify: `{applied: false, reason, reason_code}`, `mode: accurate`, the whole cut re-encoded |
+| `keyframes` | `probe.py --keyframes-near T[,T...]` | per time `{at, window, keyframes, before, after}`: the video keyframes within `--keyframe-window` seconds, and the nearest of those at or before / at or after it (`null` when none is within the window; widen `--keyframe-window`). A failed keyframe read fails the run (kind `ffmpeg`) |
+
+Keys added for the alpha path beyond `export.py` (additive; the `alpha` step on an alpha source without `--keep-alpha` is the one change to an existing run, see below):
+
+| key | tool | what it holds |
+|---|---|---|
+| `alpha_codec`, `alpha_mode`; step `alpha` | `color.py --correct/--lut --keep-alpha`, `graphics.py --keep-alpha`, `overlay.py --keep-alpha`, `background.py --transparent` | `alpha_codec`: the alpha line written (`--alpha-codec prores4444` (default), `qtrle`, `png`, `vp9`; the output must be a container that holds it, `.mov`/`.mkv`, `.mov` for qtrle, `.webm`/`.mkv` for vp9). `alpha_mode`: `straight` or `premultiplied` (`--alpha-mode`). The line keeps the source's colour tags and converts no matrix, as `--codec prores` does; `--codec` and `--keep-alpha` together are refused, and `--hw` leaves the line on the CPU. `alpha` step: `written {codec, pix_fmt, alpha_plane}` read back, `frames {expected, measured}`. `color.py`: the alpha is split off before the grade and merged back, so the written alpha must equal the source's frame by frame within 2 of 255 (`comparison {ok, paired, worst_delta, worst_frame}`). `graphics.py`/`overlay.py` (`property: alpha_at_least_source`): drawn layers add coverage, so every written frame's alpha must be at or above the source's within 2 of 255, the stream must store an alpha plane, and the output must not have turned opaque in every frame the source was transparent in (`reason`: `alpha_below_source`, `no_alpha_plane`, `opaque_everywhere`). `background.py --transparent`: every frame's alpha read back as 0 (`provenance: specification`). `--keep-alpha` on a source with no alpha plane is refused (`kind: input`) |
+| `alpha_dropped`; step `alpha` with `reason: alpha_dropped` | `color.py --correct/--lut/--to-sdr` (and `--retag` when its copy falls back to a re-encode), `graphics.py`, `overlay.py` without `--keep-alpha` | on a source whose alpha is used (a frame below opaque; measured, streamed frame by frame, only when the source stores an alpha plane or a palette, so an opaque source runs and reports exactly as before; a stored plane whose alpha cannot be read counts as used and a kept step on it fails with `reason: source_alpha_unmeasured`; a VP9 source or layer with alpha needs the libvpx-vp9 decoder, `error.reason: decoder_missing` without it): the output's opaque line drops it, so the `alpha` step fails (`attribution: artifact`, a `hint`, an `alpha_dropped` warning) and `verified` is false. `--drop-alpha` says an opaque output is wanted: no step, `alpha_dropped: true` and a note. An `overlay.py --video` layer with alpha keeps it: a VP9 one is decoded with libvpx-vp9, an RGB one (qtrle, PNG) is converted to BT.709 with its alpha plane |
 
 Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 
@@ -924,7 +937,7 @@ dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ff
 tool used to print to stderr only (emoji fallbacks, silent or short inputs, memory-heavy jobs,
 `--strip-dovi` without Dolby Vision, `render.py`'s frame-from-preset and `--normalize` defaults).
 `render.py`'s plan, check and cache records (`check_dry_run`, `check_output_unparsed`, `cache_entry_damaged`, ...),
-`export.py`'s `loudness_not_measured`, `loudness_outside_spec`, `colour_not_converted`, `size_over_limit` and `repair_incomplete`, `multicam.py`'s
+`export.py`'s `loudness_not_measured`, `loudness_outside_spec`, `colour_not_converted`, `size_over_limit` and `repair_incomplete`, `color.py`'s `legalize_residual`, `multicam.py`'s
 `camera_not_started`, `report.py`'s `report_section_missing` and `batch.py`'s cache records
 (`batch_cache_reset`, `batch_cache_output_changed`, ...) are listed there too. Every one of them
 still prints its stderr line; the record is additive.

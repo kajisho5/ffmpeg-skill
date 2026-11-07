@@ -23,6 +23,10 @@ Examples:
   python3 overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480 --opacity 0.9
   python3 overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00 --chromakey-similarity 0.15
   python3 overlay.py talk.mp4 --video cues.mov --position 0,0 --margin 0 --place 0-2.5@12 --place 2.5-6@40
+  python3 overlay.py canvas.mov --image logo.png --position center --keep-alpha -o logo_layer.mov
+
+A VP9 --video layer stored with an alpha layer (a WebM from export.py --preset vp9-alpha) is decoded
+with libvpx-vp9, so its transparency reaches the composite (FFmpeg's own VP9 decoder drops it).
 """
 import argparse
 import re
@@ -33,6 +37,8 @@ from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as 
 from _common import still_input_args  # noqa: E402
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
+from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
+                           has_alpha_plane, report as alpha_report, source_alpha, tag_args, video_line)
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.wrap import wrap_text
 from _common import text_width_em
@@ -278,6 +284,7 @@ def main() -> int:
     enc = ap.add_argument_group("encoding")
     enc.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     enc.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    add_alpha_args(ap)
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -345,6 +352,10 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    # --keep-alpha: composited onto the main input's alpha (a transparent canvas from background.py
+    # --transparent, or any alpha clip) and written in an alpha line with the source's tags kept
+    alpha_codec = check_alpha_args(args, args.output)
+    src_alpha = source_alpha(args, meta, args.input)
     audio_streams = meta.get("audio_streams") or []
     if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
@@ -395,7 +406,7 @@ def main() -> int:
     if args.place and (args.start or args.end or args.fade):
         die("--place sets when each piece shows: drop --start / --end / --fade")
 
-    output = args.output or default_output(args.input, "overlay")
+    output = args.output or default_output(args.input, "overlay", default_ext(alpha_codec) if alpha_codec else None)
     enable = enable_expr(start, end)
     cmd = ffmpeg_base() + ["-i", args.input]
 
@@ -468,7 +479,8 @@ def main() -> int:
             chain.append(f"scale={int(vw * args.scale_percent / 100)}:-2")
         elif args.scale:
             chain.append(f"scale={args.scale}:-2")
-        chain.append("format=yuva420p")
+        # an alpha line composites at 4:4:4: the layer is not taken through 4:2:0 on the way
+        chain.append("format=yuva444p" if alpha_codec else "format=yuva420p")
         if args.chromakey:
             chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
         if args.opacity < 1:
@@ -477,11 +489,18 @@ def main() -> int:
         ov = f"overlay={x}:{y}:format=auto"
         if enable:
             ov += f":enable='{enable}'"
-        cmd = ffmpeg_base() + ["-i", args.input, "-i", args.video]
+        # a VP9 layer stored with an alpha layer is decoded with libvpx-vp9: FFmpeg's own decoder
+        # drops the alpha, and the layer covered the picture as an opaque rectangle
+        cmd = ffmpeg_base() + ["-i", args.input] + decoder_args_for(pip_meta, args.video) + ["-i", args.video]
         # both pictures converted by their own colour tags to the BT.709 the output is tagged with;
         # beside a converted one an untagged one gets its BT.709 label, tags only, so 7.1+'s
         # overlay does not convert one to the other's "unknown" (BT.601) matrix
         base, pip = matrix_chain(meta, meta), matrix_chain(pip_meta, meta)
+        if pip and has_alpha_plane(pip_meta, args.video):
+            # an RGB layer with alpha (qtrle, PNG in .mov, a graphics.py/background.py alpha line) is
+            # converted to BT.709 YUV with its alpha plane: the 4:4:4 the conversion ends in had none,
+            # and the layer covered the picture as an opaque rectangle
+            pip = pip.replace("format=yuv444p", "format=yuva444p")
         if base or pip:
             base, pip = base or label_chain(meta, meta), pip or label_chain(pip_meta, meta)
         # overlay mixes samples: a full-range picture is taken to limited range (#410)
@@ -541,13 +560,37 @@ def main() -> int:
     if square and "-filter_complex" in cmd:
         i = cmd.index("-filter_complex") + 1
         cmd[i] = f"[0:v]{square}[sq];" + cmd[i].replace("[0:v]", "[sq]")
-    cmd += video_args(meta, args.crf, args.preset, convert_matrix=not args.video) + cfr_args(meta)
-    cmd += aac_args() if meta.get("audio") else ["-an"]
+    if alpha_codec:
+        # the main picture keeps its alpha plane at 4:4:4, every layer is overlaid at 4:4:4 (overlay
+        # composites the alpha when the main picture has one) and drawtext draws into the alpha too;
+        # the line's pixel format ends the graph so nothing after it can drop the plane
+        finish = finish_chain(alpha_codec, args.alpha_mode, meta)
+        first = cmd.index("-i")
+        cmd[first:first] = decoder_args_for(meta, args.input)
+        if "-filter_complex" in cmd:
+            i = cmd.index("-filter_complex") + 1
+            cmd[i] = ("[0:v]format=yuva444p[ka0];" + cmd[i].replace("[0:v]", "[ka0]").replace(":format=auto", ":format=yuv444")
+                      + f";[out]{finish}[ka_v]")
+            cmd[cmd.index("[out]")] = "[ka_v]"
+        else:
+            i = cmd.index("-vf") + 1
+            cmd[i] = f"format=yuva444p,{cmd[i]},{finish}"
+        cmd += video_line(alpha_codec) + tag_args(meta) + cfr_args(meta)
+        cmd += audio_line(alpha_codec) if meta.get("audio") else ["-an"]
+        if STATE.hw:
+            note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")
+    else:
+        cmd += video_args(meta, args.crf, args.preset, convert_matrix=not args.video) + cfr_args(meta)
+        cmd += aac_args() if meta.get("audio") else ["-an"]
     dropped_streams = run_keeping_subtitles(cmd, output)
     if not STATE.dry_run:
         result = probe(output, role="output")
         info(f"wrote {output} ({fmt_secs(result['duration'])})")
-    emit(output, dropped_non_av_streams=dropped_streams, **({"font_used": font_used} if args.text else {}))
+    extra = {"dropped_non_av_streams": dropped_streams, **({"font_used": font_used} if args.text else {})}
+    # a layer adds coverage: with --keep-alpha the written alpha is at or above the main input's in
+    # every frame; without it, an output that lost the main input's used alpha fails the `alpha` step
+    alpha_report(args, alpha_codec, src_alpha, output, extra, composite=True)
+    emit(output, **extra)
     return 0
 
 

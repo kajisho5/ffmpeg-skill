@@ -96,6 +96,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "cut from 1:20 to 2:05", "trim the first 10 s" | `cut.py input.mp4 --start 1:20 --end 2:05` |
 | "keep only these parts" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` |
 | "remove the middle" | `cut.py in.mp4 --remove 1:00-1:30` |
+| "frame-exact but keep the quality" (H.264) | `cut.py in.mp4 --start 1:20.4 --end 2:05.1 --smart` (re-encodes only the partial GOPs; `smart.reason` if it fell back) |
 | "make it exactly 60 seconds" | `fit.py in.mp4 --duration 60` (speed; `--method trim`) |
 | "cut it and make it HEVC / AV1 / ProRes" | `cut.py in.mp4 --start 0:10 --end 0:40 --codec hevc` |
 | "cut out the pauses", "jump cuts" | `silence.py in.mp4` |
@@ -155,9 +156,12 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "a small proxy file" | `proxy.py in.mp4 --width 640` |
 | "is this OK to upload?" | `check.py final.mp4 --platform reels` |
 | "how much quality was lost" | `check.py final.mp4 --compare master.mp4` |
+| "is it broadcast legal?" | `check.py final.mp4 --levels ebu-r103` (clamp: `color.py in.mp4 --correct --legalize ebu-r103`) |
 | "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 -o report.html` |
 | "title card", "Ken Burns on a photo" | `insert.py title.png --duration 3` (`--zoom in --pan right`) |
 | "a blank colour clip" | `background.py -o bg.mp4 --duration 3 --color 0x101010` |
+| "grade it but keep the alpha" | `color.py logo.mov --correct --exposure 0.3 --keep-alpha -o graded.mov` |
+| "lower third as a transparent layer" | `background.py --transparent -o canvas.mov --duration 5 --width 1920 --height 1080`, then `graphics.py canvas.mov --template lower-third --name "Ada" --keep-alpha -o lt.mov` |
 | "numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "waveform video for this track" | `waveform.py ep.wav -o waveform.mp4` |
 | "add black at the start" | `pad.py clip.mp4 --start 1.5` |
@@ -183,6 +187,7 @@ One line each; open the linked `references/gotchas.md` section when the job is i
 
 - HDR re-encoded through an SDR path goes flat. -> [#hdr-and-colour](references/gotchas.md#hdr-and-colour)
 - Log footage is tagged SDR and looks grey. -> [#log-footage](references/gotchas.md#log-footage)
+- Re-encodes drop alpha unless `--keep-alpha`. -> [#alpha-channels](references/gotchas.md#alpha-channels)
 - A `-c copy` cut can start on a wrong frame. -> [#keyframe-cuts](references/gotchas.md#keyframe-cuts)
 - VFR phone/screen clips go CFR on re-encode. -> [#variable-frame-rate](references/gotchas.md#variable-frame-rate)
 - Sync `confidence` under 0.3 is suspect. -> [#sync-multicam-and-drift](references/gotchas.md#sync-multicam-and-drift)

@@ -29,6 +29,11 @@ WARN when there is any); and, from one more video pass and a one-frame decode (2
 (single frames that differ from both neighbours while they match each other: WARN when there is
 any) and first frame (one flat colour, the frame a feed's autoplay shows first: WARN). Without it
 the row set is unchanged.
+
+--levels bt709|ebu-r103 (opt-in) decodes every frame once more and adds a legal levels row: the share
+of luma and of chroma samples outside the standard's legal range, counted exactly per frame, with
+min/max Y/U/V (FAIL when any frame's share passes --levels-tolerance, 1 % by default). The JSON
+`levels` document repeats it per clip and per --levels-window seconds (10 by default).
 """
 import argparse
 import json
@@ -39,7 +44,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
-from _common.probe import (COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
+from _common.probe import (LEGAL_RANGE_CHOICES, measure_signal_range, COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
                            detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
 from _common.emit import file_identity
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
@@ -72,6 +77,11 @@ BLACK_WARN, BLACK_FAIL = 0.10, 0.95        # share of the duration that is black
 FROZEN_WARN_S, FROZEN_WARN_SHARE = 3.0, 0.30  # longest frozen span: WARN above max(3 s, 30%)
 FROZEN_FAIL = 0.95                         # a frozen span covering this share = whole video frozen
 SILENCE_WARN, SILENCE_FAIL = 0.50, 0.95    # share of the duration below SILENT_PEAK_DBFS
+# --levels: the share of one frame's luma (or chroma) samples that may sit outside the legal range
+# before the row FAILs -- room for a filter's overshoot at a sharp edge, not a licence for a clipped sky
+LEVELS_TOLERANCE_PCT = 1.0
+# pixel formats whose planes are Y'CbCr (an RGB or grey picture has no luma/chroma codes to count)
+_YUV_PREFIXES = ("yuv", "yuvj", "nv", "p01", "p21", "p41", "y21", "uyvy", "yuyv", "ayuv", "vuya", "xv")
 
 
 STATE_NOTES: List[str] = []
@@ -114,6 +124,40 @@ def aspect_name(w: int, h: int) -> str:
     return f"{f.numerator}:{f.denominator}"
 
 
+def levels_row(args: argparse.Namespace, v: Dict[str, Any], row: Any) -> "Optional[Dict[str, Any]]":
+    """--levels: measure the signal range (measure_signal_range) and add the legal levels row.
+    Returns the JSON `levels` document, or None when nothing was measured."""
+    expect = f"every frame <= {args.levels_tolerance:g}% of luma and of chroma samples outside {args.levels}"
+    pix = str(v.get("pix_fmt") or "")
+    if not v:
+        return None
+    if not pix.startswith(_YUV_PREFIXES):
+        row("legal levels", "WARN", f"not measured: {pix or 'unknown'} is not a Y'CbCr picture", expect,
+            "legal levels are measured on the Y'CbCr file a broadcaster receives: check the encoded delivery, not an RGB master",
+            reason="an RGB or grey picture has no luma and chroma codes to count")
+        return None
+    doc = measure_signal_range(args.input, args.levels, args.levels_window, pix_fmt=pix)
+    if doc is None:
+        row("legal levels", "WARN", "could not measure", expect, "re-run check.py --levels, or look.py the picture",
+            reason="the decode failed or stopped part-way, so the signal range of the whole file is unknown")
+        return None
+    pct, worst = doc["out_of_range_pct"], doc["worst_frame"]
+    over = worst["y_pct"] > args.levels_tolerance or worst["chroma_pct"] > args.levels_tolerance
+    at = "" if worst["time"] is None else f" at {worst['time']:.2f}s"
+    lo, hi = doc["min"], doc["max"]
+    value = (f"luma {pct['y']:.3f}%, chroma {pct['chroma']:.3f}% out of range (worst frame{at}: luma {worst['y_pct']:.3f}%, "
+             f"chroma {worst['chroma_pct']:.3f}%); Y {lo['y']}-{hi['y']}, U {lo['u']}-{hi['u']}, V {lo['v']}-{hi['v']}")
+    full = v.get("color_range") == "pc" or pix.startswith("yuvj")
+    if full:
+        STATE_NOTES.append("--levels: the picture is tagged full range (0-255 codes by design), so it was counted against "
+                           "the limited-range limits a broadcast file uses; convert it to limited range before judging the row")
+    row("legal levels", "FAIL" if over else "PASS", value, expect,
+        f"color.py {args.input} --legalize {args.levels} (clamps after the 4:2:0 conversion and measures the result), or "
+        "pull the highlights and shadows in with a soft clip in the grade and check again" if over else "",
+        reason="a broadcaster's QC rejects or clips a picture whose levels leave the legal range" if over else "")
+    return doc
+
+
 def main() -> int:
     STATE_NOTES.clear()  # module state: a second main() in one process starts without the first's notes
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -127,6 +171,15 @@ def main() -> int:
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
                     help="also check the content (one decode pass, plus an audio-only and a video-only one): black, frozen, silence, dropouts, flashes and first frame rows")
+    ap.add_argument("--levels", choices=LEGAL_RANGE_CHOICES, default=None,
+                    help="also measure the broadcast signal range (one more decode of every frame): a legal levels row with "
+                         "the share of luma and chroma samples outside bt709 (16-235 / 16-240) or ebu-r103 (luma -1..103 %%), "
+                         "and min/max Y/U/V; the JSON levels document has it per clip and per --levels-window")
+    ap.add_argument("--levels-window", type=float, default=10.0, metavar="SECONDS",
+                    help="--levels: report the shares for every window of this many seconds too (default 10; 0 = the whole clip only)")
+    ap.add_argument("--levels-tolerance", type=float, default=LEVELS_TOLERANCE_PCT, metavar="PCT",
+                    help="--levels: the legal levels row FAILs when one frame has more than this percentage of its luma or of "
+                         "its chroma samples out of range (default %(default)g; 0 = any sample)")
     ap.add_argument("--compare", metavar="REFERENCE",
                     help="also measure the picture against REFERENCE, frame by frame (SSIM and PSNR, one pass): a "
                          "similarity row, WARN when the mean SSIM is under 0.98, with the worst frame's time")
@@ -153,6 +206,10 @@ def main() -> int:
         spec["tp"] = args.tp
     if args.max_mb is not None:
         spec["max_bytes"] = int(args.max_mb * 1024 * 1024)
+    if args.levels_window < 0:
+        die(f"--levels-window {args.levels_window:g}: a window is 0 (the whole clip only) or a number of seconds")
+    if not 0 <= args.levels_tolerance <= 100:
+        die(f"--levels-tolerance {args.levels_tolerance:g} is outside 0..100 (percent of a frame's samples)")
 
     expected_identity = None
     if args.expect_identity is not None:
@@ -384,6 +441,10 @@ def main() -> int:
                 "again); a noise gate makes these on purpose" if gaps else "",
                 reason="a short stretch of digital silence in the middle of the sound is usually lost audio at a join or a glitched decode" if gaps else "")
 
+    levels_doc = None
+    if args.levels and not dry_run_input_pending(args.input):
+        levels_doc = levels_row(args, v, row)
+
     if args.compare and not dry_run_input_pending(args.input) and not dry_run_input_pending(args.compare):
         ref = probe(args.compare)
         rv = ref.get("video") or {}
@@ -457,6 +518,8 @@ def main() -> int:
         for n in notes:
             print(f"  note: {n}")
     extra: Dict[str, Any] = {"notes": notes} if notes else {}
+    if levels_doc is not None:
+        extra["levels"] = levels_doc
     if identity is not None:
         extra["input_identity"] = identity
     if failed:

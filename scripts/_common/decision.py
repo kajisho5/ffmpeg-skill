@@ -741,6 +741,13 @@ def _x264_raw(crf: int, preset: str, keep_bt709: bool = True) -> List[str]:
     return args
 
 
+def keeps_source_tags() -> bool:
+    """True when the line being written is an editing master that keeps the source's colour tags
+    and converts no matrix: --codec prores, or an alpha line (--keep-alpha / --transparent,
+    _common.alpha). The BT.709 conversions and labels below are for lines tagged BT.709."""
+    return STATE.codec == "prores" or STATE.alpha_line is not None
+
+
 def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True,
               source: Optional[Dict[str, Any]] = None) -> List[str]:
     """SDR H.264 encoder args -- or, when --codec named another encoder, that encoder's SDR args
@@ -753,7 +760,7 @@ def x264_args(crf: int = 18, preset: str = "medium", keep_bt709: bool = True,
         args = encoder_args(STATE.codec, crf, preset, None, keep_bt709)
     else:
         args = _maybe_hw("h264", crf, None, keep_bt709, _x264_raw(crf, preset, keep_bt709))
-    return args + (bt709_matrix_args(source) if keep_bt709 and STATE.codec != "prores" else [])
+    return args + (bt709_matrix_args(source) if keep_bt709 and not keeps_source_tags() else [])
 
 
 def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "medium", convert_matrix: bool = True,
@@ -777,7 +784,7 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     video_args(None)); its RGB or BT.601 pixels are converted to the BT.709 that line is tagged with.
     """
     v = (meta or {}).get("video") or {}
-    fix = bt709_matrix_args(meta if source is None else source) if convert_matrix and STATE.codec != "prores" else []
+    fix = bt709_matrix_args(meta if source is None else source) if convert_matrix and not keeps_source_tags() else []
     if STATE.codec:
         return encoder_args(STATE.codec, crf, preset, meta) + fix
     if not v.get("bt2020_or_hdr"):
@@ -790,7 +797,7 @@ def matrix_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, A
     video_args(line_meta, convert_matrix=False): the conversion one source's own chain starts
     with ("<filter>," -- bt709_matrix_filter), or "" when that source needs none or the line does
     not tag BT.709 (an HDR/BT.2020 line keeps its tags, --codec prores keeps the source's)."""
-    if STATE.codec == "prores" or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
+    if keeps_source_tags() or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
         return ""
     f = bt709_matrix_filter(meta)
     return f + "," if f else ""
@@ -801,7 +808,7 @@ def label_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, An
     cell beside a converted cell), encoded through video_args(line_meta): the BT.709 label an
     untagged one's chain starts with ("<setparams>," -- bt709_label_filter), or "" (a tagged, RGB or
     HDR picture, or a line that does not tag BT.709)."""
-    if STATE.codec == "prores" or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
+    if keeps_source_tags() or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
         return ""
     f = bt709_label_filter(meta)
     return f + "," if f else ""
@@ -813,7 +820,7 @@ def range_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, An
     takes after its matrix_chain()/label_chain() ("<filter>," -- limited_range_filter), or "" (a
     limited, RGB or HDR picture, or a line that does not tag BT.709). Every SDR picture such a
     tool mixes is then limited range, whatever each one was: the filters mix samples, not colours."""
-    if STATE.codec == "prores" or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
+    if keeps_source_tags() or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
         return ""
     f = limited_range_filter(meta)
     return f + "," if f else ""
@@ -835,7 +842,12 @@ def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva
     is encoded through video_args(line_meta): "," + the conversion to BT.709 YUV to end that chain
     with (rgb_to_bt709_filter), or "" when the line does not tag BT.709 (the lines matrix_chain()
     leaves alone). Without it the graph's own RGB-to-YUV step used FFmpeg's BT.601 default."""
-    if STATE.codec == "prores" or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
+    v = (line_meta or {}).get("video") or {}
+    if STATE.alpha_line is not None and v.get("color_space") == "bt709" and not v.get("bt2020_or_hdr"):
+        # an alpha line keeps the source's tags: on a BT.709-tagged picture an RGB layer is made
+        # BT.709 too (FFmpeg 6.1's own conversion is BT.601), in 4:4:4 with its alpha plane
+        return "," + rgb_to_bt709_filter("yuva444p")
+    if keeps_source_tags() or v.get("bt2020_or_hdr"):
         return ""
     return "," + rgb_to_bt709_filter(pix_fmt)
 
@@ -843,7 +855,7 @@ def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva
 def draws_chroma(colours: Sequence[Any], line_meta: Optional[Dict[str, Any]]) -> bool:
     """True when one of `colours` has chroma (is_neutral_color) and the line video_args(line_meta)
     tags the output BT.709 -- when a drawn colour needs drawn_chain() at all."""
-    return (not all(is_neutral_color(c) for c in colours if c is not None) and STATE.codec != "prores"
+    return (not all(is_neutral_color(c) for c in colours if c is not None) and not keeps_source_tags()
             and not ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"))
 
 

@@ -478,23 +478,33 @@ def _bit_depth(pix_fmt: Optional[str]) -> int:
     return n if 8 <= n <= 16 else 8
 
 
-def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
-    """Video keyframe timestamps within +-window seconds of t, ascending. Read with
-    -read_intervals so a long file is not scanned end to end; empty when ffprobe cannot say."""
-    ffprobe = require_tool("ffprobe")
-    lo = max(0.0, t - window)
-    proc = run([ffprobe, "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
-                "-read_intervals", f"{lo:.3f}%{t + window:.3f}", "-show_entries", "frame=pts_time",
+def keyframe_times(path: str, lo: float, hi: float, stream: str = "v:0") -> Optional[List[float]]:
+    """Keyframe timestamps of `stream` read from lo to hi seconds (file time), ascending and as
+    ffprobe prints them (microseconds). Read with -read_intervals so a long file is not scanned end
+    to end; the read starts at the keyframe at or before lo, so the first may lie before it. None
+    when ffprobe fails (unmeasured, not "no keyframes")."""
+    # an interval's end is exclusive (6.1: a keyframe at exactly hi is not read), so read a
+    # little past it and drop what lies beyond hi
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", stream, "-skip_frame", "nokey",
+                "-read_intervals", f"{max(0.0, lo):.6f}%{hi + 0.01:.6f}", "-show_entries", "frame=pts_time",
                 "-of", "csv=p=0", path], quiet=True, check=False)
     if proc.returncode != 0:
-        return []
+        return None
     out: List[float] = []
     for line in proc.stdout.splitlines():
         try:
-            out.append(round(float(line.strip().rstrip(",")), 3))
+            k = float(line.strip().rstrip(","))
         except ValueError:
             continue
+        if k <= hi + 1e-6:
+            out.append(k)
     return sorted(set(out))
+
+
+def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
+    """Video keyframe timestamps within +-window seconds of t (to the ms), ascending; empty when
+    ffprobe cannot say (cut.py's best-effort hints; probe.py --keyframes-near uses keyframe_times)."""
+    return sorted(set(round(k, 3) for k in keyframe_times(path, t - window, t + window) or []))
 
 
 # frame timing: is a stream's frame rate really variable? (cut.py's VFR guard)
@@ -607,6 +617,162 @@ def measured_level_dbfs(path: str, seconds: Optional[float] = 120.0,
     if not (m_mean and m_max):
         return None
     return {"mean_dbfs": float(m_mean.group(1)), "peak_dbfs": float(m_max.group(1))}
+
+
+# Legal signal range of limited-range Y'CbCr (check.py --levels, color.py --legalize). Each standard
+# is stated in percent of the nominal swing, so the code limits follow from the bit depth: 0 % luma is
+# code 16 << (depth - 8), 100 % is 235 << (depth - 8); chroma's nominal swing is 16..240 (scaled the
+# same way) around the midpoint. A sample is legal when its code lies inside [lo, hi] inclusive.
+#   bt709     ITU-R BT.709 nominal range: luma 0..100 %, chroma 16..240 (8-bit) -- no excursion.
+#   ebu-r103  EBU R 103 tolerance: luma -1 %..103 %, RGB components -5 %..105 %. Chroma is held to the
+#             widest Cb/Cr an RGB triple inside -5 %..105 % can produce (|C| <= 0.55 of the RGB span,
+#             i.e. 8-bit 5..251); RGB gamut itself is not measured here (a per-plane Y'CbCr count).
+LEGAL_RANGES: Dict[str, Dict[str, Any]] = {
+    "bt709": {"luma_pct": (0.0, 100.0), "chroma_half_swing": 0.5,
+              "reference": "ITU-R BT.709 nominal range: luma 16-235, chroma 16-240 (8-bit; 10-bit 64-940 / 64-960)"},
+    "ebu-r103": {"luma_pct": (-1.0, 103.0), "chroma_half_swing": 0.55,
+                 "reference": "EBU R 103 tolerance: luma -1 %..103 % (8-bit 14-241), chroma as far as RGB -5 %..105 % "
+                              "reaches (8-bit 5-251)"},
+}
+LEGAL_RANGE_CHOICES = sorted(LEGAL_RANGES)
+
+
+def legal_limits(standard: str, bit_depth: int = 8) -> Dict[str, Tuple[int, int]]:
+    """{"y": (lo, hi), "c": (lo, hi)}: the inclusive legal code range of a limited-range sample at
+    `bit_depth`. A limit that falls between two codes is rounded inward (the code past it is out)."""
+    spec = LEGAL_RANGES[standard]
+    scale = 1 << (max(8, int(bit_depth)) - 8)
+    black, white = 16 * scale, 235 * scale
+    span = white - black
+    p_lo, p_hi = spec["luma_pct"]
+    y = (math.ceil(black + span * p_lo / 100.0 - 1e-9), math.floor(white + span * (p_hi - 100.0) / 100.0 + 1e-9))
+    mid, cspan = 128 * scale, 224 * scale
+    half = spec["chroma_half_swing"] * cspan
+    c = (max(0, math.ceil(mid - half - 1e-9)), min((256 * scale) - 1, math.floor(mid + half + 1e-9)))
+    return {"y": y, "c": c}
+
+
+_COMPONENT_DEPTHS: Dict[str, int] = {}
+
+
+def component_depth(pix_fmt: Optional[str]) -> int:
+    """Bits per luma sample of `pix_fmt`, from ffmpeg's own pixel-format table (`-pix_fmts`,
+    BIT_DEPTHS column): the depth the planes really hold, which the name does not always say --
+    nv12 is 8-bit 4:2:0 (the 12 is bits per pixel), p010le is 10-bit. Falls back to _bit_depth()
+    when ffmpeg does not list the format."""
+    name = str(pix_fmt or "")
+    if not _COMPONENT_DEPTHS:
+        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-pix_fmts"], check=False)
+        for line in (proc.stdout or "").splitlines():
+            cols = line.split()
+            if len(cols) == 5 and re.fullmatch(r"\d+(?:-\d+)*", cols[4]):
+                _COMPONENT_DEPTHS[cols[1]] = int(cols[4].split("-")[0])
+    return _COMPONENT_DEPTHS.get(name) or _bit_depth(name)
+
+
+def _metadata_frames(text: str, keys: Optional[frozenset] = None) -> List[Tuple[float, Dict[str, float]]]:
+    """metadata=print's output: one (pts_time, {key: value}) per `frame:` block, signalstats keys only
+    (only those in `keys` when given: signalstats prints ~25 per frame and an hour is 100k frames)."""
+    frames: List[Tuple[float, Dict[str, float]]] = []
+    for line in text.splitlines():
+        if line.startswith("frame:"):
+            m = re.search(r"pts_time:\s*(-?[0-9.]+|nan)", line)
+            t = float(m.group(1)) if m and m.group(1) != "nan" else float("nan")
+            frames.append((t, {}))
+        elif "lavfi.signalstats." in line and "=" in line and frames:
+            key, val = line.split("lavfi.signalstats.", 1)[1].split("=", 1)
+            key = key.strip()
+            if keys is not None and key not in keys:
+                continue
+            try:
+                frames[-1][1][key] = float(val)
+            except ValueError:
+                pass
+    return frames
+
+
+# the signalstats keys measure_signal_range reads: the frame's own extremes and BRNG, and the mask's means
+_OWN_KEYS = frozenset({"BRNG", "YMIN", "YMAX", "UMIN", "UMAX", "VMIN", "VMAX"})
+_MASK_KEYS = frozenset({"YAVG", "UAVG", "VAVG"})
+
+
+def measure_signal_range(path: str, standard: str, window: float = 10.0,
+                         bit_depth: Optional[int] = None, pix_fmt: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Share of luma and chroma samples outside `standard`'s legal range, per clip and per `window`
+    seconds, plus min/max Y/U/V, from one decode of every frame of the first video stream.
+
+    The count is exact, not sampled from a histogram: each plane goes through lutyuv, which maps an
+    out-of-range code to the depth's top code (255 at 8 bits) and every other code to 0, and
+    signalstats' mean of that mask is the top code x the out-of-range share of that plane in that frame. Chroma planes are
+    counted at their own (subsampled) resolution, so "chroma" is the share of Cb and Cr samples. A
+    second signalstats ahead of the mask reads the frame's own MIN/MAX and BRNG (the share of pixels
+    with any component outside the BT.601/709 nominal range, signalstats' fixed limits). Every frame
+    holds the same number of samples, so a clip's share is the mean of its frames' shares.
+
+    The limits and the mask use `bit_depth`, or else the depth of `pix_fmt`'s planes
+    (component_depth(): nv12 is 8-bit, not 12). None when the measurement is not whole: nothing
+    decoded, ffmpeg failed part-way (a share from the frames read before the failure would grade a
+    file nobody measured to the end), or the two passes counted different frames."""
+    if standard not in LEGAL_RANGES:
+        die(f"unknown legal range {standard!r}; choose from {', '.join(LEGAL_RANGE_CHOICES)}")
+    import tempfile
+    from _common.decision import escape_filter_path
+    ffmpeg = require_tool("ffmpeg")
+    depth = int(bit_depth or component_depth(pix_fmt))
+    lim = legal_limits(standard, depth)
+    (ylo, yhi), (clo, chi) = lim["y"], lim["c"]
+    top = (1 << depth) - 1  # a literal: lutyuv's own maxval is 235 for limited-range luma, 240 for chroma
+    out = str(top) + "*(lt(val\\,{lo})+gt(val\\,{hi}))"
+    mask = (f"lutyuv=y='{out.format(lo=ylo, hi=yhi)}':u='{out.format(lo=clo, hi=chi)}'"
+            f":v='{out.format(lo=clo, hi=chi)}'")
+    with tempfile.TemporaryDirectory(prefix="ffskill_levels_") as tmp:
+        stats_file = os.path.join(tmp, "stats.txt")
+        vf = (f"signalstats=stat=brng,metadata=print:file={escape_filter_path(stats_file)},"
+              f"{mask},signalstats,metadata=print:file=-")
+        cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", "0:v:0", "-an", "-sn", "-dn", "-vf", vf, "-f", "null", "-"]
+        proc = run_analysis(cmd, check=False, record=True)
+        try:
+            with open(stats_file, encoding="utf-8", errors="replace") as f:
+                own = _metadata_frames(f.read(), _OWN_KEYS)
+        except OSError:
+            own = []
+    masks = _metadata_frames(proc.stdout or "", _MASK_KEYS)
+    if proc.returncode != 0 or not own or len(own) != len(masks):
+        return None
+    t0 = next((t for t, _ in own if t == t), 0.0)
+    rows: List[Dict[str, Any]] = []
+    for (t, s), (_, m) in zip(own, masks, strict=True):
+        y, u, v = (m.get(k, 0.0) / top * 100.0 for k in ("YAVG", "UAVG", "VAVG"))
+        rows.append({"t": (t - t0) if t == t else None, "y": y, "u": u, "v": v, "brng": s.get("BRNG", 0.0) * 100.0,
+                     "min": {k: s.get(k.upper() + "MIN") for k in "yuv"}, "max": {k: s.get(k.upper() + "MAX") for k in "yuv"}})
+
+    def summary(frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+        k = len(frames)
+        share = {p: sum(f[p] for f in frames) / k for p in ("y", "u", "v", "brng")}
+        worst = max(frames, key=lambda f: max(f["y"], (f["u"] + f["v"]) / 2))
+        def ext(which: str, fn: Any) -> Dict[str, Any]:
+            vals = {p: [f[which][p] for f in frames if f[which][p] is not None] for p in "yuv"}
+            return {p: (int(fn(v)) if v else None) for p, v in vals.items()}
+        return {"frames": k,
+                "out_of_range_pct": {"y": round(share["y"], 4), "u": round(share["u"], 4), "v": round(share["v"], 4),
+                                     "chroma": round((share["u"] + share["v"]) / 2, 4)},
+                "brng_pct": round(share["brng"], 4),
+                "worst_frame": {"time": None if worst["t"] is None else round(worst["t"], 3),
+                                "y_pct": round(worst["y"], 4), "chroma_pct": round((worst["u"] + worst["v"]) / 2, 4)},
+                "min": ext("min", min), "max": ext("max", max)}
+
+    doc = {"standard": standard, "reference": LEGAL_RANGES[standard]["reference"], "bit_depth": depth,
+           "legal": {"y": list(lim["y"]), "c": list(lim["c"])}, "window_seconds": window, **summary(rows)}
+    windows: List[Dict[str, Any]] = []
+    if window and window > 0:
+        buckets: Dict[int, List[Dict[str, Any]]] = {}
+        for i, f in enumerate(rows):
+            buckets.setdefault(int((f["t"] if f["t"] is not None else i) // window), []).append(f)
+        for idx in sorted(buckets):
+            w = summary(buckets[idx])
+            windows.append({"start": round(idx * window, 3), "end": round((idx + 1) * window, 3), **w})
+    doc["windows"] = windows
+    return doc
 
 
 def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:

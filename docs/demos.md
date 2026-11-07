@@ -282,6 +282,16 @@ python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --remove 2-4 --accurate --p
 
 **Look for:** cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.
 
+### Frame-exact cut, re-encoding only the ends
+
+![Frame-exact cut, re-encoding only the ends](demos/cut_smart.gif)
+
+```bash
+python3 scripts/cut.py demos/out/cut_smart_gop30.mp4 --start 1.3 --end 6.6 --smart --json -o demos/out/cut_smart_after.mp4
+```
+
+**Look for:** cut.py --smart cuts 1.3-6.6 s frame-exactly but re-encodes only 1.3-2 s and 6-6.6 s, matched to the source's H.264 parameters; the whole GOPs between are the source's own packets, checked against it before the file is written. The build fails unless the result is a verified smart cut.
+
 ### Lossless cut that starts where asked
 
 ![Lossless cut that starts where asked](demos/cut_edit_list.gif)
@@ -481,6 +491,18 @@ python3 scripts/overlay.py demos/out/greenscreen_plate.mp4 --video demos/out/fix
 
 **Look for:** background.py draws the gradient plate from nothing (there is no input file), then overlay.py keys the chroma green out of the subject and composites it on top.
 
+### A graphic rendered as its own alpha layer
+
+![A graphic rendered as its own alpha layer](demos/alpha_layer.gif)
+
+```bash
+python3 scripts/background.py --transparent --alpha-codec qtrle --duration 6 --width 1280 --height 720 --fps 30 -o demos/out/alpha_layer_canvas.mov --json
+python3 scripts/graphics.py demos/out/alpha_layer_canvas.mov --template lower-third --name 'Ada Lovelace' --title 'Analytical Engine' --start 0.5 --end 5.5 --keep-alpha --alpha-codec qtrle -o demos/out/alpha_layer_layer.mov --json
+python3 scripts/overlay.py demos/out/fixtures/motion.mp4 --video demos/out/alpha_layer_layer.mov --position 0,0 --margin 0 --preset veryfast -o demos/out/alpha_layer_after.mp4
+```
+
+**Look for:** background.py --transparent makes an empty canvas, graphics.py --keep-alpha draws a lower third on it and writes it with its alpha (QuickTime Animation here; ProRes 4444 by default), checked frame by frame, and overlay.py lays that one layer over the footage. The layer can go to an editor as it is: nothing but the graphic was ever in its picture.
+
 ### Pieces of one layer at their own times
 
 ![Pieces of one layer at their own times](demos/overlay_place.gif)
@@ -510,6 +532,16 @@ python3 scripts/color.py demos/out/fixtures/motion.mp4 --correct --exposure 0.25
 ```
 
 **Look for:** Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.
+
+### Broadcast legal levels
+
+![Broadcast legal levels](demos/color_legalize.gif)
+
+```bash
+python3 scripts/color.py demos/out/color_legalize_hot.mp4 --correct --legalize bt709 --quality 8 --preset veryfast -o demos/out/color_legalize_legal.mp4 --json
+```
+
+**Look for:** A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp acts before encoding, on the 4:2:0 picture the encoder receives (16-235 luma, 16-240 chroma); the encoder's error at the clamped edges can put a few decoded samples back out. The run then measures the encoded file (check.py --levels counts the same way), which passes with up to 1 % of a frame's luma or chroma samples out of range, and the build fails unless that check passes; --quality 8 keeps this pattern inside the allowance.
 
 ### 2x2 comparison grid
 
@@ -819,6 +851,14 @@ python3 scripts/check.py final.mp4 --platform youtube --content
 ```
 
 **No picture:** adds content rows to the platform check: black frames, frozen frames, the share of silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, the mark of lost audio at a join), single-frame flashes (one frame unlike both of its neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the first five times; a row that does not pass names a fix.
+
+### check.py --levels
+
+```bash
+python3 scripts/check.py spot.mxf --platform broadcast --levels ebu-r103
+```
+
+**No picture:** counts the luma and chroma samples outside the legal range in every frame (bt709 16-235 / 16-240, or EBU R 103's -1..103 % luma) and adds a legal levels row with the worst frame's time and min/max Y/U/V; the JSON has the shares per window. color.py --legalize clamps after the 4:2:0 conversion and measures the file it wrote the same way -- a change no preview would show, which is why it is a number here and not a GIF.
 
 ### report.py
 
