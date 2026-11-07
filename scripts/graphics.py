@@ -53,6 +53,8 @@ from _common import drawtext_fontfile  # noqa: E402
 # where the template's text chain goes in a filter_complex it builds (graphics.main fills it in)
 TEXT = "@TEXT@"
 BOX = "@BOX@"  # a box's place in the filter chain, followed by its index (graphics.main fill_box)
+# a dry run on a planned input (not written yet) has no duration: the plan ends its element here
+PLANNED_END_SECONDS = 10.0
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug", "sticker", "hook", "meme"]
 
 
@@ -202,6 +204,14 @@ def main(force_route: Optional[str] = None) -> int:
     fps = meta["video"].get("fps")
     s = time_arg(args.start, "--start", fps) if args.start else 0.0
     e = time_arg(args.end, "--end", fps) if args.end else dur
+    if meta.get("dry_run") and not args.end and not dur:
+        # a planned input an earlier dry-run stage would write (a --transparent canvas in a
+        # recipe): its length is unknown until then, so the plan runs to a placeholder end and the
+        # real run takes the end from the written file. Refusing it as "--end must be after
+        # --start" refused every plan that draws on an earlier stage's output.
+        e = s + PLANNED_END_SECONDS
+        note(f"[dry-run] {args.input} does not exist yet: its duration is unknown, so the planned element ends at "
+             f"{e:g}s; the real run uses the written file's duration")
     if e <= s:
         die("--end must be after --start")
     en = f"enable='between(t,{s:.3f},{e:.3f})'"

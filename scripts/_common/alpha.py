@@ -272,6 +272,22 @@ def video_line(codec: str) -> List[str]:
     return list(ALPHA_CODECS[codec]["video"])
 
 
+def source_tag_filter(meta: Optional[Dict[str, Any]], codec: str) -> str:
+    """The source's colour tags put back on the frames (",setparams=..."), for an alpha line whose
+    chain passes through RGB (color.py's grade): the conversion pair leaves the frames untagged
+    (6.1) or tagged with its working matrix (7.1+), so the line would not keep the source's tags.
+    A label only, as the pair is an identity on the matrix: never the -colorspace output options,
+    which 7.1+ turns into a real conversion (color.bt709_tag_args). "" for an untagged source, and
+    for an RGB line (qtrle, png), which has no YUV matrix to label."""
+    if not ALPHA_CODECS[codec]["pix_fmt"].startswith("yuv"):
+        return ""
+    v = (meta or {}).get("video") or {}
+    opts = [f"{key}={v[name]}" for key, name in (("colorspace", "color_space"), ("color_primaries", "color_primaries"),
+                                                 ("color_trc", "color_transfer"))
+            if v.get(name) and v[name] not in ("unknown", "reserved")]
+    return ",setparams=" + ":".join(opts) if opts else ""
+
+
 def audio_line(codec: str) -> List[str]:
     return list(ALPHA_CODECS[codec]["audio"])
 
