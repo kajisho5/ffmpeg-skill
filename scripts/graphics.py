@@ -230,7 +230,7 @@ def main(force_route: Optional[str] = None) -> int:
         has chroma. overlay places a 4:2:0 picture on even rows and columns only: a box that starts on
         an odd one is placed one earlier with a transparent first column/row (`left`, `top`), so it
         covers the rows and columns the drawbox did."""
-        conv = rgb_chain_to_bt709(meta) if draws_chroma([colour], meta) else ""
+        conv = rgb_chain_to_bt709(meta) if (alpha_codec or draws_chroma([colour], meta)) else ""
         if conv:
             converted.append(colour)
         edge = f",pad={w + left}:{h + top}:{left}:{top}:color=black@0" if left or top else ""
@@ -769,6 +769,9 @@ def main(force_route: Optional[str] = None) -> int:
             if asset not in STATE.plan_inputs:
                 STATE.plan_inputs.append(asset)
         if eo:
+            if alpha_codec:
+                # at 4:4:4 like every other layer here (overlay's default 4:2:0 subsamples the picture)
+                eo = [re.sub(r"(overlay=x=.*?:enable='[^']*')\[", r"\1:format=yuv444[", c) for c in eo]
             chains += eo
             last = "vfinal"
         if finish:

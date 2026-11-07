@@ -20,9 +20,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import threading
 from typing import Any, Dict, List, Optional
 
-from _common.runner import STATE, ffmpeg_encoders, require_tool, run, run_analysis
+from _common import runner as _runner
+from _common.runner import STATE, ffmpeg_encoders, require_tool, run
 
 # A pixel format that carries an alpha plane (yuva*, rgba, argb, gbrap, ya8/ya16, ...).
 ALPHA_PIX = re.compile(r"^(yuva|gbrap|ya\d|rgba|bgra|argb|abgr|rgba64|bgra64)")
@@ -51,11 +54,29 @@ ALPHA_CODEC_DEFAULT = "prores4444"
 ALPHA_MODES = ("straight", "premultiplied")
 
 
+_DECODERS: "Optional[set]" = None
+
+
+def ffmpeg_decoders() -> set:
+    """Names from `ffmpeg -decoders`, read once (empty when the list cannot be read), as
+    runner.ffmpeg_encoders() reads the encoders: the libvpx VP9 decoder is a build option of its
+    own, so the encoder list does not say whether it is there."""
+    global _DECODERS
+    if _DECODERS is None:
+        _DECODERS = _runner._read_ff_list("-decoders", r"^\s*[VAS][.\w]{5}\s+(\S+)")
+    return _DECODERS
+
+
+def libvpx_vp9_decoder() -> bool:
+    return "libvpx-vp9" in ffmpeg_decoders()
+
+
 def vp9_decoder_args(codec: Optional[str]) -> List[str]:
     """The input option that decodes a VP9 stream with libvpx-vp9: FFmpeg's native vp9 decoder
     drops the alpha layer (a WebM's yuva420p comes out yuv420p, fully opaque). [] for any other
-    codec, or when this build has no libvpx (its encoder list stands in for the decoder's)."""
-    return ["-c:v", "libvpx-vp9"] if codec == "vp9" and "libvpx-vp9" in ffmpeg_encoders() else []
+    codec, or when this build has no libvpx-vp9 decoder (decoder_args_for() refuses that case
+    where the alpha matters)."""
+    return ["-c:v", "libvpx-vp9"] if codec == "vp9" and libvpx_vp9_decoder() else []
 
 
 def vp9_alpha_tagged(path: str) -> bool:
@@ -78,7 +99,10 @@ def has_alpha_plane(meta: Dict[str, Any], path: str) -> bool:
     format with one, or a VP9 stream tagged with an alpha layer. Metadata only; whether the alpha
     is used (any pixel below opaque) takes alpha_stats()."""
     v = (meta or {}).get("video") or {}
-    return bool(ALPHA_PIX.match(v.get("pix_fmt") or "")) or (v.get("codec") == "vp9" and vp9_alpha_tagged(path))
+    # a palette (pal8: an indexed PNG/GIF) can carry transparency in the palette itself (tRNS),
+    # which the pixel format does not show; it is measured like an alpha plane
+    return (bool(ALPHA_PIX.match(v.get("pix_fmt") or "")) or v.get("pix_fmt") == "pal8"
+            or (v.get("codec") == "vp9" and vp9_alpha_tagged(path)))
 
 
 def frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, object] | None":
@@ -88,12 +112,46 @@ def frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, object
     w, h = _MEASURE_W, _MEASURE_H
     cmd = cmd_head + ["-i", path, "-map", "0:v:0", "-vf", f"{chain},scale={w}:{h}:flags=area,format=gray",
                       "-f", "rawvideo", "-"]
-    proc = run_analysis(cmd, check=False, text=False)
-    data = proc.stdout or b""
+    # Read frame by frame as ffmpeg writes them, not the whole pipe at once: the raw copy is 2304
+    # bytes a frame (~250 MB for an hour at 30 fps), the per-frame means a float each. The same
+    # wall-clock limit as run_analysis(), which this replaces here.
+    _runner._refuse_url_media(cmd)
+    limit = _runner._limit_for(cmd)
     size = w * h
-    if proc.returncode != 0 or len(data) < size:
+    frames: List[float] = []
+    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **_runner.child_kwargs())
+    _runner._watch(child, cmd)
+    expired = threading.Event()
+
+    def _expire() -> None:
+        expired.set()
+        child.kill()
+
+    timer = threading.Timer(limit, _expire) if limit else None
+    if timer:
+        timer.daemon = True
+        timer.start()
+    try:
+        pending = b""
+        while True:
+            chunk = child.stdout.read(size * 64)
+            if not chunk:
+                break
+            pending += chunk
+            whole = len(pending) - len(pending) % size
+            for i in range(0, whole, size):
+                frames.append(sum(pending[i:i + size]) / size)
+            pending = pending[whole:]
+        child.wait()
+    finally:
+        if timer:
+            timer.cancel()
+        _runner._unwatch(child)
+        child.stdout.close()
+    if expired.is_set():
+        _runner._timed_out(cmd, limit or 0)
+    if child.returncode != 0 or not frames:
         return None
-    frames = [sum(data[i:i + size]) / size for i in range(0, len(data) - size + 1, size)]
     return {"mean": sum(frames) / len(frames), "min": min(frames), "frames": len(frames), "per_frame": frames}
 
 
@@ -130,9 +188,19 @@ def rounded(st) -> "Dict[str, float] | None":
     return None if st is None else {"mean": round(st["mean"], 2), "min": round(st["min"], 2), "frames": st["frames"]}
 
 
+# source_alpha()'s answer for a source that stores an alpha plane whose alpha could not be read:
+# not "opaque" (that would let an output that dropped it pass), so every check on it fails
+UNMEASURED: Dict[str, Any] = {"unmeasured": True}
+
+
+def _measured(st):
+    return None if st is None or st.get("unmeasured") else st
+
+
 def uses_alpha(st) -> bool:
-    """True when a measured clip has a frame that is not fully opaque (its alpha is used)."""
-    return st is not None and st["min"] < OPAQUE
+    """True when a measured clip has a frame that is not fully opaque (its alpha is used), or when
+    a clip that stores an alpha plane could not be measured (UNMEASURED)."""
+    return st is not None and (bool(st.get("unmeasured")) or st["min"] < OPAQUE)
 
 
 # --- the flags -----------------------------------------------------------------------------------
@@ -230,6 +298,8 @@ def kept_step(output: str, output_meta: Dict[str, Any], source: "Dict[str, objec
     picture add coverage, so the written alpha may only be at or above the source's in every
     frame, and must not have gone opaque in every frame the source was transparent in (what an
     alpha dropped on the way reads as). In both, the written stream must store an alpha plane."""
+    unmeasured = bool(source and source.get("unmeasured"))
+    source = _measured(source)
     line = written_line(output_meta, output)
     written = alpha_stats(output, line["codec"])
     step: Dict[str, Any] = {"step": "alpha", "property": "alpha_mean", "tolerance": ALPHA_TOLERANCE,
@@ -237,6 +307,8 @@ def kept_step(output: str, output_meta: Dict[str, Any], source: "Dict[str, objec
                             "measured": None if written is None else round(written["mean"], 2),
                             "frames": {"expected": rounded(source), "measured": rounded(written)},
                             "written": line, "provenance": provenance}
+    if unmeasured:
+        step["reason"] = "source_alpha_unmeasured"
     if not composite:
         cmp = alpha_compare(written, source)
         step.update(comparison=cmp, ok=bool(cmp["ok"] and line["alpha_plane"]))
@@ -273,7 +345,10 @@ def lost_step(output: str, output_meta: Dict[str, Any], source: "Dict[str, objec
     """The `alpha` step of a run without --keep-alpha on a source whose alpha is used: the output
     stores no alpha plane (every re-encoding line but the alpha ones is opaque), so it fails, with
     the reason and the flag that keeps it. Measured, not assumed: a written file that does carry
-    the source's alpha passes."""
+    the source's alpha passes. A source whose alpha could not be measured (UNMEASURED) fails
+    with reason source_alpha_unmeasured: nothing shows the output kept what it had."""
+    unmeasured = bool(source and source.get("unmeasured"))
+    source = _measured(source)
     line = written_line(output_meta, output)
     written = alpha_stats(output, line["codec"]) if line["alpha_plane"] else None
     cmp = alpha_compare(written, source) if written is not None else {"ok": False, "paired": None,
@@ -285,7 +360,8 @@ def lost_step(output: str, output_meta: Dict[str, Any], source: "Dict[str, objec
                             "frames": {"expected": rounded(source), "measured": rounded(written)},
                             "written": line, "provenance": "input_premeasurement"}
     if not step["ok"]:
-        step.update(reason="alpha_dropped", attribution="artifact",
+        step.update(reason="source_alpha_unmeasured" if unmeasured and line["alpha_plane"] else "alpha_dropped",
+                    attribution="artifact",
                     hint="pass --keep-alpha to write an alpha line, or --drop-alpha when an opaque output is wanted")
     return step
 
@@ -295,21 +371,42 @@ def source_alpha(args, meta: Dict[str, Any], path: str) -> "Dict[str, object] | 
     alpha plane and this is not a dry run. Refuses --keep-alpha on a source without one (nothing to
     keep). Returns None when there is nothing to measure."""
     from _common.emit import die
+    if STATE.dry_run and _runner.dry_run_input_pending(path):
+        # a planned input an earlier step will write (a --transparent canvas in a recipe): there is
+        # nothing to probe yet, so the alpha checks wait for the real run
+        return None
     plane = has_alpha_plane(meta, path)
+    codec = ((meta or {}).get("video") or {}).get("codec")
+    if plane and codec == "vp9" and not libvpx_vp9_decoder():
+        _no_vp9_decoder(path)
     if getattr(args, "keep_alpha", False) and not plane:
         die(f"--keep-alpha keeps the source's alpha channel and {path} has none "
             f"({((meta or {}).get('video') or {}).get('pix_fmt')}, fully opaque)", kind="input",
             hint="background.py --transparent makes a transparent canvas to draw on; drop --keep-alpha for an opaque output")
     if not plane or STATE.dry_run:
         return None
-    return alpha_stats(path, ((meta or {}).get("video") or {}).get("codec"))
+    return alpha_stats(path, codec) or UNMEASURED
 
 
 def decoder_args_for(meta: Dict[str, Any], path: str) -> List[str]:
     """The input options a source with alpha needs to arrive with it: libvpx-vp9 for a VP9 stream
     tagged with an alpha layer (the native decoder drops it). [] for anything else."""
     v = (meta or {}).get("video") or {}
-    return vp9_decoder_args("vp9") if v.get("codec") == "vp9" and vp9_alpha_tagged(path) else []
+    if v.get("codec") != "vp9" or not vp9_alpha_tagged(path):
+        return []
+    if not libvpx_vp9_decoder():
+        # FFmpeg's own decoder would read it without the alpha, and a layer would cover what is
+        # under it: refused, not composited wrong
+        _no_vp9_decoder(path)
+    return ["-c:v", "libvpx-vp9"]
+
+
+def _no_vp9_decoder(path: str) -> None:
+    from _common.emit import die
+    die(f"{path} is VP9 with an alpha layer, and this ffmpeg build has no libvpx-vp9 decoder to read it "
+        "(FFmpeg's own VP9 decoder drops the alpha)", kind="missing_tool",
+        error_extra={"reason": "decoder_missing", "details": {"name": "libvpx-vp9"}},
+        hint="use an ffmpeg built with libvpx, or a ProRes 4444 / qtrle / PNG source")
 
 
 def report(args, codec: Optional[str], src: "Dict[str, object] | None", output: Optional[str],

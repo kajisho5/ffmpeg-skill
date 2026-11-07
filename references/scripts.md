@@ -1840,7 +1840,12 @@ kept (no BT.709 conversion, as `--codec prores`). The `alpha` step compares the 
 the source's frame by frame on 64x36 copies, each within 2 of 255. A source without an alpha plane is
 refused. Without `--keep-alpha`, a grade of a source whose alpha is used writes opaque H.264 and the
 `alpha` step fails (`reason: alpha_dropped`, `verified: false`); `--drop-alpha` makes it a note
-instead. `--retag`/`--strip-dovi` are stream copies and keep the alpha as they keep every pixel.
+instead. `--retag`/`--strip-dovi` are stream copies and keep the alpha as they keep every pixel;
+when `--retag`'s copy cannot carry the tags it falls back to an H.264 re-encode, which holds no
+alpha, and on a source whose alpha is used that run's `alpha` step fails (`alpha_dropped`).
+A source that stores an alpha plane whose alpha cannot be read fails the step too
+(`source_alpha_unmeasured`), and a VP9 source with alpha needs the libvpx-vp9 decoder
+(`error.reason: decoder_missing` without it).
 `--correct` is typed primary colour correction, no filter string ever accepted:
 `--exposure`/`--contrast`/`--saturation`/`--gamma` (`exposure`/`eq` filters),
 `--temperature`/`--tint`/`--lift`/`--gain` (`colortemperature`/`colorbalance`

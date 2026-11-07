@@ -437,6 +437,7 @@ ERROR_REASONS = {
     "plan_unknown_tool": "render.py PLAN: the plan names no tool render.py can run; details: {plan, plan_sha256, checked_at, tool, audit_log}",
     "plan_cwd_missing": "render.py PLAN: the directory the plan was made in is gone; details: {plan, plan_sha256, checked_at, cwd, audit_log}",
     "plan_argv_invalid": "render.py PLAN: argv is not a list; details: {plan, plan_sha256, checked_at, argv_type, audit_log}",
+    "decoder_missing": "color.py / graphics.py / overlay.py: a VP9 source or --video layer stored with an alpha layer, on a build with no libvpx-vp9 decoder (FFmpeg's own VP9 decoder drops the alpha), kind missing_tool; details: {name}",
     "encoder_missing": "--codec av1/prores: the build's encoder list was read and has no encoder for the codec (kind missing_tool; details: {codec, encoders}); or ffmpeg itself reported \"Unknown encoder\" for the encoder the command named (kind ffmpeg; details: {name}; the hint points at doctor)",
     "asr_engine_missing": "kind missing_tool: --transcribe (caption.py, silence.py --filler) found no local speech-to-text engine; the message lists the install lines; details: {}",
     "encoder_list_unreadable": "--codec av1/prores: the build's encoder list could not be read, so whether it has the encoder is unknown (kind ffmpeg); details: {codec, encoders, error}",
@@ -542,7 +543,9 @@ DIAGNOSTIC_CODES = {
 ALPHA_LINE_TOOLS = ("color", "graphics", "overlay", "background")
 ALPHA_LINE_OPTIONAL = [{"capability": "encoder:prores_ks", "when": "--keep-alpha / --transparent with --alpha-codec prores4444 (the default)"},
                        {"capability": "encoder:qtrle", "when": "--alpha-codec qtrle"}, {"capability": "encoder:png", "when": "--alpha-codec png"},
-                       {"capability": "encoder:libvpx-vp9", "when": "--alpha-codec vp9, or an alpha source stored as VP9 (decoded with libvpx-vp9)"},
+                       {"capability": "encoder:libvpx-vp9", "when": "--alpha-codec vp9"},
+                       {"capability": "encoder:libopus", "when": "--alpha-codec vp9 on an input with audio (color, graphics, overlay)"},
+                       {"capability": "decoder:libvpx-vp9", "when": "an alpha source or overlay --video layer stored as VP9 with alpha (refused without it, error.reason decoder_missing)"},
                        {"capability": "filter:alphaextract", "when": "an alpha source or --keep-alpha / --transparent (the alpha is read back)"}]
 
 
@@ -555,11 +558,12 @@ def alpha_result_schema(name: str) -> Dict[str, Any]:
     if name == "background":
         out["alpha_codec"]["description"] += ". The `alpha` verification step reads every written frame back and expects alpha 0 (provenance specification)"
         return out
-    out["alpha_dropped"] = {"type": "boolean", "description": "true when the source's alpha is used (a frame below opaque) and the output does not keep it: without --keep-alpha the `alpha` verification step fails (reason alpha_dropped, attribution artifact, with an alpha_dropped warning); with --drop-alpha there is no such step and a note says the alpha was dropped on purpose. Absent on a source without alpha"}
+    out["alpha_dropped"] = {"type": "boolean", "description": "true when the source's alpha is used (a frame below opaque, or a stored alpha plane that could not be read) and the output does not keep it (color.py --retag too, when its copy fell back to an H.264 re-encode): without --keep-alpha the `alpha` verification step fails (reason alpha_dropped, attribution artifact, with an alpha_dropped warning); with --drop-alpha there is no such step and a note says the alpha was dropped on purpose. Absent on a source without alpha"}
     if name == "color":
         out["alpha_codec"]["description"] += ". --correct / --lut only: the grade works on the colour (at 4:4:4) and the source's alpha is merged back unchanged; the `alpha` step compares the written alpha with the source's frame by frame, tolerance 2 of 255 (comparison {ok, paired, worst_delta, worst_frame}; frames {expected, measured}; written {codec, pix_fmt, alpha_plane})"
     else:
         out["alpha_codec"]["description"] += ". Drawn on the input's alpha at 4:4:4 (layers composited with their alpha, text drawn into it); the `alpha` step (property alpha_at_least_source) passes when the written stream stores an alpha plane, every frame's alpha is at or above the source's (tolerance 2 of 255) and the output did not turn opaque in every frame the source was transparent in (reason: opaque_everywhere, alpha_below_source or no_alpha_plane when it fails)"
+    out["alpha_codec"]["description"] += ". A source that stores an alpha plane whose alpha could not be read is never taken as opaque: its step fails with reason source_alpha_unmeasured"
     return out
 
 

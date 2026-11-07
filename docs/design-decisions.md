@@ -65,7 +65,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 - [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 - [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
-- [Unreleased — the alpha path beyond export](#unreleased--the-alpha-path-beyond-export)
+- [After 3.2.1 — the alpha path beyond export (#433)](#after-321--the-alpha-path-beyond-export-433)
 <!-- contents:end -->
 
 ## Time limits
@@ -2889,7 +2889,7 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   `test_loudness_versions_writes_one_measured_file_per_target`.
 
 
-## Unreleased — the alpha path beyond export
+## After 3.2.1 — the alpha path beyond export (#433)
 
 Context: `export.py`'s alpha presets kept and checked an alpha channel, but every tool that grades
 or composites wrote opaque H.264 and still said `verified: true` on a ProRes 4444 source whose alpha
@@ -2932,5 +2932,18 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   picture as an opaque rectangle. This changes the picture of an existing call, and only where the
   old one was wrong. Code: `overlay.main()`, `alpha.decoder_args_for()`. Test:
   `test_overlay_keeps_a_video_layers_alpha`.
+- **What cannot be read is not taken as opaque.** A source that stores an alpha plane (or a
+  palette, which can hold transparency the pixel format does not show) and whose alpha cannot be
+  measured counts as using it, so an output without alpha fails; a VP9 source or layer with alpha
+  on a build with no libvpx-vp9 decoder is refused (`decoder_missing`, read from `ffmpeg -decoders`,
+  not the encoder list) rather than composited opaque. The measurement is read frame by frame from
+  the pipe (an hour at 30 fps was ~250 MB held at once). A planned input a dry run cannot probe yet
+  is not refused. `color.py --retag`'s fallback re-encode gets the same `alpha` step. Code:
+  `alpha.source_alpha()`, `alpha.frame_means()`. Test:
+  `test_alpha_checks_do_not_pass_what_they_could_not_read`.
+- **On a BT.709-tagged alpha line, RGB layers are converted to BT.709.** The line keeps the source's
+  tags, and FFmpeg 6.1 turns an RGB logo or box into YUV with BT.601, so saturated colours shifted
+  under the kept tag. Drawn text colours (drawtext, libass) are not converted on an alpha line.
+  Code: `decision.rgb_chain_to_bt709()`. Test: `test_graphics_and_overlay_render_on_a_transparent_canvas`.
 - **`--alpha-mode` describes the written colour, as in `export.py`.** Sources are taken as straight;
   `premultiplied` multiplies the written colour by the alpha at the end of the graph.

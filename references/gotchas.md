@@ -65,7 +65,8 @@ of every re-encoding tool, cannot. `color.py --correct/--lut`, `graphics.py` and
 it) and read the alpha back after the write. Without it, a source whose alpha is used comes out
 opaque and the result says `verified: false` with a failing `alpha` step (`alpha_dropped`): pass
 `--drop-alpha` only when an opaque output is what you want. For a per-element layer with
-transparency, start from `background.py --transparent -o canvas.mov` and draw one element on it
+transparency, start from `background.py --transparent --duration 5 --width 1920 --height 1080 -o canvas.mov`
+and draw one element on it
 with `graphics.py`/`overlay.py --keep-alpha`. An alpha line keeps the source's colour tags (as
 `--codec prores` does). `--alpha-mode premultiplied` multiplies the written colour by the alpha;
 sources are taken as straight. A VP9 layer with alpha is decoded with libvpx-vp9; FFmpeg's own VP9

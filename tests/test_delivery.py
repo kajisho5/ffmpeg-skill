@@ -4,6 +4,8 @@
     python3 tests/test_delivery.py       # this group alone
     python3 tests/test_all.py            # every group
 """
+import contextlib
+import io
 import json
 import os
 import re
@@ -144,11 +146,11 @@ class DeliveryTests(MediaFixtures):
 
     # ------------------------------------------------- the alpha path beyond export
     def _alpha_clip(self, name, alpha="if(lt(X,80),255,64)", codec=("-c:v", "prores_ks", "-profile:v", "4",
-                                                                       "-pix_fmt", "yuva444p10le")):
+                                                                       "-pix_fmt", "yuva444p10le"), tags=()):
         """A 160x96, 1 s ProRes 4444 clip (testsrc2's colour) with a partly transparent alpha."""
         path = OUT / name
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
-           f"testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'", *codec, path)
+           f"testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'", *codec, *tags, path)
         return path
 
     def _rgba_png(self, path, t=0.0):
@@ -166,11 +168,18 @@ class DeliveryTests(MediaFixtures):
     def test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha(self):
         """--keep-alpha: the grade changes the colour and leaves the alpha as it was, frame for
         frame, in ProRes 4444 at 4:4:4 with the source's tags; the step that says so is measured."""
-        src = self._alpha_clip("alpha_grade_src.mov")
+        tags = ("-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709")
+        src = self._alpha_clip("alpha_grade_src.mov", tags=tags)
         out = OUT / "alpha_grade_kept.mov"
-        doc = json.loads(script("color.py", src, "--correct", "--exposure", "0.5", "--keep-alpha", "--json",
+        # --hw is accepted and leaves the alpha line on the CPU (a note says so); it raised
+        # UnboundLocalError once (a local `note` in the --to-sdr branch hid the function)
+        doc = json.loads(script("color.py", src, "--correct", "--exposure", "0.5", "--keep-alpha", "--hw", "--json",
                                 "-o", out).stdout)
         self.assertTrue(doc["verified"], doc["verification"])
+        src_v, out_v = probe(str(src))["video"], probe(str(out))["video"]
+        for key in ("color_space", "color_primaries", "color_transfer"):
+            self.assertEqual(out_v[key], src_v[key], key)
+        self.assertEqual(src_v["color_space"], "bt709")
         step = self._alpha_step(doc)
         self.assertTrue(step["ok"])
         self.assertTrue(step["comparison"]["paired"])
@@ -267,11 +276,60 @@ class DeliveryTests(MediaFixtures):
         self.assertEqual(a, 255)
         self.assertGreater(r, 200)
         self.assertEqual(self._rgba_at(lay, 10, 10)[3], 0)
+        # on a BT.709-tagged canvas the RGB logo is converted to BT.709 (6.1's own conversion is
+        # BT.601: pure red then decodes as (255,24,0) under the kept tag), and a --video layer is
+        # composited at 4:4:4, never through 4:2:0
+        canvas709 = OUT / "alpha_canvas_709.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", canvas, "-c", "copy", "-colorspace", "bt709",
+           "-color_primaries", "bt709", "-color_trc", "bt709", canvas709)
+        lay709 = OUT / "alpha_logo_layer_709.mov"
+        script("overlay.py", canvas709, "--image", logo, "--position", "center", "--keep-alpha", "-o", lay709)
+        frame = self._rgba_png(lay709)
+        r, g, b, a = self._rgba_at(frame, 160, 90)
+        self.assertEqual(a, 255)
+        self.assertLess(max(g, b), 12, (r, g, b))
+        doc = json.loads(script("overlay.py", canvas, "--video", lay, "--position", "0,0", "--margin", "0",
+                                "--keep-alpha", "--json", "-o", OUT / "alpha_video_layer.mov").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertIn("format=yuva444p", doc["commands"][-1])
+        self.assertNotIn("yuva420p", doc["commands"][-1])
         # without --keep-alpha the element on a transparent canvas is flattened: not verified
         doc = json.loads(script("graphics.py", canvas, "--template", "bug", "--title", "LIVE", "--json",
                                 "-o", OUT / "alpha_bug_flat.mp4").stdout)
         self.assertFalse(doc["verified"])
         self.assertEqual(self._alpha_step(doc)["reason"], "alpha_dropped")
+
+    def test_alpha_checks_do_not_pass_what_they_could_not_read(self):
+        """A source that stores an alpha plane whose alpha could not be measured counts as using it
+        (never as opaque), so an output without alpha fails; a VP9 layer with alpha on a build with
+        no libvpx-vp9 decoder is refused (decoder_missing) instead of being composited opaque; a
+        planned input a dry run cannot probe yet is not refused as opaque."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _common import alpha
+        self.assertTrue(alpha.uses_alpha(alpha.UNMEASURED))
+        self.assertFalse(alpha.uses_alpha(None))
+        flat = OUT / "alpha_unmeasured_out.mp4"
+        script("background.py", "--duration", "1", "--width", "160", "--height", "96", "-o", flat)
+        step = alpha.lost_step(str(flat), probe(str(flat)), alpha.UNMEASURED)
+        self.assertFalse(step["ok"])
+        self.assertEqual(step["reason"], "alpha_dropped")
+        webm = self._alpha_clip("alpha_nodec.webm", codec=("-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p"))
+        saved = alpha._DECODERS
+        try:
+            alpha._DECODERS = {"vp9"}
+            with self.assertRaises(SystemExit):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    alpha.decoder_args_for(probe(str(webm)), str(webm))
+            alpha._DECODERS = {"vp9", "libvpx-vp9"}
+            self.assertEqual(alpha.decoder_args_for(probe(str(webm)), str(webm)), ["-c:v", "libvpx-vp9"])
+        finally:
+            alpha._DECODERS = saved
+        planned = OUT / "alpha_planned_canvas.mov"
+        if planned.exists():
+            planned.unlink()
+        doc = json.loads(script("graphics.py", planned, "--template", "bug", "--title", "LIVE", "--keep-alpha",
+                                "--dry-run", "--json", "-o", OUT / "alpha_planned_bug.mov").stdout)
+        self.assertEqual(doc["status"], "completed")
 
     def test_overlay_keeps_a_video_layers_alpha(self):
         """A --video layer with alpha shows the picture under its transparent half: a VP9 layer

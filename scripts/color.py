@@ -306,7 +306,7 @@ def retag_mismatch(output: str, want: tuple) -> "Optional[str]":
     return shown if frame in ((None,) * 3, stream) else f"{shown} (decoded frames: {'/'.join(str(t) for t in frame)})"
 
 
-def retag(args: argparse.Namespace, meta: dict, has_audio: bool) -> int:
+def retag(args: argparse.Namespace, meta: dict, has_audio: bool, src_alpha=lambda: None) -> int:
     """--retag: rewrite the colour description, never the pixels.
 
     First a stream copy of every stream: the container options plus, where the codec keeps its
@@ -366,8 +366,12 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool) -> int:
     info(f"wrote {output} (tags -> {args.retag})")
     check = [] if STATE.dry_run else [{"step": "color_tags", "ok": True, "color_space": names[0],
                                        "color_primaries": names[1], "color_transfer": names[2]}]
-    emit(output, reencoded=reencoded, dropped_non_av_streams=dropped_streams, verification=check,
-         **({"notes": notes} if notes else {}))
+    extra = {"reencoded": reencoded, "dropped_non_av_streams": dropped_streams, "verification": check}
+    if reencoded:
+        # the fallback re-encode is H.264, which holds no alpha: on a source whose alpha is used the
+        # `alpha` step fails (a stream copy keeps every pixel, alpha included, and needs no step)
+        alpha_report(args, None, src_alpha(), output, extra, composite=False)
+    emit(output, **extra, **({"notes": notes} if notes else {}))
     return 0
 
 
@@ -453,7 +457,7 @@ def main() -> int:
         return 0
 
     if args.retag:
-        return retag(args, meta, has_audio)
+        return retag(args, meta, has_audio, lambda: source_alpha(args, meta, args.input))
 
     measurements = None
     sdr_extra: dict = {}
@@ -463,14 +467,14 @@ def main() -> int:
         if is_bt2020_sdr(v):
             vf = bt2020_sdr_to_bt709_chain(meta)
             sdr_path = "gamut"
-            note = (f"BT.2020 primaries on an SDR transfer ({v.get('color_transfer')}): converted the gamut to BT.709 "
+            sdr_note = (f"BT.2020 primaries on an SDR transfer ({v.get('color_transfer')}): converted the gamut to BT.709 "
                     f"without a tone map (--tonemap/--peak/--desat do not apply)")
         else:
             vf = hdr_to_sdr_chain(meta, args.tonemap, args.peak, args.desat)
             sdr_path = "tonemap"
-            note = f"tone-mapped {v.get('hdr_format') or 'untagged input as PQ (--force)'} to SDR BT.709 with {args.tonemap}"
-        info(f"note: {note}")
-        sdr_extra = {"sdr_path": sdr_path, "notes": [note]}
+            sdr_note = f"tone-mapped {v.get('hdr_format') or 'untagged input as PQ (--force)'} to SDR BT.709 with {args.tonemap}"
+        info(f"note: {sdr_note}")
+        sdr_extra = {"sdr_path": sdr_path, "notes": [sdr_note]}
         output = args.output or default_output(args.input, "sdr")
         tag = "sdr"
     elif args.correct:

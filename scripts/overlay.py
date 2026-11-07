@@ -479,7 +479,8 @@ def main() -> int:
             chain.append(f"scale={int(vw * args.scale_percent / 100)}:-2")
         elif args.scale:
             chain.append(f"scale={args.scale}:-2")
-        chain.append("format=yuva420p")
+        # an alpha line composites at 4:4:4: the layer is not taken through 4:2:0 on the way
+        chain.append("format=yuva444p" if alpha_codec else "format=yuva420p")
         if args.chromakey:
             chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
         if args.opacity < 1:
