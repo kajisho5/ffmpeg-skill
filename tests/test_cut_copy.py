@@ -1400,11 +1400,15 @@ class SmartCutTests(unittest.TestCase):
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=6",
            "-f", "lavfi", "-i", "sine=f=440:d=6", "-c:v", "libx264", "-g", "30", "-bf", "2", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-shortest", cls.bsrc)
-        # no B-frames, Main profile, BT.709 tags, 30000/1001 in Matroska, no sound
+        # no B-frames, Main profile, BT.709 tags, 30000/1001 in Matroska, no sound. The tags go on the
+        # frames (setparams), not in output options: from FFmpeg 7.1 the encoder takes them from the
+        # frames, and testsrc2's are untagged, so -color_primaries/-color_trc came out unset there
         cls.nsrc = cls.dir / "ntsc_main.mkv"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30000/1001:d=6",
-           "-c:v", "libx264", "-g", "24", "-bf", "0", "-profile:v", "main", "-pix_fmt", "yuv420p", "-colorspace", "bt709",
-           "-color_primaries", "bt709", "-color_trc", "bt709", cls.nsrc)
+           "-vf", "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
+           "-c:v", "libx264", "-g", "24", "-bf", "0", "-profile:v", "main", "-pix_fmt", "yuv420p", cls.nsrc)
+        tags = importlib.import_module("_smartcut").stream_params(str(cls.nsrc)) or {}
+        assert (tags.get("color_space"), tags.get("color_primaries"), tags.get("color_transfer")) == ("bt709",) * 3, tags
 
     def _cut(self, src, out, *args):
         return json.loads(script("cut.py", src, *args, "--smart", "-o", out, "--json").stdout)
