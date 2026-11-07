@@ -1072,7 +1072,7 @@ already has a picture.
 ### scenes.py — scene changes and highlight candidates
 ```
 scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECONDS] [--max-scene 15]] [--edl picks.txt] [--sheet scenes.png] [--json]
-scenes.py INPUT --beats [--beat-step 0.01] [--beat-range 60-200] [--min-confidence 0.5] [--json]
+scenes.py INPUT --beats [--beat-step 0.01] [--beat-range 60-200] [--min-confidence 0.5] [--json]   # INPUT may be audio-only
 scenes.py INPUT [--shots] [--audio-peaks] [--speech] [--json]
 ```
 Lists scenes with audio energy, the loudest moments, and (with
@@ -1105,6 +1105,23 @@ other lags (in standard deviations) and half the fraction of onsets that land
 on the grid. With `--beats` the file is decoded once, at 22050 Hz, and the
 `supported + unsupported == len(beats)` always, and `supported_beats` is that
 supported subset — the list `cut.py --snap beats` moves onto.
+
+**Audio-only input and timing (after 3.2.0).** INPUT may be a WAV, FLAC, MP3 or any
+file with no video stream: no scene detection runs, the file is one scene from 0 to
+its duration, and the document carries `"audio_only": true`. `--beats`,
+`--audio-peaks`, `--speech` and `--highlights` measure the sound; `--sheet` and
+`--shots` need a picture and are refused (`kind: input`). Three things set how close
+the grid is to the music, each of which was off by tens of ms before:
+`beat_grid.step_s` is the envelope's real step (220 samples at 22050 Hz = 9.977 ms
+for `--beat-step 0.01`; timing it as 10 ms stretched every time by 0.23 %, 68 ms over
+30 s); the tempo and phase are refitted by weighted least squares to the strongest
+onset at each grid point, so a tempo between two envelope steps (90 BPM = 0.6667 s)
+is not rounded to one (0.67 s, 3.3 ms a beat); and each onset is placed on the
+decoded samples (`onset_refinement: "pcm-window-ratio"`) instead of at the start of
+its 10 ms block. A grid point within 10 ms before 0 s is the beat at `0.0`; one further before is not reported (it would make `0.0` a snap target the grid does not mark). Measured on
+synthetic click tracks at 90 and 120 BPM (first click at 0, 0.137 and 0.25 s): every
+beat within 1 ms on WAV/FLAC, 9 ms on MP3 (the encoder's pre-echo), 6 ms through AAC;
+the test holds every click to 20 ms.
 
 With `--beats` the file is decoded once, at 22050 Hz, and the 0.5 s scene
 envelope is derived from that same pass rather than from a second 8 kHz decode.

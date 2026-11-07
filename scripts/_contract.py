@@ -208,10 +208,10 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                                   {"capability": "filter:blackdetect", "when": "--content (black row)"}, {"capability": "filter:freezedetect", "when": "--content (frozen row)"},
                                                   {"capability": "filter:silencedetect", "when": "--content (silence row)"}],
                   video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=False, idempotency="bit_exact", deterministic=True),
-    "scenes": dict(role="analysis", inputs=["video asset"], outputs=["scene / audio-peak / highlight JSON on stdout", "EDL text (--edl)", "per-scene contact sheet PNG (--sheet)"],
+    "scenes": dict(role="analysis", inputs=["video asset", "audio asset (after 3.2.0: one scene; --beats, --audio-peaks, --speech, --highlights; --sheet and --shots need a picture)"], outputs=["scene / audio-peak / highlight JSON on stdout", "EDL text (--edl)", "per-scene contact sheet PNG (--sheet)"],
                    required=FF + ["filter:scdet"], optional=[{"capability": "filter:drawtext", "when": "--sheet"}, {"capability": "filter:tile", "when": "--sheet"},
                                                             {"capability": "ffmpeg", "when": "--beats (one audio decode for the onset pass)"}],
-                   video_required=True, audio_only=False, visual=False, verify=[], produces_artifact=True, idempotency="bit_exact", deterministic=True),
+                   video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=True, idempotency="bit_exact", deterministic=True),
     "look": dict(role="verification", inputs=["video artifact"], outputs=["PNG contact sheet / frames / side-by-side"],
                  required=FF + ["filter:tile"], optional=[{"capability": "filter:drawtext", "when": "timecode stamps (default; without drawtext the sheet is drawn without them, fallback look_no_drawtext)"},
                                                           {"capability": "filter:drawbox", "when": "--safe NAME (the platform's occluded zones)"}, {"capability": "filter:zscale", "when": "HDR source"}, {"capability": "filter:tonemap", "when": "HDR source"}],
@@ -604,7 +604,10 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
         extra = {"file": {"type": "string"}, "duration": {"type": "number"}, "scene_count": {"type": "integer"}, "scenes": {"type": "array"}, "audio_peaks": {"type": "array"},
                  "shots": {"type": "array", "description": "--shots (1.18): [{start, end, label, flow_magnitude}]"},
                  "audio_peaks_db": {"type": "array", "description": "--audio-peaks (1.18): [{time, level}] measured dBFS, distinct from audio_peaks above"},
-                 "speech": {"type": "array", "description": "--speech (1.18): [{time, speech_music_ratio}]"}}
+                 "speech": {"type": "array", "description": "--speech (1.18): [{time, speech_music_ratio}]"},
+                 "audio_only": {"type": "boolean", "description": "After 3.2.0: present (true) when the input has no video stream: no scene detection ran and the file is one scene, 0 to its duration"},
+                 "beats": {"type": "array", "description": "--beats (1.17): the regular beat grid, seconds"},
+                 "beat_grid": {"type": "object", "description": "--beats (1.17): {supported_beats, tempo_bpm, interval, confidence, phase, onsets, supported, unsupported, method, step_s (the envelope's real step: 220/22050 s for --beat-step 0.01, after 3.2.0), range_bpm, usable, onset_refinement (after 3.2.0: pcm-window-ratio when each onset was placed on the decoded samples, else null)}"}}
     elif name == "silence":
         extra = {"silences": {"type": "array"}, "keep": {"type": "array"}, "input_duration": {"type": "number"}, "kept_duration": {"type": "number"}, "removed_seconds": {"type": "number"},
                  "removed_seconds_total": {"type": "number", "description": "--filler: seconds removed in all, silence plus filler words (removed_seconds stays the silence alone)"},
