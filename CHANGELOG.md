@@ -22,6 +22,15 @@
   Contract: `scenes` is `audio_only: true`, `video_required: false`; `audio_only`, `beats` and
   `beat_grid` are described in its output schema.
 
+## 3.2.1
+
+_Automated release: version and notes generated from pull requests merged since 3.2.0._
+
+### Fixed
+
+- **`audio.py --denoise-strength` accepts 20..60, down from 10..60.** The value becomes afftdn's noise floor `nf=-N`, which ffmpeg accepts only in -80..-20, so 10..19.99 passed the check and then failed inside ffmpeg (exit 222). Those values are now refused as `kind: input` before ffmpeg runs; the help text says the value is a starting noise floor that `tn=1` tracks, not an amount removed. The default 25 and every value from 20 to 60 produce the same filter as before.
+- Fix audio.py --denoise-strength range to match afftdn nf (20..60) (#379)
+
 ## 3.2.0
 
 _Automated release: version and notes generated from pull requests merged since 3.1.8._
