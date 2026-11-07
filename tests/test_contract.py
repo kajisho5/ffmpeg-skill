@@ -4491,7 +4491,7 @@ def garbage_payload(p):
         block = text.split("<!-- thresholds:start -->", 1)[1].split("<!-- thresholds:end -->", 1)[0]
         rows = [r for r in block.strip().splitlines()[2:] if r.startswith("|")]
         # every threshold: a row deleted (or added) must be a deliberate edit here too
-        self.assertEqual(len(rows), 29)
+        self.assertEqual(len(rows), 31)
         for row in rows:
             what, value, source, _used = [c.strip() for c in row.strip("|").split("|")]
             number = float(re.search(r"-?\d+(?:\.\d+)?", value).group(0))

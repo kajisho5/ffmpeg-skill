@@ -820,6 +820,14 @@ python3 scripts/check.py final.mp4 --platform youtube --content
 
 **No picture:** adds content rows to the platform check: black frames, frozen frames, the share of silence, and short dropouts (digital silence for 20 ms to 1 s with sound on both sides, the mark of lost audio at a join), single-frame flashes (one frame unlike both of its neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the first five times; a row that does not pass names a fix.
 
+### check.py --levels
+
+```bash
+python3 scripts/check.py spot.mxf --platform broadcast --levels ebu-r103
+```
+
+**No picture:** counts the luma and chroma samples outside the legal range in every frame (bt709 16-235 / 16-240, or EBU R 103's -1..103 % luma) and adds a legal levels row with the worst frame's time and min/max Y/U/V; the JSON has the shares per window. color.py --legalize clamps after the 4:2:0 conversion and measures the file it wrote the same way -- a change no preview would show, which is why it is a number here and not a GIF.
+
 ### report.py
 
 ```bash

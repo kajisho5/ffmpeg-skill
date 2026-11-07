@@ -21,7 +21,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, frame_rgb, sar_clip, tiny_clip, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, frame_rgb, legal_range_clip, sar_clip, tiny_clip, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
 from _common import default_font_file, detect_script, escape_filter_path, font_family_for_script, font_for_script, probe  # noqa: E402
 
 
@@ -1487,6 +1487,50 @@ class PictureTests(MediaFixtures):
         m2 = data2["measurements"]
         self.assertLess(m2["output"]["saturation_avg"], m2["input"]["saturation_avg"], "saturation 0 must desaturate")
         self.assertLess(m2["output"]["saturation_avg"], 5.0, "saturation 0 must be close to grayscale")
+
+    def test_color_legalize_clamps_after_the_420_conversion_and_measures_the_file(self):
+        """--legalize: --correct with no values clamps only (lutyuv clip() as the last filter, after
+        format=yuv420p); the written file is measured against the same limits check.py --levels uses.
+        Encoded losslessly (--quality 0) nothing is left out of range and the legal_levels step
+        passes with the clamped codes on the limits; at the default quality the encoder's error around
+        the clamped edges leaves a residue, reported as a warning, and the step follows the 1 %
+        allowance. The stream-copy modes and a --codec that would convert the clamped picture again
+        are refused before ffmpeg runs."""
+        src = OUT / "legalize_src.mkv"
+        legal_range_clip(src, size=128, frames=20, rate=10)
+        for standard, (ylo, yhi), (clo, chi) in (("bt709", (16, 235), (16, 240)), ("ebu-r103", (14, 241), (5, 251))):
+            out = OUT / f"legalize_{standard}.mp4"
+            data = json.loads(script("color.py", src, "--correct", "--legalize", standard, "--quality", "0",
+                                     "--preset", "veryfast", "-o", out, "--json").stdout)
+            cmd = data["commands"][0]
+            self.assertRegex(cmd, r"format=yuv420p,lutyuv=y=\W*clip\(val", "the clamp follows the 4:2:0 conversion")
+            self.assertNotIn("exposure", cmd, "no correction values: nothing but the clamp")
+            lg = data["legalize"]
+            self.assertEqual((lg["standard"], lg["legal"]), (standard, {"y": [ylo, yhi], "c": [clo, chi]}))
+            step = next(st for st in data["verification"] if st["step"] == "legal_levels")
+            self.assertTrue(step["ok"], step)
+            self.assertTrue(data["verified"])
+            out_lv = lg["output"]
+            self.assertEqual(out_lv["out_of_range_pct"], {"y": 0.0, "u": 0.0, "v": 0.0, "chroma": 0.0})
+            # the out-of-range pattern now sits on the limits (bt709's 15 and 240 too; ebu-r103 keeps them)
+            self.assertEqual((out_lv["min"]["y"], out_lv["max"]["y"]), (ylo, yhi))
+            self.assertEqual(out_lv["min"]["u"], max(clo, 10))
+            codes = [w["code"] for w in (data.get("diagnostics") or {}).get("warnings", [])]
+            self.assertNotIn("legalize_residual", codes, "nothing left out of range: no residual warning")
+        lossy = json.loads(script("color.py", src, "--correct", "--legalize", "bt709", "--preset", "veryfast",
+                                  "-o", OUT / "legalize_lossy.mp4", "--json").stdout)
+        step = next(st for st in lossy["verification"] if st["step"] == "legal_levels")
+        worst = step["worst_frame"]
+        self.assertEqual(step["ok"], worst["y_pct"] <= 1.0 and worst["chroma_pct"] <= 1.0, step)
+        self.assertEqual(lossy["verified"], step["ok"])
+        self.assertLess(step["out_of_range_pct"]["y"], 12.46 / 4, "the clamp removed most of the source's 12.46 % luma excursion")
+        if step["out_of_range_pct"]["y"] or step["out_of_range_pct"]["chroma"]:
+            self.assertIn("legalize_residual", [w["code"] for w in lossy["diagnostics"]["warnings"]])
+        for bad in (("--retag", "bt709"), ("--correct", "--codec", "prores")):
+            proc = script("color.py", src, *bad, "--legalize", "bt709", "-o", OUT / "legalize_refused.mov", "--json",
+                          expect_fail=True)
+            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", bad)
+            self.assertEqual(json.loads(proc.stdout)["commands"], [], bad)
 
     def test_color_correct_temperature_and_tint_run_and_preserve_geometry(self):
         out = OUT / "correct_wb.mp4"

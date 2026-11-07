@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, _is_faststart, _no_fontconfig, png_size, sar_clip, script, sh, tiny_clip  # noqa: E402
-from _fixtures import make_tones_take  # noqa: E402
+from _fixtures import make_tones_take, legal_range_clip  # noqa: E402
 from _common import default_font_file, font_for_script, probe  # noqa: E402
 import importlib  # noqa: E402
 content_probe = importlib.import_module("_common.probe")  # the module: `_common.probe` is also a function
@@ -519,6 +519,90 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(low["status"], "WARN", low)
         self.assertIn("worst", low["value"])
         self.assertIn("not compared", self._rows(small, "--no-loudness", "--compare", ref)["similarity"]["value"])
+
+    def _levels(self, path, *extra):
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom",
+                               "--no-loudness", "--json", *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        doc = json.loads(proc.stdout)
+        return doc, {r["check"]: r for r in doc["checks"]}
+
+    def test_check_levels_counts_out_of_range_samples_exactly(self):
+        """--levels: on a lossless clip with known shares (frames 0-4 patterned, 5-9 legal grey), the
+        luma and chroma shares per clip, per window and in the worst frame are the counted ones, for
+        bt709 and for ebu-r103's wider limits; min/max are the codes written."""
+        clip = OUT / "levels8.mkv"
+        known = legal_range_clip(clip)
+        n, c = known["samples"]
+        y709 = sum(known["y"].values()) / n * 100
+        u709 = sum(known["u"].values()) / c * 100
+        y103 = (known["y"][10] + known["y"][250]) / n * 100
+        doc, rows = self._levels(clip, "--levels", "bt709", "--levels-window", "0.5")
+        lv = doc["levels"]
+        self.assertEqual((lv["standard"], lv["bit_depth"], lv["legal"]), ("bt709", 8, {"y": [16, 235], "c": [16, 240]}))
+        self.assertEqual(lv["frames"], 10)
+        self.assertAlmostEqual(lv["out_of_range_pct"]["y"], y709 / 2, places=2)
+        self.assertAlmostEqual(lv["out_of_range_pct"]["u"], u709 / 2, places=2)
+        self.assertAlmostEqual(lv["out_of_range_pct"]["v"], 0.0, places=6)
+        self.assertAlmostEqual(lv["out_of_range_pct"]["chroma"], u709 / 4, places=2)
+        self.assertAlmostEqual(lv["worst_frame"]["y_pct"], y709, places=2)
+        self.assertAlmostEqual(lv["worst_frame"]["time"], 0.0, places=3)
+        self.assertEqual((lv["min"], lv["max"]), ({"y": 10, "u": 10, "v": 128}, {"y": 250, "u": 128, "v": 128}))
+        self.assertAlmostEqual(lv["brng_pct"], y709 / 2, places=2, msg="every out-of-range Cb sample sits on an out-of-range luma row")
+        first, second = lv["windows"]
+        self.assertEqual((first["start"], first["end"], first["frames"], second["frames"]), (0.0, 0.5, 5, 5))
+        self.assertAlmostEqual(first["out_of_range_pct"]["y"], y709, places=2)
+        self.assertEqual(second["out_of_range_pct"], {"y": 0.0, "u": 0.0, "v": 0.0, "chroma": 0.0})
+        self.assertEqual(rows["legal levels"]["status"], "FAIL")
+        self.assertEqual(rows["legal levels"]["kind"], "format")
+        self.assertIn("--legalize bt709", rows["legal levels"]["fix"])
+        doc, rows = self._levels(clip, "--levels", "ebu-r103", "--levels-window", "0")
+        lv = doc["levels"]
+        self.assertEqual(lv["legal"], {"y": [14, 241], "c": [5, 251]})
+        self.assertAlmostEqual(lv["out_of_range_pct"]["y"], y103 / 2, places=2)
+        self.assertEqual(lv["out_of_range_pct"]["chroma"], 0.0)
+        self.assertEqual(lv["windows"], [])
+        # the tolerance is per frame: 15 % of luma out passes a 20 % allowance, not a 10 % one
+        self.assertEqual(self._levels(clip, "--levels", "ebu-r103", "--levels-tolerance", "20")[1]["legal levels"]["status"], "PASS")
+        self.assertEqual(self._levels(clip, "--levels", "ebu-r103", "--levels-tolerance", "10")[1]["legal levels"]["status"], "FAIL")
+
+    def test_check_levels_scales_the_limits_with_the_bit_depth(self):
+        """--levels on a 10-bit clip: the same pattern at 4x the codes gives the same shares against
+        64-940 / 64-960 (bt709) and 56-966 / 20-1004 (ebu-r103)."""
+        clip = OUT / "levels10.mkv"
+        known = legal_range_clip(clip, depth=10)
+        n, _ = known["samples"]
+        doc, _rows = self._levels(clip, "--levels", "bt709")
+        self.assertEqual((doc["levels"]["bit_depth"], doc["levels"]["legal"]), (10, {"y": [64, 940], "c": [64, 960]}))
+        self.assertAlmostEqual(doc["levels"]["out_of_range_pct"]["y"], sum(known["y"].values()) / n * 50, places=2)
+        self.assertEqual((doc["levels"]["min"]["y"], doc["levels"]["max"]["y"]), (40, 1000))
+        doc, _rows = self._levels(clip, "--levels", "ebu-r103")
+        self.assertEqual(doc["levels"]["legal"], {"y": [56, 966], "c": [20, 1004]})
+        self.assertAlmostEqual(doc["levels"]["out_of_range_pct"]["y"], (known["y"][10] + known["y"][250]) / n * 50, places=2)
+
+    def test_check_levels_is_opt_in_and_skips_a_picture_with_no_luma(self):
+        """Without --levels the row set and the document are unchanged; a legal clip PASSes at 0 %;
+        an RGB picture is not measured (WARN); a bad window or tolerance is refused before decoding."""
+        legal = OUT / "levels_legal.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x64:r=10:d=1",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", legal)
+        doc, rows = self._levels(legal)
+        self.assertNotIn("legal levels", rows)
+        self.assertNotIn("levels", doc)
+        doc, rows = self._levels(legal, "--levels", "bt709")
+        self.assertEqual(rows["legal levels"]["status"], "PASS")
+        self.assertEqual(doc["levels"]["out_of_range_pct"], {"y": 0.0, "u": 0.0, "v": 0.0, "chroma": 0.0})
+        rgb = OUT / "levels_rgb.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=64x64:r=10:d=1",
+           "-pix_fmt", "gbrp", "-c:v", "ffv1", rgb)
+        doc, rows = self._levels(rgb, "--levels", "bt709")
+        self.assertEqual(rows["legal levels"]["status"], "WARN")
+        self.assertIn("not measured", rows["legal levels"]["value"])
+        self.assertNotIn("levels", doc)
+        for bad in (("--levels-window", "-1"), ("--levels-tolerance", "101")):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(legal), "--levels", "bt709", *bad, "--json"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(proc.returncode, 1, bad)
+            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", bad)
 
     def test_check_compare_times_the_worst_frame_and_counts_frames(self):
         """2.24: --compare names the worst frame by its presentation time (one damaged frame at

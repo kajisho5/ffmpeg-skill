@@ -232,8 +232,10 @@ the loudness pass or, when loudness is skipped, one volumedetect pass). `check -
 from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
 video-only pass and a one-frame decode; without it the row set is unchanged.
 `--compare REF` adds `similarity` (SSIM/PSNR against a reference) and `--expect-identity SIZE:MTIME_NS`
-adds `identity`, against the `output_identity` every writing tool reports (2.24). Thresholds:
-`docs/design-decisions.md` ("check.py --content").
+adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
+bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
+counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
+document. Thresholds: `docs/design-decisions.md` ("check.py --content", "broadcast legal levels").
 
 ### Dry run
 
@@ -789,6 +791,8 @@ Keys added after 3.1.8, additive (delivery masters and versions, #417-#423):
 | `versions`, `outputs` | `loudness.py --versions` | one row per target `{target, output, targets, result}` (top-level `output` is null) and the files written; each version's `loudness` and `duration` steps carry `version`, and `verified` holds only when every version met its own target. An empty list is refused; a `--plan` path that is one of the version files is refused (`output_path_taken`) |
 | `crossfade`, `expected_duration`, `seam` | `loop.py` | `crossfade`: the fade in seconds, whole frames; `expected_duration`: the length asked for, checked by the `duration` step within 1.5 frames; `seam`: the first seam measured (`video_step` against `video_typical_step`, `audio_level_step_db`) |
 | `guides` | `look.py --guides` | each outline drawn on the PNG (`action` 0.93, `title` 0.90 of the frame, or the `4:3` centre cut with its own); a frame (either clip under `--compare`) no wider than 4:3 refuses `4:3` |
+| `levels`; row `legal levels` | `check.py --levels bt709\|ebu-r103` | `{standard, reference, bit_depth, legal {y, c}, window_seconds, frames, out_of_range_pct {y, u, v, chroma}, brng_pct, worst_frame {time, y_pct, chroma_pct}, min {y, u, v}, max {y, u, v}, windows [{start, end, ...the same}]}`: `legal` is the inclusive code range at the file's bit depth, the shares are percentages of samples (chroma: Cb and Cr together, at their own resolution), counted exactly per frame, and `brng_pct` is signalstats' BRNG (pixels with any component outside the fixed nominal range) |
+| `legalize`; step `legal_levels` | `color.py --legalize bt709\|ebu-r103` (with `--to-sdr`, `--lut` or `--correct`) | `{standard, reference, legal, output}`: `output` is the `levels` document of the written file; the step fails (`verified: false`, status `completed`) when one frame keeps more than 1 % of its luma or chroma samples out of range after the encode, with a `legalize_residual` warning whenever any sample is out |
 
 Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 
@@ -924,7 +928,7 @@ dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ff
 tool used to print to stderr only (emoji fallbacks, silent or short inputs, memory-heavy jobs,
 `--strip-dovi` without Dolby Vision, `render.py`'s frame-from-preset and `--normalize` defaults).
 `render.py`'s plan, check and cache records (`check_dry_run`, `check_output_unparsed`, `cache_entry_damaged`, ...),
-`export.py`'s `loudness_not_measured`, `loudness_outside_spec`, `colour_not_converted`, `size_over_limit` and `repair_incomplete`, `multicam.py`'s
+`export.py`'s `loudness_not_measured`, `loudness_outside_spec`, `colour_not_converted`, `size_over_limit` and `repair_incomplete`, `color.py`'s `legalize_residual`, `multicam.py`'s
 `camera_not_started`, `report.py`'s `report_section_missing` and `batch.py`'s cache records
 (`batch_cache_reset`, `batch_cache_output_changed`, ...) are listed there too. Every one of them
 still prints its stderr line; the record is additive.

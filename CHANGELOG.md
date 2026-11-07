@@ -4,7 +4,19 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`check.py --levels bt709|ebu-r103`** measures the broadcast signal range: a `legal levels` row
+  with the share of luma and of chroma samples outside the standard's legal range, counted exactly
+  in every frame (lutyuv mask + signalstats), the worst frame and min/max Y/U/V; FAIL when one frame
+  has more than `--levels-tolerance` (1 %) out. The JSON `levels` document repeats it per clip and per
+  `--levels-window` seconds (10), with signalstats' BRNG beside it. Limits follow the bit depth
+  (bt709: 16-235 / 16-240 at 8 bits; ebu-r103: luma -1 %..103 %, 14-241). Without the flag the rows
+  and the document are unchanged.
+- **`color.py --legalize bt709|ebu-r103`** (with `--to-sdr`, `--lut` or `--correct`; `--correct`
+  alone clamps only) clamps luma and chroma into the same limits as the last filter, after the 8-bit
+  4:2:0 conversion, and measures the written file (`legalize`, verification step `legal_levels`,
+  `legalize_residual` warning when the encode left samples out of range).
 
 ## 3.2.1
 

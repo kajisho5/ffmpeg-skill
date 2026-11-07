@@ -65,6 +65,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 - [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 - [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
+- [After 3.2.1 — broadcast legal levels, measured](#after-321--broadcast-legal-levels-measured)
 <!-- contents:end -->
 
 ## Time limits
@@ -2887,3 +2888,41 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   when it was executed. Code: `_common.emit.write_plan()`, `_planned_outputs()`. Test:
   `test_loudness_versions_writes_one_measured_file_per_target`.
 
+## After 3.2.1 — broadcast legal levels, measured
+
+- **The out-of-range share is counted, not estimated from a histogram.** `check.py --levels` sends
+  each plane through `lutyuv` as a mask (an out-of-range code becomes the depth's top code, every
+  other code 0) and reads the mask's mean with `signalstats`: that mean over the top code is the
+  plane's out-of-range share in that frame, exact to the sample. signalstats' own BRNG is reported
+  beside it (`brng_pct`) but does not decide the row: its limits are fixed at the nominal range, it
+  counts pixels with any component out (luma and chroma cannot be told apart), and it cannot take
+  EBU R 103's wider tolerance. The mask's value is a literal, not lutyuv's `maxval` (235 for limited-
+  range luma, 240 for chroma), which would scale every share down. Code: `_common.probe.measure_signal_range()`.
+  Test: `test_check_levels_counts_out_of_range_samples_exactly`.
+- **Each standard is stated in percent of the nominal swing; the codes follow from the bit depth.**
+  `bt709` is 0..100 % luma and the nominal chroma swing (16-235 / 16-240 at 8 bits, 64-940 / 64-960
+  at 10). `ebu-r103` is the R 103 tolerance, luma -1 %..103 % (14-241 at 8 bits, 56-966 at 10), and
+  chroma as far as an RGB triple inside R 103's -5 %..105 % can reach (|C| <= 0.55 of the span, 5-251).
+  A limit between two codes rounds inward. This counts Y'CbCr codes: an RGB gamut error made of
+  legal Y'CbCr codes is not counted, and the reference says so. Code: `_common.probe.LEGAL_RANGES`,
+  `legal_limits()`. Test: `test_check_levels_scales_the_limits_with_the_bit_depth`.
+- **The row judges the worst frame, not the clip average.** One frame with a clipped sky is a QC
+  failure even in an hour that is otherwise legal, so the row FAILs when any frame has more than
+  `--levels-tolerance` (1 %) of its luma or of its chroma samples out; the allowance is room for a
+  filter's overshoot at a sharp edge. The clip share, the per-window shares and the worst frame's
+  time are all in `levels`. It is a `format` row (the fix is mechanical: `color.py --legalize`), so
+  it FAILs without a named platform too: the caller asked for it. Code: `check.levels_row()`.
+- **An RGB or grey picture is not measured, and a full-range file is measured with a note.** Neither
+  has the limited-range Y'CbCr codes a broadcast file carries; converting one here would measure the
+  conversion. Test: `test_check_levels_is_opt_in_and_skips_a_picture_with_no_luma`.
+- **`color.py --legalize` clamps after the 4:2:0 conversion, and measures instead of promising.** The
+  clamp is the last filter before the encoder, on the 8-bit 4:2:0 picture it encodes: a clamp
+  ahead of the subsampling lets the chroma filter's overshoot put samples back out. A lossy encoder
+  can still move a decoded sample a code or more past a hard-clamped edge (the test pattern at CRF
+  18 kept 4 % of one frame's luma out), so the written file is measured with the same counter: the
+  `legal_levels` step holds it to the same 1 % per frame and `legalize_residual` reports any
+  residue. Encoded losslessly (`--quality 0`) the residue is zero. `--codec` other than h264 is
+  refused because the encoder line would convert the clamped picture again (10-bit, 4:2:2), and
+  `--retag` / `--strip-dovi` because they copy the stream. Code: `color.legal_clamp()`,
+  `color.legalize_report()`. Test:
+  `test_color_legalize_clamps_after_the_420_conversion_and_measures_the_file`.
