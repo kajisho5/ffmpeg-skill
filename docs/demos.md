@@ -282,6 +282,16 @@ python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --remove 2-4 --accurate --p
 
 **Look for:** cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.
 
+### Frame-exact cut, re-encoding only the ends
+
+![Frame-exact cut, re-encoding only the ends](demos/cut_smart.gif)
+
+```bash
+python3 scripts/cut.py demos/out/cut_smart_gop30.mp4 --start 1.3 --end 6.6 --smart --json -o demos/out/cut_smart_after.mp4
+```
+
+**Look for:** cut.py --smart cuts 1.3-6.6 s frame-exactly but re-encodes only 1.3-2 s and 6-6.6 s, matched to the source's H.264 parameters; the whole GOPs between are the source's own packets, checked against it before the file is written. The build fails unless the result is a verified smart cut.
+
 ### Lossless cut that starts where asked
 
 ![Lossless cut that starts where asked](demos/cut_edit_list.gif)

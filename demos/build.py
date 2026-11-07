@@ -873,6 +873,24 @@ def demo_cut_remove(ctx):
     return src, after
 
 
+def demo_cut_smart(ctx):
+    """--smart: a frame-exact cut that re-encodes only the partial GOPs at its two ends. The source
+    is re-encoded here with a keyframe every second, so the cut has whole GOPs in the middle to copy."""
+    src = ctx.path("gop30.mp4")
+    ffmpeg("-i", str(FIX / "motion.mp4"), "-c:v", "libx264", "-preset", "veryfast", "-g", "30", "-bf", "2",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", str(src))
+    after = ctx.path("after.mp4")
+    out = ctx.script("cut.py", src, "--start", "1.3", "--end", "6.6", "--smart", "--json", "-o", after, capture=True)
+    ctx.expect(after, "cut.py --smart")
+    if out:
+        doc = json.loads(out)
+        if doc.get("mode") != "smart" or not doc.get("verified"):
+            raise BuildError("cut.py --smart did not make a verified smart cut: %s" % (doc.get("smart") or {}).get("reason"))
+        sm = doc["smart"]
+        ctx.note("%d frames re-encoded, %d copied" % (sm["reencoded_frames"], sm["copied_frames"]))
+    return src, after
+
+
 def demo_cut_edit_list(ctx):
     """Two lossless copies of the same request: the default one shifts its timestamps to zero and
     shows the keyframe's pre-roll, the --edit-list one keeps the MP4 edit list that hides it, so
@@ -1679,6 +1697,9 @@ _ROWS = [
     ("cut_remove", PICTURE, "Cut out a range, keep the rest",
      "cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.",
      demo_cut_remove, "video", None, ("SOURCE", "--REMOVE 2-4")),
+    ("cut_smart", PICTURE, "Frame-exact cut, re-encoding only the ends",
+     "cut.py --smart cuts 1.3-6.6 s frame-exactly but re-encodes only 1.3-2 s and 6-6.6 s, matched to the source's H.264 parameters; the whole GOPs between are the source's own packets, checked against it before the file is written. The build fails unless the result is a verified smart cut.",
+     demo_cut_smart, "video", None, ("SOURCE", "--SMART 1.3-6.6")),
     ("cut_edit_list", PICTURE, "Lossless cut that starts where asked",
      "Both sides are stream copies of the same 2.05 s request. The default shifts the copy's timestamps to zero, so the keyframe's pre-roll plays first (start_snapped: true); --edit-list keeps the MP4 edit list that hides it, so the picture starts at 2.05 s (start_snapped: false, stored_preroll_seconds says how much is hidden). A player that ignores edit lists shows the pre-roll.",
      demo_cut_edit_list, "video", None, ("DEFAULT COPY", "--EDIT-LIST")),

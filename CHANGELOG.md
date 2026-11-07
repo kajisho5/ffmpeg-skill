@@ -19,6 +19,19 @@
   4:2:0 conversion, and measures the written file (`legalize`, verification step `legal_levels`,
   `legalize_residual` warning when the encode left samples out of range). It writes the H.264 line, so
   `--keep-alpha` and a `--codec` other than h264 are refused with it; `--drop-alpha` combines.
+- **`cut.py --smart`**: a keyframe-aware, frame-exact cut for H.264. Only the frames from each cut
+  point to the next keyframe (and from the last keyframe to the end point) are re-encoded, with
+  libx264 matched to the source's profile, level, pixel format, reorder depth, size, SAR and colour
+  tags. The whole GOPs between are the source's packets, joined through MPEG-TS parts (in-band
+  parameter sets) and kept on the source's time base.
+  - The result is checked before it is moved into place: the frame count and frame grid, the copied
+    packets against the source's, framemd5 of the re-encoded parts and of the first 300 frames
+    of each copied part, and the stream parameters (`smart.checks`, `smart_*` steps, `mode: smart`).
+  - A source it cannot match, or a failed check, falls back to the full re-encode. The result then
+    says why (`smart.reason`, `reason_code`, `reencode_reason` `smart_fallback`).
+  - Without `--smart`, every cut is unchanged.
+- **`probe.py --keyframes-near T[,T...]`** (`--keyframe-window`, 5 s): the keyframes around each
+  time, with the nearest before and after (`keyframes`).
 
 ### Changed
 
