@@ -483,17 +483,21 @@ def keyframe_times(path: str, lo: float, hi: float, stream: str = "v:0") -> Opti
     ffprobe prints them (microseconds). Read with -read_intervals so a long file is not scanned end
     to end; the read starts at the keyframe at or before lo, so the first may lie before it. None
     when ffprobe fails (unmeasured, not "no keyframes")."""
+    # an interval's end is exclusive (6.1: a keyframe at exactly hi is not read), so read a
+    # little past it and drop what lies beyond hi
     proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", stream, "-skip_frame", "nokey",
-                "-read_intervals", f"{max(0.0, lo):.6f}%{hi:.6f}", "-show_entries", "frame=pts_time",
+                "-read_intervals", f"{max(0.0, lo):.6f}%{hi + 0.01:.6f}", "-show_entries", "frame=pts_time",
                 "-of", "csv=p=0", path], quiet=True, check=False)
     if proc.returncode != 0:
         return None
     out: List[float] = []
     for line in proc.stdout.splitlines():
         try:
-            out.append(float(line.strip().rstrip(",")))
+            k = float(line.strip().rstrip(","))
         except ValueError:
             continue
+        if k <= hi + 1e-6:
+            out.append(k)
     return sorted(set(out))
 
 

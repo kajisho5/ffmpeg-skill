@@ -2912,9 +2912,10 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   - a copy that started or stopped on the wrong packet (packet MD5s against the source's, with
     SPS/PPS/AUD removed on both sides);
   - a decoder that used the wrong parameter set after a join (framemd5 of each re-encoded part as
-    written, and of each copied part's first GOP from the source, against the output). A copied
-    part's check stops at 300 frames (`DECODE_CHECK_MAX_FRAMES`): a wrong parameter set shows from
-    the first frame after the join, and a 10-second GOP would otherwise cost a decode of its own.
+    written, and of the first 300 frames of each copied part from the source, against the output).
+    The cap (`DECODE_CHECK_MAX_FRAMES`) is there because a wrong parameter set shows from the first
+    frame after the join, and a long copied part (several GOPs, or one 10-second GOP) would
+    otherwise cost a decode of its own.
     Both sides must hold all the frames asked for; two equally short lists are not a match.
 
   A failed check is a fallback, never a warning on a written file: the smart result is written

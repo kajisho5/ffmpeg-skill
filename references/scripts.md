@@ -184,8 +184,8 @@ Before it is moved into place, the result is checked:
 - the frame count, and one frame per frame duration (no gap, no repeat);
 - every copied packet against the source's (MD5 with the parameter-set and delimiter NAL units
   removed);
-- framemd5 of every re-encoded part against the same frames decoded from the output, and of each
-  copied part's first GOP (up to 300 frames) against the source's;
+- framemd5 of every re-encoded part against the same frames decoded from the output, and of the
+  first 300 frames of each copied part against the source's;
 - the output's stream parameters and time base against the source's.
 
 These are reported in `smart.checks` and as `smart_*` verification steps, and `mode` is `smart`.

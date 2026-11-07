@@ -12,8 +12,8 @@
   tags. The whole GOPs between are the source's packets, joined through MPEG-TS parts (in-band
   parameter sets) and kept on the source's time base.
   - The result is checked before it is moved into place: the frame count and frame grid, the copied
-    packets against the source's, framemd5 of the re-encoded parts and of each copied part's first
-    GOP (up to 300 frames), and the stream parameters (`smart.checks`, `smart_*` steps, `mode: smart`).
+    packets against the source's, framemd5 of the re-encoded parts and of the first 300 frames
+    of each copied part, and the stream parameters (`smart.checks`, `smart_*` steps, `mode: smart`).
   - A source it cannot match, or a failed check, falls back to the full re-encode. The result then
     says why (`smart.reason`, `reason_code`, `reencode_reason` `smart_fallback`).
   - Without `--smart`, every cut is unchanged.

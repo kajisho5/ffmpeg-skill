@@ -22,8 +22,8 @@ re-encode with the reason stated:
     packets   every copied part's packets against the source's (MD5 of each packet with the
               parameter-set and delimiter NAL units removed, which the in-band switch adds)
     decode    framemd5 of each re-encoded part as written against the same frames decoded from
-              the output, and of each copied part's first GOP (up to DECODE_CHECK_MAX_FRAMES)
-              against the source's
+              the output, and of the first DECODE_CHECK_MAX_FRAMES frames of each copied
+              part against the source's
     params    the re-encoded parts' stream parameters against the source's, and the output's
               time base against the source's
 
@@ -43,7 +43,7 @@ MATCH_FIELDS = ("codec_name", "profile", "level", "pix_fmt", "width", "height", 
 SMART_PIX_FMTS = ("yuv420p", "yuvj420p")
 SMART_PROFILES = {"Constrained Baseline": "baseline", "Baseline": "baseline", "Main": "main", "High": "high"}
 SMART_EXTS = (".mp4", ".mov", ".m4v", ".mkv")
-# a copied part's first GOP is decoded and compared against the source's; capped so a long GOP
+# the first frames of a copied part are decoded and compared against the source's; capped so a long part
 # does not make the check cost a long decode
 DECODE_CHECK_MAX_FRAMES = 300
 # an input -ss lands this far after the keyframe it is asked for (ffprobe prints microseconds)

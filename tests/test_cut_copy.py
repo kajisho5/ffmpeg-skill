@@ -1500,6 +1500,9 @@ class SmartCutTests(unittest.TestCase):
         at, between = doc["keyframes"]
         self.assertEqual((at["keyframes"], at["before"], at["after"]), ([0.8008], 0.8008, 0.8008))
         self.assertEqual((between["keyframes"], between["before"], between["after"]), ([], None, None))
+        # a keyframe exactly at the window's edge is inside it (a -read_intervals end is exclusive)
+        edge = json.loads(script("probe.py", self._ntsc_mp4(), "--keyframes-near", "1.2012", "--keyframe-window", "0.4004").stdout)
+        self.assertEqual(edge["keyframes"][0]["keyframes"], [0.8008, 1.6016])
         line = script("probe.py", self._ntsc_mp4(), "--keyframes-near", "0.8008", "--compact").stdout
         self.assertIn("keyframes near 0.8008s: 0.8008/0.8008", line)
 
