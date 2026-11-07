@@ -146,11 +146,16 @@ class DeliveryTests(MediaFixtures):
 
     # ------------------------------------------------- the alpha path beyond export
     def _alpha_clip(self, name, alpha="if(lt(X,80),255,64)", codec=("-c:v", "prores_ks", "-profile:v", "4",
-                                                                       "-pix_fmt", "yuva444p10le"), tags=()):
-        """A 160x96, 1 s ProRes 4444 clip (testsrc2's colour) with a partly transparent alpha."""
+                                                                       "-pix_fmt", "yuva444p10le"), tags=False):
+        """A 160x96, 1 s ProRes 4444 clip (testsrc2's colour) with a partly transparent alpha.
+        `tags` labels it BT.709 on the frames (setparams: from 7.1 the encoder takes the tags from
+        the frames, and output options alone left an RGB-made clip untagged) and in the stream."""
         path = OUT / name
+        label = (",format=yuva444p10le,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+                 if tags else "")
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
-           f"testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'", *codec, *tags, path)
+           f"testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'{label}", *codec,
+           *(("-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709") if tags else ()), path)
         return path
 
     def _rgba_png(self, path, t=0.0):
@@ -168,8 +173,7 @@ class DeliveryTests(MediaFixtures):
     def test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha(self):
         """--keep-alpha: the grade changes the colour and leaves the alpha as it was, frame for
         frame, in ProRes 4444 at 4:4:4 with the source's tags; the step that says so is measured."""
-        tags = ("-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709")
-        src = self._alpha_clip("alpha_grade_src.mov", tags=tags)
+        src = self._alpha_clip("alpha_grade_src.mov", tags=True)
         out = OUT / "alpha_grade_kept.mov"
         # --hw is accepted and leaves the alpha line on the CPU (a note says so); it raised
         # UnboundLocalError once (a local `note` in the --to-sdr branch hid the function)
