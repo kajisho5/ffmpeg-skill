@@ -546,7 +546,12 @@ def main() -> int:
     if args.legalize:
         # the last filter before the encoder, on the 4:2:0 picture it encodes: a clamp ahead of the
         # chroma subsampling would let the subsampling filter's overshoot put samples back out
-        vf = (vf + "," if vf else "") + "format=yuv420p," + legal_clamp(args.legalize)
+        # a full-range picture (yuvj420p, or tagged pc) is converted to limited range first: its codes
+        # span 0-255 by design, and clamping them as they are would crush its blacks and whites into
+        # the limits instead of scaling them there. A limited-range source gets the chain it always had.
+        full = v.get("color_range") == "pc" or str(v.get("pix_fmt") or "").startswith("yuvj")
+        vf = ((vf + "," if vf else "") + ("scale=out_range=tv," if full else "")
+              + "format=yuv420p," + legal_clamp(args.legalize))
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     # --lut/--correct grade the source's own pixels, so a BT.601 source is converted to the BT.709
     # the line is tagged with; --to-sdr's zscale chain already writes BT.709 and converts nothing more

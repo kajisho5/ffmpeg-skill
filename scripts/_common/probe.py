@@ -642,6 +642,24 @@ def legal_limits(standard: str, bit_depth: int = 8) -> Dict[str, Tuple[int, int]
     return {"y": y, "c": c}
 
 
+_COMPONENT_DEPTHS: Dict[str, int] = {}
+
+
+def component_depth(pix_fmt: Optional[str]) -> int:
+    """Bits per luma sample of `pix_fmt`, from ffmpeg's own pixel-format table (`-pix_fmts`,
+    BIT_DEPTHS column): the depth the planes really hold, which the name does not always say --
+    nv12 is 8-bit 4:2:0 (the 12 is bits per pixel), p010le is 10-bit. Falls back to _bit_depth()
+    when ffmpeg does not list the format."""
+    name = str(pix_fmt or "")
+    if not _COMPONENT_DEPTHS:
+        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-pix_fmts"], check=False)
+        for line in (proc.stdout or "").splitlines():
+            cols = line.split()
+            if len(cols) == 5 and re.fullmatch(r"\d+(?:-\d+)*", cols[4]):
+                _COMPONENT_DEPTHS[cols[1]] = int(cols[4].split("-")[0])
+    return _COMPONENT_DEPTHS.get(name) or _bit_depth(name)
+
+
 def _metadata_frames(text: str) -> List[Tuple[float, Dict[str, float]]]:
     """metadata=print's output: one (pts_time, {key: value}) per `frame:` block, signalstats keys only."""
     frames: List[Tuple[float, Dict[str, float]]] = []
@@ -660,7 +678,7 @@ def _metadata_frames(text: str) -> List[Tuple[float, Dict[str, float]]]:
 
 
 def measure_signal_range(path: str, standard: str, window: float = 10.0,
-                         bit_depth: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                         bit_depth: Optional[int] = None, pix_fmt: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Share of luma and chroma samples outside `standard`'s legal range, per clip and per `window`
     seconds, plus min/max Y/U/V, from one decode of every frame of the first video stream.
 
@@ -672,13 +690,16 @@ def measure_signal_range(path: str, standard: str, window: float = 10.0,
     with any component outside the BT.601/709 nominal range, signalstats' fixed limits). Every frame
     holds the same number of samples, so a clip's share is the mean of its frames' shares.
 
-    None when nothing decoded (no video, an unreadable file)."""
+    The limits and the mask use `bit_depth`, or else the depth of `pix_fmt`'s planes
+    (component_depth(): nv12 is 8-bit, not 12). None when the measurement is not whole: nothing
+    decoded, ffmpeg failed part-way (a share from the frames read before the failure would grade a
+    file nobody measured to the end), or the two passes counted different frames."""
     if standard not in LEGAL_RANGES:
         die(f"unknown legal range {standard!r}; choose from {', '.join(LEGAL_RANGE_CHOICES)}")
     import tempfile
     from _common.decision import escape_filter_path
     ffmpeg = require_tool("ffmpeg")
-    depth = int(bit_depth or 8)
+    depth = int(bit_depth or component_depth(pix_fmt))
     lim = legal_limits(standard, depth)
     (ylo, yhi), (clo, chi) = lim["y"], lim["c"]
     top = (1 << depth) - 1  # a literal: lutyuv's own maxval is 235 for limited-range luma, 240 for chroma
@@ -697,12 +718,11 @@ def measure_signal_range(path: str, standard: str, window: float = 10.0,
         except OSError:
             own = []
     masks = _metadata_frames(proc.stdout or "")
-    n = min(len(own), len(masks))
-    if not n:
+    if proc.returncode != 0 or not own or len(own) != len(masks):
         return None
     t0 = next((t for t, _ in own if t == t), 0.0)
     rows: List[Dict[str, Any]] = []
-    for (t, s), (_, m) in zip(own[:n], masks[:n]):
+    for (t, s), (_, m) in zip(own, masks, strict=True):
         y, u, v = (m.get(k, 0.0) / top * 100.0 for k in ("YAVG", "UAVG", "VAVG"))
         rows.append({"t": (t - t0) if t == t else None, "y": y, "u": u, "v": v, "brng": s.get("BRNG", 0.0) * 100.0,
                      "min": {k: s.get(k.upper() + "MIN") for k in "yuv"}, "max": {k: s.get(k.upper() + "MAX") for k in "yuv"}})

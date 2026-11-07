@@ -1197,9 +1197,9 @@ A render project enables it with `"check": {"platform":
 share of luma samples and of chroma (Cb and Cr) samples outside the standard's legal range, counted
 exactly in every frame (each plane through `lutyuv` as an out-of-range mask, its mean read by
 `signalstats`; chroma at its own subsampled resolution), the worst frame and its time, and min/max
-Y/U/V. `bt709` is the nominal range, 16-235 luma and 16-240 chroma at 8 bits (64-940 / 64-960 at
+Y/U/V (a decode that fails part-way is `could not measure`, never a share of the frames read). `bt709` is the nominal range, 16-235 luma and 16-240 chroma at 8 bits (64-940 / 64-960 at
 10); `ebu-r103` is EBU R 103's tolerance, luma -1 %..103 % (8-bit 14-241) and chroma as far as RGB
--5 %..105 % reaches (8-bit 5-251). Limits scale with the file's bit depth and round inward. The row
+-5 %..105 % reaches (8-bit 5-251). Limits scale with the depth of the planes (nv12 is 8-bit) and round inward. The row
 FAILs when one frame has more than `--levels-tolerance` (1 %) of its luma or chroma samples out; it
 WARNs, unmeasured, on an RGB or grey picture, and a full-range file is counted against the
 limited-range limits with a note. The JSON `levels` document holds the same per clip and per
@@ -1835,7 +1835,7 @@ luma/saturation) for input and output side by side.
 
 `--legalize bt709|ebu-r103` (with `--to-sdr`, `--lut` or `--correct`; `--correct` with no
 correction values clamps only) is the last filter before the encoder: the picture is made 8-bit
-4:2:0 and every luma and chroma sample is clamped (`lutyuv` `clip()`) into the limits `check.py
+4:2:0 (a full-range source is scaled to limited range first) and every luma and chroma sample is clamped (`lutyuv` `clip()`) into the limits `check.py
 --levels` counts against. Clamping after the subsampling matters: a clamp ahead of it lets the
 chroma filter's overshoot put samples back out. The written file is then measured the same way
 (`legalize.output`), and the `legal_levels` verification step fails when one frame keeps more than

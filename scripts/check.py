@@ -136,10 +136,10 @@ def levels_row(args: argparse.Namespace, v: Dict[str, Any], row: Any) -> "Option
             "legal levels are measured on the Y'CbCr file a broadcaster receives: check the encoded delivery, not an RGB master",
             reason="an RGB or grey picture has no luma and chroma codes to count")
         return None
-    doc = measure_signal_range(args.input, args.levels, args.levels_window, bit_depth=v.get("bit_depth") or 8)
+    doc = measure_signal_range(args.input, args.levels, args.levels_window, pix_fmt=pix)
     if doc is None:
         row("legal levels", "WARN", "could not measure", expect, "re-run check.py --levels, or look.py the picture",
-            reason="no frame decoded, so the signal range is unknown")
+            reason="the decode failed or stopped part-way, so the signal range of the whole file is unknown")
         return None
     pct, worst = doc["out_of_range_pct"], doc["worst_frame"]
     over = worst["y_pct"] > args.levels_tolerance or worst["chroma_pct"] > args.levels_tolerance

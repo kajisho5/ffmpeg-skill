@@ -2915,6 +2915,13 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
 - **An RGB or grey picture is not measured, and a full-range file is measured with a note.** Neither
   has the limited-range Y'CbCr codes a broadcast file carries; converting one here would measure the
   conversion. Test: `test_check_levels_is_opt_in_and_skips_a_picture_with_no_luma`.
+- **The limits follow the depth of the planes, and a partial measurement is no measurement.** The
+  depth comes from ffmpeg's pixel-format table (`component_depth()`), not from the format's name:
+  `nv12` is 8-bit (its 12 is bits per pixel), and read as 12-bit every legal sample counted out. A
+  run that exits non-zero, or whose two passes counted different frames, returns nothing and the
+  row says `could not measure`: the frames read before a failure are not the file. Tests:
+  `test_check_levels_reads_the_depth_of_the_planes_not_of_the_name`,
+  `test_check_levels_is_not_measured_when_the_decode_fails_part_way` (#432 review).
 - **`color.py --legalize` clamps after the 4:2:0 conversion, and measures instead of promising.** The
   clamp is the last filter before the encoder, on the 8-bit 4:2:0 picture it encodes: a clamp
   ahead of the subsampling lets the chroma filter's overshoot put samples back out. A lossy encoder
@@ -2923,6 +2930,10 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   `legal_levels` step holds it to the same 1 % per frame and `legalize_residual` reports any
   residue. Encoded losslessly (`--quality 0`) the residue is zero. `--codec` other than h264 is
   refused because the encoder line would convert the clamped picture again (10-bit, 4:2:2), and
-  `--retag` / `--strip-dovi` because they copy the stream. Code: `color.legal_clamp()`,
+  `--retag` / `--strip-dovi` because they copy the stream. A full-range source (tagged `pc`, or
+  yuvj420p) is scaled to limited range (`scale=out_range=tv`) ahead of the 4:2:0 conversion, so its
+  blacks and whites move into the limits instead of being cut at them; a limited-range source's
+  chain is unchanged (#432 review; test
+  `test_color_legalize_converts_a_full_range_picture_before_the_clamp`). Code: `color.legal_clamp()`,
   `color.legalize_report()`. Test:
   `test_color_legalize_clamps_after_the_420_conversion_and_measures_the_file`.

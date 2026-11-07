@@ -579,6 +579,50 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(doc["levels"]["legal"], {"y": [56, 966], "c": [20, 1004]})
         self.assertAlmostEqual(doc["levels"]["out_of_range_pct"]["y"], (known["y"][10] + known["y"][250]) / n * 50, places=2)
 
+    def test_check_levels_reads_the_depth_of_the_planes_not_of_the_name(self):
+        """#432 review: nv12 is 8-bit 4:2:0 (the 12 in its name is bits per pixel). Its limits and mask
+        are the 8-bit ones, so the same pattern counts the same shares as the planar 8-bit file; read
+        as 12-bit, every legal sample would have been counted out of range."""
+        planar = OUT / "levels8_for_nv12.mkv"
+        known = legal_range_clip(planar)
+        nv12 = OUT / "levels_nv12.nut"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", planar, "-c:v", "rawvideo", "-pix_fmt", "nv12", nv12)
+        self.assertEqual(probe(str(nv12))["video"]["pix_fmt"], "nv12")
+        self.assertEqual(content_probe.component_depth("nv12"), 8)
+        self.assertEqual(content_probe.component_depth("p010le"), 10)
+        doc, _rows = self._levels(nv12, "--levels", "bt709")
+        n, _ = known["samples"]
+        self.assertEqual((doc["levels"]["bit_depth"], doc["levels"]["legal"]), (8, {"y": [16, 235], "c": [16, 240]}))
+        self.assertAlmostEqual(doc["levels"]["out_of_range_pct"]["y"], sum(known["y"].values()) / n * 50, places=2)
+
+    def test_check_levels_is_not_measured_when_the_decode_fails_part_way(self):
+        """#432 review: a measurement whose ffmpeg run exits non-zero, or whose two passes counted
+        different frames, is None (the row says could not measure) -- never a share of the frames
+        read before the failure."""
+        import subprocess as sp
+        from unittest import mock
+        clip = OUT / "levels8_fail.mkv"
+        legal_range_clip(clip)
+        real = content_probe.run_analysis
+
+        def failing(cmd, **kw):
+            proc = real(cmd, **kw)
+            return sp.CompletedProcess(proc.args, 1, proc.stdout, proc.stderr) if "lutyuv" in " ".join(map(str, cmd)) else proc
+
+        with mock.patch.object(content_probe, "run_analysis", failing):
+            self.assertIsNone(content_probe.measure_signal_range(str(clip), "bt709", bit_depth=8))
+
+        def short(cmd, **kw):
+            proc = real(cmd, **kw)
+            if "lutyuv" not in " ".join(map(str, cmd)):
+                return proc
+            out = proc.stdout.split("frame:")
+            return sp.CompletedProcess(proc.args, 0, "frame:".join(out[:-1]), proc.stderr)
+
+        with mock.patch.object(content_probe, "run_analysis", short):
+            self.assertIsNone(content_probe.measure_signal_range(str(clip), "bt709", bit_depth=8))
+        self.assertIsNotNone(content_probe.measure_signal_range(str(clip), "bt709", bit_depth=8))
+
     def test_check_levels_is_opt_in_and_skips_a_picture_with_no_luma(self):
         """Without --levels the row set and the document are unchanged; a legal clip PASSes at 0 %;
         an RGB picture is not measured (WARN); a bad window or tolerance is refused before decoding."""

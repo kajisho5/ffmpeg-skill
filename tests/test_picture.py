@@ -1532,6 +1532,35 @@ class PictureTests(MediaFixtures):
             self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", bad)
             self.assertEqual(json.loads(proc.stdout)["commands"], [], bad)
 
+    def test_color_legalize_converts_a_full_range_picture_before_the_clamp(self):
+        """#432 review: a full-range source (tagged pc, or yuvj420p) is scaled to limited range before
+        the clamp, so its blacks and whites move into the limits instead of being cut there: full-range
+        code 20 becomes limited 33, where a clamp alone would have kept 20 and crushed nothing but
+        the extremes. A limited-range source's command is unchanged (no range conversion)."""
+        import struct
+        n = 64 * 64
+        raw = OUT / "legalize_full.yuv"
+        raw.write_bytes((struct.pack(f"{n}B", *([20] * (n // 2) + [128] * (n // 2))) + bytes([128]) * (n // 2)) * 4)
+        tagged = OUT / "legalize_full_pc.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-color_range", "pc",
+           "-s", "64x64", "-r", "10", "-i", raw, "-c:v", "ffv1", "-color_range", "pc", tagged)
+        jpeg = OUT / "legalize_full_j.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "yuvj420p", "-s", "64x64",
+           "-r", "10", "-i", raw, "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuvj420p", jpeg)
+        raw.unlink()
+        for src in (tagged, jpeg):
+            data = json.loads(script("color.py", src, "--correct", "--legalize", "bt709", "--quality", "0", "--preset", "veryfast",
+                                     "-o", OUT / "legalize_full_out.mp4", "--json").stdout)
+            self.assertIn("scale=out_range=tv,format=yuv420p,lutyuv", data["commands"][0], src)
+            out = data["legalize"]["output"]
+            self.assertLessEqual(abs(out["min"]["y"] - 33), 1, (src, out["min"]))
+            self.assertTrue(data["verified"], src)
+        limited = OUT / "legalize_src.mkv"
+        legal_range_clip(limited, size=64, frames=4, rate=10)
+        data = json.loads(script("color.py", limited, "--correct", "--legalize", "bt709", "--dry-run", "--json",
+                                 "-o", OUT / "legalize_limited.mp4").stdout)
+        self.assertNotIn("out_range", data["commands"][0])
+
     def test_color_correct_temperature_and_tint_run_and_preserve_geometry(self):
         out = OUT / "correct_wb.mp4"
         script("color.py", self.src, "--correct", "--temperature", "3200", "--tint", "-0.3", "--contrast", "1.1", "--preset", "veryfast", "-o", out)
