@@ -103,7 +103,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
 | "just the real pauses, not inside a sentence" | `silence.py in.mp4 --speech-aware` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments` with picks.txt's lines joined by commas) |
-| "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`) |
+| "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`; a WAV/MP3 music bed too) |
 | "speed up here, slow-mo there" | `speedramp.py in.mp4 --segment 0-3:1.0 --segment 3-4:0.25` |
 | "freeze the last frame" | `freeze.py clip.mp4 --hold 2` |
 | "smooth slow motion" | `fit.py in.mp4 --duration 2x --smooth interpolate` |

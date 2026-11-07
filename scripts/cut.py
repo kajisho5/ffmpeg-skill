@@ -1204,8 +1204,11 @@ def _grid_from_source(path: str, min_confidence: float) -> "dict":
         die(f"--snap-source {path}: this JSON has no beat_grid -- produce one with "
             "`scenes.py MUSIC --beats --json`", kind="input")
     samples = decode_pcm_mono(path, BEAT_RATE, check=False)
-    env = rms_envelope(samples, max(1, int(round(BEAT_RATE * 0.01))))
-    return beat_grid(env, 0.01, min_confidence=min_confidence)
+    block = max(1, int(round(BEAT_RATE * 0.01)))
+    env = rms_envelope(samples, block)
+    # the envelope's real step is block / rate (220 / 22050 = 9.977 ms), not the 10 ms asked for:
+    # timing the onsets at 10 ms stretched the grid 0.23 % (68 ms over 30 s) -- see scenes.py
+    return beat_grid(env, block / BEAT_RATE, min_confidence=min_confidence)
 
 
 def snap_segments(args, segments, meta, total):
