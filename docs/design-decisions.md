@@ -65,7 +65,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 - [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 - [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
-- [After 3.2.1 — the alpha path beyond export (#433)](#after-321--the-alpha-path-beyond-export-433)
+- [After 3.2.2 — the alpha path beyond export (#433)](#after-322--the-alpha-path-beyond-export-433)
 <!-- contents:end -->
 
 ## Time limits
@@ -2889,7 +2889,7 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   `test_loudness_versions_writes_one_measured_file_per_target`.
 
 
-## After 3.2.1 — the alpha path beyond export (#433)
+## After 3.2.2 — the alpha path beyond export (#433)
 
 Context: `export.py`'s alpha presets kept and checked an alpha channel, but every tool that grades
 or composites wrote opaque H.264 and still said `verified: true` on a ProRes 4444 source whose alpha
@@ -2912,7 +2912,11 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   `alpha.lost_step()`. Test: as above.
 - **The alpha line keeps the source's colour tags, as `--codec prores` does.** An alpha master is an
   editing master: it converts no matrix and draws no BT.709 label, so `decision.keeps_source_tags()`
-  is true for both. Code: `decision.keeps_source_tags()`. Test:
+  is true for both. A grade's RGB legs (and an RGB layer's conversion) leave the frames untagged
+  (6.1) or relabelled (7.1+), so the source's tags are put back on the frames with `setparams` at
+  the end of the chain and named on the stream; with the frames already carrying them, 7.1+'s
+  output-option negotiation has nothing to convert. Code: `decision.keeps_source_tags()`,
+  `alpha.finish_chain()`, `alpha.tag_args()`. Test:
   `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
 - **`color.py` never grades the alpha.** The alpha is split off the source, kept as decoded and merged
   back (`alphamerge`) after the grade, which runs at 4:4:4 (8-bit: the grade filters' own depth), so
@@ -2936,9 +2940,13 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   palette, which can hold transparency the pixel format does not show) and whose alpha cannot be
   measured counts as using it, so an output without alpha fails; a VP9 source or layer with alpha
   on a build with no libvpx-vp9 decoder is refused (`decoder_missing`, read from `ffmpeg -decoders`,
-  not the encoder list) rather than composited opaque. The measurement is read frame by frame from
+  not the encoder list) rather than composited opaque. A decoder list that cannot be read is
+  unknown, not missing, as for filters: libvpx-vp9 is still asked for and ffmpeg says whether it
+  exists. `doctor` reports `decoder:libvpx-vp9` from the same list
+  (`test_doctor_resolves_the_declared_decoder_capability`). The measurement is read frame by frame from
   the pipe (an hour at 30 fps was ~250 MB held at once). A planned input a dry run cannot probe yet
-  is not refused. `color.py --retag`'s fallback re-encode gets the same `alpha` step. Code:
+  is not refused as opaque (its window is given: a clip of unknown length has no end to default
+  `--end` to). `color.py --retag`'s fallback re-encode gets the same `alpha` step. Code:
   `alpha.source_alpha()`, `alpha.frame_means()`. Test:
   `test_alpha_checks_do_not_pass_what_they_could_not_read`.
 - **On a BT.709-tagged alpha line, RGB layers are converted to BT.709.** The line keeps the source's

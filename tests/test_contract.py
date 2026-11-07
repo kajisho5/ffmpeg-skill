@@ -5761,13 +5761,12 @@ class DoctorDetectionTests(unittest.TestCase):
         shutil.rmtree(self.work, ignore_errors=True)
 
     def _doctor(self, filters, encoders="ffmpeg_encoders_6.1.txt", bsfs="ffmpeg_bsfs_6.1.txt", filters_exit=0,
-                decoders="ffmpeg_decoders_6.1.txt"):
+                decoders="ffmpeg_decoders_6.1.txt", decoders_exit=0):
         """`doctor --json` with a fake ffmpeg that prints the named fixtures (stdout cat, no shell interpolation of names)."""
         shim = self.work / "shim"
         shim.mkdir(exist_ok=True)
         script = "#!/bin/sh\ncase \"$2\" in\n"
-        for flag, name, code in (("-filters", filters, filters_exit), ("-encoders", encoders, 0), ("-bsfs", bsfs, 0),
-                                 ("-decoders", decoders, 0)):
+        for flag, name, code in (("-filters", filters, filters_exit), ("-encoders", encoders, 0), ("-bsfs", bsfs, 0), ("-decoders", decoders, decoders_exit)):
             script += f"  {flag}) cat '{self.FIX / name}'; exit {code};;\n"
         script += "esac\ncase \"$1\" in -version) echo 'ffmpeg version 8.0-fixture'; exit 0;; esac\nexit 1\n"
         (shim / "ffmpeg").write_text(script)
@@ -5811,6 +5810,28 @@ class DoctorDetectionTests(unittest.TestCase):
         for bsf_name in ("ffmpeg_bsfs_6.1.txt", "ffmpeg_bsfs_8.1.2_macos.txt", "ffmpeg_bsfs_9.0.1_windows.txt"):
             self.assertIn("filter_units", _contract._parse_ff_list("-bsfs", (self.FIX / bsf_name).read_text()), bsf_name)
         self.assertEqual(_contract._parse_ff_list("-filters", (self.FIX / "ffmpeg_filters_garbage.txt").read_text()), [])
+
+    def test_doctor_resolves_the_declared_decoder_capability(self):
+        """#433 review: the alpha tools declare `decoder:libvpx-vp9` (a VP9 alpha source is refused
+        without it), and doctor read no decoder list, so it never appeared in any state. It is read
+        from `ffmpeg -decoders`: available when listed, missing when the list lacks it, unknown when
+        the list cannot be read; optional, so `ok` does not change."""
+        self.assertIn("decoder:libvpx-vp9", _contract.required_capabilities()["optional"])
+        self.assertIn("libvpx-vp9", _contract._parse_ff_list("-decoders", (self.FIX / "ffmpeg_decoders_6.1.txt").read_text()))
+        d, code = self._doctor("ffmpeg_filters_6.1.txt")
+        self.assertIn("decoder:libvpx-vp9", d["available"])
+        self.assertEqual(d["detection"]["decoders"]["status"], "parsed")
+        self.assertEqual(code, 0)
+        lean = self.work / "decoders_no_libvpx.txt"
+        lean.write_text("".join(ln for ln in (self.FIX / "ffmpeg_decoders_6.1.txt").read_text().splitlines(True)
+                                if " libvpx-vp9 " not in ln))
+        d, code = self._doctor("ffmpeg_filters_6.1.txt", decoders=lean)
+        self.assertIn("decoder:libvpx-vp9", d["missing_optional"])
+        self.assertEqual((d["ok"], code), (True, 0))
+        d, code = self._doctor("ffmpeg_filters_6.1.txt", decoders_exit=3)
+        self.assertIn("decoder:libvpx-vp9", d["unknown"])
+        self.assertNotIn("decoder:libvpx-vp9", d["missing_optional"])
+        self.assertEqual(d["ok"], True)
 
     def test_two_character_flags_do_not_hide_filters(self):
         """The FFmpeg 8 layout: every declared filter is found, nothing is reported missing or unknown."""
@@ -5864,7 +5885,7 @@ class DoctorDetectionTests(unittest.TestCase):
         shim = self.work / "shim_fc"
         shim.mkdir(exist_ok=True)
         script = "#!/bin/sh\ncase \"$2\" in\n"
-        for flag, name in (("-filters", "ffmpeg_filters_6.1.txt"), ("-encoders", "ffmpeg_encoders_6.1.txt"), ("-bsfs", "ffmpeg_bsfs_6.1.txt")):
+        for flag, name in (("-filters", "ffmpeg_filters_6.1.txt"), ("-encoders", "ffmpeg_encoders_6.1.txt"), ("-bsfs", "ffmpeg_bsfs_6.1.txt"), ("-decoders", "ffmpeg_decoders_6.1.txt")):
             script += f"  {flag}) cat '{self.FIX / name}'; exit 0;;\n"
         script += "esac\ncase \"$1\" in -version) echo 'ffmpeg version 8.0-fixture'; exit 0;; esac\n"
         script += "case \"$*\" in *drawtext=fontfile=*) exit 0;; *drawtext=text=x*) kill -s SEGV $$;; esac\nexit 1\n"
@@ -5968,7 +5989,7 @@ class DoctorDetectionTests(unittest.TestCase):
             shim = self.work / f"shim_{version}"
             shim.mkdir()
             script = "#!/bin/sh\ncase \"$2\" in\n"
-            for flag, name in (("-filters", "ffmpeg_filters_6.1.txt"), ("-encoders", "ffmpeg_encoders_6.1.txt"), ("-bsfs", "ffmpeg_bsfs_6.1.txt")):
+            for flag, name in (("-filters", "ffmpeg_filters_6.1.txt"), ("-encoders", "ffmpeg_encoders_6.1.txt"), ("-bsfs", "ffmpeg_bsfs_6.1.txt"), ("-decoders", "ffmpeg_decoders_6.1.txt")):
                 script += f"  {flag}) cat '{self.FIX / name}'; exit 0;;\n"
             script += f"esac\ncase \"$1\" in -version) echo 'ffmpeg version {version} Copyright (c) 2000-2026'; exit 0;; esac\nexit 1\n"
             (shim / "ffmpeg").write_text(script)

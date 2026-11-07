@@ -2026,7 +2026,7 @@ def _read_ff_list(flag: str, pattern: str) -> set:
         why = f"{tool} {flag} could not run: {exc}"
     if why:
         _LIST_ERRORS[flag] = why
-        what = {"-encoders": "encoder", "-bsfs": "bitstream filter"}.get(flag, "filter")
+        what = {"-encoders": "encoder", "-decoders": "decoder", "-bsfs": "bitstream filter"}.get(flag, "filter")
         warn(f"could not read this ffmpeg build's {what} list ({why}); nothing that needs it can be confirmed, which is not the same as the build lacking it",
              "ffmpeg_list_unreadable", list=flag.lstrip("-"), tool=tool, error=why)
     return names

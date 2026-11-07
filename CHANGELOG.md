@@ -11,6 +11,7 @@
 ### Changed
 
 - **An output that loses a used alpha is no longer `verified`.** `color.py` (`--correct`, `--lut`, `--to-sdr`), `graphics.py` and `overlay.py` on a source whose alpha is used (ProRes 4444, QuickTime Animation, PNG, VP9 with alpha; a frame below opaque) wrote opaque H.264 and reported `verified: true`. The run still completes and writes the same file, but a failing `alpha` step (`reason: alpha_dropped`), `alpha_dropped: true` and an `alpha_dropped` warning now say the alpha was lost; `--drop-alpha` records that an opaque output is wanted. An opaque source runs and reports as before.
+- **`doctor` reads `ffmpeg -decoders`.** The capability names gain `decoder:<name>`, and the alpha tools' optional capabilities (`decoder:libvpx-vp9`, `encoder:qtrle`, `encoder:png`, `encoder:libopus`, ...) are resolved like every other one: `available`, `missing_optional` or `unknown`, never affecting `ok`. `detection` gains a `decoders` entry.
 
 ### Fixed
 

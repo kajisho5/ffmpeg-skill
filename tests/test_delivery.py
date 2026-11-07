@@ -325,9 +325,11 @@ class DeliveryTests(MediaFixtures):
                     alpha.decoder_args_for(probe(str(webm)), str(webm))
             alpha._DECODERS = {"vp9", "libvpx-vp9"}
             self.assertEqual(alpha.decoder_args_for(probe(str(webm)), str(webm)), ["-c:v", "libvpx-vp9"])
-            # a decoder list that could not be read is unknown, not "missing": the decoder is still named
+            # a decoder list that could not be read is unknown, not missing (#433 review): the
+            # decoder is still asked for, never refused and never left to the native one
             alpha._DECODERS = set()
             self.assertEqual(alpha.decoder_args_for(probe(str(webm)), str(webm)), ["-c:v", "libvpx-vp9"])
+            self.assertEqual(alpha.vp9_decoder_args("vp9"), ["-c:v", "libvpx-vp9"])
         finally:
             alpha._DECODERS = saved
         planned = OUT / "alpha_planned_canvas.mov"
