@@ -63,7 +63,7 @@ from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT
 from _common import require_tool
 from _common.probe import TS_EXTS, signatures_match, stream_signature
 from _common.decision import grid_at_or_after
-from _common import warn, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
+from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
 DROPPED_STREAMS: List[str] = []
@@ -1303,6 +1303,70 @@ def _join_workspace():
                 pass
 
 
+def run_smart(args, segments, output: str, meta: dict, forced: List[str], hold_needed: bool, total: float) -> dict:
+    """--smart: the keyframe-aware cut (_smartcut), written beside the output and moved into place once
+    verified. Returns the `smart` document; {applied: false, reason, reason_code} when it could not be
+    made or did not verify, and the caller re-encodes the whole cut."""
+    import _smartcut
+
+    def fallback(reason: str, code: str) -> dict:
+        return {"applied": False, "reason": reason, "reason_code": code}
+
+    # an existing output is refused before the parts are rendered and checked, not at placement
+    refuse_existing_outputs([output])
+    video = meta.get("video") or {}
+    if not video or is_audio_output(output):
+        return fallback("the cut has no picture to copy (an audio output or an audio-only source)", "no_video")
+    if dry_run_input_pending(args.input):
+        return fallback("the input does not exist yet, so its keyframes cannot be read", "pending_input")
+    for why in forced:
+        if why in ("vfr", "vfr_inconclusive"):
+            return fallback("the source's frame timing is variable or could not be measured; a copy of it cannot be "
+                            "placed frame-accurately", "vfr")
+        if why == "codec":
+            return fallback("--codec asks for another codec, so nothing can be copied", "codec")
+    if hold_needed:
+        return fallback("a segment runs past the end of the video, and only a re-encode can hold its last frame",
+                        "hold")
+    if meta.get("audio") and len(segments) > JOIN_CHUNK:
+        # the sound of every segment is one input of the join command; past this many the command
+        # line can outgrow Windows' limit, and the full re-encode joins in chunks of this size
+        return fallback(f"{len(segments)} segments with sound: the smart join takes at most {JOIN_CHUNK}, the "
+                        "full re-encode joins them in chunks", "segments")
+    ext = os.path.splitext(output)[1] or ".mp4"
+    params = _smartcut.stream_params(args.input)
+    bad = _smartcut.ineligible(params, meta, ext)
+    if bad:
+        return fallback(*bad)
+    packets = video_packets(args.input, segments, 0.5, total)
+    if not packets:
+        return fallback("the source's video packets could not be read", "packets")
+    with _join_workspace() as (tmp, temps):
+        dst = output if STATE.dry_run else sibling_temp(output, "smart")
+        if not STATE.dry_run:
+            temps.append(dst)
+        try:
+            doc = _smartcut.execute(args.input, segments, dst, meta, params, packets, args.crf, args.preset, tmp,
+                                    vend=video_end(args.input, meta), gop_is_open=gop_is_open, landing=seek_keyframe,
+                                    origin=file_origin, declick=DECLICK_S, seek_margin=SEEK_MARGIN)
+        except _smartcut.SmartFallback as exc:
+            return fallback(exc.reason, exc.code)
+        if not STATE.dry_run:
+            place_output(dst, output, move=True)
+    if meta.get("subtitle_streams") or meta.get("data_streams"):
+        DROPPED_STREAMS.append(output)
+    return doc
+
+
+def smart_verification(doc: dict) -> List[dict]:
+    """The --smart checks as verification steps (all passed: a failed one fell back before this)."""
+    c = doc["checks"]
+    return [{"step": "smart_frames", "ok": True, "frames": c["frames"], "grid_worst_seconds": c["grid_worst_seconds"]},
+            {"step": "smart_packets", "ok": True, "copied_packets_equal": c["copied_packets_equal"]},
+            {"step": "smart_decode", "ok": True, "frames_decoded_equal": c["frames_decoded_equal"]},
+            {"step": "smart_params", "ok": True, "time_base": c["time_base"]}]
+
+
 def main() -> int:
     global DECLICK_S
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1316,6 +1380,11 @@ def main() -> int:
     ap.add_argument("--remove", metavar="START-END[,...]",
                     help="the inverse of --segments: drop these ranges and keep the rest, joined in order "
                          "(e.g. '1:20-2:05,10:00-10:30'); overlapping ranges merge")
+    ap.add_argument("--smart", action="store_true",
+                    help="keyframe-aware cut of an H.264 source: re-encode only from each cut point to the next keyframe "
+                         "(and from the last keyframe to the end point), matched to the source's profile, level, pixel "
+                         "format, reorder depth and colour tags, and stream-copy the whole GOPs between; verified (frame "
+                         "grid, copied packets, decoded frames) or re-encoded in full with the reason in smart.reason")
     ap.add_argument("--accurate", action="store_true", help="always re-encode for frame-accurate (video) / sample-accurate (audio) cuts (default: lossless -c copy, re-encoding only when the keyframe snap exceeds --tolerance)")
     el = ap.add_mutually_exclusive_group()
     el.add_argument("--edit-list", action="store_true",
@@ -1368,6 +1437,9 @@ def main() -> int:
     total = meta.get("duration") or 0.0
     # why every segment re-encodes, if one of these forces it; `requested` is read before the
     # guards below overwrite args.accurate, so a forced re-encode is never reported as asked for
+    if args.smart and args.accurate:
+        die("--smart re-encodes only the partial GOPs at each cut and copies the rest; --accurate re-encodes all of it: "
+            "choose one")
     forced: List[str] = ["requested"] if args.accurate else []
     if STATE.codec:
         # "cut this and make it HEVC": a stream copy keeps the source codec, so the request is a
@@ -1512,7 +1584,21 @@ def main() -> int:
     outcomes: List[dict] = []
     join_reencoded = False
     join_check = None
-    if len(segments) == 1:
+    smart_doc = None
+    if args.smart:
+        smart_doc = run_smart(args, segments, output, meta, forced, hold_needed, total)
+        if not smart_doc["applied"]:
+            # the stated fallback: the full re-encode --accurate makes, with the reason reported
+            record_fallback(f"--smart: {smart_doc['reason']}; re-encoding the whole cut instead", "smart_fallback",
+                            reason_code=smart_doc["reason_code"])
+            join_notes.append(f"--smart fell back to a full re-encode: {smart_doc['reason']}")
+            args.accurate = True
+            forced.append("smart_fallback")
+    if smart_doc is not None and smart_doc["applied"]:
+        # every part copied and no sound (a silent source cut on keyframes) re-encodes nothing
+        smart_encoded = bool(smart_doc["reencoded_frames"] or meta.get("audio"))
+        outcomes = [_outcome(meta, output, smart_encoded, ["smart"] if smart_encoded else []) for _ in segments]
+    elif len(segments) == 1:
         outcomes.append(cut_one(args.input, segments[0][0], segments[0][1], output, args.accurate, args.crf, args.preset, args.tolerance, meta,
                                 edit_list_ok=not args.no_edit_list))
     elif hold_needed or args.accurate:
@@ -1676,7 +1762,8 @@ def main() -> int:
     # mode: "copy" (nothing re-encoded at any stage, the join included), "accurate" (--accurate was
     # asked for or forced), "hybrid" (asked for lossless but a segment or the join re-encoded anyway;
     # reencode_reason says why)
-    mode = "copy" if not reencoded else ("accurate" if args.accurate else "hybrid")
+    mode = ("smart" if smart_doc is not None and smart_doc["applied"] else
+            "copy" if not reencoded else ("accurate" if args.accurate else "hybrid"))
     notes: List[str] = vfr_notes + join_notes + [n for o in outcomes for n in o.get("notes") or []]
     single = outcomes[0] if len(outcomes) == 1 else {}
     stored = single.get("stored_preroll_seconds")
@@ -1737,15 +1824,16 @@ def main() -> int:
          edit_list=bool(single.get("edit_list")), stored_preroll_seconds=stored, av_start_skew_seconds=skew,
          join_check=join_check, segment_end_snap_seconds=end_snaps,
          # the joins were faded only where the concat filter re-encoded them
-         declick_ms=(DECLICK_S * 1000 if len(segments) > 1 and (join_reencoded or args.accurate) and meta.get("audio")
-                     else None),
+         declick_ms=(DECLICK_S * 1000 if len(segments) > 1 and meta.get("audio")
+                     and (join_reencoded or args.accurate or mode == "smart") else None),
          notes=notes, **({"vfr_check": vfr_check} if vfr_check else {}),
          nearest_keyframes=sorted(NEAREST_KEYFRAMES) if NEAREST_KEYFRAMES else None,
          # the trade the caller can offer instead of a re-encode (eval e02: "without losing quality")
          lossless_alternative=(f"--start {min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])):.3f} lands on a keyframe: "
                                f"stream copy with no re-encode, {abs(min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])) - segments[0][0]):.2f}s off the requested start")
          if mode == "hybrid" and NEAREST_KEYFRAMES and len(segments) == 1 else None,
-         snap=snap_result)
+         snap=snap_result, **({"smart": smart_doc} if smart_doc is not None else {}),
+         **({"verification": smart_verification(smart_doc)} if smart_doc is not None and smart_doc.get("checks") else {}))
     return 0
 
 

@@ -873,6 +873,24 @@ def demo_cut_remove(ctx):
     return src, after
 
 
+def demo_cut_smart(ctx):
+    """--smart: a frame-exact cut that re-encodes only the partial GOPs at its two ends. The source
+    is re-encoded here with a keyframe every second, so the cut has whole GOPs in the middle to copy."""
+    src = ctx.path("gop30.mp4")
+    ffmpeg("-i", str(FIX / "motion.mp4"), "-c:v", "libx264", "-preset", "veryfast", "-g", "30", "-bf", "2",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", str(src))
+    after = ctx.path("after.mp4")
+    out = ctx.script("cut.py", src, "--start", "1.3", "--end", "6.6", "--smart", "--json", "-o", after, capture=True)
+    ctx.expect(after, "cut.py --smart")
+    if out:
+        doc = json.loads(out)
+        if doc.get("mode") != "smart" or not doc.get("verified"):
+            raise BuildError("cut.py --smart did not make a verified smart cut: %s" % (doc.get("smart") or {}).get("reason"))
+        sm = doc["smart"]
+        ctx.note("%d frames re-encoded, %d copied" % (sm["reencoded_frames"], sm["copied_frames"]))
+    return src, after
+
+
 def demo_cut_edit_list(ctx):
     """Two lossless copies of the same request: the default one shifts its timestamps to zero and
     shows the keyframe's pre-roll, the --edit-list one keeps the MP4 edit list that hides it, so
@@ -1075,6 +1093,42 @@ def demo_greenscreen(ctx):
     return before, after
 
 
+def _require_verified(doc, what):
+    """Fail the build when a tool's --json result says verified: false (the run itself exited 0).
+    The docs recorder (_DryCtx) runs nothing and returns "", so there it checks nothing and the
+    builder goes on recording the commands that follow."""
+    if not doc:
+        return
+    result = json.loads(doc)
+    if not result.get("verified"):
+        raise BuildError("%s did not verify: %s" % (what, [s for s in result.get("verification") or []
+                                                           if not s.get("ok")]))
+
+
+def demo_alpha_layer(ctx):
+    """The alpha path: background.py --transparent makes an empty canvas, graphics.py --keep-alpha
+    renders a lower third on it as a layer with its own alpha (QuickTime Animation: an RLE line that
+    stays small for a mostly transparent picture), and overlay.py puts that layer over the footage."""
+    before = FIX / "motion.mp4"
+    canvas = ctx.path("canvas.mov")
+    layer = ctx.path("layer.mov")
+    after = ctx.path("after.mp4")
+    # a run whose alpha step failed exits 0 (verified: false), so each verdict is read and a layer
+    # that did not verify fails the build, as demo_color_legalize does
+    doc = ctx.script("background.py", "--transparent", "--alpha-codec", "qtrle", "--duration", "6", "--width", "1280",
+                     "--height", "720", "--fps", "30", "-o", canvas, "--json", capture=True)
+    ctx.expect(canvas, "background.py --transparent")
+    _require_verified(doc, "background.py --transparent")
+    doc = ctx.script("graphics.py", canvas, "--template", "lower-third", "--name", "Ada Lovelace",
+                     "--title", "Analytical Engine", "--start", "0.5", "--end", "5.5", "--keep-alpha",
+                     "--alpha-codec", "qtrle", "-o", layer, "--json", capture=True)
+    ctx.expect(layer, "graphics.py --keep-alpha")
+    _require_verified(doc, "graphics.py --keep-alpha")
+    ctx.script("overlay.py", before, "--video", layer, "--position", "0,0", "--margin", "0",
+               "--preset", "veryfast", "-o", after)
+    return before, after
+
+
 def demo_overlay_place(ctx):
     """overlay.py --place: two ranges of one layer, each shown at its own time on the main
     timeline; the main picture is untouched between them."""
@@ -1100,6 +1154,38 @@ def demo_color_correct(ctx):
     ctx.script("color.py", before, "--correct", "--exposure", "0.25", "--contrast", "1.25",
                "--saturation", "1.3", "--temperature", "7000", "--gamma", "1.1",
                "--preset", "veryfast", "-o", after)
+    return before, after
+
+
+def _waveform_over_picture(src, dst):
+    """The picture (top) over its luma waveform with the digital-scale graticule (bottom): the
+    16/235 legal limits are where the graticule lines sit, so a level past them is visible."""
+    ffmpeg("-i", str(src), "-filter_complex",
+           "[0:v]split[p][w];[p]scale=1280:360,setsar=1[top];"
+           "[w]waveform=graticule=green:flags=numbers:scale=digital:filter=lowpass,scale=1280:360,setsar=1[bot];"
+           "[top][bot]vstack,format=yuv420p", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(dst))
+
+
+def demo_color_legalize(ctx):
+    # a grade that runs hot: luma stretched past 235 and below 16, chroma past 240
+    hot = ctx.path("hot.mp4")
+    ffmpeg("-i", str(FIX / "motion.mp4"), "-t", "4", "-an", "-vf",
+           "lutyuv=y='(val-16)*1.18+4':u='128+(val-128)*1.3':v='128+(val-128)*1.3'",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", str(hot))
+    legal = ctx.path("legal.mp4")
+    # --quality 8: at the default 18, x264's error around the clamped chroma of this saturated
+    # pattern left 1.4 % of one frame out of range, past the 1 % the legal_levels step allows. A
+    # run whose own check failed exits 0 (verified: false), so the demo reads the verdict and fails
+    # the build rather than publish a preview of a file that did not verify.
+    doc = ctx.script("color.py", hot, "--correct", "--legalize", "bt709", "--quality", "8", "--preset", "veryfast",
+                     "-o", legal, "--json", capture=True)
+    ctx.expect(legal, "color.py --legalize")
+    if not json.loads(doc).get("verified"):
+        raise BuildError("color.py --legalize did not verify: %s" % [s for s in json.loads(doc).get("verification") or []
+                                                                     if s.get("step") == "legal_levels"])
+    before, after = ctx.path("before.mp4"), ctx.path("after.mp4")
+    _waveform_over_picture(hot, before)
+    _waveform_over_picture(legal, after)
     return before, after
 
 
@@ -1629,6 +1715,9 @@ _ROWS = [
     ("cut_remove", PICTURE, "Cut out a range, keep the rest",
      "cut.py --remove 2-4 drops two seconds from the middle and joins what is left: the 'after' side jumps from 2 s to 4 s of the source and finishes two seconds early.",
      demo_cut_remove, "video", None, ("SOURCE", "--REMOVE 2-4")),
+    ("cut_smart", PICTURE, "Frame-exact cut, re-encoding only the ends",
+     "cut.py --smart cuts 1.3-6.6 s frame-exactly but re-encodes only 1.3-2 s and 6-6.6 s, matched to the source's H.264 parameters; the whole GOPs between are the source's own packets, checked against it before the file is written. The build fails unless the result is a verified smart cut.",
+     demo_cut_smart, "video", None, ("SOURCE", "--SMART 1.3-6.6")),
     ("cut_edit_list", PICTURE, "Lossless cut that starts where asked",
      "Both sides are stream copies of the same 2.05 s request. The default shifts the copy's timestamps to zero, so the keyframe's pre-roll plays first (start_snapped: true); --edit-list keeps the MP4 edit list that hides it, so the picture starts at 2.05 s (start_snapped: false, stored_preroll_seconds says how much is hidden). A player that ignores edit lists shows the pre-roll.",
      demo_cut_edit_list, "video", None, ("DEFAULT COPY", "--EDIT-LIST")),
@@ -1686,6 +1775,9 @@ _ROWS = [
     ("greenscreen", PICTURE, "Green screen onto a generated background",
      "background.py draws the gradient plate from nothing (there is no input file), then overlay.py keys the chroma green out of the subject and composites it on top.",
      demo_greenscreen, "video", None),
+    ("alpha_layer", PICTURE, "A graphic rendered as its own alpha layer",
+     "background.py --transparent makes an empty canvas, graphics.py --keep-alpha draws a lower third on it and writes it with its alpha (QuickTime Animation here; ProRes 4444 by default), checked frame by frame, and overlay.py lays that one layer over the footage. The layer can go to an editor as it is: nothing but the graphic was ever in its picture.",
+     demo_alpha_layer, "video", None),
     ("overlay_place", PICTURE, "Pieces of one layer at their own times",
      "overlay.py --place lays two ranges of the fractal clip on the test pattern: its first 1.5 s at 0.5 s, its 4-5.5 s at 3.5 s. Between them the layer is hidden and the main picture is untouched -- one pass, no full-length mostly-transparent layer to render first.",
      demo_overlay_place, "video", None),
@@ -1695,6 +1787,9 @@ _ROWS = [
     ("color_correct", PICTURE, "Primary colour correction",
      "Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.",
      demo_color_correct, "video", None),
+    ("color_legalize", PICTURE, "Broadcast legal levels",
+     "A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp acts before encoding, on the 4:2:0 picture the encoder receives (16-235 luma, 16-240 chroma); the encoder's error at the clamped edges can put a few decoded samples back out. The run then measures the encoded file (check.py --levels counts the same way), which passes with up to 1 % of a frame's luma or chroma samples out of range, and the build fails unless that check passes; --quality 8 keeps this pattern inside the allowance.",
+     demo_color_legalize, "video", None),
     ("grid_2x2", PICTURE, "2x2 comparison grid",
      "Four clips of different content in one frame, each letterboxed into its cell rather than stretched, with the source name burnt into the corner and only input 0's audio carried through.",
      demo_grid_2x2, "video", "latin"),
@@ -1770,6 +1865,12 @@ INSPECTION = [
      "the mark of lost audio at a join), single-frame flashes (one frame unlike both of its "
      "neighbours) and a first frame of one flat colour. The dropouts and flashes rows list the "
      "first five times; a row that does not pass names a fix."),
+    ("check.py --levels", "python3 scripts/check.py spot.mxf --platform broadcast --levels ebu-r103",
+     "counts the luma and chroma samples outside the legal range in every frame (bt709 16-235 / "
+     "16-240, or EBU R 103's -1..103 % luma) and adds a legal levels row with the worst frame's time "
+     "and min/max Y/U/V; the JSON has the shares per window. color.py --legalize clamps after the "
+     "4:2:0 conversion and measures the file it wrote the same way -- a change no preview would show, "
+     "which is why it is a number here and not a GIF."),
     ("report.py", "python3 scripts/report.py --before raw.mov --after final.mp4 -o report.html",
      "a single self-contained HTML page: before/after contact sheets, loudness, the platform "
      "check table and the exact commands. It is a file to open, not a picture to embed here."),

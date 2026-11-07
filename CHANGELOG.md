@@ -4,7 +4,43 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **An alpha-preserving path for grading and compositing.** `color.py --correct/--lut --keep-alpha` grades an alpha clip and keeps its alpha (split off before the grade, merged back unchanged, compared with the source's frame by frame); `graphics.py --keep-alpha` and `overlay.py --keep-alpha` draw on the input's alpha and write the element with it; `background.py --transparent` writes a fully transparent canvas to draw one element on. The line is ProRes 4444 by default (`--alpha-codec qtrle|png|vp9`), `--alpha-mode straight|premultiplied` says how the colour is stored, and the source's colour tags are kept as `--codec prores` keeps them. Every such run reads the alpha back as an `alpha` verification step (`alpha_codec`, `alpha_mode` in the result). Without the new flags the tools write what they wrote before.
+- **`check.py --levels bt709|ebu-r103`** measures the broadcast signal range: a `legal levels` row
+  with the share of luma and of chroma samples outside the standard's legal range, counted exactly
+  in every frame (lutyuv mask + signalstats), the worst frame and min/max Y/U/V; FAIL when one frame
+  has more than `--levels-tolerance` (1 %) out. The JSON `levels` document repeats it per clip and per
+  `--levels-window` seconds (10), with signalstats' BRNG beside it. Limits follow the bit depth
+  (bt709: 16-235 / 16-240 at 8 bits; ebu-r103: luma -1 %..103 %, 14-241). Without the flag the rows
+  and the document are unchanged.
+- **`color.py --legalize bt709|ebu-r103`** (with `--to-sdr`, `--lut` or `--correct`; `--correct`
+  alone clamps only) clamps luma and chroma into the same limits as the last filter, after the 8-bit
+  4:2:0 conversion, and measures the written file (`legalize`, verification step `legal_levels`,
+  `legalize_residual` warning when the encode left samples out of range). It writes the H.264 line, so
+  `--keep-alpha` and a `--codec` other than h264 are refused with it; `--drop-alpha` combines.
+- **`cut.py --smart`**: a keyframe-aware, frame-exact cut for H.264. Only the frames from each cut
+  point to the next keyframe (and from the last keyframe to the end point) are re-encoded, with
+  libx264 matched to the source's profile, level, pixel format, reorder depth, size, SAR and colour
+  tags. The whole GOPs between are the source's packets, joined through MPEG-TS parts (in-band
+  parameter sets) and kept on the source's time base.
+  - The result is checked before it is moved into place: the frame count and frame grid, the copied
+    packets against the source's, framemd5 of the re-encoded parts and of the first 300 frames
+    of each copied part, and the stream parameters (`smart.checks`, `smart_*` steps, `mode: smart`).
+  - A source it cannot match, or a failed check, falls back to the full re-encode. The result then
+    says why (`smart.reason`, `reason_code`, `reencode_reason` `smart_fallback`).
+  - Without `--smart`, every cut is unchanged.
+- **`probe.py --keyframes-near T[,T...]`** (`--keyframe-window`, 5 s): the keyframes around each
+  time, with the nearest before and after (`keyframes`).
+
+### Changed
+
+- **An output that loses a used alpha is no longer `verified`.** `color.py` (`--correct`, `--lut`, `--to-sdr`), `graphics.py` and `overlay.py` on a source whose alpha is used (ProRes 4444, QuickTime Animation, PNG, VP9 with alpha; a frame below opaque) wrote opaque H.264 and reported `verified: true`. The run still completes and writes the same file, but a failing `alpha` step (`reason: alpha_dropped`), `alpha_dropped: true` and an `alpha_dropped` warning now say the alpha was lost; `--drop-alpha` records that an opaque output is wanted. An opaque source runs and reports as before.
+- **`doctor` reads `ffmpeg -decoders`.** The capability names gain `decoder:<name>`, and the alpha tools' optional capabilities (`decoder:libvpx-vp9`, `encoder:qtrle`, `encoder:png`, `encoder:libopus`, ...) are resolved like every other one: `available`, `missing_optional` or `unknown`, never affecting `ok`. `detection` gains a `decoders` entry.
+
+### Fixed
+
+- **`overlay.py --video` with a layer that has alpha covered the picture with an opaque rectangle.** A VP9 layer stored with alpha (`export.py --preset vp9-alpha`) lost it in FFmpeg's own VP9 decoder and is now decoded with libvpx-vp9; an RGB layer (QuickTime Animation, PNG in .mov) lost it in its conversion to BT.709 YUV, which now keeps the alpha plane. Their transparent parts show the picture under them.
 
 ## 3.2.2
 

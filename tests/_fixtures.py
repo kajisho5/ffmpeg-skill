@@ -177,6 +177,49 @@ def tiny_clip(path, source, *extra, seconds=1, audio=False, pix_fmt="yuv420p"):
     return path
 
 
+# legal_range_clip(): the share of each plane's samples set to each code in the first half of the
+# frames (the rest of a frame, and every sample of the second half, is mid-grey 128). Luma: 10 and
+# 250 are out of both bt709 and ebu-r103; 15 and 240 are out of bt709 only. Chroma (Cb): 10 is out
+# of bt709 only (ebu-r103 allows 5..251). Cr stays 128.
+LEGAL_FIXTURE_Y = ((10, 0.10), (250, 0.05), (15, 0.05), (240, 0.05))
+LEGAL_FIXTURE_U = ((10, 0.20),)
+
+
+def legal_range_clip(path, depth=8, size=64, frames=10, rate=10):
+    """A lossless FFV1 clip with known out-of-range sample shares (LEGAL_FIXTURE_*), written from raw
+    planes: frames 0..frames/2-1 carry the pattern, the rest are all 128 (scaled to `depth`).
+    Returns {"y": {code: count}, "u": {code: count}, "samples": (luma, chroma)} for one patterned frame."""
+    import struct
+    n, c = size * size, (size // 2) * (size // 2)
+    shift = depth - 8
+
+    def plane(total, pattern):
+        vals, k, counts = [128] * total, 0, {}
+        for code, share in pattern:
+            cnt = int(total * share)
+            vals[k:k + cnt] = [code] * cnt
+            counts[code] = cnt
+            k += cnt
+        return vals, counts
+
+    y, ycounts = plane(n, LEGAL_FIXTURE_Y)
+    u, ucounts = plane(c, LEGAL_FIXTURE_U)
+    grey_y, grey_c = [128] * n, [128] * c
+    fmt = "<%dH" if depth > 8 else "%dB"
+    def pack(vals):
+        return struct.pack(fmt % len(vals), *[v << shift for v in vals])
+    raw = Path(str(path) + ".yuv")
+    with open(raw, "wb") as f:
+        for i in range(frames):
+            on = i < frames // 2
+            f.write(pack(y if on else grey_y) + pack(u if on else grey_c) + pack(grey_c))
+    pix = "yuv420p" if depth == 8 else f"yuv420p{depth}le"
+    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", pix, "-s", f"{size}x{size}",
+       "-r", str(rate), "-i", raw, "-c:v", "ffv1", path)
+    raw.unlink()
+    return {"y": ycounts, "u": ucounts, "samples": (n, c)}
+
+
 def sar_clip(path, colour="red", size="180x180", sar="16/9", seconds=1, audio=False):
     """A clip that stores non-square pixels: 180x180 at SAR 16:9 is a 320x180 picture on screen."""
     return tiny_clip(path, f"color=c={colour}:s={size}:r=30", "-vf", f"setsar={sar}", seconds=seconds, audio=audio)

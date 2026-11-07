@@ -4,9 +4,12 @@
     python3 tests/test_delivery.py       # this group alone
     python3 tests/test_all.py            # every group
 """
+import contextlib
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -141,6 +144,273 @@ class DeliveryTests(MediaFixtures):
         self.assertEqual((s_px[3], p_px[3]), (64, 64))
         for sc, pc in zip(s_px[:3], p_px[:3]):
             self.assertAlmostEqual(pc, sc * 64 / 255, delta=2)
+
+    # ------------------------------------------------- the alpha path beyond export
+    def _alpha_clip(self, name, alpha="if(lt(X,80),255,64)", codec=("-c:v", "prores_ks", "-profile:v", "4",
+                                                                       "-pix_fmt", "yuva444p10le"), tags=False):
+        """A 160x96, 1 s ProRes 4444 clip (testsrc2's colour) with a partly transparent alpha.
+        `tags` labels it BT.709 on the frames (setparams: from 7.1 the encoder takes the tags from
+        the frames, and output options alone left an RGB-made clip untagged) and in the stream."""
+        path = OUT / name
+        label = (",format=yuva444p10le,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+                 if tags else "")
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           f"testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'{label}", *codec,
+           *(("-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709") if tags else ()), path)
+        return path
+
+    def _rgba_png(self, path, t=0.0):
+        """One frame of a file as an RGBA PNG beside it, for _rgba_at (a 4:2:0 file cannot be
+        cropped to one pixel before its conversion)."""
+        png = Path(str(path) + f".{t:g}.png")
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path, "-frames:v", "1",
+           "-vf", "format=rgba", png)
+        return png
+
+    @staticmethod
+    def _alpha_step(doc):
+        return next(s for s in doc["verification"] if s["step"] == "alpha")
+
+    def test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha(self):
+        """--keep-alpha: the grade changes the colour and leaves the alpha as it was, frame for
+        frame, in ProRes 4444 at 4:4:4 with the source's tags; the step that says so is measured."""
+        src = self._alpha_clip("alpha_grade_src.mov", tags=True)
+        out = OUT / "alpha_grade_kept.mov"
+        # --hw is accepted and leaves the alpha line on the CPU (a note says so); it raised
+        # UnboundLocalError once (a local `note` in the --to-sdr branch hid the function)
+        doc = json.loads(script("color.py", src, "--correct", "--exposure", "0.5", "--keep-alpha", "--hw", "--json",
+                                "-o", out).stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        src_v, out_v = probe(str(src))["video"], probe(str(out))["video"]
+        for key in ("color_space", "color_primaries", "color_transfer"):
+            self.assertEqual(out_v[key], src_v[key], key)
+        self.assertEqual(src_v["color_space"], "bt709")
+        step = self._alpha_step(doc)
+        self.assertTrue(step["ok"])
+        self.assertTrue(step["comparison"]["paired"])
+        self.assertLessEqual(step["comparison"]["worst_delta"], 2.0)
+        self.assertEqual((doc["alpha_codec"], doc["alpha_mode"]), ("prores4444", "straight"))
+        m = probe(str(out))
+        self.assertEqual(m["video"]["codec"], "prores")
+        self.assertTrue(m["video"]["pix_fmt"].startswith("yuva444p"))
+        # the alpha survived where it was 64 and 255, and the colour was graded (brighter)
+        self.assertAlmostEqual(self._rgba_at(out, 120, 48)[3], 64, delta=2)
+        self.assertEqual(self._rgba_at(out, 20, 48)[3], 255)
+        self.assertGreater(sum(self._rgba_at(out, 20, 20)[:3]), sum(self._rgba_at(src, 20, 20)[:3]))
+        # a .cube LUT keeps it the same way, and qtrle / png / vp9 are lines too
+        lut = OUT / "alpha_identity.cube"
+        lut.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        for codec, ext in (("qtrle", "mov"), ("png", "mkv"), ("vp9", "webm")):
+            with self.subTest(codec=codec):
+                doc = json.loads(script("color.py", src, "--lut", lut, "--keep-alpha", "--alpha-codec", codec, "--json",
+                                        "-o", OUT / f"alpha_grade_{codec}.{ext}").stdout)
+                self.assertTrue(self._alpha_step(doc)["ok"], self._alpha_step(doc))
+        # premultiplied colour is the straight colour x alpha
+        pm = OUT / "alpha_grade_pm.mov"
+        script("color.py", src, "--correct", "--exposure", "0.5", "--keep-alpha", "--alpha-codec", "qtrle",
+               "--alpha-mode", "premultiplied", "-o", pm)
+        straight = OUT / "alpha_grade_qtrle.mov"
+        script("color.py", src, "--correct", "--exposure", "0.5", "--keep-alpha", "--alpha-codec", "qtrle", "-o", straight)
+        for sc, pc in zip(self._rgba_at(straight, 120, 48)[:3], self._rgba_at(pm, 120, 48)[:3]):
+            self.assertAlmostEqual(pc, sc * 64 / 255, delta=2)
+
+    def test_color_on_an_alpha_source_without_keep_alpha_is_not_verified(self):
+        """Regression: an H.264 grade of a ProRes 4444 clip dropped the alpha and still said
+        verified: true. The `alpha` step now fails (alpha_dropped), --drop-alpha records the
+        choice instead, and an opaque source gets no alpha step at all (unchanged)."""
+        src = self._alpha_clip("alpha_lost_src.mov")
+        doc = json.loads(script("color.py", src, "--correct", "--exposure", "0.3", "--json",
+                                "-o", OUT / "alpha_lost.mp4").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertFalse(doc["verified"])
+        step = self._alpha_step(doc)
+        self.assertFalse(step["ok"])
+        self.assertEqual((step["reason"], step["attribution"]), ("alpha_dropped", "artifact"))
+        self.assertFalse(step["written"]["alpha_plane"])
+        self.assertTrue(doc["alpha_dropped"])
+        self.assertIn("alpha_dropped", [w.get("code") for w in (doc.get("diagnostics") or {}).get("warnings") or []])
+        doc = json.loads(script("color.py", src, "--correct", "--exposure", "0.3", "--drop-alpha", "--json",
+                                "-o", OUT / "alpha_lost_ok.mp4").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertNotIn("alpha", [s["step"] for s in doc["verification"]])
+        self.assertTrue(doc["alpha_dropped"])
+        doc = json.loads(script("color.py", self.src, "--correct", "--exposure", "0.3", "--json",
+                                "-o", OUT / "alpha_opaque.mp4").stdout)
+        self.assertNotIn("alpha", [s["step"] for s in doc["verification"]])
+        self.assertNotIn("alpha_dropped", doc)
+        # refusals: nothing to keep, a container that cannot hold the line, two opposite flags
+        for argv, needle in (((self.src, "--correct", "--keep-alpha", "-o", OUT / "alpha_x.mov"), "has none"),
+                             ((src, "--correct", "--keep-alpha", "-o", OUT / "alpha_x.mp4"), "cannot hold it"),
+                             ((src, "--correct", "--keep-alpha", "--drop-alpha", "-o", OUT / "alpha_x.mov"), "opposite"),
+                             ((src, "--retag", "bt709", "--keep-alpha", "-o", OUT / "alpha_x.mov"), "copy the stream"),
+                             ((src, "--correct", "--alpha-codec", "qtrle", "-o", OUT / "alpha_x.mov"), "apply with --keep-alpha")):
+            with self.subTest(argv=argv[1:4]):
+                proc = script("color.py", *argv, "--json", expect_fail=True)
+                self.assertIn(needle, json.loads(proc.stdout)["error"]["message"])
+
+    def test_color_legalize_with_an_alpha_line_is_refused_and_runs_on_the_opaque_line(self):
+        """#432 x #433: --legalize clamps the 8-bit 4:2:0 picture the H.264 line encodes, and every
+        --alpha-codec converts the graded picture again after it (10-bit 4:4:4, RGB, yuva420p), so
+        --legalize --keep-alpha is refused before ffmpeg runs, as --legalize --codec prores is. With
+        --drop-alpha the same source takes the H.264 line: the clamp runs and both the legal_levels
+        step and the dropped-alpha record are in one document."""
+        src = self._alpha_clip("alpha_legalize_src.mov")
+        for codec in (None, "qtrle"):
+            with self.subTest(alpha_codec=codec):
+                proc = script("color.py", src, "--correct", "--legalize", "bt709", "--keep-alpha",
+                              *(("--alpha-codec", codec) if codec else ()), "-o", OUT / "alpha_legalize_x.mov",
+                              "--json", expect_fail=True)
+                err = json.loads(proc.stdout)
+                self.assertEqual(err["error"]["kind"], "input")
+                self.assertIn("--keep-alpha", err["error"]["message"])
+                self.assertEqual(err["commands"], [])
+        doc = json.loads(script("color.py", src, "--correct", "--legalize", "bt709", "--drop-alpha", "--quality", "0",
+                                "--preset", "veryfast", "--json", "-o", OUT / "alpha_legalize_opaque.mp4").stdout)
+        self.assertRegex(doc["commands"][0], r"format=yuv420p,lutyuv=y=")
+        steps = {s["step"]: s for s in doc["verification"]}
+        self.assertIn("legal_levels", steps)
+        self.assertTrue(steps["legal_levels"]["ok"], steps["legal_levels"])
+        self.assertNotIn("alpha", steps)
+        self.assertTrue(doc["alpha_dropped"])
+        self.assertTrue(doc["verified"], doc["verification"])
+
+    def test_graphics_and_overlay_render_on_a_transparent_canvas(self):
+        """background.py --transparent makes the canvas (alpha 0 in every frame, read back);
+        graphics.py and overlay.py --keep-alpha draw on it and write the element with its alpha:
+        transparent where nothing is drawn, opaque where the bar and the logo are."""
+        canvas = OUT / "alpha_canvas.mov"
+        doc = json.loads(script("background.py", "--transparent", "--duration", "2", "--width", "320", "--height", "180",
+                                "--json", "-o", canvas).stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(self._alpha_step(doc)["frames"]["measured"]["min"], 0.0)
+        self.assertEqual(self._rgba_at(canvas, 160, 90)[3], 0)
+        gfx = OUT / "alpha_lower_third.mov"
+        doc = json.loads(script("graphics.py", canvas, "--template", "lower-third", "--name", "Ada", "--title", "Analyst",
+                                "--start", "0", "--keep-alpha", "--json", "-o", gfx).stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        step = self._alpha_step(doc)
+        self.assertEqual(step["property"], "alpha_at_least_source")
+        self.assertTrue(step["written"]["alpha_plane"])
+        self.assertTrue(0.0 < step["frames"]["measured"]["mean"] < 128.0, step)
+        # a frame after the slide-in: the bar is opaque, the top of the frame is still transparent
+        frame = self._rgba_png(gfx, 1.5)
+        self.assertEqual(self._rgba_at(frame, 160, 10)[3], 0)
+        # the bar is the brand background at 85 % (alpha ~217), its accent stripe opaque
+        self.assertGreater(max(self._rgba_at(frame, x, y)[3] for x in range(20, 120, 10) for y in range(120, 175, 5)), 200)
+        logo = OUT / "alpha_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=40x40", "-frames:v", "1", logo)
+        lay = OUT / "alpha_logo_layer.mov"
+        doc = json.loads(script("overlay.py", canvas, "--image", logo, "--position", "center", "--keep-alpha", "--json",
+                                "-o", lay).stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        r, g, b, a = self._rgba_at(lay, 160, 90)
+        self.assertEqual(a, 255)
+        self.assertGreater(r, 200)
+        self.assertEqual(self._rgba_at(lay, 10, 10)[3], 0)
+        # on a BT.709-tagged canvas the RGB logo is converted to BT.709 (6.1's own conversion is
+        # BT.601: pure red then decodes as (255,24,0) under the kept tag), and a --video layer is
+        # composited at 4:4:4, never through 4:2:0
+        canvas709 = OUT / "alpha_canvas_709.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", canvas, "-c", "copy", "-colorspace", "bt709",
+           "-color_primaries", "bt709", "-color_trc", "bt709", canvas709)
+        lay709 = OUT / "alpha_logo_layer_709.mov"
+        script("overlay.py", canvas709, "--image", logo, "--position", "center", "--keep-alpha", "-o", lay709)
+        frame = self._rgba_png(lay709)
+        r, g, b, a = self._rgba_at(frame, 160, 90)
+        self.assertEqual(a, 255)
+        self.assertLess(max(g, b), 12, (r, g, b))
+        doc = json.loads(script("overlay.py", canvas, "--video", lay, "--position", "0,0", "--margin", "0",
+                                "--keep-alpha", "--json", "-o", OUT / "alpha_video_layer.mov").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertIn("format=yuva444p", doc["commands"][-1])
+        self.assertNotIn("yuva420p", doc["commands"][-1])
+        # without --keep-alpha the element on a transparent canvas is flattened: not verified
+        doc = json.loads(script("graphics.py", canvas, "--template", "bug", "--title", "LIVE", "--json",
+                                "-o", OUT / "alpha_bug_flat.mp4").stdout)
+        self.assertFalse(doc["verified"])
+        self.assertEqual(self._alpha_step(doc)["reason"], "alpha_dropped")
+
+    def test_alpha_checks_do_not_pass_what_they_could_not_read(self):
+        """A source that stores an alpha plane whose alpha could not be measured counts as using it
+        (never as opaque), so an output without alpha fails; a VP9 layer with alpha on a build with
+        no libvpx-vp9 decoder is refused (decoder_missing) instead of being composited opaque; a
+        planned input a dry run cannot probe yet is not refused as opaque."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _common import alpha
+        self.assertTrue(alpha.uses_alpha(alpha.UNMEASURED))
+        self.assertFalse(alpha.uses_alpha(None))
+        flat = OUT / "alpha_unmeasured_out.mp4"
+        script("background.py", "--duration", "1", "--width", "160", "--height", "96", "-o", flat)
+        step = alpha.lost_step(str(flat), probe(str(flat)), alpha.UNMEASURED)
+        self.assertFalse(step["ok"])
+        self.assertEqual(step["reason"], "alpha_dropped")
+        webm = self._alpha_clip("alpha_nodec.webm", codec=("-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p"))
+        saved = alpha._DECODERS
+        try:
+            alpha._DECODERS = {"vp9"}
+            with self.assertRaises(SystemExit):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    alpha.decoder_args_for(probe(str(webm)), str(webm))
+            alpha._DECODERS = {"vp9", "libvpx-vp9"}
+            self.assertEqual(alpha.decoder_args_for(probe(str(webm)), str(webm)), ["-c:v", "libvpx-vp9"])
+            # a decoder list that could not be read is unknown, not "missing": the decoder is still named
+            alpha._DECODERS = set()
+            self.assertEqual(alpha.decoder_args_for(probe(str(webm)), str(webm)), ["-c:v", "libvpx-vp9"])
+            self.assertEqual(alpha.vp9_decoder_args("vp9"), ["-c:v", "libvpx-vp9"])
+        finally:
+            alpha._DECODERS = saved
+        # export.py: a VP9 alpha source on a build whose decoder list lacks libvpx-vp9 (the encoder
+        # may still be there) is refused before it is measured; measured with FFmpeg's own decoder
+        # it read opaque, the written line did too, and the alpha step passed (#433 review)
+        shim = OUT / "alpha_nodec_shim"
+        shim.mkdir(exist_ok=True)
+        real = sh("ffmpeg", "-hide_banner", "-decoders").stdout
+        (shim / "decoders.txt").write_text("".join(ln for ln in real.splitlines(True) if " libvpx-vp9 " not in ln))
+        if os.name != "nt":
+            ff = shutil.which("ffmpeg")
+            (shim / "ffmpeg").write_text(f"#!/bin/sh\nif [ \"$2\" = -decoders ]; then cat '{shim / 'decoders.txt'}'; exit 0; fi\n"
+                                       f"exec '{ff}' \"$@\"\n")
+            (shim / "ffmpeg").chmod(0o755)
+            env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}")
+            for preset, ext in (("vp9-alpha", "webm"), ("prores4444", "mov")):
+                with self.subTest(preset=preset):
+                    proc = script("export.py", webm, "--preset", preset, "--json", "--overwrite",
+                                  "-o", OUT / f"alpha_nodec_out.{ext}", env=env, expect_fail=True)
+                    err = json.loads(proc.stdout)["error"]
+                    self.assertEqual(err["reason"], "decoder_missing", err)
+                    self.assertFalse((OUT / f"alpha_nodec_out.{ext}").exists())
+        planned = OUT / "alpha_planned_canvas.mov"
+        if planned.exists():
+            planned.unlink()
+        # the window is given: a planned clip has no length to default --end to yet (as without
+        # --keep-alpha), and the alpha line is planned on it rather than refused as opaque
+        doc = json.loads(script("graphics.py", planned, "--template", "bug", "--title", "LIVE", "--start", "0",
+                                "--end", "2", "--keep-alpha", "--dry-run", "--json",
+                                "-o", OUT / "alpha_planned_bug.mov").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertEqual(doc["alpha_codec"], "prores4444")
+        self.assertIn("prores_ks", doc["commands"][-1])
+
+    def test_overlay_keeps_a_video_layers_alpha(self):
+        """A --video layer with alpha shows the picture under its transparent half: a VP9 layer
+        (export's vp9-alpha) is decoded with libvpx-vp9, where the native decoder covered the base
+        with the layer's colour, and an RGB one (qtrle, PNG in .mov: what graphics.py --keep-alpha
+        writes) keeps its alpha plane through its BT.709 conversion, which ended in yuv444p."""
+        base = OUT / "alpha_white.mp4"
+        script("background.py", "--duration", "1", "--width", "320", "--height", "180", "--color", "white", "-o", base)
+        for name, codec in (("alpha_layer.webm", ("-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p")),
+                            ("alpha_layer_qtrle.mov", ("-c:v", "qtrle", "-pix_fmt", "argb"))):
+            with self.subTest(layer=name):
+                layer = self._alpha_clip(name, alpha="if(lt(X,80),255,0)", codec=codec)
+                out = OUT / f"{name}_over_white.mp4"
+                doc = json.loads(script("overlay.py", base, "--video", layer, "--position", "0,0", "--margin", "0",
+                                        "--json", "-o", out).stdout)
+                if name.endswith(".webm"):
+                    self.assertIn("-c:v libvpx-vp9 -i", " ".join(doc["commands"]))
+                frame = self._rgba_png(out)
+                self.assertGreater(min(self._rgba_at(frame, 140, 48)[:3]), 240, "the transparent half shows the white base")
+                self.assertLess(min(self._rgba_at(frame, 40, 48)[:3]), 240, "the opaque half covers it")
+                self.assertNotIn("alpha", [s["step"] for s in doc["verification"]], "an opaque main input gets no alpha step")
 
     def test_export_key_fill_review_430(self):
         """#430 review: key-fill maps only the fill and the sound (a source with a subtitle track

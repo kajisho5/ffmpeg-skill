@@ -11,6 +11,7 @@ The one-line form each section below starts from (SKILL.md keeps a shorter line 
 
 - HDR (iPhone, HDR10) re-encoded through an SDR path goes flat; the scripts keep HDR; `hdr: true` is a real PQ/HLG/DV signal, `bt2020_or_hdr: true` also BT.2020 SDR. -> [#hdr-and-colour](#hdr-and-colour)
 - Log footage (S-Log/V-Log/C-Log) is tagged SDR and looks grey: `probe.py --analyze`, then `color.py --lut` first. -> [#log-footage](#log-footage)
+- Re-encodes write opaque H.264: an alpha source needs `--keep-alpha` (color/graphics/overlay), or the `alpha` step fails; `background.py --transparent` is the canvas. -> [#alpha-channels](#alpha-channels)
 - A `-c copy` cut can start on a wrong/frozen frame; `cut.py` re-encodes past a 0.5 s snap, respect it; an .mp4/.mov copy's edit list hides the pre-roll (`--no-edit-list` off). -> [#keyframe-cuts](#keyframe-cuts)
 - VFR phone/screen clips: re-encodes go CFR; `cut.py` re-encodes measured VFR (`--vfr-guard average`: 2.x rule); odd rate: `fit.py --fps`. -> [#variable-frame-rate](#variable-frame-rate)
 - Sync/multicam `confidence` under 0.3 (or a huge offset) is suspect — check every camera; these align audio, never lip sync. -> [#sync-multicam-and-drift](#sync-multicam-and-drift)
@@ -56,6 +57,20 @@ at source colour: `export.py --preset prores` does not retag.
 Re-encoding an HDR (iPhone, HDR10) source through an SDR path flattens the
 colours. The scripts keep HDR; if you hand-write ffmpeg (never do — see SKILL.md),
 do not tag BT.709 on BT.2020 pixels.
+
+### Alpha channels
+ProRes 4444, QuickTime Animation, PNG and VP9 can carry an alpha channel; H.264, the default line
+of every re-encoding tool, cannot. `color.py --correct/--lut`, `graphics.py` and `overlay.py` take
+`--keep-alpha` (ProRes 4444 by default; `--alpha-codec qtrle|png|vp9`, each in a container that holds
+it) and read the alpha back after the write. Without it, a source whose alpha is used comes out
+opaque and the result says `verified: false` with a failing `alpha` step (`alpha_dropped`): pass
+`--drop-alpha` only when an opaque output is what you want. For a per-element layer with
+transparency, start from `background.py --transparent --duration 5 --width 1920 --height 1080 -o canvas.mov`
+and draw one element on it
+with `graphics.py`/`overlay.py --keep-alpha`. An alpha line keeps the source's colour tags (as
+`--codec prores` does). `--alpha-mode premultiplied` multiplies the written colour by the alpha;
+sources are taken as straight. A VP9 layer with alpha is decoded with libvpx-vp9; FFmpeg's own VP9
+decoder drops the alpha.
 
 ### Log footage
 S-Log, V-Log and C-Log look grey and low-contrast but are tagged SDR. Run

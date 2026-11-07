@@ -65,6 +65,9 @@ exists. When a decision changes, edit the entry in the same PR.
 - [3.1.7 — the same mechanisms, where the earlier fixes did not reach (#414)](#317--the-same-mechanisms-where-the-earlier-fixes-did-not-reach-414)
 - [3.1.8 — earlier fixes, where they had not reached (#415)](#318--earlier-fixes-where-they-had-not-reached-415)
 - [After 3.1.8 — delivery masters (#417–#423, review of #430)](#after-318--delivery-masters-417423-review-of-430)
+- [After 3.2.1 — broadcast legal levels, measured](#after-321--broadcast-legal-levels-measured)
+- [After 3.2.2 — the alpha path beyond export (#433)](#after-322--the-alpha-path-beyond-export-433)
+- [After 3.2.1 — a smart cut that re-encodes only the partial GOPs](#after-321--a-smart-cut-that-re-encodes-only-the-partial-gops)
 <!-- contents:end -->
 
 ## Time limits
@@ -2886,4 +2889,178 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   --versions` has no single output, and a plan over a version file was refused as an existing output
   when it was executed. Code: `_common.emit.write_plan()`, `_planned_outputs()`. Test:
   `test_loudness_versions_writes_one_measured_file_per_target`.
+
+## After 3.2.1 — broadcast legal levels, measured
+
+- **The out-of-range share is counted, not estimated from a histogram.** `check.py --levels` sends
+  each plane through `lutyuv` as a mask (an out-of-range code becomes the depth's top code, every
+  other code 0) and reads the mask's mean with `signalstats`: that mean over the top code is the
+  plane's out-of-range share in that frame, exact to the sample. signalstats' own BRNG is reported
+  beside it (`brng_pct`) but does not decide the row: its limits are fixed at the nominal range, it
+  counts pixels with any component out (luma and chroma cannot be told apart), and it cannot take
+  EBU R 103's wider tolerance. The mask's value is a literal, not lutyuv's `maxval` (235 for limited-
+  range luma, 240 for chroma), which would scale every share down. Code: `_common.probe.measure_signal_range()`.
+  Test: `test_check_levels_counts_out_of_range_samples_exactly`.
+- **Each standard is stated in percent of the nominal swing; the codes follow from the bit depth.**
+  `bt709` is 0..100 % luma and the nominal chroma swing (16-235 / 16-240 at 8 bits, 64-940 / 64-960
+  at 10). `ebu-r103` is the R 103 tolerance, luma -1 %..103 % (14-241 at 8 bits, 56-966 at 10), and
+  chroma as far as an RGB triple inside R 103's -5 %..105 % can reach (|C| <= 0.55 of the span, 5-251).
+  A limit between two codes rounds inward. This counts Y'CbCr codes: an RGB gamut error made of
+  legal Y'CbCr codes is not counted, and the reference says so. Code: `_common.probe.LEGAL_RANGES`,
+  `legal_limits()`. Test: `test_check_levels_scales_the_limits_with_the_bit_depth`.
+- **The row judges the worst frame, not the clip average.** One frame with a clipped sky is a QC
+  failure even in an hour that is otherwise legal, so the row FAILs when any frame has more than
+  `--levels-tolerance` (1 %) of its luma or of its chroma samples out; the allowance is room for a
+  filter's overshoot at a sharp edge. The clip share, the per-window shares and the worst frame's
+  time are all in `levels`. It is a `format` row (the fix is mechanical: `color.py --legalize`), so
+  it FAILs without a named platform too: the caller asked for it. Code: `check.levels_row()`.
+- **An RGB or grey picture is not measured, and a full-range file is measured with a note.** Neither
+  has the limited-range Y'CbCr codes a broadcast file carries; converting one here would measure the
+  conversion. Test: `test_check_levels_is_opt_in_and_skips_a_picture_with_no_luma`.
+- **The limits follow the depth of the planes, and a partial measurement is no measurement.** The
+  depth comes from ffmpeg's pixel-format table (`component_depth()`), not from the format's name:
+  `nv12` is 8-bit (its 12 is bits per pixel), and read as 12-bit every legal sample counted out. A
+  run that exits non-zero, or whose two passes counted different frames, returns nothing and the
+  row says `could not measure`: the frames read before a failure are not the file. Tests:
+  `test_check_levels_reads_the_depth_of_the_planes_not_of_the_name`,
+  `test_check_levels_is_not_measured_when_the_decode_fails_part_way` (#432 review).
+- **`color.py --legalize` clamps after the 4:2:0 conversion, and measures instead of promising.** The
+  clamp is the last filter before the encoder, on the 8-bit 4:2:0 picture it encodes: a clamp
+  ahead of the subsampling lets the chroma filter's overshoot put samples back out. A lossy encoder
+  can still move a decoded sample a code or more past a hard-clamped edge (the test pattern at CRF
+  18 kept 4 % of one frame's luma out), so the written file is measured with the same counter: the
+  `legal_levels` step holds it to the same 1 % per frame and `legalize_residual` reports any
+  residue. Encoded losslessly (`--quality 0`) the residue is zero. `--codec` other than h264 is
+  refused because the encoder line would convert the clamped picture again (10-bit, 4:2:2), and
+  `--retag` / `--strip-dovi` because they copy the stream. A full-range source (tagged `pc`, or
+  yuvj420p) is scaled to limited range (`scale=out_range=tv`) ahead of the 4:2:0 conversion, so its
+  blacks and whites move into the limits instead of being cut at them; a limited-range source's
+  chain is unchanged (#432 review; test
+  `test_color_legalize_converts_a_full_range_picture_before_the_clamp`). Code: `color.legal_clamp()`,
+  `color.legalize_report()`. Test:
+  `test_color_legalize_clamps_after_the_420_conversion_and_measures_the_file`.
+- **`--legalize` with `--keep-alpha` is refused; with `--drop-alpha` it runs.** The clamp and its
+  measurement are defined on the 8-bit 4:2:0 picture the H.264 line encodes. An alpha line grades
+  at 4:4:4 and every `--alpha-codec` converts the clamped picture again (ProRes 4444 to 10-bit,
+  qtrle/PNG to RGB, VP9 to yuva420p), which is the reason `--codec` other than h264 is refused, so
+  the combination is refused the same way (`kind: input`, before ffmpeg runs). An alpha master is an
+  editing master, not the broadcast delivery: legalize the opaque delivery (`--drop-alpha`), or
+  measure the master with `check.py --levels`. Code: `color.main()`. Test:
+  `test_color_legalize_with_an_alpha_line_is_refused_and_runs_on_the_opaque_line` (#432 with #433).
+
+## After 3.2.2 — the alpha path beyond export (#433)
+
+Context: `export.py`'s alpha presets kept and checked an alpha channel, but every tool that grades
+or composites wrote opaque H.264 and still said `verified: true` on a ProRes 4444 source whose alpha
+it had dropped, and nothing could make a transparent canvas to draw one graphic on. Decisions:
+
+- **An alpha line is asked for, never inferred.** `--keep-alpha` (`color.py --correct/--lut`,
+  `graphics.py`, `overlay.py`) and `background.py --transparent` write ProRes 4444 by default
+  (`--alpha-codec qtrle|png|vp9`); without the flag the tools write the same H.264 line as before.
+  Switching an alpha source to ProRes on its own would change the codec, container and size of an
+  existing call's output, which is not an additive change. A container that cannot hold the line
+  (`.mp4` for ProRes, `.mov` for VP9) is refused before anything runs. Code: `_common/alpha.py`
+  `check_alpha_args()`. Test: `test_color_on_an_alpha_source_without_keep_alpha_is_not_verified`.
+- **A lost alpha fails verification instead of passing.** The one change to a call without the new
+  flags: on a source that stores an alpha plane and uses it (a frame below opaque), a re-encode that
+  writes no alpha adds an `alpha` step with `ok: false` (`reason: alpha_dropped`, `attribution:
+  artifact`) and an `alpha_dropped` warning, so `verified` is false. The run still completes and
+  writes its file; `--drop-alpha` records that an opaque output was wanted and adds no failing step.
+  An opaque source is not decoded for this and reports exactly as before (the check needs the pixel
+  format, or a VP9 stream's `alpha_mode` tag, to show an alpha plane first). Code: `alpha.report()`,
+  `alpha.lost_step()`. Test: as above.
+- **The alpha line keeps the source's colour tags, as `--codec prores` does.** An alpha master is an
+  editing master: it converts no matrix and draws no BT.709 label, so `decision.keeps_source_tags()`
+  is true for both. A grade's RGB legs (and an RGB layer's conversion) leave the frames untagged
+  (6.1) or relabelled (7.1+), so the source's tags are put back on the frames with `setparams` at
+  the end of the chain and named on the stream; with the frames already carrying them, 7.1+'s
+  output-option negotiation has nothing to convert. Code: `decision.keeps_source_tags()`,
+  `alpha.finish_chain()`, `alpha.tag_args()`. Test:
+  `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
+- **`color.py` never grades the alpha.** The alpha is split off the source, kept as decoded and merged
+  back (`alphamerge`) after the grade, which runs at 4:4:4 (8-bit: the grade filters' own depth), so
+  the written alpha is compared with the source's frame by frame (tolerance 2 of 255), exactly as
+  export's alpha presets are. Code: `color.main()`. Test: as above.
+- **Compositing is checked against a floor, not an equality.** A layer drawn on the picture adds
+  coverage, so the written alpha cannot equal the source's: `graphics.py`/`overlay.py` pass when the
+  stream stores an alpha plane, no frame's alpha is below the source's, and the output did not turn
+  opaque in every frame the source was transparent in (what a dropped alpha reads as). A layer that
+  covers the whole frame for the whole clip fails `opaque_everywhere`: there is no alpha left to
+  keep, and the step says so rather than guessing that was intended. Boxes are composited as layers
+  (`overlay` blends the alpha; `drawbox` leaves it as it was), libass gets `alpha=1`. Code:
+  `alpha.kept_step()`. Test: `test_graphics_and_overlay_render_on_a_transparent_canvas`.
+- **An `overlay.py --video` layer with alpha keeps it**, with or without `--keep-alpha`: a VP9 layer
+  is decoded with libvpx-vp9 (FFmpeg's own VP9 decoder drops the alpha layer), and an RGB layer
+  (qtrle, PNG in .mov) is converted to BT.709 YUV in `yuva444p`, not `yuv444p`. Both covered the
+  picture as an opaque rectangle. This changes the picture of an existing call, and only where the
+  old one was wrong. Code: `overlay.main()`, `alpha.decoder_args_for()`. Test:
+  `test_overlay_keeps_a_video_layers_alpha`.
+- **What cannot be read is not taken as opaque.** A source that stores an alpha plane (or a
+  palette, which can hold transparency the pixel format does not show) and whose alpha cannot be
+  measured counts as using it, so an output without alpha fails; a VP9 source or layer with alpha
+  on a build with no libvpx-vp9 decoder is refused (`decoder_missing`, read from `ffmpeg -decoders`,
+  not the encoder list) rather than composited opaque. A decoder list that cannot be read is
+  unknown, not missing, as for filters: libvpx-vp9 is still asked for and ffmpeg says whether it
+  exists. `export.py`'s alpha presets take the same guard before they measure the source: with
+  only FFmpeg's own decoder a VP9 alpha source and its written line both read opaque, and the step
+  passed with the transparency gone. `doctor` reports `decoder:libvpx-vp9` from the same list
+  (`test_doctor_resolves_the_declared_decoder_capability`). The measurement is read frame by frame from
+  the pipe (an hour at 30 fps was ~250 MB held at once). A planned input a dry run cannot probe yet
+  is not refused as opaque (its window is given: a clip of unknown length has no end to default
+  `--end` to). `color.py --retag`'s fallback re-encode gets the same `alpha` step. Code:
+  `alpha.source_alpha()`, `alpha.frame_means()`. Test:
+  `test_alpha_checks_do_not_pass_what_they_could_not_read`.
+- **On a BT.709-tagged alpha line, RGB layers are converted to BT.709.** The line keeps the source's
+  tags, and FFmpeg 6.1 turns an RGB logo or box into YUV with BT.601, so saturated colours shifted
+  under the kept tag. Drawn text colours (drawtext, libass) are not converted on an alpha line.
+  Code: `decision.rgb_chain_to_bt709()`. Test: `test_graphics_and_overlay_render_on_a_transparent_canvas`.
+- **`--alpha-mode` describes the written colour, as in `export.py`.** Sources are taken as straight;
+  `premultiplied` multiplies the written colour by the alpha at the end of the graph.
+
+## After 3.2.1 — a smart cut that re-encodes only the partial GOPs
+
+- **Only H.264 that libx264 here can reproduce is cut smart; everything else falls back, saying why.**
+  A re-encoded part and the copied GOPs are decoded as one stream, so the part has to have the
+  source's parameters: profile (Baseline/Main/High), level, 8-bit 4:2:0, frame size, SAR, colour tags.
+  It also has to have the source's reorder depth (`has_b_frames`). Each part's decode times run
+  ahead of its presentation times by that depth, so parts of different depth would collide in
+  decode order at a join. The x264 line sets `bframes`/`b-pyramid` to give the same depth, and
+  every part is probed against the source. HEVC, 10-bit, 4:2:2/4:4:4, interlaced, variable-rate
+  and HDR sources are not matched. Neither is an open GOP at a copy boundary, whose leading frames
+  decode after the keyframe. These are re-encoded in full, as `--accurate` would, with `smart.reason`
+  and a `reason_code`; they are not refused, because the caller asked for a cut. Code:
+  `_smartcut.ineligible()`, `x264_line()`, `plan_segment()`.
+- **The parts travel as MPEG-TS, so the parameter sets switch in-band.** An MP4 or Matroska part
+  carries one SPS/PPS out of band, and a concat of the encoder's part and the source's packets would
+  decode one of them with the other's. In MPEG-TS every keyframe carries its own, and the output
+  keeps them in-band. The delimiter NAL units the TS muxer adds are removed again (`filter_units`). The
+  output's MP4 time scale is set to the source's time base (`-video_track_timescale`).
+- **Verified against the source, not trusted.** Each check below would catch a different way the
+  join can go wrong:
+  - a frame dropped or repeated at a join (the count and the frame grid);
+  - a copy that started or stopped on the wrong packet (packet MD5s against the source's, with
+    SPS/PPS/AUD removed on both sides);
+  - a decoder that used the wrong parameter set after a join (framemd5 of each re-encoded part as
+    written, and of the first 300 frames of each copied part from the source, against the output).
+    The cap (`DECODE_CHECK_MAX_FRAMES`) is there because a wrong parameter set shows from the first
+    frame after the join, and a long copied part (several GOPs, or one 10-second GOP) would
+    otherwise cost a decode of its own.
+    Both sides must hold all the frames asked for; two equally short lists are not a match.
+
+  A failed check is a fallback, never a warning on a written file: the smart result is written
+  beside the output and moved into place only once it passes.
+- **The sound is cut from the source and encoded once.** A packet copy of AAC lands on 21 ms
+  packet boundaries and carries encoder priming into every join. The sound is trimmed on the
+  picture's frame grid, as the `--accurate` re-cut does, and encoded in the same command that joins
+  the picture. The saving is in the video, which is where the time and the quality go. Each
+  segment's sound is padded to its picture's length, so a track that ends early cannot pull the
+  next segment's sound forward. A segment whose picture starts more than a frame after it (video
+  that starts after its sound) falls back (`av_offset`): trimming the sound on the picture's grid
+  would drop the sound before the picture, which the full re-encode keeps.
+- **`--fps` stays a number in this change.** `join.py --fps 30000/1001` needs `--fps` to take a
+  rational, but the MCP schema publishes `--fps` as `number`, and a rational needs it to become a
+  string or a union, which the contract's type set does not allow. That is a contract decision for
+  its own change; a float `--fps` is unchanged.
+
+Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
 
