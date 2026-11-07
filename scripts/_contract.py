@@ -516,6 +516,7 @@ DIAGNOSTIC_CODES = {
     "repair_incomplete": ("warnings", "export.py --repair: decode errors remain after the remux (a damaged frame needs a re-encode); {timestamp_warnings, decode_errors}"),
     "size_over_limit": ("warnings", "export.py --max-mb: the written file is over the size asked for (the encoder overshot its bitrate); {size, limit}"),
     "loudness_outside_spec": ("warnings", "export.py: the written file's loudness is outside the platform's spec (normalized: after --normalize too); {platform, lufs, tp, normalized}"),
+    "smart_fallback": ("fallbacks", "cut.py --smart could not make or verify the smart cut, so the whole cut was re-encoded as --accurate would (smart.reason says why); {reason_code}"),
     "camera_not_started": ("fallbacks", "multicam.py: a range asked for a camera that had not started; camera 0 played it ({start, end, requested_camera, camera, starts_at}); `cuts` names the camera rendered"),
     "loudness_not_measured": ("warnings", "export.py: the written file's loudness could not be read, so the platform's loudness was not verified (loudness.ok null, a failing loudness verification step)"),
     "loudness_no_audio": ("skipped", "export.py: a platform preset's loudness check, on a source with no audio"),
@@ -567,7 +568,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                                "timecode": {"type": "object", "description": "3.0.0: the source's start timecode {value, drop_frame, source}: the first HH:MM:SS[:;.]FF timecode tag from the video stream, then a tmcd data stream, then the container; all three null when none carries one"},
                                "chapters": {"type": "array", "description": "the container's chapter markers [{index, start, end, title}]"},
                                "subtitle_stream_details": {"type": "array", "description": "every subtitle stream in file order [{index (the n of -map 0:s:n), codec, language, title}]"},
-                               "keyframes": {"type": "array", "description": "--keyframes-near only: one entry per time [{at, window, keyframes (the video keyframes within window seconds of it), before (the nearest at or before it, or null), after (at or after it, or null)}], seconds from the file's start"}},
+                               "keyframes": {"type": "array", "description": "--keyframes-near only: one entry per time [{at, window, keyframes (the video keyframes within window seconds of it), before (the nearest of those at or before it, or null when none is within the window), after (at or after it, likewise)}], seconds from the file's start; a failed keyframe read fails the run (kind ffmpeg)"}},
                 "additionalProperties": True}
     base = {"status": {"enum": ["completed"]}, "output": {"type": ["string", "null"], "description": "path written, or null"},
             "dry_run": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}, "description": "every ffmpeg command line planned or run"},

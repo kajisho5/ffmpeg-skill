@@ -22,7 +22,8 @@ re-encode with the reason stated:
     packets   every copied part's packets against the source's (MD5 of each packet with the
               parameter-set and delimiter NAL units removed, which the in-band switch adds)
     decode    framemd5 of each re-encoded part as written against the same frames decoded from
-              the output, and of each copied part's first GOP against the source's
+              the output, and of each copied part's first GOP (up to DECODE_CHECK_MAX_FRAMES)
+              against the source's
     params    the re-encoded parts' stream parameters against the source's, and the output's
               time base against the source's
 
@@ -33,6 +34,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, aac_args, concat_list_line, ffmpeg_base, require_tool, run
+from _common.runner import fail_if_classified
 
 # the stream parameters a re-encoded part must share with the source (ffprobe -show_streams)
 MATCH_FIELDS = ("codec_name", "profile", "level", "pix_fmt", "width", "height", "sample_aspect_ratio",
@@ -238,6 +240,18 @@ def output_pts(path: str) -> List[float]:
     return sorted(out)
 
 
+def _write(cmd: List[str], what: str) -> None:
+    """Run one of the smart cut's ffmpeg writes. A failure the runner classifies (a full disk, a
+    missing input) fails the run as it would anywhere; any other is a fallback with ffmpeg's reason
+    (x264 refusing the matched profile at --quality 0, a copy the muxer rejects)."""
+    proc = run(cmd, check=False)
+    fail_if_classified(proc)
+    if proc.returncode != 0:
+        lines = [ln.strip() for ln in (proc.stderr or "").splitlines() if ln.strip()]
+        why = next((ln for ln in lines if "rror" in ln), lines[-1] if lines else f"exit code {proc.returncode}")
+        raise SmartFallback(f"ffmpeg could not write {what}: {why}", "encode")
+
+
 def _count(n_frames: int, rate: Fraction) -> str:
     """A part's exact length for the concat list's `duration`, in seconds."""
     return f"{float(Fraction(n_frames) / rate):.9f}"
@@ -254,6 +268,15 @@ def execute(src: str, segments: List[Tuple[float, float]], dst: str, meta: Dict[
     half = frame / 2
     x264 = x264_line(params, crf, preset)
     plans = [plan_segment(packets, s, e, vend, gop_is_open) for s, e in segments]
+    has_a = bool(meta.get("audio"))
+    for si, ((s, _), segment_parts) in enumerate(zip(segments, plans)):
+        # the sound is trimmed on the picture's grid from the segment's first frame; a picture that
+        # starts later than a frame after the segment (video that starts after its audio) would
+        # lose the sound before it, which the full re-encode keeps
+        late = segment_parts[0]["start"] - s
+        if has_a and late > frame + 1e-6:
+            raise SmartFallback(f"the picture of segment {si + 1} starts {late:.3f}s after it does, and the sound "
+                                "before it is kept only by a full re-encode", "av_offset")
     parts: List[Dict[str, Any]] = []
     for si, segment_parts in enumerate(plans):
         for part in segment_parts:
@@ -261,9 +284,10 @@ def execute(src: str, segments: List[Tuple[float, float]], dst: str, meta: Dict[
             if part["kind"] == "reencode":
                 m = min(seek_margin, part["start"])
                 trim = f"trim=start={m - half:.6f}" + (f":end={m + part['frames'] * frame - half:.6f}")
-                run(ffmpeg_base() + ["-ss", f"{part['start'] - m:.6f}", "-i", src, "-map", "0:v:0", "-an", "-sn", "-dn",
-                                     "-vf", f"{trim},setpts=PTS-STARTPTS", "-frames:v", str(part["frames"]),
-                                     "-fps_mode", "passthrough"] + x264 + ["-f", "mpegts", part["path"]])
+                _write(ffmpeg_base() + ["-ss", f"{part['start'] - m:.6f}", "-i", src, "-map", "0:v:0", "-an", "-sn", "-dn",
+                                        "-vf", f"{trim},setpts=PTS-STARTPTS", "-frames:v", str(part["frames"]),
+                                        "-fps_mode", "passthrough"] + x264 + ["-f", "mpegts", part["path"]],
+                       f"the re-encoded part from {part['start']:.3f}s")
             else:
                 target = part["start"] + _SEEK_PAST
                 landed = None if STATE.dry_run else landing(src, target)
@@ -272,8 +296,9 @@ def execute(src: str, segments: List[Tuple[float, float]], dst: str, meta: Dict[
                                         f"{'an unreadable place' if landed is None else f'{landed[0]:.3f}s'}", "seek")
                 part["seek"] = target
                 part["t"] = None if part["end_dts"] is None else part["end_dts"] - target - _DTS_MARGIN
-                run(ffmpeg_base() + ["-ss", f"{target:.6f}", "-i", src] + ([] if part["t"] is None else ["-t", f"{part['t']:.6f}"])
-                    + ["-map", "0:v:0", "-an", "-sn", "-dn", "-c", "copy", "-f", "mpegts", part["path"]])
+                _write(ffmpeg_base() + ["-ss", f"{target:.6f}", "-i", src] + ([] if part["t"] is None else ["-t", f"{part['t']:.6f}"])
+                       + ["-map", "0:v:0", "-an", "-sn", "-dn", "-c", "copy", "-f", "mpegts", part["path"]],
+                       f"the copied part from {part['start']:.3f}s")
             if not STATE.dry_run:
                 written = output_pts(part["path"])
                 if part["kind"] == "copy":
@@ -299,7 +324,6 @@ def execute(src: str, segments: List[Tuple[float, float]], dst: str, meta: Dict[
                 fh.write(f"duration {_count(part['frames'], rate)}\n")
     ext = os.path.splitext(dst)[1].lower()
     cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
-    has_a = bool(meta.get("audio"))
     graph: List[str] = []
     if has_a:
         # the sound of each segment from the source, on the picture's frame grid, encoded once
@@ -314,8 +338,10 @@ def execute(src: str, segments: List[Tuple[float, float]], dst: str, meta: Dict[
             fade = min(declick, (b - a) / 2)
             fades = (f",afade=t=in:st=0:d={fade:.6f}" if fade > 0 and i > 0 else "")
             fades += (f",afade=t=out:st={b - a - fade:.6f}:d={fade:.6f}" if fade > 0 and i < len(segments) - 1 else "")
+            # padded to its picture's length: sound that ends early (a track shorter than the
+            # picture) must not pull the next segment's sound forward
             graph.append(f"[{i + 1}:a:0]atrim=start={a:.6f}:end={b:.6f},asetpts=PTS-{a:.6f}/TB,"
-                         f"aresample=async=1:first_pts=0{fades}[a{i}]")
+                         f"aresample=async=1:first_pts=0,apad=whole_dur={b - a:.6f}{fades}[a{i}]")
             pads += f"[a{i}]"
         graph.append(f"{pads}concat=n={len(segments)}:v=0:a=1[a]")
         cmd += ["-filter_complex", ";".join(graph), "-map", "0:v:0", "-map", "[a]"] + aac_args()
@@ -327,7 +353,7 @@ def execute(src: str, segments: List[Tuple[float, float]], dst: str, meta: Dict[
         if tb.startswith("1/"):
             cmd += ["-video_track_timescale", tb[2:]]
         cmd += ["-tag:v", "avc1", "-movflags", "+faststart"]
-    run(cmd + [dst])
+    _write(cmd + [dst], "the joined parts")
     doc: Dict[str, Any] = {
         "applied": True,
         "parts": [{"segment": p["segment"] + 1, "kind": p["kind"], "start": round(p["start"], 6),
@@ -380,7 +406,8 @@ def verify(src: str, dst: str, parts: List[Dict[str, Any]], params: Dict[str, An
             g = n
             want = frame_hashes(p["path"], None, g)
         got = frame_hashes(dst, at_out, g)
-        if not want or want != got:
+        # a short list on both sides (a frame that did not decode) is not a match of g frames
+        if len(want) != g or want != got:
             raise SmartFallback(f"the frames decoded from the output's {p['kind']} part at {pts[offset] - pts[0]:.3f}s "
                                 f"differ from the {'source' if p['kind'] == 'copy' else 'encoded part'}", "decode")
         decoded += g

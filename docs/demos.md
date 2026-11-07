@@ -823,7 +823,7 @@ python3 scripts/check.py final.mp4 --platform youtube --content
 ### cut.py --smart
 
 ```bash
-python3 scripts/cut.py talk.mp4 --start 1:20.4 --end 2:05.1 --smart
+python3 scripts/cut.py talk.mp4 --start 1:20.4 --end 2:05.1 --smart --json
 ```
 
 **No picture:** a frame-exact H.264 cut that re-encodes only the partial GOPs at the two cut points and copies the rest, then reports which parts were which (smart.parts) and what it checked against the source; probe.py --keyframes-near 80.4 shows the keyframes it works between. A frame-exact cut looks the same as an --accurate one, so this is a number here, not a GIF.

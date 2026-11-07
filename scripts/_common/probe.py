@@ -478,23 +478,29 @@ def _bit_depth(pix_fmt: Optional[str]) -> int:
     return n if 8 <= n <= 16 else 8
 
 
-def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
-    """Video keyframe timestamps within +-window seconds of t, ascending. Read with
-    -read_intervals so a long file is not scanned end to end; empty when ffprobe cannot say."""
-    ffprobe = require_tool("ffprobe")
-    lo = max(0.0, t - window)
-    proc = run([ffprobe, "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
-                "-read_intervals", f"{lo:.3f}%{t + window:.3f}", "-show_entries", "frame=pts_time",
+def keyframe_times(path: str, lo: float, hi: float, stream: str = "v:0") -> Optional[List[float]]:
+    """Keyframe timestamps of `stream` read from lo to hi seconds (file time), ascending and as
+    ffprobe prints them (microseconds). Read with -read_intervals so a long file is not scanned end
+    to end; the read starts at the keyframe at or before lo, so the first may lie before it. None
+    when ffprobe fails (unmeasured, not "no keyframes")."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", stream, "-skip_frame", "nokey",
+                "-read_intervals", f"{max(0.0, lo):.6f}%{hi:.6f}", "-show_entries", "frame=pts_time",
                 "-of", "csv=p=0", path], quiet=True, check=False)
     if proc.returncode != 0:
-        return []
+        return None
     out: List[float] = []
     for line in proc.stdout.splitlines():
         try:
-            out.append(round(float(line.strip().rstrip(",")), 3))
+            out.append(float(line.strip().rstrip(",")))
         except ValueError:
             continue
     return sorted(set(out))
+
+
+def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
+    """Video keyframe timestamps within +-window seconds of t (to the ms), ascending; empty when
+    ffprobe cannot say (cut.py's best-effort hints; probe.py --keyframes-near uses keyframe_times)."""
+    return sorted(set(round(k, 3) for k in keyframe_times(path, t - window, t + window) or []))
 
 
 # frame timing: is a stream's frame rate really variable? (cut.py's VFR guard)

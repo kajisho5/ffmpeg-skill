@@ -120,8 +120,8 @@ holds the written length to the maximum with no tolerance, as `check.py` does.
 probe.py INPUT... [--compact] [--field duration|video.fps|...] [--keyframes-near T[,T...] [--keyframe-window 5]]
 ```
 `--keyframes-near` adds `keyframes`: for each time, the video keyframes within `--keyframe-window`
-seconds, and the nearest at or before it (`before`) and at or after it (`after`), in seconds from the
-file's start. These are where a stream copy can start, and where `cut.py --smart` stops re-encoding.
+seconds, and the nearest of those at or before it (`before`) and at or after it (`after`; either is
+`null` when none is within the window), in seconds from the file's start. These are where a stream copy can start, and where `cut.py --smart` stops re-encoding.
 JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation,variable_frame_rate_suspected,hdr,hdr_signal,bt2020_or_hdr,hdr_format,start_time}`
 (`hdr`, and `hdr_signal` equal to it, is true only for a PQ / HLG transfer or Dolby Vision -- since 2.0;
 `bt2020_or_hdr` also counts BT.2020 primaries on an SDR transfer, which `hdr_format` names "BT.2020 SDR"),
@@ -185,7 +185,7 @@ Before it is moved into place, the result is checked:
 - every copied packet against the source's (MD5 with the parameter-set and delimiter NAL units
   removed);
 - framemd5 of every re-encoded part against the same frames decoded from the output, and of each
-  copied part's first GOP against the source's;
+  copied part's first GOP (up to 300 frames) against the source's;
 - the output's stream parameters and time base against the source's.
 
 These are reported in `smart.checks` and as `smart_*` verification steps, and `mode` is `smart`.
@@ -194,6 +194,8 @@ When the source cannot be matched, the result is `mode: accurate`, `reencode_rea
 - a source that is not H.264 8-bit 4:2:0 in Baseline/Main/High;
 - an interlaced, variable-rate or HDR source;
 - an open GOP at a copy boundary;
+- a picture that starts after its sound at a segment's start, or more than 32 segments with sound;
+- an ffmpeg write that fails (x264 cannot make the matched High profile at `--quality 0`);
 - an output other than `.mp4`/`.mov`/`.m4v`/`.mkv`;
 - any check failing.
 

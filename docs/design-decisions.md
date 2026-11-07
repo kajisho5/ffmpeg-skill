@@ -2912,14 +2912,21 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   - a copy that started or stopped on the wrong packet (packet MD5s against the source's, with
     SPS/PPS/AUD removed on both sides);
   - a decoder that used the wrong parameter set after a join (framemd5 of each re-encoded part as
-    written, and of each copied part's first GOP from the source, against the output).
+    written, and of each copied part's first GOP from the source, against the output). A copied
+    part's check stops at 300 frames (`DECODE_CHECK_MAX_FRAMES`): a wrong parameter set shows from
+    the first frame after the join, and a 10-second GOP would otherwise cost a decode of its own.
+    Both sides must hold all the frames asked for; two equally short lists are not a match.
 
   A failed check is a fallback, never a warning on a written file: the smart result is written
   beside the output and moved into place only once it passes.
 - **The sound is cut from the source and encoded once.** A packet copy of AAC lands on 21 ms
   packet boundaries and carries encoder priming into every join. The sound is trimmed on the
   picture's frame grid, as the `--accurate` re-cut does, and encoded in the same command that joins
-  the picture. The saving is in the video, which is where the time and the quality go.
+  the picture. The saving is in the video, which is where the time and the quality go. Each
+  segment's sound is padded to its picture's length, so a track that ends early cannot pull the
+  next segment's sound forward. A segment whose picture starts more than a frame after it (video
+  that starts after its sound) falls back (`av_offset`): trimming the sound on the picture's grid
+  would drop the sound before the picture, which the full re-encode keeps.
 - **`--fps` stays a number in this change.** `join.py --fps 30000/1001` needs `--fps` to take a
   rational, but the MCP schema publishes `--fps` as `number`, and a rational needs it to become a
   string or a union, which the contract's type set does not allow. That is a contract decision for

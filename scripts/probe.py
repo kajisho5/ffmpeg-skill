@@ -15,18 +15,25 @@ Examples:
 points a stream copy can start at, and where cut.py --smart's re-encode around a cut ends.
 """
 import argparse
+import math
 import sys
 
-from _common import add_common, analyze_levels, apply_common, die, keyframes_near, print_json, probe, time_arg
+from _common import add_common, analyze_levels, apply_common, die, keyframe_times, print_json, probe, time_arg
 
 
 def keyframe_candidates(result: dict, times: list, window: float) -> list:
     """For each time (seconds from the file's start), the keyframes within `window` of it and the
-    nearest at or before / at or after it, on the same clock (the file's start_time subtracted)."""
+    nearest of those at or before / at or after it (null when none is within the window), on the
+    same clock (the file's start_time subtracted). The picture is the stream probe() reports (`V`:
+    not a cover picture). A failed read is an error, not an empty neighbourhood."""
     origin = float(result.get("start_time") or 0.0)
     out = []
     for t in times:
-        keys = [round(k - origin, 6) for k in keyframes_near(result["file"], origin + t, window)]
+        read = keyframe_times(result["file"], origin + t - window, origin + t + window, "V:0")
+        if read is None:
+            die(f"ffprobe could not read the keyframes of {result['file']} around {t:g}s", kind="ffmpeg")
+        # the read starts at the keyframe at or before the window, which may lie outside it
+        keys = [k for k in (round(k - origin, 6) for k in read) if t - window - 1e-6 <= k <= t + window + 1e-6]
         before = [k for k in keys if k <= t + 1e-6]
         after = [k for k in keys if k >= t - 1e-6]
         out.append({"at": t, "window": window, "keyframes": keys, "before": before[-1] if before else None,
@@ -49,15 +56,17 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
 
-    if args.keyframe_window <= 0:
-        die(f"--keyframe-window must be a positive number of seconds, got {args.keyframe_window:g}")
+    if not math.isfinite(args.keyframe_window) or args.keyframe_window <= 0:
+        die(f"--keyframe-window must be a positive, finite number of seconds, got {args.keyframe_window:g}")
+    if args.keyframes_near is not None and not any(t.strip() for t in args.keyframes_near.split(",")):
+        die("--keyframes-near takes one or more times (e.g. 12.4,47), got none")
     results = [probe(p) for p in args.inputs]
     if args.keyframes_near:
         for r in results:
             fps = (r.get("video") or {}).get("fps")
             times = [time_arg(t.strip(), "--keyframes-near", fps) for t in args.keyframes_near.split(",") if t.strip()]
-            if any(t < 0 for t in times):
-                die("--keyframes-near takes times at or after 0")
+            if any(not math.isfinite(t) or t < 0 for t in times):
+                die("--keyframes-near takes finite times at or after 0")
             r["keyframes"] = keyframe_candidates(r, times, args.keyframe_window) if r.get("video") else []
     if args.analyze:
         for r in results:
@@ -91,6 +100,9 @@ def main() -> int:
                 line += f" | audio {a.get('codec')} {a.get('channels')}ch {a.get('sample_rate')}Hz"
             else:
                 line += " | no audio"
+            for k in r.get("keyframes") or []:
+                before, after = ("-" if x is None else f"{x:g}" for x in (k["before"], k["after"]))
+                line += f" | keyframes near {k['at']:g}s: {before}/{after} ({len(k['keyframes'])} within {k['window']:g}s)"
             print(line)
         return 0
 

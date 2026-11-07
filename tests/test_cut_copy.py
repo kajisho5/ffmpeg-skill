@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from fractions import Fraction
 from pathlib import Path
 from unittest import mock
 
@@ -1482,6 +1483,107 @@ class SmartCutTests(unittest.TestCase):
         a, b = doc["keyframes"]
         self.assertEqual((a["at"], a["before"], a["after"], a["keyframes"]), (1.3, 1.0, 2.0, [0.0, 1.0, 2.0]))
         self.assertEqual((b["before"], b["after"]), (4.0, 4.0))
+        self.assertTrue(all(2.5 <= k <= 5.5 for k in b["keyframes"]), b)  # review 434: the window, nothing more
+
+    def _ntsc_mp4(self):
+        """3 s of 30000/1001 H.264 in MP4 (time base 1/30000), a keyframe every 24 frames: 0.8008, 1.6016, ..."""
+        src = self.dir / "ntsc_g24.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30000/1001:d=3",
+               "-c:v", "libx264", "-g", "24", "-keyint_min", "24", "-sc_threshold", "0", "-bf", "0", "-pix_fmt", "yuv420p", src)
+        return src
+
+    def test_probe_keyframes_keep_microseconds_and_stay_inside_the_window(self):
+        """Review 434: a keyframe at 0.8008 s was rounded to 0.801, so a query at 0.8008 named the next
+        one as `after`; and the read starts at the keyframe before the window, which was listed."""
+        doc = json.loads(script("probe.py", self._ntsc_mp4(), "--keyframes-near", "0.8008,1.2", "--keyframe-window", "0.2").stdout)
+        at, between = doc["keyframes"]
+        self.assertEqual((at["keyframes"], at["before"], at["after"]), ([0.8008], 0.8008, 0.8008))
+        self.assertEqual((between["keyframes"], between["before"], between["after"]), ([], None, None))
+        line = script("probe.py", self._ntsc_mp4(), "--keyframes-near", "0.8008", "--compact").stdout
+        self.assertIn("keyframes near 0.8008s: 0.8008/0.8008", line)
+
+    def test_probe_keyframes_refuses_what_it_cannot_measure(self):
+        for extra in (["--keyframes-near", " , "], ["--keyframes-near", "1", "--keyframe-window", "nan"],
+                      ["--keyframes-near", "1", "--keyframe-window", "inf"]):
+            proc = script("probe.py", self.bsrc, *extra, "--json", expect_fail=True)
+            self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input", extra)
+        # the picture probe() reports (V: not a cover picture), and a failed read is a failure, not []
+        probe_cli = importlib.import_module("probe")
+        result = {"file": "x.mp4", "start_time": 0.0}
+        with mock.patch.object(probe_cli, "keyframe_times", return_value=[1.0, 2.0]) as read:
+            probe_cli.keyframe_candidates(result, [1.5], 1.0)
+        self.assertEqual(read.call_args[0][3], "V:0")
+        with mock.patch.object(probe_cli, "keyframe_times", return_value=None), \
+                mock.patch.object(probe_cli, "die", side_effect=SystemExit(1)) as die:
+            with self.assertRaises(SystemExit):
+                probe_cli.keyframe_candidates(result, [1.5], 1.0)
+        self.assertEqual(die.call_args[1]["kind"], "ffmpeg")
+
+    def test_smart_cut_of_whole_gops_with_no_sound_reencodes_nothing(self):
+        data = self._cut(self._ntsc_mp4(), self.dir / "smart_copy_only.mp4", "--start", "0.8008", "--end", "2.4024")
+        sm = data["smart"]
+        self.assertTrue(sm["applied"], sm)
+        self.assertEqual(([p["kind"] for p in sm["parts"]], sm["reencoded_frames"], sm["copied_frames"]), (["copy"], 0, 48))
+        self.assertEqual((data["mode"], data["reencode_reason"]), ("smart", []))
+
+    def test_smart_cut_pads_each_segments_sound_to_its_picture(self):
+        """Review 434: sound that ends before a segment's picture pulled the next segment's sound forward."""
+        src = self.dir / "short_sound.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=6",
+           "-f", "lavfi", "-i", "sine=f=440:d=3", "-c:v", "libx264", "-g", "30", "-bf", "0", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", src)
+        out = self.dir / "smart_short_sound.mp4"
+        data = self._cut(src, out, "--segments", "0-5,1-3")
+        self.assertTrue(data["smart"]["applied"], data["smart"])
+        self.assertEqual(data["declick_ms"], 20)  # the smart join fades its joins, and says so
+        adur = probe_mod.run([probe_mod.require_tool("ffprobe"), "-v", "error", "-select_streams", "a:0", "-show_entries",
+                              "stream=duration", "-of", "csv=p=0", str(out)], quiet=True).stdout.strip()
+        self.assertAlmostEqual(float(adur), 7.0, delta=0.1)
+
+    def test_smart_cut_falls_back_where_its_join_would_lose_or_cannot_carry_sound(self):
+        # video that starts a second after its sound: the sound before it would be lost
+        pic, late = self.dir / "late_picture.mp4", self.dir / "late_video.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=3",
+           "-c:v", "libx264", "-g", "30", "-bf", "0", "-pix_fmt", "yuv420p", pic)
+        # a copy keeps the offset (an encode would start the picture at 0 again)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-itsoffset", "1", "-i", pic, "-f", "lavfi", "-i",
+           "sine=f=440:d=4", "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", late)
+        data = self._cut(late, self.dir / "smart_late.mp4", "--start", "0", "--end", "3")
+        self.assertEqual((data["smart"]["applied"], data["smart"]["reason_code"]), (False, "av_offset"), data["smart"])
+        # more segments with sound than one join command takes: stated, and in diagnostics.fallbacks
+        segs = ",".join(f"{i * 0.15:.2f}-{i * 0.15 + 0.1:.2f}" for i in range(cut.JOIN_CHUNK + 1))
+        data = json.loads(script("cut.py", self.bsrc, "--segments", segs, "--smart", "-o", self.dir / "smart_many.mp4",
+                                 "--json", "--dry-run").stdout)
+        self.assertEqual(data["smart"]["reason_code"], "segments")
+        self.assertIn("smart_fallback", [f["code"] for f in data["diagnostics"]["fallbacks"]])
+
+    def test_smart_cut_falls_back_when_the_matched_encode_is_refused(self):
+        """Review 434: x264 has no lossless High profile, so --quality 0 failed the run instead of falling back."""
+        data = self._cut(self.bsrc, self.dir / "smart_q0.mp4", "--start", "1.3", "--end", "2.6", "--quality", "0")
+        self.assertEqual((data["mode"], data["smart"]["reason_code"]), ("accurate", "encode"), data["smart"])
+        self.assertIn("lossless", data["smart"]["reason"])
+
+    def test_smart_cut_refuses_an_existing_output_before_rendering(self):
+        out = self.dir / "smart_exists.mp4"
+        out.write_bytes(b"keep")
+        smart_mod = importlib.import_module("_smartcut")
+        with mock.patch.object(cut.STATE, "overwrite", False), mock.patch.object(smart_mod, "execute") as execute:
+            with self.assertRaises(SystemExit):
+                cut.run_smart(mock.Mock(input=str(self.bsrc)), [(1.0, 2.0)], str(out), {"video": {}}, [], False, 6.0)
+        execute.assert_not_called()
+        self.assertEqual(out.read_bytes(), b"keep")
+
+    def test_smart_decode_check_needs_every_frame_it_asked_for(self):
+        """Review 434: two equally short framemd5 lists (a frame that did not decode) passed as a match."""
+        smart_mod = importlib.import_module("_smartcut")
+        parts = [{"kind": "reencode", "frames": 3, "path": "part.ts", "start": 0.0}]
+        with mock.patch.object(smart_mod, "output_pts", return_value=[0.0, 1 / 30, 2 / 30]), \
+                mock.patch.object(smart_mod, "packet_hashes", return_value=[(1, "p")] * 3), \
+                mock.patch.object(smart_mod, "frame_hashes", return_value=[(1, "f")]):
+            with self.assertRaises(smart_mod.SmartFallback) as caught:
+                smart_mod.verify("src.mp4", "dst.mp4", parts, {}, Fraction(30), lambda p: 0.0)
+        self.assertEqual(caught.exception.code, "decode")
 
 
 class SourceCodecArgsTests(unittest.TestCase):
