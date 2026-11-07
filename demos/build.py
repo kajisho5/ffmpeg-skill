@@ -1103,6 +1103,30 @@ def demo_color_correct(ctx):
     return before, after
 
 
+def _waveform_over_picture(src, dst):
+    """The picture (top) over its luma waveform with the digital-scale graticule (bottom): the
+    16/235 legal limits are where the graticule lines sit, so a level past them is visible."""
+    ffmpeg("-i", str(src), "-filter_complex",
+           "[0:v]split[p][w];[p]scale=1280:360,setsar=1[top];"
+           "[w]waveform=graticule=green:flags=numbers:scale=digital:filter=lowpass,scale=1280:360,setsar=1[bot];"
+           "[top][bot]vstack,format=yuv420p", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(dst))
+
+
+def demo_color_legalize(ctx):
+    # a grade that runs hot: luma stretched past 235 and below 16, chroma past 240
+    hot = ctx.path("hot.mp4")
+    ffmpeg("-i", str(FIX / "motion.mp4"), "-t", "4", "-an", "-vf",
+           "lutyuv=y='(val-16)*1.18+4':u='128+(val-128)*1.3':v='128+(val-128)*1.3'",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", str(hot))
+    legal = ctx.path("legal.mp4")
+    ctx.script("color.py", hot, "--correct", "--legalize", "bt709", "--preset", "veryfast", "-o", legal)
+    ctx.expect(legal, "color.py --legalize")
+    before, after = ctx.path("before.mp4"), ctx.path("after.mp4")
+    _waveform_over_picture(hot, before)
+    _waveform_over_picture(legal, after)
+    return before, after
+
+
 def demo_grid_2x2(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
@@ -1695,6 +1719,9 @@ _ROWS = [
     ("color_correct", PICTURE, "Primary colour correction",
      "Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.",
      demo_color_correct, "video", None),
+    ("color_legalize", PICTURE, "Broadcast legal levels",
+     "A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion, and the run measures what the encode left (check.py --levels counts the same way).",
+     demo_color_legalize, "video", None),
     ("grid_2x2", PICTURE, "2x2 comparison grid",
      "Four clips of different content in one frame, each letterboxed into its cell rather than stretched, with the source name burnt into the corner and only input 0's audio carried through.",
      demo_grid_2x2, "video", "latin"),

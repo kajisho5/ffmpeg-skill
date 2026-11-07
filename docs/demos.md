@@ -511,6 +511,16 @@ python3 scripts/color.py demos/out/fixtures/motion.mp4 --correct --exposure 0.25
 
 **Look for:** Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.
 
+### Broadcast legal levels
+
+![Broadcast legal levels](demos/color_legalize.gif)
+
+```bash
+python3 scripts/color.py demos/out/color_legalize_hot.mp4 --correct --legalize bt709 --preset veryfast -o demos/out/color_legalize_legal.mp4
+```
+
+**Look for:** A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion, and the run measures what the encode left (check.py --levels counts the same way).
+
 ### 2x2 comparison grid
 
 ![2x2 comparison grid](demos/grid_2x2.gif)
