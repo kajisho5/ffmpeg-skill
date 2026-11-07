@@ -51,6 +51,7 @@ ROLES = {
 # Facts that are not derivable from the argparse parsers. Capability names:
 #   ffmpeg / ffprobe            the binaries on PATH
 #   encoder:<name>              `ffmpeg -encoders`
+#   decoder:<name>              `ffmpeg -decoders`
 #   filter:<name>               `ffmpeg -filters`
 #   bsf:<name>                  `ffmpeg -bsfs`
 #   external:whisper            a local whisper engine (whisper.cpp / faster-whisper / openai-whisper)
@@ -880,7 +881,7 @@ def _parse_ff_list(flag: str, text: str) -> List[str]:
             m = _FILTER_ROW.match(line)
             if m:
                 names.append(m.group(1))
-    elif flag == "-encoders":
+    elif flag in ("-encoders", "-decoders"):
         lines = text.splitlines()
         sep = next((i for i, l in enumerate(lines) if _LIST_SEPARATOR.match(l)), None)
         rows = lines[sep + 1:] if sep is not None else lines
@@ -1263,6 +1264,7 @@ def required_capabilities() -> Dict[str, List[str]]:
         req.update(meta["required"])
         opt.update(o["capability"] for o in meta["optional"] if o["capability"] != "delegated")
     opt.update(o["capability"] for o in CODEC_CAPS)
+    opt.update(o["capability"] for o in ALPHA_LINE_OPTIONAL)
     opt -= req
     return {"required": sorted(req), "optional": sorted(opt)}
 
@@ -1308,6 +1310,7 @@ def doctor() -> Dict[str, Any]:
         "encoders": _ff_listing("ffmpeg", "-encoders"),
         "filters": _ff_listing("ffmpeg", "-filters"),
         "bsfs": _ff_listing("ffmpeg", "-bsfs"),
+        "decoders": _ff_listing("ffmpeg", "-decoders"),
     }
     sets = {k: set(v["names"]) for k, v in listings.items()}
     state: Dict[str, str] = {}  # capability -> available | missing | unknown
@@ -1331,6 +1334,8 @@ def doctor() -> Dict[str, Any]:
             state[cap] = "available" if _exe("ffprobe") else "missing"
         elif cap.startswith("encoder:"):
             state[cap] = _from("encoders", cap[8:])
+        elif cap.startswith("decoder:"):
+            state[cap] = _from("decoders", cap[8:])
         elif cap == "filter:drawtext":
             listing_state = _from("filters", "drawtext")
             if listing_state == "available":
@@ -1491,6 +1496,8 @@ def _capability_fix_hint(cap: str, drawtext_crashed: bool = False) -> str:
         full_hint = "install/build ffmpeg with it enabled"
     if cap.startswith("encoder:"):
         return f"this ffmpeg build has no {cap[8:]} encoder; {full_hint}"
+    if cap.startswith("decoder:"):
+        return f"this ffmpeg build has no {cap[8:]} decoder; {full_hint}"
     if cap == "filter:drawtext" and not drawtext_crashed:
         return f"this ffmpeg build has no drawtext filter (no freetype); {full_hint}"
     if cap == "filter:drawtext":
@@ -1918,7 +1925,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
     version = skill_version()
     tools = [tool_spec(n, version) for n in public_tools()]
     wanted = required_capabilities()
-    caps: Dict[str, Any] = {"required": wanted["required"], "optional": wanted["optional"], "naming": "ffmpeg | ffprobe | encoder:<name> | filter:<name> | bsf:<name> | external:whisper | external:parakeet"}
+    caps: Dict[str, Any] = {"required": wanted["required"], "optional": wanted["optional"], "naming": "ffmpeg | ffprobe | encoder:<name> | decoder:<name> | filter:<name> | bsf:<name> | external:whisper | external:parakeet"}
     if detect:
         d = doctor()
         caps.update({"available": d["available"], "missing": d["missing"], "missing_optional": d["missing_optional"],
