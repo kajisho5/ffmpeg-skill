@@ -1119,8 +1119,16 @@ def demo_color_legalize(ctx):
            "lutyuv=y='(val-16)*1.18+4':u='128+(val-128)*1.3':v='128+(val-128)*1.3'",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", str(hot))
     legal = ctx.path("legal.mp4")
-    ctx.script("color.py", hot, "--correct", "--legalize", "bt709", "--preset", "veryfast", "-o", legal)
+    # --quality 8: at the default 18, x264's error around the clamped chroma of this saturated
+    # pattern left 1.4 % of one frame out of range, past the 1 % the legal_levels step allows. A
+    # run whose own check failed exits 0 (verified: false), so the demo reads the verdict and fails
+    # the build rather than publish a preview of a file that did not verify.
+    doc = ctx.script("color.py", hot, "--correct", "--legalize", "bt709", "--quality", "8", "--preset", "veryfast",
+                     "-o", legal, "--json", capture=True)
     ctx.expect(legal, "color.py --legalize")
+    if not json.loads(doc).get("verified"):
+        raise BuildError("color.py --legalize did not verify: %s" % [s for s in json.loads(doc).get("verification") or []
+                                                                     if s.get("step") == "legal_levels"])
     before, after = ctx.path("before.mp4"), ctx.path("after.mp4")
     _waveform_over_picture(hot, before)
     _waveform_over_picture(legal, after)
@@ -1720,7 +1728,7 @@ _ROWS = [
      "Typed values, not a look: exposure +0.25, contrast 1.25, saturation 1.3, white balance to 7000 K, gamma 1.1 -- each one a number the caller chose.",
      demo_color_correct, "video", None),
     ("color_legalize", PICTURE, "Broadcast legal levels",
-     "A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion, and the run measures what the encode left (check.py --levels counts the same way).",
+     "A grade that runs hot, before and after color.py --legalize bt709: each half shows the picture over its luma waveform, whose green graticule marks the digital scale. The clamp holds every sample inside 16-235 luma and 16-240 chroma after the 4:2:0 conversion. The run then measures what the encode left (check.py --levels counts the same way), and the build fails unless that check passes; --quality 8 keeps the encoder's error at the clamped edges inside the 1 % allowance.",
      demo_color_legalize, "video", None),
     ("grid_2x2", PICTURE, "2x2 comparison grid",
      "Four clips of different content in one frame, each letterboxed into its cell rather than stretched, with the source name burnt into the corner and only input 0's audio carried through.",
