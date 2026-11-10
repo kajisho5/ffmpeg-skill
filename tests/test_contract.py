@@ -1082,6 +1082,20 @@ class ContractTests(unittest.TestCase):
         # major is never resolved automatically (the 1.0.0 case), whatever else is there
         with self.assertRaises(SystemExit):
             rv.resolve("1.0.3", ["Fix y (#152)", "Big (#154)"], labels({152: ["fix"], 154: ["major"]}))
+        # A squash subject that does not END with "(#N)" still belongs to its PR: 3.2.3 shipped
+        # three features as a patch because "... (#433, carries #432 and #434)" matched nothing
+        # and the `feature` label was never read. The PR is then found by the merge commit's SHA.
+        subject = "Alpha path, legal levels, smart cut (#433, carries #432 and #434)"
+        v, d = rv.resolve("3.2.2", [subject], labels({433: ["chore", "feature"]}))
+        self.assertEqual((v, d[0]["pr"]), ("3.2.3", None), "without the SHA lookup: the old answer")
+        asked = []
+        v, d = rv.resolve("3.2.2", [subject, "Fix y (#152)"], labels({433: ["chore", "feature"], 152: ["fix"]}),
+                          ["aaa", "bbb"], lambda sha: asked.append(sha) or {"aaa": 433}.get(sha))
+        self.assertEqual((v, d[0]["pr"], d[0]["bump"]), ("3.3.0", 433, "minor"))
+        self.assertEqual(asked, ["aaa"], "a subject ending (#N) is not looked up")
+        # a direct push has no PR by SHA either, and keeps the title rules
+        v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
+        self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))
 
     # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
     def test_drawtext_uses_the_6_1_spellings(self):
