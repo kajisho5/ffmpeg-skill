@@ -615,7 +615,14 @@ class ContractTests(unittest.TestCase):
         self.assertLess(block.index("cosign verify-blob"), block.index("tar xzf"))
         self.assertRegex(block, r"sigstore/cosign-installer@[0-9a-f]{40} ")
         # a registry that cannot be asked is not "not listed", and a failure never blocks a release
-        self.assertIn("curl --fail", block[:block.index("name: Install cosign")])
+        # the exact name-and-version endpoint, not the paginated list; only 200 and 404 are answers
+        asked = block[:block.index("name: Install cosign")]
+        self.assertIn('/v0/servers/$ENCODED/versions/$VERSION', asked)
+        self.assertNotIn("search=", asked)
+        self.assertIn("200) LISTED=yes ;;", asked)
+        self.assertIn("404) LISTED=no ;;", asked)
+        self.assertIn("could not ask the MCP Registry", asked)
+        self.assertIn("the MCP Registry answered HTTP $STATUS", asked)
         # nor is an npm that cannot be asked "not on npm"; and a tagged version npm does not have
         # (E404) is a release that never reached npm, which fails the step and is not a quiet skip
         asking = block[:block.index("name: Install cosign")]

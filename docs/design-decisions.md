@@ -3244,8 +3244,11 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   when npm has the version and the registry does not: they do not depend on "was a tag created
   in this run", which is what lets a re-run finish a failed publish. The re-run checks out the tip of `main`, so
   it lists the version that is current then; a failed version that `main` has since moved past is
-  not listed, and the registry's newest entry is the one clients read. A registry that cannot be
-  asked stops the step (`curl --fail`, and any `npm view` failure); it is not read as "not listed".
+  not listed, and the registry's newest entry is the one clients read. The registry is asked for
+  the exact name and version (`/v0/servers/{name}/versions/{version}`: 200 or 404), not through
+  its paginated list, where a version on a later page would read as absent. A registry that
+  cannot be asked, or any other status, stops the step, as does any `npm view` failure; neither is
+  read as "not listed".
   A version npm answers E404 for also fails the step: by then it is tagged, so it is a release
   that never reached npm, which a re-run would otherwise pass over in silence. Authentication is
   GitHub's OIDC token for this repository, which the registry accepts for a name under

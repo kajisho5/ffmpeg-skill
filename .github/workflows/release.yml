@@ -371,15 +371,19 @@ jobs:
           if [ "$ON_NPM" != "$VERSION" ]; then
             echo "::error::npm answered '$ON_NPM' for $PKG@$VERSION"; exit 1
           fi
-          # a registry that cannot be asked is not "not listed": curl --fail stops the step here
-          curl --fail --silent --show-error --max-time 60 --get \
-            "https://registry.modelcontextprotocol.io/v0/servers" --data-urlencode "search=$NAME" > registry.json
-          LISTED=$(NAME="$NAME" VERSION="$VERSION" node -e '
-            const seen = (v) => v && typeof v === "object" &&
-              ((v.name === process.env.NAME && v.version === process.env.VERSION) || Object.values(v).some(seen));
-            console.log(seen(JSON.parse(require("fs").readFileSync("registry.json", "utf8"))) ? "yes" : "no");
-          ')
-          rm -f registry.json
+          # One name and one version, asked exactly: the list endpoint is paginated, and a version on
+          # a later page would read as absent, be published a second time and be refused. 200 is
+          # listed and 404 is not; anything else (a registry that could not be asked, a 5xx) is
+          # neither, and stops the step.
+          ENCODED=$(NAME="$NAME" node -p 'encodeURIComponent(process.env.NAME)')
+          STATUS=$(curl --silent --show-error --max-time 60 --output /dev/null --write-out '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0/servers/$ENCODED/versions/$VERSION") || {
+            echo "::error::could not ask the MCP Registry whether $NAME $VERSION is listed"; exit 1; }
+          case "$STATUS" in
+            200) LISTED=yes ;;
+            404) LISTED=no ;;
+            *) echo "::error::the MCP Registry answered HTTP $STATUS for $NAME $VERSION"; exit 1 ;;
+          esac
           if [ "$LISTED" = "yes" ]; then
             echo "the MCP Registry already lists $NAME $VERSION"
             echo "publish=false" >> "$GITHUB_OUTPUT"
