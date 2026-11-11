@@ -513,12 +513,14 @@ class ContractTests(unittest.TestCase):
             kinds = {kind for kind, _ in chunks(icon)}
             self.assertLessEqual(kinds, {"IHDR", "PLTE", "tRNS", "gAMA", "cHRM", "sRGB", "iCCP", "pHYs", "IDAT", "IEND"})
             self.assertTrue({"IHDR", "IDAT", "IEND"} <= kinds)
-            # the words the script itself refuses, read from the script so the two cannot drift
+            # every word the script refuses, read from the script so a word added there is checked here
             listed = re.search(r'words = \[([^\]]+)\]', script)
             self.assertTrue(listed, "publish_plugin_branch.sh no longer names its word list")
             words = re.findall(r'"([^"]+)"', listed.group(1))
-            self.assertTrue({"curl", "|sh"} <= set(words), words)
-            for word in words:
+            # a fixed minimum, so that trimming the script's list cannot let a word through
+            known = {"curl", "wget", "bash", "|sh", "| sh", "sh -c", "eval"}
+            self.assertLessEqual(known, set(words), "publish_plugin_branch.sh dropped a word it used to refuse")
+            for word in sorted(known | set(words)):
                 self.assertNotIn(word.encode(), icon)
             # the same pixels as assets/icon.png: only the metadata and the deflate stream differ
             def pixels(png):
