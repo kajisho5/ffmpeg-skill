@@ -69,6 +69,23 @@ cp "$ROOT/assets/icon.png" "$TREE/.claude-plugin/icon.png"
 # the skill calls it, and the plugin directory's checks flag a bin/ folder and the installer's
 # shell-outs as an install-time risk. It leaves the tree, and package.json stops naming it.
 rm -rf "$TREE/bin"
+# The repository README is written for someone deciding whether to install: 700 lines of
+# comparisons, measurements and install commands for five hosts. In a plugin the skill is already
+# installed and SKILL.md is what the agent reads, so the tree carries a short README that says what
+# this directory is and where the full one lives.
+cat > "$TREE/README.md" <<'PLUGIN_README'
+# ffmpeg-skill (plugin tree)
+
+Local FFmpeg video and audio editing for coding agents. This directory is the installable plugin:
+the skill (`SKILL.md`, also at `skills/ffmpeg-skill/SKILL.md`), its tools (`scripts/`), their
+references and templates, the machine-readable contract (`docs/contract.md`,
+`python3 scripts/_contract.py --json`) and the MCP server (`mcp/server.py`).
+
+It is built from the npm package by every release and published to the `plugin` branch. The full
+README, the changelog and the tests are in the repository: https://github.com/kajisho5/ffmpeg-skill
+
+Needs FFmpeg 6.1 or later and Python 3.10 or later. Nothing here uses the network or reads a key.
+PLUGIN_README
 node -e '
   const fs = require("fs"), f = process.argv[1], p = JSON.parse(fs.readFileSync(f, "utf8"));
   delete p.bin;

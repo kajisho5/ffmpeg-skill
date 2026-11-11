@@ -468,6 +468,10 @@ class ContractTests(unittest.TestCase):
             self.assertFalse([n for n in names if n.split("/")[0] in
                               ("tests", "evals", "site", "brand", "demos", "assets", ".github", "bin")])
             self.assertNotIn("bin", json.loads((tree / "package.json").read_text(encoding="utf-8")))
+            # a short README of its own, not the repository's 700 lines
+            plugin_readme = (tree / "README.md").read_text(encoding="utf-8")
+            self.assertLess(len(plugin_readme.splitlines()), 30)
+            self.assertIn("https://github.com/kajisho5/ffmpeg-skill", plugin_readme)
             # the listing icon: a square PNG, 512 to 2048 px a side, under 2 MB
             icon = (tree / ".claude-plugin" / "icon.png").read_bytes()
             self.assertEqual(icon[:8], b"\x89PNG\r\n\x1a\n")

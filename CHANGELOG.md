@@ -13,6 +13,13 @@
   The installer is what `npx ffmpeg-skill` runs; a plugin host does the installing and nothing in
   the skill calls it. The branch now ships `assets/icon.png` as `.claude-plugin/icon.png`, leaves
   `bin/` out, and its `package.json` no longer names a `bin`. The npm package is unchanged.
+  The same validation held six findings as "uses a credential from the user's machine". None
+  reads a credential: each is a file that names a URL and also holds a word the check reads as a
+  credential source (`pass --overwrite`, a `$FFMPEG_SKILL_HW` reference, an environment lookup).
+  Two came from the repository README, so the plugin tree now carries a short README of its own,
+  and `references/workflow.md` says "add `--overwrite`". The three that remain
+  (`docs/contract.md`, `scripts/_contract.py`, `scripts/_common/runner.py`: an ffmpeg.org link
+  beside a configuration variable) are left for the directory's reviewer.
 
 ### Changed
 
