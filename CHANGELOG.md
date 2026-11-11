@@ -37,6 +37,11 @@
   in the graph, refuses an odd width or height. The frame is now padded to even for the conversion and cropped
   back to its own size after it, so no pixel is lost or resampled; an even-sized source runs the
   command it ran before.
+- **An odd-sized clip failed in `caption.py` and aborted `stabilize.py`** (#438, found by sweeping
+  the class behind #437). The runner's even-size retry put its scale at the head of the `-vf`
+  chain, where a later filter could make the frame odd again; it now goes at the end, where the
+  encoder reads it. `stabilize.py` scales an odd frame to even before both vid.stab passes
+  (vid.stab asserts on one) and records `odd_dimensions_scaled_even`.
 - **Release versions: a squash commit whose subject does not end with "(#N)" is resolved to its PR
   by the merge commit's SHA** (a failed lookup stops the release job instead of guessing)**.** 3.2.3 shipped three features as a patch because the subject ended
   "(#433, carries #432 and #434)" and the `feature` label was never read.

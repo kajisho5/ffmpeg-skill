@@ -5557,6 +5557,39 @@ class UserReportTests(unittest.TestCase):
         self.assertTrue(bt709_matrix_filter(rotated).endswith(",crop=iw-1:ih-0:0:0:exact=1"), "the odd axis after FFmpeg's rotation")
 
 
+    def test_an_odd_sized_clip_is_captioned_and_stabilized(self):
+        """#438, found by sweeping the class behind #437: on a 629x1401 clip caption.py retried
+        with the even scale at the head of its chain, where a later filter made the frame odd
+        again (the encoder refused it twice), and stabilize.py let vid.stab abort on its own
+        assertion. Both now write an even frame and say so."""
+        OUT.mkdir(parents=True, exist_ok=True)
+        odd = OUT / "odd438.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x1408:r=30:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-vf", "scale=629:1401,format=yuvj420p", "-c:v", "mjpeg", "-q:v", "3",
+           "-c:a", "aac", odd)
+        m = probe(str(odd))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (629, 1401), "the fixture has to be odd on both axes")
+        cues = OUT / "odd438.txt"
+        cues.write_text("0 1.5 Odd\n", encoding="utf-8")
+        runs = {"caption.py": ["--text", cues]}
+        filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+        if re.search(r"\bvidstabdetect\b", filters):
+            runs["stabilize.py"] = []
+        if not re.search(r"\bsubtitles\b", filters):
+            runs.pop("caption.py")
+        if not runs:
+            self.skipTest("this ffmpeg build has neither libass nor vid.stab")
+        for tool, extra in runs.items():
+            with self.subTest(tool=tool):
+                out = OUT / f"odd438_{tool[:-3]}.mp4"
+                doc = json.loads(script(tool, odd, *extra, "-o", out, "--overwrite", "--json").stdout)
+                self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc)
+                v = doc["probe"]["video"]
+                self.assertEqual((v["width"] % 2, v["height"] % 2), (0, 0), v)
+                codes = [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks", [])]
+                self.assertIn("odd_dimensions_scaled_even", codes, doc)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
