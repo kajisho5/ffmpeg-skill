@@ -62,17 +62,50 @@ tar -xzf "$TARBALL" -C "$TREE" --strip-components=1
 mkdir -p "$TREE/.claude-plugin" "$TREE/skills/ffmpeg-skill"
 cp "$ROOT/.claude-plugin/plugin.json" "$TREE/.claude-plugin/plugin.json"
 cp "$ROOT/skills/ffmpeg-skill/SKILL.md" "$TREE/skills/ffmpeg-skill/SKILL.md"
+# The listing icon: the plugin directory reads .claude-plugin/icon.png (a square PNG, 512 to 2048 px,
+# under 2 MB) and takes it once, at the first submission.
+cp "$ROOT/assets/icon.png" "$TREE/.claude-plugin/icon.png"
+# bin/install.js is the `npx ffmpeg-skill` installer. A plugin host does the installing, nothing in
+# the skill calls it, and the plugin directory's checks flag a bin/ folder and the installer's
+# shell-outs as an install-time risk. It leaves the tree, and package.json stops naming it.
+rm -rf "$TREE/bin"
+# The repository README is written for someone deciding whether to install: 700 lines of
+# comparisons, measurements and install commands for five hosts. In a plugin the skill is already
+# installed and SKILL.md is what the agent reads, so the tree carries a short README that says what
+# this directory is and where the full one lives.
+cat > "$TREE/README.md" <<'PLUGIN_README'
+# ffmpeg-skill (plugin tree)
+
+Local FFmpeg video and audio editing for coding agents. This directory is the installable plugin:
+the skill (`SKILL.md`, also at `skills/ffmpeg-skill/SKILL.md`), its tools (`scripts/`), their
+references and templates, the machine-readable contract (`docs/contract.md`,
+`python3 scripts/_contract.py --json`) and the MCP server (`mcp/server.py`).
+
+It is built from the npm package by every release and published to the `plugin` branch. The full
+README, the changelog and the tests are in the repository: https://github.com/kajisho5/ffmpeg-skill
+
+Needs FFmpeg 6.1 or later and Python 3.10 or later. The tools themselves open no network
+connection and read no API key. The one exception is transcription (`caption.py --transcribe`,
+`silence.py --filler --transcribe`), which runs a speech engine you installed yourself
+(whisper.cpp, faster-whisper, openai-whisper or parakeet): on its first run such an engine may
+download its model, and a Hugging Face client uses a token you are logged in with.
+PLUGIN_README
+node -e '
+  const fs = require("fs"), f = process.argv[1], p = JSON.parse(fs.readFileSync(f, "utf8"));
+  delete p.bin;
+  fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n");
+' "$TREE/package.json"
 # A local checkout that has run the tools carries bytecode caches into the tarball; a release
 # runner's clean checkout does not. Either way they are not part of a plugin.
 find "$TREE" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 # The gate is on the tree that ships, not on the source tree: what a host needs to find the
 # skill, and what the skill needs to run.
-for needed in .claude-plugin/plugin.json skills/ffmpeg-skill/SKILL.md SKILL.md \
+for needed in .claude-plugin/plugin.json .claude-plugin/icon.png skills/ffmpeg-skill/SKILL.md SKILL.md \
               scripts/_contract.py scripts/probe.py docs/contract.md references/workflow.md LICENSE; do
   [ -s "$TREE/$needed" ] || { echo "plugin tree is missing $needed" >&2; exit 1; }
 done
-for unwanted in tests evals site brand demos assets .github; do
+for unwanted in tests evals site brand demos assets .github bin; do
   [ ! -e "$TREE/$unwanted" ] || { echo "plugin tree carries $unwanted/" >&2; exit 1; }
 done
 VERSION="$(node -p "require('$TREE/package.json').version")"

@@ -3132,13 +3132,29 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   "npm pack failed" without one), and the plugin route has never needed Node. A git source with
   `ref` installed with git alone in both, but not alike: from the 3.3.0 branch (tree at the root,
   a `url` source) Claude Code cached 2.6 MB and Codex kept the whole clone with every branch's
-  history (39 MB, more than the repository's files). So since 3.3.0 the branch holds the tree
+  history (39 MB, more than the repository's files). So since 3.4.0 the branch holds the tree
   under `ffmpeg-skill/`, for a `git-subdir` source: both hosts then copy that directory alone and
   keep no `.git` (2.6 MB each, measured). The two plugin files stay out of the npm package itself
   because `npx ffmpeg-skill` copies the package into an agent's skills folder, where a second
-  `SKILL.md` under `skills/` would be the same skill twice. The marketplace entry moves from `./`
-  to the branch only after a release has published that layout; until then the entry says `./` on purpose.
+  `SKILL.md` under `skills/` would be the same skill twice. The marketplace entry moved from `./`
+  to that directory after 3.4.0 had published the layout, and after both hosts installed from the
+  real branch through it (3.4.0, 2.7 MB each, no `.git`). The marketplace itself is still this
+  repository, so `marketplace add` checks it out: 50 MB in Claude Code and 66 MB in Codex, or
+  1.1 MB and 2.2 MB with `--sparse .claude-plugin`, which the README's commands use. The one-line
+  `/plugin install ... --marketplace` form was not measured. The cost of the move is a floor: by
+  Claude Code's changelog a `git-subdir` source exists from 2.1.69, and installs correctly on git
+  older than 2.39 only from 2.1.288. Neither older combination was run here; the README names
+  both and points older installs at `npx ffmpeg-skill`.
   Test: `test_plugin_branch_tree_is_the_runtime_set`.
+- **The plugin tree is the npm tarball minus `bin/`, plus the manifest, the `skills/` copy and
+  the icon.** `bin/install.js` is the `npx ffmpeg-skill` installer: it copies the package into a
+  skills folder and shells out to `python3` and `ffmpeg -version`. A plugin host does the
+  installing, and the Claude plugin directory's checks read the file as an install-time risk
+  (three findings on the 3.4.0 branch, plus a notice that `bin/` will later be accepted only from
+  verified organisations). So the tree leaves it out and removes `bin` from its `package.json`,
+  which the contract still reads for the version. `.claude-plugin/icon.png` is `assets/icon.png`;
+  the directory takes the icon once, at the first submission, so it has to be on the branch before
+  that. Same test.
 - **The plugin does not register the MCP server.** `mcp/server.py` rides along in the plugin tree,
   but no `.mcp.json` or `mcpServers` entry starts it. In a host that runs a plugin (Claude Code,
   Codex, Gemini CLI) the agent has a shell, and the skill reaches all 42 tools through it; the MCP

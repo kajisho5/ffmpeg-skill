@@ -424,7 +424,7 @@ class ContractTests(unittest.TestCase):
 
     def test_plugin_branch_tree_is_the_runtime_set(self):
         """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
-        which at `./` is the whole 28 MB repository. release.yml publishes the npm tarball's
+        which at `./` was the whole 28 MB repository. release.yml publishes the npm tarball's
         contents plus the plugin manifest and skills/ to the `plugin` branch instead. The gate is
         on the tree that ships: build it and look, where bash and npm exist (the Windows runner
         cannot spawn `npm`, the debian-trixie job has no npm; see the npm package test)."""
@@ -445,11 +445,13 @@ class ContractTests(unittest.TestCase):
         # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
         self.assertIn('ls-remote --exit-code --heads "$REMOTE"', script)
         self.assertNotIn("2>/dev/null; then", script)
-        # the entry stays at ./ until a release has published the branch; whichever it names,
-        # it must be one of the two forms both hosts were run against
+        # the entry names the directory the script writes, on the branch it pushes: the form both
+        # hosts were run against on the 3.4.0 branch. Back at ./ a host copies the repository.
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-        self.assertIn(market["plugins"][0]["source"], ("./", {
-            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
+        self.assertEqual(market["plugins"][0]["source"], {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
+        self.assertIn('SUBDIR="ffmpeg-skill"', script)
+        self.assertIn('BRANCH="plugin"', script)
         if sys.platform == "win32" or not shutil.which("bash") or not shutil.which("npm"):
             return
         with tempfile.TemporaryDirectory() as tmp:
@@ -458,11 +460,32 @@ class ContractTests(unittest.TestCase):
                                   capture_output=True, text=True, cwd=ROOT)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             names = {p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()}
-            for needed in (".claude-plugin/plugin.json", "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
+            for needed in (".claude-plugin/plugin.json", ".claude-plugin/icon.png",
+                           "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
                            "scripts/_contract.py", "mcp/server.py", "docs/contract.md"):
                 self.assertIn(needed, names)
+            # bin/ is the npx installer: a plugin host installs, and the plugin directory flags it
             self.assertFalse([n for n in names if n.split("/")[0] in
-                              ("tests", "evals", "site", "brand", "demos", "assets", ".github")])
+                              ("tests", "evals", "site", "brand", "demos", "assets", ".github", "bin")])
+            self.assertNotIn("bin", json.loads((tree / "package.json").read_text(encoding="utf-8")))
+            # a short README of its own, not the repository's 700 lines
+            plugin_readme = (tree / "README.md").read_text(encoding="utf-8")
+            self.assertLess(len(plugin_readme.splitlines()), 30)
+            self.assertIn("https://github.com/kajisho5/ffmpeg-skill", plugin_readme)
+            # it does not promise an offline skill: a transcription engine may fetch its model
+            self.assertIn("--transcribe", plugin_readme)
+            self.assertNotIn("Nothing here uses the network", plugin_readme)
+            # the listing icon: a square PNG, 512 to 2048 px a side, under 2 MB
+            icon = (tree / ".claude-plugin" / "icon.png").read_bytes()
+            self.assertEqual(icon[:8], b"\x89PNG\r\n\x1a\n")
+            width, height = int.from_bytes(icon[16:20], "big"), int.from_bytes(icon[20:24], "big")
+            self.assertEqual(width, height)
+            self.assertTrue(512 <= width <= 2048 and len(icon) < 2_000_000, (width, len(icon)))
+            # the contract still reads its version from the package.json that ships
+            ver = subprocess.run([sys.executable, str(tree / "scripts" / "_contract.py"), "--json"],
+                                 capture_output=True, text=True)
+            self.assertEqual(json.loads(ver.stdout)["skill"]["version"],
+                             json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"])
             self.assertFalse([n for n in names if "__pycache__" in n or n.endswith(".mcp.json")])
             self.assertLess(sum((tree / n).stat().st_size for n in names), 5_000_000)
             # every relative link in the skills/ copy resolves inside the tree that ships
@@ -576,21 +599,27 @@ class ContractTests(unittest.TestCase):
                     if not re.match(r"^[a-z]+:", url):
                         self.assertTrue((page.parent / url).is_file(), f"{page.relative_to(out)}: {url}")
 
-    def test_claude_plugin_marketplace_lists_the_plugin_at_the_repo_root(self):
+    def test_claude_plugin_marketplace_lists_the_plugin(self):
         """Without .claude-plugin/marketplace.json, `claude plugin install` and `claude plugin
         marketplace add kajisho5/ffmpeg-skill` both fail ("not found in any configured
         marketplace" / "Marketplace file not found"), so the README's plugin install line could
         never work. The marketplace lists exactly this plugin, by the manifest's name, from the
-        repository root, and the README installs it under that name."""
+        plugin branch, and the README installs it under that name."""
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", market["name"]))
         self.assertTrue(market["owner"]["name"])
         self.assertEqual([p["name"] for p in market["plugins"]], [manifest["name"]])
-        # ./ until a release has published the plugin branch's ffmpeg-skill/ layout, then that
-        # directory as a git-subdir source (test_plugin_branch_tree_is_the_runtime_set has why)
-        self.assertIn(market["plugins"][0]["source"], ("./", {
-            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
+        # the plugin branch's ffmpeg-skill/ directory as a git-subdir source
+        # (test_plugin_branch_tree_is_the_runtime_set has why)
+        self.assertEqual(market["plugins"][0]["source"], {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
+        self.assertIn("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text := (ROOT / "README.md").read_text(encoding="utf-8"))
+        # every `marketplace add` line in the README carries the flag, however many there are
+        self.assertEqual(readme_text.count("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
+                         readme_text.count("marketplace add kajisho5/ffmpeg-skill"))
+        for host in ("claude plugin marketplace add", "codex plugin marketplace add"):
+            self.assertIn(f"{host} kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)

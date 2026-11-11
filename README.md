@@ -578,6 +578,19 @@ Analysis tools and stream-copy cuts stay far below the limit.
 
 ## Install
 
+Where it can be installed from today. Each route is spelled out below the table.
+
+| Route | For | Command or link |
+|---|---|---|
+| npm | Claude Code, Cursor, Codex skills folders | `npx ffmpeg-skill` ([npmjs.com/package/ffmpeg-skill](https://www.npmjs.com/package/ffmpeg-skill)) |
+| Claude Code plugin | Claude Code 2.1.275 or later (2.1.69 to 2.1.274: the two commands below) | `/plugin install ffmpeg-skill --marketplace kajisho5/ffmpeg-skill` |
+| Codex plugin | Codex CLI | `codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin`, then `codex plugin add ffmpeg-skill@ffmpeg-skill` |
+| Gemini CLI extension | Gemini CLI | `gemini extensions install https://github.com/kajisho5/ffmpeg-skill` |
+| MCP server | clients without a shell | `npx -y ffmpeg-skill mcp` (see [MCP](#mcp)) |
+| GitHub release | a pinned copy | [releases](https://github.com/kajisho5/ffmpeg-skill/releases) |
+
+Not listed in a directory yet: the Claude plugin directory, the Cursor Marketplace, the Gemini CLI extension gallery, the MCP Registry and Glama. This table gains a row when a listing goes live; until then the routes above are the whole list.
+
 ```bash
 npx ffmpeg-skill              # Claude Code   → ~/.claude/skills/ffmpeg-skill
 npx ffmpeg-skill --cursor     # Cursor        → ~/.cursor/skills/ffmpeg-skill
@@ -592,21 +605,21 @@ As a Claude Code plugin (no Node needed, updates with `claude plugin update`). T
 
 ```bash
 /plugin install ffmpeg-skill --marketplace kajisho5/ffmpeg-skill      # in Claude Code 2.1.275 or later
-claude plugin marketplace add kajisho5/ffmpeg-skill                    # older versions: add the marketplace,
-claude plugin install ffmpeg-skill@ffmpeg-skill                        # then install from it
+claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin   # 2.1.69 to 2.1.274: add the marketplace,
+claude plugin install ffmpeg-skill@ffmpeg-skill                               # then install from it
 ```
 
 The same repository installs as a plugin in two more hosts (checked against Codex CLI 0.167 and Gemini CLI 0.68):
 
 ```bash
-codex plugin marketplace add kajisho5/ffmpeg-skill     # Codex: add the marketplace,
-codex plugin add ffmpeg-skill@ffmpeg-skill             # then the plugin
+codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin   # Codex: add the marketplace,
+codex plugin add ffmpeg-skill@ffmpeg-skill                                   # then the plugin
 gemini extensions install https://github.com/kajisho5/ffmpeg-skill   # Gemini CLI
 ```
 
 Those hosts find a plugin's skill only at `skills/ffmpeg-skill/SKILL.md`, a generated copy of the root `SKILL.md` (`.github/scripts/build_plugin_skill.py`; a test fails when it is stale). A Cursor plugin manifest (`.cursor-plugin/plugin.json`) is in the repository for the Cursor Marketplace; it follows Cursor's reference and has not been through their review yet.
 
-The plugin namespaces the skill as `ffmpeg-skill:ffmpeg-skill`. The manifests are [.claude-plugin/plugin.json](.claude-plugin/plugin.json), whose version follows every release automatically, and [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json), which lists the plugin from the repository root. Before 2.17.1 the README's one-line `claude plugin install kajisho5/ffmpeg-skill` could not work, because there was no marketplace file.
+The plugin namespaces the skill as `ffmpeg-skill:ffmpeg-skill`. The manifests are [.claude-plugin/plugin.json](.claude-plugin/plugin.json), whose version follows every release automatically, and [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json), which names the `ffmpeg-skill/` directory of the `plugin` branch: the 2.7 MB a running skill reads, rebuilt by every release, and not the 28 MB repository. `--sparse .claude-plugin` keeps the marketplace checkout small as well (measured at 3.4.0: 1.1 MB instead of 50 MB in Claude Code 2.1.322, 2.2 MB instead of 66 MB in Codex 0.167); without it the install is the same and only that checkout is larger. A `git-subdir` source needs Claude Code 2.1.69 or later (2.1.288 or later where git is older than 2.39, such as Ubuntu 22.04, by Claude Code's changelog; not run here); on anything older, update Claude Code or use `npx ffmpeg-skill`. Before 2.17.1 the README's one-line `claude plugin install kajisho5/ffmpeg-skill` could not work, because there was no marketplace file.
 
 Without Node: clone this repository and copy `SKILL.md`, `package.json`, `scripts/`, `templates/`, `references/`, `docs/` and `mcp/` into your agent's skills directory (the same set `npx ffmpeg-skill` installs; without `templates/` no `--template` renders, and without `package.json` the contract reports its version as unknown).
 
