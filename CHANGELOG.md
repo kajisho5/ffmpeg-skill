@@ -4,7 +4,22 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`source_carry`: every result says what the output lost from its source.** A tool that writes a
+  media file compares what its first input carried besides the picture and the sound (subtitle
+  tracks, chapters, a cover picture, surround channels, `creation_time`, the audio language tag, the
+  start timecode) with the written file and reports `source_carry: {kept, dropped}`. A lost subtitle
+  track, chapter list, cover picture or surround layout is also a `source_items_dropped` warning,
+  unless the tool already says it through `dropped_non_av_streams`. Until now such a run was
+  `verified: true` with no note (#401). The key appears only when the source had one of the items,
+  never changes `verified`, and no tool writes a different file.
+
+### Fixed
+
+- **Release versions: a squash commit whose subject does not end with "(#N)" is resolved to its PR
+  by the merge commit's SHA.** 3.2.3 shipped three features as a patch because the subject ended
+  "(#433, carries #432 and #434)" and the `feature` label was never read.
 
 ## 3.2.3
 

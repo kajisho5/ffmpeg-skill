@@ -402,7 +402,28 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
                              (out.get("video") or {}).get("hdr10_static"))
     if role == "input" and out["timecode"].get("value") and getattr(STATE, "source_timecode", None) is None:
         STATE.source_timecode = (out["timecode"]["value"], duration)
+    # what a source carries besides its picture and sound, for emit()'s source_carry comparison:
+    # kept beside the probe, not in it, so no probe document changes
+    lang = (audio.get("tags") or {}).get("language") if audio else None
+    _CARRY[os.path.realpath(path)] = {
+        "subtitles": len(subs),
+        "chapters": len(raw.get("chapters") or []),
+        "cover_art": sum(1 for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0)),
+        "creation_time": 1 if any(k.lower() == "creation_time" for k in (fmt.get("tags") or {})) else 0,
+        "audio_language": 1 if lang and lang.lower() != "und" else 0,
+        "timecode": 1 if out["timecode"].get("value") else 0,
+        "audio_channels": (_to_int(audio.get("channels")) or 0) if audio else 0,
+        "has_video": bool(video), "has_audio": bool(audio),
+    }
     return out
+
+
+_CARRY: Dict[str, Dict[str, Any]] = {}
+
+
+def carry_inventory(path: str) -> "Optional[Dict[str, Any]]":
+    """The carry-over items probe() last read off `path` (see emit()'s source_carry), or None."""
+    return _CARRY.get(os.path.realpath(path)) if path else None
 
 
 def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[Dict[str, Any]]":

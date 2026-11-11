@@ -68,6 +68,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.1 — broadcast legal levels, measured](#after-321--broadcast-legal-levels-measured)
 - [After 3.2.2 — the alpha path beyond export (#433)](#after-322--the-alpha-path-beyond-export-433)
 - [After 3.2.1 — a smart cut that re-encodes only the partial GOPs](#after-321--a-smart-cut-that-re-encodes-only-the-partial-gops)
+- [After 3.2.3 — what the output lost from its source is said (#401)](#after-323--what-the-output-lost-from-its-source-is-said-401)
 <!-- contents:end -->
 
 ## Time limits
@@ -3064,3 +3065,32 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
 
 Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
 
+## After 3.2.3 — what the output lost from its source is said (#401)
+
+- **`source_carry` is a report in `emit()`, not a per-tool fix and not a check.** #401 listed a
+  dozen tools that drop a subtitle track, chapters, a cover picture, `creation_time`, a language
+  tag or surround channels and still say `verified: true` with no note. Fixing each drop is
+  per-tool work with its own decisions (a retimed cut cannot copy cues as they are). The shared
+  part is that the loss must be *said*, so `emit()` compares the first input's items with the
+  written file's, whichever tool, encoder or FFmpeg version dropped them. It does not touch
+  `verified`: several drops are deliberate and documented (the entry "Subtitle/data tracks are
+  kept where the picture's timeline is untouched and dropped where it is retimed"), and a check
+  that fails on a decision would train callers to ignore it.
+- **Content raises a warning; tags are only listed.** A lost subtitle track, chapter list, cover
+  picture or surround layout records `source_items_dropped`. `creation_time`, the audio language
+  and the start timecode are listed under `dropped` without a warning: every camera file carries a
+  `creation_time` and FFmpeg drops it on any write that does not ask for `-map_metadata`, so the
+  warning would fire on every real run and stop being read.
+- **Not said twice.** Where the tool already reports the subtitle loss (`dropped_non_av_streams:
+  true`, the `non_av_streams_dropped` fallback), `subtitles` is under `dropped` but adds no warning.
+- **Absent for a source with none of the items**, so every result document for a plain source is
+  what it was. Stereo and mono are not an item: `audio_channels` is compared for a surround
+  source only.
+- **Not compared:** two or more inputs with a picture or sound (which one's items the output
+  should carry is the tool's choice; a tool's own output read back as an input, as `cut.py` does,
+  is not a second source), a still or GIF output, a dry run, and an item bound to a stream the
+  output does not have (a sound-only extract has no subtitle track or timecode to lose).
+- **A chapter list kept but not retimed counts as kept.** The comparison is a count; whether the
+  chapters still point at the right moments is a later, per-tool measurement.
+  Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
+  `test_source_carry_says_what_the_output_lost_from_its_source`.
