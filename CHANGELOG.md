@@ -25,7 +25,8 @@
   25 tools. Some ended as a traceback (`--fps nan`, `--timeout inf`, `graphics.py --scale`), some
   as ffmpeg's "Invalid argument" under `kind: ffmpeg` (`loudness.py -I nan`, `silence.py
   --threshold`), most were carried silently. One registration in the shared flag set now refuses
-  them at parse time for all 42 tools, and the shared time parser refuses a non-finite time
+  them at parse time for all 42 tools (a failure document with `--json`, a usage error without),
+  and the shared time parser refuses a non-finite time
   (`cut.py --start nan`, `--duration inf`, `pad.py --end nan`, an `@nan` rate) as `kind: input`.
 
 ### Changed

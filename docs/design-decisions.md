@@ -3205,8 +3205,9 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   flag of the 25 single-input tools, 232 runs), all 232 were accepted at parse time: argparse's
   `float` reads them. A per-flag check cannot keep up with new flags; argparse looks a `type=` up
   in a per-parser registry at parse time, so one `ap.register("type", float, finite_float)` covers
-  the flags a tool added before and after the call. It is a usage error (exit 2), like any other
-  value argparse cannot read (`--fade-in abc`). Times are `str` flags read by `parse_time()`, so
+  the flags a tool added before and after the call. With `--json` the refusal is a failure document
+  (`kind: input`), as it was for the flags that checked themselves (`export.py --max-mb nan`);
+  without it, argparse's usage error (exit 2), like any other value argparse cannot read. Times are `str` flags read by `parse_time()`, so
   that is the second place, and its refusal is `kind: input` through `time_arg()`. A number inside
   another string was probed in one place only: `speedramp.py --segment 0-1:FACTOR` is range-checked
   by its own parser, which a `nan` already failed; the others were not swept. Code: `_common.runner.finite_float`, `_common.decision.parse_time`. Test:

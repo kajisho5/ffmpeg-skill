@@ -211,7 +211,7 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
     # float() reads "nan", "inf" and "1e999": none of them is a time, and each got past the
     # comparisons that bound a time (nan compares false with everything)
     if not math.isfinite(total):
-        raise ValueError(f"'{value}': not a finite time")
+        raise ValueError(f"'{value}': not a time (it is not finite)")
     return total
 
 

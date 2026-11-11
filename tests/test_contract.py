@@ -394,15 +394,23 @@ class ContractTests(unittest.TestCase):
             script_name, flag, value = job
             # argparse converts a value as it reads it, before it looks for required arguments,
             # so the flag alone is enough to reach the type check
-            proc = subprocess.run([sys.executable, str(SCRIPTS / Path(script_name).name), flag, value],
+            proc = subprocess.run([sys.executable, str(SCRIPTS / Path(script_name).name), flag, value, "--json"],
                                   capture_output=True, text=True)
-            return job, proc.returncode, proc.stderr
+            return job, proc.returncode, proc.stdout, proc.stderr
 
         with ThreadPoolExecutor(max_workers=8) as pool:
-            for job, code, err in pool.map(refuse, jobs):
-                self.assertEqual(code, 2, (job, err[-300:]))
-                self.assertIn(f"argument {job[1]}", err, job)
-                self.assertIn("is not a finite number", err, job)
+            for job, code, out, err in pool.map(refuse, jobs):
+                # with --json it is a failure document, like any refusal a tool makes itself
+                self.assertEqual(code, 1, (job, err[-300:]))
+                error = json.loads(out)["error"]
+                self.assertEqual(error["kind"], "input", job)
+                # argparse names the argument with every spelling it has ("-I/--lufs")
+                self.assertIn(job[1], error["message"].split(": ")[0].split("/"), (job, error["message"]))
+                self.assertIn("is not a finite number", error["message"], job)
+        # without --json it is argparse's own usage error, as for any value it cannot read
+        plain = subprocess.run([sys.executable, str(SCRIPTS / "audio.py"), "--fade-in", "nan"], capture_output=True, text=True)
+        self.assertEqual(plain.returncode, 2)
+        self.assertIn("argument --fade-in: 'nan' is not a finite number", plain.stderr)
         from _common.decision import parse_time
         for text in ("nan", "inf", "-inf", "1e999", "1:nan", "00:00:inf", "00:00:01:02@nan", "00:00:01:02@inf"):
             with self.assertRaises(ValueError, msg=text):
@@ -412,7 +420,7 @@ class ContractTests(unittest.TestCase):
                                "--dry-run", "-o", "out.mp4"], capture_output=True, text=True)
         failure = json.loads(proc.stdout)
         self.assertEqual(failure["error"]["kind"], "input")
-        self.assertIn("not a finite time", failure["error"]["message"])
+        self.assertIn("not a time (it is not finite)", failure["error"]["message"])
 
     def test_plugin_branch_tree_is_the_runtime_set(self):
         """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
