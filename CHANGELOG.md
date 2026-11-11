@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.4.2
+
+_Automated release: version and notes generated from pull requests merged since 3.4.1._
+
 ### Fixed
 
 - **The plugin's icon is picture data only.** The Claude plugin directory read the 3.4.1 icon as
@@ -11,6 +17,7 @@
   whose text, beside the compressed pixels, matched the check. The copy on the `plugin` branch now
   keeps only the PNG's picture chunks (the file in `assets/` is unchanged), and the branch's
   `package.json` drops `mcpName`, a field the directory lists as outside its allowed set.
+- fix: the plugin's icon is picture data only (#443)
 
 ## 3.4.1
 
