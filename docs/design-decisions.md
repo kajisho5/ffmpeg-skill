@@ -70,6 +70,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.1 — a smart cut that re-encodes only the partial GOPs](#after-321--a-smart-cut-that-re-encodes-only-the-partial-gops)
 - [After 3.2.3 — what the output lost from its source is said (#401)](#after-323--what-the-output-lost-from-its-source-is-said-401)
 - [After 3.2.3 — two reports from outside (#436, #437)](#after-323--two-reports-from-outside-436-437)
+- [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
 <!-- contents:end -->
 
 ## Time limits
@@ -3117,3 +3118,27 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   two `-vf` and the second replaced the tool's graph). Code:
   `_common.color.bt709_matrix_filter()`. Test: `UserReportTests.test_insert_takes_an_odd_sized_jpeg`.
 
+## After 3.2.3 — what a plugin install copies, and what it leaves out
+
+- **The plugin tree is a branch built from the npm tarball, not the repository root.** A plugin
+  host copies whatever the marketplace entry points at; at `./` that is every tracked file (28 MB:
+  tests, evals, the site, brand files, docs images) for a skill that reads 2.6 MB. Each release
+  commits the npm tarball's contents, plus `.claude-plugin/plugin.json` and
+  `skills/ffmpeg-skill/SKILL.md`, to the `plugin` branch (`.github/scripts/publish_plugin_branch.sh`,
+  run by release.yml before the npm publish). An npm plugin source was measured and rejected:
+  Claude Code 2.1.322 and Codex 0.167 both shell out to `npm` for it ("npm exited with an error",
+  "npm pack failed" without one), and the plugin route has never needed Node. A git source with
+  `ref` installed with git alone in both. The two plugin files stay out of the npm package itself
+  because `npx ffmpeg-skill` copies the package into an agent's skills folder, where a second
+  `SKILL.md` under `skills/` would be the same skill twice. The marketplace entry moves from `./`
+  to the branch only after a release has published it; until then the entry says `./` on purpose.
+  Test: `test_plugin_branch_tree_is_the_runtime_set`.
+- **The plugin does not register the MCP server.** `mcp/server.py` rides along in the plugin tree,
+  but no `.mcp.json` or `mcpServers` entry starts it. In a host that runs a plugin (Claude Code,
+  Codex, Gemini CLI) the agent has a shell, and the skill reaches all 42 tools through it; the MCP
+  server exposes 12 tools whose definitions are 68 KB (about 17,000 tokens) and would be loaded
+  into every session of a host that does not defer tool definitions, for a second route to the
+  same scripts. The server is for clients without a shell, which do not install plugins: they get
+  it from the MCP Registry entry (`server.json`) or the one-line config in the README
+  (`npx -y ffmpeg-skill mcp`). Report this as a defect only with a host that runs plugins, has no
+  shell, and cannot add an MCP server by its own config.

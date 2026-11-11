@@ -325,6 +325,46 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("skills/", pkg["files"])
         self.assertNotIn("skills", [f.rstrip("/") for f in pkg["files"]])
 
+    def test_plugin_branch_tree_is_the_runtime_set(self):
+        """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
+        which at `./` is the whole 28 MB repository. release.yml publishes the npm tarball's
+        contents plus the plugin manifest and skills/ to the `plugin` branch instead. The gate is
+        on the tree that ships: build it and look, where bash and npm exist (the Windows runner
+        cannot spawn `npm`, the debian-trixie job has no npm; see the npm package test)."""
+        script_path = ROOT / ".github" / "scripts" / "publish_plugin_branch.sh"
+        script = script_path.read_text(encoding="utf-8")
+        self.assertNotIn("--force", script)
+        self.assertNotIn("push -f", script)
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        step = release.index("bash .github/scripts/publish_plugin_branch.sh")
+        self.assertLess(release.index("name: Create tag and GitHub Release"), step)
+        self.assertLess(step, release.index("name: Publish to npm"),
+                        "a missing npm token must not hold the plugin branch back")
+        # the entry stays at ./ until a release has published the branch; whichever it names,
+        # it must be one of the two forms both hosts were run against
+        market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        self.assertIn(market["plugins"][0]["source"], (
+            "./", {"source": "url", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "ref": "plugin"}))
+        if sys.platform == "win32" or not shutil.which("bash") or not shutil.which("npm"):
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp) / "tree"
+            proc = subprocess.run(["bash", str(script_path), "--tree-only", str(tree)],
+                                  capture_output=True, text=True, cwd=ROOT)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            names = {p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()}
+            for needed in (".claude-plugin/plugin.json", "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
+                           "scripts/_contract.py", "mcp/server.py", "docs/contract.md"):
+                self.assertIn(needed, names)
+            self.assertFalse([n for n in names if n.split("/")[0] in
+                              ("tests", "evals", "site", "brand", "demos", "assets", ".github")])
+            self.assertFalse([n for n in names if "__pycache__" in n or n.endswith(".mcp.json")])
+            self.assertLess(sum((tree / n).stat().st_size for n in names), 5_000_000)
+            # every relative link in the skills/ copy resolves inside the tree that ships
+            copy = (tree / "skills" / "ffmpeg-skill" / "SKILL.md").read_text(encoding="utf-8")
+            for target in re.findall(r"\]\((\.\./\.\./[^)#]+)", copy):
+                self.assertTrue((tree / "skills" / "ffmpeg-skill" / target).resolve().exists(), target)
+
     def test_mcp_registry_manifest_tracks_the_package_version(self):
         """server.json is the official MCP Registry document (schema 2025-12-11). Its two
         version fields and package.json's mcpName have to stay on the published npm version,

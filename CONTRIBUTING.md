@@ -104,6 +104,11 @@ would have caught the original bug isn't done yet.
   keeps the hand-written prose, marked with the version it describes
   (`.github/scripts/bump_roadmap_md.py`); the next hand-written release PR replaces the sentence.
   The same bump moves both `version` fields in `server.json` (`.github/scripts/bump_server_json.py`).
+- Every release also commits the installable plugin tree to the `plugin` branch
+  (`.github/scripts/publish_plugin_branch.sh`): the npm tarball's contents plus the plugin
+  manifest and `skills/`. Never commit to that branch by hand and never force-push it; hosts
+  fast-forward it. `bash .github/scripts/publish_plugin_branch.sh --tree-only DIR` builds the
+  tree locally without touching git.
 
 ## Publishing the MCP listing
 

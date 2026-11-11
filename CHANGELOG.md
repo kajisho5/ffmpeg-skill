@@ -32,6 +32,12 @@
   `gemini-extension.json` and a `.cursor-plugin/plugin.json`; the release bump moves their
   versions. Claude Code still counts one skill (#406).
 
+- **A `plugin` branch with only what a plugin install needs.** Each release commits the npm
+  tarball's contents plus the plugin manifest and the `skills/` copy (2.6 MB, 88 files) to the
+  `plugin` branch. Pointed at the repository root, a Claude Code or Codex plugin install copies all
+  28 MB of it, tests and evals included. The marketplace entry moves to the branch once the first
+  release has published it.
+
 ### Fixed
 
 - **`caption.py --srt --position` put the text in the wrong place** for every value but the bottom

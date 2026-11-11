@@ -279,6 +279,14 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      # The installable plugin tree (the npm tarball's contents, 2.6 MB instead of the 28 MB
+      # repository) goes to the `plugin` branch, one commit per release, for plugin hosts to
+      # fetch with git alone. It runs before the npm publish so a missing npm token does not
+      # hold it back; a failure here leaves the branch at the previous release.
+      - name: Publish the plugin branch
+        if: steps.check.outputs.already_released == 'false'
+        run: bash .github/scripts/publish_plugin_branch.sh
+
       # Requires an npm access token in this repo's Settings -> Secrets and variables ->
       # Actions, named NPM_TOKEN (npmjs.com -> your avatar -> Access Tokens -> Generate New
       # Token -> Granular Access Token or Automation, with publish permission on this
