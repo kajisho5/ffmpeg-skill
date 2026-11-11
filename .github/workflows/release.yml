@@ -331,6 +331,81 @@ jobs:
           fi
           echo "published $PKG@$EXPECTED (previous tag $PREVIOUS)"
 
+      # The MCP Registry entry (server.json, io.github.kajisho5/ffmpeg-skill). It points at the npm
+      # package, so it can only be published once npm has this version, and the registry refuses a
+      # version it already lists. These steps therefore do not hang on `already_released`: every
+      # run asks the two registries and publishes when npm has the version and the MCP Registry
+      # does not. That makes a re-run finish a publish that failed, and it is how a version that
+      # was released before these steps existed gets listed. Authentication is GitHub's OIDC token
+      # for this repository (`id-token: write` above), which is what lets a name under
+      # io.github.kajisho5/ be published with no stored secret. mcp-publisher is pinned to a
+      # release and its Sigstore bundle is verified before it runs, as the registry's own guide
+      # says to. Like the plugin branch, a failure here must not undo or block a release: the
+      # steps may fail, and the job's last step reports it.
+      - name: Ask whether the MCP Registry already lists this version
+        id: registry_state
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./server.json').name")
+          VERSION=$(node -p "require('./server.json').version")
+          PKG=$(node -p "require('./package.json').name")
+          ON_NPM=$(npm view "$PKG@$VERSION" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
+          if [ "$ON_NPM" != "$VERSION" ]; then
+            echo "npm does not have $PKG@$VERSION; nothing to list yet"
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # a registry that cannot be asked is not "not listed": curl --fail stops the step here
+          curl --fail --silent --show-error --max-time 60 --get \
+            "https://registry.modelcontextprotocol.io/v0/servers" --data-urlencode "search=$NAME" > registry.json
+          LISTED=$(NAME="$NAME" VERSION="$VERSION" node -e '
+            const seen = (v) => v && typeof v === "object" &&
+              ((v.name === process.env.NAME && v.version === process.env.VERSION) || Object.values(v).some(seen));
+            console.log(seen(JSON.parse(require("fs").readFileSync("registry.json", "utf8"))) ? "yes" : "no");
+          ')
+          rm -f registry.json
+          if [ "$LISTED" = "yes" ]; then
+            echo "the MCP Registry already lists $NAME $VERSION"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "the MCP Registry does not list $NAME $VERSION yet"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install cosign
+        id: cosign
+        if: steps.registry_state.outputs.publish == 'true'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Publish to the MCP Registry
+        id: mcp_registry
+        if: steps.registry_state.outputs.publish == 'true' && steps.cosign.outcome == 'success'
+        continue-on-error: true
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$WORK/$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$WORK/$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$WORK/$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$WORK/$archive"
+          tar xzf "$WORK/$archive" -C "$WORK" mcp-publisher
+          "$WORK/mcp-publisher" login github-oidc
+          "$WORK/mcp-publisher" publish
+
+      - name: Fail the job when the MCP Registry was not updated
+        if: steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'
+        run: |
+          echo "::error::the MCP Registry entry was not published for this version (see the three MCP Registry steps); npm, the GitHub Release and the plugin branch are unaffected. Re-running this workflow publishes it."
+          exit 1
+
       - name: Fail the job when the plugin branch was not published
         if: steps.plugin_branch.outcome == 'failure'
         run: |

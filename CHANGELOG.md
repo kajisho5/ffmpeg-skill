@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- **The release workflow publishes the MCP Registry entry.** `server.json`
+  (`io.github.kajisho5/ffmpeg-skill`) was kept on the package version by every release but never
+  sent: publishing meant running `mcp-publisher` by hand after a GitHub login. `release.yml` now
+  does it after the npm publish, authenticated by GitHub's OIDC token for this repository (no
+  stored secret), with `mcp-publisher` pinned to a release and its Sigstore bundle verified
+  before it runs. The steps ask npm and the registry first and publish when npm has the version
+  and the registry does not, so a re-run finishes a failed publish and a version released before
+  this change is listed by the next run. A failure never blocks or undoes a release.
 
 ## 3.4.3
 

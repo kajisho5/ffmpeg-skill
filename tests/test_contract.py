@@ -597,6 +597,27 @@ class ContractTests(unittest.TestCase):
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
         self.assertIn("bump_server_json", release)
         self.assertIn("server.json", release)
+        # release.yml publishes the entry itself, after npm has the version (the registry reads
+        # mcpName from the npm package), with GitHub's OIDC token and no stored secret
+        self.assertRegex(release, r"(?m)^  id-token: write")
+        npm_step = release.index("name: Publish to npm")
+        ask = release.index("name: Ask whether the MCP Registry already lists this version")
+        publish = release.index("name: Publish to the MCP Registry")
+        self.assertLess(npm_step, ask)
+        self.assertLess(ask, publish)
+        block = release[ask:release.index("name: Fail the job when the plugin branch was not published")]
+        self.assertIn("mcp-publisher\" login github-oidc", block)
+        self.assertIn("mcp-publisher\" publish", block)
+        # the publisher is a pinned release whose Sigstore bundle is verified before it runs
+        self.assertRegex(block, r"MCP_PUBLISHER_VERSION: v\d+\.\d+\.\d+")
+        self.assertNotIn("releases/latest", block)
+        self.assertLess(block.index("cosign verify-blob"), block.index("tar xzf"))
+        self.assertRegex(block, r"sigstore/cosign-installer@[0-9a-f]{40} ")
+        # a registry that cannot be asked is not "not listed", and a failure never blocks a release
+        self.assertIn("curl --fail", block[:block.index("name: Install cosign")])
+        self.assertEqual(block.count("continue-on-error: true"), 3)
+        self.assertNotIn("already_released", block[block.index("        run:"):])
+        self.assertIn("steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'", block)
         scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
         self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
         self.assertIn("publish_results: true", scorecard)
