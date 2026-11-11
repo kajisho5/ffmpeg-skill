@@ -17,3 +17,8 @@
   the defect's class without naming the tool, run `python3 tests/sweep.py INPUT --baseline PLAIN`
   and the path-parity checks in `.claude/skills/sibling-sweep/SKILL.md`, then fix the shared cause
   or file the siblings in one issue. The PR body says what was swept and what it showed.
+- **Before a push, ask the reviewer's questions yourself.**
+  `.claude/skills/code-review/references/reviewer-findings.md` groups the 353 findings an outside
+  reviewer made on earlier PRs into twenty questions (path guards against every input and output,
+  a failed measurement reported as not measured, a claim as narrow as the code, the right stream,
+  ...). A finding that fits none of them adds a question in the PR that answers it.
