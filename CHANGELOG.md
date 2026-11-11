@@ -25,6 +25,13 @@
   defect is now checked across the tools before it is fixed. Its first run, on the class behind
   #437, found #438.
 
+- **Codex and Gemini CLI plugin installs find the skill.** `codex plugin marketplace add
+  kajisho5/ffmpeg-skill` already installed the plugin, but Codex listed no skill for it: Codex
+  0.167 and Gemini CLI 0.68 discover a plugin's skill only at `skills/<name>/SKILL.md`. The
+  repository now carries `skills/ffmpeg-skill/SKILL.md`, generated from the root `SKILL.md`, a
+  `gemini-extension.json` and a `.cursor-plugin/plugin.json`; the release bump moves their
+  versions. Claude Code still counts one skill (#406).
+
 ### Fixed
 
 - **`caption.py --srt --position` put the text in the wrong place** for every value but the bottom

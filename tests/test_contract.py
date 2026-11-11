@@ -291,6 +291,40 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(set(manifest) <= {"name", "version", "description", "author", "homepage", "repository", "license", "keywords"}, sorted(manifest))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", manifest["name"]))
 
+    def test_plugin_hosts_find_the_skill_and_its_version(self):
+        """Codex 0.167 and Gemini CLI 0.68 discover a plugin's skills only under
+        skills/<name>/SKILL.md (measured: Codex lists nothing for a SKILL.md at the plugin root,
+        with or without a manifest `skills` field), so the repository carries a generated copy
+        there. It must be the generator's output for the current SKILL.md, and every host's
+        manifest must carry the package version, moved by release.yml's bump."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "build_plugin_skill", ROOT / ".github" / "scripts" / "build_plugin_skill.py")
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        root_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        copy = (ROOT / "skills" / "ffmpeg-skill" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(copy, gen.build(root_text),
+                         "stale: run python3 .github/scripts/build_plugin_skill.py --write")
+        front = root_text[:root_text.index("\n---\n", 4)]
+        self.assertTrue(copy.startswith(front), "the copy keeps the frontmatter hosts trigger on")
+        for target in re.findall(r"\]\((\.\./\.\./[^)#]+)", copy):
+            self.assertTrue((ROOT / "skills" / "ffmpeg-skill" / target).resolve().exists(), target)
+        self.assertNotIn("](references/", copy)
+        pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
+            doc = json.loads((ROOT / manifest).read_text(encoding="utf-8"))
+            self.assertEqual((doc["name"], doc["version"]), ("ffmpeg-skill", pkg["version"]), manifest)
+            self.assertTrue(doc.get("description"), manifest)
+            self.assertGreaterEqual(release.count(manifest), 2, f"{manifest}: bumped and staged by release.yml")
+        cursor = json.loads((ROOT / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertTrue((ROOT / cursor["logo"]).is_file(), "the logo is a committed, relative path")
+        # the npm installer copies one skill directory: the plugin copy must not ride along, or an
+        # agent's skills folder would hold the same skill twice
+        self.assertNotIn("skills/", pkg["files"])
+        self.assertNotIn("skills", [f.rstrip("/") for f in pkg["files"]])
+
     def test_mcp_registry_manifest_tracks_the_package_version(self):
         """server.json is the official MCP Registry document (schema 2025-12-11). Its two
         version fields and package.json's mcpName have to stay on the published npm version,

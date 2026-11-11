@@ -147,11 +147,13 @@ jobs:
           assert pkg != pkg_new, "package.json version field not found/replaced"
           pkg_path.write_text(pkg_new, encoding="utf-8")
 
-          plugin_path = root / ".claude-plugin" / "plugin.json"
-          plugin = plugin_path.read_text(encoding="utf-8")
-          plugin_new = re.sub(r'("version":\s*")[^"]+(")', rf'\g<1>{new}\g<2>', plugin, count=1)
-          assert plugin != plugin_new, ".claude-plugin/plugin.json version field not found/replaced"
-          plugin_path.write_text(plugin_new, encoding="utf-8")
+          # every plugin host's manifest carries the package version (Claude Code, Cursor, Gemini CLI)
+          for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
+              plugin_path = root / manifest
+              plugin = plugin_path.read_text(encoding="utf-8")
+              plugin_new = re.sub(r'("version":\s*")[^"]+(")', rf'\g<1>{new}\g<2>', plugin, count=1)
+              assert plugin != plugin_new, f"{manifest} version field not found/replaced"
+              plugin_path.write_text(plugin_new, encoding="utf-8")
 
           # Only the two current-version mentions move; a blind replace of the version string
           # also rewrote every historical "since"/"added in" version (see the helper's docstring).
@@ -222,7 +224,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json server.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
+          git add package.json server.json .claude-plugin/plugin.json .cursor-plugin/plugin.json gemini-extension.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
           git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
           # A merge that landed during this step would still make the push non-fast-forward;
           # replay the bump on top of it (a conflict here is real and should fail the run).

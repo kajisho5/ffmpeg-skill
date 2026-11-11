@@ -596,6 +596,16 @@ claude plugin marketplace add kajisho5/ffmpeg-skill                    # older v
 claude plugin install ffmpeg-skill@ffmpeg-skill                        # then install from it
 ```
 
+The same repository installs as a plugin in two more hosts (checked against Codex CLI 0.167 and Gemini CLI 0.68):
+
+```bash
+codex plugin marketplace add kajisho5/ffmpeg-skill     # Codex: add the marketplace,
+codex plugin add ffmpeg-skill@ffmpeg-skill             # then the plugin
+gemini extensions install https://github.com/kajisho5/ffmpeg-skill   # Gemini CLI
+```
+
+Those hosts find a plugin's skill only at `skills/ffmpeg-skill/SKILL.md`, a generated copy of the root `SKILL.md` (`.github/scripts/build_plugin_skill.py`; a test fails when it is stale). A Cursor plugin manifest (`.cursor-plugin/plugin.json`) is in the repository for the Cursor Marketplace; it follows Cursor's reference and has not been through their review yet.
+
 The plugin namespaces the skill as `ffmpeg-skill:ffmpeg-skill`. The manifests are [.claude-plugin/plugin.json](.claude-plugin/plugin.json), whose version follows every release automatically, and [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json), which lists the plugin from the repository root. Before 2.17.1 the README's one-line `claude plugin install kajisho5/ffmpeg-skill` could not work, because there was no marketplace file.
 
 Without Node: clone this repository and copy `SKILL.md`, `package.json`, `scripts/`, `templates/`, `references/`, `docs/` and `mcp/` into your agent's skills directory (the same set `npx ffmpeg-skill` installs; without `templates/` no `--template` renders, and without `package.json` the contract reports its version as unknown).
