@@ -6,7 +6,9 @@ description: 'Edit video and audio with local FFmpeg: cut, join, reframe, speed,
 > Generated from the repository's root `SKILL.md` by `.github/scripts/build_plugin_skill.py`;
 > edit that file, not this one. In a plugin install this file sits in `skills/ffmpeg-skill/`
 > and the plugin root is two directories up: `<skill-dir>` below means that root, so the
-> scripts are at `<this file's directory>/../../scripts/`.
+> scripts are at `<this file's directory>/../../scripts/`. Every plain path below
+> (`references/...`, `docs/...`, `templates/...`, `scripts/...`) is under that root too, not
+> next to this file.
 
 # ffmpeg-skill
 

@@ -142,7 +142,7 @@ def show(row):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input")
+    ap.add_argument("input", nargs="?", help="the clip to sweep (not needed with --list)")
     ap.add_argument("--only", help="comma-separated tool names from the table")
     ap.add_argument("--baseline", help="a plain clip: print only the rows that differ from its rows")
     ap.add_argument("--json", action="store_true", help="print the rows as JSON")
@@ -151,6 +151,8 @@ def main():
     if args.list:
         print("\n".join(TABLE))
         return 0
+    if not args.input:
+        ap.error("an input clip is required (only --list runs without one)")
     tools = list(TABLE)
     if args.only:
         wanted = [t.strip() for t in args.only.split(",") if t.strip()]

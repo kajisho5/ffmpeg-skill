@@ -27,7 +27,9 @@ NOTE = (
     "> Generated from the repository's root `SKILL.md` by `.github/scripts/build_plugin_skill.py`;\n"
     "> edit that file, not this one. In a plugin install this file sits in `skills/ffmpeg-skill/`\n"
     "> and the plugin root is two directories up: `<skill-dir>` below means that root, so the\n"
-    "> scripts are at `<this file's directory>/../../scripts/`.\n"
+    "> scripts are at `<this file's directory>/../../scripts/`. Every plain path below\n"
+    "> (`references/...`, `docs/...`, `templates/...`, `scripts/...`) is under that root too, not\n"
+    "> next to this file.\n"
 )
 RELATIVE_LINK = re.compile(r"\]\((?!https?://|#|/|\.\./|mailto:)([^)]+)\)")
 

@@ -311,6 +311,13 @@ class ContractTests(unittest.TestCase):
         for target in re.findall(r"\]\((\.\./\.\./[^)#]+)", copy):
             self.assertTrue((ROOT / "skills" / "ffmpeg-skill" / target).resolve().exists(), target)
         self.assertNotIn("](references/", copy)
+        # plain (unlinked) paths cannot be rewritten without breaking the commands that quote
+        # them, so the note says where they are, and each one exists at the plugin root
+        self.assertIn("Every plain path below", gen.NOTE)
+        plain = set(re.findall(r"`((?:references|docs|templates)/[\w./-]+\.\w+)(?:#[\w-]+)?`", copy))
+        self.assertGreaterEqual(len(plain), 5)
+        for rel in plain:
+            self.assertTrue((ROOT / rel).is_file(), rel)
         pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
         for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
@@ -324,6 +331,48 @@ class ContractTests(unittest.TestCase):
         # agent's skills folder would hold the same skill twice
         self.assertNotIn("skills/", pkg["files"])
         self.assertNotIn("skills", [f.rstrip("/") for f in pkg["files"]])
+
+    def test_sweep_stops_on_a_failed_probe_and_survives_a_stalled_tool(self):
+        """tests/sweep.py is the sibling sweep's instrument, so its own failure modes are pinned:
+        an unreadable input stops before any tool runs (it used to build tool arguments from
+        default sizes and print rows), a child that passes the ceiling becomes a `timeout` row and
+        the next tool still runs, and `--list` needs no input."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sweep_tool", ROOT / "tests" / "sweep.py")
+        sweep = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sweep)
+        with tempfile.TemporaryDirectory() as work:
+            ran = []
+            with unittest.mock.patch.object(sweep, "row_for", side_effect=lambda *a, **k: ran.append(a)):
+                with self.assertRaises(SystemExit) as stop:
+                    sweep.sweep(os.path.join(work, "missing.mp4"), ["probe"], work)
+            self.assertIn("probe.py could not read", str(stop.exception.code))
+            self.assertEqual(ran, [], "no tool runs after a failed probe")
+
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(cmd)
+                self.assertEqual(kwargs.get("timeout"), sweep.TIMEOUT_S)
+                if len(calls) == 1:
+                    raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+                return subprocess.CompletedProcess(cmd, 0, '{"status": "completed", "verified": true}', "")
+
+            facts = {"w": 2, "h": 2, "mid": "0.5", "dur": "1.000", "cues": "c.txt", "still": "s.png"}
+            two = list(sweep.TABLE)[:2]
+            with unittest.mock.patch.object(sweep.subprocess, "run", side_effect=fake_run):
+                rows = [sweep.row_for(tool, "in.mp4", facts, work) for tool in two]
+            self.assertEqual([r["status"] for r in rows], ["timeout", "completed"])
+            self.assertEqual(len(calls), 2)
+        out = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", ["sweep.py", "--list"]), contextlib.redirect_stdout(out):
+            self.assertEqual(sweep.main(), 0)
+        self.assertEqual(out.getvalue().split("\n")[:-1], list(sweep.TABLE))
+        err = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", ["sweep.py"]), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as usage:
+                sweep.main()
+        self.assertEqual(usage.exception.code, 2)
 
     def test_plugin_branch_tree_is_the_runtime_set(self):
         """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
