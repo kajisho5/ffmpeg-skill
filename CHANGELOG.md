@@ -14,6 +14,21 @@
   model). No terms-of-service link: the project has none beyond its MIT licence. The plugin
   branch's `package.json` also drops `scripts`.
 
+## 3.4.3
+
+_Automated release: version and notes generated from pull requests merged since 3.4.2._
+
+### Fixed
+
+- **The plugin's listing has a name, links and a privacy page.** The Claude plugin directory
+  showed the plugin as "Ffmpeg Skill" (auto-filled from the name) with four of six links unset.
+  `.claude-plugin/plugin.json` now sets `displayName` ("FFmpeg Skill"), `documentationUrl`,
+  `supportUrl` and `privacyPolicyUrl`; the last points at a new `PRIVACY.md` that says what the
+  tools do with data (nothing is collected or uploaded; transcription engines may download a
+  model). No terms-of-service link: the project has none beyond its MIT licence. The plugin
+  branch's `package.json` also drops `scripts`.
+- fix: plugin listing name, links and a privacy page (#444)
+
 ## 3.4.2
 
 _Automated release: version and notes generated from pull requests merged since 3.4.1._
