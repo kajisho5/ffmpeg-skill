@@ -5570,7 +5570,7 @@ class UserReportTests(unittest.TestCase):
         m = probe(str(odd))
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (629, 1401), "the fixture has to be odd on both axes")
         cues = OUT / "odd438.txt"
-        cues.write_text("0 1.5 Odd\n", encoding="utf-8")
+        cues.write_text("0-1.5 Odd\n", encoding="utf-8")
         runs = {"caption.py": ["--text", cues]}
         filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
         if re.search(r"\bvidstabdetect\b", filters):

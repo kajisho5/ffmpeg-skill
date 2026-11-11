@@ -59,8 +59,15 @@ TABLE = {
 }
 
 
+# One tool on one short clip: generous, and a stalled child still ends so the sweep reaches the rest.
+TIMEOUT_S = 600
+
+
 def run_json(cmd):
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return None, subprocess.CompletedProcess(cmd, -1, "", f"no result after {TIMEOUT_S} s (timed out)")
     start = proc.stdout.find("{")
     try:
         return json.loads(proc.stdout[start:]) if start >= 0 else None, proc
@@ -76,7 +83,8 @@ def row_for(tool, source, facts, work):
     doc, proc = run_json([sys.executable, str(SCRIPTS / f"{name}.py"), source, *args, "-o", out, "--overwrite", "--json"])
     if doc is None:
         tail = (proc.stderr or proc.stdout).strip().splitlines()[-1:] or [""]
-        return {"tool": tool, "status": "no-json", "exit": proc.returncode, "message": tail[0][:200]}
+        status = "timeout" if proc.returncode == -1 and "timed out" in tail[0] else "no-json"
+        return {"tool": tool, "status": status, "exit": proc.returncode, "message": tail[0][:200]}
     err = doc.get("error") or {}
     diag = doc.get("diagnostics") or {}
     row = {"tool": tool, "status": doc.get("status"), "kind": err.get("kind"), "verified": doc.get("verified"),
@@ -92,14 +100,18 @@ def row_for(tool, source, facts, work):
 
 def facts_for(source, work):
     doc, proc = run_json([sys.executable, str(SCRIPTS / "probe.py"), source, "--json"])
-    if not doc:
-        sys.exit(f"probe.py could not read {source}: {(proc.stderr or '').strip()[-300:]}")
+    failed = isinstance(doc, dict) and (doc.get("status") == "failed" or doc.get("error"))
+    if not doc or failed or proc.returncode != 0:
+        why = ((doc or {}).get("error") or {}).get("message") if isinstance(doc, dict) else None
+        sys.exit(f"probe.py could not read {source}: {(why or proc.stderr or '').strip()[-300:]}")
     meta = doc[0] if isinstance(doc, list) else (doc.get("files") or [doc])[0] if "files" in doc else doc
+    if not isinstance(meta, dict) or not (meta.get("video") or meta.get("audio")):
+        sys.exit(f"probe.py found no picture or sound in {source}")
     video = meta.get("video") or {}
     duration = float(meta.get("duration") or 2.0)
     w, h = int(video.get("width") or 320), int(video.get("height") or 240)
     cues = os.path.join(work, "sweep_cues.txt")
-    Path(cues).write_text(f"0 {max(duration / 2, 0.5):.2f} Sweep\n", encoding="utf-8")
+    Path(cues).write_text(f"0-{max(duration / 2, 0.5):.2f} Sweep\n", encoding="utf-8")
     still = os.path.join(work, "sweep_still.png")
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=white:s=64x64", "-frames:v", "1", still], check=True)
     return {"w": max(2, (w // 2) // 2 * 2), "h": max(2, (h // 2) // 2 * 2), "mid": f"{max(duration / 2, 0.4):.2f}",

@@ -48,6 +48,14 @@ fix belongs (one shared helper, or one tool).
    - `kind: ffmpeg`, an assertion, "Nothing was written", or a completed run
      whose output is wrong is a sibling.
 
+   A row that matches the baseline proves less than it looks: the sweep compares
+   what each tool *said*, and deletes what it wrote. A defect in the pixels or
+   the sound with an honest-looking result (the #436 kind: `completed`,
+   `verified: true`, text in the wrong place) leaves every row equal. When the
+   class is "the output is wrong" rather than "the run fails", run the tools the
+   class can reach yourself and measure the output (a bounding box, a frame
+   hash, `check.py --compare`, a loudness reading), matching rows included.
+
 5. **Decide where the fix goes.** Two or more siblings through one helper: fix
    the helper. Siblings with separate causes: fix the reported one here and
    file the others in **one** issue titled by the class, with the sweep rows
