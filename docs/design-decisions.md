@@ -73,6 +73,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
+- [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 <!-- contents:end -->
 
 ## Time limits
@@ -3234,3 +3235,26 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   by its own parser, which a `nan` already failed; the others were not swept. Code: `_common.runner.finite_float`, `_common.decision.parse_time`. Test:
   `test_no_numeric_flag_of_any_tool_takes_nan_or_inf`, which walks the contract, so a new tool or
   flag is covered without being listed.
+
+## After 3.4.3 — the MCP Registry entry is published by the release, not by hand
+
+- **`release.yml` publishes `server.json` to the MCP Registry after the npm publish.** The entry
+  names the npm package, so it can exist only once npm has the version, and the registry refuses
+  a version it already lists. The steps therefore ask both registries on every run and publish
+  when npm has the version and the registry does not: they do not depend on "was a tag created
+  in this run", which is what lets a re-run finish a failed publish. The re-run checks out the tip of `main`, so
+  it lists the version that is current then; a failed version that `main` has since moved past is
+  not listed, and the registry's newest entry is the one clients read. The registry is asked for
+  the exact name and version (`/v0/servers/{name}/versions/{version}`: 200 or 404), not through
+  its paginated list, where a version on a later page would read as absent. A registry that
+  cannot be asked, or any other status, stops the step, as does any `npm view` failure; neither is
+  read as "not listed".
+  A version npm answers E404 for also fails the step: by then it is tagged, so it is a release
+  that never reached npm, which a re-run would otherwise pass over in silence. Authentication is
+  GitHub's OIDC token for this repository, which the registry accepts for a name under
+  `io.github.kajisho5/`, so no secret is stored. `mcp-publisher` is a pinned release whose
+  Sigstore bundle is verified before the binary runs, as the registry's GitHub Actions guide
+  says to; `releases/latest` is not used. The three steps may fail without stopping the job and
+  a last step turns it red, the same shape as the plugin branch: a missing registry entry must
+  not undo a release. Not established: the steps have not run yet; the first run is the merge
+  of the PR that adds them. Test: `test_mcp_registry_manifest_tracks_the_package_version`.

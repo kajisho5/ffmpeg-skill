@@ -331,8 +331,105 @@ jobs:
           fi
           echo "published $PKG@$EXPECTED (previous tag $PREVIOUS)"
 
+      # The MCP Registry entry (server.json, io.github.kajisho5/ffmpeg-skill). It points at the npm
+      # package, so it can only be published once npm has this version, and the registry refuses a
+      # version it already lists. These steps therefore do not hang on `already_released`: every
+      # run asks the two registries and publishes when npm has the version and the MCP Registry
+      # does not. That makes a re-run finish a publish that failed, for the version on main at
+      # the time of the re-run (the checkout is main's tip, not the commit that failed), and it is
+      # how a version that was released before these steps existed gets listed. Authentication is GitHub's OIDC token
+      # for this repository (`id-token: write` above), which is what lets a name under
+      # io.github.kajisho5/ be published with no stored secret. mcp-publisher is pinned to a
+      # release and its Sigstore bundle is verified before it runs, as the registry's own guide
+      # says to. Like the plugin branch, a failure here must not undo or block a release: the
+      # steps may fail, and the job's last step reports it.
+      - name: Ask whether the MCP Registry already lists this version
+        id: registry_state
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./server.json').name")
+          VERSION=$(node -p "require('./server.json').version")
+          PKG=$(node -p "require('./package.json').name")
+          # npm answers a version it does not have with E404 and exit 1; any other failure (network,
+          # registry down) also exits 1, and stops this step as "could not ask". Neither is a quiet
+          # skip. By this point the version is either one this run just published (the verify step
+          # above saw it on npm) or one an earlier run tagged, so a version npm does not have is a
+          # release that never reached npm: a re-run skips `npm publish` because the tag exists,
+          # and without this the job would be green with the release on neither registry.
+          NPM_STATE=0
+          ON_NPM=$(npm view "$PKG@$VERSION" version --cache /tmp/npm-verify-cache 2> npm-view.err) || NPM_STATE=$?
+          if [ "$NPM_STATE" -ne 0 ]; then
+            if grep -q "E404" npm-view.err; then
+              rm -f npm-view.err
+              echo "::error::$PKG@$VERSION is tagged but npm does not have it, so the MCP Registry cannot list it. Nothing here publishes it: this workflow skips npm publish once the tag exists. Publishing it by hand from the tag v$VERSION is a maintainer's decision: a local publish carries no provenance attestation, and if npm already has a newer version it needs --tag so that latest does not move back."; exit 1
+            fi
+            cat npm-view.err >&2
+            echo "::error::could not ask npm whether $PKG@$VERSION exists (npm view exited $NPM_STATE)"; exit 1
+          fi
+          rm -f npm-view.err
+          if [ "$ON_NPM" != "$VERSION" ]; then
+            echo "::error::npm answered '$ON_NPM' for $PKG@$VERSION"; exit 1
+          fi
+          # One name and one version, asked exactly: the list endpoint is paginated, and a version on
+          # a later page would read as absent, be published a second time and be refused. 200 is
+          # listed and 404 is not; anything else (a registry that could not be asked, a 5xx) is
+          # neither, and stops the step.
+          ENCODED=$(NAME="$NAME" node -p 'encodeURIComponent(process.env.NAME)')
+          STATUS=$(curl --silent --show-error --max-time 60 --output /dev/null --write-out '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0/servers/$ENCODED/versions/$VERSION") || {
+            echo "::error::could not ask the MCP Registry whether $NAME $VERSION is listed"; exit 1; }
+          case "$STATUS" in
+            200) LISTED=yes ;;
+            404) LISTED=no ;;
+            *) echo "::error::the MCP Registry answered HTTP $STATUS for $NAME $VERSION"; exit 1 ;;
+          esac
+          if [ "$LISTED" = "yes" ]; then
+            echo "the MCP Registry already lists $NAME $VERSION"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "the MCP Registry does not list $NAME $VERSION yet"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install cosign
+        id: cosign
+        if: steps.registry_state.outputs.publish == 'true'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Publish to the MCP Registry
+        id: mcp_registry
+        if: steps.registry_state.outputs.publish == 'true' && steps.cosign.outcome == 'success'
+        continue-on-error: true
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$WORK/$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$WORK/$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$WORK/$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$WORK/$archive"
+          tar xzf "$WORK/$archive" -C "$WORK" mcp-publisher
+          "$WORK/mcp-publisher" login github-oidc
+          "$WORK/mcp-publisher" publish
+
+      - name: Fail the job when the MCP Registry was not updated
+        if: steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'
+        run: |
+          echo "::error::the MCP Registry entry was not published (see the three MCP Registry steps, which say why). The tag, the GitHub Release and npm do not depend on it. A re-run publishes the version that is on main when it runs: if main has moved on to a newer version by then, that one is listed and this one is not."
+          exit 1
+
+      # always(): the step above may already have failed the job, and a second failure still has
+      # to be reported, not skipped.
       - name: Fail the job when the plugin branch was not published
-        if: steps.plugin_branch.outcome == 'failure'
+        if: always() && steps.plugin_branch.outcome == 'failure'
         run: |
           echo "::error::the plugin branch was not updated for this release (see the 'Publish the plugin branch' step); npm and the GitHub Release are unaffected. Run .github/scripts/publish_plugin_branch.sh from the release commit to publish it."
           exit 1

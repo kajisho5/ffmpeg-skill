@@ -457,7 +457,8 @@ class ContractTests(unittest.TestCase):
         # the npm publish for good. The step may fail; the job's last step reports it.
         block = release[release.index("name: Publish the plugin branch"):release.index("name: Publish to npm")]
         self.assertIn("continue-on-error: true", block)
-        self.assertIn("steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
+        # always(): the MCP Registry's failure step sits before this one, and both must be reported
+        self.assertIn("if: always() && steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
         # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
         self.assertIn('ls-remote --exit-code --heads "$REMOTE"', script)
         self.assertNotIn("2>/dev/null; then", script)
@@ -597,6 +598,45 @@ class ContractTests(unittest.TestCase):
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
         self.assertIn("bump_server_json", release)
         self.assertIn("server.json", release)
+        # release.yml publishes the entry itself, after npm has the version (the registry reads
+        # mcpName from the npm package), with GitHub's OIDC token and no stored secret
+        self.assertRegex(release, r"(?m)^  id-token: write")
+        npm_step = release.index("name: Publish to npm")
+        ask = release.index("name: Ask whether the MCP Registry already lists this version")
+        publish = release.index("name: Publish to the MCP Registry")
+        self.assertLess(npm_step, ask)
+        self.assertLess(ask, publish)
+        block = release[ask:release.index("name: Fail the job when the plugin branch was not published")]
+        self.assertIn("mcp-publisher\" login github-oidc", block)
+        self.assertIn("mcp-publisher\" publish", block)
+        # the publisher is a pinned release whose Sigstore bundle is verified before it runs
+        self.assertRegex(block, r"MCP_PUBLISHER_VERSION: v\d+\.\d+\.\d+")
+        self.assertNotIn("releases/latest", block)
+        self.assertLess(block.index("cosign verify-blob"), block.index("tar xzf"))
+        self.assertRegex(block, r"sigstore/cosign-installer@[0-9a-f]{40} ")
+        # a registry that cannot be asked is not "not listed", and a failure never blocks a release
+        # the exact name-and-version endpoint, not the paginated list; only 200 and 404 are answers
+        asked = block[:block.index("name: Install cosign")]
+        self.assertIn('/v0/servers/$ENCODED/versions/$VERSION', asked)
+        self.assertNotIn("search=", asked)
+        self.assertIn("200) LISTED=yes ;;", asked)
+        self.assertIn("404) LISTED=no ;;", asked)
+        self.assertIn("could not ask the MCP Registry", asked)
+        self.assertIn("the MCP Registry answered HTTP $STATUS", asked)
+        # nor is an npm that cannot be asked "not on npm"; and a tagged version npm does not have
+        # (E404) is a release that never reached npm, which fails the step and is not a quiet skip
+        asking = block[:block.index("name: Install cosign")]
+        self.assertNotIn("|| true", asking)
+        self.assertIn('grep -q "E404" npm-view.err', asking)
+        self.assertIn("could not ask npm", asking)
+        e404 = asking[asking.index('grep -q "E404" npm-view.err'):asking.index("could not ask npm")]
+        self.assertIn("is tagged but npm does not have it", e404)
+        self.assertNotIn("npm publish --access public", e404, "no recipe that drops provenance or moves latest back")
+        self.assertIn("exit 1", e404)
+        self.assertNotIn("publish=false", e404)
+        self.assertEqual(block.count("continue-on-error: true"), 3)
+        self.assertNotIn("already_released", block[block.index("        run:"):])
+        self.assertIn("steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'", block)
         scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
         self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
         self.assertIn("publish_results: true", scorecard)
