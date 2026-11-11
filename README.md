@@ -587,7 +587,7 @@ Where it can be installed from today. Each route is spelled out below the table.
 | Codex plugin | Codex CLI | `codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin`, then `codex plugin add ffmpeg-skill@ffmpeg-skill` |
 | Gemini CLI extension | Gemini CLI | `gemini extensions install https://github.com/kajisho5/ffmpeg-skill` |
 | MCP server | clients without a shell | `npx -y ffmpeg-skill mcp` (see [MCP](#mcp)) |
-| MCP Registry | clients that install from the registry | `io.github.kajisho5/ffmpeg-skill` ([entry](https://registry.modelcontextprotocol.io/v0/servers/io.github.kajisho5%2Fffmpeg-skill/versions/latest)), published by every release |
+| MCP Registry | clients that install from the registry | `io.github.kajisho5/ffmpeg-skill` ([entry](https://registry.modelcontextprotocol.io/v0/servers/io.github.kajisho5%2Fffmpeg-skill/versions/latest)); the release workflow publishes a new version there after npm, and a failed registry step leaves the entry on the previous version |
 | GitHub release | a pinned copy | [releases](https://github.com/kajisho5/ffmpeg-skill/releases) |
 
 Not listed in a directory yet: the Claude plugin directory, the Cursor Marketplace, the Gemini CLI extension gallery and Glama (each is submitted and waiting on its review or crawl). This table gains a row when a listing goes live; until then the routes above are the whole list.
