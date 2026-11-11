@@ -13,11 +13,21 @@
 #   publish_plugin_branch.sh --no-push         also make the commit, print it, do not push
 #   publish_plugin_branch.sh                   make the commit and push it to origin/plugin
 #
+# The commit holds the tree under ffmpeg-skill/ (see SUBDIR below).
+#
 # The branch only ever moves forward (each release is a commit on top of the last), so a host
 # that fetched it before can fast-forward. Nothing here force-pushes.
 set -euo pipefail
 
 BRANCH="plugin"
+# The tree sits in a subdirectory of the branch, not at its root, so a marketplace entry can name it
+# as a `git-subdir` source. Measured on the 3.3.0 branch (tree at the root, a `url` source with
+# `ref`): Claude Code 2.1.322 cached 2.6 MB, but Codex 0.167 kept the whole clone, every branch's
+# history included (39 MB, more than the repository's 28 MB of files). With `git-subdir` both copy
+# the directory alone and keep no .git (60 KB for a 44 KB directory in each).
+SUBDIR="ffmpeg-skill"
+# origin, unless a test points the script at a remote of its own.
+REMOTE="${PLUGIN_REMOTE:-origin}"
 MODE="push"
 TREE_DIR=""
 case "${1:-}" in
@@ -78,6 +88,9 @@ fi
 # Build the commit with a private index, so the checkout and its index are never touched.
 export GIT_INDEX_FILE="$WORK/index"
 git --work-tree="$TREE" add -A -f .
+INNER_ID="$(git write-tree)"
+git read-tree --empty
+git read-tree --prefix="$SUBDIR/" "$INNER_ID"
 TREE_ID="$(git write-tree)"
 unset GIT_INDEX_FILE
 
@@ -86,16 +99,16 @@ unset GIT_INDEX_FILE
 # anything else (network, auth) stops here, with its own message, before a commit is made.
 PARENT=""
 REMOTE_STATE=0
-git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null || REMOTE_STATE=$?
+git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null || REMOTE_STATE=$?
 if [ "$REMOTE_STATE" -ne 0 ] && [ "$REMOTE_STATE" -ne 2 ]; then
-  echo "could not ask origin whether $BRANCH exists (git ls-remote exited $REMOTE_STATE)" >&2
+  echo "could not ask $REMOTE whether $BRANCH exists (git ls-remote exited $REMOTE_STATE)" >&2
   exit 1
 fi
 if [ "$REMOTE_STATE" -eq 0 ]; then
-  git fetch --quiet origin "refs/heads/$BRANCH"
+  git fetch --quiet "$REMOTE" "refs/heads/$BRANCH"
   PARENT="$(git rev-parse FETCH_HEAD)"
   if [ "$(git rev-parse "$PARENT^{tree}")" = "$TREE_ID" ]; then
-    echo "origin/$BRANCH already holds this tree ($VERSION); nothing to publish"
+    echo "$REMOTE/$BRANCH already holds this tree ($VERSION); nothing to publish"
     exit 0
   fi
 fi
@@ -115,4 +128,4 @@ echo "plugin commit $COMMIT (tree $TREE_ID) for $VERSION"
 if [ "$MODE" = "commit" ]; then
   exit 0
 fi
-git push origin "$COMMIT:refs/heads/$BRANCH"
+git push "$REMOTE" "$COMMIT:refs/heads/$BRANCH"

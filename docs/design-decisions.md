@@ -71,6 +71,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.3 — what the output lost from its source is said (#401)](#after-323--what-the-output-lost-from-its-source-is-said-401)
 - [After 3.2.3 — two reports from outside (#436, #437)](#after-323--two-reports-from-outside-436-437)
 - [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
+- [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
 <!-- contents:end -->
 
 ## Time limits
@@ -3128,10 +3129,14 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   run by release.yml before the npm publish). An npm plugin source was measured and rejected:
   Claude Code 2.1.322 and Codex 0.167 both shell out to `npm` for it ("npm exited with an error",
   "npm pack failed" without one), and the plugin route has never needed Node. A git source with
-  `ref` installed with git alone in both. The two plugin files stay out of the npm package itself
+  `ref` installed with git alone in both, but not alike: from the 3.3.0 branch (tree at the root,
+  a `url` source) Claude Code cached 2.6 MB and Codex kept the whole clone with every branch's
+  history (39 MB, more than the repository's files). So since 3.3.0 the branch holds the tree
+  under `ffmpeg-skill/`, for a `git-subdir` source: both hosts then copy that directory alone and
+  keep no `.git` (2.6 MB each, measured). The two plugin files stay out of the npm package itself
   because `npx ffmpeg-skill` copies the package into an agent's skills folder, where a second
   `SKILL.md` under `skills/` would be the same skill twice. The marketplace entry moves from `./`
-  to the branch only after a release has published it; until then the entry says `./` on purpose.
+  to the branch only after a release has published that layout; until then the entry says `./` on purpose.
   Test: `test_plugin_branch_tree_is_the_runtime_set`.
 - **The plugin does not register the MCP server.** `mcp/server.py` rides along in the plugin tree,
   but no `.mcp.json` or `mcpServers` entry starts it. In a host that runs a plugin (Claude Code,
@@ -3142,3 +3147,51 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   it from the MCP Registry entry (`server.json`) or the one-line config in the README
   (`npx -y ffmpeg-skill mcp`). Report this as a defect only with a host that runs plugins, has no
   shell, and cannot add an MCP server by its own config.
+
+## After 3.3.0 — a declared change scope for `check.py --compare` (#439)
+
+- **`--expect-changed` takes the scope from the caller and only measures.** The tool does not
+  decide what an edit was meant to touch, and it does not align frames: pairs are by decode order,
+  as `--compare` has paired them since 2.24. A declared span is closed at both ends and widened to
+  whole frames (`between(t,3,5)` draws on the frame at 5.000 s). With a rectangle, the tiles it
+  does not touch are still held to "unchanged" in those frames. Code: `check.change_scope()`,
+  `_common.probe.change_tiles()`. Tests:
+  `test_check_expect_changed_fails_on_a_change_outside_the_declaration`,
+  `test_change_scope_is_closed_at_both_ends_and_holds_the_rest_of_a_rectangle_frame`.
+- **"Not compared" is FAIL here, where `similarity` says WARN.** Another frame size, another frame
+  count, a frame count or frame times that cannot be read, or a pass that failed: the flag exists to
+  stop a false "nothing else changed", and a check that did not run would be one. The same
+  reasoning as `--expect-identity`. An edit that changes the length therefore fails as not
+  compared; declaring a removed span is a later phase, never detection.
+- **Tiles, not SSIM.** In the issue's measurements a 200x60 box on 1920x1080 (0.6 % of the frame) leaves every frame's SSIM
+  above `COMPARE_SSIM_WARN` on a clean source, and on a noisy one the edited and unedited frames'
+  SSIM ranges overlap. The difference of the two pictures as 8-bit RGB, area-scaled to 32x18, with
+  a tile's value the largest of its channels, separates them: 72 or more inside the edit against
+  16 or less outside, in every case below.
+- **The floor is 24, from footage, not 16.** The issue proposed 16 from synthetic pictures and
+  asked for it to be set from real ones. The same box, 3 s to 5 s, FFmpeg 6.1.1, libx264:
+
+  | source | settings | edited frames (min-max) | everything else (max) |
+  |---|---|---|---|
+  | iPhone 4K60 HEVC, scaled to 1080p30 | crf 20 veryfast | 72-128 | 9 |
+  | same | crf 23 medium | 73-128 | 11 |
+  | same | crf 28 medium | 73-128 | 16 |
+  | Android screen recording 720x1600 | crf 20, 23, 28 | 107-109 | 3, 3, 4 |
+
+  "Everything else" is not zero because later frames of a GOP are predicted from the changed ones
+  and the rate control looks ahead; it grows with the quantiser and reached 16 at crf 28. A floor
+  of 16 would sit on that value; 24 leaves a margin and is a third of the smallest edit measured.
+  Two encodes with the same settings and no edit gave 0 everywhere. The row prints the floor and
+  the largest tile that stayed under it (`quiet_peak`), so a run close to the floor shows. Two
+  sources and one encoder are not a survey: `--change-floor` exists for footage this did not cover.
+- **Files that are not encoded alike are a WARN and a note, not a higher floor.** A different
+  preset alone moved the largest tile of every frame to 11 on a noisy source (and the mean SSIM to
+  0.87) in the issue's measurements: the comparison then measures the encoder. The row compares codec, pixel format and frame
+  rate and says so; it cannot see a different CRF or preset, which the docs state.
+- **A changed frame is kept as a bit mask of its tiles.** Two unrelated files differ in every tile
+  of every frame; as lists of tuples an hour of that is tens of millions of objects, as masks about
+  10 MB. The pass streams 1728 bytes a frame and a frame under the floor costs one `max()`.
+- **Limits, stated in `references/scripts.md`.** A change much smaller than a tile is diluted (a
+  full-contrast change needs about a tenth of a tile); a faint shift over the whole picture stays
+  under the floor in every tile, and `similarity` is the row for that; picture only. Measured on
+  FFmpeg 6.1.1 locally; the test runs on every FFmpeg in CI.

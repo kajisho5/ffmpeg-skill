@@ -106,7 +106,8 @@ would have caught the original bug isn't done yet.
   The same bump moves both `version` fields in `server.json` (`.github/scripts/bump_server_json.py`).
 - Every release also commits the installable plugin tree to the `plugin` branch
   (`.github/scripts/publish_plugin_branch.sh`): the npm tarball's contents plus the plugin
-  manifest and `skills/`. Never commit to that branch by hand and never force-push it; hosts
+  manifest and `skills/`, under `ffmpeg-skill/` on that branch (a `git-subdir` marketplace source names
+  that directory). Never commit to that branch by hand and never force-push it; hosts
   fast-forward it. `bash .github/scripts/publish_plugin_branch.sh --tree-only DIR` builds the
   tree locally without touching git.
 

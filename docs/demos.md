@@ -860,6 +860,14 @@ python3 scripts/check.py spot.mxf --platform broadcast --levels ebu-r103
 
 **No picture:** counts the luma and chroma samples outside the legal range in every frame (bt709 16-235 / 16-240, or EBU R 103's -1..103 % luma) and adds a legal levels row with the worst frame's time and min/max Y/U/V; the JSON has the shares per window. color.py --legalize clamps after the 4:2:0 conversion and measures the file it wrote the same way -- a change no preview would show, which is why it is a number here and not a GIF.
 
+### check.py --expect-changed
+
+```bash
+python3 scripts/check.py new.mp4 --platform custom --compare old.mp4 --expect-changed 12-18
+```
+
+**No picture:** after a small re-render, says whether anything changed outside the span the edit was meant to touch: both pictures are subtracted frame by frame on a 32x18 grid, and a change_scope row FAILs with the time and place of a change nobody declared, WARNs when the declared span did not change, and FAILs when the two files could not be compared. A 200x60 box on a 1080p frame leaves the whole-frame SSIM above 0.99; this row finds it.
+
 ### report.py
 
 ```bash

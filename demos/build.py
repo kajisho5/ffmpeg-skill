@@ -1871,6 +1871,12 @@ INSPECTION = [
      "and min/max Y/U/V; the JSON has the shares per window. color.py --legalize clamps after the "
      "4:2:0 conversion and measures the file it wrote the same way -- a change no preview would show, "
      "which is why it is a number here and not a GIF."),
+    ("check.py --expect-changed", "python3 scripts/check.py new.mp4 --platform custom --compare old.mp4 --expect-changed 12-18",
+     "after a small re-render, says whether anything changed outside the span the edit was meant "
+     "to touch: both pictures are subtracted frame by frame on a 32x18 grid, and a change_scope row "
+     "FAILs with the time and place of a change nobody declared, WARNs when the declared span did "
+     "not change, and FAILs when the two files could not be compared. A 200x60 box on a 1080p "
+     "frame leaves the whole-frame SSIM above 0.99; this row finds it."),
     ("report.py", "python3 scripts/report.py --before raw.mov --after final.mp4 -o report.html",
      "a single self-contained HTML page: before/after contact sheets, loudness, the platform "
      "check table and the exact commands. It is a file to open, not a picture to embed here."),

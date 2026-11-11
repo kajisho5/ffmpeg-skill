@@ -395,13 +395,13 @@ class ContractTests(unittest.TestCase):
         self.assertIn("continue-on-error: true", block)
         self.assertIn("steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
         # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
-        self.assertIn("ls-remote --exit-code --heads origin", script)
+        self.assertIn('ls-remote --exit-code --heads "$REMOTE"', script)
         self.assertNotIn("2>/dev/null; then", script)
         # the entry stays at ./ until a release has published the branch; whichever it names,
         # it must be one of the two forms both hosts were run against
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-        self.assertIn(market["plugins"][0]["source"], (
-            "./", {"source": "url", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "ref": "plugin"}))
+        self.assertIn(market["plugins"][0]["source"], ("./", {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
         if sys.platform == "win32" or not shutil.which("bash") or not shutil.which("npm"):
             return
         with tempfile.TemporaryDirectory() as tmp:
@@ -421,6 +421,37 @@ class ContractTests(unittest.TestCase):
             copy = (tree / "skills" / "ffmpeg-skill" / "SKILL.md").read_text(encoding="utf-8")
             for target in re.findall(r"\]\((\.\./\.\./[^)#]+)", copy):
                 self.assertTrue((tree / "skills" / "ffmpeg-skill" / target).resolve().exists(), target)
+
+            # the three answers a remote can give, run against remotes of the test's own
+            def publish(remote, *args):
+                return subprocess.run(["bash", str(script_path), *args], capture_output=True, text=True, cwd=ROOT,
+                                      env={**os.environ, "PLUGIN_REMOTE": str(remote)})
+
+            def git(*args):
+                return subprocess.run(["git", *args], capture_output=True, text=True, cwd=ROOT).stdout.strip()
+
+            gone = publish(Path(tmp) / "no-such-remote", "--no-push")
+            self.assertEqual(gone.returncode, 1, gone.stdout + gone.stderr)
+            self.assertIn("could not ask", gone.stderr)
+            self.assertNotIn("plugin commit", gone.stdout, "no commit is made when the remote cannot be asked")
+            bare = Path(tmp) / "remote.git"
+            subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+            first = publish(bare)                       # no such branch (exit 2): the branch starts here
+            self.assertEqual(first.returncode, 0, first.stderr)
+            head = git("ls-remote", str(bare), "refs/heads/plugin").split()[0]
+            self.assertIn(f"plugin commit {head}", first.stdout)
+            listed = subprocess.run(["git", "--git-dir", str(bare), "ls-tree", "-r", "--name-only", "plugin"],
+                                    capture_output=True, text=True).stdout.split("\n")
+            self.assertEqual(subprocess.run(["git", "--git-dir", str(bare), "rev-list", "--count", "plugin"],
+                                            capture_output=True, text=True).stdout.strip(), "1")
+            # under one directory, which is what a git-subdir marketplace source names
+            self.assertTrue(all(n.startswith("ffmpeg-skill/") for n in listed if n), listed[:3])
+            self.assertIn("ffmpeg-skill/.claude-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/skills/ffmpeg-skill/SKILL.md", listed)
+            again = publish(bare)                       # the branch holds this tree: nothing is pushed
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("already holds this tree", again.stdout)
+            self.assertEqual(git("ls-remote", str(bare), "refs/heads/plugin").split()[0], head)
 
     def test_mcp_registry_manifest_tracks_the_package_version(self):
         """server.json is the official MCP Registry document (schema 2025-12-11). Its two

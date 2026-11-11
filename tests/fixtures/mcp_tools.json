@@ -207,9 +207,11 @@
   "properties": [
    "argv",
    "aspect",
+   "change_floor",
    "compare",
    "content",
    "dry_run",
+   "expect_changed",
    "expect_identity",
    "fast",
    "input",

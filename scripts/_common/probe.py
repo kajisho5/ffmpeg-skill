@@ -1328,3 +1328,91 @@ def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
     mean_psnr = psnr.group(1) if psnr else None
     return {"ssim": float(ssim.group(1)), "worst_ssim": worst[1], "worst_frame": worst[0] - 1, "frames": len(frames),
             "psnr": None if mean_psnr is None else (float("inf") if mean_psnr == "inf" else float(mean_psnr))}
+
+
+# check.py --compare --expect-changed (#439): where the picture differs from the reference.
+CHANGE_GRID = (32, 18)   # tiles across and down: one is 60x60 px at 1080p
+CHANGE_FLOOR = 24        # a tile whose largest channel difference (0-255, area mean) is above this changed
+
+
+def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" = CHANGE_GRID) -> "Optional[Dict[str, Any]]":
+    """Which tiles of which frames of `path` differ from `reference`, frame i against frame i in
+    decode order (as compare_pictures() pairs them; the caller checks sizes and frame counts).
+    Both pictures go to 8-bit RGB planes, are subtracted, and each frame of the difference is
+    area-scaled to `grid`; a tile's value is the largest of its three channels.
+    {frames, changed {frame index: a bit mask of the tiles above `floor`, bit column + row * columns;
+    change_mask_tiles() lists them}, peaks {frame index: its largest tile}, quiet_peak (the largest
+    tile at or under the floor)}. A mask and not a list: two unrelated hours differ in every tile
+    of every frame, which as tuples is tens of millions of objects.
+    None when the pass fails, times out of its bytes mid-frame, or decodes no frame: nothing was
+    compared, which the caller must not read as "nothing changed"."""
+    import subprocess
+    import threading
+    from _common import runner as _runner
+    gw, gh = grid
+    graph = ("[0:V:0]settb=1/1000,setpts=N,format=gbrp[a];[1:V:0]settb=1/1000,setpts=N,format=gbrp[b];"
+             f"[a][b]blend=all_mode=difference:shortest=1,scale={gw}:{gh}:flags=area[o]")
+    # passthrough: the frames carry index timestamps, and a constant-rate muxer would drop
+    # nearly all of them as duplicates (12 of 300 came out without it)
+    cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-i", reference,
+           "-filter_complex", graph, "-map", "[o]", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    # read frame by frame as ffmpeg writes them: 1728 bytes a frame is 187 MB for an hour at
+    # 30 fps, and only the frames with a changed tile are kept. Same wall-clock limit as run_analysis()
+    _runner._refuse_url_media(cmd)
+    limit = _runner._limit_for(cmd)
+    size, tiles = gw * gh * 3, gw * gh
+    changed: Dict[int, int] = {}
+    peaks: Dict[int, int] = {}
+    quiet, n, pending = 0, 0, b""
+    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **_runner.child_kwargs())
+    _runner._watch(child, cmd)
+    expired = threading.Event()
+
+    def _expire() -> None:
+        expired.set()
+        child.kill()
+
+    timer = threading.Timer(limit, _expire) if limit else None
+    if timer:
+        timer.daemon = True
+        timer.start()
+    try:
+        while True:
+            chunk = child.stdout.read(size * 64)
+            if not chunk:
+                break
+            pending += chunk
+            whole = len(pending) - len(pending) % size
+            for i in range(0, whole, size):
+                frame = pending[i:i + size]
+                top = max(frame)
+                if top <= floor:
+                    quiet = max(quiet, top)
+                else:
+                    mask = 0
+                    for t in range(tiles):
+                        value = max(frame[3 * t:3 * t + 3])
+                        if value > floor:
+                            mask |= 1 << t
+                        elif value > quiet:
+                            quiet = value
+                    changed[n], peaks[n] = mask, top
+                n += 1
+            pending = pending[whole:]
+        child.wait()
+    finally:
+        if timer:
+            timer.cancel()
+        _runner._unwatch(child)
+        child.stdout.close()
+    if expired.is_set():
+        _runner._timed_out(cmd, limit or 0)
+    if child.returncode != 0 or not n or pending:
+        return None
+    return {"frames": n, "changed": changed, "peaks": peaks, "quiet_peak": quiet}
+
+
+def change_mask_tiles(mask: int, grid: "Tuple[int, int]" = CHANGE_GRID) -> "List[Tuple[int, int]]":
+    """change_tiles()'s bit mask as [(column, row)], row by row."""
+    gw = grid[0]
+    return [(t % gw, t // gw) for t in range(grid[0] * grid[1]) if mask >> t & 1]
