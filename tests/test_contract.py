@@ -457,7 +457,8 @@ class ContractTests(unittest.TestCase):
         # the npm publish for good. The step may fail; the job's last step reports it.
         block = release[release.index("name: Publish the plugin branch"):release.index("name: Publish to npm")]
         self.assertIn("continue-on-error: true", block)
-        self.assertIn("steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
+        # always(): the MCP Registry's failure step sits before this one, and both must be reported
+        self.assertIn("if: always() && steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
         # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
         self.assertIn('ls-remote --exit-code --heads "$REMOTE"', script)
         self.assertNotIn("2>/dev/null; then", script)
@@ -623,6 +624,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("could not ask npm", asking)
         e404 = asking[asking.index('grep -q "E404" npm-view.err'):asking.index("could not ask npm")]
         self.assertIn("is tagged but npm does not have it", e404)
+        self.assertNotIn("npm publish --access public", e404, "no recipe that drops provenance or moves latest back")
         self.assertIn("exit 1", e404)
         self.assertNotIn("publish=false", e404)
         self.assertEqual(block.count("continue-on-error: true"), 3)

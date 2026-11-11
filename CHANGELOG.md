@@ -12,8 +12,8 @@
   does it after the npm publish, authenticated by GitHub's OIDC token for this repository (no
   stored secret), with `mcp-publisher` pinned to a release and its Sigstore bundle verified
   before it runs. The steps ask npm and the registry first and publish when npm has the version
-  and the registry does not, so a re-run finishes a failed publish and a version released before
-  this change is listed by the next run. A failure never blocks or undoes a release, and a
+  and the registry does not, so a re-run finishes a failed publish (for the version on `main` when
+  it runs) and a version released before this change is listed by the next run. A failure never blocks or undoes a release, and a
   tagged version that npm does not have now turns the job red instead of passing unnoticed.
 
 ## 3.4.3

@@ -3242,7 +3242,9 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   names the npm package, so it can exist only once npm has the version, and the registry refuses
   a version it already lists. The steps therefore ask both registries on every run and publish
   when npm has the version and the registry does not: they do not depend on "was a tag created
-  in this run", which is what lets a re-run finish a failed publish. A registry that cannot be
+  in this run", which is what lets a re-run finish a failed publish. The re-run checks out the tip of `main`, so
+  it lists the version that is current then; a failed version that `main` has since moved past is
+  not listed, and the registry's newest entry is the one clients read. A registry that cannot be
   asked stops the step (`curl --fail`, and any `npm view` failure); it is not read as "not listed".
   A version npm answers E404 for also fails the step: by then it is tagged, so it is a release
   that never reached npm, which a re-run would otherwise pass over in silence. Authentication is

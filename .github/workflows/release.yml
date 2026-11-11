@@ -335,8 +335,9 @@ jobs:
       # package, so it can only be published once npm has this version, and the registry refuses a
       # version it already lists. These steps therefore do not hang on `already_released`: every
       # run asks the two registries and publishes when npm has the version and the MCP Registry
-      # does not. That makes a re-run finish a publish that failed, and it is how a version that
-      # was released before these steps existed gets listed. Authentication is GitHub's OIDC token
+      # does not. That makes a re-run finish a publish that failed, for the version on main at
+      # the time of the re-run (the checkout is main's tip, not the commit that failed), and it is
+      # how a version that was released before these steps existed gets listed. Authentication is GitHub's OIDC token
       # for this repository (`id-token: write` above), which is what lets a name under
       # io.github.kajisho5/ be published with no stored secret. mcp-publisher is pinned to a
       # release and its Sigstore bundle is verified before it runs, as the registry's own guide
@@ -361,7 +362,7 @@ jobs:
           if [ "$NPM_STATE" -ne 0 ]; then
             if grep -q "E404" npm-view.err; then
               rm -f npm-view.err
-              echo "::error::$PKG@$VERSION is tagged but npm does not have it, so the MCP Registry cannot list it. Publish it from the tag (git checkout v$VERSION && npm publish --access public), then re-run this workflow."; exit 1
+              echo "::error::$PKG@$VERSION is tagged but npm does not have it, so the MCP Registry cannot list it. Nothing here publishes it: this workflow skips npm publish once the tag exists. Publishing it by hand from the tag v$VERSION is a maintainer's decision: a local publish carries no provenance attestation, and if npm already has a newer version it needs --tag so that latest does not move back."; exit 1
             fi
             cat npm-view.err >&2
             echo "::error::could not ask npm whether $PKG@$VERSION exists (npm view exited $NPM_STATE)"; exit 1
@@ -418,11 +419,13 @@ jobs:
       - name: Fail the job when the MCP Registry was not updated
         if: steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'
         run: |
-          echo "::error::the MCP Registry entry was not published for this version (see the three MCP Registry steps, which say why); the GitHub Release and the plugin branch are unaffected. Once the cause is fixed, re-running this workflow publishes it."
+          echo "::error::the MCP Registry entry was not published (see the three MCP Registry steps, which say why). The tag, the GitHub Release and npm do not depend on it. A re-run publishes the version that is on main when it runs: if main has moved on to a newer version by then, that one is listed and this one is not."
           exit 1
 
+      # always(): the step above may already have failed the job, and a second failure still has
+      # to be reported, not skipped.
       - name: Fail the job when the plugin branch was not published
-        if: steps.plugin_branch.outcome == 'failure'
+        if: always() && steps.plugin_branch.outcome == 'failure'
         run: |
           echo "::error::the plugin branch was not updated for this release (see the 'Publish the plugin branch' step); npm and the GitHub Release are unaffected. Run .github/scripts/publish_plugin_branch.sh from the release commit to publish it."
           exit 1
