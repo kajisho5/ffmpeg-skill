@@ -472,6 +472,9 @@ class ContractTests(unittest.TestCase):
             plugin_readme = (tree / "README.md").read_text(encoding="utf-8")
             self.assertLess(len(plugin_readme.splitlines()), 30)
             self.assertIn("https://github.com/kajisho5/ffmpeg-skill", plugin_readme)
+            # it does not promise an offline skill: a transcription engine may fetch its model
+            self.assertIn("--transcribe", plugin_readme)
+            self.assertNotIn("Nothing here uses the network", plugin_readme)
             # the listing icon: a square PNG, 512 to 2048 px a side, under 2 MB
             icon = (tree / ".claude-plugin" / "icon.png").read_bytes()
             self.assertEqual(icon[:8], b"\x89PNG\r\n\x1a\n")

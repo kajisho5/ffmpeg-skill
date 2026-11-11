@@ -84,7 +84,11 @@ references and templates, the machine-readable contract (`docs/contract.md`,
 It is built from the npm package by every release and published to the `plugin` branch. The full
 README, the changelog and the tests are in the repository: https://github.com/kajisho5/ffmpeg-skill
 
-Needs FFmpeg 6.1 or later and Python 3.10 or later. Nothing here uses the network or reads a key.
+Needs FFmpeg 6.1 or later and Python 3.10 or later. The tools themselves open no network
+connection and read no API key. The one exception is transcription (`caption.py --transcribe`,
+`silence.py --filler --transcribe`), which runs a speech engine you installed yourself
+(whisper.cpp, faster-whisper, openai-whisper or parakeet): on its first run such an engine may
+download its model, and a Hugging Face client uses a token you are logged in with.
 PLUGIN_README
 node -e '
   const fs = require("fs"), f = process.argv[1], p = JSON.parse(fs.readFileSync(f, "utf8"));
