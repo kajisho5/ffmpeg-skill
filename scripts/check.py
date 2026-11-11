@@ -275,7 +275,7 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     # pictures are brought to before they are subtracted
     from _common.probe import display_size as shown_size, square_pixels
     size = shown_size(v)
-    if size != shown_size(rv) or display_size(v) != display_size(rv):
+    if size != shown_size(rv):
         return not_compared("%dx%d against %dx%d (as displayed)" % (size + shown_size(rv)),
                             "compare two renders of the same frame size")
     for d in declared:
@@ -317,7 +317,11 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     idle = "; ".join(f"declared {span(d)} but nothing changed there" for d in doc["declared_unchanged"])
     differ = [f"{k} {a} against {b}" for k, a, b in (("codec", v.get("codec"), rv.get("codec")),
                                                     ("pix_fmt", v.get("pix_fmt"), rv.get("pix_fmt")),
-                                                    ("fps", v.get("fps"), rv.get("fps"))) if a != b]
+                                                    ("fps", v.get("fps"), rv.get("fps")),
+                                                    # the same picture stored another way (1440x1080 at 4:3
+                                                    # against 1920x1080): compared, both squared, and said
+                                                    ("stored size", "%dx%d" % display_size(v), "%dx%d" % display_size(rv)))
+              if a != b]
     if differ:
         STATE_NOTES.append("--expect-changed: the two files are not encoded alike (" + ", ".join(differ) + "), so part of "
                            "what was measured is the encoder's difference, not the edit")

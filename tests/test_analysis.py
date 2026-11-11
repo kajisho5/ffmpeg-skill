@@ -778,6 +778,18 @@ class AnalysisTests(MediaFixtures):
         self.assertTrue(200 <= x <= 213 and x + w >= 302 and x + w <= 320, doc["change_scope"]["observed"])
         self.assertEqual(wide("--expect-changed", "0-2@0,0,180,180")[1]["status"], "FAIL", "the stored-pixel rectangle misses it")
         self.assertIn("does not fit inside the 320x180 picture", wide("--expect-changed", "0-2@300,0,40,40")[0]["error"]["message"])
+        # the same displayed size stored another way (320x180 square against 180x180 at 16:9) is
+        # compared, both squared, and the difference in storage is said: not a "not compared" that
+        # prints two equal sizes
+        flat = OUT / "scope_sar_flat.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", wide_old, "-vf", "scale=320:180,setsar=1", *x264, flat)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(flat), "--platform", "custom", "--no-loudness", "--json",
+                               "--compare", str(wide_old), "--expect-changed", "none"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        doc = json.loads(proc.stdout)
+        row = {r["check"]: r for r in doc["checks"]}["change_scope"]
+        self.assertNotIn("not compared", row["value"], row)
+        self.assertIn("change_scope", doc)
+        self.assertTrue(any("stored size 320x180 against 180x180" in n for n in doc["notes"]), doc["notes"])
 
         for bad, say in ((["--expect-changed", "3-5", "--expect-changed", "none"], "cannot be combined"),
                          (["--expect-changed", "5-3"], "ends at or after its start"),
