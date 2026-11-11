@@ -350,10 +350,23 @@ jobs:
           NAME=$(node -p "require('./server.json').name")
           VERSION=$(node -p "require('./server.json').version")
           PKG=$(node -p "require('./package.json').name")
-          ON_NPM=$(npm view "$PKG@$VERSION" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
+          # npm answers a version it does not have with E404 and exit 1; any other failure (network,
+          # registry down) also exits 1. Only the first is "not on npm": the rest stop this step,
+          # so an npm that could not be asked is never reported as a quiet skip.
+          NPM_STATE=0
+          ON_NPM=$(npm view "$PKG@$VERSION" version --cache /tmp/npm-verify-cache 2> npm-view.err) || NPM_STATE=$?
+          if [ "$NPM_STATE" -ne 0 ]; then
+            if grep -q "E404" npm-view.err; then
+              echo "npm does not have $PKG@$VERSION; nothing to list yet"
+              rm -f npm-view.err
+              echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            cat npm-view.err >&2
+            echo "::error::could not ask npm whether $PKG@$VERSION exists (npm view exited $NPM_STATE)"; exit 1
+          fi
+          rm -f npm-view.err
           if [ "$ON_NPM" != "$VERSION" ]; then
-            echo "npm does not have $PKG@$VERSION; nothing to list yet"
-            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+            echo "::error::npm answered '$ON_NPM' for $PKG@$VERSION"; exit 1
           fi
           # a registry that cannot be asked is not "not listed": curl --fail stops the step here
           curl --fail --silent --show-error --max-time 60 --get \
