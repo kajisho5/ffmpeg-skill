@@ -69,9 +69,11 @@ def is_rgb(meta: Optional[Dict[str, Any]]) -> bool:
     return bool(_RGB_PIX_FMT_RE.match(str(((meta or {}).get("video") or {}).get("pix_fmt") or "")))
 
 
-_EVEN_CROP = "crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0,"
-_MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709|(?:format=rgb24,)?%s)$"
-                               % (re.escape(_EVEN_CROP), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter())))
+# An odd-sized BT.601 source is padded to even for the colorspace filter and cropped back to its
+# own size after it (bt709_matrix_filter): both wrap the conversion in the one -vf the merge finds.
+_EVEN_PAD = "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0,"
+_MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s)$"
+                               % (re.escape(_EVEN_PAD), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter())))
 _INPUT_VIDEO_REF = re.compile(r"\[(\d+):v(?::0)?\]")
 
 
@@ -104,11 +106,18 @@ def bt709_matrix_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
     if matrix not in NON_BT709_MATRICES:
         return None
     # the colorspace filter refuses an odd width or height outright ("Invalid odd size"), and a
-    # 4:2:0 JPEG can have one (a phone screenshot, #437): the last row or column is cropped off
-    # first. No resampling, and nothing changes for an even-sized source.
+    # 4:2:0 JPEG can have one (a phone screenshot, #437). The frame is padded by one row and/or
+    # column, converted, and cropped back to its own size: no source pixel is lost or resampled
+    # (a 4:2:0 frame's chroma planes are the same size either way), so a caller's own crop or
+    # scale sees the frame it measured. Nothing changes for an even-sized source. FFmpeg rotates
+    # a rotated source before the graph, so the odd axis is read after the same swap.
     w, h = int(v.get("width") or 0), int(v.get("height") or 0)
-    even = _EVEN_CROP if (w % 2 or h % 2) else ""
-    return f"{even}colorspace=ispace={matrix}:iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709"
+    if int(v.get("rotation") or 0) % 180 == 90:
+        w, h = h, w
+    conv = f"colorspace=ispace={matrix}:iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709"
+    if w % 2 or h % 2:
+        return f"{_EVEN_PAD}{conv},crop=iw-{w % 2}:ih-{h % 2}:0:0:exact=1"
+    return conv
 
 
 def bt709_label_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:

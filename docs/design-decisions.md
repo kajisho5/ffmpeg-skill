@@ -3105,11 +3105,15 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   FFmpeg 9.0.2. Code: `caption.FORCE_STYLE_ALIGN`. Test:
   `UserReportTests.test_caption_srt_position_lands_where_it_says` (the text's bounding box on the
   burned frame, for all seven positions).
-- **An odd-sized BT.601 source is cropped by one row or column before its matrix conversion, not
-  scaled.** The `colorspace` filter refuses an odd frame, and it has to come first in the graph
-  (it converts the source's own pixels). A crop leaves every other pixel as it was; a scale would
-  resample the whole picture for the sake of one edge. `_MATRIX_FILTER_RE` accepts the prefix, so
-  the code that folds the conversion into a tool's own `-vf` still finds it (without that the
-  command carried two `-vf` and the second replaced the tool's graph). Code:
+- **An odd-sized BT.601 source is padded to even for its matrix conversion and cropped back to
+  its own size, not cropped or scaled.** The `colorspace` filter refuses an odd frame, and it has
+  to come first in the graph (it converts the source's own pixels). Padding by one row or column
+  and cropping it off again after the conversion loses and resamples nothing (a 4:2:0 frame's
+  chroma planes are the same size either way), so a caller's own rectangle (`crop.py --x 1
+  --width 628` on a 629-wide source) still addresses the pixels it measured; a first version
+  cropped the edge off and shifted such a rectangle. The odd axis is read after the rotation swap
+  FFmpeg applies before the graph. `_MATRIX_FILTER_RE` accepts the wrapped form, so the code that
+  folds the conversion into a tool's own `-vf` still finds it (without that the command carried
+  two `-vf` and the second replaced the tool's graph). Code:
   `_common.color.bt709_matrix_filter()`. Test: `UserReportTests.test_insert_takes_an_odd_sized_jpeg`.
 

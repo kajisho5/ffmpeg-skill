@@ -1134,6 +1134,15 @@ class ContractTests(unittest.TestCase):
                           ["aaa", "bbb"], lambda sha: asked.append(sha) or {"aaa": 433}.get(sha))
         self.assertEqual((v, d[0]["pr"], d[0]["bump"]), ("3.3.0", 433, "minor"))
         self.assertEqual(asked, ["aaa"], "a subject ending (#N) is not looked up")
+        # a lookup that fails is not "no PR": the job stops rather than fall back to the title rules
+        from unittest import mock
+        failed = subprocess.CompletedProcess([], 1, "", "HTTP 502")
+        with mock.patch.object(rv.subprocess, "run", return_value=failed), self.assertRaises(SystemExit):
+            rv._gh_pr_for_sha("o/r")("aaa")
+        with mock.patch.object(rv.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[]", "")):
+            self.assertIsNone(rv._gh_pr_for_sha("o/r")("aaa"))
+        with mock.patch.object(rv.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[433]", "")):
+            self.assertEqual(rv._gh_pr_for_sha("o/r")("aaa"), 433)
         # a direct push has no PR by SHA either, and keeps the title rules
         v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
         self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))

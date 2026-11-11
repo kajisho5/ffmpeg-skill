@@ -25,7 +25,7 @@ A PR with `chore` AND `fix` is a fix. A commit on main that came from no PR is t
 patch unless its subject starts with chore/ci/docs/build (the autolabeler's own title rules).
 
 Which PR a commit came from: the "(#N)" GitHub puts at the end of a squash subject, and, when
-the subject does not end with one, the merged PR whose merge commit is that SHA. 3.2.3 was a
+the subject does not end with one, the merged PR whose merge commit is that SHA (a failed lookup stops the job). 3.2.3 was a
 patch for three features because the squash subject ended "(#433, carries #432 and #434)": the
 subject matched nothing, the PR's `feature` label was never read, and the commit counted as a
 direct push.
@@ -122,15 +122,16 @@ def _gh_labels(repo: str) -> Callable[[int], List[str]]:
 def _gh_pr_for_sha(repo: str) -> Callable[[str], Optional[int]]:
     def pr_for_sha(sha: str) -> Optional[int]:
         # Only the PR this commit is the merge commit of: the endpoint also lists every PR that
-        # merely contains the commit. A failed lookup is "no PR" (the pre-existing answer), said
-        # on stderr, so an API hiccup cannot stop a release.
+        # merely contains the commit. An empty answer is "no PR" (a direct push). A failed request
+        # is not: falling back to the title rules is exactly how a feature became a patch, so the
+        # job stops and can be re-run.
         proc = subprocess.run(
             ["gh", "api", f"repos/{repo}/commits/{sha}/pulls", "--jq",
              f'[.[] | select(.merged_at != null and .merge_commit_sha == "{sha}") | .number]'],
             capture_output=True, text=True)
         if proc.returncode != 0:
-            print(f"  could not look up the PR of {sha[:9]}: {proc.stderr.strip()[:200]}", file=sys.stderr)
-            return None
+            raise SystemExit(f"could not look up the pull request of {sha[:9]} (re-run the job): "
+                             f"{proc.stderr.strip()[:300]}")
         numbers = json.loads(proc.stdout or "[]")
         return int(numbers[0]) if numbers else None
     return pr_for_sha

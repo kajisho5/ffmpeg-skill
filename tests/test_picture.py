@@ -5544,6 +5544,17 @@ class UserReportTests(unittest.TestCase):
                                         *extra, "-o", out, "--overwrite", "--json").stdout)
                 self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc)
                 self.assertEqual((doc["probe"]["video"]["width"], doc["probe"]["video"]["height"]), (1080, 1920))
+        # the conversion keeps the frame's own size: padded for the filter, cropped back after it,
+        # so a rectangle that ends on the last column still means that column
+        from _common.color import bt709_matrix_filter
+        conv = bt709_matrix_filter(m)
+        self.assertTrue(conv.startswith("pad=") and conv.endswith(",crop=iw-1:ih-1:0:0:exact=1"), conv)
+        kept = OUT / "odd437_kept.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", odd, "-vf", conv, "-frames:v", "1", "-update", "1", kept)
+        k = probe(str(kept))
+        self.assertEqual((k["video"]["width"], k["video"]["height"]), (629, 1401))
+        rotated = dict(m, video=dict(m["video"], width=1400, height=629, rotation=90))
+        self.assertTrue(bt709_matrix_filter(rotated).endswith(",crop=iw-1:ih-0:0:0:exact=1"), "the odd axis after FFmpeg's rotation")
 
 
 if __name__ == "__main__":
