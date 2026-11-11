@@ -374,6 +374,46 @@ class ContractTests(unittest.TestCase):
                 sweep.main()
         self.assertEqual(usage.exception.code, 2)
 
+    def test_no_numeric_flag_of_any_tool_takes_nan_or_inf(self):
+        """A reviewer found a non-finite value accepted by one flag at a time on nine PRs (--max-mb,
+        fade durations, --margin, crossfade times, keyframe windows, the MCP timeout, ...). Run as
+        a class, `nan` and `inf` on every `type=float` flag of 25 tools: 232 runs, all 232 accepted
+        at parse time. Some ended as a traceback (int() of --fps, --timeout inf), some as ffmpeg's
+        "Invalid argument" under kind ffmpeg (loudness -I), most were silently carried. The cause
+        was shared (argparse's float reads them) and so is the fix: add_common() registers
+        finite_float for every `type=float`, and parse_time() refuses a non-finite time. This
+        test walks the contract, so a tool or flag added later is covered without being listed."""
+        from concurrent.futures import ThreadPoolExecutor
+        doc = _contract.build(detect=False)
+        jobs = [(tool["executable"], prop["cli"][0], value)
+                for tool in doc["tools"] for prop in tool["input_schema"]["properties"].values()
+                if prop.get("type") == "number" and prop.get("cli") for value in ("nan", "inf")]
+        self.assertGreater(len(jobs), 200)
+
+        def refuse(job):
+            script_name, flag, value = job
+            # argparse converts a value as it reads it, before it looks for required arguments,
+            # so the flag alone is enough to reach the type check
+            proc = subprocess.run([sys.executable, str(SCRIPTS / Path(script_name).name), flag, value],
+                                  capture_output=True, text=True)
+            return job, proc.returncode, proc.stderr
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for job, code, err in pool.map(refuse, jobs):
+                self.assertEqual(code, 2, (job, err[-300:]))
+                self.assertIn(f"argument {job[1]}", err, job)
+                self.assertIn("is not a finite number", err, job)
+        from _common.decision import parse_time
+        for text in ("nan", "inf", "-inf", "1e999", "1:nan", "00:00:inf", "00:00:01:02@nan", "00:00:01:02@inf"):
+            with self.assertRaises(ValueError, msg=text):
+                parse_time(text, 25.0)
+        self.assertEqual(parse_time("1:30"), 90.0)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "cut.py"), "in.mp4", "--start", "nan", "--end", "2", "--json",
+                               "--dry-run", "-o", "out.mp4"], capture_output=True, text=True)
+        failure = json.loads(proc.stdout)
+        self.assertEqual(failure["error"]["kind"], "input")
+        self.assertIn("not a finite time", failure["error"]["message"])
+
     def test_plugin_branch_tree_is_the_runtime_set(self):
         """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
         which at `./` is the whole 28 MB repository. release.yml publishes the npm tarball's

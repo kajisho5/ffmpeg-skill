@@ -18,6 +18,16 @@
   screen-recording footage). Picture only, same-length edits only; `references/scripts.md` lists
   the limits.
 
+### Fixed
+
+- **No numeric flag of any tool takes `nan` or `inf` any more.** argparse's `float` reads both
+  (and `1e999`), and every `type=float` flag of every tool passed them on: 232 of 232 runs across
+  25 tools. Some ended as a traceback (`--fps nan`, `--timeout inf`, `graphics.py --scale`), some
+  as ffmpeg's "Invalid argument" under `kind: ffmpeg` (`loudness.py -I nan`, `silence.py
+  --threshold`), most were carried silently. One registration in the shared flag set now refuses
+  them at parse time for all 42 tools, and the shared time parser refuses a non-finite time
+  (`cut.py --start nan`, `--duration inf`, `pad.py --end nan`, an `@nan` rate) as `kind: input`.
+
 ### Changed
 
 - **The `plugin` branch holds the plugin under `ffmpeg-skill/`**, not at its root. Installed from

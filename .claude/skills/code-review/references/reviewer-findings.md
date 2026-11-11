@@ -41,7 +41,9 @@ not the full list. To rebuild the list: the review comments of this repository, 
    stage), preferably from the output probe, and is absent when the thing did not happen.
 6. **What does each numeric flag do with `nan`, `inf`, a negative, zero and an empty string?**
    (about 15: #343, #364, #372, #385, #387, #416, #427, #430, #434.) Also a count that sizes an
-   allocation or a concat list.
+   allocation or a concat list. Since 3.3.0 `nan` and `inf` are refused for every `type=float`
+   flag and every time string in one place each (`finite_float`, `parse_time`), and a contract
+   walk tests it; what is left to ask is a number parsed any other way, and the range.
 7. **Is a flag that this mode ignores refused?** (about 10: #385, #386, #399, #430.) Including
    when the caller passes the default value explicitly, and including zero.
 8. **Does the dry run agree with the real run?** (about 12: #383, #385, #389, #428, #430, #431,

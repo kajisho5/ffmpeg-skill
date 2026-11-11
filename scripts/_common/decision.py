@@ -179,8 +179,8 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
             fps = float(rate)
         except ValueError:
             raise ValueError(f"bad @fps suffix in '{value}' (expected a number such as @29.97)")
-        if fps <= 0:
-            raise ValueError(f"bad @fps suffix in '{value}': the rate must be positive")
+        if not math.isfinite(fps) or fps <= 0:
+            raise ValueError(f"bad @fps suffix in '{value}': the rate must be a positive, finite number")
         if len(v.split(":")) != 4:
             raise ValueError(f"'{value}': the @fps suffix belongs to an hh:mm:ss:ff timecode, not to seconds or mm:ss")
     parts = v.split(":")
@@ -208,6 +208,10 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
         except ValueError:
             # not the interpreter's "could not convert string to float: 'zz'" (review 9)
             raise ValueError(f"'{value}': not a time")
+    # float() reads "nan", "inf" and "1e999": none of them is a time, and each got past the
+    # comparisons that bound a time (nan compares false with everything)
+    if not math.isfinite(total):
+        raise ValueError(f"'{value}': not a finite time")
     return total
 
 

@@ -72,6 +72,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.3 — two reports from outside (#436, #437)](#after-323--two-reports-from-outside-436-437)
 - [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
+- [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 <!-- contents:end -->
 
 ## Time limits
@@ -3195,3 +3196,19 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   full-contrast change needs about a tenth of a tile); a faint shift over the whole picture stays
   under the floor in every tile, and `similarity` is the row for that; picture only. Measured on
   FFmpeg 6.1.1 locally; the test runs on every FFmpeg in CI.
+
+## After 3.3.0 — non-finite numbers are refused in one place
+
+- **`add_common()` registers `finite_float` for every `type=float`; `parse_time()` refuses a
+  non-finite time.** An outside reviewer reported a `nan` or `inf` accepted by one flag at a time on
+  nine PRs, and each was fixed where it was found. Run as a class (`nan` and `inf` on every float
+  flag of the 25 single-input tools, 232 runs), all 232 were accepted at parse time: argparse's
+  `float` reads them. A per-flag check cannot keep up with new flags; argparse looks a `type=` up
+  in a per-parser registry at parse time, so one `ap.register("type", float, finite_float)` covers
+  the flags a tool added before and after the call. It is a usage error (exit 2), like any other
+  value argparse cannot read (`--fade-in abc`). Times are `str` flags read by `parse_time()`, so
+  that is the second place, and its refusal is `kind: input` through `time_arg()`. A number inside
+  another string was probed in one place only: `speedramp.py --segment 0-1:FACTOR` is range-checked
+  by its own parser, which a `nan` already failed; the others were not swept. Code: `_common.runner.finite_float`, `_common.decision.parse_time`. Test:
+  `test_no_numeric_flag_of_any_tool_takes_nan_or_inf`, which walks the contract, so a new tool or
+  flag is covered without being listed.
