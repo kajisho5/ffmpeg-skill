@@ -270,9 +270,13 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     rv = ref.get("video") or {}
     if not v or not rv:
         return not_compared("one of the files has no picture", "--expect-changed needs a video stream in both files")
-    size = display_size(v)
-    if size != display_size(rv):
-        return not_compared("%dx%d against %dx%d (as displayed)" % (size + display_size(rv)),
+    # the displayed picture: rotation applied and non-square pixels squared (a 1440x1080 file at
+    # 4:3 is 1920x1080), which is the frame a caller measures a rectangle on and the frame both
+    # pictures are brought to before they are subtracted
+    from _common.probe import display_size as shown_size, square_pixels
+    size = shown_size(v)
+    if size != shown_size(rv) or display_size(v) != display_size(rv):
+        return not_compared("%dx%d against %dx%d (as displayed)" % (size + shown_size(rv)),
                             "compare two renders of the same frame size")
     for d in declared:
         if d["rect"] and (d["rect"][0] + d["rect"][2] > size[0] or d["rect"][1] + d["rect"][3] > size[1]):
@@ -288,7 +292,7 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     if int(nout) != int(nref):
         return not_compared(f"{nout} frames against the reference's {nref}",
                             "an edit that changes the length cannot be paired frame by frame; compare the parts separately")
-    tiles = change_tiles(args.input, args.compare, args.change_floor)
+    tiles = change_tiles(args.input, args.compare, args.change_floor, squares=(square_pixels(v), square_pixels(rv)))
     if tiles is None:
         return not_compared("the comparison pass failed", look + "0")
     n = tiles["frames"]
@@ -296,14 +300,11 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     if pts and len(pts) >= n:
         times = [max(0.0, t - origin) for t in pts[:n]]
         times.append(times[-1] + ((times[-1] - times[-2]) if n > 1 else (1.0 / fps if fps else 0.0)))
-    elif declared:
-        # a span is placed by each frame's own time; an average rate would put a frame near a
-        # span's edge on the wrong side of it (and is simply wrong on variable-rate video)
-        return not_compared("the frame times could not be read", "remux the file (export.py --preset copy) and check it again")
     else:
-        # `none` places nothing: the times only label where a change was found
-        lead = max(0.0, float(v.get("start_time") or 0.0) - origin)
-        times = [lead + i / fps for i in range(n + 1)] if fps else [float(i) for i in range(n + 1)]
+        # a span is placed by each frame's own time, and a change is reported at one; an average
+        # rate would put a frame near a span's edge on the wrong side of it, and is simply wrong
+        # on variable-rate video. `none` too: its FAIL names where the change is
+        return not_compared("the frame times could not be read", "remux the file (export.py --preset copy) and check it again")
     doc = change_scope(tiles, declared, times, size, args.change_floor)
 
     def span(d: "Dict[str, Any]") -> str:

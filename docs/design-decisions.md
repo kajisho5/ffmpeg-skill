@@ -3159,6 +3159,11 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `_common.probe.change_tiles()`. Tests:
   `test_check_expect_changed_fails_on_a_change_outside_the_declaration`,
   `test_change_scope_is_closed_at_both_ends_and_holds_the_rest_of_a_rectangle_frame`.
+- **Rectangles and reported places are in the displayed picture.** Both files go through
+  `square_pixels()` before they are subtracted, so the grid covers `display_size()`: rotation
+  applied and non-square pixels squared (1440x1080 at 4:3 is 1920x1080). A first version used the
+  stored width, which refused a rectangle that fits the picture a viewer sees and picked the wrong
+  tiles for one that passed.
 - **"Not compared" is FAIL here, where `similarity` says WARN.** Another frame size, another frame
   count, a frame count or frame times that cannot be read, or a pass that failed: the flag exists to
   stop a false "nothing else changed", and a check that did not run would be one. The same

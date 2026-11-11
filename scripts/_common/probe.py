@@ -1335,11 +1335,14 @@ CHANGE_GRID = (32, 18)   # tiles across and down: one is 60x60 px at 1080p
 CHANGE_FLOOR = 24        # a tile whose largest channel difference (0-255, area mean) is above this changed
 
 
-def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" = CHANGE_GRID) -> "Optional[Dict[str, Any]]":
+def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" = CHANGE_GRID,
+                 squares: "Tuple[str, str]" = ("", "")) -> "Optional[Dict[str, Any]]":
     """Which tiles of which frames of `path` differ from `reference`, frame i against frame i in
     decode order (as compare_pictures() pairs them; the caller checks sizes and frame counts).
     Both pictures go to 8-bit RGB planes, are subtracted, and each frame of the difference is
-    area-scaled to `grid`; a tile's value is the largest of its three channels.
+    area-scaled to `grid`; a tile's value is the largest of its three channels. `squares` is each
+    file's square_pixels() filter, so the grid covers the displayed picture (display_size()) and a
+    caller's rectangle in displayed pixels names the tiles it means on a non-square-pixel file.
     {frames, changed {frame index: a bit mask of the tiles above `floor`, bit column + row * columns;
     change_mask_tiles() lists them}, peaks {frame index: its largest tile}, quiet_peak (the largest
     tile at or under the floor)}. A mask and not a list: two unrelated hours differ in every tile
@@ -1350,7 +1353,8 @@ def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" 
     import threading
     from _common import runner as _runner
     gw, gh = grid
-    graph = ("[0:V:0]settb=1/1000,setpts=N,format=gbrp[a];[1:V:0]settb=1/1000,setpts=N,format=gbrp[b];"
+    sq_a, sq_b = (s + "," if s else "" for s in squares)
+    graph = (f"[0:V:0]{sq_a}settb=1/1000,setpts=N,format=gbrp[a];[1:V:0]{sq_b}settb=1/1000,setpts=N,format=gbrp[b];"
              f"[a][b]blend=all_mode=difference:shortest=1,scale={gw}:{gh}:flags=area[o]")
     # passthrough: the frames carry index timestamps, and a constant-rate muxer would drop
     # nearly all of them as duplicates (12 of 300 came out without it)

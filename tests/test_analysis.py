@@ -747,20 +747,37 @@ class AnalysisTests(MediaFixtures):
         self.assertIsNone(out)
         self.assertEqual(rows[0][:2], ("change_scope", "FAIL"))
         self.assertIn("the comparison pass failed", rows[0][2])
-        # no readable frame times: a declared span cannot be placed, so it is not compared; `none`
-        # places nothing and is still graded
-        for declared, status in (([{"start": 3.0, "end": 5.0, "rect": None}], "FAIL"), ([], "FAIL")):
+        # no readable frame times: nothing can be placed or reported at a time, so it is not
+        # compared, for a span and for `none` alike
+        for declared in ([{"start": 3.0, "end": 5.0, "rect": None}], []):
             rows = []
             with unittest.mock.patch.object(check_mod, "presentation_times", return_value=[]):
                 meta = check_mod.probe(str(new))
                 args = types.SimpleNamespace(input=str(new), compare=str(old), change_floor=24)
                 out = check_mod.change_scope_row(args, declared, meta, meta["video"], lambda *a, **k: rows.append(a))
-            self.assertEqual(rows[0][:2], ("change_scope", status), rows)
-            if declared:
-                self.assertIsNone(out)
-                self.assertIn("not compared: the frame times could not be read", rows[0][2])
-            else:
-                self.assertIn("changed 3.00-5.10", rows[0][2])
+            self.assertIsNone(out)
+            self.assertEqual(rows[0][:2], ("change_scope", "FAIL"), rows)
+            self.assertIn("not compared: the frame times could not be read", rows[0][2])
+
+        # a rectangle is in displayed pixels: 180x180 stored at SAR 16:9 is a 320x180 picture, and a
+        # box at stored x 120-170 is shown at x 213-302, past the stored width
+        wide_old, wide_new = OUT / "scope_sar_old.mp4", OUT / "scope_sar_new.mp4"
+        sar = "testsrc2=size=180x180:rate=10"
+        sh(*lavfi, sar, "-t", "2", "-vf", "setsar=16/9", *x264, wide_old)
+        sh(*lavfi, sar, "-t", "2", "-vf", "drawbox=x=120:y=60:w=50:h=60:color=red:t=fill,setsar=16/9", *x264, wide_new)
+
+        def wide(*extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(wide_new), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(wide_old), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            return doc, {r["check"]: r for r in doc.get("checks", [])}.get("change_scope")
+
+        doc, row = wide("--expect-changed", "0-2@200,50,115,80")
+        self.assertEqual(row["status"], "PASS", row)
+        x, y, w, h = doc["change_scope"]["observed"][0]["rect"]
+        self.assertTrue(200 <= x <= 213 and x + w >= 302 and x + w <= 320, doc["change_scope"]["observed"])
+        self.assertEqual(wide("--expect-changed", "0-2@0,0,180,180")[1]["status"], "FAIL", "the stored-pixel rectangle misses it")
+        self.assertIn("does not fit inside the 320x180 picture", wide("--expect-changed", "0-2@300,0,40,40")[0]["error"]["message"])
 
         for bad, say in ((["--expect-changed", "3-5", "--expect-changed", "none"], "cannot be combined"),
                          (["--expect-changed", "5-3"], "ends at or after its start"),
