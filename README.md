@@ -583,7 +583,7 @@ Where it can be installed from today. Each route is spelled out below the table.
 | Route | For | Command or link |
 |---|---|---|
 | npm | Claude Code, Cursor, Codex skills folders | `npx ffmpeg-skill` ([npmjs.com/package/ffmpeg-skill](https://www.npmjs.com/package/ffmpeg-skill)) |
-| Claude Code plugin | Claude Code 2.1.69 or later | `/plugin install ffmpeg-skill --marketplace kajisho5/ffmpeg-skill` |
+| Claude Code plugin | Claude Code 2.1.275 or later (2.1.69 to 2.1.274: the two commands below) | `/plugin install ffmpeg-skill --marketplace kajisho5/ffmpeg-skill` |
 | Codex plugin | Codex CLI | `codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin`, then `codex plugin add ffmpeg-skill@ffmpeg-skill` |
 | Gemini CLI extension | Gemini CLI | `gemini extensions install https://github.com/kajisho5/ffmpeg-skill` |
 | MCP server | clients without a shell | `npx -y ffmpeg-skill mcp` (see [MCP](#mcp)) |
