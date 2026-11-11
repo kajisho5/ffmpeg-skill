@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.3.0
+
+_Automated release: version and notes generated from pull requests merged since 3.2.3._
+
 ### Added
 
 - **`source_carry`: every result says what the output lost from its source.** A tool that writes a
@@ -58,6 +64,7 @@
 - **Release versions: a squash commit whose subject does not end with "(#N)" is resolved to its PR
   by the merge commit's SHA** (a failed lookup stops the release job instead of guessing)**.** 3.2.3 shipped three features as a patch because the subject ended
   "(#433, carries #432 and #434)" and the `feature` label was never read.
+- Say what the output lost from its source; fix --srt --position and odd-sized video; plugin branch (#435)
 
 ## 3.2.3
 
