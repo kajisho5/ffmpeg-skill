@@ -17,6 +17,15 @@
 
 ### Fixed
 
+- **`caption.py --srt --position` put the text in the wrong place** for every value but the bottom
+  row (#436): `top` landed mid-left, `center` top-left, `top-left` top-right. The SRT burn hands its
+  style to libass's `force_style`, which reads `Alignment` in the legacy SSA numbering, and it was
+  given the v4+ numpad value. It now gets the legacy one (`top` 6, `center` 10, `top-left` 5,
+  `top-right` 7); `--text` and `--transcribe`, which burn a generated ASS file, were right already.
+- **An odd-sized 4:2:0 JPEG (a phone screenshot) failed with "Invalid odd size"** in `insert.py`
+  and in every tool that converts a BT.601 source to BT.709 (#437): the `colorspace` filter, first
+  in the graph, refuses an odd width or height. The last row or column is now cropped off before it
+  (no resampling); an even-sized source runs the command it ran before.
 - **Release versions: a squash commit whose subject does not end with "(#N)" is resolved to its PR
   by the merge commit's SHA.** 3.2.3 shipped three features as a patch because the subject ended
   "(#433, carries #432 and #434)" and the `feature` label was never read.

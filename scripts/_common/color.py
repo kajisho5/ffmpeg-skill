@@ -69,8 +69,9 @@ def is_rgb(meta: Optional[Dict[str, Any]]) -> bool:
     return bool(_RGB_PIX_FMT_RE.match(str(((meta or {}).get("video") or {}).get("pix_fmt") or "")))
 
 
-_MATRIX_FILTER_RE = re.compile(r"^(?:colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709|(?:format=rgb24,)?%s)$"
-                               % ("|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter())))
+_EVEN_CROP = "crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0,"
+_MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709|(?:format=rgb24,)?%s)$"
+                               % (re.escape(_EVEN_CROP), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter())))
 _INPUT_VIDEO_REF = re.compile(r"\[(\d+):v(?::0)?\]")
 
 
@@ -102,7 +103,12 @@ def bt709_matrix_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
         return ("format=rgb24," if v.get("pix_fmt") == "pal8" else "") + rgb_to_bt709_filter()
     if matrix not in NON_BT709_MATRICES:
         return None
-    return f"colorspace=ispace={matrix}:iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709"
+    # the colorspace filter refuses an odd width or height outright ("Invalid odd size"), and a
+    # 4:2:0 JPEG can have one (a phone screenshot, #437): the last row or column is cropped off
+    # first. No resampling, and nothing changes for an even-sized source.
+    w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+    even = _EVEN_CROP if (w % 2 or h % 2) else ""
+    return f"{even}colorspace=ispace={matrix}:iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709"
 
 
 def bt709_label_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:

@@ -69,6 +69,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.2 — the alpha path beyond export (#433)](#after-322--the-alpha-path-beyond-export-433)
 - [After 3.2.1 — a smart cut that re-encodes only the partial GOPs](#after-321--a-smart-cut-that-re-encodes-only-the-partial-gops)
 - [After 3.2.3 — what the output lost from its source is said (#401)](#after-323--what-the-output-lost-from-its-source-is-said-401)
+- [After 3.2.3 — two reports from outside (#436, #437)](#after-323--two-reports-from-outside-436-437)
 <!-- contents:end -->
 
 ## Time limits
@@ -3094,3 +3095,21 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   chapters still point at the right moments is a later, per-tool measurement.
   Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
   `test_source_carry_says_what_the_output_lost_from_its_source`.
+
+## After 3.2.3 — two reports from outside (#436, #437)
+
+- **A `force_style` Alignment is the legacy SSA number, a Style line's is the numpad one.**
+  `caption.py` keeps two tables: `ALIGN` for the ASS file it writes (`--text`, `--transcribe`,
+  karaoke) and `FORCE_STYLE_ALIGN` for the SRT burn. They agree on the bottom row only, which is
+  why the default placement hid the bug. Measured on libass 0.17.1 (FFmpeg 6.1.1) and reported on
+  FFmpeg 9.0.2. Code: `caption.FORCE_STYLE_ALIGN`. Test:
+  `UserReportTests.test_caption_srt_position_lands_where_it_says` (the text's bounding box on the
+  burned frame, for all seven positions).
+- **An odd-sized BT.601 source is cropped by one row or column before its matrix conversion, not
+  scaled.** The `colorspace` filter refuses an odd frame, and it has to come first in the graph
+  (it converts the source's own pixels). A crop leaves every other pixel as it was; a scale would
+  resample the whole picture for the sake of one edge. `_MATRIX_FILTER_RE` accepts the prefix, so
+  the code that folds the conversion into a tool's own `-vf` still finds it (without that the
+  command carried two `-vf` and the second replaced the tool's graph). Code:
+  `_common.color.bt709_matrix_filter()`. Test: `UserReportTests.test_insert_takes_an_odd_sized_jpeg`.
+
