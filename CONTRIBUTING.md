@@ -117,10 +117,9 @@ npm first (the release workflow does) and only then the registry. Clients run
 1. Install [`mcp-publisher`](https://modelcontextprotocol.io/registry/quickstart) and run
    `mcp-publisher login github` as **kajisho5** (GitHub auth only allows the `io.github.kajisho5/`
    namespace). `mcp-publisher validate`, then `mcp-publisher publish`.
-2. Smithery's current publish docs are a public URL or an `.mcpb` bundle
-   (`smithery auth login`, then `smithery mcp publish`). `smithery.yaml` is not in those docs
-   (`/docs/config` and `/docs/build/project-config` 404; the docs index has no such page), so this
-   repo does not ship one. There is no `.mcpb` bundle here either.
+2. Smithery: nothing to run. Its API, CLI and SDKs stopped working on 2026-10-31
+   (smithery.ai/future); the site remains a curated directory and documents no way to submit a
+   server, so this repository ships no `smithery.yaml` and no `.mcpb` bundle.
 3. Glama: submit the GitHub repo, then claim it. `glama.json` lists maintainer `kajisho5`.
    Claiming again is what picks up a change to that file.
 4. Scorecard uploads SARIF to code scanning. That upload needs code scanning enabled on the
