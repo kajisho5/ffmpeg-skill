@@ -4,7 +4,37 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`check.py --compare REF --expect-changed SPAN[@X,Y,W,H]|none`: say where the picture may
+  differ, and fail on a change anywhere else** (#439). After a small re-render ("fix the caption at
+  0:12 to 0:18") nothing could tell, short of watching the file again, that the rest did not move:
+  the `similarity` row grades one mean over the whole picture, and a 200x60 box on a 1080p frame
+  leaves it above 0.99. A `change_scope` row now measures both files tile by tile (32x18, 8-bit RGB
+  difference) and grades it against the declaration: a change outside the declared spans is a
+  FAIL with its time, frame count and place; a declared span that did not change is a WARN; and
+  two files that cannot be compared (another size, another frame count, a failed pass) are a FAIL,
+  not a pass. `--change-floor` sets the per-tile floor (default 24 of 255, chosen from phone and
+  screen-recording footage). Picture only, same-length edits only; `references/scripts.md` lists
+  the limits.
+
+### Fixed
+
+- **No numeric flag of any tool takes `nan` or `inf` any more.** argparse's `float` reads both
+  (and `1e999`), and every `type=float` flag of every tool passed them on: 232 of 232 runs across
+  25 tools. Some ended as a traceback (`--fps nan`, `--timeout inf`, `graphics.py --scale`), some
+  as ffmpeg's "Invalid argument" under `kind: ffmpeg` (`loudness.py -I nan`, `silence.py
+  --threshold`), most were carried silently. One registration in the shared flag set now refuses
+  them at parse time for all 42 tools (a failure document with `--json`, a usage error without),
+  and the shared time parser refuses a non-finite time
+  (`cut.py --start nan`, `--duration inf`, `pad.py --end nan`, an `@nan` rate) as `kind: input`.
+
+### Changed
+
+- **The `plugin` branch holds the plugin under `ffmpeg-skill/`**, not at its root. Installed from
+  the 3.3.0 branch by `ref`, Claude Code cached 2.6 MB but Codex kept the whole clone (39 MB). As a
+  `git-subdir` source both copy the directory alone (2.6 MB). The marketplace entry still points at
+  the repository root until a release has published the new layout.
 
 ## 3.3.0
 

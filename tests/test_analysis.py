@@ -11,7 +11,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -663,6 +665,175 @@ class AnalysisTests(MediaFixtures):
                                "--compare", str(ref)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertIn("note: --compare: 28 frames against the reference's 30", proc.stdout + proc.stderr)
         self.assertIn("similarity", self._rows(hit, "--no-loudness", "--compare", ref, "--dry-run"))
+
+    def test_check_expect_changed_fails_on_a_change_outside_the_declaration(self):
+        """#439: --compare --expect-changed SPAN[@X,Y,W,H]|none. A box drawn from 3 s to 5 s on
+        0.7 % of the frame (which the whole-frame SSIM row passes) is found with its time and
+        place; declared it PASSes, undeclared it FAILs, a declared span with no change WARNs, and
+        a comparison that cannot be made is a FAIL, never a pass."""
+        x264 = ["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-an"]
+        src = "testsrc2=size=640x360:rate=10"
+        old, new, small, short, other = (OUT / n for n in ("scope_old.mp4", "scope_new.mp4", "scope_small.mp4",
+                                                           "scope_short.mp4", "scope_444.mp4"))
+        box = "drawbox=x=520:y=300:w=80:h=40:color=red:t=fill:enable='between(t,3,5)'"
+        lavfi = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"]
+        sh(*lavfi, src, "-t", "6", *x264, old)
+        sh(*lavfi, src + "," + box, "-t", "6", *x264, new)
+        sh(*lavfi, "testsrc2=size=320x180:rate=10", "-t", "6", *x264, small)
+        sh(*lavfi, src, "-t", "5", *x264, short)
+        sh(*lavfi, src, "-t", "6", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv444p", "-an", other)
+
+        def check(path, *extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(old), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            return proc.returncode, doc, {r["check"]: r for r in doc.get("checks", [])}.get("change_scope")
+
+        # the edit is invisible to the existing row, which is why the new one exists
+        self.assertEqual(self._rows(new, "--no-loudness", "--compare", old)["similarity"]["status"], "PASS")
+        code, doc, row = check(new, "--expect-changed", "3-5")
+        self.assertEqual((code, row["status"]), (0, "PASS"), row)
+        # the end is inclusive (between(t,3,5) draws on the frame at 5.0 s) and widened to the frame
+        self.assertIn("changed 3.00-5.10 inside the declared span", row["value"])
+        seen = doc["change_scope"]["observed"]
+        self.assertEqual([(o["start"], o["end"], o["frames"]) for o in seen], [(3.0, 5.1, 21)])
+        x, y, w, h = seen[0]["rect"]
+        self.assertTrue(x <= 520 and y <= 300 and x + w >= 600 and y + h >= 340 and w <= 120 and h <= 80, seen)
+        self.assertEqual(doc["change_scope"]["undeclared"], [])
+        self.assertLessEqual(doc["change_scope"]["quiet_peak"], doc["change_scope"]["floor"])
+
+        code, doc, row = check(new, "--expect-changed", "0.5-1")
+        self.assertEqual((code, row["status"], doc["error"]["kind"]), (1, "FAIL", "verification"), row)
+        self.assertIn("changed 3.00-5.10 (21 frames, around x", row["value"])
+        self.assertIn("declared 0.50-1.00 but nothing changed there", row["value"])
+        self.assertIn("look.py --compare", row["fix"])
+        self.assertTrue(row["fix"].endswith("--at 3"), row["fix"])
+        self.assertEqual(len(doc["change_scope"]["declared_unchanged"]), 1)
+
+        self.assertEqual(check(new, "--expect-changed", "none")[2]["status"], "FAIL")
+        self.assertEqual(check(old, "--expect-changed", "none")[2]["status"], "PASS")
+        self.assertEqual(check(new, "--expect-changed", "3-5@500,280,140,80")[2]["status"], "PASS")
+        elsewhere = check(new, "--expect-changed", "3-5@0,0,100,100")[2]
+        self.assertEqual(elsewhere["status"], "FAIL", elsewhere)
+        # two spans, one of them the edit: the other is only a warning
+        code, doc, row = check(new, "--expect-changed", "3-5", "--expect-changed", "0-1")
+        self.assertEqual((code, row["status"]), (0, "WARN"), row)
+        self.assertIn("declared 0.00-1.00 but nothing changed there", row["value"])
+        # --change-floor is the floor the pass uses and the document reports: at 254 only a tile
+        # at full difference still counts (whether this edit has one depends on the FFmpeg build's
+        # colour conversion: none on 6.1, some on later ones, so the status is not asserted)
+        code, doc, row = check(new, "--expect-changed", "none", "--change-floor", "254")
+        self.assertEqual(doc["change_scope"]["floor"], 254)
+        self.assertTrue(all(o["peak"] == 255 for o in doc["change_scope"]["observed"]), doc["change_scope"]["observed"])
+        self.assertEqual(row["status"], "FAIL" if doc["change_scope"]["observed"] else "PASS")
+        self.assertIn("floor 254", row["value"])
+
+        for path, why in ((small, "320x180 against 640x360"), (short, "50 frames against the reference's 60")):
+            code, doc, row = check(path, "--expect-changed", "none")
+            self.assertEqual((code, row["status"]), (1, "FAIL"), row)
+            self.assertIn("not compared: " + why, row["value"])
+            self.assertNotIn("change_scope", doc)
+        code, doc, row = check(other, "--expect-changed", "none")
+        self.assertNotEqual(row["status"], "PASS", row)
+        self.assertTrue(any("not encoded alike (pix_fmt yuv444p against yuv420p)" in n for n in doc["notes"]), doc.get("notes"))
+
+        # the pass itself failing is a FAIL too
+        check_mod = check_module
+        rows = []
+        with unittest.mock.patch.object(check_mod, "change_tiles", return_value=None):
+            args = types.SimpleNamespace(input=str(new), compare=str(old), change_floor=24)
+            meta = check_mod.probe(str(new))
+            out = check_mod.change_scope_row(args, [], meta, meta["video"], lambda *a, **k: rows.append(a))
+        self.assertIsNone(out)
+        self.assertEqual(rows[0][:2], ("change_scope", "FAIL"))
+        self.assertIn("the comparison pass failed", rows[0][2])
+        # no readable frame times: nothing can be placed or reported at a time, so it is not
+        # compared, for a span and for `none` alike
+        for declared in ([{"start": 3.0, "end": 5.0, "rect": None}], []):
+            rows = []
+            with unittest.mock.patch.object(check_mod, "presentation_times", return_value=[]):
+                meta = check_mod.probe(str(new))
+                args = types.SimpleNamespace(input=str(new), compare=str(old), change_floor=24)
+                out = check_mod.change_scope_row(args, declared, meta, meta["video"], lambda *a, **k: rows.append(a))
+            self.assertIsNone(out)
+            self.assertEqual(rows[0][:2], ("change_scope", "FAIL"), rows)
+            self.assertIn("not compared: the frame times could not be read", rows[0][2])
+
+        # a rectangle is in displayed pixels: 180x180 stored at SAR 16:9 is a 320x180 picture, and a
+        # box at stored x 120-170 is shown at x 213-302, past the stored width
+        wide_old, wide_new = OUT / "scope_sar_old.mp4", OUT / "scope_sar_new.mp4"
+        sar = "testsrc2=size=180x180:rate=10"
+        sh(*lavfi, sar, "-t", "2", "-vf", "setsar=16/9", *x264, wide_old)
+        sh(*lavfi, sar, "-t", "2", "-vf", "drawbox=x=120:y=60:w=50:h=60:color=red:t=fill,setsar=16/9", *x264, wide_new)
+
+        def wide(*extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(wide_new), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(wide_old), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            return doc, {r["check"]: r for r in doc.get("checks", [])}.get("change_scope")
+
+        doc, row = wide("--expect-changed", "0-2@200,50,115,80")
+        self.assertEqual(row["status"], "PASS", row)
+        x, y, w, h = doc["change_scope"]["observed"][0]["rect"]
+        self.assertTrue(200 <= x <= 213 and x + w >= 302 and x + w <= 320, doc["change_scope"]["observed"])
+        self.assertEqual(wide("--expect-changed", "0-2@0,0,180,180")[1]["status"], "FAIL", "the stored-pixel rectangle misses it")
+        self.assertIn("does not fit inside the 320x180 picture", wide("--expect-changed", "0-2@300,0,40,40")[0]["error"]["message"])
+        # the same displayed size stored another way (320x180 square against 180x180 at 16:9) is
+        # compared, both squared, and the difference in storage is said: not a "not compared" that
+        # prints two equal sizes
+        flat = OUT / "scope_sar_flat.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", wide_old, "-vf", "scale=320:180,setsar=1", *x264, flat)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(flat), "--platform", "custom", "--no-loudness", "--json",
+                               "--compare", str(wide_old), "--expect-changed", "none"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        doc = json.loads(proc.stdout)
+        row = {r["check"]: r for r in doc["checks"]}["change_scope"]
+        self.assertNotIn("not compared", row["value"], row)
+        self.assertIn("change_scope", doc)
+        self.assertTrue(any("stored size 320x180 against 180x180" in n for n in doc["notes"]), doc["notes"])
+
+        for bad, say in ((["--expect-changed", "3-5", "--expect-changed", "none"], "cannot be combined"),
+                         (["--expect-changed", "5-3"], "ends at or after its start"),
+                         (["--expect-changed", "nan-3"], "--expect-changed"),
+                         (["--expect-changed", "3"], "START-END"),
+                         (["--expect-changed", "3-5@1,2,3"], "X,Y,W,H"),
+                         (["--expect-changed", "3-5@0,0,0,10"], "X,Y,W,H"),
+                         (["--expect-changed", "3-5@700,0,10,10"], "does not fit inside the 640x360 picture"),
+                         (["--expect-changed", "3-5@600,300,80,40"], "does not fit inside the 640x360 picture"),
+                         (["--expect-changed", "none", "--change-floor", "0"], "outside 1..254")):
+            code, doc, row = check(new, *bad)
+            self.assertEqual((code, doc["error"]["kind"]), (1, "input"), (bad, doc))
+            self.assertIn(say, doc["error"]["message"], bad)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(new), "--platform", "custom", "--no-loudness",
+                               "--json", "--expect-changed", "3-5"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertIn("needs --compare", json.loads(proc.stdout)["error"]["message"])
+        # a dry run measures nothing, as --compare does for a file an earlier stage would write
+        code, doc, row = check(OUT / "scope_not_written_yet.mp4", "--expect-changed", "none", "--dry-run")
+        self.assertEqual((code, row), (0, None), doc)
+
+    def test_change_scope_is_closed_at_both_ends_and_holds_the_rest_of_a_rectangle_frame(self):
+        """#439: the pure grading step. A declared span covers every frame whose own interval
+        touches it; with a rectangle, tiles it does not touch are still held to "unchanged"."""
+        check_mod = check_module
+        times = [i / 10 for i in range(11)]            # 10 frames, 0.1 s each
+        tiles = {"frames": 10, "changed": {3: 1, 4: 1 | 1 << (31 + 17 * 32), 5: 1}, "peaks": {3: 90, 4: 99, 5: 90}, "quiet_peak": 2}
+        doc = check_mod.change_scope(tiles, [{"start": 0.3, "end": 0.5, "rect": None}], times, (640, 360), 24)
+        self.assertEqual((doc["undeclared"], doc["declared_unchanged"]), ([], []))
+        # 0.3-0.45 still reaches frame 4 (0.4-0.5), not frame 5
+        doc = check_mod.change_scope(tiles, [{"start": 0.3, "end": 0.45, "rect": None}], times, (640, 360), 24)
+        self.assertEqual([(u["start"], u["end"]) for u in doc["undeclared"]], [(0.5, 0.6)])
+        doc = check_mod.change_scope(tiles, [{"start": 0.3, "end": 0.5, "rect": [0, 0, 20, 20]}], times, (640, 360), 24)
+        self.assertEqual([(u["start"], u["frames"], u["rect"]) for u in doc["undeclared"]], [(0.4, 1, [620, 340, 20, 20])])
+        self.assertEqual(doc["observed"][0]["rect"], [0, 0, 640, 360])
+        # a turned file against an upright one of the same displayed size is still "stored another way"
+        turned = {"codec": "h264", "pix_fmt": "yuv420p", "fps": 30.0, "width": 1080, "height": 1920, "rotation": 90}
+        upright = dict(turned, width=1920, height=1080, rotation=0)
+        self.assertEqual(check_mod.encoding_differences(turned, upright), ["stored size 1080x1920 against 1920x1080"])
+        self.assertEqual(check_mod.encoding_differences(upright, dict(upright)), [])
+        # two declarations that overlap: each is graded against the frame's own tiles, in either order
+        whole, corner = {"start": 0.3, "end": 0.5, "rect": None}, {"start": 0.3, "end": 0.5, "rect": [0, 0, 20, 20]}
+        for order in ([whole, corner], [corner, whole]):
+            doc = check_mod.change_scope(tiles, order, times, (640, 360), 24)
+            self.assertEqual((doc["undeclared"], doc["declared_unchanged"]), ([], []), order)
 
     def test_check_compare_pairs_only_existing_frames_and_is_order_and_rotation_safe(self):
         """2.24.1: a shorter output was paired with its last frame repeated (mean below 0.9 for 52

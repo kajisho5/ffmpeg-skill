@@ -374,6 +374,54 @@ class ContractTests(unittest.TestCase):
                 sweep.main()
         self.assertEqual(usage.exception.code, 2)
 
+    def test_no_numeric_flag_of_any_tool_takes_nan_or_inf(self):
+        """A reviewer found a non-finite value accepted by one flag at a time on nine PRs (--max-mb,
+        fade durations, --margin, crossfade times, keyframe windows, the MCP timeout, ...). Run as
+        a class, `nan` and `inf` on every `type=float` flag of 25 tools: 232 runs, all 232 accepted
+        at parse time. Some ended as a traceback (int() of --fps, --timeout inf), some as ffmpeg's
+        "Invalid argument" under kind ffmpeg (loudness -I), most were silently carried. The cause
+        was shared (argparse's float reads them) and so is the fix: add_common() registers
+        finite_float for every `type=float`, and parse_time() refuses a non-finite time. This
+        test walks the contract, so a tool or flag added later is covered without being listed."""
+        from concurrent.futures import ThreadPoolExecutor
+        doc = _contract.build(detect=False)
+        jobs = [(tool["executable"], prop["cli"][0], value)
+                for tool in doc["tools"] for prop in tool["input_schema"]["properties"].values()
+                if prop.get("type") == "number" and prop.get("cli") for value in ("nan", "inf")]
+        self.assertGreater(len(jobs), 200)
+
+        def refuse(job):
+            script_name, flag, value = job
+            # argparse converts a value as it reads it, before it looks for required arguments,
+            # so the flag alone is enough to reach the type check
+            proc = subprocess.run([sys.executable, str(SCRIPTS / Path(script_name).name), flag, value, "--json"],
+                                  capture_output=True, text=True)
+            return job, proc.returncode, proc.stdout, proc.stderr
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for job, code, out, err in pool.map(refuse, jobs):
+                # with --json it is a failure document, like any refusal a tool makes itself
+                self.assertEqual(code, 1, (job, err[-300:]))
+                error = json.loads(out)["error"]
+                self.assertEqual(error["kind"], "input", job)
+                # argparse names the argument with every spelling it has ("-I/--lufs")
+                self.assertIn(job[1], error["message"].split(": ")[0].split("/"), (job, error["message"]))
+                self.assertIn("is not a finite number", error["message"], job)
+        # without --json it is argparse's own usage error, as for any value it cannot read
+        plain = subprocess.run([sys.executable, str(SCRIPTS / "audio.py"), "--fade-in", "nan"], capture_output=True, text=True)
+        self.assertEqual(plain.returncode, 2)
+        self.assertIn("argument --fade-in: 'nan' is not a finite number", plain.stderr)
+        from _common.decision import parse_time
+        for text in ("nan", "inf", "-inf", "1e999", "1:nan", "00:00:inf", "00:00:01:02@nan", "00:00:01:02@inf"):
+            with self.assertRaises(ValueError, msg=text):
+                parse_time(text, 25.0)
+        self.assertEqual(parse_time("1:30"), 90.0)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "cut.py"), "in.mp4", "--start", "nan", "--end", "2", "--json",
+                               "--dry-run", "-o", "out.mp4"], capture_output=True, text=True)
+        failure = json.loads(proc.stdout)
+        self.assertEqual(failure["error"]["kind"], "input")
+        self.assertIn("not a time (it is not finite)", failure["error"]["message"])
+
     def test_plugin_branch_tree_is_the_runtime_set(self):
         """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
         which at `./` is the whole 28 MB repository. release.yml publishes the npm tarball's
@@ -395,13 +443,13 @@ class ContractTests(unittest.TestCase):
         self.assertIn("continue-on-error: true", block)
         self.assertIn("steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
         # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
-        self.assertIn("ls-remote --exit-code --heads origin", script)
+        self.assertIn('ls-remote --exit-code --heads "$REMOTE"', script)
         self.assertNotIn("2>/dev/null; then", script)
         # the entry stays at ./ until a release has published the branch; whichever it names,
         # it must be one of the two forms both hosts were run against
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-        self.assertIn(market["plugins"][0]["source"], (
-            "./", {"source": "url", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "ref": "plugin"}))
+        self.assertIn(market["plugins"][0]["source"], ("./", {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
         if sys.platform == "win32" or not shutil.which("bash") or not shutil.which("npm"):
             return
         with tempfile.TemporaryDirectory() as tmp:
@@ -421,6 +469,37 @@ class ContractTests(unittest.TestCase):
             copy = (tree / "skills" / "ffmpeg-skill" / "SKILL.md").read_text(encoding="utf-8")
             for target in re.findall(r"\]\((\.\./\.\./[^)#]+)", copy):
                 self.assertTrue((tree / "skills" / "ffmpeg-skill" / target).resolve().exists(), target)
+
+            # the three answers a remote can give, run against remotes of the test's own
+            def publish(remote, *args):
+                return subprocess.run(["bash", str(script_path), *args], capture_output=True, text=True, cwd=ROOT,
+                                      env={**os.environ, "PLUGIN_REMOTE": str(remote)})
+
+            def git(*args):
+                return subprocess.run(["git", *args], capture_output=True, text=True, cwd=ROOT).stdout.strip()
+
+            gone = publish(Path(tmp) / "no-such-remote", "--no-push")
+            self.assertEqual(gone.returncode, 1, gone.stdout + gone.stderr)
+            self.assertIn("could not ask", gone.stderr)
+            self.assertNotIn("plugin commit", gone.stdout, "no commit is made when the remote cannot be asked")
+            bare = Path(tmp) / "remote.git"
+            subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+            first = publish(bare)                       # no such branch (exit 2): the branch starts here
+            self.assertEqual(first.returncode, 0, first.stderr)
+            head = git("ls-remote", str(bare), "refs/heads/plugin").split()[0]
+            self.assertIn(f"plugin commit {head}", first.stdout)
+            listed = subprocess.run(["git", "--git-dir", str(bare), "ls-tree", "-r", "--name-only", "plugin"],
+                                    capture_output=True, text=True).stdout.split("\n")
+            self.assertEqual(subprocess.run(["git", "--git-dir", str(bare), "rev-list", "--count", "plugin"],
+                                            capture_output=True, text=True).stdout.strip(), "1")
+            # under one directory, which is what a git-subdir marketplace source names
+            self.assertTrue(all(n.startswith("ffmpeg-skill/") for n in listed if n), listed[:3])
+            self.assertIn("ffmpeg-skill/.claude-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/skills/ffmpeg-skill/SKILL.md", listed)
+            again = publish(bare)                       # the branch holds this tree: nothing is pushed
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("already holds this tree", again.stdout)
+            self.assertEqual(git("ls-remote", str(bare), "refs/heads/plugin").split()[0], head)
 
     def test_mcp_registry_manifest_tracks_the_package_version(self):
         """server.json is the official MCP Registry document (schema 2025-12-11). Its two
@@ -507,7 +586,11 @@ class ContractTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", market["name"]))
         self.assertTrue(market["owner"]["name"])
-        self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [(manifest["name"], "./")])
+        self.assertEqual([p["name"] for p in market["plugins"]], [manifest["name"]])
+        # ./ until a release has published the plugin branch's ffmpeg-skill/ layout, then that
+        # directory as a git-subdir source (test_plugin_branch_tree_is_the_runtime_set has why)
+        self.assertIn(market["plugins"][0]["source"], ("./", {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)

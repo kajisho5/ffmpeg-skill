@@ -386,9 +386,37 @@ class Context:
 STATE = Context()
 
 
+def finite_float(text: str) -> float:
+    """argparse's `float`, minus nan and inf. Python's float() reads "nan", "inf" and "1e999", and
+    no flag here means any of them: they reached int() as a traceback, ffmpeg as "Invalid
+    argument" (kind ffmpeg, as if the build were at fault), or a comparison that is always false
+    and so skipped the check it guarded. add_common() registers this for every `type=float`."""
+    import argparse
+    import math
+    value = float(text)
+    if not math.isfinite(value):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a finite number")
+    return value
+
+
 def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
     """Add the flags every script shares. `codec=False` is for a tool that re-encodes but whose
     preset decides the encoder (export.py): it must not advertise --codec/--quality in its schema."""
+    # one place for every tool: argparse looks a `type=` up in this registry at parse time, so the
+    # flags a tool added before this call are covered as well
+    ap.register("type", float, finite_float)
+    usage_error = ap.error
+
+    def error(message: str) -> None:
+        # a --json caller gets a failure document for this refusal, as for every other bad value a
+        # tool checks itself (export.py --max-mb nan answered with one before this was shared);
+        # anything else argparse rejects stays its usage error
+        if "is not a finite number" in message and {"--json", "--json-brief"} & set(sys.argv[1:]):
+            STATE.json = True
+            die(message.replace("argument ", "", 1))
+        usage_error(message)
+
+    ap.error = error  # type: ignore[method-assign]
     g = ap.add_argument_group("agent options")
     g.add_argument("--dry-run", action="store_true", help="print the ffmpeg commands that would run, run nothing")
     g.add_argument("--json", action="store_true", help="print a JSON result (output, probe, commands) on stdout instead of the path")

@@ -231,7 +231,9 @@ the loudness pass or, when loudness is skipped, one volumedetect pass). `check -
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
 from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
 video-only pass and a one-frame decode; without it the row set is unchanged.
-`--compare REF` adds `similarity` (SSIM/PSNR against a reference) and `--expect-identity SIZE:MTIME_NS`
+`--compare REF` adds `similarity` (SSIM/PSNR against a reference); with it, `--expect-changed
+SPAN[@X,Y,W,H]|none` adds `change_scope`, which FAILs on a change outside the declared spans and when
+the two files could not be compared, and WARNs when a declared span did not change. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
