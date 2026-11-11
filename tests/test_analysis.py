@@ -741,6 +741,20 @@ class AnalysisTests(MediaFixtures):
         self.assertIsNone(out)
         self.assertEqual(rows[0][:2], ("change_scope", "FAIL"))
         self.assertIn("the comparison pass failed", rows[0][2])
+        # no readable frame times: a declared span cannot be placed, so it is not compared; `none`
+        # places nothing and is still graded
+        for declared, status in (([{"start": 3.0, "end": 5.0, "rect": None}], "FAIL"), ([], "FAIL")):
+            rows = []
+            with unittest.mock.patch.object(check_mod, "presentation_times", return_value=[]):
+                meta = check_mod.probe(str(new))
+                args = types.SimpleNamespace(input=str(new), compare=str(old), change_floor=24)
+                out = check_mod.change_scope_row(args, declared, meta, meta["video"], lambda *a, **k: rows.append(a))
+            self.assertEqual(rows[0][:2], ("change_scope", status), rows)
+            if declared:
+                self.assertIsNone(out)
+                self.assertIn("not compared: the frame times could not be read", rows[0][2])
+            else:
+                self.assertIn("changed 3.00-5.10", rows[0][2])
 
         for bad, say in ((["--expect-changed", "3-5", "--expect-changed", "none"], "cannot be combined"),
                          (["--expect-changed", "5-3"], "ends at or after its start"),
@@ -748,7 +762,8 @@ class AnalysisTests(MediaFixtures):
                          (["--expect-changed", "3"], "START-END"),
                          (["--expect-changed", "3-5@1,2,3"], "X,Y,W,H"),
                          (["--expect-changed", "3-5@0,0,0,10"], "X,Y,W,H"),
-                         (["--expect-changed", "3-5@700,0,10,10"], "starts outside the 640x360 picture"),
+                         (["--expect-changed", "3-5@700,0,10,10"], "does not fit inside the 640x360 picture"),
+                         (["--expect-changed", "3-5@600,300,80,40"], "does not fit inside the 640x360 picture"),
                          (["--expect-changed", "none", "--change-floor", "0"], "outside 1..254")):
             code, doc, row = check(new, *bad)
             self.assertEqual((code, doc["error"]["kind"]), (1, "input"), (bad, doc))
@@ -774,6 +789,11 @@ class AnalysisTests(MediaFixtures):
         doc = check_mod.change_scope(tiles, [{"start": 0.3, "end": 0.5, "rect": [0, 0, 20, 20]}], times, (640, 360), 24)
         self.assertEqual([(u["start"], u["frames"], u["rect"]) for u in doc["undeclared"]], [(0.4, 1, [620, 340, 20, 20])])
         self.assertEqual(doc["observed"][0]["rect"], [0, 0, 640, 360])
+        # two declarations that overlap: each is graded against the frame's own tiles, in either order
+        whole, corner = {"start": 0.3, "end": 0.5, "rect": None}, {"start": 0.3, "end": 0.5, "rect": [0, 0, 20, 20]}
+        for order in ([whole, corner], [corner, whole]):
+            doc = check_mod.change_scope(tiles, order, times, (640, 360), 24)
+            self.assertEqual((doc["undeclared"], doc["declared_unchanged"]), ([], []), order)
 
     def test_check_compare_pairs_only_existing_frames_and_is_order_and_rotation_safe(self):
         """2.24.1: a shorter output was paired with its last frame repeated (mean below 0.9 for 52

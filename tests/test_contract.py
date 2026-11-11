@@ -538,7 +538,11 @@ class ContractTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", market["name"]))
         self.assertTrue(market["owner"]["name"])
-        self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [(manifest["name"], "./")])
+        self.assertEqual([p["name"] for p in market["plugins"]], [manifest["name"]])
+        # ./ until a release has published the plugin branch's ffmpeg-skill/ layout, then that
+        # directory as a git-subdir source (test_plugin_branch_tree_is_the_runtime_set has why)
+        self.assertIn(market["plugins"][0]["source"], ("./", {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)

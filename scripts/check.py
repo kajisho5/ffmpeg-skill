@@ -191,10 +191,14 @@ def change_scope(tiles: "Dict[str, Any]", declared: "List[Dict[str, Any]]", time
         return out
 
     outside: "Dict[int, int]" = {}
-    for n, left in tiles["changed"].items():
+    for n, changed in tiles["changed"].items():
+        left = changed
         for d in spans:
             if times[n] <= d["end"] and times[n + 1] > d["start"]:
-                if left & d["mask"]:
+                # against the frame's own tiles, not what earlier declarations left of them: two
+                # declarations that overlap would otherwise depend on their order, and the later
+                # one would read as "nothing changed there"
+                if changed & d["mask"]:
                     d["seen"] = True
                 left &= ~d["mask"]
         if left:
@@ -271,8 +275,10 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
         return not_compared("%dx%d against %dx%d (as displayed)" % (size + display_size(rv)),
                             "compare two renders of the same frame size")
     for d in declared:
-        if d["rect"] and (d["rect"][0] >= size[0] or d["rect"][1] >= size[1]):
-            die(f"--expect-changed: the rectangle {','.join(map(str, d['rect']))} starts outside the {size[0]}x{size[1]} picture")
+        if d["rect"] and (d["rect"][0] + d["rect"][2] > size[0] or d["rect"][1] + d["rect"][3] > size[1]):
+            # a rectangle that runs past the edge is a wrong size or a wrong file, and clipping it
+            # quietly would allow less than the caller believes it declared
+            die(f"--expect-changed: the rectangle {','.join(map(str, d['rect']))} does not fit inside the {size[0]}x{size[1]} picture")
     origin = float(meta.get("start_time") or 0.0)
     pts = presentation_times(args.input, float(v.get("start_time") or 0.0))
     ref_pts = presentation_times(args.compare, float(rv.get("start_time") or 0.0))
@@ -290,11 +296,14 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     if pts and len(pts) >= n:
         times = [max(0.0, t - origin) for t in pts[:n]]
         times.append(times[-1] + ((times[-1] - times[-2]) if n > 1 else (1.0 / fps if fps else 0.0)))
-    elif fps:
-        lead = max(0.0, float(v.get("start_time") or 0.0) - origin)
-        times = [lead + i / fps for i in range(n + 1)]
-    else:
+    elif declared:
+        # a span is placed by each frame's own time; an average rate would put a frame near a
+        # span's edge on the wrong side of it (and is simply wrong on variable-rate video)
         return not_compared("the frame times could not be read", "remux the file (export.py --preset copy) and check it again")
+    else:
+        # `none` places nothing: the times only label where a change was found
+        lead = max(0.0, float(v.get("start_time") or 0.0) - origin)
+        times = [lead + i / fps for i in range(n + 1)] if fps else [float(i) for i in range(n + 1)]
     doc = change_scope(tiles, declared, times, size, args.change_floor)
 
     def span(d: "Dict[str, Any]") -> str:
