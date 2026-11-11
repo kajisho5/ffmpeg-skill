@@ -16,8 +16,12 @@ not the full list. To rebuild the list: the review comments of this repository, 
    `--edl`, `--plan`, a report, an ASS sidecar, a second media output): compare it with *every*
    input (each `--srt`, `--brand`, `--font-file`, each clip of a project, each expanded batch
    item), with every other output including the *default* output path, and by file identity
-   (hard links, symlinks), not by string. Guard only on runs that write the file. Validate before
-   the first write, write the side file after the media render succeeded, stage it beside the
+   (hard links, symlinks), not by string. Guard on every run that would write the file, a dry
+   run included (a dry run refuses an existing output just as the real run would), and on no run
+   that would not (a mode that skips the file skips its guard). Validate before the first write.
+   A side file that only records the result (a time map, an EDL, a report) is written after the
+   media render succeeded; one the render reads (a generated ASS) has to exist before it, and one
+   a mode produces with no render (an SRT alone) has no render to wait for. Stage it beside the
    target and replace, and require `--overwrite` to replace an existing one.
 2. **Is a measurement that failed reported as "not measured"?** (about 30: #372, #376, #380, #383,
    #385, #386, #431, #432, #433, #434.) A failed ffprobe, a decode that returned nothing, an
