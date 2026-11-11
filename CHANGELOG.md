@@ -4,7 +4,14 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- **A plugin install copies 2.7 MB, not the repository.** The marketplace entry now names the
+  `ffmpeg-skill/` directory of the `plugin` branch (a `git-subdir` source) instead of the
+  repository root. Installed from the real branch at 3.4.0 by Claude Code 2.1.322 and Codex 0.167:
+  2.7 MB each, no `.git`. The README's `marketplace add` commands gain `--sparse .claude-plugin`,
+  which takes the marketplace checkout from 50 MB to 1.1 MB (Claude Code) and from 66 MB to 2.2 MB
+  (Codex). Gemini CLI still clones the repository.
 
 ## 3.4.0
 

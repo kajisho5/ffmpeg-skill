@@ -3132,12 +3132,16 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   "npm pack failed" without one), and the plugin route has never needed Node. A git source with
   `ref` installed with git alone in both, but not alike: from the 3.3.0 branch (tree at the root,
   a `url` source) Claude Code cached 2.6 MB and Codex kept the whole clone with every branch's
-  history (39 MB, more than the repository's files). So since 3.3.0 the branch holds the tree
+  history (39 MB, more than the repository's files). So since 3.4.0 the branch holds the tree
   under `ffmpeg-skill/`, for a `git-subdir` source: both hosts then copy that directory alone and
   keep no `.git` (2.6 MB each, measured). The two plugin files stay out of the npm package itself
   because `npx ffmpeg-skill` copies the package into an agent's skills folder, where a second
-  `SKILL.md` under `skills/` would be the same skill twice. The marketplace entry moves from `./`
-  to the branch only after a release has published that layout; until then the entry says `./` on purpose.
+  `SKILL.md` under `skills/` would be the same skill twice. The marketplace entry moved from `./`
+  to that directory after 3.4.0 had published the layout, and after both hosts installed from the
+  real branch through it (3.4.0, 2.7 MB each, no `.git`). The marketplace itself is still this
+  repository, so `marketplace add` checks it out: 50 MB in Claude Code and 66 MB in Codex, or
+  1.1 MB and 2.2 MB with `--sparse .claude-plugin`, which the README's commands use. The one-line
+  `/plugin install ... --marketplace` form was not measured.
   Test: `test_plugin_branch_tree_is_the_runtime_set`.
 - **The plugin does not register the MCP server.** `mcp/server.py` rides along in the plugin tree,
   but no `.mcp.json` or `mcpServers` entry starts it. In a host that runs a plugin (Claude Code,

@@ -424,7 +424,7 @@ class ContractTests(unittest.TestCase):
 
     def test_plugin_branch_tree_is_the_runtime_set(self):
         """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
-        which at `./` is the whole 28 MB repository. release.yml publishes the npm tarball's
+        which at `./` was the whole 28 MB repository. release.yml publishes the npm tarball's
         contents plus the plugin manifest and skills/ to the `plugin` branch instead. The gate is
         on the tree that ships: build it and look, where bash and npm exist (the Windows runner
         cannot spawn `npm`, the debian-trixie job has no npm; see the npm package test)."""
@@ -445,11 +445,13 @@ class ContractTests(unittest.TestCase):
         # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
         self.assertIn('ls-remote --exit-code --heads "$REMOTE"', script)
         self.assertNotIn("2>/dev/null; then", script)
-        # the entry stays at ./ until a release has published the branch; whichever it names,
-        # it must be one of the two forms both hosts were run against
+        # the entry names the directory the script writes, on the branch it pushes: the form both
+        # hosts were run against on the 3.4.0 branch. Back at ./ a host copies the repository.
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-        self.assertIn(market["plugins"][0]["source"], ("./", {
-            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
+        self.assertEqual(market["plugins"][0]["source"], {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
+        self.assertIn('SUBDIR="ffmpeg-skill"', script)
+        self.assertIn('BRANCH="plugin"', script)
         if sys.platform == "win32" or not shutil.which("bash") or not shutil.which("npm"):
             return
         with tempfile.TemporaryDirectory() as tmp:
@@ -576,21 +578,23 @@ class ContractTests(unittest.TestCase):
                     if not re.match(r"^[a-z]+:", url):
                         self.assertTrue((page.parent / url).is_file(), f"{page.relative_to(out)}: {url}")
 
-    def test_claude_plugin_marketplace_lists_the_plugin_at_the_repo_root(self):
+    def test_claude_plugin_marketplace_lists_the_plugin(self):
         """Without .claude-plugin/marketplace.json, `claude plugin install` and `claude plugin
         marketplace add kajisho5/ffmpeg-skill` both fail ("not found in any configured
         marketplace" / "Marketplace file not found"), so the README's plugin install line could
         never work. The marketplace lists exactly this plugin, by the manifest's name, from the
-        repository root, and the README installs it under that name."""
+        plugin branch, and the README installs it under that name."""
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", market["name"]))
         self.assertTrue(market["owner"]["name"])
         self.assertEqual([p["name"] for p in market["plugins"]], [manifest["name"]])
-        # ./ until a release has published the plugin branch's ffmpeg-skill/ layout, then that
-        # directory as a git-subdir source (test_plugin_branch_tree_is_the_runtime_set has why)
-        self.assertIn(market["plugins"][0]["source"], ("./", {
-            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"}))
+        # the plugin branch's ffmpeg-skill/ directory as a git-subdir source
+        # (test_plugin_branch_tree_is_the_runtime_set has why)
+        self.assertEqual(market["plugins"][0]["source"], {
+            "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
+        self.assertIn("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text := (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertEqual(readme_text.count("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"), 2)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)
