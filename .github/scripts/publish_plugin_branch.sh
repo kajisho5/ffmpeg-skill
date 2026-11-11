@@ -81,8 +81,18 @@ git --work-tree="$TREE" add -A -f .
 TREE_ID="$(git write-tree)"
 unset GIT_INDEX_FILE
 
+# "The branch does not exist yet" and "the remote could not be asked" are different answers: only
+# the first may start the branch without a parent. ls-remote --exit-code exits 2 for no such ref;
+# anything else (network, auth) stops here, with its own message, before a commit is made.
 PARENT=""
-if git fetch --quiet origin "refs/heads/$BRANCH" 2>/dev/null; then
+REMOTE_STATE=0
+git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null || REMOTE_STATE=$?
+if [ "$REMOTE_STATE" -ne 0 ] && [ "$REMOTE_STATE" -ne 2 ]; then
+  echo "could not ask origin whether $BRANCH exists (git ls-remote exited $REMOTE_STATE)" >&2
+  exit 1
+fi
+if [ "$REMOTE_STATE" -eq 0 ]; then
+  git fetch --quiet origin "refs/heads/$BRANCH"
   PARENT="$(git rev-parse FETCH_HEAD)"
   if [ "$(git rev-parse "$PARENT^{tree}")" = "$TREE_ID" ]; then
     echo "origin/$BRANCH already holds this tree ($VERSION); nothing to publish"

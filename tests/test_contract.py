@@ -389,6 +389,14 @@ class ContractTests(unittest.TestCase):
         self.assertLess(release.index("name: Create tag and GitHub Release"), step)
         self.assertLess(step, release.index("name: Publish to npm"),
                         "a missing npm token must not hold the plugin branch back")
+        # and the branch must not hold npm back: the tag exists by then, so a re-run would skip
+        # the npm publish for good. The step may fail; the job's last step reports it.
+        block = release[release.index("name: Publish the plugin branch"):release.index("name: Publish to npm")]
+        self.assertIn("continue-on-error: true", block)
+        self.assertIn("steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
+        # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
+        self.assertIn("ls-remote --exit-code --heads origin", script)
+        self.assertNotIn("2>/dev/null; then", script)
         # the entry stays at ./ until a release has published the branch; whichever it names,
         # it must be one of the two forms both hosts were run against
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
