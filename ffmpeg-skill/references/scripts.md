@@ -1210,7 +1210,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1239,6 +1239,25 @@ someone else's file. `--compare REF` (2.24) measures the picture against a refer
 the worst frame and its time, and the mean PSNR (`identical` when every pixel matches); WARN under a
 mean SSIM of 0.98. Frames of another size are not compared (WARN, "not compared"); a different frame
 count is compared pair by pair and named in `notes`, since a dropped frame shifts every later pair.
+`--expect-changed` (with `--compare`) declares where the picture is allowed to differ from the
+reference, and a `change_scope` row grades the measurement against it: `--expect-changed 12-18`
+(a span in this file's time, both ends included, repeatable), `12-18@0,880,1920,200` (only that
+rectangle of displayed pixels during the span) or `none`. A change anywhere else is a FAIL with
+its span, frame count and place, and a `look.py --compare` command at its start; a declared span
+in which nothing changed is a WARN (the edit probably did not apply); two files that are not
+encoded alike (codec, pixel format or frame rate) are a WARN and a note. **When the two cannot be
+compared (another frame size, another frame count, an unreadable frame count or a failed pass) the
+row is FAIL**, since "not measured" must not read as "nothing else changed". The measure: both
+pictures as 8-bit RGB, subtracted, each frame area-scaled to 32x18 tiles; a tile changed when its
+largest channel is above the floor (`--change-floor`, default 24 of 255). The JSON
+`change_scope` document has `declared`, `observed`, `undeclared`, `declared_unchanged`, `floor`,
+`tile`, `frames` and `quiet_peak` (the largest tile that stayed under the floor: how close the
+unchanged part came). Limits: a change much smaller than a tile is diluted (a full-contrast
+change needs about a tenth of a tile, 19x19 px at 1080p); a faint shift over the whole picture
+stays under the floor in every tile, and `similarity` is the row for that; it compares the
+picture only; an edit that changes the length cannot be paired and FAILs as not compared. Compare
+two renders made with the same encoder settings: a different preset alone moved every frame's
+largest tile to 11 in the measurements behind the default.
 `--content` (opt-in, one decode pass) adds three rows: `black` (share of the duration that is
 black: WARN > 10%, FAIL >= 95%), `frozen` (longest frozen span: WARN > max(3 s, 30% of the
 duration), FAIL when it covers >= 95%, i.e. the whole video) and `silence` (share below

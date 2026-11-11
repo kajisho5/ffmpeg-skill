@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.3.0`) | any release |
+| `skill.version` | the npm / package.json version (`3.4.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.3.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.4.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -231,7 +231,9 @@ the loudness pass or, when loudness is skipped, one volumedetect pass). `check -
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
 from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
 video-only pass and a one-frame decode; without it the row set is unchanged.
-`--compare REF` adds `similarity` (SSIM/PSNR against a reference) and `--expect-identity SIZE:MTIME_NS`
+`--compare REF` adds `similarity` (SSIM/PSNR against a reference); with it, `--expect-changed
+SPAN[@X,Y,W,H]|none` adds `change_scope`, which FAILs on a change outside the declared spans and when
+the two files could not be compared, and WARNs when a declared span did not change. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
