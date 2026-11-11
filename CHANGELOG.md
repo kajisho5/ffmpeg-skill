@@ -12,6 +12,8 @@
   2.7 MB each, no `.git`. The README's `marketplace add` commands gain `--sparse .claude-plugin`,
   which takes the marketplace checkout from 50 MB to 1.1 MB (Claude Code) and from 66 MB to 2.2 MB
   (Codex). Gemini CLI still clones the repository.
+  The plugin route now needs Claude Code 2.1.69 or later (2.1.288 with git older than 2.39);
+  `npx ffmpeg-skill` is unchanged.
 
 ## 3.4.0
 

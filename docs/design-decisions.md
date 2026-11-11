@@ -3141,7 +3141,10 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   real branch through it (3.4.0, 2.7 MB each, no `.git`). The marketplace itself is still this
   repository, so `marketplace add` checks it out: 50 MB in Claude Code and 66 MB in Codex, or
   1.1 MB and 2.2 MB with `--sparse .claude-plugin`, which the README's commands use. The one-line
-  `/plugin install ... --marketplace` form was not measured.
+  `/plugin install ... --marketplace` form was not measured. The cost of the move is a floor: by
+  Claude Code's changelog a `git-subdir` source exists from 2.1.69, and installs correctly on git
+  older than 2.39 only from 2.1.288. Neither older combination was run here; the README names
+  both and points older installs at `npx ffmpeg-skill`.
   Test: `test_plugin_branch_tree_is_the_runtime_set`.
 - **The plugin does not register the MCP server.** `mcp/server.py` rides along in the plugin tree,
   but no `.mcp.json` or `mcpServers` entry starts it. In a host that runs a plugin (Claude Code,
