@@ -156,6 +156,10 @@ jobs:
           # Only the two current-version mentions move; a blind replace of the version string
           # also rewrote every historical "since"/"added in" version (see the helper's docstring).
           sys.path.insert(0, str(root / ".github" / "scripts"))
+          from bump_server_json import bump_server_json
+          server_path = root / "server.json"
+          server_path.write_text(bump_server_json(server_path.read_text(encoding="utf-8"), old, new), encoding="utf-8")
+
           from bump_contract_md import bump_contract_md
           contract_path = root / "docs" / "contract.md"
           contract = contract_path.read_text(encoding="utf-8")
@@ -218,7 +222,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
+          git add package.json server.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
           git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
           # A merge that landed during this step would still make the push non-fast-forward;
           # replay the bump on top of it (a conflict here is real and should fail the run).
