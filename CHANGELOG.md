@@ -15,6 +15,10 @@
   `verified: true` with no note (#401). The key appears only when the source had one of the items,
   never changes `verified`, and no tool writes a different file.
 
+- **`npx ffmpeg-skill mcp`** starts the stdio MCP server (`python3 mcp/server.py`), the command
+  the MCP Registry manifest (`server.json`, kept on the package version by the release bump)
+  publishes. An OpenSSF Scorecard workflow runs weekly and on pushes to `main` (#369).
+
 ### Fixed
 
 - **`caption.py --srt --position` put the text in the wrong place** for every value but the bottom
