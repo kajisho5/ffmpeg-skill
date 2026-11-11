@@ -255,6 +255,18 @@ def levels_row(args: argparse.Namespace, v: Dict[str, Any], row: Any) -> "Option
     return doc
 
 
+def encoding_differences(v: Dict[str, Any], rv: Dict[str, Any]) -> "List[str]":
+    """What makes two video streams "not encoded alike" for --expect-changed: part of a measured
+    difference is then the encoder's. The stored size is the file's own width and height, before
+    rotation: 1080x1920 turned to 1920x1080 against a stored 1920x1080 is the same displayed
+    picture stored another way (as is 1440x1080 at 4:3), compared and said."""
+    def stored(x: Dict[str, Any]) -> str:
+        return f"{x.get('width')}x{x.get('height')}"
+    pairs = (("codec", v.get("codec"), rv.get("codec")), ("pix_fmt", v.get("pix_fmt"), rv.get("pix_fmt")),
+             ("fps", v.get("fps"), rv.get("fps")), ("stored size", stored(v), stored(rv)))
+    return [f"{k} {a} against {b}" for k, a, b in pairs if a != b]
+
+
 def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str, Any], v: Dict[str, Any], row: Any) -> "Optional[Dict[str, Any]]":
     """--expect-changed: measure where the picture differs from the reference and grade it against
     the declaration. A comparison that could not be made is a FAIL, never a WARN or a PASS: the
@@ -315,13 +327,7 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
         return f"{span(d)} ({d['frames']} frame{'s' if d['frames'] != 1 else ''}, around x {x}-{x + w}, y {y}-{y + h})"
 
     idle = "; ".join(f"declared {span(d)} but nothing changed there" for d in doc["declared_unchanged"])
-    differ = [f"{k} {a} against {b}" for k, a, b in (("codec", v.get("codec"), rv.get("codec")),
-                                                    ("pix_fmt", v.get("pix_fmt"), rv.get("pix_fmt")),
-                                                    ("fps", v.get("fps"), rv.get("fps")),
-                                                    # the same picture stored another way (1440x1080 at 4:3
-                                                    # against 1920x1080): compared, both squared, and said
-                                                    ("stored size", "%dx%d" % display_size(v), "%dx%d" % display_size(rv)))
-              if a != b]
+    differ = encoding_differences(v, rv)
     if differ:
         STATE_NOTES.append("--expect-changed: the two files are not encoded alike (" + ", ".join(differ) + "), so part of "
                            "what was measured is the encoder's difference, not the edit")

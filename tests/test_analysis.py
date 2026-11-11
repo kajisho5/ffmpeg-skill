@@ -824,6 +824,11 @@ class AnalysisTests(MediaFixtures):
         doc = check_mod.change_scope(tiles, [{"start": 0.3, "end": 0.5, "rect": [0, 0, 20, 20]}], times, (640, 360), 24)
         self.assertEqual([(u["start"], u["frames"], u["rect"]) for u in doc["undeclared"]], [(0.4, 1, [620, 340, 20, 20])])
         self.assertEqual(doc["observed"][0]["rect"], [0, 0, 640, 360])
+        # a turned file against an upright one of the same displayed size is still "stored another way"
+        turned = {"codec": "h264", "pix_fmt": "yuv420p", "fps": 30.0, "width": 1080, "height": 1920, "rotation": 90}
+        upright = dict(turned, width=1920, height=1080, rotation=0)
+        self.assertEqual(check_mod.encoding_differences(turned, upright), ["stored size 1080x1920 against 1920x1080"])
+        self.assertEqual(check_mod.encoding_differences(upright, dict(upright)), [])
         # two declarations that overlap: each is graded against the frame's own tiles, in either order
         whole, corner = {"start": 0.3, "end": 0.5, "rect": None}, {"start": 0.3, "end": 0.5, "rect": [0, 0, 20, 20]}
         for order in ([whole, corner], [corner, whole]):
