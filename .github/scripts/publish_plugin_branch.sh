@@ -121,6 +121,7 @@ node -e '
   const fs = require("fs"), f = process.argv[1], p = JSON.parse(fs.readFileSync(f, "utf8"));
   delete p.bin;
   delete p.mcpName;   // the MCP Registry reads it from the npm package, not from a plugin
+  delete p.scripts;   // npm lifecycle and test commands: nothing runs them in a plugin
   fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n");
 ' "$TREE/package.json"
 # A local checkout that has run the tools carries bytecode caches into the tarball; a release

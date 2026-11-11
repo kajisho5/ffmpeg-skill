@@ -289,7 +289,22 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(manifest["name"], pkg["name"])
         skill_name = re.search(r"(?m)^name:\s*(\S+)", (ROOT / "SKILL.md").read_text(encoding="utf-8")).group(1)
         self.assertEqual(manifest["name"], skill_name)
-        self.assertTrue(set(manifest) <= {"name", "version", "description", "author", "homepage", "repository", "license", "keywords"}, sorted(manifest))
+        # displayName and the four *Url fields are what the Claude plugin directory's listing
+        # reads ("Ffmpeg Skill" is its auto-filled name without displayName); `claude plugin
+        # validate` 2.1.322 accepts them
+        self.assertTrue(set(manifest) <= {"name", "displayName", "version", "description", "author", "homepage", "repository",
+                                          "documentationUrl", "supportUrl", "privacyPolicyUrl", "license", "keywords"}, sorted(manifest))
+        self.assertEqual(manifest["displayName"], "FFmpeg Skill")
+        self.assertEqual(manifest["privacyPolicyUrl"], "https://github.com/kajisho5/ffmpeg-skill/blob/main/PRIVACY.md")
+        privacy = (ROOT / "PRIVACY.md").read_text(encoding="utf-8")
+        self.assertIn("--transcribe", privacy, "the privacy page names the one path that can reach the network")
+        # every environment variable the shipped code reads is one the privacy page names
+        read = set()
+        for source in [*(ROOT / "scripts").rglob("*.py"), ROOT / "mcp" / "server.py"]:
+            text = source.read_text(encoding="utf-8")
+            read |= set(re.findall(r"os\.environ(?:\.get\(|\[)\s*\"([A-Z_0-9]+)\"", text))
+        unnamed = {name for name in read if not name.startswith("FFMPEG_SKILL_") and f"`{name}`" not in privacy}
+        self.assertFalse(unnamed, sorted(unnamed))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", manifest["name"]))
 
     def test_plugin_hosts_find_the_skill_and_its_version(self):
@@ -503,6 +518,7 @@ class ContractTests(unittest.TestCase):
                 return zlib.decompress(data)
             self.assertEqual(pixels(icon), pixels((ROOT / "assets" / "icon.png").read_bytes()))
             self.assertNotIn("mcpName", json.loads((tree / "package.json").read_text(encoding="utf-8")))
+            self.assertNotIn("scripts", json.loads((tree / "package.json").read_text(encoding="utf-8")))
             self.assertIn("mcpName", json.loads((ROOT / "package.json").read_text(encoding="utf-8")))
             # the contract still reads its version from the package.json that ships
             ver = subprocess.run([sys.executable, str(tree / "scripts" / "_contract.py"), "--json"],
