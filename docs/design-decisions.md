@@ -3256,5 +3256,5 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   Sigstore bundle is verified before the binary runs, as the registry's GitHub Actions guide
   says to; `releases/latest` is not used. The three steps may fail without stopping the job and
   a last step turns it red, the same shape as the plugin branch: a missing registry entry must
-  not undo a release. Not established: the steps have not run yet; the first run is the merge
-  of the PR that adds them. Test: `test_mcp_registry_manifest_tracks_the_package_version`.
+  not undo a release. The first run was the merge of the PR that added the steps (#445): it listed 3.4.3, a
+  version released before they existed. Test: `test_mcp_registry_manifest_tracks_the_package_version`.

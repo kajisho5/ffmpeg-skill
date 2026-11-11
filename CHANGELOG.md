@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+### Docs
+
+- README: the MCP Registry is in the table of install routes. The entry
+  (`io.github.kajisho5/ffmpeg-skill`) went live at 3.4.3, published by the release workflow.
+
 ### Changed
 
 - **The release workflow publishes the MCP Registry entry.** `server.json`
