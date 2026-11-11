@@ -295,6 +295,8 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(set(manifest) <= {"name", "displayName", "version", "description", "author", "homepage", "repository",
                                           "documentationUrl", "supportUrl", "privacyPolicyUrl", "license", "keywords"}, sorted(manifest))
         self.assertEqual(manifest["displayName"], "FFmpeg Skill")
+        self.assertEqual(manifest["documentationUrl"], "https://kajisho5.github.io/ffmpeg-skill/")
+        self.assertEqual(manifest["supportUrl"], "https://github.com/kajisho5/ffmpeg-skill/issues")
         self.assertEqual(manifest["privacyPolicyUrl"], "https://github.com/kajisho5/ffmpeg-skill/blob/main/PRIVACY.md")
         privacy = (ROOT / "PRIVACY.md").read_text(encoding="utf-8")
         self.assertIn("--transcribe", privacy, "the privacy page names the one path that can reach the network")
@@ -499,24 +501,30 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(width, height)
             self.assertTrue(512 <= width <= 2048 and len(icon) < 2_000_000, (width, len(icon)))
             # picture chunks only: a provenance chunk's text read as a shell command to the directory
-            kinds, at = set(), 8
-            while at < len(icon):
-                size = int.from_bytes(icon[at:at + 4], "big")
-                kinds.add(icon[at + 4:at + 8].decode("latin1"))
-                at += 12 + size
+            def chunks(png):
+                """(type, data) for each PNG chunk; a truncated file is an assertion, not a loop."""
+                at = 8
+                while at < len(png):
+                    self.assertLessEqual(at + 12, len(png), "a PNG chunk header runs past the file")
+                    size = int.from_bytes(png[at:at + 4], "big")
+                    self.assertLessEqual(at + 12 + size, len(png), "a PNG chunk runs past the file")
+                    yield png[at + 4:at + 8].decode("latin1"), png[at + 8:at + 8 + size]
+                    at += 12 + size
+            kinds = {kind for kind, _ in chunks(icon)}
             self.assertLessEqual(kinds, {"IHDR", "PLTE", "tRNS", "gAMA", "cHRM", "sRGB", "iCCP", "pHYs", "IDAT", "IEND"})
             self.assertTrue({"IHDR", "IDAT", "IEND"} <= kinds)
-            for word in (b"curl", b"wget", b"bash", b"|sh", b"| sh", b"sh -c", b"eval"):
-                self.assertNotIn(word, icon)
+            # every word the script refuses, read from the script so a word added there is checked here
+            listed = re.search(r'words = \[([^\]]+)\]', script)
+            self.assertTrue(listed, "publish_plugin_branch.sh no longer names its word list")
+            words = re.findall(r'"([^"]+)"', listed.group(1))
+            # a fixed minimum, so that trimming the script's list cannot let a word through
+            known = {"curl", "wget", "bash", "|sh", "| sh", "sh -c", "eval"}
+            self.assertLessEqual(known, set(words), "publish_plugin_branch.sh dropped a word it used to refuse")
+            for word in sorted(known | set(words)):
+                self.assertNotIn(word.encode(), icon)
             # the same pixels as assets/icon.png: only the metadata and the deflate stream differ
             def pixels(png):
-                data, pos = b"", 8
-                while pos < len(png):
-                    length = int.from_bytes(png[pos:pos + 4], "big")
-                    if png[pos + 4:pos + 8] == b"IDAT":
-                        data += png[pos + 8:pos + 8 + length]
-                    pos += 12 + length
-                return zlib.decompress(data)
+                return zlib.decompress(b"".join(data for kind, data in chunks(png) if kind == "IDAT"))
             self.assertEqual(pixels(icon), pixels((ROOT / "assets" / "icon.png").read_bytes()))
             self.assertNotIn("mcpName", json.loads((tree / "package.json").read_text(encoding="utf-8")))
             self.assertNotIn("scripts", json.loads((tree / "package.json").read_text(encoding="utf-8")))
