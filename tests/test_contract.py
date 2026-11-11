@@ -615,11 +615,16 @@ class ContractTests(unittest.TestCase):
         self.assertRegex(block, r"sigstore/cosign-installer@[0-9a-f]{40} ")
         # a registry that cannot be asked is not "not listed", and a failure never blocks a release
         self.assertIn("curl --fail", block[:block.index("name: Install cosign")])
-        # nor is an npm that cannot be asked "not on npm": only E404 is a quiet skip
+        # nor is an npm that cannot be asked "not on npm"; and a tagged version npm does not have
+        # (E404) is a release that never reached npm, which fails the step and is not a quiet skip
         asking = block[:block.index("name: Install cosign")]
         self.assertNotIn("|| true", asking)
         self.assertIn('grep -q "E404" npm-view.err', asking)
         self.assertIn("could not ask npm", asking)
+        e404 = asking[asking.index('grep -q "E404" npm-view.err'):asking.index("could not ask npm")]
+        self.assertIn("is tagged but npm does not have it", e404)
+        self.assertIn("exit 1", e404)
+        self.assertNotIn("publish=false", e404)
         self.assertEqual(block.count("continue-on-error: true"), 3)
         self.assertNotIn("already_released", block[block.index("        run:"):])
         self.assertIn("steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'", block)

@@ -351,15 +351,17 @@ jobs:
           VERSION=$(node -p "require('./server.json').version")
           PKG=$(node -p "require('./package.json').name")
           # npm answers a version it does not have with E404 and exit 1; any other failure (network,
-          # registry down) also exits 1. Only the first is "not on npm": the rest stop this step,
-          # so an npm that could not be asked is never reported as a quiet skip.
+          # registry down) also exits 1, and stops this step as "could not ask". Neither is a quiet
+          # skip. By this point the version is either one this run just published (the verify step
+          # above saw it on npm) or one an earlier run tagged, so a version npm does not have is a
+          # release that never reached npm: a re-run skips `npm publish` because the tag exists,
+          # and without this the job would be green with the release on neither registry.
           NPM_STATE=0
           ON_NPM=$(npm view "$PKG@$VERSION" version --cache /tmp/npm-verify-cache 2> npm-view.err) || NPM_STATE=$?
           if [ "$NPM_STATE" -ne 0 ]; then
             if grep -q "E404" npm-view.err; then
-              echo "npm does not have $PKG@$VERSION; nothing to list yet"
               rm -f npm-view.err
-              echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+              echo "::error::$PKG@$VERSION is tagged but npm does not have it, so the MCP Registry cannot list it. Publish it from the tag (git checkout v$VERSION && npm publish --access public), then re-run this workflow."; exit 1
             fi
             cat npm-view.err >&2
             echo "::error::could not ask npm whether $PKG@$VERSION exists (npm view exited $NPM_STATE)"; exit 1
@@ -416,7 +418,7 @@ jobs:
       - name: Fail the job when the MCP Registry was not updated
         if: steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'
         run: |
-          echo "::error::the MCP Registry entry was not published for this version (see the three MCP Registry steps); npm, the GitHub Release and the plugin branch are unaffected. Re-running this workflow publishes it."
+          echo "::error::the MCP Registry entry was not published for this version (see the three MCP Registry steps, which say why); the GitHub Release and the plugin branch are unaffected. Once the cause is fixed, re-running this workflow publishes it."
           exit 1
 
       - name: Fail the job when the plugin branch was not published

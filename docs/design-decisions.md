@@ -3243,7 +3243,9 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   a version it already lists. The steps therefore ask both registries on every run and publish
   when npm has the version and the registry does not: they do not depend on "was a tag created
   in this run", which is what lets a re-run finish a failed publish. A registry that cannot be
-  asked stops the step (`curl --fail`); it is not read as "not listed". Authentication is
+  asked stops the step (`curl --fail`, and any `npm view` failure); it is not read as "not listed".
+  A version npm answers E404 for also fails the step: by then it is tagged, so it is a release
+  that never reached npm, which a re-run would otherwise pass over in silence. Authentication is
   GitHub's OIDC token for this repository, which the registry accepts for a name under
   `io.github.kajisho5/`, so no secret is stored. `mcp-publisher` is a pinned release whose
   Sigstore bundle is verified before the binary runs, as the registry's GitHub Actions guide
