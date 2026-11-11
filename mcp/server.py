@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""ffmpeg-skill as an MCP server (stdio, JSON-RPC 2.0) — standard library only.
+
+Every public script in ../scripts becomes a callable tool, but tools/list defaults to
+advertising only the core 12 (_contract.MCP_CORE_TOOLS) to keep the schema dump small;
+set FFMPEG_SKILL_MCP_FULL=1 to list all 42. Every tool is still callable by name via
+tools/call either way. Tool names, order, inputSchema and the structured-argument mapping
+all come from the contract (scripts/_contract.py); this file is only the transport.
+Arguments are passed as a flat object (keys = argparse dests) or, for CLI compatibility,
+as an argv list. Results are the script's --json output.
+
+Run:
+  python3 mcp/server.py                         # stdio transport
+Claude Desktop / Claude Code config example:
+  {"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["/path/to/ffmpeg-skill/mcp/server.py"]}}}
+  On Windows, use "python" instead of "python3" unless Python was installed from the Microsoft
+  Store (a python.org install exposes python/py, not python3) -- see README.md's MCP section.
+"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+HERE = Path(__file__).resolve().parent
+SCRIPTS = HERE.parent / "scripts"
+PROTOCOL_VERSION = "2024-11-05"
+
+sys.path.insert(0, str(SCRIPTS))
+import _contract  # noqa: E402  (the contract is the only source of tool names, schemas and argument mapping)
+import _common  # noqa: E402  (run_tool: the outer wall-clock ceiling on a dispatched tool)
+
+_SPECS: Dict[str, Dict[str, Any]] = {}
+
+
+def specs() -> Dict[str, Dict[str, Any]]:
+    """ToolSpecs from the contract, generated once per process (argparse -> ToolSpec -> here)."""
+    if not _SPECS:
+        for spec in _contract.build(detect=False)["tools"]:
+            _SPECS[spec["name"]] = spec
+    return _SPECS
+
+
+class _Positional(dict):
+    """Positional argument names per tool, read from the contract (kept as a mapping for compatibility)."""
+
+    def __missing__(self, name: str) -> List[str]:
+        return list(specs()[name]["mcp"]["positional"]) if name in specs() else ["input"]
+
+    def get(self, name: str, default: Any = None) -> Any:  # type: ignore[override]
+        return self[name] if name in specs() else default
+
+
+POSITIONAL: Dict[str, List[str]] = _Positional()
+
+
+def build_argv(name: str, args: Dict[str, Any]) -> List[str]:
+    """Structured arguments -> argv, using the mapping the contract states (invocation.structured)."""
+    if isinstance(args.get("argv"), list):
+        argv = [str(a) for a in args["argv"]]
+        if name not in _contract.MCP_JSON_EXEMPT and "--json" not in argv and "--help" not in argv:
+            argv.append("--json")
+        return argv
+    spec = specs().get(name)
+    exceptions = spec["mcp"]["argument_exceptions"] if spec else {}
+    argv: List[str] = []
+    args = dict(args)
+    for key in POSITIONAL[name]:
+        val = args.pop(key, None)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            argv += [str(v) for v in val]
+        else:
+            argv.append(str(val))
+    for key, val in args.items():
+        if val is None or val is False:
+            continue
+        flag = exceptions.get(key, "--" + key.replace("_", "-"))
+        if val is True:
+            argv.append(flag)
+        elif isinstance(val, list):
+            for v in val:
+                argv += [flag, str(v)]
+        else:
+            argv += [flag, str(val)]
+    if name not in _contract.MCP_JSON_EXEMPT and "--json" not in argv and "--help" not in argv:
+        argv.append("--json")
+    return argv
+
+
+def _timeout_in_argv(argv: List[str]) -> Optional[float]:
+    """The last `--timeout` / `--timeout=N` value in a raw argv list.
+
+    None when the flag is absent or its value is not a number (the child argparse then fails,
+    and the outer ceiling stays the environment default)."""
+    found: Optional[float] = None
+    seen = False
+    i = 0
+    n = len(argv)
+    while i < n:
+        token = argv[i]
+        if token == "--":
+            break
+        if token == "--timeout":
+            if i + 1 >= n:
+                return None
+            raw = argv[i + 1]
+            i += 2
+        elif token.startswith("--timeout="):
+            raw = token.split("=", 1)[1]
+            i += 1
+        else:
+            i += 1
+            continue
+        seen = True
+        try:
+            found = float(raw)
+        except ValueError:
+            return None
+    return found if seen else None
+
+
+def timeout_from_call(args: Dict[str, Any]) -> float:
+    """Per-call seconds for the MCP outer ceiling.
+
+    Structured `timeout` is the canonical key. A raw `argv` list ignores every other key, so
+    `--timeout` has to be read from that list: `--timeout 0` otherwise left the ceiling at 4x
+    the 1800 s default while the child itself ran with no limit. A negative value is 0, matching
+    apply_common (0 means no limit)."""
+    if isinstance(args.get("argv"), list):
+        parsed = _timeout_in_argv([str(a) for a in args["argv"]])
+        if parsed is None:
+            return _common._env_timeout()
+        return max(0.0, parsed)
+    try:
+        return max(0.0, float(args.get("timeout", _common._env_timeout())))
+    except (TypeError, ValueError):
+        return _common._env_timeout()
+
+
+def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    script = SCRIPTS / f"{name}.py"
+    if name not in specs() or not script.exists():
+        return {"isError": True, "content": [{"type": "text", "text": f"unknown tool {name}"}]}
+    argv = build_argv(name, args or {})
+    # The child enforces --timeout on each ffmpeg call; this outer ceiling (4x that plus 60 s)
+    # is the only thing that ends a child hung for any other reason. Structured `timeout` or
+    # `--timeout` inside a raw argv list sets both (0 = no limit); otherwise
+    # FFMPEG_SKILL_TIMEOUT / the 1800 s default.
+    per_call = timeout_from_call(args or {})
+    proc = _common.run_tool([str(script)] + argv, per_call=per_call)
+    stdout = proc.stdout.strip()
+    text = stdout
+    structured = None
+    try:
+        structured = json.loads(stdout) if stdout.startswith("{") or stdout.startswith("[") else None
+    except ValueError:
+        structured = None
+    if proc.returncode != 0:
+        err = proc.stderr.strip().splitlines()
+        tail = "\n".join(err[-12:])
+        failed: Dict[str, Any] = {"isError": True, "content": [{"type": "text", "text": f"{name} failed (exit {proc.returncode})\n{tail}"}]}
+        # The child's own failure document (status, error.kind/code/hint, commands) is the
+        # machine-readable half of the contract; dropping it here left an MCP caller regex-
+        # parsing prose to tell a timeout from a missing binary.
+        if isinstance(structured, dict):
+            failed["structuredContent"] = structured
+        return failed
+    if structured is None:
+        text = stdout or "\n".join(proc.stderr.strip().splitlines()[-5:])
+    result: Dict[str, Any] = {"content": [{"type": "text", "text": text}]}
+    if structured is not None:
+        result["structuredContent"] = structured if isinstance(structured, dict) else {"result": structured}
+    return result
+
+
+def tool_list() -> List[Dict[str, Any]]:
+    """tools/list: one entry per ToolSpec, in the contract's order, inputSchema derived from ToolSpec.input_schema.
+
+    Default surface is the core 12 (_contract.MCP_CORE_TOOLS, roadmap P1-7): the other 30 stay
+    reachable by name through tools/call regardless. FFMPEG_SKILL_MCP_FULL=1 (anything but "" or
+    "0") lists all 42, unchanged from pre-1.18.3 behaviour.
+    """
+    all_specs = specs()
+    if os.environ.get("FFMPEG_SKILL_MCP_FULL", "") not in ("", "0"):
+        names = all_specs.keys()
+    else:
+        names = (n for n in all_specs if n in _contract.MCP_CORE_TOOLS)
+    return [_contract.mcp_tool(all_specs[name]) for name in names]
+
+
+def handle(req: Dict[str, Any]) -> Dict[str, Any]:
+    method = req.get("method")
+    params = req.get("params") or {}
+    if method == "initialize":
+        # 1.20.0: the structured-arguments note used to be appended to every one of the 42 tool
+        # descriptions verbatim; it's server-wide, not per-tool, so it now lives here once instead
+        # -- `tools/list` descriptions stay each tool's own one-line sentence.
+        return {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}, "prompts": {}},
+                "serverInfo": {"name": "ffmpeg-skill", "version": version()},
+                "instructions": _contract.MCP_STRUCTURED_NOTE}
+    if method == "tools/list":
+        return {"tools": tool_list()}
+    if method == "tools/call":
+        return call_tool(params.get("name", ""), params.get("arguments") or {})
+    if method == "prompts/list":
+        # roadmap 1.20.0: the five workflow recipes (reel, podcast, multicam, delivery_check, hdr)
+        return {"prompts": _contract.mcp_prompt_list()}
+    if method == "prompts/get":
+        try:
+            return _contract.mcp_prompt_get(params.get("name", ""), params.get("arguments") or {})
+        except KeyError as exc:
+            # not "method not found" (-32601, handle()'s own KeyError below): the *method*
+            # prompts/get exists, only this prompt *name* doesn't -- a caller mistake, same as
+            # call_tool()'s "unknown tool" text, not a transport-level error.
+            raise ValueError(f"unknown prompt: {exc}") from exc
+    if method == "ping":
+        return {}
+    raise KeyError(method)
+
+
+def version() -> str:
+    try:
+        return json.loads((HERE.parent / "package.json").read_text())["version"]
+    except Exception:
+        return "0"
+
+
+def main() -> int:
+    if "--list" in sys.argv:
+        for t in tool_list():
+            print(f"{t['name']:10s} {t['description']}")
+        return 0
+    if "--call" in sys.argv:  # debugging helper: --call NAME '{"input": "..."}'
+        i = sys.argv.index("--call")
+        name = sys.argv[i + 1]
+        args = json.loads(sys.argv[i + 2]) if len(sys.argv) > i + 2 else {}
+        print(json.dumps(call_tool(name, args), indent=2))
+        return 0
+    stdin = sys.stdin.buffer
+    stdout = sys.stdout.buffer
+    for raw in stdin:
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except ValueError as exc:
+            # JSON-RPC 2.0: a line that is not JSON is answered with -32700 and id null, not
+            # dropped -- a client whose request was mangled in transit otherwise waits for an
+            # answer that never comes, with nothing to say why
+            resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"parse error: {exc}"}}
+            stdout.write((json.dumps(resp) + "\n").encode("utf-8"))
+            stdout.flush()
+            continue
+        # json.loads accepts any valid JSON value, not just an object -- a bare `42`, `null`,
+        # `true` or `[1,2]` line parses fine but isn't a JSON-RPC request. Without this guard,
+        # "id" not in req raised TypeError for a non-dict req (ints/bools/None aren't iterable
+        # the way `in` needs), uncaught by the try/except below it, killing the whole stdio
+        # server process -- not just failing that one malformed line, but every other in-flight
+        # and future tool call in the session along with it.
+        if not isinstance(req, dict):
+            continue
+        if "id" not in req:  # notification
+            continue
+        try:
+            result = handle(req)
+            resp = {"jsonrpc": "2.0", "id": req["id"], "result": result}
+        except KeyError as exc:
+            resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32601, "message": f"method not found: {exc}"}}
+        except Exception as exc:  # noqa: BLE001
+            resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32000, "message": str(exc)}}
+        stdout.write((json.dumps(resp) + "\n").encode("utf-8"))
+        stdout.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

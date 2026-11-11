@@ -1,0 +1,47 @@
+{
+  "template": "linkedin",
+  "output": "$OUTPUT",
+  "clips": [
+    {
+      "src": "$INPUT"
+    }
+  ],
+  "frame": {
+    "aspect": "1:1",
+    "fit": "crop"
+  },
+  "brand": "$BRAND",
+  "captions": {
+    "text": "$CUES",
+    "animate": "none",
+    "karaoke": false,
+    "size": 20,
+    "position": "bottom",
+    "margin": 14
+  },
+  "graphics": [
+    {
+      "template": "lower-third",
+      "name": "$TITLE",
+      "start": 1,
+      "end": 6
+    }
+  ],
+  "overlays": [
+    {
+      "image": "$LOGO",
+      "position": "top-left"
+    }
+  ],
+  "loudness": {
+    "lufs": -14,
+    "tp": -1.0
+  },
+  "export": {
+    "preset": "linkedin",
+    "normalize": true
+  },
+  "check": {
+    "platform": "linkedin"
+  }
+}

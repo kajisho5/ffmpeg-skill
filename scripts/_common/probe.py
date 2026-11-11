@@ -1,0 +1,1330 @@
+"""ffprobe and the measured facts read back off a file: the probe document every script starts
+from, the verification every script ends with, and the level/waveform measurements.
+
+Reading only -- the choices made from these facts live in decision.py.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+import statistics
+from fractions import Fraction
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+from _common.emit import die, warn
+from _common.runner import STATE, dry_run_input_pending, require_tool, run, run_analysis, still_input_args
+
+
+def fingerprint(path: str) -> Dict[str, Any]:
+    """Size plus a sha256 over the first and last 8 MiB: enough to notice a re-export, a re-trim
+    or a swapped file, cheap enough for a multi-GB source (hashing a whole master would make
+    planning slower than the edit)."""
+    import hashlib
+    st = os.stat(path)
+    h = hashlib.sha256()
+    chunk = 8 * 1024 * 1024
+    with open(path, "rb") as f:
+        h.update(f.read(chunk))
+        if st.st_size > 2 * chunk:
+            f.seek(-chunk, os.SEEK_END)
+            h.update(f.read(chunk))
+        elif st.st_size > chunk:
+            h.update(f.read())
+    return {"path": os.path.abspath(path), "size": st.st_size, "sha256_head_tail": h.hexdigest()}
+
+
+def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None, start: float = 0.0,
+                    *, check: bool = True) -> List[float]:
+    """Decode (part of) a file's audio to mono float samples in [-1, 1) at `sample_rate` via a
+    single ffmpeg pass under --timeout. Shared by scenes.py (audio envelope for cut scoring) and
+    sync.py (cross-correlation); an undecodable input is kind ffmpeg when check=True, else [].
+    The samples are on the file's clock: a sound that starts late is padded at its head."""
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if start:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", path]
+    if seconds is not None:
+        cmd += ["-t", f"{seconds:.3f}"]
+    # first_pts=0 pads a sound that starts after the file's start (or after `start`) with silence,
+    # so sample i is at start + i / sample_rate on the file's clock: sync.py measured a track that
+    # starts 0.3 s late 0.279 s off, and --replace-audio placed it that far late (#409)
+    cmd += ["-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
+    proc = run_analysis(cmd, check=False, text=False)
+    if proc.returncode != 0 or not proc.stdout:
+        if check:
+            die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
+        return []
+    n = len(proc.stdout) // 2
+    import struct
+    return [v / 32768.0 for v in struct.unpack(f"<{n}h", proc.stdout[: n * 2])]
+
+
+def rms_envelope(samples: Sequence[float], step: int, *, full_blocks_only: bool = False, remove_mean: bool = False) -> List[float]:
+    """RMS per block of `step` samples. full_blocks_only drops a short tail block (sync.py: every
+    block must be the same length for the correlation); remove_mean subtracts the envelope's mean
+    (sync.py: so silence does not correlate). scenes.py keeps the tail and the absolute level."""
+    step = max(1, int(step))
+    n = len(samples)
+    stop = n - step + 1 if full_blocks_only else n
+    env: List[float] = []
+    for i in range(0, max(0, stop), step):
+        block = samples[i:i + step]
+        env.append(math.sqrt(sum(x * x for x in block) / len(block)))
+    if remove_mean and env:
+        mean = sum(env) / len(env)
+        env = [e - mean for e in env]
+    return env
+
+
+# the audio members of MEDIA_EXT: every audio file this skill reads, a wider set than the audio
+# outputs it writes (AUDIO_CODECS / is_audio_output() -- no .aif, .aiff, .caf or .wma there)
+AUDIO_MEDIA_EXT = {".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".aif", ".aiff", ".caf", ".wma"}
+MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".m2ts", ".mxf", ".3gp", ".wmv", ".gif",
+             ".png", ".jpg", ".jpeg", ".webp"} | AUDIO_MEDIA_EXT
+
+
+def decode_gray_frames(path: str, fps: float, width: int, height: int, *, start: float = 0.0,
+                       seconds: "Optional[float]" = None, check: bool = True) -> "List[bytes]":
+    """Decode `path` to raw 8-bit grayscale frames at a low `fps`/`width`x`height`, one ffmpeg
+    pass to stdout. Used by scenes.py --shots (per-shot flow label) and cropdetect.py
+    --motion-centre (motion centroid): both need pixel data, not a filter's own summary number,
+    but at 1.18.0's resolutions (tens of pixels a side, a few fps) a whole shot is a few KB, so
+    piping raw frames through Python stays cheap and needs no extra dependency."""
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if start:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", path]
+    if seconds is not None:
+        cmd += ["-t", f"{max(0.0, seconds):.3f}"]
+    cmd += ["-vf", f"fps={fps:g},scale={width}:{height}:flags=area,format=gray",
+            "-f", "rawvideo", "-"]
+    proc = run_analysis(cmd, check=False, text=False)
+    if proc.returncode != 0 or not proc.stdout:
+        if check:
+            die(f"could not decode frames from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
+        return []
+    frame_size = width * height
+    data = proc.stdout
+    return [data[i:i + frame_size] for i in range(0, len(data) - frame_size + 1, frame_size)]
+
+
+def _output_failed(path: str, why: str) -> "None":
+    """An ffmpeg run reported success but the artifact is not usable: say so, and do not leave a
+    0-byte file behind that a later step could mistake for a result."""
+    try:
+        if os.path.exists(path) and os.path.getsize(path) == 0:
+            os.remove(path)
+            why += " (empty file removed)"
+    except OSError:
+        pass
+    die(f"output verification failed: {path}: {why}", kind="output")
+
+
+def verify_output(path: str) -> Dict[str, Any]:
+    """The success criterion for every writing tool: the file exists, is not empty and ffprobe
+    can read at least one stream from it. Non-media artifacts (srt, edl, html, md) only need to
+    exist and be non-empty. Returns the probe (empty dict for non-media)."""
+    if not os.path.exists(path):
+        _output_failed(path, "not written")
+    if os.path.getsize(path) == 0:
+        _output_failed(path, "0 bytes")
+    if os.path.splitext(path)[1].lower() not in MEDIA_EXT:
+        return {}
+    meta = probe(path, role="output")
+    if not meta.get("video") and not meta.get("audio"):
+        _output_failed(path, "no video or audio stream")
+    return meta
+
+
+_TIMECODE = re.compile(r"^(\d{2}):([0-5]\d):([0-5]\d)([:;.])(\d{2,3})$")
+
+
+def _tag(entry: Dict[str, Any], key: str) -> Optional[str]:
+    return next((v for k, v in (entry.get("tags") or {}).items() if k.lower() == key), None)
+
+
+def _nominal_fps(video: Optional[Dict[str, Any]]) -> Optional[int]:
+    """The integer timecode rate of the picture (30 for 29.97), from avg_frame_rate, else
+    r_frame_rate: the order probe()'s `fps` uses, which the timeline export validates against."""
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        try:
+            num, _, den = str((video or {}).get(key) or "").partition("/")
+            rate = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if 0 < rate <= 240:
+            return int(round(rate))
+    return None
+
+
+def start_timecode(streams: List[Dict[str, Any]], fmt: Dict[str, Any],
+                   video: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The first well-formed `timecode` tag, from the video stream, then a `tmcd` data stream,
+    then the container: {value, drop_frame, source}. `drop_frame` is the `;` (or `.`) separator
+    before the frames field; `source` is `stream:<ffprobe index>` or `format`. None when no
+    source carries one (all three null). A tag that is not HH:MM:SS[:;.]FF, or whose frames field
+    the picture's rate cannot reach, is skipped, not repaired."""
+    candidates = []
+    if video is not None:
+        candidates.append((video, f"stream:{video.get('index')}"))
+    candidates += [(s, f"stream:{s.get('index')}") for s in streams
+                   if s.get("codec_type") == "data" and str(s.get("codec_tag_string", "")).lower() == "tmcd"]
+    candidates.append((fmt, "format"))
+    nominal = _nominal_fps(video)
+    for entry, source in candidates:
+        value = _tag(entry, "timecode")
+        m = _TIMECODE.match(value.strip()) if isinstance(value, str) else None
+        # a frames field the picture's rate cannot reach (frame 29 at 25 fps) is no timecode
+        # either: the next candidate (a tmcd track's own tag) may still hold a real one (#427)
+        if m and not (nominal and int(m.group(5)) >= nominal):
+            return {"value": value.strip(), "drop_frame": m.group(4) in ";.", "source": source}
+    return {"value": None, "drop_frame": None, "source": None}
+
+
+def probe(path: str, role: str = "input") -> Dict[str, Any]:
+    """Return a compact, script-friendly description of a media file.
+
+    role="output" marks a file this tool just wrote: a read failure is then reported as an
+    output-verification failure (kind "output") instead of an input problem."""
+    if not os.path.exists(path):
+        if role == "output" and not STATE.dry_run:
+            _output_failed(path, "not written")
+        if STATE.dry_run:
+            # width/height/fps are honestly 0/0/0.0 -- "not measured", matching duration/size_bytes
+            # below -- because this is a dry run: the file doesn't exist yet, so there is nothing to
+            # probe. Earlier this stub used plausible-looking placeholders (1920x1080x30.0) instead,
+            # which some tools' dry-run summary line echoed verbatim as if it were a real computed
+            # preview (#77). That was reverted once, because a couple of call sites divided by these
+            # values for aspect-ratio math and crashed on a real 0 (join.py, fit.py); those call
+            # sites are now guarded to treat 0 as "unknown" and fall back sanely instead of dividing
+            # by it, so the stub can finally report the honest, unknown value.
+            return {"file": path, "dry_run": True, "format": None, "duration": 0.0, "size_bytes": 0, "bitrate": None,
+                    "video": {"codec": None, "width": 0, "height": 0, "fps": 0.0, "pix_fmt": None, "hdr": False, "bt2020_or_hdr": False,
+                              "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
+                    "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0, "data_streams": 0}
+        die(f"input not found: {path}")
+    ffprobe = require_tool("ffprobe")
+    proc = run(
+        [ffprobe, "-v", "error", *still_input_args(path),
+         "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
+        quiet=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        if role == "output":
+            _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
+        die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
+    if not (proc.stdout or "").strip():
+        # ffprobe exited 0 and printed nothing we could read. Before 1.17.1 that produced a
+        # SUCCESS document of nulls -- "?s | no video | no audio", exit 0 -- which is how #234
+        # showed up on a Windows cp932 machine: the capture decoded ffprobe's UTF-8 JSON with the
+        # locale code page, the reader thread raised UnicodeDecodeError and stdout came back
+        # empty. Every child capture is decoded as UTF-8 with errors="replace" now; if a document
+        # still does not arrive, refuse rather than report an unmeasured file as measured.
+        msg = (f"ffprobe printed no output for {path}: its JSON could not be read (a decoding or "
+               "pipe failure, not a measurement)")
+        if proc.stderr.strip():
+            msg += f"\n{proc.stderr.strip()}"
+        if role == "output":
+            _output_failed(path, msg)
+        die(msg, kind="input")
+    try:
+        raw = json.loads(proc.stdout or "{}")
+    except ValueError as e:
+        if role == "output":
+            _output_failed(path, f"ffprobe printed unreadable JSON: {e}")
+        die(f"ffprobe printed unreadable JSON for {path}: {e}", kind="ffmpeg")
+    fmt = raw.get("format", {})
+    streams = raw.get("streams", [])
+    video = next((s for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0) == 0), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    subs = [s for s in streams if s.get("codec_type") == "subtitle"]
+    data_stream_count = sum(1 for s in streams if s.get("codec_type") in ("data", "attachment"))
+
+    duration = _to_float(fmt.get("duration"))
+    if duration is None and video:
+        duration = _to_float(video.get("duration"))
+    if duration is None and audio:
+        duration = _to_float(audio.get("duration"))
+    if duration and STATE.duration_hint is None:
+        STATE.duration_hint = duration
+
+    out: Dict[str, Any] = {
+        "file": path,
+        "format": fmt.get("format_name"),
+        "duration": duration,
+        # where the file's timeline starts (MPEG-TS starts at 1.4 s, not 0): a -ss and a cut's
+        # --start count from here
+        "start_time": _to_float(fmt.get("start_time")),
+        "size_bytes": _to_int(fmt.get("size")),
+        "bitrate": _to_int(fmt.get("bit_rate")),
+        "video": None,
+        "audio": None,
+        "subtitle_streams": len(subs),
+        "data_streams": data_stream_count,
+        # how many picture and sound streams the file carries (a cover picture is not a video
+        # stream); the streams check compares them with what the operation should have written
+        "stream_counts": {
+            "video": sum(1 for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0) == 0),
+            "audio": sum(1 for s in streams if s.get("codec_type") == "audio"),
+        },
+        # container-level chapter markers and the common tags, so metadata.py's result is
+        # verifiable the same way every other tool's is (additive keys, 1.x-safe)
+        "chapters": [{
+            "index": n,
+            "start": _to_float(ch.get("start_time")),
+            "end": _to_float(ch.get("end_time")),
+            "title": (ch.get("tags") or {}).get("title"),
+        } for n, ch in enumerate(raw.get("chapters") or [])],
+        "tags": {k.lower(): v for k, v in (fmt.get("tags") or {}).items() if k.lower() in ("title", "artist", "album", "comment", "date", "genre")},
+        # the source's start timecode (a camera's 10:00:00:00), for an edit list or an NLE relink
+        "timecode": start_timecode(streams, fmt, video),
+        # every subtitle stream in file order: index n here is `-map 0:s:n`
+        "subtitle_stream_details": [{
+            "index": n,
+            "codec": s.get("codec_name"),
+            "language": (s.get("tags") or {}).get("language"),
+            "title": (s.get("tags") or {}).get("title"),
+        } for n, s in enumerate(subs)],
+    }
+    if video:
+        r_rate = _fraction(video.get("r_frame_rate"))
+        avg_rate = _fraction(video.get("avg_frame_rate"))
+        fps = float(avg_rate) if avg_rate else (float(r_rate) if r_rate else None)
+        vfr = bool(r_rate and avg_rate and abs(float(r_rate) - float(avg_rate)) > 0.01)
+        w, h = _to_int(video.get("width")), _to_int(video.get("height"))
+        rotation = 0
+        for sd in video.get("side_data_list", []) or []:
+            if "rotation" in sd:
+                rotation = int(round(float(sd["rotation"])))
+        if "rotate" in (video.get("tags") or {}):
+            try:
+                rotation = int(video["tags"]["rotate"])
+            except ValueError:
+                pass
+        if not rotation and _is_still(fmt, video):
+            # an EXIF Orientation reaches ffmpeg as the decoded frame's display matrix, not as
+            # stream side data, so -show_streams has no rotation for a phone's portrait JPEG;
+            # ffmpeg still turns the picture upright on decode, and every tool that sizes the
+            # frame has to know it did (#411)
+            rotation = _still_rotation(path)
+        pix = video.get("pix_fmt") or ""
+        trc = video.get("color_transfer") or ""
+        prim = video.get("color_primaries") or ""
+        hdr = trc in ("smpte2084", "arib-std-b67") or prim == "bt2020"
+        dovi = None
+        for sd in video.get("side_data_list", []) or []:
+            if "dv_profile" in sd or "DOVI" in str(sd.get("side_data_type", "")):
+                dovi = {"profile": sd.get("dv_profile"), "level": sd.get("dv_level"), "bl_compatibility_id": sd.get("dv_bl_signal_compatibility_id")}
+        if dovi:  # a Dolby Vision stream is HDR even when its base layer tags are missing
+            hdr = True
+        hdr_signal = trc in ("smpte2084", "arib-std-b67") or bool(dovi)
+        out["video"] = {
+            "codec": video.get("codec_name"),
+            "profile": video.get("profile"),
+            "width": w,
+            "height": h,
+            "display_aspect": video.get("display_aspect_ratio") or _aspect_string(w, h),
+            # the stored pixel's shape (DV, HDV 1440x1080, DVD and XDCAM store non-square pixels);
+            # every tool that sizes or draws on the picture works on square pixels at the display
+            # aspect (square_pixels() / display_size() below)
+            "sample_aspect_ratio": _sar_string(video.get("sample_aspect_ratio")),
+            "fps": round(fps, 3) if fps else None,
+            "r_frame_rate": video.get("r_frame_rate"),
+            "avg_frame_rate": video.get("avg_frame_rate"),
+            "variable_frame_rate_suspected": vfr,
+            "pix_fmt": video.get("pix_fmt"),
+            "bit_depth": _bit_depth(pix),
+            # 2.0: `hdr` is true only for a PQ / HLG transfer or Dolby Vision, i.e. a genuinely HDR
+            # signal (1.x also counted BT.2020 primaries on an SDR transfer). `hdr_signal` (1.9) is
+            # kept, equal to it, for callers that moved to it. `bt2020_or_hdr` is the 1.x meaning,
+            # which every editing tool still routes on: a BT.2020 SDR source goes through the
+            # 10-bit path with its own tags, since x264 with BT.709 tags would shift its colours.
+            "hdr": hdr_signal,
+            "hdr_signal": hdr_signal,
+            "bt2020_or_hdr": hdr,
+            "hdr_format": (("Dolby Vision %s" % (("profile %s" % dovi["profile"]) if dovi and dovi.get("profile") is not None else "")).strip() if dovi else
+                           "HDR10/PQ" if trc == "smpte2084" else "HLG" if trc == "arib-std-b67" else "BT.2020 SDR" if hdr else None),
+            "dolby_vision": dovi,
+            # HDR10 static metadata (mastering display, content light level) as the encoders take it:
+            # FFmpeg before 7 does not hand it from the decoded frames to libx265 / libsvtav1, so the
+            # tools pass it explicitly (decision.hdr10_x265_params). None when the source has none.
+            "hdr10_static": _hdr10_static(ffprobe, path, video) if trc == "smpte2084" else None,
+            "color_space": video.get("color_space"),
+            "color_primaries": video.get("color_primaries"),
+            "color_transfer": video.get("color_transfer"),
+            "color_range": video.get("color_range"),
+            "rotation": rotation,
+            "nb_frames": _to_int(video.get("nb_frames")),
+            # the stream's own length (a container's also counts audio priming and a longer track)
+            "duration": _to_float(video.get("duration")),
+            # Matroska/WebM keep the stream's length in a DURATION tag only, as for audio below
+            "tagged_duration": _tag_seconds((video.get("tags") or {}).get("DURATION")),
+            # where the stream starts; a video stream that starts after its audio (or the reverse)
+            # is how a lossless cut's A/V skew shows up
+            "start_time": _to_float(video.get("start_time")),
+            "bitrate": _to_int(video.get("bit_rate")),
+        }
+    if audio:
+        out["audio"] = {
+            "codec": audio.get("codec_name"),
+            "channels": _to_int(audio.get("channels")),
+            "channel_layout": audio.get("channel_layout"),
+            "sample_rate": _to_int(audio.get("sample_rate")),
+            "bitrate": _to_int(audio.get("bit_rate")),
+            "duration": _to_float(audio.get("duration")),
+            "start_time": _to_float(audio.get("start_time")),
+            # Matroska/WebM give no stream duration, only a DURATION tag; the container's own length
+            # is the longest stream's, which is not the sound's when the picture runs longer (2.20)
+            "tagged_duration": _tag_seconds((audio.get("tags") or {}).get("DURATION")),
+        }
+        # every audio stream in file order: index n here is `-map 0:a:n` (audio.py --audio-stream n)
+        out["audio_streams"] = [{
+            "index": n,
+            "codec": a.get("codec_name"),
+            "channels": _to_int(a.get("channels")),
+            "channel_layout": a.get("channel_layout"),
+            "sample_rate": _to_int(a.get("sample_rate")),
+            "language": (a.get("tags") or {}).get("language"),
+            "title": (a.get("tags") or {}).get("title"),
+        } for n, a in enumerate(s for s in streams if s.get("codec_type") == "audio")]
+    if role == "input" and out.get("video") and out["video"].get("codec") \
+            and os.path.splitext(path)[1].lower() not in _STILL_EXT:
+        # a still (an overlay's logo, an insert card) is not a second picture source (#412 review)
+        STATE.video_inputs.add(os.path.realpath(path))
+    if role == "input" and out.get("audio_streams"):
+        STATE.audio_inputs.add(os.path.realpath(path))
+    if role == "input" and getattr(STATE, "first_input", None) is None:
+        STATE.first_input = (path, len(out.get("audio_streams") or []),
+                             (out.get("video") or {}).get("hdr10_static"))
+    if role == "input" and out["timecode"].get("value") and getattr(STATE, "source_timecode", None) is None:
+        STATE.source_timecode = (out["timecode"]["value"], duration)
+    # what a source carries besides its picture and sound, for emit()'s source_carry comparison:
+    # kept beside the probe, not in it, so no probe document changes
+    lang = (audio.get("tags") or {}).get("language") if audio else None
+    _CARRY[os.path.realpath(path)] = {
+        "subtitles": len(subs),
+        "chapters": len(raw.get("chapters") or []),
+        "cover_art": sum(1 for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0)),
+        "creation_time": 1 if any(k.lower() == "creation_time" for k in (fmt.get("tags") or {})) else 0,
+        "audio_language": 1 if lang and lang.lower() != "und" else 0,
+        "timecode": 1 if out["timecode"].get("value") else 0,
+        "audio_channels": (_to_int(audio.get("channels")) or 0) if audio else 0,
+        "has_video": bool(video), "has_audio": bool(audio),
+    }
+    return out
+
+
+_CARRY: Dict[str, Dict[str, Any]] = {}
+
+
+def carry_inventory(path: str) -> "Optional[Dict[str, Any]]":
+    """The carry-over items probe() last read off `path` (see emit()'s source_carry), or None."""
+    return _CARRY.get(os.path.realpath(path)) if path else None
+
+
+def _hdr10_static(ffprobe: str, path: str, stream: Dict[str, Any]) -> "Optional[Dict[str, Any]]":
+    """A PQ stream's mastering display and content light level, from the stream (an mdcv/clli box,
+    a Matroska colour element) or else its first frame (the HEVC SEI / AV1 metadata OBU): one
+    frame is decoded when either part is missing or incomplete in the stream. Each part is taken
+    from wherever it is complete first, the stream before the frame. Chromaticities are CIE 1931
+    x/y, luminances cd/m2. None when it has neither."""
+    out = _hdr10_parts(stream.get("side_data_list") or [])
+    if len(out) < 2:
+        # V:0, not v:0: an attached cover picture before the motion video has no HDR side data
+        proc = run([ffprobe, "-v", "error", "-select_streams", "V:0", "-read_intervals", "%+#1", "-show_frames",
+                    "-show_entries", "frame=side_data_list", "-of", "json", path], quiet=True, check=False)
+        frames: List[Dict[str, Any]] = []
+        if proc.returncode == 0:
+            try:
+                frames = json.loads(proc.stdout or "{}").get("frames") or []
+            except ValueError:
+                pass
+        for k, v in _hdr10_parts((frames[0].get("side_data_list") or []) if frames else []).items():
+            out.setdefault(k, v)
+    return out or None
+
+
+def _hdr10_parts(sides: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """The complete parts in one side-data list: a mastering display with every field, a content
+    light level with both values; an incomplete record counts as absent."""
+    out: Dict[str, Any] = {}
+    for sd in sides:
+        kind = _side_kind(sd)
+        if kind == "mastering" and "mastering_display" not in out:
+            vals = {k: _ratio(sd.get(k)) for k in ("red_x", "red_y", "green_x", "green_y", "blue_x", "blue_y",
+                                                    "white_point_x", "white_point_y", "min_luminance", "max_luminance")}
+            if all(v is not None for v in vals.values()):
+                out["mastering_display"] = {k: float(v) for k, v in vals.items()}
+        elif kind == "light" and "content_light" not in out:
+            mc, ma = _to_int(sd.get("max_content")), _to_int(sd.get("max_average"))
+            if mc is not None and ma is not None:
+                out["content_light"] = {"max_content": mc, "max_average": ma}
+    return out
+
+
+_STILL_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif", ".avif", ".heic")
+
+
+def _ratio(v: Any) -> "Optional[Fraction]":
+    """A side-data value such as "34000/50000" or "0/10000". Unlike _fraction() a zero is a value
+    (a mastering display's minimum luminance may be 0 cd/m2); only a missing or malformed one is None."""
+    try:
+        f = Fraction(str(v))
+    except (ValueError, ZeroDivisionError, TypeError):
+        return None
+    return f if f >= 0 else None
+
+
+def _side_kind(sd: Dict[str, Any]) -> "Optional[str]":
+    t = str(sd.get("side_data_type") or "")
+    return "mastering" if t == "Mastering display metadata" else "light" if t == "Content light level metadata" else None
+
+
+def _bit_depth(pix_fmt: Optional[str]) -> int:
+    """Bits per component from a pixel format name. `"10" in pix` used to read yuv410p (4:1:0
+    chroma) as 10-bit; the depth is the number that ends the name (before an le/be suffix):
+    yuv420p10le -> 10, gbrp12be -> 12, gray16le -> 16, yuv410p / yuv420p / rgb24 -> 8."""
+    m = re.search(r"(\d{1,2})(?:le|be)?$", pix_fmt or "")
+    if not m:
+        return 8
+    n = int(m.group(1))
+    if n in (24, 32):      # packed 8-bit rgb24/bgr32/rgb0 etc.
+        return 8
+    if n in (48, 64):      # packed 16-bit rgb48/rgba64
+        return 16
+    return n if 8 <= n <= 16 else 8
+
+
+def keyframe_times(path: str, lo: float, hi: float, stream: str = "v:0") -> Optional[List[float]]:
+    """Keyframe timestamps of `stream` read from lo to hi seconds (file time), ascending and as
+    ffprobe prints them (microseconds). Read with -read_intervals so a long file is not scanned end
+    to end; the read starts at the keyframe at or before lo, so the first may lie before it. None
+    when ffprobe fails (unmeasured, not "no keyframes")."""
+    # an interval's end is exclusive (6.1: a keyframe at exactly hi is not read), so read a
+    # little past it and drop what lies beyond hi
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", stream, "-skip_frame", "nokey",
+                "-read_intervals", f"{max(0.0, lo):.6f}%{hi + 0.01:.6f}", "-show_entries", "frame=pts_time",
+                "-of", "csv=p=0", path], quiet=True, check=False)
+    if proc.returncode != 0:
+        return None
+    out: List[float] = []
+    for line in proc.stdout.splitlines():
+        try:
+            k = float(line.strip().rstrip(","))
+        except ValueError:
+            continue
+        if k <= hi + 1e-6:
+            out.append(k)
+    return sorted(set(out))
+
+
+def keyframes_near(path: str, t: float, window: float = 5.0) -> List[float]:
+    """Video keyframe timestamps within +-window seconds of t (to the ms), ascending; empty when
+    ffprobe cannot say (cut.py's best-effort hints; probe.py --keyframes-near uses keyframe_times)."""
+    return sorted(set(round(k, 3) for k in keyframe_times(path, t - window, t + window) or []))
+
+
+# frame timing: is a stream's frame rate really variable? (cut.py's VFR guard)
+TIMING_WINDOWS = 5          # sampled windows per file, fewer on a short one
+TIMING_WINDOW_SECONDS = 6
+TIMING_MIN_DELTAS = 20      # fewer measured intervals than this is no evidence either way
+
+
+def complete_pts(packets: Sequence[Dict[str, Any]]) -> List[Any]:
+    """The pts of `packets` (as read, in decode order) whose frames are all there: those at or
+    before the last dts read. A read that stops just after a frame stored ahead of the B-frames
+    shown before it has missed those B-frames, and their gap would read as a dropped frame; every
+    frame shown by the last dts was decoded by then, so it was read. (FFmpeg 9.0's interval reads
+    measured whole on MP4; this keeps a demuxer that stops elsewhere from faking VFR.)"""
+    dts = [p["dts"] for p in packets if isinstance(p.get("dts"), int)]
+    pts = [p.get("pts") for p in packets]
+    return pts if not dts else [t for t in pts if isinstance(t, int) and t <= max(dts)]
+
+
+def classify_frame_timing(windows: Sequence[Sequence[Any]], time_base: Any) -> Dict[str, Any]:
+    """Whether the frame timing in sampled windows is constant. `windows` are lists of pts in
+    `time_base` ticks, the first starting at the file's first packet.
+
+    Each window's pts are sorted (decode order stores B-frames out of sequence) and differenced,
+    with repeats and missing values dropped. The file-start window also drops its first interval:
+    an edit list or encoder priming can stretch it without the frame rate being variable.
+    `sampled_cfr` needs every interval within one tick (at least 1 ms) of its window's median and
+    the window medians to agree, so a single dropped or irregular frame is `vfr`. The tolerance
+    never exceeds half a frame: a tick that coarse (AVI's 1/fps) cannot round an interval, and one
+    tick of slack there would pass a dropped frame. Fewer than
+    TIMING_MIN_DELTAS intervals is `inconclusive`. What happens between the windows is not seen."""
+    result: Dict[str, Any] = {"measured": "inconclusive", "windows": len(windows), "deltas": 0}
+    tick = _fraction(str(time_base)) if time_base else None
+    if not tick or tick <= 0:
+        return result
+    per_window: List[List[float]] = []
+    for i, pts in enumerate(windows):
+        vals = sorted(float(p) for p in pts if isinstance(p, (int, float)) and math.isfinite(p))
+        deltas = [(b - a) * float(tick) for a, b in zip(vals, vals[1:]) if b != a]
+        per_window.append(deltas[1:] if i == 0 else deltas)
+    per_window = [d for d in per_window if d]
+    result["deltas"] = sum(len(d) for d in per_window)
+    if result["deltas"] < TIMING_MIN_DELTAS:
+        return result
+    medians = [statistics.median(d) for d in per_window]
+    tol = min(max(0.001, float(tick) + 1e-6), min(medians) / 2)
+    steady = all(abs(x - m) <= tol for d, m in zip(per_window, medians) for x in d)
+    result["measured"] = "sampled_cfr" if steady and max(medians) - min(medians) <= tol else "vfr"
+    return result
+
+
+def timing_window_starts(duration: float, start: float = 0.0) -> List[float]:
+    """Up to TIMING_WINDOWS non-overlapping window starts spread over the file, the first on its
+    first packet. -read_intervals takes timestamps, so a file that starts at 10 s is read from 10."""
+    n = max(1, min(TIMING_WINDOWS, int((duration or 0.0) // TIMING_WINDOW_SECONDS)))
+    span = (duration or 0.0) - TIMING_WINDOW_SECONDS
+    return [round(start + (span * i / (n - 1) if n > 1 else 0.0), 3) for i in range(n)]
+
+
+def measure_frame_timing(path: str, duration: Optional[float], start: float = 0.0) -> Dict[str, Any]:
+    """classify_frame_timing over sampled windows of `path`'s first video stream that is not cover
+    art (probe()'s choice): one packet-only ffprobe per window, no decoding. An interval read seeks
+    back to the keyframe before its start and, given a relative end, ends that far past the
+    keyframe -- on a long GOP every window read the file's first seconds -- so each window names
+    its absolute end and keeps only the frames from its start. The first window does not seek at
+    all: a seek to the start of an edit-listed MP4 skips its keyframe, stored before the start
+    with a negative pts, and loses the frames that depend on it (seeks near the start behave
+    erratically, so no margin is safe). The cost: a file whose video begins long after its first
+    packet is demuxed, not decoded, up to the video start. An ffprobe failure is `inconclusive`."""
+    ffprobe = require_tool("ffprobe")
+    windows: List[List[Any]] = []
+    time_base = None
+    for i, t in enumerate(timing_window_starts(duration or 0.0, start)):
+        proc = run([ffprobe, "-v", "error", "-select_streams", "V:0", "-show_packets",
+                    "-show_entries", "packet=pts,dts,flags:stream=time_base", "-of", "json",
+                    "-read_intervals", f"{t if i else ''}%{t + TIMING_WINDOW_SECONDS:.3f}", path], quiet=True, check=False)
+        try:
+            doc = json.loads(proc.stdout) if proc.returncode == 0 else None
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            return {"measured": "inconclusive", "windows": len(windows), "deltas": 0}
+        time_base = time_base or ((doc.get("streams") or [{}])[0] or {}).get("time_base")
+        tick = float(_fraction(str(time_base)) or 0) if time_base else 0.0
+        packets = doc.get("packets") or []
+        floor = t - 1e-6
+        if i:
+            # a seek into MPEG-TS lands mid-GOP, not on a keyframe: a frame stored before the
+            # landing point is missing, which read as a dropped frame (a constant TS measured
+            # `vfr`). Judge a seeked window from its first keyframe's presentation on.
+            key = next((p.get("pts") for p in packets if "K" in str(p.get("flags", "")) and isinstance(p.get("pts"), int)), None)
+            if key is not None:
+                floor = max(floor, key * tick - 1e-6)
+        windows.append([p for p in complete_pts(packets) if isinstance(p, int) and p * tick >= floor])
+    return classify_frame_timing(windows, time_base)
+
+
+def measured_level_dbfs(path: str, seconds: Optional[float] = 120.0,
+                        audio_stream: Optional[int] = None) -> Optional[Dict[str, float]]:
+    """Mean and peak level of the first `seconds` of audio (volumedetect), in dBFS; None if unmeasurable.
+    Cheap enough to run once as a hint when a threshold-based tool found nothing. seconds=None
+    measures the whole file; audio_stream picks the Nth audio stream (default: ffmpeg's choice)."""
+    ffmpeg = require_tool("ffmpeg")
+    head = ["-t", f"{seconds:.0f}"] if seconds is not None else []
+    pick = ["-map", f"0:a:{audio_stream}"] if audio_stream is not None else []
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", *head, "-i", path, *pick, "-vn",
+                         "-af", "volumedetect", "-f", "null", "-"], check=False)
+    m_mean = re.search(r"mean_volume:\s*(-?[0-9.]+) dB", proc.stderr)
+    m_max = re.search(r"max_volume:\s*(-?[0-9.]+) dB", proc.stderr)
+    if not (m_mean and m_max):
+        return None
+    return {"mean_dbfs": float(m_mean.group(1)), "peak_dbfs": float(m_max.group(1))}
+
+
+# Legal signal range of limited-range Y'CbCr (check.py --levels, color.py --legalize). Each standard
+# is stated in percent of the nominal swing, so the code limits follow from the bit depth: 0 % luma is
+# code 16 << (depth - 8), 100 % is 235 << (depth - 8); chroma's nominal swing is 16..240 (scaled the
+# same way) around the midpoint. A sample is legal when its code lies inside [lo, hi] inclusive.
+#   bt709     ITU-R BT.709 nominal range: luma 0..100 %, chroma 16..240 (8-bit) -- no excursion.
+#   ebu-r103  EBU R 103 tolerance: luma -1 %..103 %, RGB components -5 %..105 %. Chroma is held to the
+#             widest Cb/Cr an RGB triple inside -5 %..105 % can produce (|C| <= 0.55 of the RGB span,
+#             i.e. 8-bit 5..251); RGB gamut itself is not measured here (a per-plane Y'CbCr count).
+LEGAL_RANGES: Dict[str, Dict[str, Any]] = {
+    "bt709": {"luma_pct": (0.0, 100.0), "chroma_half_swing": 0.5,
+              "reference": "ITU-R BT.709 nominal range: luma 16-235, chroma 16-240 (8-bit; 10-bit 64-940 / 64-960)"},
+    "ebu-r103": {"luma_pct": (-1.0, 103.0), "chroma_half_swing": 0.55,
+                 "reference": "EBU R 103 tolerance: luma -1 %..103 % (8-bit 14-241), chroma as far as RGB -5 %..105 % "
+                              "reaches (8-bit 5-251)"},
+}
+LEGAL_RANGE_CHOICES = sorted(LEGAL_RANGES)
+
+
+def legal_limits(standard: str, bit_depth: int = 8) -> Dict[str, Tuple[int, int]]:
+    """{"y": (lo, hi), "c": (lo, hi)}: the inclusive legal code range of a limited-range sample at
+    `bit_depth`. A limit that falls between two codes is rounded inward (the code past it is out)."""
+    spec = LEGAL_RANGES[standard]
+    scale = 1 << (max(8, int(bit_depth)) - 8)
+    black, white = 16 * scale, 235 * scale
+    span = white - black
+    p_lo, p_hi = spec["luma_pct"]
+    y = (math.ceil(black + span * p_lo / 100.0 - 1e-9), math.floor(white + span * (p_hi - 100.0) / 100.0 + 1e-9))
+    mid, cspan = 128 * scale, 224 * scale
+    half = spec["chroma_half_swing"] * cspan
+    c = (max(0, math.ceil(mid - half - 1e-9)), min((256 * scale) - 1, math.floor(mid + half + 1e-9)))
+    return {"y": y, "c": c}
+
+
+_COMPONENT_DEPTHS: Dict[str, int] = {}
+
+
+def component_depth(pix_fmt: Optional[str]) -> int:
+    """Bits per luma sample of `pix_fmt`, from ffmpeg's own pixel-format table (`-pix_fmts`,
+    BIT_DEPTHS column): the depth the planes really hold, which the name does not always say --
+    nv12 is 8-bit 4:2:0 (the 12 is bits per pixel), p010le is 10-bit. Falls back to _bit_depth()
+    when ffmpeg does not list the format."""
+    name = str(pix_fmt or "")
+    if not _COMPONENT_DEPTHS:
+        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-pix_fmts"], check=False)
+        for line in (proc.stdout or "").splitlines():
+            cols = line.split()
+            if len(cols) == 5 and re.fullmatch(r"\d+(?:-\d+)*", cols[4]):
+                _COMPONENT_DEPTHS[cols[1]] = int(cols[4].split("-")[0])
+    return _COMPONENT_DEPTHS.get(name) or _bit_depth(name)
+
+
+def _metadata_frames(text: str, keys: Optional[frozenset] = None) -> List[Tuple[float, Dict[str, float]]]:
+    """metadata=print's output: one (pts_time, {key: value}) per `frame:` block, signalstats keys only
+    (only those in `keys` when given: signalstats prints ~25 per frame and an hour is 100k frames)."""
+    frames: List[Tuple[float, Dict[str, float]]] = []
+    for line in text.splitlines():
+        if line.startswith("frame:"):
+            m = re.search(r"pts_time:\s*(-?[0-9.]+|nan)", line)
+            t = float(m.group(1)) if m and m.group(1) != "nan" else float("nan")
+            frames.append((t, {}))
+        elif "lavfi.signalstats." in line and "=" in line and frames:
+            key, val = line.split("lavfi.signalstats.", 1)[1].split("=", 1)
+            key = key.strip()
+            if keys is not None and key not in keys:
+                continue
+            try:
+                frames[-1][1][key] = float(val)
+            except ValueError:
+                pass
+    return frames
+
+
+# the signalstats keys measure_signal_range reads: the frame's own extremes and BRNG, and the mask's means
+_OWN_KEYS = frozenset({"BRNG", "YMIN", "YMAX", "UMIN", "UMAX", "VMIN", "VMAX"})
+_MASK_KEYS = frozenset({"YAVG", "UAVG", "VAVG"})
+
+
+def measure_signal_range(path: str, standard: str, window: float = 10.0,
+                         bit_depth: Optional[int] = None, pix_fmt: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Share of luma and chroma samples outside `standard`'s legal range, per clip and per `window`
+    seconds, plus min/max Y/U/V, from one decode of every frame of the first video stream.
+
+    The count is exact, not sampled from a histogram: each plane goes through lutyuv, which maps an
+    out-of-range code to the depth's top code (255 at 8 bits) and every other code to 0, and
+    signalstats' mean of that mask is the top code x the out-of-range share of that plane in that frame. Chroma planes are
+    counted at their own (subsampled) resolution, so "chroma" is the share of Cb and Cr samples. A
+    second signalstats ahead of the mask reads the frame's own MIN/MAX and BRNG (the share of pixels
+    with any component outside the BT.601/709 nominal range, signalstats' fixed limits). Every frame
+    holds the same number of samples, so a clip's share is the mean of its frames' shares.
+
+    The limits and the mask use `bit_depth`, or else the depth of `pix_fmt`'s planes
+    (component_depth(): nv12 is 8-bit, not 12). None when the measurement is not whole: nothing
+    decoded, ffmpeg failed part-way (a share from the frames read before the failure would grade a
+    file nobody measured to the end), or the two passes counted different frames."""
+    if standard not in LEGAL_RANGES:
+        die(f"unknown legal range {standard!r}; choose from {', '.join(LEGAL_RANGE_CHOICES)}")
+    import tempfile
+    from _common.decision import escape_filter_path
+    ffmpeg = require_tool("ffmpeg")
+    depth = int(bit_depth or component_depth(pix_fmt))
+    lim = legal_limits(standard, depth)
+    (ylo, yhi), (clo, chi) = lim["y"], lim["c"]
+    top = (1 << depth) - 1  # a literal: lutyuv's own maxval is 235 for limited-range luma, 240 for chroma
+    out = str(top) + "*(lt(val\\,{lo})+gt(val\\,{hi}))"
+    mask = (f"lutyuv=y='{out.format(lo=ylo, hi=yhi)}':u='{out.format(lo=clo, hi=chi)}'"
+            f":v='{out.format(lo=clo, hi=chi)}'")
+    with tempfile.TemporaryDirectory(prefix="ffskill_levels_") as tmp:
+        stats_file = os.path.join(tmp, "stats.txt")
+        vf = (f"signalstats=stat=brng,metadata=print:file={escape_filter_path(stats_file)},"
+              f"{mask},signalstats,metadata=print:file=-")
+        cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", "0:v:0", "-an", "-sn", "-dn", "-vf", vf, "-f", "null", "-"]
+        proc = run_analysis(cmd, check=False, record=True)
+        try:
+            with open(stats_file, encoding="utf-8", errors="replace") as f:
+                own = _metadata_frames(f.read(), _OWN_KEYS)
+        except OSError:
+            own = []
+    masks = _metadata_frames(proc.stdout or "", _MASK_KEYS)
+    if proc.returncode != 0 or not own or len(own) != len(masks):
+        return None
+    t0 = next((t for t, _ in own if t == t), 0.0)
+    rows: List[Dict[str, Any]] = []
+    for (t, s), (_, m) in zip(own, masks, strict=True):
+        y, u, v = (m.get(k, 0.0) / top * 100.0 for k in ("YAVG", "UAVG", "VAVG"))
+        rows.append({"t": (t - t0) if t == t else None, "y": y, "u": u, "v": v, "brng": s.get("BRNG", 0.0) * 100.0,
+                     "min": {k: s.get(k.upper() + "MIN") for k in "yuv"}, "max": {k: s.get(k.upper() + "MAX") for k in "yuv"}})
+
+    def summary(frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+        k = len(frames)
+        share = {p: sum(f[p] for f in frames) / k for p in ("y", "u", "v", "brng")}
+        worst = max(frames, key=lambda f: max(f["y"], (f["u"] + f["v"]) / 2))
+        def ext(which: str, fn: Any) -> Dict[str, Any]:
+            vals = {p: [f[which][p] for f in frames if f[which][p] is not None] for p in "yuv"}
+            return {p: (int(fn(v)) if v else None) for p, v in vals.items()}
+        return {"frames": k,
+                "out_of_range_pct": {"y": round(share["y"], 4), "u": round(share["u"], 4), "v": round(share["v"], 4),
+                                     "chroma": round((share["u"] + share["v"]) / 2, 4)},
+                "brng_pct": round(share["brng"], 4),
+                "worst_frame": {"time": None if worst["t"] is None else round(worst["t"], 3),
+                                "y_pct": round(worst["y"], 4), "chroma_pct": round((worst["u"] + worst["v"]) / 2, 4)},
+                "min": ext("min", min), "max": ext("max", max)}
+
+    doc = {"standard": standard, "reference": LEGAL_RANGES[standard]["reference"], "bit_depth": depth,
+           "legal": {"y": list(lim["y"]), "c": list(lim["c"])}, "window_seconds": window, **summary(rows)}
+    windows: List[Dict[str, Any]] = []
+    if window and window > 0:
+        buckets: Dict[int, List[Dict[str, Any]]] = {}
+        for i, f in enumerate(rows):
+            buckets.setdefault(int((f["t"] if f["t"] is not None else i) // window), []).append(f)
+        for idx in sorted(buckets):
+            w = summary(buckets[idx])
+            windows.append({"start": round(idx * window, 3), "end": round((idx + 1) * window, 3), **w})
+    doc["windows"] = windows
+    return doc
+
+
+def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
+    """Sample luma/saturation statistics (signalstats) and guess whether the picture is Log-encoded.
+
+    Log gammas (S-Log3, V-Log, C-Log, HLG-looking flat profiles) put black around 90-95/255 and
+    white below ~235 with low saturation: the image looks grey and flat but is tagged as plain SDR.
+    """
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-t", f"{seconds:.1f}", "-i", path, "-an",
+           "-vf", "fps=2,signalstats,metadata=print:file=-", "-f", "null", "-"]
+    proc = run_analysis(cmd, check=False)
+    vals: Dict[str, List[float]] = {}
+    for line in proc.stdout.splitlines():
+        if "lavfi.signalstats." in line and "=" in line:
+            key, val = line.split("lavfi.signalstats.", 1)[1].split("=", 1)
+            try:
+                vals.setdefault(key, []).append(float(val))
+            except ValueError:
+                pass
+    if not vals.get("YAVG"):
+        return {"error": "no frames analysed"}
+    def mean(k: str) -> float:
+        v = vals.get(k) or [0.0]
+        return sum(v) / len(v)
+    ymin, ymax, yavg, sat = min(vals.get("YMIN") or [0]), max(vals.get("YMAX") or [255]), mean("YAVG"), mean("SATAVG")
+    # signalstats reports in the source bit depth; normalise everything to an 8-bit scale
+    scale = 1.0
+    if ymax > 255 or yavg > 255:
+        scale = 1 / 4.0 if ymax <= 1023 else (1 / 16.0 if ymax <= 4095 else 1 / 256.0)  # 10 / 12 / 16-bit
+    ymin, ymax, yavg, sat = ymin * scale, ymax * scale, yavg * scale, sat * scale
+    # 5th/95th percentile of per-frame lows/highs is more robust than the absolute min/max
+    lows = sorted(x * scale for x in (vals.get("YLOW") or vals.get("YMIN") or [0]))
+    highs = sorted(x * scale for x in (vals.get("YHIGH") or vals.get("YMAX") or [255]))
+    p_low = lows[len(lows) // 20]
+    p_high = highs[-1 - len(highs) // 20]
+    looks_log = p_low >= 64 and p_high <= 235 and sat < 40
+    return {
+        "scale": "8-bit equivalent",
+        "y_min": round(ymin, 1), "y_max": round(ymax, 1), "y_avg": round(yavg, 1), "y_low_p5": round(p_low, 1), "y_high_p95": round(p_high, 1),
+        "saturation_avg": round(sat, 1),
+        "looks_like_log": looks_log,
+        "note": ("flat, low-contrast, desaturated picture tagged as SDR: probably a Log profile (S-Log/V-Log/C-Log). "
+                 "Apply the camera's conversion LUT with color.py --lut" if looks_log else "contrast and saturation look like normal display-referred SDR"),
+    }
+
+
+def _tag_seconds(value: Any) -> "Optional[float]":
+    """A Matroska DURATION tag ("00:00:04.008000000") in seconds, or None."""
+    try:
+        if "-" in str(value):  # "-00:00:01": int("-00") is 0, so the sign would be lost
+            return None
+        h, m, sec = str(value).split(":")
+        seconds = int(h) * 3600 + int(m) * 60 + float(sec)
+    except (TypeError, ValueError):
+        return None
+    # float() reads "nan" and "inf": a length that is not a finite, non-negative number is none
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _to_float(v: Any) -> Optional[float]:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(v: Any) -> Optional[int]:
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _fraction(v: Optional[str]) -> Optional[Fraction]:
+    if not v or v in ("0/0", "0"):
+        return None
+    try:
+        f = Fraction(v)
+        return f if f > 0 else None
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def _sar_string(v: Optional[str]) -> str:
+    """ffprobe's sample_aspect_ratio as "N:D", "1:1" when unset (0:1, N/A, missing)."""
+    f = _fraction((v or "").replace(":", "/"))
+    return f"{f.numerator}:{f.denominator}" if f else "1:1"
+
+
+def pixel_aspect(video: Optional[Dict[str, Any]]) -> Fraction:
+    """The stored pixel's width over its height (the SAR); 1 when the stream does not say."""
+    return _fraction(str((video or {}).get("sample_aspect_ratio") or "").replace(":", "/")) or Fraction(1)
+
+
+def _square_size(video: Optional[Dict[str, Any]]) -> "Tuple[int, int, Fraction]":
+    """(width, height, SAR) of the frame the filter graph receives: rotation applied (ffmpeg
+    autorotates on decode, and its transpose turns the SAR over too), pixels not yet squared."""
+    video = video or {}
+    w, h = int(video.get("width") or 0), int(video.get("height") or 0)
+    sar = pixel_aspect(video)
+    if video.get("rotation") in (90, -90, 270, -270):
+        w, h, sar = h, w, 1 / sar
+    return w, h, sar
+
+
+def display_size(video: Optional[Dict[str, Any]]) -> "Tuple[int, int]":
+    """The displayed frame in square pixels: rotation applied, and a non-square-pixel picture
+    widened or narrowed to its display aspect at its own height (1440x1080 at 4:3 is 1920x1080,
+    720x480 at 8:9 is 640x480). It is the frame square_pixels() hands the rest of a graph, so a
+    tool sizes, places and draws in it. 0x0 when unknown (a dry run's pending input)."""
+    w, h, sar = _square_size(video)
+    if w and h and sar != 1:
+        w = max(2, int(round(w * sar / 2)) * 2)
+    return w, h
+
+
+def square_pixels(video: Optional[Dict[str, Any]]) -> str:
+    """The filter that makes a non-square-pixel picture square at its display aspect
+    ("scale=640:360,setsar=1"), or "" when the pixels are square already. A tool that scales,
+    crops, places or draws starts its video chain with it, so every such tool agrees on one
+    frame (display_size()) and nothing is squashed or drawn stretched (#411). Tools that only
+    re-encode keep the stored size and its SAR, which the encoder writes through."""
+    w, h, sar = _square_size(video)
+    if not (w and h) or sar == 1:
+        return ""
+    dw, dh = display_size(video)
+    return f"scale={dw}:{dh},setsar=1"
+
+
+def square_pixels_note(video: Optional[Dict[str, Any]], what: str = "the input") -> Optional[str]:
+    """The notes line for a square_pixels() scale, or None when there is none."""
+    if not square_pixels(video):
+        return None
+    w, h, _ = _square_size(video)
+    dw, dh = display_size(video)
+    return (f"{what} stores non-square pixels (SAR {(video or {}).get('sample_aspect_ratio')}): "
+            f"its {w}x{h} picture was scaled to {dw}x{dh} square pixels, its display aspect")
+
+
+def _is_still(fmt: Dict[str, Any], video: Dict[str, Any]) -> bool:
+    """A single picture read by an image demuxer (image2, jpeg_pipe, png_pipe, ...)."""
+    name = fmt.get("format_name") or ""
+    return name == "image2" or name.endswith("_pipe")
+
+
+def _still_rotation(path: str) -> int:
+    """The display rotation of a still's first decoded frame (an EXIF Orientation), 0 if none."""
+    proc = run([require_tool("ffprobe"), "-v", "error", *still_input_args(path), "-select_streams", "v:0",
+                "-read_intervals", "%+#1", "-show_entries", "frame_side_data=rotation", "-of", "json", path],
+               quiet=True, check=False)
+    try:
+        frames = json.loads(proc.stdout or "{}").get("frames") or []
+        for sd in (frames[0].get("side_data_list") or []) if frames else []:
+            if "rotation" in sd:
+                return int(round(float(sd["rotation"])))
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return 0
+
+
+def _aspect_string(w: Optional[int], h: Optional[int]) -> Optional[str]:
+    if not w or not h:
+        return None
+    f = Fraction(w, h)
+    return f"{f.numerator}:{f.denominator}"
+
+
+# --------------------------------------------------------------- structure detectors (1.16)
+# silencedetect and scdet, lifted out of silence.py and scenes.py byte-for-byte in 1.16.0 so that
+# metadata.py --auto-chapters can measure structure without importing another tool (no script in
+# scripts/ imports a sibling tool; only the _-prefixed modules are shared). silence.py and
+# scenes.py import them back from here, so their behaviour is unchanged.
+
+SIL_RE = re.compile(r"silence_(start|end): ([0-9.]+)")
+
+
+def detect_silences(path: str, threshold: float, min_silence: float) -> "List[Tuple[float, float]]":
+    if dry_run_input_pending(path):
+        return []
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af",
+           f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
+    proc = run_analysis(cmd, check=False, record=True)
+    if proc.returncode != 0:
+        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+    silences: "List[Tuple[float, float]]" = []
+    start = None
+    for kind, val in SIL_RE.findall(proc.stderr):
+        if kind == "start":
+            start = float(val)
+        elif start is not None:
+            silences.append((start, float(val)))
+            start = None
+    if start is not None:  # silence runs to the end
+        silences.append((start, float("inf")))
+    return silences
+
+
+# 2.3.0's silence threshold: a track whose whole-file peak is at or below this is digital
+# silence (join.py / audio.py --silence-threshold default, check.py's audio row).
+SILENT_PEAK_DBFS = -50.0
+
+# check.py --content thresholds (docs/design-decisions.md "check.py --content").
+CONTENT_BLACK_PIX_TH = 0.10      # blackdetect pixel threshold (share of the luma range)
+CONTENT_MIN_SPAN = 0.1           # blackdetect minimum run, seconds
+CONTENT_FREEZE_NOISE = "-60dB"   # freezedetect noise tolerance
+CONTENT_FREEZE_MIN = 0.5         # freezedetect minimum run, seconds
+CONTENT_SILENCE_MIN = 0.5        # silencedetect minimum run, seconds
+# 2.17: a dropout is a short run of (near) digital silence with sound on both sides -- a join
+# that lost its audio, a glitched decode. Far quieter than the silence row's -50 dB, so a
+# recording's own pauses (room tone) do not count; a noise gate does produce them, which is
+# why the row only ever WARNs.
+CONTENT_DROPOUT_DB = -80.0
+CONTENT_DROPOUT_MIN, CONTENT_DROPOUT_MAX = 0.02, 1.0   # seconds
+CONTENT_DROPOUT_EDGE = 0.05      # a gap this close to the start or end is a lead-in/out, not a dropout
+CONTENT_DROPOUT_PAD = 2.0        # zeros appended before the dropout pass; > MAX, so a tail that runs into it never counts
+
+# 2.23: a flash is one frame that differs from both of its neighbours while they match each other
+# (a stray frame from another shot, a white or black frame at a join, a decode glitch). Measured on
+# 64x36 grey frames as the mean absolute luma difference (0-255): moving footage stays at a few
+# units, a cut or a flash moves the whole frame by tens.
+CONTENT_FLASH_JUMP = 12.0        # both steps into and out of the frame are at least this
+CONTENT_FLASH_RETURN = 0.25      # ...and the frames either side differ by at most this share of the smaller step
+CONTENT_FLAT_STD = 4.0           # first frame: luma standard deviation (0-255) below this is one flat colour
+_DIFF_W, _DIFF_H = 64, 36
+
+_BLACK_RE = re.compile(r"black_start:\s*([0-9.]+)\s+black_end:\s*([0-9.]+)")
+_FREEZE_RE = re.compile(r"lavfi\.freezedetect\.freeze_(start|end):\s*([0-9.]+)")
+
+
+def detect_content(path: str, duration: float, *, video: bool = True, audio: bool = True) -> Dict[str, Any]:
+    """One decode pass of blackdetect + freezedetect (video) and silencedetect (audio, at
+    SILENT_PEAK_DBFS). Returns {"black": [(s, e)], "frozen": [(s, e)], "silence": [(s, e)]}
+    with open-ended spans closed at `duration`; a key is absent when its stream is. {} when the
+    input is a pending dry-run placeholder."""
+    if dry_run_input_pending(path) or not (video or audio):
+        return {}
+    ffmpeg = require_tool("ffmpeg")
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path]
+    if video:
+        cmd += ["-map", "0:V:0", "-vf", f"blackdetect=d={CONTENT_MIN_SPAN}:pix_th={CONTENT_BLACK_PIX_TH},"
+                f"freezedetect=n={CONTENT_FREEZE_NOISE}:d={CONTENT_FREEZE_MIN}"]
+    if audio:
+        cmd += ["-map", "0:a:0", "-af", f"silencedetect=noise={SILENT_PEAK_DBFS:g}dB:d={CONTENT_SILENCE_MIN}"]
+    proc = run_analysis(cmd + ["-f", "null", "-"], check=False, record=True)
+    if proc.returncode != 0:
+        die(f"content detection failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+    end = max(duration, 0.0)
+    out: Dict[str, Any] = {}
+    if video:
+        out["black"] = [(float(a), min(float(b), end) if end else float(b)) for a, b in _BLACK_RE.findall(proc.stderr)]
+        frozen: "List[Tuple[float, float]]" = []
+        start = None
+        for kind, val in _FREEZE_RE.findall(proc.stderr):
+            if kind == "start":
+                start = float(val)
+            elif start is not None:
+                frozen.append((start, float(val)))
+                start = None
+        if start is not None:
+            frozen.append((start, end))
+        out["frozen"] = frozen
+    if audio:
+        sil: "List[Tuple[float, float]]" = []
+        start = None
+        for kind, val in SIL_RE.findall(proc.stderr):
+            if kind == "start":
+                start = float(val)
+            elif start is not None:
+                sil.append((start, min(float(val), end) if end else float(val)))
+                start = None
+        if start is not None:
+            sil.append((start, end))
+        out["silence"] = sil
+        out["dropouts"] = _detect_dropouts(path, end)
+    return out
+
+
+def _detect_dropouts(path: str, end: float) -> "List[Tuple[float, float]]":
+    """Short (near) digital-silence gaps inside the first audio stream: one audio-only pass
+    (silencedetect at CONTENT_DROPOUT_DB). A second silencedetect in the main pass would log
+    under the same name as the silence row's, so its lines could not be told apart. The audio
+    is padded with CONTENT_DROPOUT_PAD s of zeros first: a silent tail of audio that ends before
+    the container does then runs into the pad and is too long to count, instead of closing at
+    the audio's EOF and passing the container-duration edge test."""
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-map", "0:a:0", "-af",
+                         f"apad=pad_dur={CONTENT_DROPOUT_PAD:g},"
+                         f"silencedetect=noise={CONTENT_DROPOUT_DB:g}dB:d={CONTENT_DROPOUT_MIN}", "-f", "null", "-"],
+                        check=False, record=True)
+    if proc.returncode != 0:
+        die(f"dropout detection failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+    gaps: "List[Tuple[float, float]]" = []
+    start = None
+    for kind, val in SIL_RE.findall(proc.stderr):
+        if kind == "start":
+            start = float(val)
+        elif start is not None:
+            s, e = start, float(val)
+            start = None
+            inside = s > CONTENT_DROPOUT_EDGE and (not end or e < end - CONTENT_DROPOUT_EDGE)
+            if inside and CONTENT_DROPOUT_MIN <= e - s <= CONTENT_DROPOUT_MAX:
+                gaps.append((s, e))
+    return gaps  # a gap still open at the end is a tail, never a dropout
+
+
+def detect_flashes(path: str) -> "Optional[List[int]]":
+    """Frame indexes of single-frame flashes in the first video stream: frame n differs from n-1 and
+    from n+1 by at least CONTENT_FLASH_JUMP while n-1 and n+1 differ by at most
+    CONTENT_FLASH_RETURN of the smaller step. One video-only pass; ffmpeg reduces each frame to
+    three 16-bit numbers (|f[n]-f[n-1]| and the two clipped halves of f[n]-f[n-2]): 6 bytes a
+    frame in the captured output (1.3 MB for an hour at 60 fps), read in place. The caller turns an index into a time;
+    the comparison itself needs no frame rate. None when no frame decoded or the pass failed
+    (nothing was compared; a failure is also a flash_pass_failed warning)."""
+    if dry_run_input_pending(path):
+        return []
+    graph = (f"[0:V:0]scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray16le,split=3[a][b][c];"
+             "[a]tblend=all_mode=difference,scale=1:1:flags=area[d];"
+             "[b]tmix=frames=3:weights='-1 0 1':scale=1,scale=1:1:flags=area[p];"
+             "[c]tmix=frames=3:weights='1 0 -1':scale=1,scale=1:1:flags=area[q];"
+             "[d][p][q]hstack=inputs=3")
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                         "-filter_complex", graph, "-fps_mode", "passthrough", "-f", "rawvideo", "-"],
+                        check=False, text=False, record=True)
+    if proc.returncode != 0:
+        # an unmeasured row, not the end of the report: the other content rows stand
+        warn("flash detection failed: " + (proc.stderr.decode(errors="replace").strip().splitlines() or ["ffmpeg exited " + str(proc.returncode)])[-1][:300],
+             "flash_pass_failed")
+        return None
+    # tblend has no output for frame 0, so record r is frame r+1: a zero record in front puts
+    # every value at its own frame's index. passthrough keeps the rawvideo muxer from padding a
+    # constant rate, which repeated records over timestamp gaps (a repeat is a zero step, and a
+    # flash before a gap went unreported)
+    if len(proc.stdout) < 6:
+        return None
+    data = bytes(6) + proc.stdout
+    n = len(data) // 6
+
+    def record(i: int) -> "Tuple[float, float]":
+        """(|f[i] - f[i-1]|, |f[i] - f[i-2]|), 0-255; read from the buffer, never kept per frame."""
+        d, p, q = (int.from_bytes(data[i * 6 + k:i * 6 + k + 2], "little") / 256.0 for k in (0, 2, 4))
+        return d, p + q
+
+    flashes = []
+    into = record(1)[0] if n > 1 else 0.0
+    for i in range(1, n - 1):
+        out, back = record(i + 1)
+        if into >= CONTENT_FLASH_JUMP and out >= CONTENT_FLASH_JUMP and back <= CONTENT_FLASH_RETURN * min(into, out):
+            flashes.append(i)
+        into = out
+    return flashes
+
+
+def presentation_times(path: str, start: float) -> "List[float]":
+    """The presentation time of every frame of the first video stream (attached pictures
+    excluded), in order: its packets' pts sorted, those before the stream's own start (an edit
+    list's hidden pre-roll, never shown) dropped. From packets, so no decode. [] when unreadable,
+    also when one packet has no pts: skipping it would shift every later time onto the wrong frame."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "V:0", "-show_entries", "packet=pts_time",
+                "-of", "csv=p=0", path], quiet=True, check=False)
+    times = []
+    for line in (proc.stdout or "").split() if proc.returncode == 0 else []:
+        try:
+            times.append(float(line.split(",")[0]))
+        except ValueError:
+            return []
+    return sorted(t for t in times if t >= start - 1e-6)
+
+
+def first_frame_stats(path: str) -> "Optional[Tuple[float, float]]":
+    """(mean, standard deviation) of the first frame's luma, 0-255, at 64x36; None when it does
+    not decode or the input is a pending dry-run placeholder."""
+    if dry_run_input_pending(path):
+        return None
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                         "-map", "0:V:0", "-frames:v", "1", "-vf", f"scale={_DIFF_W}:{_DIFF_H}:flags=area,format=gray",
+                         "-f", "rawvideo", "-"], check=False, text=False, record=True)
+    px = list(proc.stdout[:_DIFF_W * _DIFF_H])
+    if proc.returncode != 0 or len(px) < _DIFF_W * _DIFF_H:
+        return None
+    return statistics.fmean(px), statistics.pstdev(px)
+
+
+SCORE_RE = re.compile(r"frame:(\d+)\s+pts:\d+\s+pts_time:([0-9.]+)")
+
+
+def detect_scenes(path: str, threshold: float, min_len: float, duration: float, ratio: float = 3.0) -> "List[float]":
+    """Scene cuts = frames whose scdet score is above `threshold` AND stands out from its
+    neighbourhood (score > ratio x median of the surrounding +-12 frames). Sustained motion,
+    flashes and fast pans raise the score on many consecutive frames and are rejected;
+    a real cut is a one-frame spike. On real footage this roughly doubles precision at
+    equal recall compared with the raw scdet threshold."""
+    ffmpeg = require_tool("ffmpeg")
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-an", "-vf",
+                         "scale=320:-2,scdet=threshold=0,metadata=print:file=-", "-f", "null", "-"])
+    # No `sc_pass=1` on scdet: on FFmpeg 5.x that option means "pass only the frames whose
+    # score exceeds the threshold", so every truly static frame (score exactly 0 -- a title
+    # card, colour bars) is dropped before metadata=print and the frame numbers are re-counted
+    # without them. The +-12-frame neighbourhood around a real cut then fills with the moving
+    # segment's scores instead of the still one's zeros, the cut fails the ratio test, and a
+    # 4 s smptebars scene made the cuts on both sides of it disappear (found by the 5.1.1 CI
+    # job, #146). 6.1+ passes every frame either way. Scores are still indexed by frame number
+    # and any frame the filter did not report counts as 0, so a build that drops frames again
+    # cannot shift the neighbourhood.
+    by_frame: "Dict[int, Tuple[float, float]]" = {}
+    cur = None
+    for line in proc.stdout.splitlines():
+        m = SCORE_RE.match(line)
+        if m:
+            cur = (int(m.group(1)), float(m.group(2)))
+            continue
+        if line.startswith("lavfi.scd.score=") and cur is not None:
+            try:
+                by_frame[cur[0]] = (cur[1], float(line.split("=", 1)[1]))
+            except ValueError:
+                pass
+    cuts = [0.0]
+    if not by_frame:
+        return cuts
+    n_frames = max(by_frame) + 1
+    times: "List[float]" = [by_frame[i][0] if i in by_frame else -1.0 for i in range(n_frames)]
+    scores: "List[float]" = [by_frame[i][1] if i in by_frame else 0.0 for i in range(n_frames)]
+    w = 12
+    for i, sc in enumerate(scores):
+        if sc < threshold:
+            continue
+        lo, hi = max(0, i - w), min(len(scores), i + w + 1)
+        neigh = sorted(scores[lo:i] + scores[i + 1:hi])
+        med = neigh[len(neigh) // 2] if neigh else 0.0
+        if sc < ratio * max(med, 0.5):
+            continue
+        # keep only the local maximum inside +-2 frames
+        if any(scores[j] > sc for j in range(max(0, i - 2), min(len(scores), i + 3)) if j != i):
+            continue
+        t = times[i]
+        if t - cuts[-1] >= min_len:
+            cuts.append(t)
+    if duration - cuts[-1] < min_len and len(cuts) > 1:
+        cuts.pop()
+    return cuts
+
+
+# What a stream-copy join compares (cut.py --segments, join.py --copy).
+# codecs that carry no out-of-band configuration in these containers, so no extradata on
+# either side is a match, not a difference
+IN_BAND_CONFIG = ("mp3", "mp2", "vp8", "vp9")
+TS_EXTS = (".ts", ".m2ts", ".mts")
+_SIG_FIELDS = {"video": ("codec_name", "profile", "pix_fmt", "width", "height", "r_frame_rate", "time_base",
+                         "sample_aspect_ratio", "color_space", "color_range", "color_transfer", "color_primaries"),
+               "audio": ("codec_name", "profile", "sample_rate", "channels", "time_base")}
+
+
+def stream_signature(doc: Dict[str, Any]) -> "List[Dict[str, Any]]":
+    """What a stream-copy join needs to be identical across parts, from one ffprobe document
+    (-show_streams with -show_data_hash sha256): each stream's type, codec parameters, rotation
+    and extradata hash. Shared by cut.py's --segments join and join.py --copy."""
+    sig = []
+    for st in doc.get("streams") or []:
+        kind = st.get("codec_type")
+        entry = {"type": kind, "extradata_hash": st.get("extradata_hash")}
+        entry.update({f: st.get(f) for f in _SIG_FIELDS.get(kind, ("codec_name",))})
+        if kind == "video":
+            entry["rotation"] = next((sd.get("rotation") for sd in st.get("side_data_list") or []
+                                      if "rotation" in sd), None)
+        sig.append(entry)
+    return sig
+
+
+def signatures_match(sigs: list, ext: str) -> bool:
+    """True when every part can be joined by stream copy: same streams in the same order with the
+    same parameters. A missing extradata hash only matches another missing one where the codec (or
+    an MPEG-TS output) carries its configuration in-band -- PCM has none at all."""
+    if not sigs or any(sig is None for sig in sigs):
+        return False
+    first = sigs[0]
+    for sig in sigs[1:]:
+        if len(sig) != len(first):
+            return False
+        for a, b in zip(first, sig):
+            if {k: v for k, v in a.items() if k != "extradata_hash"} != {k: v for k, v in b.items() if k != "extradata_hash"}:
+                return False
+            ha, hb = a.get("extradata_hash"), b.get("extradata_hash")
+            if ha or hb:
+                if ha != hb:
+                    return False
+            else:
+                codec = str(a.get("codec_name") or "")
+                if not (codec.startswith("pcm_") or codec in IN_BAND_CONFIG or ext in TS_EXTS):
+                    return False
+    return True
+
+
+# check.py --compare (2.24): the output's picture against a reference, frame by frame.
+COMPARE_SSIM_WARN = 0.98   # mean SSIM below this: a visible difference somewhere is likely
+# the channel letters follow the negotiated format: Y U V (or y u v) for YUV, R G B for RGB
+_SSIM_SUMMARY = re.compile(r"SSIM [A-Za-z]:[0-9.]+ .*All:([0-9.]+)")
+_PSNR_SUMMARY = re.compile(r"PSNR [a-z]:\S+ .*average:(\S+)")
+_SSIM_FRAME = re.compile(r"n:(\d+) .*All:([0-9.]+)")
+
+
+def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
+    """SSIM (mean and the worst frame) and PSNR (mean) of `path`'s first video stream against
+    `reference`'s, frame by frame in decode order, in one pass. ffmpeg's ssim and psnr filters
+    need equal sizes; the caller checks that first. None when the pass fails."""
+    import tempfile
+    from _common.decision import escape_filter_path
+    with tempfile.TemporaryDirectory(prefix="ffskill_compare_") as tmp:
+        stats = os.path.join(tmp, "ssim.log")
+        # frames paired by index (settb/setpts=N): ssim and psnr otherwise pair by timestamp, so a
+        # shifted or irregular timestamp would meet the wrong reference frame
+        # shortest=1: by default the shorter file's last frame is repeated against the rest of
+        # the longer one, which measures pairs that do not exist. format=yuv444p on both: the
+        # filters otherwise take the first input's format, so an RGB file against a YUV one
+        # measured differently by argument order
+        graph = ("[0:V:0]settb=1/1000,setpts=N,format=yuv444p,split[a0][a1];"
+                 "[1:V:0]settb=1/1000,setpts=N,format=yuv444p,split[b0][b1];"
+                 f"[a0][b0]ssim=shortest=1:stats_file={escape_filter_path(stats, bind=False)};[a1][b1]psnr=shortest=1")
+        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-i", reference,
+                             "-filter_complex", graph, "-f", "null", "-"], check=False, record=True)
+        if proc.returncode != 0:
+            return None
+        ssim, psnr = _SSIM_SUMMARY.search(proc.stderr), _PSNR_SUMMARY.search(proc.stderr)
+        frames = []
+        try:
+            with open(stats, encoding="utf-8") as fh:
+                frames = [(int(m.group(1)), float(m.group(2))) for m in map(_SSIM_FRAME.search, fh) if m]
+        except OSError:
+            pass
+    if not ssim or not frames:
+        return None
+    worst = min(frames, key=lambda f: f[1])
+    mean_psnr = psnr.group(1) if psnr else None
+    return {"ssim": float(ssim.group(1)), "worst_ssim": worst[1], "worst_frame": worst[0] - 1, "frames": len(frames),
+            "psnr": None if mean_psnr is None else (float("inf") if mean_psnr == "inf" else float(mean_psnr))}

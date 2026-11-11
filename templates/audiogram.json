@@ -1,0 +1,31 @@
+{
+  "template": "audiogram",
+  "output": "$OUTPUT",
+  "clips": [
+    {
+      "src": "$INPUT"
+    }
+  ],
+  "audiogram": {
+    "image": "$IMAGE",
+    "style": "waveform",
+    "position": "strip"
+  },
+  "captions": {
+    "text": "$CUES",
+    "size": 20,
+    "position": "bottom",
+    "margin": 14
+  },
+  "loudness": {
+    "lufs": -14,
+    "tp": -1
+  },
+  "export": {
+    "preset": "youtube",
+    "normalize": true
+  },
+  "check": {
+    "platform": "youtube"
+  }
+}

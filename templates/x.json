@@ -1,0 +1,47 @@
+{
+  "template": "x",
+  "output": "$OUTPUT",
+  "clips": [
+    {
+      "src": "$INPUT"
+    }
+  ],
+  "frame": {
+    "aspect": "16:9",
+    "fit": "pad"
+  },
+  "brand": "$BRAND",
+  "captions": {
+    "text": "$CUES",
+    "animate": "none",
+    "karaoke": false,
+    "size": 20,
+    "position": "bottom",
+    "margin": 14
+  },
+  "graphics": [
+    {
+      "template": "lower-third",
+      "name": "$TITLE",
+      "start": 1,
+      "end": 6
+    }
+  ],
+  "overlays": [
+    {
+      "image": "$LOGO",
+      "position": "top-left"
+    }
+  ],
+  "loudness": {
+    "lufs": -14,
+    "tp": -1.0
+  },
+  "export": {
+    "preset": "x",
+    "normalize": true
+  },
+  "check": {
+    "platform": "x"
+  }
+}

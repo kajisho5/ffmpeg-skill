@@ -1,0 +1,70 @@
+{
+  "name": "ffmpeg-skill",
+  "version": "3.3.0",
+  "mcpName": "io.github.kajisho5/ffmpeg-skill",
+  "description": "Agent Skill that gives coding agents (Claude Code, Cursor, Codex) a local video editor: 42 FFmpeg tools with a machine-readable contract, contract-derived MCP server, FFmpeg capability detection, probe-first / verify-last workflow. Cut, join, silence removal, fit, captions and karaoke, overlays, motion graphics, HDR to SDR, LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, project rendering, batch. No API keys, no cloud, no dependencies.",
+  "keywords": [
+    "ffmpeg",
+    "video",
+    "video-editing",
+    "video-processing",
+    "audio",
+    "audio-processing",
+    "subtitles",
+    "captions",
+    "transcoding",
+    "loudness",
+    "agent-skill",
+    "agent-skills",
+    "claude-code",
+    "claude-skill",
+    "cursor",
+    "codex",
+    "ai-agents",
+    "mcp",
+    "mcp-server",
+    "skill"
+  ],
+  "license": "MIT",
+  "author": "kajisho5",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kajisho5/ffmpeg-skill.git"
+  },
+  "homepage": "https://github.com/kajisho5/ffmpeg-skill#readme",
+  "bugs": "https://github.com/kajisho5/ffmpeg-skill/issues",
+  "bin": {
+    "ffmpeg-skill": "bin/install.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "templates/",
+    "mcp/",
+    "references/scripts.md",
+    "references/devices.md",
+    "references/ci-platform-pitfalls.md",
+    "references/gotchas.md",
+    "references/flags.md",
+    "references/workflow.md",
+    "references/report.md",
+    "references/requests.md",
+    "references/timestamps.md",
+    "docs/contract.md",
+    "SKILL.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "python3 tests/run_parallel.py && python3 tests/test_contract.py",
+    "test:fast": "python3 tests/test_contract.py",
+    "release-check": "bash tests/release_check.sh",
+    "demo": "python3 demos/build.py",
+    "demo:pipeline": "bash examples/make_demo.sh",
+    "contract": "python3 scripts/_contract.py --json",
+    "doctor": "python3 scripts/_contract.py doctor"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

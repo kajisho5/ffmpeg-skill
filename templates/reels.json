@@ -1,0 +1,47 @@
+{
+  "template": "reels",
+  "output": "$OUTPUT",
+  "clips": [
+    {
+      "src": "$INPUT"
+    }
+  ],
+  "frame": {
+    "aspect": "9:16",
+    "fit": "crop"
+  },
+  "brand": "$BRAND",
+  "captions": {
+    "text": "$CUES",
+    "animate": "pop",
+    "karaoke": true,
+    "size": 24,
+    "position": "bottom",
+    "margin": 58
+  },
+  "graphics": [
+    {
+      "template": "hook",
+      "title": "$TITLE",
+      "start": 0,
+      "end": 3
+    }
+  ],
+  "overlays": [
+    {
+      "image": "$LOGO",
+      "position": "top-left"
+    }
+  ],
+  "loudness": {
+    "lufs": -14,
+    "tp": -1.0
+  },
+  "export": {
+    "preset": "reels",
+    "normalize": true
+  },
+  "check": {
+    "platform": "reels"
+  }
+}
