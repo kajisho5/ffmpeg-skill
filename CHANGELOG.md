@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.4.1
+
+_Automated release: version and notes generated from pull requests merged since 3.4.0._
+
 ### Fixed
 
 - **The plugin tree carries its listing icon and no longer carries the `npx` installer.** The
@@ -31,6 +37,7 @@
   (Codex). Gemini CLI still clones the repository.
   The plugin route now needs Claude Code 2.1.69 or later (2.1.288 with git older than 2.39);
   `npx ffmpeg-skill` is unchanged.
+- fix: plugin tree ships its icon and no installer; marketplace entry names the plugin branch (#441)
 
 ## 3.4.0
 
