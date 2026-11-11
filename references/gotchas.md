@@ -54,6 +54,13 @@ on a stream copy as on a re-encode
 (`cut.py` reports it: `dropped_audio_streams`, an `audio_tracks_dropped` warning). Keep ProRes masters
 at source colour: `export.py --preset prores` does not retag.
 
+What else the source carried is compared on every write: `source_carry: {kept, dropped}` lists
+subtitles, chapters, a cover picture, surround channels, `creation_time`, the audio language tag
+and the start timecode, and a lost subtitle track, chapter list, cover picture or surround layout
+is a `source_items_dropped` warning. Read it before telling the user the file is complete; to
+carry the items over, use the tool that keeps them (`export.py` keeps subtitle tracks,
+`metadata.py` writes chapters and tags).
+
 Re-encoding an HDR (iPhone, HDR10) source through an SDR path flattens the
 colours. The scripts keep HDR; if you hand-write ffmpeg (never do — see SKILL.md),
 do not tag BT.709 on BT.2020 pixels.

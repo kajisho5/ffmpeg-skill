@@ -5487,6 +5487,109 @@ class GeometryAuditPictureTests(unittest.TestCase):
         self.assertEqual(doc["font_used"]["how"], "script", doc["font_used"])
 
 
+class UserReportTests(unittest.TestCase):
+    """Bugs reported from outside the repository, each pinned by what was measured."""
+
+    def _bright_box(self, video):
+        """Bounding box (x1, x2, y1, y2) of the bright pixels of the frame at 0.5 s."""
+        proc = subprocess.run(
+            ["ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(video), "-frames:v", "1",
+             "-vf", "format=gray,lut='if(gt(val,150),255,0)',bbox=min_val=128,metadata=print:file=-", "-f", "null", "-"],
+            capture_output=True, text=True)
+        found = dict(re.findall(r"lavfi\.bbox\.(x1|x2|y1|y2)=(\d+)", proc.stdout))
+        self.assertEqual(len(found), 4, proc.stdout + proc.stderr)
+        return tuple(int(found[k]) for k in ("x1", "x2", "y1", "y2"))
+
+    def test_caption_srt_position_lands_where_it_says(self):
+        """#436: the SRT burn passed the v4+ numpad Alignment to libass's force_style, which reads
+        the legacy SSA numbering, so --position top landed mid-left, center top-left and top-left
+        top-right; only the bottom row (the same numbers in both) was right."""
+        filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+        if not re.search(r"\bsubtitles\b", filters):
+            self.skipTest("this ffmpeg build has no subtitles filter (libass)")
+        OUT.mkdir(parents=True, exist_ok=True)
+        clip, srt = OUT / "pos436.mp4", OUT / "pos436.srt"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x1d2433:s=1080x1920:r=30:d=1",
+           "-f", "lavfi", "-i", "sine=d=1", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", clip)
+        srt.write_text("1\n00:00:00,000 --> 00:00:03,000\nCentered?\n", encoding="utf-8")
+        W, H = 1080, 1920
+        where = {}
+        for pos in ("bottom", "top", "center", "top-left", "top-right", "bottom-left", "bottom-right"):
+            out = OUT / f"pos436_{pos}.mp4"
+            script("caption.py", clip, "--srt", srt, "--position", pos, "-o", out, "--overwrite")
+            x1, x2, y1, y2 = self._bright_box(out)
+            where[pos] = ((x1 + x2) / 2 / W, (y1 + y2) / 2 / H)
+        for pos, (cx, cy) in where.items():
+            with self.subTest(position=pos):
+                row = "top" if pos.startswith("top") else "bottom" if pos.startswith("bottom") else "center"
+                col = "left" if pos.endswith("left") else "right" if pos.endswith("right") else "center"
+                self.assertTrue({"top": cy < 0.33, "center": 0.4 < cy < 0.6, "bottom": cy > 0.67}[row], (pos, cx, cy))
+                self.assertTrue({"left": cx < 0.45, "center": 0.45 <= cx <= 0.55, "right": cx > 0.55}[col], (pos, cx, cy))
+
+    def test_insert_takes_an_odd_sized_jpeg(self):
+        """#437: a 4:2:0 JPEG with an odd width or height (a phone screenshot) failed with
+        "Invalid odd size": the BT.601 -> BT.709 colorspace filter came first in the graph and
+        refuses odd frames. The same picture as a PNG worked."""
+        OUT.mkdir(parents=True, exist_ok=True)
+        odd = OUT / "odd437.jpg"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x1408",
+           "-vf", "scale=629:1401,format=yuvj420p", "-frames:v", "1", "-update", "1", odd)
+        m = probe(str(odd))
+        self.assertEqual((m["video"]["width"], m["video"]["height"], m["video"]["pix_fmt"]), (629, 1401, "yuvj420p"),
+                         "the fixture has to be the odd 4:2:0 JPEG the report is about")
+        for extra in ([], ["--zoom", "in"]):
+            with self.subTest(extra=extra):
+                out = OUT / "odd437.mp4"
+                doc = json.loads(script("insert.py", odd, "--duration", "2", "--width", "1080", "--height", "1920",
+                                        *extra, "-o", out, "--overwrite", "--json").stdout)
+                self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc)
+                self.assertEqual((doc["probe"]["video"]["width"], doc["probe"]["video"]["height"]), (1080, 1920))
+        # the conversion keeps the frame's own size: padded for the filter, cropped back after it,
+        # so a rectangle that ends on the last column still means that column
+        from _common.color import bt709_matrix_filter
+        conv = bt709_matrix_filter(m)
+        self.assertTrue(conv.startswith("pad=") and conv.endswith(",crop=iw-1:ih-1:0:0:exact=1"), conv)
+        kept = OUT / "odd437_kept.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", odd, "-vf", conv, "-frames:v", "1", "-update", "1", kept)
+        k = probe(str(kept))
+        self.assertEqual((k["video"]["width"], k["video"]["height"]), (629, 1401))
+        rotated = dict(m, video=dict(m["video"], width=1400, height=629, rotation=90))
+        self.assertTrue(bt709_matrix_filter(rotated).endswith(",crop=iw-1:ih-0:0:0:exact=1"), "the odd axis after FFmpeg's rotation")
+
+
+    def test_an_odd_sized_clip_is_captioned_and_stabilized(self):
+        """#438, found by sweeping the class behind #437: on a 629x1401 clip caption.py retried
+        with the even scale at the head of its chain, where a later filter made the frame odd
+        again (the encoder refused it twice), and stabilize.py let vid.stab abort on its own
+        assertion. Both now write an even frame and say so."""
+        OUT.mkdir(parents=True, exist_ok=True)
+        odd = OUT / "odd438.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x1408:r=30:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-vf", "scale=629:1401,format=yuvj420p", "-c:v", "mjpeg", "-q:v", "3",
+           "-c:a", "aac", odd)
+        m = probe(str(odd))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (629, 1401), "the fixture has to be odd on both axes")
+        cues = OUT / "odd438.txt"
+        cues.write_text("0-1.5 Odd\n", encoding="utf-8")
+        runs = {"caption.py": ["--text", cues]}
+        filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+        if re.search(r"\bvidstabdetect\b", filters):
+            runs["stabilize.py"] = []
+        if not re.search(r"\bsubtitles\b", filters):
+            runs.pop("caption.py")
+        if not runs:
+            self.skipTest("this ffmpeg build has neither libass nor vid.stab")
+        for tool, extra in runs.items():
+            with self.subTest(tool=tool):
+                out = OUT / f"odd438_{tool[:-3]}.mp4"
+                doc = json.loads(script(tool, odd, *extra, "-o", out, "--overwrite", "--json").stdout)
+                self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc)
+                v = doc["probe"]["video"]
+                self.assertEqual((v["width"] % 2, v["height"] % 2), (0, 0), v)
+                codes = [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks", [])]
+                self.assertIn("odd_dimensions_scaled_even", codes, doc)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

@@ -918,6 +918,19 @@ that is so: once a tool has written its deliverable and runs a further step on i
 says it is kept without the step that was stopped, and the document carries it as `output`
 (3.1.6, #415).
 
+**Source carry-over.** Every tool that writes a media file compares what its first input carried
+besides the picture and the sound with the file it wrote, and says so in `source_carry:
+{kept: [...], dropped: [...]}`. The items are `subtitles`, `chapters`, `cover_art`,
+`audio_channels` (a surround source only: more than two), `creation_time`, `audio_language` and
+`timecode`. The key is present only when the source had at least one of them, so a result for a
+plain source is unchanged. It is absent under `--dry-run`, for a still or GIF output, and when two
+or more inputs have a picture or sound (which one's items the output should carry is the tool's
+choice). An item bound to a stream the output does not have at all is not compared (a sound-only
+extract has no subtitle track to lose). It is a report, not a check: `verified` does not depend on
+it. A dropped `subtitles`, `chapters`, `cover_art` or `audio_channels` also records one
+`source_items_dropped` warning and a notes line; a subtitle track the tool already reports through
+`dropped_non_av_streams` is not warned about twice, and a lost tag is listed without a warning.
+
 **Diagnostics.** What a run decided on its own -- a warning, a fallback it took, a step it
 skipped -- is recorded as it happens (a stderr line too) and lands in the document as
 `diagnostics: {warnings, fallbacks, skipped}`, each entry `{code, message, ...facts}`; it is

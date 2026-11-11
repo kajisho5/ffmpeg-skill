@@ -1088,6 +1088,94 @@ class DeliveryTests(MediaFixtures):
                                  f"{tool} must treat youtube-shorts and shorts as one destination")
 
 
+class SourceCarryTests(MediaFixtures):
+    """#401: what the output lost from its source is said, by every tool, in one place."""
+
+    def test_source_carry_says_what_the_output_lost_from_its_source(self):
+        """A dozen tools dropped a subtitle track, chapters, creation_time or surround channels and
+        reported verified: true with no note. emit() now compares the first input's items with the
+        written file's: `source_carry: {kept, dropped}`, a `source_items_dropped` warning for
+        content (not for tags, not for a subtitle loss the tool already reports), and nothing at
+        all for a source that carried none of the items."""
+        from _common.probe import carry_inventory
+        srt = OUT / "carry.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:02,000\nhi\n", encoding="utf-8")
+        meta = OUT / "carry_chapters.txt"
+        meta.write_text(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2000\ntitle=A\n"
+                        "[CHAPTER]\nTIMEBASE=1/1000\nSTART=2000\nEND=4000\ntitle=B\n", encoding="utf-8")
+        rich = OUT / "carry_rich.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=4",
+           "-f", "lavfi", "-i", "sine=d=4", "-i", srt, "-i", meta,
+           "-filter_complex", "[1:a]pan=5.1|c0=c0|c1=c0|c2=c0|c3=c0|c4=c0|c5=c0[a]",
+           "-map", "0:v", "-map", "[a]", "-map", "2", "-map_metadata", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-c:s", "mov_text", "-metadata", "creation_time=2026-01-02T03:04:05Z",
+           "-metadata:s:a:0", "language=jpn", "-timecode", "01:00:00:00", rich)
+        probe(str(rich))
+        have = carry_inventory(str(rich))
+        # the fixture is checked before any tool is: an FFmpeg that stopped writing one of these
+        # would otherwise read as "the tool kept nothing"
+        self.assertEqual((have["subtitles"], have["chapters"], have["creation_time"], have["audio_language"],
+                          have["timecode"], have["audio_channels"]), (1, 2, 1, 1, 1, 6), have)
+
+        def run(tool, *args):
+            doc = json.loads(script(tool, *args, "--overwrite", "--json").stdout)
+            codes = [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings", [])]
+            return doc, codes
+
+        # a tool with no field of its own for the loss: listed, and one warning for the content
+        doc, codes = run("crop.py", rich, "--x", "0", "--y", "0", "--width", "160", "--height", "120", "-o", OUT / "carry_crop.mp4")
+        carry = doc["source_carry"]
+        self.assertIn("subtitles", carry["dropped"], doc)
+        self.assertIn("chapters", carry["kept"], doc)
+        self.assertIn("audio_channels", carry["kept"], doc)
+        self.assertEqual(codes.count("source_items_dropped"), 1, doc)
+        warning = next(w for w in doc["diagnostics"]["warnings"] if w["code"] == "source_items_dropped")
+        self.assertEqual(warning["dropped"], ["subtitles"], "tags are listed, not warned about")
+        self.assertIn("creation_time", carry["dropped"], doc)
+        self.assertTrue(doc["verified"], "a report, not a check")
+        self.assertTrue(any("subtitle track" in n for n in doc.get("notes") or []), doc)
+        self.assertEqual(sorted(carry["kept"] + carry["dropped"]), sorted(set(carry["kept"]) | set(carry["dropped"])))
+
+        # a tool that already says the subtitle track went: listed, not warned about twice
+        doc, codes = run("color.py", rich, "--correct", "--contrast", "1.1", "-o", OUT / "carry_color.mp4")
+        if doc.get("dropped_non_av_streams"):
+            self.assertIn("subtitles", doc["source_carry"]["dropped"], doc)
+            self.assertNotIn("source_items_dropped", codes, doc)
+
+        # cut.py reads its own output back as an input: that is not a second source (the stream
+        # copy that drops the mov_text track with dropped_non_av_streams false is #401's own case)
+        doc, codes = run("cut.py", rich, "--start", "1", "--end", "3", "-o", OUT / "carry_cut.mp4")
+        self.assertIn("source_carry", doc, doc)
+        if "subtitles" in doc["source_carry"]["dropped"] and not doc.get("dropped_non_av_streams"):
+            self.assertIn("source_items_dropped", codes, doc)
+
+        # export keeps the subtitle track: kept, and nothing to warn about
+        doc, codes = run("export.py", rich, "--preset", "youtube", "-o", OUT / "carry_export.mp4")
+        self.assertIn("subtitles", doc["source_carry"]["kept"], doc)
+        self.assertNotIn("source_items_dropped", codes, doc)
+
+        # a sound-only extract has no subtitle track or timecode to lose
+        doc, codes = run("audio.py", rich, "-o", OUT / "carry_audio.m4a")
+        carry = doc.get("source_carry") or {"kept": [], "dropped": []}
+        self.assertNotIn("subtitles", carry["kept"] + carry["dropped"], doc)
+        self.assertNotIn("timecode", carry["kept"] + carry["dropped"], doc)
+
+        # a source with none of the items: the key is absent and nothing is warned
+        doc, codes = run("crop.py", self.src, "--x", "0", "--y", "0", "--width", "160", "--height", "120", "-o", OUT / "carry_plain.mp4")
+        self.assertNotIn("source_carry", doc)
+        self.assertNotIn("source_items_dropped", codes)
+        # a dry run measured nothing; a still holds none of these; two picture sources are not compared
+        doc = json.loads(script("crop.py", rich, "--x", "0", "--y", "0", "--width", "160", "--height", "120",
+                                "-o", OUT / "carry_dry.mp4", "--dry-run", "--json").stdout)
+        self.assertNotIn("source_carry", doc)
+        doc, codes = run("look.py", rich, "--at", "1", "-o", OUT / "carry_look.png")
+        self.assertNotIn("source_carry", doc)
+        self.assertNotIn("source_items_dropped", codes)
+        doc, codes = run("join.py", rich, self.src, "-o", OUT / "carry_join.mp4")
+        self.assertNotIn("source_carry", doc)
+        self.assertNotIn("source_items_dropped", codes)
+
+
 class GeometryAuditDeliveryTests(unittest.TestCase):
     """Issue #411 (audit H): a delivery preset sizes a non-square-pixel master in square pixels."""
 

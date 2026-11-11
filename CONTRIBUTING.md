@@ -19,6 +19,11 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
   cross-platform correctness, test coverage for an edge case, and documentation
   drift fixes are always welcome. New tools or features are a much higher bar —
   see "Scope" below.
+- **A bug fix sweeps for siblings first.** Before fixing a reported defect, name its class and
+  check which other tools meet the same thing: `python3 tests/sweep.py INPUT --baseline PLAIN`
+  runs one input through the 25 single-input tools and prints the rows that differ from a plain
+  clip's. The full procedure is `.claude/skills/sibling-sweep/SKILL.md`; the PR template's
+  "Siblings" section records what was swept.
 - **Every change needs a reproduction.** If you're fixing a bug, show the failing
   case before your fix and the passing case after — either as a new test or a
   documented manual repro in the PR description.
@@ -98,6 +103,32 @@ would have caught the original bug isn't done yet.
   planned. A label-driven release (release.yml's auto-bump) moves only the version number and
   keeps the hand-written prose, marked with the version it describes
   (`.github/scripts/bump_roadmap_md.py`); the next hand-written release PR replaces the sentence.
+  The same bump moves both `version` fields in `server.json` (`.github/scripts/bump_server_json.py`).
+- Every release also commits the installable plugin tree to the `plugin` branch
+  (`.github/scripts/publish_plugin_branch.sh`): the npm tarball's contents plus the plugin
+  manifest and `skills/`. Never commit to that branch by hand and never force-push it; hosts
+  fast-forward it. `bash .github/scripts/publish_plugin_branch.sh --tree-only DIR` builds the
+  tree locally without touching git.
+
+## Publishing the MCP listing
+
+These steps are manual. Nothing in CI publishes the server.
+
+The registry checks the **already published** npm package. `mcpName` in `package.json` has to
+equal `server.json`'s `name` (`io.github.kajisho5/ffmpeg-skill`) at that exact version, so publish
+npm first (the release workflow does) and only then the registry. Clients run
+`npx -y ffmpeg-skill mcp`, which is `python3 mcp/server.py` on stdio.
+
+1. Install [`mcp-publisher`](https://modelcontextprotocol.io/registry/quickstart) and run
+   `mcp-publisher login github` as **kajisho5** (GitHub auth only allows the `io.github.kajisho5/`
+   namespace). `mcp-publisher validate`, then `mcp-publisher publish`.
+2. Smithery: nothing to run. Its API, CLI and SDKs stopped working on 2026-10-31
+   (smithery.ai/future); the site remains a curated directory and documents no way to submit a
+   server, so this repository ships no `smithery.yaml` and no `.mcpb` bundle.
+3. Glama: submit the GitHub repo, then claim it. `glama.json` lists maintainer `kajisho5`.
+   Claiming again is what picks up a change to that file.
+4. Scorecard uploads SARIF to code scanning. That upload needs code scanning enabled on the
+   repository. The badge in the README fills in after a scan with `publish_results` has run.
 
 ## Reporting issues
 

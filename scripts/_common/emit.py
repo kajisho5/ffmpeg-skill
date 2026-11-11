@@ -163,6 +163,74 @@ def _report_dropped_hdr10_metadata(meta: Dict[str, Any], ctx: "Context") -> None
         ctx.notes.append(note_line)
 
 
+# source_carry: the items compared, in report order. The first group is content a viewer or
+# listener notices missing and raises the warning; the second is tags, listed but never warned
+# about (every camera file has a creation_time, so a warning for it would fire on every run).
+CARRY_CONTENT = ("subtitles", "chapters", "cover_art", "audio_channels")
+CARRY_TAGS = ("creation_time", "audio_language", "timecode")
+_CARRY_NAMES = {"subtitles": "subtitle track", "chapters": "chapters", "cover_art": "cover picture",
+                "audio_channels": "audio channels"}
+
+
+def source_carry(output: Optional[str], ctx: "Context", extra: Dict[str, Any]) -> "Optional[Dict[str, List[str]]]":
+    """What the first input carried besides its picture and sound, and whether the written file
+    still has it (#401): {"kept": [...], "dropped": [...]}, or None when the source had none of
+    it or the two files are not comparable. Measured on the written file, so the tool, encoder or
+    FFmpeg version that dropped it does not matter. A report, not a check: `verified` is not
+    touched. Not compared: two or more picture or sound sources (which one's items the output
+    should carry is the tool's choice), an output that is not a media file, and items bound to a
+    stream the output does not have at all (a sound-only extract has no subtitle track or
+    timecode to lose; a picture-only output has no audio channels). Audio channels are an item
+    only for a surround source (more than two)."""
+    from .probe import MEDIA_EXT, _STILL_EXT, carry_inventory
+    first = getattr(STATE, "first_input", None)
+    if not first or not output:
+        return None
+    # a tool that reads its own output back (cut.py measures the cut it wrote) probed it as an
+    # input too: that is not a second source
+    own = os.path.realpath(output)
+    if any(len(set(getattr(STATE, name, None) or ()) - {own}) > 1 for name in ("video_inputs", "audio_inputs")):
+        return None
+    ext = os.path.splitext(output)[1].lower()
+    if ext not in MEDIA_EXT or ext in _STILL_EXT:
+        return None  # a still, a contact sheet or an animated GIF holds none of these
+    src, out = carry_inventory(first[0]), carry_inventory(output)
+    if not src or not out or os.path.realpath(first[0]) == os.path.realpath(output):
+        return None
+    kept: List[str] = []
+    dropped: List[str] = []
+    for item in CARRY_CONTENT + CARRY_TAGS:
+        if not src.get(item):
+            continue
+        if item == "audio_channels" and src[item] <= 2:
+            continue  # mono and stereo are what every tool writes; only a surround layout can be folded down
+        if item in ("subtitles", "timecode") and src["has_video"] and not out["has_video"]:
+            continue
+        if item in ("audio_channels", "audio_language") and not out["has_audio"]:
+            continue
+        (kept if out.get(item, 0) >= src[item] else dropped).append(item)
+    if not kept and not dropped:
+        return None
+    said = set()
+    if extra.get("dropped_non_av_streams") or any(w.get("code") == "non_av_streams_dropped" for w in ctx.fallbacks):
+        said.add("subtitles")  # the tool's own field already says the track went
+    loud = [i for i in dropped if i in CARRY_CONTENT and i not in said]
+    if loud:
+        parts = []
+        for i in loud:
+            if i == "audio_channels":
+                parts.append(f"{src[i] - out.get(i, 0)} of its {src[i]} audio channels")
+            else:
+                parts.append("its " + _CARRY_NAMES[i])
+        warn("the source carried " + ", ".join(parts) + " that this output does not have "
+             "(source_carry lists everything kept and dropped)",
+             "source_items_dropped", ctx=ctx, dropped=loud)
+        note_line = ctx.warnings[-1]["message"] if ctx.warnings else None
+        if note_line and note_line not in ctx.notes:
+            ctx.notes.append(note_line)
+    return {"kept": kept, "dropped": dropped}
+
+
 def refuse(kind: str, reason: str, msg: str, *, hint: Optional[str] = None, code: int = 1,
            ctx: "Optional[Context]" = None, extra: "Optional[Dict[str, Any]]" = None, **details: Any) -> "None":
     """die() for a refusal a caller has to act on: `error.reason` is a stable snake_case code for
@@ -710,6 +778,9 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
         _report_dropped_audio_tracks(meta, ctx)
         _report_dropped_hdr10_metadata(meta, ctx)
+        carry = source_carry(output, ctx, extra)
+        if carry and "source_carry" not in extra:
+            extra["source_carry"] = carry
     if ctx.json:
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         if meta:

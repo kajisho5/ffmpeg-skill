@@ -1,0 +1,50 @@
+# OpenSSF Scorecard. Pins match ossf/scorecard's own scorecard-analysis.yml
+# (actions/checkout v7.0.1, ossf/scorecard-action v2.5.0, actions/upload-artifact v7.0.2,
+# github/codeql-action/upload-sarif v4.38.3). branch_protection_rule is the trigger the
+# Branch-Protection check documents:
+# https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection
+name: Scorecard supply-chain security
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly. Same Saturday slot as ossf/scorecard's own workflow.
+    - cron: '30 1 * * 6'
+  branch_protection_rule:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload the SARIF to code scanning.
+      security-events: write
+      # OIDC token for publish_results.
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: results.sarif

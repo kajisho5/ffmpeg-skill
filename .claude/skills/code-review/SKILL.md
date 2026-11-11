@@ -149,6 +149,9 @@ and claim-honesty.
   and how to check for drift.
 - **`references/review-checklist.md`** — the runnable pre-commit and pre-merge
   checklist with exact commands.
+- **`references/reviewer-findings.md`** — the twenty questions an outside reviewer
+  kept asking across 353 findings (#92 to #435). Read it before every push; add a
+  question when a finding fits none of them.
 
 ### Note for this repository (ffmpeg-skill)
 

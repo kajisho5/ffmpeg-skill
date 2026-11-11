@@ -27,7 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs
+from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
 def main() -> int:
@@ -63,7 +63,18 @@ def main() -> int:
         trf_arg = escape_filter_path(trf)
 
         ffmpeg = require_tool("ffmpeg")
-        detect_vf = f"vidstabdetect=shakiness={args.shakiness}:result={trf_arg}"
+        # vid.stab asserts on an odd frame (ffmpeg aborts in pass 1, #438), so both passes see an
+        # even one. Recorded like the runner's own odd-size retry: the output is a pixel narrower
+        # or shorter than the source.
+        v = meta["video"]
+        w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+        if int(v.get("rotation") or 0) % 180 == 90:
+            w, h = h, w
+        even = f"{EVEN_SCALE}," if (w % 2 or h % 2) else ""
+        if even:
+            record_fallback("source has odd dimensions; scaling to even before stabilizing (vid.stab needs it)",
+                            "odd_dimensions_scaled_even", output=output, scale=EVEN_SCALE)
+        detect_vf = f"{even}vidstabdetect=shakiness={args.shakiness}:result={trf_arg}"
         if args.tripod:
             # A frame number, not a boolean: frame 1 is the standard reference for "lock to
             # this fixed frame" (mirrors vidstabtransform's own tripod=1 below).
@@ -78,7 +89,7 @@ def main() -> int:
                 die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg")
 
         crop_mode = {"keep": 0, "black": 1}[args.crop]
-        transform_vf = f"vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=1"
+        transform_vf = f"{even}vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=1"
         if args.tripod:
             # Equivalent to relative=0:smoothing=0 -- overrides --smoothing, since averaging a
             # camera path makes no sense once every frame is locked to one fixed reference.

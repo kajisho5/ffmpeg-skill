@@ -1,0 +1,35 @@
+{
+  "name": "ffmpeg-skill",
+  "displayName": "ffmpeg-skill",
+  "description": "Local FFmpeg video/audio editing for coding agents: 42 tools with a machine-readable contract and MCP server, capability detection, probe-first / verify-last workflow. Cut, captions, reframe, loudness, platform exports. No cloud, no API keys.",
+  "version": "3.2.3",
+  "author": {
+    "name": "kajisho5"
+  },
+  "homepage": "https://github.com/kajisho5/ffmpeg-skill",
+  "repository": "https://github.com/kajisho5/ffmpeg-skill",
+  "license": "MIT",
+  "keywords": [
+    "ffmpeg",
+    "video",
+    "video-editing",
+    "video-processing",
+    "audio",
+    "audio-processing",
+    "subtitles",
+    "captions",
+    "transcoding",
+    "loudness",
+    "agent-skill",
+    "agent-skills",
+    "claude-code",
+    "claude-skill",
+    "cursor",
+    "codex",
+    "ai-agents",
+    "mcp",
+    "mcp-server",
+    "skill"
+  ],
+  "logo": "assets/icon.png"
+}

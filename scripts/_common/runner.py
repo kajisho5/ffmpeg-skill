@@ -1067,9 +1067,14 @@ class _OutputLock:
 def _odd_dimension_retry(cmd: List[str], stderr: str) -> Optional[List[str]]:
     """An odd-sized source (641x359 screen captures, some 4:4:4 masters) fails every yuv420p
     encode with "width/height not divisible by 2" (sweep F8, 15 tools). Return the same command
-    with an even-dimension scale prepended to its -vf chain (or a new -vf when the command had
+    with an even-dimension scale appended to its -vf chain (or a new -vf when the command had
     none); None when the failure is something else or the graph is a -filter_complex the
-    caller has to fix itself."""
+    caller has to fix itself.
+
+    Appended, not prepended: what the encoder refuses is the frame the chain hands it, and a
+    chain can make an even frame odd again (squaring non-square pixels to 636x1401, a conversion
+    that restores the source's own size). Through 3.2.3 the scale went first, so caption.py on an
+    odd-sized clip retried and failed the same way (#438)."""
     if "not divisible by 2" not in stderr or EVEN_SCALE in cmd or any(EVEN_SCALE in a for a in cmd):
         return None
     if "-filter_complex" in cmd:
@@ -1077,7 +1082,7 @@ def _odd_dimension_retry(cmd: List[str], stderr: str) -> Optional[List[str]]:
     new = list(cmd)
     if "-vf" in new:
         i = new.index("-vf") + 1
-        new[i] = EVEN_SCALE + "," + new[i]
+        new[i] = new[i] + "," + EVEN_SCALE
         return new
     if "-c:v" in new and new[new.index("-c:v") + 1] == "copy":
         return None

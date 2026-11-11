@@ -68,6 +68,9 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.1 — broadcast legal levels, measured](#after-321--broadcast-legal-levels-measured)
 - [After 3.2.2 — the alpha path beyond export (#433)](#after-322--the-alpha-path-beyond-export-433)
 - [After 3.2.1 — a smart cut that re-encodes only the partial GOPs](#after-321--a-smart-cut-that-re-encodes-only-the-partial-gops)
+- [After 3.2.3 — what the output lost from its source is said (#401)](#after-323--what-the-output-lost-from-its-source-is-said-401)
+- [After 3.2.3 — two reports from outside (#436, #437)](#after-323--two-reports-from-outside-436-437)
+- [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
 <!-- contents:end -->
 
 ## Time limits
@@ -3064,3 +3067,78 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
 
 Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
 
+## After 3.2.3 — what the output lost from its source is said (#401)
+
+- **`source_carry` is a report in `emit()`, not a per-tool fix and not a check.** #401 listed a
+  dozen tools that drop a subtitle track, chapters, a cover picture, `creation_time`, a language
+  tag or surround channels and still say `verified: true` with no note. Fixing each drop is
+  per-tool work with its own decisions (a retimed cut cannot copy cues as they are). The shared
+  part is that the loss must be *said*, so `emit()` compares the first input's items with the
+  written file's, whichever tool, encoder or FFmpeg version dropped them. It does not touch
+  `verified`: several drops are deliberate and documented (the entry "Subtitle/data tracks are
+  kept where the picture's timeline is untouched and dropped where it is retimed"), and a check
+  that fails on a decision would train callers to ignore it.
+- **Content raises a warning; tags are only listed.** A lost subtitle track, chapter list, cover
+  picture or surround layout records `source_items_dropped`. `creation_time`, the audio language
+  and the start timecode are listed under `dropped` without a warning: every camera file carries a
+  `creation_time` and FFmpeg drops it on any write that does not ask for `-map_metadata`, so the
+  warning would fire on every real run and stop being read.
+- **Not said twice.** Where the tool already reports the subtitle loss (`dropped_non_av_streams:
+  true`, the `non_av_streams_dropped` fallback), `subtitles` is under `dropped` but adds no warning.
+- **Absent for a source with none of the items**, so every result document for a plain source is
+  what it was. Stereo and mono are not an item: `audio_channels` is compared for a surround
+  source only.
+- **Not compared:** two or more inputs with a picture or sound (which one's items the output
+  should carry is the tool's choice; a tool's own output read back as an input, as `cut.py` does,
+  is not a second source), a still or GIF output, a dry run, and an item bound to a stream the
+  output does not have (a sound-only extract has no subtitle track or timecode to lose).
+- **A chapter list kept but not retimed counts as kept.** The comparison is a count; whether the
+  chapters still point at the right moments is a later, per-tool measurement.
+  Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
+  `test_source_carry_says_what_the_output_lost_from_its_source`.
+
+## After 3.2.3 — two reports from outside (#436, #437)
+
+- **A `force_style` Alignment is the legacy SSA number, a Style line's is the numpad one.**
+  `caption.py` keeps two tables: `ALIGN` for the ASS file it writes (`--text`, `--transcribe`,
+  karaoke) and `FORCE_STYLE_ALIGN` for the SRT burn. They agree on the bottom row only, which is
+  why the default placement hid the bug. Measured on libass 0.17.1 (FFmpeg 6.1.1) and reported on
+  FFmpeg 9.0.2. Code: `caption.FORCE_STYLE_ALIGN`. Test:
+  `UserReportTests.test_caption_srt_position_lands_where_it_says` (the text's bounding box on the
+  burned frame, for all seven positions).
+- **An odd-sized BT.601 source is padded to even for its matrix conversion and cropped back to
+  its own size, not cropped or scaled.** The `colorspace` filter refuses an odd frame, and it has
+  to come first in the graph (it converts the source's own pixels). Padding by one row or column
+  and cropping it off again after the conversion loses and resamples nothing (a 4:2:0 frame's
+  chroma planes are the same size either way), so a caller's own rectangle (`crop.py --x 1
+  --width 628` on a 629-wide source) still addresses the pixels it measured; a first version
+  cropped the edge off and shifted such a rectangle. The odd axis is read after the rotation swap
+  FFmpeg applies before the graph. `_MATRIX_FILTER_RE` accepts the wrapped form, so the code that
+  folds the conversion into a tool's own `-vf` still finds it (without that the command carried
+  two `-vf` and the second replaced the tool's graph). Code:
+  `_common.color.bt709_matrix_filter()`. Test: `UserReportTests.test_insert_takes_an_odd_sized_jpeg`.
+
+## After 3.2.3 — what a plugin install copies, and what it leaves out
+
+- **The plugin tree is a branch built from the npm tarball, not the repository root.** A plugin
+  host copies whatever the marketplace entry points at; at `./` that is every tracked file (28 MB:
+  tests, evals, the site, brand files, docs images) for a skill that reads 2.6 MB. Each release
+  commits the npm tarball's contents, plus `.claude-plugin/plugin.json` and
+  `skills/ffmpeg-skill/SKILL.md`, to the `plugin` branch (`.github/scripts/publish_plugin_branch.sh`,
+  run by release.yml before the npm publish). An npm plugin source was measured and rejected:
+  Claude Code 2.1.322 and Codex 0.167 both shell out to `npm` for it ("npm exited with an error",
+  "npm pack failed" without one), and the plugin route has never needed Node. A git source with
+  `ref` installed with git alone in both. The two plugin files stay out of the npm package itself
+  because `npx ffmpeg-skill` copies the package into an agent's skills folder, where a second
+  `SKILL.md` under `skills/` would be the same skill twice. The marketplace entry moves from `./`
+  to the branch only after a release has published it; until then the entry says `./` on purpose.
+  Test: `test_plugin_branch_tree_is_the_runtime_set`.
+- **The plugin does not register the MCP server.** `mcp/server.py` rides along in the plugin tree,
+  but no `.mcp.json` or `mcpServers` entry starts it. In a host that runs a plugin (Claude Code,
+  Codex, Gemini CLI) the agent has a shell, and the skill reaches all 42 tools through it; the MCP
+  server exposes 12 tools whose definitions are 68 KB (about 17,000 tokens) and would be loaded
+  into every session of a host that does not defer tool definitions, for a second route to the
+  same scripts. The server is for clients without a shell, which do not install plugins: they get
+  it from the MCP Registry entry (`server.json`) or the one-line config in the README
+  (`npx -y ffmpeg-skill mcp`). Report this as a defect only with a host that runs plugins, has no
+  shell, and cannot add an MCP server by its own config.

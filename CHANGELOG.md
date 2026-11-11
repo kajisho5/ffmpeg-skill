@@ -4,7 +4,60 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`source_carry`: every result says what the output lost from its source.** A tool that writes a
+  media file compares what its first input carried besides the picture and the sound (subtitle
+  tracks, chapters, a cover picture, surround channels, `creation_time`, the audio language tag, the
+  start timecode) with the written file and reports `source_carry: {kept, dropped}`. A lost subtitle
+  track, chapter list, cover picture or surround layout is also a `source_items_dropped` warning,
+  unless the tool already says it through `dropped_non_av_streams`. Until now such a run was
+  `verified: true` with no note (#401). The key appears only when the source had one of the items,
+  never changes `verified`, and no tool writes a different file.
+
+- **`npx ffmpeg-skill mcp`** starts the stdio MCP server (`python3 mcp/server.py`), the command
+  the MCP Registry manifest (`server.json`, kept on the package version by the release bump)
+  publishes. An OpenSSF Scorecard workflow runs weekly and on pushes to `main` (#369).
+
+- **`tests/sweep.py`** runs one input through the 25 single-input tools and prints what each said
+  (`--baseline PLAIN` keeps only the rows that differ from a plain clip's). With the
+  `sibling-sweep` skill, the AGENTS.md rule and the PR template's "Siblings" section, a reported
+  defect is now checked across the tools before it is fixed. Its first run, on the class behind
+  #437, found #438.
+
+- **Codex and Gemini CLI plugin installs find the skill.** `codex plugin marketplace add
+  kajisho5/ffmpeg-skill` already installed the plugin, but Codex listed no skill for it: Codex
+  0.167 and Gemini CLI 0.68 discover a plugin's skill only at `skills/<name>/SKILL.md`. The
+  repository now carries `skills/ffmpeg-skill/SKILL.md`, generated from the root `SKILL.md`, a
+  `gemini-extension.json` and a `.cursor-plugin/plugin.json`; the release bump moves their
+  versions. Claude Code still counts one skill (#406).
+
+- **A `plugin` branch with only what a plugin install needs.** Each release commits the npm
+  tarball's contents plus the plugin manifest and the `skills/` copy (2.6 MB, 88 files) to the
+  `plugin` branch. Pointed at the repository root, a Claude Code or Codex plugin install copies all
+  28 MB of it, tests and evals included. The marketplace entry moves to the branch once the first
+  release has published it.
+
+### Fixed
+
+- **`caption.py --srt --position` put the text in the wrong place** for every value but the bottom
+  row (#436): `top` landed mid-left, `center` top-left, `top-left` top-right. The SRT burn hands its
+  style to libass's `force_style`, which reads `Alignment` in the legacy SSA numbering, and it was
+  given the v4+ numpad value. It now gets the legacy one (`top` 6, `center` 10, `top-left` 5,
+  `top-right` 7); `--text` and `--transcribe`, which burn a generated ASS file, were right already.
+- **An odd-sized 4:2:0 JPEG (a phone screenshot) failed with "Invalid odd size"** in `insert.py`
+  and in every tool that converts a BT.601 source to BT.709 (#437): the `colorspace` filter, first
+  in the graph, refuses an odd width or height. The frame is now padded to even for the conversion and cropped
+  back to its own size after it, so no pixel is lost or resampled; an even-sized source runs the
+  command it ran before.
+- **An odd-sized clip failed in `caption.py` and aborted `stabilize.py`** (#438, found by sweeping
+  the class behind #437). The runner's even-size retry put its scale at the head of the `-vf`
+  chain, where a later filter could make the frame odd again; it now goes at the end, where the
+  encoder reads it. `stabilize.py` scales an odd frame to even before both vid.stab passes
+  (vid.stab asserts on one) and records `odd_dimensions_scaled_even`.
+- **Release versions: a squash commit whose subject does not end with "(#N)" is resolved to its PR
+  by the merge commit's SHA** (a failed lookup stops the release job instead of guessing)**.** 3.2.3 shipped three features as a patch because the subject ended
+  "(#433, carries #432 and #434)" and the `feature` label was never read.
 
 ## 3.2.3
 

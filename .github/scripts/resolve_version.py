@@ -23,6 +23,12 @@ reading the PR see the same thing):
 
 A PR with `chore` AND `fix` is a fix. A commit on main that came from no PR is treated as
 patch unless its subject starts with chore/ci/docs/build (the autolabeler's own title rules).
+
+Which PR a commit came from: the "(#N)" GitHub puts at the end of a squash subject, and, when
+the subject does not end with one, the merged PR whose merge commit is that SHA (a failed lookup stops the job). 3.2.3 was a
+patch for three features because the squash subject ended "(#433, carries #432 and #434)": the
+subject matched nothing, the PR's `feature` label was never read, and the commit counted as a
+direct push.
 If nothing since the last tag is releasable, the resolved version is empty and release.yml
 does nothing.
 
@@ -61,18 +67,26 @@ def bump_for_labels(labels: Iterable[str]) -> Optional[str]:
 
 
 def resolve(last_version: str, subjects: List[str],
-            labels_for: Callable[[int], List[str]]) -> Tuple[Optional[str], List[Dict[str, object]]]:
+            labels_for: Callable[[int], List[str]],
+            shas: Optional[List[str]] = None,
+            pr_for_sha: Optional[Callable[[str], Optional[int]]] = None,
+            ) -> Tuple[Optional[str], List[Dict[str, object]]]:
     """Return (next_version or None, per-commit decisions).
 
     subjects: commit subjects on main since the last tag, newest first (git log order).
     labels_for: PR number -> its label names.
+    shas, pr_for_sha: the commits' SHAs (same order as subjects) and SHA -> the number of the
+    merged PR it is the merge commit of (None when there is none). Asked only for a subject that
+    does not end with "(#N)".
     """
     decisions: List[Dict[str, object]] = []
     bumps: List[str] = []
-    for subject in subjects:
+    for i, subject in enumerate(subjects):
         m = PR_NUMBER.search(subject)
-        if m:
-            number = int(m.group(1))
+        number: Optional[int] = int(m.group(1)) if m else None
+        if number is None and shas and pr_for_sha:
+            number = pr_for_sha(shas[i])
+        if number is not None:
             labels = labels_for(number)
             bump = bump_for_labels(labels)
             decisions.append({"subject": subject, "pr": number, "labels": sorted(labels), "bump": bump})
@@ -105,14 +119,35 @@ def _gh_labels(repo: str) -> Callable[[int], List[str]]:
     return labels_for
 
 
+def _gh_pr_for_sha(repo: str) -> Callable[[str], Optional[int]]:
+    def pr_for_sha(sha: str) -> Optional[int]:
+        # Only the PR this commit is the merge commit of: the endpoint also lists every PR that
+        # merely contains the commit. An empty answer is "no PR" (a direct push). A failed request
+        # is not: falling back to the title rules is exactly how a feature became a patch, so the
+        # job stops and can be re-run.
+        proc = subprocess.run(
+            ["gh", "api", f"repos/{repo}/commits/{sha}/pulls", "--jq",
+             f'[.[] | select(.merged_at != null and .merge_commit_sha == "{sha}") | .number]'],
+            capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise SystemExit(f"could not look up the pull request of {sha[:9]} (re-run the job): "
+                             f"{proc.stderr.strip()[:300]}")
+        numbers = json.loads(proc.stdout or "[]")
+        return int(numbers[0]) if numbers else None
+    return pr_for_sha
+
+
 def main() -> int:
     last = os.environ["LAST_VERSION"]
     repo = os.environ["GITHUB_REPOSITORY"]
     rev_range = f"v{last}..HEAD" if last != "0.0.0" else "HEAD"
-    subjects = [s for s in subprocess.run(
-        ["git", "log", rev_range, "--format=%s"], capture_output=True, text=True, check=True
-    ).stdout.splitlines() if s.strip()]
-    version, decisions = resolve(last, subjects, _gh_labels(repo))
+    pairs = [line.split(" ", 1) for line in subprocess.run(
+        ["git", "log", rev_range, "--format=%H %s"], capture_output=True, text=True, check=True
+    ).stdout.splitlines() if line.strip()]
+    pairs = [p for p in pairs if len(p) == 2 and p[1].strip()]
+    subjects = [p[1] for p in pairs]
+    shas = [p[0] for p in pairs]
+    version, decisions = resolve(last, subjects, _gh_labels(repo), shas, _gh_pr_for_sha(repo))
     for d in decisions:
         tag = d["bump"] or "-"
         print(f"  {tag:6} {'#' + str(d['pr']) if d['pr'] else '(no PR)':8} {','.join(d['labels']) or '(unlabeled)':30} {d['subject']}")

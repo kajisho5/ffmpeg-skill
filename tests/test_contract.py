@@ -291,6 +291,178 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(set(manifest) <= {"name", "version", "description", "author", "homepage", "repository", "license", "keywords"}, sorted(manifest))
         self.assertTrue(re.fullmatch(r"[a-z0-9-]+", manifest["name"]))
 
+    def test_plugin_hosts_find_the_skill_and_its_version(self):
+        """Codex 0.167 and Gemini CLI 0.68 discover a plugin's skills only under
+        skills/<name>/SKILL.md (measured: Codex lists nothing for a SKILL.md at the plugin root,
+        with or without a manifest `skills` field), so the repository carries a generated copy
+        there. It must be the generator's output for the current SKILL.md, and every host's
+        manifest must carry the package version, moved by release.yml's bump."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "build_plugin_skill", ROOT / ".github" / "scripts" / "build_plugin_skill.py")
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        root_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        copy = (ROOT / "skills" / "ffmpeg-skill" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(copy, gen.build(root_text),
+                         "stale: run python3 .github/scripts/build_plugin_skill.py --write")
+        front = root_text[:root_text.index("\n---\n", 4)]
+        self.assertTrue(copy.startswith(front), "the copy keeps the frontmatter hosts trigger on")
+        for target in re.findall(r"\]\((\.\./\.\./[^)#]+)", copy):
+            self.assertTrue((ROOT / "skills" / "ffmpeg-skill" / target).resolve().exists(), target)
+        self.assertNotIn("](references/", copy)
+        # plain (unlinked) paths cannot be rewritten without breaking the commands that quote
+        # them, so the note says where they are, and each one exists at the plugin root
+        self.assertIn("Every plain path below", gen.NOTE)
+        plain = set(re.findall(r"`((?:references|docs|templates)/[\w./-]+\.\w+)(?:#[\w-]+)?`", copy))
+        self.assertGreaterEqual(len(plain), 5)
+        for rel in plain:
+            self.assertTrue((ROOT / rel).is_file(), rel)
+        pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
+            doc = json.loads((ROOT / manifest).read_text(encoding="utf-8"))
+            self.assertEqual((doc["name"], doc["version"]), ("ffmpeg-skill", pkg["version"]), manifest)
+            self.assertTrue(doc.get("description"), manifest)
+            self.assertGreaterEqual(release.count(manifest), 2, f"{manifest}: bumped and staged by release.yml")
+        cursor = json.loads((ROOT / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertTrue((ROOT / cursor["logo"]).is_file(), "the logo is a committed, relative path")
+        # the npm installer copies one skill directory: the plugin copy must not ride along, or an
+        # agent's skills folder would hold the same skill twice
+        self.assertNotIn("skills/", pkg["files"])
+        self.assertNotIn("skills", [f.rstrip("/") for f in pkg["files"]])
+
+    def test_sweep_stops_on_a_failed_probe_and_survives_a_stalled_tool(self):
+        """tests/sweep.py is the sibling sweep's instrument, so its own failure modes are pinned:
+        an unreadable input stops before any tool runs (it used to build tool arguments from
+        default sizes and print rows), a child that passes the ceiling becomes a `timeout` row and
+        the next tool still runs, and `--list` needs no input."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sweep_tool", ROOT / "tests" / "sweep.py")
+        sweep = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sweep)
+        with tempfile.TemporaryDirectory() as work:
+            ran = []
+            with unittest.mock.patch.object(sweep, "row_for", side_effect=lambda *a, **k: ran.append(a)):
+                with self.assertRaises(SystemExit) as stop:
+                    sweep.sweep(os.path.join(work, "missing.mp4"), ["probe"], work)
+            self.assertIn("probe.py could not read", str(stop.exception.code))
+            self.assertEqual(ran, [], "no tool runs after a failed probe")
+
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(cmd)
+                self.assertEqual(kwargs.get("timeout"), sweep.TIMEOUT_S)
+                if len(calls) == 1:
+                    raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+                return subprocess.CompletedProcess(cmd, 0, '{"status": "completed", "verified": true}', "")
+
+            facts = {"w": 2, "h": 2, "mid": "0.5", "dur": "1.000", "cues": "c.txt", "still": "s.png"}
+            two = list(sweep.TABLE)[:2]
+            with unittest.mock.patch.object(sweep.subprocess, "run", side_effect=fake_run):
+                rows = [sweep.row_for(tool, "in.mp4", facts, work) for tool in two]
+            self.assertEqual([r["status"] for r in rows], ["timeout", "completed"])
+            self.assertEqual(len(calls), 2)
+        out = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", ["sweep.py", "--list"]), contextlib.redirect_stdout(out):
+            self.assertEqual(sweep.main(), 0)
+        self.assertEqual(out.getvalue().split("\n")[:-1], list(sweep.TABLE))
+        err = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", ["sweep.py"]), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as usage:
+                sweep.main()
+        self.assertEqual(usage.exception.code, 2)
+
+    def test_plugin_branch_tree_is_the_runtime_set(self):
+        """docs/design-decisions.md: a plugin install copies what the marketplace entry points at,
+        which at `./` is the whole 28 MB repository. release.yml publishes the npm tarball's
+        contents plus the plugin manifest and skills/ to the `plugin` branch instead. The gate is
+        on the tree that ships: build it and look, where bash and npm exist (the Windows runner
+        cannot spawn `npm`, the debian-trixie job has no npm; see the npm package test)."""
+        script_path = ROOT / ".github" / "scripts" / "publish_plugin_branch.sh"
+        script = script_path.read_text(encoding="utf-8")
+        self.assertNotIn("--force", script)
+        self.assertNotIn("push -f", script)
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        step = release.index("bash .github/scripts/publish_plugin_branch.sh")
+        self.assertLess(release.index("name: Create tag and GitHub Release"), step)
+        self.assertLess(step, release.index("name: Publish to npm"),
+                        "a missing npm token must not hold the plugin branch back")
+        # and the branch must not hold npm back: the tag exists by then, so a re-run would skip
+        # the npm publish for good. The step may fail; the job's last step reports it.
+        block = release[release.index("name: Publish the plugin branch"):release.index("name: Publish to npm")]
+        self.assertIn("continue-on-error: true", block)
+        self.assertIn("steps.plugin_branch.outcome == 'failure'", release[release.index("name: Verify the publish landed"):])
+        # a remote that could not be asked is not "no branch yet": only exit 2 starts an orphan
+        self.assertIn("ls-remote --exit-code --heads origin", script)
+        self.assertNotIn("2>/dev/null; then", script)
+        # the entry stays at ./ until a release has published the branch; whichever it names,
+        # it must be one of the two forms both hosts were run against
+        market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        self.assertIn(market["plugins"][0]["source"], (
+            "./", {"source": "url", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "ref": "plugin"}))
+        if sys.platform == "win32" or not shutil.which("bash") or not shutil.which("npm"):
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp) / "tree"
+            proc = subprocess.run(["bash", str(script_path), "--tree-only", str(tree)],
+                                  capture_output=True, text=True, cwd=ROOT)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            names = {p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()}
+            for needed in (".claude-plugin/plugin.json", "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
+                           "scripts/_contract.py", "mcp/server.py", "docs/contract.md"):
+                self.assertIn(needed, names)
+            self.assertFalse([n for n in names if n.split("/")[0] in
+                              ("tests", "evals", "site", "brand", "demos", "assets", ".github")])
+            self.assertFalse([n for n in names if "__pycache__" in n or n.endswith(".mcp.json")])
+            self.assertLess(sum((tree / n).stat().st_size for n in names), 5_000_000)
+            # every relative link in the skills/ copy resolves inside the tree that ships
+            copy = (tree / "skills" / "ffmpeg-skill" / "SKILL.md").read_text(encoding="utf-8")
+            for target in re.findall(r"\]\((\.\./\.\./[^)#]+)", copy):
+                self.assertTrue((tree / "skills" / "ffmpeg-skill" / target).resolve().exists(), target)
+
+    def test_mcp_registry_manifest_tracks_the_package_version(self):
+        """server.json is the official MCP Registry document (schema 2025-12-11). Its two
+        version fields and package.json's mcpName have to stay on the published npm version,
+        or mcp-publisher rejects the publish. release.yml's auto-bump moves server.json."""
+        import importlib.util
+        pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        self.assertEqual(server["$schema"], "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json")
+        self.assertEqual(server["name"], "io.github.kajisho5/ffmpeg-skill")
+        self.assertEqual(pkg["mcpName"], server["name"])
+        self.assertEqual(server["version"], pkg["version"])
+        self.assertLessEqual(len(server["description"]), 100)
+        self.assertEqual(server["repository"]["source"], "github")
+        self.assertEqual(server["repository"]["url"], "https://github.com/kajisho5/ffmpeg-skill")
+        pkg_entry = server["packages"][0]
+        self.assertEqual(pkg_entry["registryType"], "npm")
+        self.assertEqual(pkg_entry["identifier"], "ffmpeg-skill")
+        self.assertEqual(pkg_entry["version"], pkg["version"])
+        self.assertEqual(pkg_entry["transport"], {"type": "stdio"})
+        self.assertEqual(pkg_entry["packageArguments"], [{"type": "positional", "value": "mcp"}])
+        glama = json.loads((ROOT / "glama.json").read_text(encoding="utf-8"))
+        self.assertEqual(glama["$schema"], "https://glama.ai/mcp/schemas/server.json")
+        self.assertEqual(glama["maintainers"], ["kajisho5"])
+        spec = importlib.util.spec_from_file_location(
+            "bump_server_json", ROOT / ".github" / "scripts" / "bump_server_json.py")
+        bump = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bump)
+        bumped = json.loads(bump.bump_server_json((ROOT / "server.json").read_text(encoding="utf-8"), pkg["version"], "9.9.9"))
+        self.assertEqual(bumped["version"], "9.9.9")
+        self.assertEqual(bumped["packages"][0]["version"], "9.9.9")
+        self.assertEqual(bumped["name"], server["name"])
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("bump_server_json", release)
+        self.assertIn("server.json", release)
+        scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
+        self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
+        self.assertIn("publish_results: true", scorecard)
+        self.assertIn("branch_protection_rule:", scorecard)
+        self.assertIn("security-events: write", scorecard)
+        self.assertIn("id-token: write", scorecard)
+
     def test_pages_site_builds_with_no_dead_links(self):
         """The GitHub Pages site (pages.yml) is assembled from the repo's own Markdown by
         .github/scripts/build_pages.py, which refuses a relative link whose target does not
@@ -1082,6 +1254,29 @@ class ContractTests(unittest.TestCase):
         # major is never resolved automatically (the 1.0.0 case), whatever else is there
         with self.assertRaises(SystemExit):
             rv.resolve("1.0.3", ["Fix y (#152)", "Big (#154)"], labels({152: ["fix"], 154: ["major"]}))
+        # A squash subject that does not END with "(#N)" still belongs to its PR: 3.2.3 shipped
+        # three features as a patch because "... (#433, carries #432 and #434)" matched nothing
+        # and the `feature` label was never read. The PR is then found by the merge commit's SHA.
+        subject = "Alpha path, legal levels, smart cut (#433, carries #432 and #434)"
+        v, d = rv.resolve("3.2.2", [subject], labels({433: ["chore", "feature"]}))
+        self.assertEqual((v, d[0]["pr"]), ("3.2.3", None), "without the SHA lookup: the old answer")
+        asked = []
+        v, d = rv.resolve("3.2.2", [subject, "Fix y (#152)"], labels({433: ["chore", "feature"], 152: ["fix"]}),
+                          ["aaa", "bbb"], lambda sha: asked.append(sha) or {"aaa": 433}.get(sha))
+        self.assertEqual((v, d[0]["pr"], d[0]["bump"]), ("3.3.0", 433, "minor"))
+        self.assertEqual(asked, ["aaa"], "a subject ending (#N) is not looked up")
+        # a lookup that fails is not "no PR": the job stops rather than fall back to the title rules
+        from unittest import mock
+        failed = subprocess.CompletedProcess([], 1, "", "HTTP 502")
+        with mock.patch.object(rv.subprocess, "run", return_value=failed), self.assertRaises(SystemExit):
+            rv._gh_pr_for_sha("o/r")("aaa")
+        with mock.patch.object(rv.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[]", "")):
+            self.assertIsNone(rv._gh_pr_for_sha("o/r")("aaa"))
+        with mock.patch.object(rv.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[433]", "")):
+            self.assertEqual(rv._gh_pr_for_sha("o/r")("aaa"), 433)
+        # a direct push has no PR by SHA either, and keeps the title rules
+        v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
+        self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))
 
     # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
     def test_drawtext_uses_the_6_1_spellings(self):
@@ -1805,6 +2000,17 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(sh("node", ROOT / "bin" / "install.js", "contract", "--json", "--static").stdout)
         self.assertEqual([t["id"] for t in doc["tools"]], [t["id"] for t in self.contract["tools"]])
         self.assertEqual(sh("node", ROOT / "bin" / "install.js", "doctor", "--json").returncode, 0)
+        # `npx ffmpeg-skill mcp` is the stdio command server.json publishes. One initialize
+        # and EOF: the installer must not run, and the child must answer as the MCP server.
+        proc = subprocess.run(
+            ["node", str(ROOT / "bin" / "install.js"), "mcp"],
+            input='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n',
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertNotIn("installed", proc.stdout.lower())
+        answer = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertEqual(answer["result"]["serverInfo"]["name"], "ffmpeg-skill")
+        self.assertEqual(answer["result"]["serverInfo"]["version"], json.loads((ROOT / "package.json").read_text())["version"])
 
     def test_windows_store_python_stub_is_not_treated_as_an_interpreter(self):
         """The Microsoft Store python3 alias is a real executable: spawn succeeds (no ENOENT) and

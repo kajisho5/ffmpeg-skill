@@ -147,15 +147,21 @@ jobs:
           assert pkg != pkg_new, "package.json version field not found/replaced"
           pkg_path.write_text(pkg_new, encoding="utf-8")
 
-          plugin_path = root / ".claude-plugin" / "plugin.json"
-          plugin = plugin_path.read_text(encoding="utf-8")
-          plugin_new = re.sub(r'("version":\s*")[^"]+(")', rf'\g<1>{new}\g<2>', plugin, count=1)
-          assert plugin != plugin_new, ".claude-plugin/plugin.json version field not found/replaced"
-          plugin_path.write_text(plugin_new, encoding="utf-8")
+          # every plugin host's manifest carries the package version (Claude Code, Cursor, Gemini CLI)
+          for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
+              plugin_path = root / manifest
+              plugin = plugin_path.read_text(encoding="utf-8")
+              plugin_new = re.sub(r'("version":\s*")[^"]+(")', rf'\g<1>{new}\g<2>', plugin, count=1)
+              assert plugin != plugin_new, f"{manifest} version field not found/replaced"
+              plugin_path.write_text(plugin_new, encoding="utf-8")
 
           # Only the two current-version mentions move; a blind replace of the version string
           # also rewrote every historical "since"/"added in" version (see the helper's docstring).
           sys.path.insert(0, str(root / ".github" / "scripts"))
+          from bump_server_json import bump_server_json
+          server_path = root / "server.json"
+          server_path.write_text(bump_server_json(server_path.read_text(encoding="utf-8"), old, new), encoding="utf-8")
+
           from bump_contract_md import bump_contract_md
           contract_path = root / "docs" / "contract.md"
           contract = contract_path.read_text(encoding="utf-8")
@@ -218,7 +224,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json .claude-plugin/plugin.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
+          git add package.json server.json .claude-plugin/plugin.json .cursor-plugin/plugin.json gemini-extension.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
           git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
           # A merge that landed during this step would still make the push non-fast-forward;
           # replay the bump on top of it (a conflict here is real and should fail the run).
@@ -273,6 +279,19 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      # The installable plugin tree (the npm tarball's contents, 2.6 MB instead of the 28 MB
+      # repository) goes to the `plugin` branch, one commit per release, for plugin hosts to
+      # fetch with git alone. It runs before the npm publish so a missing npm token does not
+      # hold it back, and it must not hold the npm publish back either: the tag already exists,
+      # so a re-run would skip every step below and that version would never reach npm. So the
+      # step may fail without stopping the job, and the last step turns the job red for it. A
+      # failure leaves the branch at the previous release.
+      - name: Publish the plugin branch
+        id: plugin_branch
+        if: steps.check.outputs.already_released == 'false'
+        continue-on-error: true
+        run: bash .github/scripts/publish_plugin_branch.sh
+
       # Requires an npm access token in this repo's Settings -> Secrets and variables ->
       # Actions, named NPM_TOKEN (npmjs.com -> your avatar -> Access Tokens -> Generate New
       # Token -> Granular Access Token or Automation, with publish permission on this
@@ -311,3 +330,9 @@ jobs:
             echo "::error::automatic release crossed a major boundary: $PREVIOUS -> $EXPECTED"; exit 1
           fi
           echo "published $PKG@$EXPECTED (previous tag $PREVIOUS)"
+
+      - name: Fail the job when the plugin branch was not published
+        if: steps.plugin_branch.outcome == 'failure'
+        run: |
+          echo "::error::the plugin branch was not updated for this release (see the 'Publish the plugin branch' step); npm and the GitHub Release are unaffected. Run .github/scripts/publish_plugin_branch.sh from the release commit to publish it."
+          exit 1

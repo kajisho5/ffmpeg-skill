@@ -20,6 +20,7 @@ No cloud · No API keys · Python standard library</p>
 
 <p align="center">
   <a href="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml"><img src="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/kajisho5/ffmpeg-skill"><img src="https://api.scorecard.dev/projects/github.com/kajisho5/ffmpeg-skill/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://www.npmjs.com/package/ffmpeg-skill"><img src="https://img.shields.io/npm/v/ffmpeg-skill" alt="npm"></a>
   <a href="#ffmpeg-compatibility"><img src="https://img.shields.io/badge/ffmpeg-6.1%20%7C%207.1%20%7C%208%20%7C%209%20tested-orange" alt="FFmpeg 6.1, 7.1, 8 and 9 tested in CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
@@ -595,6 +596,16 @@ claude plugin marketplace add kajisho5/ffmpeg-skill                    # older v
 claude plugin install ffmpeg-skill@ffmpeg-skill                        # then install from it
 ```
 
+The same repository installs as a plugin in two more hosts (checked against Codex CLI 0.167 and Gemini CLI 0.68):
+
+```bash
+codex plugin marketplace add kajisho5/ffmpeg-skill     # Codex: add the marketplace,
+codex plugin add ffmpeg-skill@ffmpeg-skill             # then the plugin
+gemini extensions install https://github.com/kajisho5/ffmpeg-skill   # Gemini CLI
+```
+
+Those hosts find a plugin's skill only at `skills/ffmpeg-skill/SKILL.md`, a generated copy of the root `SKILL.md` (`.github/scripts/build_plugin_skill.py`; a test fails when it is stale). A Cursor plugin manifest (`.cursor-plugin/plugin.json`) is in the repository for the Cursor Marketplace; it follows Cursor's reference and has not been through their review yet.
+
 The plugin namespaces the skill as `ffmpeg-skill:ffmpeg-skill`. The manifests are [.claude-plugin/plugin.json](.claude-plugin/plugin.json), whose version follows every release automatically, and [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json), which lists the plugin from the repository root. Before 2.17.1 the README's one-line `claude plugin install kajisho5/ffmpeg-skill` could not work, because there was no marketplace file.
 
 Without Node: clone this repository and copy `SKILL.md`, `package.json`, `scripts/`, `templates/`, `references/`, `docs/` and `mcp/` into your agent's skills directory (the same set `npx ffmpeg-skill` installs; without `templates/` no `--template` renders, and without `package.json` the contract reports its version as unknown).
@@ -629,7 +640,7 @@ FFmpeg itself:
 
 ## Stability
 
-3.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 4.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-3x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality` (except on `export.py`, whose preset chooses the encoder), an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`. 3.0.0 is the second break: it removed FFmpeg 5.x and Python 3.9 (announced in 2.14.0 and 2.10.9), made `cut.py` keep an `.mp4`/`.mov` copy's edit list, keep an SDR HEVC source HEVC and use `--vfr-guard sampled` by default (`--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore 2.x), and changed what `cut.py`'s `precision` (now the least exact segment's) and `keyframe_snapped` (now equal to `start_snapped`) mean (`contract_version` 2.0) -- see [docs/contract.md](docs/contract.md#what-30-changed).
+3.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 4.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-3x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. Releases are batched: related fixes and features ship together as one version rather than one version per merged pull request, so a dependent project sees fewer, larger steps. Pin a tagged version, not `main`. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality` (except on `export.py`, whose preset chooses the encoder), an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`. 3.0.0 is the second break: it removed FFmpeg 5.x and Python 3.9 (announced in 2.14.0 and 2.10.9), made `cut.py` keep an `.mp4`/`.mov` copy's edit list, keep an SDR HEVC source HEVC and use `--vfr-guard sampled` by default (`--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore 2.x), and changed what `cut.py`'s `precision` (now the least exact segment's) and `keyframe_snapped` (now equal to `start_snapped`) mean (`contract_version` 2.0) -- see [docs/contract.md](docs/contract.md#what-30-changed).
 
 ## Development
 

@@ -75,6 +75,11 @@ __all__ = ["parse_srt", "write_srt", "transcribe", "whisper_word_timings", "die_
            "text_width_em"]
 
 ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3, "top-left": 7, "top-right": 9}
+# libass reads a force_style Alignment in the legacy SSA numbering (1-3 bottom, 5-7 top, 9-11
+# middle), not the v4+ numpad one a Style line uses: only the bottom row is the same number in
+# both. Through 3.2.3 the SRT burn passed the numpad value, so --position top landed mid-left,
+# center top-left, top-left top-right (#436, measured on libass 0.17.1 and FFmpeg 9.0.2).
+FORCE_STYLE_ALIGN = {"bottom": 2, "top": 6, "center": 10, "bottom-left": 1, "bottom-right": 3, "top-left": 5, "top-right": 7}
 
 TIME_RE = re.compile(
     r"^\s*(?P<a>[\d:.,@]+)\s*(?:-->|-|–|to)\s*(?P<b>[\d:.,@]+)\s+(?P<text>.+)$"  # @ = the 1.9 @fps suffix
@@ -1750,7 +1755,7 @@ def main() -> int:
             f"Outline={args.outline:g}",
             f"Shadow={args.shadow:g}",
             f"Bold={-1 if args.bold else 0}",
-            f"Alignment={ALIGN[args.position]}",
+            f"Alignment={FORCE_STYLE_ALIGN[args.position]}",
             f"MarginV={args.margin}",
         ]
         force = ",".join(style).replace("\\", "\\\\").replace("'", "\\'")
