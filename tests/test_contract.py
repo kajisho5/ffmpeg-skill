@@ -17,6 +17,7 @@ import subprocess
 import types
 import sys
 import tempfile
+import zlib
 import time
 import unittest
 import unittest.mock
@@ -481,6 +482,28 @@ class ContractTests(unittest.TestCase):
             width, height = int.from_bytes(icon[16:20], "big"), int.from_bytes(icon[20:24], "big")
             self.assertEqual(width, height)
             self.assertTrue(512 <= width <= 2048 and len(icon) < 2_000_000, (width, len(icon)))
+            # picture chunks only: a provenance chunk's text read as a shell command to the directory
+            kinds, at = set(), 8
+            while at < len(icon):
+                size = int.from_bytes(icon[at:at + 4], "big")
+                kinds.add(icon[at + 4:at + 8].decode("latin1"))
+                at += 12 + size
+            self.assertLessEqual(kinds, {"IHDR", "PLTE", "tRNS", "gAMA", "cHRM", "sRGB", "iCCP", "pHYs", "IDAT", "IEND"})
+            self.assertTrue({"IHDR", "IDAT", "IEND"} <= kinds)
+            for word in (b"curl", b"wget", b"bash", b"|sh", b"| sh", b"sh -c", b"eval"):
+                self.assertNotIn(word, icon)
+            # the same pixels as assets/icon.png: only the metadata and the deflate stream differ
+            def pixels(png):
+                data, pos = b"", 8
+                while pos < len(png):
+                    length = int.from_bytes(png[pos:pos + 4], "big")
+                    if png[pos + 4:pos + 8] == b"IDAT":
+                        data += png[pos + 8:pos + 8 + length]
+                    pos += 12 + length
+                return zlib.decompress(data)
+            self.assertEqual(pixels(icon), pixels((ROOT / "assets" / "icon.png").read_bytes()))
+            self.assertNotIn("mcpName", json.loads((tree / "package.json").read_text(encoding="utf-8")))
+            self.assertIn("mcpName", json.loads((ROOT / "package.json").read_text(encoding="utf-8")))
             # the contract still reads its version from the package.json that ships
             ver = subprocess.run([sys.executable, str(tree / "scripts" / "_contract.py"), "--json"],
                                  capture_output=True, text=True)
