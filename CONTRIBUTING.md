@@ -19,6 +19,11 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
   cross-platform correctness, test coverage for an edge case, and documentation
   drift fixes are always welcome. New tools or features are a much higher bar —
   see "Scope" below.
+- **A bug fix sweeps for siblings first.** Before fixing a reported defect, name its class and
+  check which other tools meet the same thing: `python3 tests/sweep.py INPUT --baseline PLAIN`
+  runs one input through the 25 single-input tools and prints the rows that differ from a plain
+  clip's. The full procedure is `.claude/skills/sibling-sweep/SKILL.md`; the PR template's
+  "Siblings" section records what was swept.
 - **Every change needs a reproduction.** If you're fixing a bug, show the failing
   case before your fix and the passing case after — either as a new test or a
   documented manual repro in the PR description.

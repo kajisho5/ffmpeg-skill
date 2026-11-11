@@ -19,6 +19,12 @@
   the MCP Registry manifest (`server.json`, kept on the package version by the release bump)
   publishes. An OpenSSF Scorecard workflow runs weekly and on pushes to `main` (#369).
 
+- **`tests/sweep.py`** runs one input through the 25 single-input tools and prints what each said
+  (`--baseline PLAIN` keeps only the rows that differ from a plain clip's). With the
+  `sibling-sweep` skill, the AGENTS.md rule and the PR template's "Siblings" section, a reported
+  defect is now checked across the tools before it is fixed. Its first run, on the class behind
+  #437, found #438.
+
 ### Fixed
 
 - **`caption.py --srt --position` put the text in the wrong place** for every value but the bottom
