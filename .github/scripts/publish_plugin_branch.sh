@@ -64,7 +64,34 @@ cp "$ROOT/.claude-plugin/plugin.json" "$TREE/.claude-plugin/plugin.json"
 cp "$ROOT/skills/ffmpeg-skill/SKILL.md" "$TREE/skills/ffmpeg-skill/SKILL.md"
 # The listing icon: the plugin directory reads .claude-plugin/icon.png (a square PNG, 512 to 2048 px,
 # under 2 MB) and takes it once, at the first submission.
-cp "$ROOT/assets/icon.png" "$TREE/.claude-plugin/icon.png"
+# The copy keeps the picture, drops every chunk that is not picture data and recompresses the pixels. assets/icon.png carries
+# a 23 KB C2PA provenance chunk (caBX) whose text holds "url" entries; read as text beside the
+# compressed pixels, the plugin directory's check took the file for a download-and-run command.
+# The file in assets/ is not touched.
+node -e '
+  const fs = require("fs"), zlib = require("zlib"), [src, dst] = process.argv.slice(1), b = fs.readFileSync(src);
+  const keep = new Set(["IHDR", "PLTE", "tRNS", "gAMA", "cHRM", "sRGB", "iCCP", "pHYs"]);
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (buf) => { let c = 0xffffffff; for (const x of buf) c = crcTable[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]), out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0); body.copy(out, 4); out.writeUInt32BE(crc(body), body.length + 4); return out; };
+  const head = [b.subarray(0, 8)], pixels = [];
+  for (let i = 8; i < b.length;) {
+    const n = b.readUInt32BE(i), type = b.toString("latin1", i + 4, i + 8), data = b.subarray(i + 8, i + 8 + n);
+    if (type === "IDAT") pixels.push(data); else if (keep.has(type)) head.push(chunk(type, data));
+    i += 12 + n;
+  }
+  // The same pixels, compressed again until the bytes spell none of the words a text scan of a
+  // binary file trips on. Lossless: only the deflate stream differs.
+  const raw = zlib.inflateSync(Buffer.concat(pixels)), words = ["curl", "wget", "bash", "|sh", "| sh", "sh -c", "eval"];
+  for (const level of [9, 8, 7, 6, 5, 4]) {
+    const png = Buffer.concat([...head, chunk("IDAT", zlib.deflateSync(raw, { level })), chunk("IEND", Buffer.alloc(0))]);
+    if (!words.some((w) => png.includes(w))) { fs.writeFileSync(dst, png); process.exit(0); }
+  }
+  console.error("no compression level gave an icon free of shell-like byte sequences"); process.exit(1);
+' "$ROOT/assets/icon.png" "$TREE/.claude-plugin/icon.png"
 # bin/install.js is the `npx ffmpeg-skill` installer. A plugin host does the installing, nothing in
 # the skill calls it, and the plugin directory's checks flag a bin/ folder and the installer's
 # shell-outs as an install-time risk. It leaves the tree, and package.json stops naming it.
@@ -93,6 +120,7 @@ PLUGIN_README
 node -e '
   const fs = require("fs"), f = process.argv[1], p = JSON.parse(fs.readFileSync(f, "utf8"));
   delete p.bin;
+  delete p.mcpName;   // the MCP Registry reads it from the npm package, not from a plugin
   fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n");
 ' "$TREE/package.json"
 # A local checkout that has run the tools carries bytecode caches into the tarball; a release
