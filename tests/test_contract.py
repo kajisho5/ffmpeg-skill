@@ -460,11 +460,25 @@ class ContractTests(unittest.TestCase):
                                   capture_output=True, text=True, cwd=ROOT)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             names = {p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()}
-            for needed in (".claude-plugin/plugin.json", "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
+            for needed in (".claude-plugin/plugin.json", ".claude-plugin/icon.png",
+                           "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
                            "scripts/_contract.py", "mcp/server.py", "docs/contract.md"):
                 self.assertIn(needed, names)
+            # bin/ is the npx installer: a plugin host installs, and the plugin directory flags it
             self.assertFalse([n for n in names if n.split("/")[0] in
-                              ("tests", "evals", "site", "brand", "demos", "assets", ".github")])
+                              ("tests", "evals", "site", "brand", "demos", "assets", ".github", "bin")])
+            self.assertNotIn("bin", json.loads((tree / "package.json").read_text(encoding="utf-8")))
+            # the listing icon: a square PNG, 512 to 2048 px a side, under 2 MB
+            icon = (tree / ".claude-plugin" / "icon.png").read_bytes()
+            self.assertEqual(icon[:8], b"\x89PNG\r\n\x1a\n")
+            width, height = int.from_bytes(icon[16:20], "big"), int.from_bytes(icon[20:24], "big")
+            self.assertEqual(width, height)
+            self.assertTrue(512 <= width <= 2048 and len(icon) < 2_000_000, (width, len(icon)))
+            # the contract still reads its version from the package.json that ships
+            ver = subprocess.run([sys.executable, str(tree / "scripts" / "_contract.py"), "--json"],
+                                 capture_output=True, text=True)
+            self.assertEqual(json.loads(ver.stdout)["skill"]["version"],
+                             json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"])
             self.assertFalse([n for n in names if "__pycache__" in n or n.endswith(".mcp.json")])
             self.assertLess(sum((tree / n).stat().st_size for n in names), 5_000_000)
             # every relative link in the skills/ copy resolves inside the tree that ships

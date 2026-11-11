@@ -3146,6 +3146,15 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   older than 2.39 only from 2.1.288. Neither older combination was run here; the README names
   both and points older installs at `npx ffmpeg-skill`.
   Test: `test_plugin_branch_tree_is_the_runtime_set`.
+- **The plugin tree is the npm tarball minus `bin/`, plus the manifest, the `skills/` copy and
+  the icon.** `bin/install.js` is the `npx ffmpeg-skill` installer: it copies the package into a
+  skills folder and shells out to `python3` and `ffmpeg -version`. A plugin host does the
+  installing, and the Claude plugin directory's checks read the file as an install-time risk
+  (three findings on the 3.4.0 branch, plus a notice that `bin/` will later be accepted only from
+  verified organisations). So the tree leaves it out and removes `bin` from its `package.json`,
+  which the contract still reads for the version. `.claude-plugin/icon.png` is `assets/icon.png`;
+  the directory takes the icon once, at the first submission, so it has to be on the branch before
+  that. Same test.
 - **The plugin does not register the MCP server.** `mcp/server.py` rides along in the plugin tree,
   but no `.mcp.json` or `mcpServers` entry starts it. In a host that runs a plugin (Claude Code,
   Codex, Gemini CLI) the agent has a shell, and the skill reaches all 42 tools through it; the MCP

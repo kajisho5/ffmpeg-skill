@@ -4,6 +4,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The plugin tree carries its listing icon and no longer carries the `npx` installer.** The
+  Claude plugin directory's validation of the 3.4.0 `plugin` branch reported no icon (it reads
+  `.claude-plugin/icon.png`, once, at the first submission) and flagged `bin/install.js` three
+  times: a download-and-run pattern, a `bin/` folder, and a file type outside the allowed set.
+  The installer is what `npx ffmpeg-skill` runs; a plugin host does the installing and nothing in
+  the skill calls it. The branch now ships `assets/icon.png` as `.claude-plugin/icon.png`, leaves
+  `bin/` out, and its `package.json` no longer names a `bin`. The npm package is unchanged.
+
 ### Changed
 
 - **A plugin install copies 2.7 MB, not the repository.** The marketplace entry now names the

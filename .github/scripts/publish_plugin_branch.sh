@@ -62,17 +62,29 @@ tar -xzf "$TARBALL" -C "$TREE" --strip-components=1
 mkdir -p "$TREE/.claude-plugin" "$TREE/skills/ffmpeg-skill"
 cp "$ROOT/.claude-plugin/plugin.json" "$TREE/.claude-plugin/plugin.json"
 cp "$ROOT/skills/ffmpeg-skill/SKILL.md" "$TREE/skills/ffmpeg-skill/SKILL.md"
+# The listing icon: the plugin directory reads .claude-plugin/icon.png (a square PNG, 512 to 2048 px,
+# under 2 MB) and takes it once, at the first submission.
+cp "$ROOT/assets/icon.png" "$TREE/.claude-plugin/icon.png"
+# bin/install.js is the `npx ffmpeg-skill` installer. A plugin host does the installing, nothing in
+# the skill calls it, and the plugin directory's checks flag a bin/ folder and the installer's
+# shell-outs as an install-time risk. It leaves the tree, and package.json stops naming it.
+rm -rf "$TREE/bin"
+node -e '
+  const fs = require("fs"), f = process.argv[1], p = JSON.parse(fs.readFileSync(f, "utf8"));
+  delete p.bin;
+  fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n");
+' "$TREE/package.json"
 # A local checkout that has run the tools carries bytecode caches into the tarball; a release
 # runner's clean checkout does not. Either way they are not part of a plugin.
 find "$TREE" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 # The gate is on the tree that ships, not on the source tree: what a host needs to find the
 # skill, and what the skill needs to run.
-for needed in .claude-plugin/plugin.json skills/ffmpeg-skill/SKILL.md SKILL.md \
+for needed in .claude-plugin/plugin.json .claude-plugin/icon.png skills/ffmpeg-skill/SKILL.md SKILL.md \
               scripts/_contract.py scripts/probe.py docs/contract.md references/workflow.md LICENSE; do
   [ -s "$TREE/$needed" ] || { echo "plugin tree is missing $needed" >&2; exit 1; }
 done
-for unwanted in tests evals site brand demos assets .github; do
+for unwanted in tests evals site brand demos assets .github bin; do
   [ ! -e "$TREE/$unwanted" ] || { echo "plugin tree carries $unwanted/" >&2; exit 1; }
 done
 VERSION="$(node -p "require('$TREE/package.json').version")"
