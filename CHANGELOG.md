@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.4.0
+
+_Automated release: version and notes generated from pull requests merged since 3.3.0._
+
 ### Added
 
 - **`check.py --compare REF --expect-changed SPAN[@X,Y,W,H]|none`: say where the picture may
@@ -35,6 +41,7 @@
   the 3.3.0 branch by `ref`, Claude Code cached 2.6 MB but Codex kept the whole clone (39 MB). As a
   `git-subdir` source both copy the directory alone (2.6 MB). The marketplace entry still points at
   the repository root until a release has published the new layout.
+- check.py --expect-changed; refuse nan/inf for every numeric flag; plugin branch as a subdirectory (#440)
 
 ## 3.3.0
 
