@@ -578,6 +578,19 @@ Analysis tools and stream-copy cuts stay far below the limit.
 
 ## Install
 
+Where it can be installed from today. Each route is spelled out below the table.
+
+| Route | For | Command or link |
+|---|---|---|
+| npm | Claude Code, Cursor, Codex skills folders | `npx ffmpeg-skill` ([npmjs.com/package/ffmpeg-skill](https://www.npmjs.com/package/ffmpeg-skill)) |
+| Claude Code plugin | Claude Code 2.1.69 or later | `/plugin install ffmpeg-skill --marketplace kajisho5/ffmpeg-skill` |
+| Codex plugin | Codex CLI | `codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin`, then `codex plugin add ffmpeg-skill@ffmpeg-skill` |
+| Gemini CLI extension | Gemini CLI | `gemini extensions install https://github.com/kajisho5/ffmpeg-skill` |
+| MCP server | clients without a shell | `npx -y ffmpeg-skill mcp` (see [MCP](#mcp)) |
+| GitHub release | a pinned copy | [releases](https://github.com/kajisho5/ffmpeg-skill/releases) |
+
+Not listed in a directory yet: the Claude plugin directory, the Cursor Marketplace, the Gemini CLI extension gallery, the MCP Registry and Glama. This table gains a row when a listing goes live; until then the routes above are the whole list.
+
 ```bash
 npx ffmpeg-skill              # Claude Code   → ~/.claude/skills/ffmpeg-skill
 npx ffmpeg-skill --cursor     # Cursor        → ~/.cursor/skills/ffmpeg-skill
