@@ -719,8 +719,14 @@ class AnalysisTests(MediaFixtures):
         code, doc, row = check(new, "--expect-changed", "3-5", "--expect-changed", "0-1")
         self.assertEqual((code, row["status"]), (0, "WARN"), row)
         self.assertIn("declared 0.00-1.00 but nothing changed there", row["value"])
-        # a floor above the edit's own difference turns it into "nothing changed", and says the floor
-        self.assertEqual(check(new, "--expect-changed", "none", "--change-floor", "254")[2]["status"], "PASS")
+        # --change-floor is the floor the pass uses and the document reports: at 254 only a tile
+        # at full difference still counts (whether this edit has one depends on the FFmpeg build's
+        # colour conversion: none on 6.1, some on later ones, so the status is not asserted)
+        code, doc, row = check(new, "--expect-changed", "none", "--change-floor", "254")
+        self.assertEqual(doc["change_scope"]["floor"], 254)
+        self.assertTrue(all(o["peak"] == 255 for o in doc["change_scope"]["observed"]), doc["change_scope"]["observed"])
+        self.assertEqual(row["status"], "FAIL" if doc["change_scope"]["observed"] else "PASS")
+        self.assertIn("floor 254", row["value"])
 
         for path, why in ((small, "320x180 against 640x360"), (short, "50 frames against the reference's 60")):
             code, doc, row = check(path, "--expect-changed", "none")
