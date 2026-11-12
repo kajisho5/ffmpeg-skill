@@ -1291,8 +1291,17 @@ def _record_checked(path: str, state: Any) -> None:
     resolved to then, under the resolved place and under the path as named: a directory symlink
     switched since is then found by the name and refused, not looked up as a place never checked."""
     entry = (_parent(path), state)
-    STATE.checked[_checked_key(path)] = entry
+    key = _checked_key(path)
+    STATE.checked[key] = entry
     STATE.checked[os.path.abspath(path)] = entry
+    # the same file reached by another spelling of its path (a write through the resolved name
+    # after a check through a link) is the same record: a later replace through either matches
+    for named in [k for k in STATE.checked if k != key]:
+        try:
+            if _checked_key(named) == key:
+                STATE.checked[named] = entry
+        except OSError:
+            pass
 
 
 def _remember_identity(path: str) -> None:
@@ -1321,7 +1330,8 @@ def refuse_changed_output(path: str, cleanup: "Optional[Callable[[], None]]" = N
         return
     try:
         key, named, real = _checked_key(path), os.path.abspath(path), os.path.realpath(path)
-        recorded = STATE.checked.get(key) or STATE.checked.get(named)
+        # the name first: a resolved place another path also reached says nothing about this one
+        recorded = STATE.checked.get(named) or STATE.checked.get(key)
         if recorded is None:
             return
         (parent_then, expected), parent_now, now = recorded, _parent(path), _checked_state(path)

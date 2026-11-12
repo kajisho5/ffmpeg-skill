@@ -427,8 +427,9 @@ exists. When a decision changes, edit the entry in the same PR.
   in place only when both targets passed, moving an earlier file aside and putting it back if the
   second replace fails, so a refused or failed pair never leaves a new file beside an old one. The
   check also records the directory the path resolved to, and is found by the name as well as the
-  resolved place: a directory link switched during the run is refused, not looked up as a place
-  never checked. A process that ignores the lock file can still write the target between the last
+  resolved place (the name first, so a place another checked path also reaches does not stand in
+  for it; a write through another spelling of the same path updates every record of that place):
+  a directory link switched during the run is refused, not looked up as a place never checked. A process that ignores the lock file can still write the target between the last
   comparison and the replace. Every temp is removed on any way out short of the replace, a held lock included.
   `--overwrite` still replaces
   whatever is at the path, changed or not: it is consent to replace that path, not one file

@@ -8276,6 +8276,43 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(path)), ("input", "output_exists"))
         self.assertEqual((b / "out.json").read_text(encoding="utf-8"), "theirs")
 
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_switched_link_is_refused_when_its_new_target_was_checked_too(self):
+        """A link checked as /link/out (into a/) and a second output b/out checked in the same run:
+        once the link points at b/, replacing /link/out is about the first check, not b/out's."""
+        a, b = self.work / "a", self.work / "b"
+        a.mkdir()
+        b.mkdir()
+        link = self.work / "dir"
+        os.symlink(a, link)
+        via_link, direct = link / "out.json", b / "out.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(via_link), str(direct)]), (None, None))
+        direct.write_text("this run's other output", encoding="utf-8")
+        self.runner.remember_written(str(direct))
+        link.unlink()
+        os.symlink(b, link)
+        staged = b / ".out.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(via_link)), ("input", "output_exists"))
+        self.assertEqual(direct.read_text(encoding="utf-8"), "this run's other output")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_an_own_write_through_another_spelling_of_the_path_is_still_own(self):
+        """Checked through a link, written through the resolved name: replacing it again through
+        the link is replacing this run's own file."""
+        a = self.work / "a"
+        a.mkdir()
+        link = self.work / "dir"
+        os.symlink(a, link)
+        via_link, resolved = link / "o.json", a / "o.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(via_link)]), (None, None))
+        resolved.write_text("first pass", encoding="utf-8")
+        self.runner.remember_written(str(resolved))
+        staged = a / ".o.ffskill-x.json"
+        staged.write_text("second pass", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(via_link)), (None, None))
+        self.assertEqual(resolved.read_text(encoding="utf-8"), "second pass")
+
     def test_a_refused_lock_removes_the_staged_file(self):
         """replace_checked() removes its temp on every way out short of the replace, a lock held
         by another live writer included."""
