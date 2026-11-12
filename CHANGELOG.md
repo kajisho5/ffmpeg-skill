@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.6
+
+_Automated release: version and notes generated from pull requests merged since 3.6.5._
+
 ### Fixed
 
 - **A tool writes the picture and the sound it measured, on a file with two of either** (A110,
@@ -23,6 +29,7 @@
   one picture and one sound builds the same `cut.py` stream copy as before; with several, the copy
   maps the first subtitle stream where the container holds it as it is and reports it dropped
   (`dropped_non_av_streams`) where it does not.
+- fix: map the picture and sound probe() describes on every tool (#484)
 
 ## 3.6.5
 
