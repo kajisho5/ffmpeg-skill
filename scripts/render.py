@@ -466,7 +466,7 @@ def check_overlay(ov: Any, label: str) -> None:
 
 def project_input_files(proj: Dict[str, Any], rel: Any) -> List[str]:
     """Every file a project names as an input: clip sources, music/replace/effects, the brand,
-    caption files (a --text value that names an existing file), overlay images and videos, the
+    caption files (a --text value that names an existing file), overlay images, videos and fonts, the
     audiogram image, a beat grid's source and the chapters file. Values of the wrong type are left
     to the stage that reads them."""
     found: List[str] = []
@@ -499,10 +499,12 @@ def project_input_files(proj: Dict[str, Any], rel: Any) -> List[str]:
             add(obj.get("source"))
     add(proj.get("brand"))
     add(proj.get("chapters"), must_exist=True)
-    for ov in proj.get("overlays") or []:
+    overlays = proj.get("overlays")
+    for ov in (overlays if isinstance(overlays, list) else []):  # any other type is the overlay stage's to refuse
         if isinstance(ov, dict):
             add(ov.get("image"))
             add(ov.get("video"))
+            add(ov.get("font_file"))
     return found
 
 
@@ -1440,7 +1442,12 @@ def main() -> int:
                           ("color", "--color"), ("background", "--background"),
                           ("width", "--width"), ("height", "--height"), ("fps", "--fps")):
             if ag.get(key) is not None:
-                argv += [flag, str(ag[key])]
+                value = ag[key]
+                if key == "image" and isinstance(value, str) and "://" not in value:
+                    # against the project file, as every other path here and as the output guard
+                    # checks it; it used to reach waveform.py as written, against the cwd
+                    value = rel(value)
+                argv += [flag, str(value)]
         argv += brand_args
         sh("waveform.py", *argv, stage="audiogram")
         current = nxt

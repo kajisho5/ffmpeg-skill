@@ -409,7 +409,11 @@ exists. When a decision changes, edit the entry in the same PR.
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the
   output directory during a run; it is created exclusively (`O_EXCL`), so an entry already at that
   name, a planted symlink included, is never written through, and the next free
-  `.<stem>.ffskill-<pid>-<n><ext>` is used instead. A lock's default audit log beside the output
+  `.<stem>.ffskill-<pid>-<n><ext>` is used instead. A copy the tool makes itself (`place_output`,
+  `batch.py`'s cross-filesystem delivery) writes the descriptor that created the temp
+  (`copy_to_sibling()`); ffmpeg opens its temp by name, so a process that may delete entries in
+  the output directory could still swap the file between the create and that open, which a
+  sticky shared directory (`/tmp`) and a directory only the caller can write both rule out. A lock's default audit log beside the output
   is opened without following a symlink; a log named with `--audit-log` is opened as named. Code:
   `_common._stage_existing_output()`, `runner.reserve_sibling()`, `emit.audit()`. Test:
   `test_hidden_temp_names_are_never_written_through_a_planted_link`.

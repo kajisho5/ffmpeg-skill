@@ -2110,7 +2110,8 @@ class CopyJoinPlanTests(unittest.TestCase):
             self.assertEqual(Path(dst).read_bytes(), b"theirs")
             lock.unlink()
             with mock.patch.object(cut.STATE, "overwrite", True), \
-                    mock.patch("shutil.copyfile", side_effect=AssertionError("copied")):
+                    mock.patch("shutil.copyfile", side_effect=AssertionError("copied")), \
+                    mock.patch("shutil.copyfileobj", side_effect=AssertionError("copied")):
                 cut.place_output(src, dst, move=True)
             self.assertEqual(Path(dst).read_bytes(), b"new")
             self.assertFalse(os.path.exists(src))

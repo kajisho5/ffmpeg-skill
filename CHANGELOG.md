@@ -8,7 +8,8 @@
 
 - **A DASH manifest or an IMF composition playlist given as media is refused, whatever it is
   called.** The playlist guard knew HLS and ffconcat by name and first bytes only, so a DASH
-  manifest saved as `clip.mp4` made every tool follow its `BaseURL`: to another local file, which
+  manifest saved as `clip.mp4` (with a `dash:profile` or the 3GPP `PSS:profile:DASH1`) made every
+  tool follow its `BaseURL`: to another local file, which
   the output then contained (reported completed and verified), or over HTTP, which FFmpeg 6.1's
   `-protocol_whitelist file` did not stop. Both are now told the way ffmpeg's own probes tell
   them, by content, and refused as `media_path_is_playlist`.
@@ -23,11 +24,14 @@
   an `--overwrite` run, `place_output()`'s temp, `export.py`'s key/fill temp and `batch.py`'s
   cross-filesystem delivery temp had fixed names and were opened through
   whatever was already there, a planted symlink included: the encode was written into the link's
-  target and the output left as a symlink to it. A lock's default audit log is opened without
-  following a symlink.
+  target and the output left as a symlink to it. A copy the tool makes itself is written
+  through the descriptor that created the temp, never by reopening its name. A lock's default
+  audit log is opened without following a symlink.
 - **`render.py` refuses an output that is any file the project names.** The guard compared the
   output with the clips and overlay videos only, so with `--overwrite` a project whose output was
-  its own music bed, brand file, overlay image, caption file or beat source replaced it.
+  its own music bed, brand file, overlay image or font, caption file or beat source replaced it.
+  `audiogram.image` is now passed to the audiogram stage resolved against the project file, as
+  every other project path is, instead of against the caller's working directory.
 
 ### Fixed
 

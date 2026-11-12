@@ -322,6 +322,9 @@ def audit(event: str, details: Dict[str, Any], *, default_path: Optional[str] = 
         # a default path is a hidden name in someone's output directory: never appended to through a
         # symlink planted there. A log the caller named (--audit-log) is opened as named.
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | (0 if ctx.audit_log else getattr(os, "O_NOFOLLOW", 0))
+        if not ctx.audit_log and not hasattr(os, "O_NOFOLLOW") and os.path.islink(path):
+            # no O_NOFOLLOW (Windows): a link at the default name is refused by looking first
+            raise OSError(f"{path} is a symbolic link")
         with os.fdopen(os.open(path, flags, 0o666), "a", encoding="utf-8") as f:
             f.write(json.dumps(json_safe(rec), ensure_ascii=False, sort_keys=True) + "\n")
     except OSError as exc:

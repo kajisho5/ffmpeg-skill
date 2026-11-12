@@ -804,7 +804,8 @@ _MANIFEST_SCAN_LIMIT = 5_000_000
 
 def _manifest_kind(path: str) -> Optional[str]:
     """"DASH" or "IMF" when ffmpeg's own probe would read `path` as that manifest, whatever its
-    name: dash_probe() looks for `<MPD` and `dash:profile` (case-insensitively), imf_probe() for
+    name: dash_probe() looks for `<MPD` and `dash:profile` or `3GPP:PSS:profile:DASH1`
+    (case-insensitively), imf_probe() for
     `<CompositionPlaylist` and `ContentTitle>`. Either one names other files, local or remote, that
     ffmpeg then opens (a DASH BaseURL is followed over HTTP even under -protocol_whitelist file)."""
     buf = bytearray()
@@ -823,7 +824,7 @@ def _manifest_kind(path: str) -> Optional[str]:
         return None
     text = bytes(buf[:_MANIFEST_SCAN_LIMIT])
     low = text.lower()
-    if b"<mpd" in low and b"dash:profile" in low:
+    if b"<mpd" in low and (b"dash:profile" in low or b"3gpp:pss:profile:dash1" in low):
         return "DASH"
     if b"<CompositionPlaylist" in text and b"ContentTitle>" in text:
         return "IMF"
@@ -1299,24 +1300,55 @@ def _stage_existing_output(cmd: Sequence[str]) -> Tuple[List[str], Optional[str]
     return list(cmd[:-1]) + [tmp], output, tmp
 
 
-def reserve_sibling(d: str, stem: str, ext: str, tag: str = "") -> str:
-    """Create the hidden sibling `.<stem>.ffskill-<pid><ext>` (or `...-<pid>-<n><ext>` when that
-    name is taken) exclusively, and return its path. O_EXCL never opens an existing entry, a
-    symlink included, so a name planted in the output directory beforehand is never written
-    through: ffmpeg -y and copyfile() then write the empty regular file created here. A directory
-    that refuses the create returns the plain name, and the write that follows fails there."""
+def _reserve(d: str, stem: str, ext: str, tag: str) -> "Tuple[str, Optional[int]]":
+    """(path, open descriptor) of a hidden sibling created exclusively; (path, None) when the
+    directory refuses the create (the write that follows then fails there)."""
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     n = 1
     while True:
         path = os.path.join(d, f".{stem}.ffskill-" + (f"{tag}-" if tag else "") + f"{os.getpid()}"
                             + (f"-{n}" if n > 1 else "") + ext)
         try:
-            os.close(os.open(path, flags, 0o666))
-            return path
+            return path, os.open(path, flags, 0o666)
         except FileExistsError:
             n += 1
         except OSError:
-            return path
+            return path, None
+
+
+def reserve_sibling(d: str, stem: str, ext: str, tag: str = "") -> str:
+    """Create the hidden sibling `.<stem>.ffskill-<pid><ext>` (or `...-<pid>-<n><ext>` when that
+    name is taken) exclusively, and return its path, for ffmpeg to write with -y. O_EXCL never
+    opens an existing entry, a symlink included, so a name planted in the output directory
+    beforehand is never written through. What it cannot stop is someone who may delete files in
+    that directory replacing this one between the create and ffmpeg's open: not possible in a
+    sticky shared directory (/tmp), nor in one only the caller can write. A copy this process makes
+    itself goes through copy_to_sibling(), which writes the descriptor it created."""
+    path, fd = _reserve(d, stem, ext, tag)
+    if fd is not None:
+        os.close(fd)
+    return path
+
+
+def copy_to_sibling(src: str, dst: str) -> str:
+    """Copy `src` into a hidden sibling of `dst` created exclusively, through the descriptor that
+    created it (never by reopening the name), and return the sibling's path for os.replace()."""
+    import shutil
+    d, base = os.path.split(dst)
+    stem, ext = os.path.splitext(base)
+    path, fd = _reserve(d, stem, ext, "")
+    if fd is None:
+        raise OSError(f"cannot create a temporary file beside {dst}")
+    try:
+        with open(src, "rb") as fin, os.fdopen(fd, "wb") as fout:
+            shutil.copyfileobj(fin, fout, 1 << 20)
+    except BaseException:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
+    return path
 
 
 HW_ENV = "FFMPEG_SKILL_HW"
@@ -1926,15 +1958,16 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
                 return
             except OSError:
                 pass
-        tmp = reserve_sibling(d, stem, ext)
+        tmp = None
         try:
-            shutil.copyfile(src, tmp)
+            tmp = copy_to_sibling(src, dst)
             os.replace(tmp, dst)
         except OSError as e:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
+            if tmp:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
             die(f"could not place {dst}: {e}", kind="output")
     _remember_output(cmd)
 

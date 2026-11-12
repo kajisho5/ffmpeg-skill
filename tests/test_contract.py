@@ -3927,12 +3927,17 @@ class ContractTests(unittest.TestCase):
         hidden.write_text("<!--" + "x" * 5000 + "-->\n" + mpd.replace("<MPD", "<mpd").replace("</MPD>", "</mpd>"), encoding="utf-8")
         named_mpd = work / "manifest.mpd"
         named_mpd.write_text(mpd, encoding="utf-8")
+        # dash_probe() also accepts the 3GPP profile in place of dash:profile
+        dash3gpp = work / "dash_3gpp.mp4"
+        dash3gpp.write_text(mpd.replace("urn:mpeg:dash:profile:isoff-on-demand:2011", "urn:3GPP:PSS:profile:DASH1"), encoding="utf-8")
         imf = work / "cpl.mp4"
         imf.write_text('<?xml version="1.0"?>\n<CompositionPlaylist xmlns="http://www.smpte-ra.org/schemas/2067-3/2016">'
                        "<Id>urn:uuid:0</Id><ContentTitle>x</ContentTitle></CompositionPlaylist>\n", encoding="utf-8")
         self.assertEqual(sh("ffprobe", "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", dash).stdout.strip(),
                          "dash", "the fixture must be what ffprobe reads as DASH")
-        for path in (dash, hidden, named_mpd, imf):
+        self.assertEqual(sh("ffprobe", "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", dash3gpp,
+                            check=False).stdout.strip(), "dash", "ffprobe reads the 3GPP profile as DASH too")
+        for path in (dash, hidden, named_mpd, dash3gpp, imf):
             for name, args in (("probe", [path]), ("cut", [path, "--start", "0", "--end", "0.5", "-o", work / "pulled.mp4"])):
                 proc = tool(name, *args, "--json", check=False)
                 err = json.loads(proc.stdout)["error"]
@@ -3964,7 +3969,8 @@ class ContractTests(unittest.TestCase):
         brand.write_text('{"name": "x"}', encoding="utf-8")
         for key, value, output in (("audio", {"music": "bed.wav"}, "bed.wav"),
                                    ("brand", "brand.json", "brand.json"),
-                                   ("overlays", [{"image": "bed.wav"}], "bed.wav")):
+                                   ("overlays", [{"image": "bed.wav"}], "bed.wav"),
+                                   ("overlays", [{"text": "hi", "font_file": "brand.json"}], "brand.json")):
             proj = work / f"p_{key}.json"
             proj.write_text(json.dumps({"output": output, "clips": [{"src": str(self.src)}], key: value}), encoding="utf-8")
             for extra in ([], ["--dry-run"]):
@@ -3978,6 +3984,18 @@ class ContractTests(unittest.TestCase):
         render = importlib.import_module("render")
         found = render.project_input_files({"captions": {"text": "final.mp4"}, "clips": []}, lambda p: str(work / p))
         self.assertEqual(found, [])
+        # an overlays value of the wrong type is the overlay stage's to refuse, not a traceback here
+        self.assertEqual(render.project_input_files({"overlays": 42}, lambda p: str(work / p)), [])
+        # the audiogram image reaches waveform.py resolved against the project file, the path the
+        # guard checked, not against the caller's working directory
+        img = work / "cover.png"
+        ffmpeg("-f", "lavfi", "-i", "color=c=red:s=64x64", "-frames:v", "1", img)
+        ag = work / "p_audiogram.json"
+        ag.write_text(json.dumps({"output": "ag.mp4", "clips": [{"src": str(self.wav)}],
+                                  "audiogram": {"image": "cover.png"}}), encoding="utf-8")
+        proc = tool("render", ag, "--dry-run", "--json", cwd=self.work)
+        forwarded = [l for l in proc.stderr.splitlines() if "waveform.py" in l]
+        self.assertTrue(forwarded and str(img) in forwarded[0], proc.stderr)
 
     def test_a_colour_is_six_hex_digits_or_refused(self):
         """color_hex() checked the length only: a six-letter name ("yellow", "orange") drew black text
@@ -4036,10 +4054,11 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(tmp) and not os.path.islink(tmp), tmp)
         self.assertEqual(cmd[-1], tmp)
         os.remove(tmp)
-        # place_output() reserves its temp through the same function
-        again = runner.reserve_sibling(str(work), "out", ".mp4")
+        # place_output() and batch.py copy through the descriptor that created the temp
+        again = runner.copy_to_sibling(str(self.src), str(out))
         self.assertNotEqual(again, str(first))
         self.assertTrue(os.path.isfile(again) and not os.path.islink(again))
+        self.assertEqual(Path(again).read_bytes(), Path(self.src).read_bytes())
         os.remove(again)
         self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
         log = work / ".out.mp4.ffskill-audit.jsonl"
@@ -7608,13 +7627,14 @@ class Issue415Tests(unittest.TestCase):
                 raise OSError(18, "Invalid cross-device link")
             return real_replace(a, b)
 
-        def copyfile(a, b):
-            Path(b).write_bytes(b"ne")
+        def copyfileobj(fin, fout, *args):
+            # the copy now writes the descriptor that created the temp (never reopening its name)
+            fout.write(b"ne")
             raise OSError(28, "No space left on device")
         saved = (batch.STATE.dry_run, batch.STATE.overwrite)
         try:
             batch.STATE.dry_run, batch.STATE.overwrite = False, True
-            with mock.patch("os.replace", replace), mock.patch("shutil.copyfile", copyfile):
+            with mock.patch("os.replace", replace), mock.patch("shutil.copyfileobj", copyfileobj):
                 with self.assertRaises(batch.ItemError):
                     batch.deliver(str(src), final)
         finally:
