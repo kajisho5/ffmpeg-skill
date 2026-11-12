@@ -153,6 +153,34 @@ def _tc_label(frames: int, rate: Fraction, drop: bool) -> str:
     return _tc(frames, nominal)[:-3] + ";" + _tc(frames, nominal)[-2:]
 
 
+def output_timecode_args(meta: Dict[str, Any], first_frame: Optional[float]) -> List[str]:
+    """The arguments that give an output the start timecode of the source frame it starts on:
+    `first_frame` seconds after the source picture's first frame (negative: a head the tool
+    added), or None to write no start timecode at all (a join, whose later frames no single start
+    label describes). A tool that moves the start of the picture used to write the source's own
+    start timecode unchanged: FFmpeg copies the video stream's `timecode` tag, and the MOV/MP4
+    muxer rebuilds a tmcd track from it, so a cut from 1 s was stamped 01:00:00:00 for frame 30.
+    Both the stream and the container tag are set (Matroska keeps a stale stream tag otherwise;
+    MXF reads the container's). Nothing for a source without a start timecode. The label also
+    goes on STATE.expected_timecode, which source_carry compares the written file with: an
+    MXF, which always writes one, reads 00:00:00:00 when none is wanted and is listed as dropped."""
+    from _common.runner import STATE
+    tc = (meta or {}).get("timecode") or {}
+    fps = ((meta or {}).get("video") or {}).get("fps")
+    if not tc.get("value") or not fps:
+        return []
+    label = ""
+    if first_frame is not None:
+        rate = exact_rate(float(fps))
+        drop = _drop_frame(tc.get("drop_frame"), rate)
+        nominal = int(round(float(rate)))
+        day = (nominal * 600 - (nominal // 15) * 9) * 144 if drop else nominal * 86400
+        frames = start_tc_frames(tc, rate) + int(round(Fraction(first_frame).limit_denominator(1000000) * rate))
+        label = _tc_label(frames % day, rate, drop)
+    STATE.expected_timecode = label
+    return ["-metadata:s:v:0", f"timecode={label}", "-metadata", f"timecode={label}"]
+
+
 def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[str, Any]:
     """The editor-neutral timeline: every time in frames at `rate`.
 

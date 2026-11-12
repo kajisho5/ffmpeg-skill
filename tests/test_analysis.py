@@ -230,21 +230,25 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
         self.assertTrue(_is_faststart(out), "sync.py --replace-audio must write +faststart")
 
-    def test_sync_trim_second_stream_copy_writes_faststart_mp4(self):
-        """Same shape as #275/#277, the other stream-copy spot in sync.py: --trim-second's
-        head-trim path (`-c copy`) when the second file has video and started earlier."""
-        early_video = OUT / "early_video.mp4"
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-           "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=1.5",
-           "-f", "lavfi", "-i", "aevalsrc=0:s=48000:d=1.5",
-           "-i", self.src, "-filter_complex",
-           "[0:v][2:v]concat=n=2:v=1:a=0[v];[1:a][2:a]concat=n=2:v=0:a=1[a]",
-           "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
-           str(early_video))
+    def test_sync_trim_second_of_a_video_lands_on_the_reference_and_is_faststart(self):
+        """--trim-second stream-copied a second camera that started earlier: the copy began at the
+        keyframe before the trim point and -avoid_negative_ts make_zero showed the frames from it,
+        so a 1 s GOP came out 0.2 s early (a 5 s GOP: nothing trimmed) and was reported as synced.
+        A picture is re-encoded from the frame itself; the written file re-measures at 0, and the
+        MP4 is still faststart (#275/#277)."""
+        ref = make_tones_take(OUT / "sync_trim_ref.mp4", start=1.2, dur=6)
+        take = make_tones_take(OUT / "sync_trim_take_tmp.mp4", start=0.0, dur=7.2)
+        early_video = OUT / "sync_trim_take_g30.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", take, "-c:v", "libx264", "-preset", "veryfast",
+           "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-c:a", "copy", early_video)
         out = OUT / "sync_trim_second_faststart.mp4"
-        script("sync.py", self.src, early_video, "--trim-second", "-o", out)
-        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
-        self.assertTrue(_is_faststart(out), "sync.py --trim-second's stream-copy branch must write +faststart")
+        data = json.loads(script("sync.py", ref, early_video, "--trim-second", "-o", out, "--json").stdout)
+        self.assertAlmostEqual(data["offset_seconds"], -1.2, delta=0.01, msg=data)
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264")
+        self.assertTrue(_is_faststart(out), "sync.py --trim-second must write +faststart")
+        again = json.loads(script("sync.py", ref, out, "--json").stdout)
+        self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
+        self.assertLess(abs(probe(str(out))["duration"] - 6.0), 0.05, "1.2 s of head trimmed off 7.2 s")
 
     def test_sync_negative_offset_trim_second(self):
         early = OUT / "early.wav"

@@ -19,7 +19,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 
 MAX_SPEED = 20.0
@@ -106,7 +106,11 @@ def main() -> int:
             die(f"--segment {start:g}-{end:g}:{factor:g} holds no frame: both ends fall on the frame at "
                 f"{bounds[i]:.3f}s; widen it or merge it into a neighbour")
         vtrim, atrim = av_trim(bounds[i], seg_end, rate)
-        vparts.append(f"[0:v]{vtrim},setpts=PTS/{factor:.6f}[{vlabel}]")
+        # the closing fps puts the sped-up frames back on the source's grid with its frame
+        # duration: concat starts the next segment after the last frame's duration, which setpts
+        # leaves at the unscaled 1/rate, so every 2x segment pushed the rest of the picture two
+        # frames late against the sound (and added those frames)
+        vparts.append(f"[0:v]{vtrim},setpts=PTS/{factor:.6f},{frame_durations(meta, rate)}[{vlabel}]")
         labels.append(f"[{vlabel}]")
         if has_audio:
             aparts.append(f"[0:a]{atrim},{atempo_chain(factor)}[{alabel}]")

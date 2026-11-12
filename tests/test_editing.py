@@ -2927,6 +2927,17 @@ class OneClockTests(MediaFixtures):
         self.assertLessEqual(abs(firsts["alate"] - firsts["sync"]), 5, firsts)
         self.assertLessEqual(abs(firsts["vlate"] - firsts["sync"]), 5, firsts)
 
+    def test_speedramp_a_sped_up_segment_leaves_the_rest_of_the_picture_on_time(self):
+        """setpts left each sped-up frame its unscaled duration, and concat starts the next segment
+        after the last frame's duration: a 2x segment put the 1x rest of the clip two frames late
+        (flashes at 1.567/2.567 s for 1.5/2.5) and the video at 92 frames for 90. The comparison
+        above cannot see it (the in-sync source shifts by as much). Absolute times here."""
+        out = OUT / "clock_ramp_fast_then_normal.mp4"
+        script("speedramp.py", self._fx("sync"), "--segment", "0-2:2", "--segment", "2-4:1",
+               "--preset", "veryfast", "-o", out, "--overwrite")
+        self.assertEqual([round(t, 3) for t in flash_times(out)], [1.5, 2.5])
+        self.assertEqual(stream_spans(out)["video"][2], 90)
+
     def test_join_keeps_a_late_sound_where_it_was(self):
         """#338 started each clip's picture at 0 and rebased its sound on its own: a clip whose
         sound starts 0.3 s late joined 279 ms early."""

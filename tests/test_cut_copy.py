@@ -783,6 +783,24 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual((stream["codec_name"], stream["codec_tag_string"], stream["pix_fmt"], stream["color_transfer"]),
                          ("hevc", "hvc1", "yuv420p10le", "arib-std-b67"))
 
+    def test_an_upper_case_mov_or_mp4_output_is_still_an_mpeg4_output(self):
+        """An iPhone IMG_0001.MOV keeps its suffix in the default output name, and the join's
+        container checks compared it with ".mov" case-sensitively: a chunked join into .MOV wrote
+        hev1 with the index at the end, and a copy join into .MP4 lost +faststart."""
+        from _fixtures import _is_faststart
+        out = DIR / "many_hlg_upper.MOV"
+        segs = ",".join(f"{i * 0.15:.2f}-{i * 0.15 + 0.1:.2f}" for i in range(36))
+        data = cut_json(self.hlg, "--segments", segs, "--preset", "ultrafast", "-o", out)
+        self.assertEqual(sum("concat=n=32:" in c for c in data["commands"]), 1, "the join was chunked")
+        tag = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_tag_string",
+                              "-of", "csv=p=0", str(out)], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+        self.assertEqual(tag, "hvc1")
+        self.assertTrue(_is_faststart(out), "the chunked join into .MOV is faststart")
+        copied = DIR / "keyframe_join_upper.MP4"
+        data = cut_json(self.h264bf, "--segments", "0-2,4-6", "-o", copied)
+        self.assertEqual(data["mode"], "copy")
+        self.assertTrue(_is_faststart(copied), "the copy join into .MP4 is faststart")
+
     # ------------------------------------------------------------------ an exact stream-copy join
     def test_keyframe_aligned_bframe_segments_join_frame_exact(self):
         """The copy join used to add the next GOP's keyframe and P-frame to every part (an

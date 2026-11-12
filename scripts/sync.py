@@ -35,7 +35,8 @@ from typing import Dict, List
 from _common.runner import fail_if_classified
 from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
-from _common.decision import stream_starts
+from _common.decision import frame_rate, grid_at_or_after, stream_starts
+from _common.timeline import output_timecode_args
 
 SR = 8000  # decode sample rate
 
@@ -385,7 +386,12 @@ def main() -> int:
                 cmd = cmd[:-1] + video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) + [output]
                 run(cmd)
         else:
-            if head_trim > 0 and not drift_af:
+            # A picture is never stream-copied here: a copy starts at the keyframe at or before -ss
+            # and -avoid_negative_ts make_zero shows the frames from it, so the output started
+            # early by up to a GOP (a 5 s GOP: nothing trimmed at all) and was reported as synced.
+            # Even a keyframe on the trim point moved the picture by its B-frame delay (+69 ms).
+            # The re-encode below starts on the frame itself; a sound-only file is still copied.
+            if head_trim > 0 and not drift_af and not has_video:
                 cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second, "-c", "copy"]
                 if os.path.splitext(output)[1].lower() in (".mp4", ".mov", ".m4v"):
                     cmd += ["-movflags", "+faststart"]
@@ -412,6 +418,11 @@ def main() -> int:
                     if vf:
                         cmd += ["-vf", ",".join(vf)]
                     cmd += video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf)
+                    # the output's first frame is the second file's frame at head_trim, or (padded)
+                    # one `offset` before its first: its start timecode moves with it
+                    v0, rate = stream_starts(second_meta)[0], frame_rate(second_meta)
+                    first = grid_at_or_after(round(head_trim, 4), v0, rate) - v0 if head_trim > 0 else -offset if delay_ms > 0 else 0.0
+                    cmd += output_timecode_args(second_meta, first)
                 if af_parts:
                     cmd += ["-af", ",".join(af_parts)]
                 cmd += audio_codec_for(output) + [output]

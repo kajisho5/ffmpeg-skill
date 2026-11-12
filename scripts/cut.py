@@ -62,7 +62,8 @@ from _common.runner import fail_if_classified
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
 from _common.probe import TS_EXTS, signatures_match, stream_signature
-from _common.decision import grid_at_or_after
+from _common.decision import frame_rate, grid_at_or_after, stream_starts
+from _common.timeline import output_timecode_args
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -350,6 +351,26 @@ def copy_presentation(t: float, key, edit_list: bool, fps) -> dict:
         # hidden: the pictures decoded from the keyframe up to the first one presented
         return {"start_snapped": False, "stored_preroll_seconds": round(max(0.0, first - k_pts), 6)}
     return {"start_snapped": abs(k_pts - t) > frame + 1e-6, "stored_preroll_seconds": None}
+
+
+def first_frame_from(src: str, meta: dict, start: float, reencode: bool, edit_list: bool):
+    """Seconds from the source picture's first frame to the frame a cut from `start` begins on,
+    for its start timecode: the first frame at or after `start` for a re-encode and an edit-listed
+    copy that hides its keyframe's pre-roll, the keyframe for any other copy (it shows the
+    pre-roll). None when where a copy lands cannot be read, and for an MXF source, whose demuxer
+    lands a seek on another keyframe than seek_keyframe's read (-ss 1.5: the one at 1.44 s, read as
+    the one at 0.96 s), so no label would be known to be right."""
+    v0, rate = stream_starts(meta)[0], frame_rate(meta)
+    if reencode:
+        return grid_at_or_after(start, v0, rate) - v0
+    if "mxf" in str(meta.get("format") or "").split(","):
+        return None
+    key = seek_keyframe(src, start)
+    if key is None:
+        return None
+    if edit_list and key[0] <= start + 1e-6:
+        return None if key[2] is None else key[2] - v0
+    return key[0] - v0
 
 
 def av_skew(out_meta: dict, edit_list_remedy: bool = False, expected: float = 0.0):
@@ -891,6 +912,8 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         edit_list = (edit_list_ok or copy_t is not None) and os.path.splitext(dst)[1].lower() in EDIT_LIST_EXTS
         cmd = (ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur if copy_t is None else copy_t:.6f}"]
                + copy_args(meta, dst) + ([] if edit_list else ["-avoid_negative_ts", "make_zero"]) + [dst])
+    if not audio_only and (meta.get("timecode") or {}).get("value"):
+        cmd[-1:-1] = output_timecode_args(meta, first_frame_from(src, meta, start, reencode, edit_list and copy_t is None))
     proc = run(cmd, check=False)
     if proc.returncode != 0:
         if not reencode:
@@ -1102,7 +1125,9 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
     # the source's rate, stated: FFmpeg 7.0 encoded the trimmed, concatenated pictures at 25 fps
     # and dropped frames to fit (98 frames for 117 at 30 fps)
     rate_out = ["-r", rate_arg] if has_v and rate_arg and rate and "-r" not in codec else []
-    cmd += ["-sn", "-dn"] + codec + rate_out + [dst]
+    # a join's frames after the first range are not the source's next frames: no start timecode
+    # labels them, so the output carries none (a single range's cut moves it to its first frame)
+    cmd += ["-sn", "-dn"] + codec + rate_out + ([] if intermediate or not has_v else output_timecode_args(meta, None)) + [dst]
     run(cmd)
     return codec
 
@@ -1122,7 +1147,7 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
     if len(segments) <= JOIN_CHUNK:
         _join_chunk(src, segments, dst, meta, crf, preset, has_v, vend=vend, hold=hold)
         return
-    ext = os.path.splitext(dst)[1] or ".mp4"
+    ext = os.path.splitext(dst)[1].lower() or ".mp4"  # IMG_0001.MOV is a .mov
     # Matroska chunks with PCM audio: no edit lists and no AAC priming to carry into the join (MP4
     # chunks measured the video 23 ms late against the audio after a copy concat)
     # the chunks' codec tag (hvc1), which a stream copy out of Matroska does not carry into an MP4
@@ -1163,7 +1188,8 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
     audio = [] if not meta.get("audio") else (aac_args() if has_v else audio_codec_for(dst))
     run(ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
         + (["-c:v", "copy"] + (tag if ext in (".mp4", ".mov", ".m4v") else []) if has_v else ["-vn"]) + audio
-        + (["-movflags", "+faststart"] if ext in (".mp4", ".mov", ".m4v") and has_v else []) + [dst])
+        + (["-movflags", "+faststart"] if ext in (".mp4", ".mov", ".m4v") and has_v else [])
+        + (output_timecode_args(meta, None) if has_v else []) + [dst])
 
 
 BEAT_RATE = 22050  # the decode rate the onset pass uses, matching scenes.py --beats
@@ -1333,7 +1359,7 @@ def run_smart(args, segments, output: str, meta: dict, forced: List[str], hold_n
         # line can outgrow Windows' limit, and the full re-encode joins in chunks of this size
         return fallback(f"{len(segments)} segments with sound: the smart join takes at most {JOIN_CHUNK}, the "
                         "full re-encode joins them in chunks", "segments")
-    ext = os.path.splitext(output)[1] or ".mp4"
+    ext = os.path.splitext(output)[1].lower() or ".mp4"
     params = _smartcut.stream_params(args.input)
     bad = _smartcut.ineligible(params, meta, ext)
     if bad:
@@ -1510,7 +1536,7 @@ def main() -> int:
 
     output = args.output or default_output(args.input, "cut")
     refuse_output_is_input(output, args.input)
-    ext = os.path.splitext(output)[1] or ".mp4"
+    ext = os.path.splitext(output)[1].lower() or ".mp4"  # an upper-case .MP4 is still faststart
 
     # A segment that runs past the end of the video, with a join after it: whatever joins it (the
     # concat demuxer or the concat filter) starts the next segment after its LONGER stream, so the
@@ -1693,6 +1719,8 @@ def main() -> int:
                     cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy"]
                     if ext in (".mp4", ".mov", ".m4v"):
                         cmd += ["-movflags", "+faststart"]
+                    if not is_audio_output(output):
+                        cmd += output_timecode_args(meta, None)  # a join: no start timecode (_join_chunk)
                     cmd += [joined]
                     proc = run(cmd, check=False)
                     fail_if_classified(proc)  # #415: a full disk is not a reason to re-cut every segment

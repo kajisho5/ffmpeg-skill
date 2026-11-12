@@ -1916,7 +1916,10 @@ Cross-correlates loudness envelopes: coarse FFT search (20 ms), then a direct
 video with the source file's audio aligned (video stream copied); the output
 keeps the reference's full length -- a shorter or head-trimmed source file is
 padded with silence, never allowed to cut the picture.
-`--trim-second` writes the source file shifted to the reference timeline.
+`--trim-second` writes the source file shifted to the reference timeline. A video source file is
+re-encoded from the frame at the trim point (a stream copy would start at the keyframe before it);
+a sound-only one is stream-copied (to the packet: within an AAC frame). Its start timecode moves
+with the trim or the padded head.
 `--fix-drift` measures the offset again near the end of the overlap, reports
 the clock difference in ppm, and resamples the source file so a 60-minute
 take stays in sync (typical consumer devices drift 20-500 ppm = up to 1.8 s/h).

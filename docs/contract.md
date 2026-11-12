@@ -926,8 +926,13 @@ says it is kept without the step that was stopped, and the document carries it a
 besides the picture and the sound with the file it wrote, and says so in `source_carry:
 {kept: [...], dropped: [...]}`. The items are `subtitles`, `chapters`, `cover_art`,
 `audio_channels` (a surround source only: more than two), `creation_time`, `audio_language` and
-`timecode`. The key is present only when the source had at least one of them, so a result for a
-plain source is unchanged. It is absent under `--dry-run`, for a still or GIF output, and when two
+`timecode`. A timecode is compared by its value: it is kept when the written start timecode
+labels the frame the output starts on, which is the source's own label or, where the tool moved
+the picture's start (`cut` from a later frame, `fit --method trim`, `sync --trim-second`, a
+`render.py` clip with an `in`), the label of the source frame the output now starts on. A join of
+several ranges (`cut --segments`, `--remove` leaving two or more) writes no start timecode, since
+no single start labels the frames after the first join. The key is present only when the source
+had at least one of them, so a result for a plain source is unchanged. It is absent under `--dry-run`, for a still or GIF output, and when two
 or more inputs have a picture or sound (which one's items the output should carry is the tool's
 choice). An item bound to a stream the output does not have at all is not compared (a sound-only
 extract has no subtitle track to lose). It is a report, not a check: `verified` does not depend on

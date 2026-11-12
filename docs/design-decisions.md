@@ -3145,6 +3145,20 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   output does not have (a sound-only extract has no subtitle track or timecode to lose).
 - **A chapter list kept but not retimed counts as kept.** The comparison is a count; whether the
   chapters still point at the right moments is a later, per-tool measurement.
+- **A start timecode is compared by its value, and moves with the start of the picture.** FFmpeg
+  copies the video stream's `timecode` tag and the MOV/MP4 muxer rebuilds a tmcd track from it, so
+  a cut from 1 s was stamped with the source's 01:00:00:00 on frame 30 and listed as kept. A tool
+  that starts the output on a later frame writes that frame's label (drop-frame where the source
+  is): a single-range `cut` (its first frame at or after `--start` for a re-encode or an
+  edit-listed copy, the keyframe for a copy that shows its pre-roll), `fit --method trim`,
+  `sync --trim-second` (a padded head counts back before the source's start) and so a
+  `render.py` clip with an `in`. A join of several ranges writes none: a timecode counts on from
+  its first frame, so after the first join every label would name the wrong source frame, and a
+  conform by timecode would land there. A stream copy out of MXF writes none either: its demuxer
+  lands a seek on another keyframe than `cut.seek_keyframe` reads. `source_carry` then lists the
+  timecode as dropped (an MXF, which always writes one, reads 00:00:00:00). Code:
+  `_common.timeline.output_timecode_args()`, `cut.first_frame_from()`. Test:
+  `test_a_tool_that_moves_the_start_moves_the_start_timecode`.
   Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
   `test_source_carry_says_what_the_output_lost_from_its_source`.
 

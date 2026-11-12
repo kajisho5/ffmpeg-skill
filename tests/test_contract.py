@@ -1211,8 +1211,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((self.tools["loudness"]["reencodes_video"], self.tools["loudness"]["reencodes_audio"]), ("never", "always"))
         self.assertEqual((self.tools["probe"]["reencodes_video"], self.tools["probe"]["reencodes_audio"]), ("never", "never"))
         # sync was declared video="never" but --trim-second re-encodes video whenever the second
-        # file starts later (offset >= 0, the common case) or --fix-drift is used -- only the
-        # offset<0 stream-copy path leaves video untouched (Hardening Phase 2 P0).
+        # file starts later (offset >= 0, the common case) or --fix-drift is used; it now
+        # always does (a copy started at the keyframe before the trim), and only --replace-audio's
+        # copy of the reference picture leaves video untouched (Hardening Phase 2 P0).
         self.assertEqual((self.tools["sync"]["reencodes_video"], self.tools["sync"]["reencodes_audio"]), ("conditional", "conditional"))
         # color is conditional, not "always": --strip-dovi and --retag are a stream copy of both
         # streams (see test_color_strip_dovi_and_retag_are_stream_copies below), only --to-sdr /

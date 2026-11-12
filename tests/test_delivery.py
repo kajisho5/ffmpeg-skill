@@ -1175,6 +1175,55 @@ class SourceCarryTests(MediaFixtures):
         self.assertNotIn("source_carry", doc)
         self.assertNotIn("source_items_dropped", codes)
 
+    def test_a_tool_that_moves_the_start_moves_the_start_timecode(self):
+        """cut, fit --method trim and sync --trim-second wrote the source's start timecode on a
+        file that starts later (a cut from 1 s stamped 01:00:00:00 on frame 30: FFmpeg copies the
+        stream's tag and the MOV muxer rebuilds a tmcd track from it), and source_carry listed it
+        as kept, comparing presence only. The label now moves to the output's first frame,
+        drop-frame where the source is; a join of several ranges writes none and says so."""
+        from _fixtures import make_tones_take
+
+        def clip(path, rate, tc):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=s=160x90:r={rate}:d=4",
+               "-f", "lavfi", "-i", "sine=d=4", "-c:v", "libx264", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac",
+               "-timecode", tc, path)
+            return path
+
+        def written(path):
+            tags = sh("ffprobe", "-v", "error", "-show_entries", "stream_tags=timecode:format_tags=timecode",
+                      "-of", "csv=p=0", path).stdout.split()
+            return sorted(set(tags))
+
+        def run(tool, *args):
+            doc = json.loads(script(tool, *args, "--overwrite", "--json").stdout)
+            return doc.get("source_carry") or {}
+
+        tc30 = clip(OUT / "tc30.mov", "30", "01:00:00:00")
+        tc2997 = clip(OUT / "tc2997.mov", "30000/1001", "01:00:00;00")
+        cases = [
+            ("cut.py", [tc30, "--start", "0.5", "--end", "1.5", "--accurate"], "tc_accurate.mov", "01:00:00:15"),
+            ("cut.py", [tc30, "--start", "1", "--end", "3"], "tc_copy.mov", "01:00:01:00"),
+            ("cut.py", [tc30, "--start", "1.2", "--end", "3", "--no-edit-list"], "tc_copy_keyframe.mov", "01:00:01:00"),
+            ("cut.py", [tc30, "--start", "1.2", "--end", "3"], "tc_copy_edit_list.mov", "01:00:01:06"),
+            ("cut.py", [tc30, "--remove", "0-1"], "tc_remove_head.mov", "01:00:01:00"),
+            ("cut.py", [tc2997, "--start", "2.002", "--end", "3.5", "--accurate"], "tc_df.mov", "01:00:02;00"),
+            ("fit.py", [tc30, "--duration", "2", "--method", "trim", "--from-center"], "tc_fit.mov", "01:00:01:00"),
+        ]
+        for tool, args, name, want in cases:
+            carry = run(tool, *args, "-o", OUT / name)
+            self.assertEqual(written(OUT / name), [want], f"{tool} {args}")
+            self.assertIn("timecode", carry.get("kept", []), f"{tool} {args}: {carry}")
+        carry = run("cut.py", tc30, "--segments", "1-2,3-4", "-o", OUT / "tc_join.mov")
+        self.assertEqual(written(OUT / "tc_join.mov"), [], "a join writes no start timecode")
+        self.assertIn("timecode", carry.get("dropped", []), carry)
+        # the second camera started 1 s earlier: trimmed by 1 s, its label moves on 30 frames
+        ref = make_tones_take(OUT / "tc_sync_ref.mp4", start=1.0, dur=5)
+        cam = OUT / "tc_sync_cam.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", make_tones_take(OUT / "tc_sync_cam_tmp.mp4", dur=6),
+           "-c", "copy", "-timecode", "10:00:00:00", cam)
+        script("sync.py", ref, cam, "--trim-second", "-o", OUT / "tc_sync.mov", "--overwrite")
+        self.assertEqual(written(OUT / "tc_sync.mov"), ["10:00:01:00"])
+
 
 class GeometryAuditDeliveryTests(unittest.TestCase):
     """Issue #411 (audit H): a delivery preset sizes a non-square-pixel master in square pixels."""

@@ -39,6 +39,8 @@ import sys
 from fractions import Fraction
 from typing import List
 
+from _common.decision import frame_rate, grid_at_or_after, stream_starts
+from _common.timeline import output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 
@@ -177,6 +179,10 @@ def main() -> int:
                 start = (src_dur - target) / 2 if args.from_center else 0.0
                 pre_input += ["-ss", f"{start:.3f}"]
                 post += ["-t", f"{target:.3f}"]
+                # the output starts on the first frame at or after the seek: its start timecode
+                # is that frame's, not the source's first frame's
+                v0, rate = stream_starts(meta)[0], frame_rate(meta)
+                post += output_timecode_args(meta, grid_at_or_after(round(start, 3), v0, rate) - v0)
             else:
                 info(f"source ({src_dur:.2f}s) is already shorter than {target:.2f}s; trim does nothing")
 
