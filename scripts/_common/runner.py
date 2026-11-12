@@ -2045,6 +2045,23 @@ def subtitle_container_holds(codec: str, out_ext: str) -> bool:
     return True
 
 
+def default_selection_maps(meta: Optional[Dict[str, Any]], dst: str) -> List[str]:
+    """The -map arguments for a re-encode that would otherwise rely on ffmpeg's default stream
+    selection: none for a file with one picture and one sound (the default picks those, and a
+    subtitle stream the container can hold, as it always did), and with several, the picture
+    and sound probe() describes plus the first subtitle stream when `dst`'s container can hold it
+    -- what the default would have carried, without its largest-picture / most-channels choice
+    (A258, #484 review)."""
+    from _common.probe import probed_maps, several_av_streams  # probe imports this module
+    if not several_av_streams(meta):
+        return []
+    maps = probed_maps(meta)
+    subs = (meta or {}).get("subtitle_stream_details") or []
+    if subs and subtitle_container_holds(subs[0].get("codec") or "", os.path.splitext(dst)[1]):
+        maps += ["-map", "0:s:0"]
+    return maps
+
+
 def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = False) -> bool:
     """Run an ffmpeg command that already maps its video/audio, trying first to also
     stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when

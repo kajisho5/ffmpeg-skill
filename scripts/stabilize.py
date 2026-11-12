@@ -27,7 +27,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common.probe import PROBED_VIDEO, probed_maps
+from _common.probe import PROBED_VIDEO
+from _common.runner import default_selection_maps
 from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
@@ -96,7 +97,7 @@ def main() -> int:
             # Equivalent to relative=0:smoothing=0 -- overrides --smoothing, since averaging a
             # camera path makes no sense once every frame is locked to one fixed reference.
             transform_vf += ":tripod=1"
-        cmd = ffmpeg_base() + ["-i", args.input] + probed_maps(meta) + ["-vf", transform_vf]
+        cmd = ffmpeg_base() + ["-i", args.input] + default_selection_maps(meta, output) + ["-vf", transform_vf]
         cmd += video_args(meta, args.crf, args.preset)
         cmd += cfr_args(meta)
         if has_audio:

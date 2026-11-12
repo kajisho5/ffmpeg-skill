@@ -343,7 +343,8 @@ def main() -> int:
     if args.limit:
         fx.append(dynamics_filter("alimiter", args))
     if args.mono:
-        in_ch = in_channels or 2
+        # after --downmix the track is the stereo fold-down, whatever the source had
+        in_ch = 2 if args.downmix else (in_channels or 2)
         if in_ch == 2:
             fx.append("pan=mono|c0=0.5*c0+0.5*c1")
         elif in_ch > 2:

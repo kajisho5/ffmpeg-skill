@@ -22,7 +22,8 @@ import argparse
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
-from _common.probe import display_size, probed_maps, square_pixels, square_pixels_note
+from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.runner import default_selection_maps
 from _common.emit import note
 
 
@@ -66,7 +67,7 @@ def main() -> int:
         vf.insert(0, square_pixels(meta["video"]))
         note(square_pixels_note(meta["video"]))
     # the picture the rectangle was checked against, not the largest one default selection takes
-    cmd = ffmpeg_base() + ["-i", args.input] + probed_maps(meta) + ["-vf", ",".join(vf)]
+    cmd = ffmpeg_base() + ["-i", args.input] + default_selection_maps(meta, output) + ["-vf", ",".join(vf)]
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta, args.fps)
     if has_audio:

@@ -2330,14 +2330,30 @@ class ProbedStreamTests(unittest.TestCase):
                 self.assertEqual(probe(str(out))["subtitle_streams"], int(holds))
                 self.assertEqual(d["dropped_non_av_streams"], not holds)
 
+    def test_crop_keeps_the_subtitle_of_a_one_picture_one_sound_file(self):
+        """Explicit -map turns ffmpeg's default selection off, subtitles included: crop of an MKV
+        with one picture, one sound and a text subtitle dropped the subtitle (#484 review). With
+        one of each the default selection is kept, as before."""
+        srt = DIR / "one_each.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+        src = DIR / "one_each.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-map", "2",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", "srt", src)
+        out = DIR / "one_each_crop.mkv"
+        script("crop.py", src, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
+        self.assertEqual(probe(str(out))["subtitle_streams"], 1)
+
     def test_crop_and_stabilize_write_the_picture_they_measured(self):
         out = DIR / "multi_crop.mp4"
         script("crop.py", self.multi, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
         self.assertEqual(written_track(out), "a:0")
         # the probed picture is testsrc2, not the red one: its first frame is not uniformly red
-        v = json.loads(sh("ffprobe", "-v", "error", "-f", "lavfi", "-show_entries", "frame_tags=lavfi.signalstats.VAVG",
-                          "-of", "json", f"movie={out},signalstats").stdout)["frames"][0]["tags"]["lavfi.signalstats.VAVG"]
-        self.assertLess(float(v), 200)
+        # (read through -i: a path inside movie= needs filtergraph escaping, a drive colon on Windows)
+        yuv = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-frames:v", "1", "-vf",
+                              "scale=1:1:flags=area,format=yuv444p", "-f", "rawvideo", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        self.assertLess(yuv[2], 200, "the frame's average V is the red picture's")
         if "vidstabdetect" in sh("ffmpeg", "-hide_banner", "-filters").stdout:
             out = DIR / "multi_stab.mp4"
             script("stabilize.py", self.multi, "-o", out, "--overwrite")
